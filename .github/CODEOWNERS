@@ -1,0 +1,5 @@
+# Code owners for webhook-co/webhook.
+# The founder owns everything; CODEOWNERS review is required on the `main` branch
+# (enforced by the branch ruleset).
+
+* @choraria

@@ -21,3 +21,12 @@ Durable principles for this repository. Design for them from day one; they are n
   code must not depend on `ee/`.
 - **Transparent pricing (qualitative).** Keep event metering accurate and single-dimension; never
   add hidden per-step counters. (No prices or cost figures belong in this repo.)
+
+## Engineering guardrails (non-negotiable)
+
+- **Human-UI-testing hard stop.** When a change needs human UI/visual verification you cannot do
+  yourself (rendering, layout, design, interaction, user-facing copy), STOP and explicitly flag it
+  for human testing. Do not mark complete, approve, or merge until a human has verified it.
+- **Never bypass tests.** Never use `git commit/push --no-verify`; never add `.only`/skip/disable
+  tests or lower coverage thresholds to make CI pass. Fix the root cause. CI required checks are
+  mandatory for everyone (including admins) — status checks have no bypass.

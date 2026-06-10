@@ -37,6 +37,23 @@ These are durable and rarely change. They are not bolt-ons — design for them f
   event metering accurate and single-dimension; never build hidden per-step counters. (Specific
   prices, tiers, and cost figures are intentionally **not** in this public repo.)
 
+## Engineering guardrails (non-negotiable, for humans and agents)
+
+These two directives are absolute. They are not style preferences — violating them is never an
+acceptable way to "make it pass." They bind every contributor and every coding agent equally.
+
+1. **Human-UI-testing hard stop.** When a change requires human UI/visual verification that you
+   cannot perform yourself — anything involving rendering, layout, visual design, interaction
+   behavior, or user-facing copy a human must eyeball — **STOP and explicitly flag it for human
+   testing.** Do **not** mark the task complete, do **not** approve, and do **not** merge until a
+   human has verified it. Say plainly that human verification is required and what to check.
+
+2. **Never bypass tests or weaken the gate.** Never use `git commit --no-verify` or
+   `git push --no-verify`. Never add `.only`/`fdescribe`/`it.only`/`describe.only`, never skip or
+   disable tests, and never lower a coverage threshold to get a green build. If tests fail, **fix
+   the root cause.** The local hooks are a convenience and are bypassable; **CI required checks are
+   the real gate and are mandatory for everyone, including admins** — status checks have no bypass.
+
 ## Tech stack
 
 | Layer | Pick |

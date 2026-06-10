@@ -1,0 +1,70 @@
+name: AI review
+
+# Runs the security + QA review sub-agents (.cursor/agents/) against the PR diff.
+#
+# STATUS: SCAFFOLD — pending a repo secret. This job is best-effort and NON-BLOCKING:
+# it is intentionally NOT in the required status checks. Until the founder adds a
+# `CURSOR_API_KEY` repo secret (Settings -> Secrets and variables -> Actions), the job
+# detects the missing key and exits successfully with a notice. Once the secret exists,
+# it installs the Cursor CLI and runs the reviewers on the diff.
+#
+# Alternative providers (swap in if preferred): anthropics/claude-code-action with
+# ANTHROPIC_API_KEY, or any code-review GitHub Action.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ai-review-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ai-review:
+    name: ai-review
+    runs-on: ubuntu-latest
+    # Non-blocking: never wedge a PR on the AI reviewer.
+    continue-on-error: true
+    env:
+      CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for API key
+        id: gate
+        run: |
+          if [ -n "${CURSOR_API_KEY:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=AI review pending::No CURSOR_API_KEY secret set. Skipping AI review. Add the secret in repo Settings to enable the security + QA reviewers."
+          fi
+
+      - name: Compute PR diff
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+          echo "Diff size: $(wc -l < pr.diff) lines"
+
+      - name: Install Cursor CLI
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          curl https://cursor.com/install -fsS | bash
+          echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
+
+      - name: Run security + QA reviewers on the diff
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          cursor-agent --print --output-format text \
+            "You are running in CI on a pull request. Review ONLY the changes in pr.diff. \
+             Apply the security-reviewer and qa-test-reviewer sub-agents defined in \
+             .cursor/agents/. Report blocking issues (injection, XSS, secrets, authz/SSRF, \
+             PII in logs, missing/weak tests, skipped tests, lowered coverage) with file:line \
+             and a concrete fix. If there are no blocking issues, say so explicitly." \
+            < pr.diff

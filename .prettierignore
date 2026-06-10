@@ -1,0 +1,12 @@
+node_modules
+dist
+build
+.turbo
+.wrangler
+coverage
+pnpm-lock.yaml
+
+# Markdown / prose is hand-authored and governed by the `writing-voice` rule, not Prettier
+# (Prettier rewraps doc tables and lists in ways that fight the house style).
+**/*.md
+**/*.mdc

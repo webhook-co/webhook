@@ -1,0 +1,12 @@
+{
+  "name": "@webhook-co/ee-control-plane",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "license": "SEE LICENSE IN ../LICENSE",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  }
+}

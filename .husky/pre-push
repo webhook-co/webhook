@@ -1,0 +1,5 @@
+# Local convenience only — bypassable with `git push --no-verify`.
+# The REAL gate is CI (see .github/workflows/ci.yml).
+#
+# Runs tests for packages affected since the last push.
+pnpm exec turbo run test --affected

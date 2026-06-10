@@ -1,0 +1,7 @@
+# Local convenience only — bypassable with `git commit --no-verify`.
+# The REAL gate is CI (see .github/workflows/ci.yml). Do not rely on this to catch everything.
+#
+# Formats + lints staged files, blocks focused/skipped tests, and typechecks the workspace.
+pnpm exec lint-staged
+pnpm run --silent no-skipped-tests
+pnpm run --silent typecheck

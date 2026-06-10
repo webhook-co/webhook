@@ -1,0 +1,50 @@
+{
+  "name": "@webhook-co/root",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Open-core webhook infrastructure — receive, inspect, replay-to-localhost, and reliably deliver webhooks.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "packageManager": "pnpm@10.25.0",
+  "engines": {
+    "node": ">=24",
+    "pnpm": ">=10"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "workerd",
+      "sharp"
+    ]
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "lint": "eslint . && pnpm run no-skipped-tests",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "no-skipped-tests": "node scripts/no-skipped-tests.mjs",
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.16.14",
+    "@cloudflare/workers-types": "^4.20260610.1",
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^25.9.2",
+    "@vitest/coverage-v8": "^4.1.8",
+    "eslint": "^10.4.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-security": "^4.0.0",
+    "globals": "^17.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^17.0.7",
+    "prettier": "^3.8.4",
+    "turbo": "^2.9.17",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.61.0",
+    "vitest": "^4.1.8",
+    "wrangler": "^4.99.0"
+  }
+}
