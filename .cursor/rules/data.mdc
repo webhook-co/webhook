@@ -1,0 +1,35 @@
+---
+description: PII/PHI handling, safe migrations, and metering integrity for data and DB code.
+globs: **/db/**,**/migrations/**
+alwaysApply: false
+---
+
+# Data, migrations & metering
+
+## PII / PHI handling
+
+- Treat webhook payloads as untrusted and potentially sensitive (PII/PHI). Store raw bodies in **R2
+  (batched)**, not Postgres — Postgres holds metadata, config, and dedup/idempotency keys only.
+- **Scrub PII/PHI from logs and traces.** Never log full payloads, headers with secrets, tokens, or
+  tenant identifiers. Redact at the boundary.
+- **Tenant isolation via Postgres RLS** is mandatory — every tenant-scoped table enforces row-level
+  security. Never rely on app-layer filtering alone.
+- Encryption at rest and in transit; honor region pinning for region-constrained records.
+
+## Safe migrations
+
+- Migrations are **forward-only and reversible in practice**: ship expand → backfill → contract in
+  separate steps. No destructive change (drop column/table, type narrowing) in the same release that
+  starts using the new shape.
+- Migrations must be idempotent and safe to re-run; large backfills run in batches, off the hot
+  path. Never lock a hot table for long.
+- Preserve the **append-only, hash-chained audit log** — never rewrite or delete audit history in a
+  migration.
+- Every migration has a tested rollback path before it reaches production.
+
+## Metering integrity
+
+- Event metering is **single-dimension (events)** and must be accurate and idempotent — count each
+  event once, dedup by id, and make counting replay-safe.
+- Never introduce hidden per-step or multi-dimension counters. Metering integrity is a correctness
+  concern. (No prices, tiers, or cost figures belong in this repo.)

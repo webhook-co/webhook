@@ -1,0 +1,41 @@
+---
+description: TypeScript and Cloudflare Workers conventions, error handling, and testing expectations.
+globs: **/*.ts
+alwaysApply: false
+---
+
+# Engineering conventions (TypeScript / Workers)
+
+## Language & types
+
+- TypeScript everywhere, `strict` on. No `any` unless justified with a comment; prefer `unknown` +
+  narrowing. Validate all external input (webhook bodies, API params) at the boundary with a schema.
+- Keep `shared/` the home for cross-surface types. The same operation across CLI / API / web / MCP
+  should share types — don't redefine payloads per surface.
+
+## Workers / Durable Objects
+
+- Workers handlers stay thin: validate → delegate → respond. ACK ingestion fast; do delivery work
+  off the request hot path (via the DO + alarms), not inline.
+- One Durable Object **per endpoint** is the ordering/isolation primitive — preserve FIFO semantics
+  and never share a DO across endpoints.
+- Schedule retries/backoff with **DO Alarms**, not hot-path queues. Make delivery idempotent and
+  dedup by event id.
+- Never block on long outbound work in a Worker; route heavy/blocking delivery through the
+  container-delivery **seam** (don't bypass the interface).
+- Use bindings (KV, R2, Hyperdrive, DO) — never hardcode endpoints or credentials.
+
+## Error handling
+
+- Fail loud internally, fail safe externally. Return Standard-Webhooks-correct status codes; don't
+  leak internal errors, stack traces, secrets, or tenant data to responses or logs.
+- Errors are typed and actionable; wrap with context rather than swallowing. Retryable vs terminal
+  failures must be distinguishable so the retry scheduler does the right thing.
+
+## Testing
+
+- Unit-test signing/verification, dedup/idempotency, and retry/backoff logic — these are
+  correctness-critical.
+- Cover edge cases: malformed/oversized payloads, duplicate deliveries, clock skew, partial
+  failures, replay. Add a regression test with every bug fix.
+- Prefer `vitest` with the Workers pool for DO/Workers code so tests run against the real runtime.

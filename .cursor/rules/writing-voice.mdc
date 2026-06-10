@@ -1,0 +1,23 @@
+---
+description: Apply the webhook.co writing voice to any user-facing copy — docs, UI text, CLI output, error messages, changelogs, and READMEs. Request this rule when writing or editing prose.
+globs: **/*.md,apps/web/**
+alwaysApply: false
+---
+
+# Writing voice
+
+Apply to anything a user reads: docs, dashboard copy, CLI output, error messages, changelogs.
+
+- **Precise & quietly opinionated.** Have a point of view and state it plainly; recommend the right
+  path instead of listing every option. Sage + Creator, not hype.
+- **Casual-professional, developer-to-developer.** Write like a sharp colleague. Contractions are
+  fine. Cut needless jargon; when a term is necessary, define it once.
+- **Dry, sparing wit** — never at the expense of clarity. If a joke risks confusing the reader, drop
+  the joke.
+- **Lowercase brand names:** `webhook.co` and `wbhk.my`, even at the start of a sentence where it
+  reads naturally.
+- **Sentence case** for headings, titles, buttons, and UI labels.
+- **Tie-breakers:** when wording choices conflict, optimize for **clarity** first, then **trust**.
+  Be honest about limits and tradeoffs; never overpromise.
+- Prefer active voice, short sentences, and concrete examples over abstraction. Lead with what the
+  reader can do.

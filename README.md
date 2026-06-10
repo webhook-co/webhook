@@ -29,6 +29,21 @@ This repository is in early development. As code lands, it will be organized as 
 See [`AGENTS.md`](AGENTS.md) for the technical context, tech stack, and conventions that contributors
 and coding agents should follow.
 
+## Governance layer (for contributors & coding agents)
+
+This repo ships a "company-as-agents" governance layer so humans and AI assistants share the same
+guardrails:
+
+- `.cursor/rules/*.mdc` — scoped rules (a tiny always-on constitution + secrets, engineering, infra,
+  design, data, and writing-voice rules) that Cursor auto-attaches by file path.
+- `.cursor/skills/*/` and `.cursor/agents/*` — task skills (deploy runbook, docs/API reference, data
+  migration, support triage) and read-only review sub-agents (security, QA, code review).
+- `.claude/skills/` and `.claude/agents/` mirror the skills and sub-agents for Claude Code;
+  [`CLAUDE.md`](CLAUDE.md) bridges Claude Code to the shared `AGENTS.md` context.
+
+Start from [`AGENTS.md`](AGENTS.md) — it's the root constitution and an index of the rules, skills,
+and sub-agents above.
+
 ## Status
 
 Early/active development — the documentation here describes the project's direction and structure.

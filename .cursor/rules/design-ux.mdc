@@ -1,0 +1,23 @@
+---
+description: Accessibility and design-system conventions for the web dashboard.
+globs: apps/web/**
+alwaysApply: false
+---
+
+# Design & UX (web dashboard)
+
+- **Accessibility is a requirement, not a polish pass.** Target WCAG 2.2 AA: semantic HTML, labeled
+  controls, visible focus states, keyboard operability for every interaction, and sufficient color
+  contrast. Don't ship interactive elements that only work with a mouse.
+- **Use the design system / tokens.** Style via the shared tokens (color, spacing, typography,
+  radius) — no hardcoded hex values or one-off magic numbers. New patterns go into the system, not
+  into a single component.
+- **Sentence case** for headings, buttons, and labels. Brand names stay lowercase (`webhook.co`,
+  `wbhk.my`). UI copy follows the `writing-voice` rule: clear, developer-peer, quietly opinionated.
+- **Respect user preferences:** honor `prefers-reduced-motion`, support light/dark, and don't trap
+  focus or autoplay motion.
+- **States are part of the design.** Always handle loading, empty, error, and permission-denied
+  states — empty states should teach the next action. Inspection/replay views must stay fast and
+  legible with large payloads.
+- **Private-by-default in the UI too:** never imply something is shared/public unless the user
+  explicitly made it so; make sharing affordances explicit and reversible.

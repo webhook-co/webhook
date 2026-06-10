@@ -1,0 +1,24 @@
+---
+description: Cloudflare-forward infrastructure and deployment guardrails.
+globs: infra/**
+alwaysApply: false
+---
+
+# Infra & DevOps guardrails
+
+- **Cloudflare-forward + TypeScript** is the settled core (2026-06-10). Default new compute to
+  Workers / Durable Objects. Don't reintroduce rejected alternatives without an ADR.
+- **Keep the container-delivery seam.** Heavy/blocking outbound delivery sits behind an abstraction
+  interface so the compute lane (Workers vs container) can change without engine changes. Never
+  couple the engine directly to a specific delivery backend.
+- **Datastore choices are deliberate:** Neon Postgres via Hyperdrive for metadata/dedup (not D1);
+  Cloudflare R2 for batched payload bodies; Workers KV for hot config cache. Don't swap these
+  casually.
+- **No destructive infra without review.** Anything that deletes/recreates resources, drops data,
+  rotates production secrets, or changes DNS/routing for `webhook.co` or `wbhk.my` requires explicit
+  human review. Prefer `wrangler ... --dry-run` / plan output first.
+- **Ingestion isolation is structural.** `wbhk.my` stays a separate registrable apex: cookieless,
+  no CORS, path-token routing. Don't route ingestion through app subdomains.
+- **Config as code, secrets out of code.** All infra is reproducible from `infra/`; secrets come
+  from the secret store / `wrangler secret`, never committed. No account/zone IDs in the repo.
+- **Observability is not optional.** Wire OpenTelemetry traces/metrics for new services.

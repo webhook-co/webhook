@@ -1,0 +1,23 @@
+---
+description: Non-negotiable product principles every change must respect.
+globs:
+alwaysApply: true
+---
+
+# Constitution — non-negotiables
+
+Durable principles for this repository. Design for them from day one; they are not bolt-ons.
+
+- **Compliance-by-design.** Encryption in transit and at rest; secrets in a KMS; append-only,
+  hash-chained audit log; Postgres RLS tenant isolation; region pinning; PII/PHI scrubbed from logs.
+- **MCP / AI-native parity.** Every capability is reachable identically from CLI / API / web / MCP.
+- **Private-by-default.** Nothing is public, listed, or shared unless explicitly made so.
+- **Cookieless ingestion on a separate apex.** Ingestion and the CLI tunnel live on `wbhk.my`:
+  cookieless, no CORS, path-token routing, `404` for unknown tokens. Never serve ingestion from a
+  primary application subdomain.
+- **Standard-Webhooks-native.** Signing/verification follow Standard Webhooks (send and receive).
+  Do not hand-roll signature schemes.
+- **Open-core boundary.** Open core is Apache-2.0; proprietary code is fenced into `ee/`. Open-core
+  code must not depend on `ee/`.
+- **Transparent pricing (qualitative).** Keep event metering accurate and single-dimension; never
+  add hidden per-step counters. (No prices or cost figures belong in this repo.)
