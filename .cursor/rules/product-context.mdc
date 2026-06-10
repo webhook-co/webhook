@@ -1,0 +1,25 @@
+---
+description: Durable technical guardrails for the webhook project that the agent must always honor.
+globs:
+alwaysApply: true
+---
+
+# webhook — durable technical guardrails
+
+Non-negotiable, durable **technical** principles for this repository. They rarely change. For
+project context and conventions, read [`AGENTS.md`](../../AGENTS.md); for a high-level overview, read
+[`README.md`](../../README.md).
+
+- **Compliance-by-design.** Build security controls into the architecture from day one: encryption
+  in transit and at rest, secrets in a KMS, an append-only hash-chained audit log, Postgres
+  row-level-security tenant isolation, region pinning, and PII/PHI log scrubbing.
+- **MCP / AI-native.** Every capability is reachable from CLI / API / web / **MCP** identically.
+  Ship an MCP server, and support the webhook → agent trigger surface.
+- **Private-by-default.** Nothing is public, listed, or shared unless explicitly made so.
+- **Cookieless ingestion on a separate apex.** Webhook ingestion and the CLI tunnel live on a
+  **separate registrable apex**: cookieless, no CORS, path-token routing, `404` for unknown tokens.
+  Never serve ingestion from a primary application subdomain.
+- **Standard-Webhooks-native.** Signing and verification follow the Standard Webhooks spec for both
+  send and receive. Do not hand-roll signature schemes.
+- **Open-core boundary.** The open core is Apache-2.0; proprietary code is fenced into the `ee/`
+  directory. Open-core code must not depend on `ee/` code.
