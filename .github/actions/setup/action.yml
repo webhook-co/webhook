@@ -1,17 +1,35 @@
-name: Setup pnpm + Node
-description: Install pnpm, set up Node from .nvmrc, and install dependencies (frozen lockfile).
+name: Setup Node + pnpm
+description: Set up Node from .nvmrc, enable pnpm via corepack, and install deps (frozen lockfile).
+
+# Uses only GitHub-owned actions (actions/*) + corepack, because the org restricts Actions to
+# GitHub-created/verified publishers (pnpm/action-setup is not allowed).
 
 runs:
   using: composite
   steps:
-    - name: Install pnpm
-      uses: pnpm/action-setup@v4
-
     - name: Set up Node
       uses: actions/setup-node@v4
       with:
         node-version-file: .nvmrc
-        cache: pnpm
+
+    - name: Enable pnpm (corepack)
+      shell: bash
+      run: |
+        corepack enable
+        # First pnpm invocation provisions the version pinned in package.json (packageManager).
+        echo "pnpm $(pnpm --version)"
+
+    - name: Configure pnpm store
+      shell: bash
+      run: pnpm config set store-dir "$HOME/.pnpm-store"
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: ~/.pnpm-store
+        key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-${{ runner.os }}-
 
     - name: Install dependencies
       shell: bash
