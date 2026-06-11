@@ -2,11 +2,11 @@ name: AI review
 
 # Runs the security + QA review sub-agents (.cursor/agents/) against the PR diff.
 #
-# STATUS: SCAFFOLD — pending a repo secret. This job is best-effort and NON-BLOCKING:
-# it is intentionally NOT in the required status checks. Until the founder adds a
-# `CURSOR_API_KEY` repo secret (Settings -> Secrets and variables -> Actions), the job
-# detects the missing key and exits successfully with a notice. Once the secret exists,
-# it installs the Cursor CLI and runs the reviewers on the diff.
+# The job is gated on a `CURSOR_API_KEY` repo secret (Settings -> Secrets and variables
+# -> Actions). Without the secret the job detects the missing key and exits successfully
+# with a notice. With the secret set, it installs the Cursor CLI and runs the reviewers
+# on the diff. Headless `cursor-agent` requires `--trust` to skip the interactive
+# workspace-trust prompt; without it the CLI exits non-zero in CI.
 #
 # Alternative providers (swap in if preferred): anthropics/claude-code-action with
 # ANTHROPIC_API_KEY, or any code-review GitHub Action.
@@ -61,7 +61,7 @@ jobs:
       - name: Run security + QA reviewers on the diff
         if: steps.gate.outputs.enabled == 'true'
         run: |
-          cursor-agent --print --output-format text \
+          cursor-agent --print --trust --output-format text \
             "You are running in CI on a pull request. Review ONLY the changes in pr.diff. \
              Apply the security-reviewer and qa-test-reviewer sub-agents defined in \
              .cursor/agents/. Report blocking issues (injection, XSS, secrets, authz/SSRF, \

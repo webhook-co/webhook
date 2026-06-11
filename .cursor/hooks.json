@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "hooks": {
+    "afterFileEdit": [{ "command": ".cursor/hooks/security-scan.mjs" }],
+    "postToolUse": [{ "command": ".cursor/hooks/security-scan.mjs", "matcher": "Write" }]
+  }
+}

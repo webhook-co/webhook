@@ -126,11 +126,42 @@ This repo ships a "company-as-agents" governance layer. Cursor reads `.cursor/`;
 - `data-migration` — plan and run safe, reversible schema/data migrations.
 - `support-triage` — triage technical issues into reproducible, actionable reports.
 
+These skills are **Cursor-side** (`.cursor/skills/`); the Claude mirror is maintained separately:
+
+- `build-mcp-server` — design and scaffold an MCP server (5-phase), biased to remote HTTP on Workers.
+- `build-mcp-app` — interactive MCP UI widgets in sandboxed iframes (respects the human-UI-testing stop).
+- `build-mcpb` — package a local stdio server into an installable MCPB bundle.
+- `test-driven-development` — strict red-green-refactor, tied to `no-skipped-tests` and coverage gates.
+- `systematic-debugging` — 4-phase root-cause method; stop and review architecture after ~3 failed fixes.
+- `brainstorming` — Socratic requirement refinement before any code.
+
+**Commands** — `.cursor/commands/<name>.md` (Cursor-side slash commands; mirrored to Claude separately):
+
+- `/feature-dev` — phased feature workflow (discovery → exploration → questions → design → build → review).
+- `/brainstorming` — Socratic requirement refinement before code.
+- `/execute-plan` — implement an agreed plan in reviewed batches with `code-reviewer` checkpoints.
+- `/commit` — Conventional-Commits commit that refuses likely-secret files and never bypasses the hooks.
+- `/commit-push-pr` — commit → push branch → open a PR with summary + test plan (via `gh`).
+- `/clean-gone` — prune local branches whose remote was deleted.
+
+**Hooks** — `.cursor/hooks.json` + `.cursor/hooks/` (Cursor-side):
+
+- `security-scan` — after a file edit, scans the newly written content and surfaces advisory warnings
+  (command injection in workflow files, unsafe `exec`/`execSync`, `eval`/`new Function`, XSS sinks,
+  Python `pickle`/`os.system`) with remediation. Complements the static `eslint-plugin-security` gate;
+  warns once per pattern per file and never blocks an edit.
+
 **Sub-agents** — `.cursor/agents/*.md` (read-only reviewers; also mirrored in `.claude/agents/`):
 
 - `security-reviewer` — injection/XSS/secrets/authz/SSRF and PII-in-logs review.
 - `qa-test-reviewer` — coverage, edge cases, and behavioral completeness (can flag blocking).
 - `code-reviewer` — correctness, maintainability, and convention adherence.
+
+These reviewers are **Cursor-side** (`.cursor/agents/`); the Claude mirror is maintained separately:
+
+- `silent-failure-hunter` — swallowed errors, empty catch blocks, ignored rejections, inadequate logging.
+- `type-design-analyzer` — type invariants, encapsulation, making illegal states unrepresentable (TS).
+- `comment-analyzer` — comments/docstrings checked for accuracy against the actual code.
 
 > Sub-agents do **not** inherit this file's context, so each one restates the load-bearing policy it
 > needs directly in its own prompt.
