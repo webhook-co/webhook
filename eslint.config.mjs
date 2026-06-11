@@ -47,6 +47,18 @@ export default tseslint.config(
     },
   },
 
+  // Cursor hook scripts are Node tooling: they read the hook payload from stdin and persist a
+  // session-scoped dedupe file by computed path. Same exemption as the build scripts above.
+  {
+    files: [".cursor/hooks/**/*.{mjs,js}"],
+    languageOptions: {
+      globals: { ...globals.node },
+    },
+    rules: {
+      "security/detect-non-literal-fs-filename": "off",
+    },
+  },
+
   // Prettier must come last so it can disable any conflicting stylistic rules.
   prettier,
 );
