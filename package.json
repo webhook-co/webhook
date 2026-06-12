@@ -10,13 +10,6 @@
     "node": ">=24",
     "pnpm": ">=10"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild",
-      "workerd",
-      "sharp"
-    ]
-  },
   "scripts": {
     "build": "turbo run build",
     "lint": "eslint . && pnpm run no-skipped-tests",

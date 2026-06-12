@@ -1,5 +1,5 @@
 {
-  "name": "@webhook-co/shared",
+  "name": "@webhook-co/db",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,10 +11,13 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "migrate:up": "dbmate up",
+    "migrate:down": "dbmate down",
+    "migrate:status": "dbmate status"
   },
   "dependencies": {
-    "uuidv7": "^1.2.1",
-    "zod": "^4.4.3"
+    "@webhook-co/shared": "workspace:*",
+    "postgres": "^3.4.9"
   }
 }

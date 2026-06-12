@@ -1,5 +1,5 @@
 {
-  "name": "@webhook-co/shared",
+  "name": "@webhook-co/contract",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -14,7 +14,7 @@
     "test": "vitest run --coverage"
   },
   "dependencies": {
-    "uuidv7": "^1.2.1",
+    "@webhook-co/shared": "workspace:*",
     "zod": "^4.4.3"
   }
 }

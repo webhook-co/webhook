@@ -79,14 +79,17 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm run no-skipped-tests
 
-  # Dependency vulnerability audit. Non-blocking (advisories on transitive deps should not
-  # wedge unrelated PRs); Dependabot opens PRs for fixes. Not a required status check.
+  # Dependency vulnerability audit. CRITICAL advisories are blocking (this is a crypto/auth
+  # surface — a known-critical transitive vuln must never auto-merge); HIGH stays advisory so
+  # routine transitive advisories don't wedge unrelated PRs (Dependabot opens fix PRs).
   audit:
     name: audit
     runs-on: ubuntu-latest
     needs: install
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
-      - run: pnpm audit --prod --audit-level=high
+      - name: Audit (critical — blocking)
+        run: pnpm audit --prod --audit-level=critical
+      - name: Audit (high — advisory)
+        run: pnpm audit --prod --audit-level=high || true
