@@ -1,15 +1,18 @@
 name: Auto-assign PR
 
-# Auto-assigns every new PR to the repo's code owner (the `*` rule in CODEOWNERS).
+# Assigns every new PR to the repo's code owner (the `*` rule in CODEOWNERS) and requests
+# review from that owner.
 #
-# A CODEOWNERS file + the branch ruleset only makes GitHub *request review* from owners;
-# it never sets the PR assignee. This workflow sets the assignee so every PR has a clear
-# owner on the board.
+# Why both: a CODEOWNERS file never sets the PR *assignee*, so we set it here to give every
+# PR a clear owner on the board. We also request review from the owner so it's explicit and
+# consistent (idempotent with whatever the branch ruleset already requests). GitHub forbids
+# requesting the PR *author* as a reviewer, so on the owner's own PRs they're assigned but
+# not review-requested — you can't review your own PR.
 #
 # Security notes:
 #   - `pull_request` (not `pull_request_target`): for PRs from forks the GITHUB_TOKEN is
-#     read-only, so assignment can't happen there. We skip forks explicitly rather than
-#     fail (see the job `if:`). Same-repo branch PRs — the normal flow here — work fine.
+#     read-only, so neither assignment nor review requests can happen there. We skip forks
+#     explicitly rather than fail (see the job `if:`). Same-repo PRs — the normal flow — work.
 #   - Least privilege: only `pull-requests: write` (+ read to checkout CODEOWNERS).
 #   - No untrusted PR fields are interpolated into shell; all logic runs in github-script
 #     against the typed `context`/`github` objects, so there's no script-injection surface.
@@ -42,7 +45,7 @@ jobs:
             docs/CODEOWNERS
           sparse-checkout-cone-mode: false
 
-      - name: Assign PR to the code owner
+      - name: Assign and request review from the code owner
         uses: actions/github-script@v7
         with:
           script: |
@@ -52,7 +55,7 @@ jobs:
             const candidates = ['.github/CODEOWNERS', 'CODEOWNERS', 'docs/CODEOWNERS'];
             const path = candidates.find((p) => fs.existsSync(p));
             if (!path) {
-              core.notice('No CODEOWNERS file found; nothing to assign.');
+              core.notice('No CODEOWNERS file found; nothing to do.');
               return;
             }
 
@@ -66,8 +69,8 @@ jobs:
               if (pattern === '*') owners = rest;
             }
 
-            // Assignees must be individual users; @org/team handles use a different API and
-            // can't be set as assignees. Strip the leading @ and drop team handles.
+            // We only handle individual users here; @org/team handles use different APIs
+            // (no assignee support; `team_reviewers` for review) and are out of scope.
             const users = owners
               .filter((o) => o.startsWith('@') && !o.includes('/'))
               .map((o) => o.slice(1));
@@ -78,38 +81,69 @@ jobs:
             }
 
             const { owner, repo } = context.repo;
-            const issue_number = context.payload.pull_request.number;
+            const pr = context.payload.pull_request;
+            const number = pr.number;
 
-            // Idempotent: don't re-add owners who are already assigned.
-            const existing = new Set(
-              (context.payload.pull_request.assignees || []).map((a) => a.login.toLowerCase()),
-            );
-            const toAdd = users.filter((u) => !existing.has(u.toLowerCase()));
+            // --- Assign the code owner(s) ------------------------------------------
+            // GitHub can assign any user (including the PR author) as an assignee, so we
+            // don't special-case "author is the owner" here — unlike review requests below.
+            const assigned = new Set((pr.assignees || []).map((a) => a.login.toLowerCase()));
+            const toAssign = users.filter((u) => !assigned.has(u.toLowerCase()));
 
-            if (toAdd.length === 0) {
+            if (toAssign.length === 0) {
               core.info('Code owner already assigned; nothing to do.');
+            } else {
+              const res = await github.rest.issues.addAssignees({
+                owner,
+                repo,
+                issue_number: number,
+                assignees: toAssign,
+              });
+              const got = (res.data.assignees || []).map((a) => a.login);
+              // GitHub silently ignores assignees without repo access; warn if that happened.
+              const ignored = toAssign.filter(
+                (u) => !got.some((a) => a.toLowerCase() === u.toLowerCase()),
+              );
+              if (ignored.length > 0) {
+                core.warning(
+                  `Could not assign (no repo access?): ${ignored.join(', ')}. ` +
+                    `Assigned: ${got.join(', ') || 'none'}.`,
+                );
+              } else {
+                core.info(`Assigned PR #${number} to: ${toAssign.join(', ')}`);
+              }
+            }
+
+            // --- Request review from the code owner(s) -----------------------------
+            // GitHub rejects a request that includes the PR author (422 "Review cannot be
+            // requested from pull request author"), so drop the author. Expected on the
+            // owner's own PRs: assigned above, but never review-requested here. Idempotent:
+            // skip anyone already on the request.
+            const author = (pr.user?.login || '').toLowerCase();
+            const requested = new Set(
+              (pr.requested_reviewers || []).map((r) => r.login.toLowerCase()),
+            );
+            const toReview = users.filter(
+              (u) => u.toLowerCase() !== author && !requested.has(u.toLowerCase()),
+            );
+
+            if (toReview.length === 0) {
+              core.info('No new reviewers to request (author-owned PR or already requested).');
               return;
             }
 
-            // GitHub can assign any user (including the PR author) as an assignee, so we
-            // don't need to special-case "author is the owner" — unlike review requests.
-            const res = await github.rest.issues.addAssignees({
-              owner,
-              repo,
-              issue_number,
-              assignees: toAdd,
-            });
-
-            const assigned = (res.data.assignees || []).map((a) => a.login);
-            // GitHub silently ignores assignees without repo access; warn if that happened.
-            const ignored = toAdd.filter(
-              (u) => !assigned.some((a) => a.toLowerCase() === u.toLowerCase()),
-            );
-            if (ignored.length > 0) {
+            // Best-effort: a stray 422/403 (e.g. a reviewer who lacks repo access) shouldn't
+            // fail the job — the assignment above already succeeded.
+            try {
+              await github.rest.pulls.requestReviewers({
+                owner,
+                repo,
+                pull_number: number,
+                reviewers: toReview,
+              });
+              core.info(`Requested review on PR #${number} from: ${toReview.join(', ')}`);
+            } catch (err) {
               core.warning(
-                `Could not assign (no repo access?): ${ignored.join(', ')}. ` +
-                  `Assigned: ${assigned.join(', ') || 'none'}.`,
+                `Could not request review from ${toReview.join(', ')}: ${err.message}`,
               );
-            } else {
-              core.info(`Assigned PR #${issue_number} to: ${toAdd.join(', ')}`);
             }
