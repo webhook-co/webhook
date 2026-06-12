@@ -1,6 +1,6 @@
 -- migrate:up
 
--- The unauthenticated ingest hot path as ONE statement (plan §0.2, H5, ADR-0012).
+-- The unauthenticated ingest hot path as ONE statement (plan §0.2, H5).
 -- The caller runs `SELECT * FROM ingest_event(...)` — a single top-level statement,
 -- so the whole body executes in one implicit transaction. set_config(..., true)
 -- scopes app.current_org to that implicit transaction (auto-reset on completion, no
