@@ -71,7 +71,10 @@ export async function bootstrapOwner(pg: EphemeralPostgres): Promise<void> {
       $$;
       ${resetPw}
       grant all on database "${pg.database}" to ${owner};
-      alter schema public owner to ${owner};
+      -- Grant CREATE+USAGE on public rather than transferring schema ownership: on
+      -- PG 16+/Neon, ALTER SCHEMA ... OWNER requires SET-ROLE membership the provider
+      -- role lacks, and the grant is all webhook_owner needs (tables it creates are
+      -- owned by it, so FORCE RLS still polices the owner). Portable across PG 14/17.
       grant all on schema public to ${owner};
     `);
   } finally {
