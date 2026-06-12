@@ -26,7 +26,7 @@ AES-256-GCM with a 96-bit nonce and AAD bound to `{org_id, endpoint_id, key_id}`
 format (M6). BAA tenants default to a tighter or zero cache (unwrap-per-use), keyed off
 the tenant's compliance tier.
 
-This refines the compliance-by-architecture decision (ADR-0009 §e on isolate caching):
+This refines the compliance-by-architecture decision on isolate caching:
 the cache is process-local, size-bounded, evicted under bound, never persisted, and now
 holds handles rather than extractable bytes.
 
