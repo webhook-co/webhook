@@ -15,14 +15,14 @@ delivery is out of scope (deferred).
 | boundary | what crosses it | primary control(s) |
 | --- | --- | --- |
 | Public internet → `wbhk.my` ingest (unauthenticated, cookieless) | untrusted webhook requests from anyone who knows a path token | path-token routing with `404` on unknown; CSPRNG token hashed at rest (H4); body-size cap (`413`); rate-limit + per-token token-bucket (H3); `Host`/SNI validation; cookieless apex (no ambient auth) |
-| Tenant A's request ↔ tenant B's data (in one shared Postgres) | any read/write on a tenant-owned table | Postgres RLS, deny-by-default, `FORCE ROW LEVEL SECURITY`, a non-owner/no-`BYPASSRLS` app role; per-request `app.current_org` via single-statement `set_config(local)` (ADR-0012) |
+| Tenant A's request ↔ tenant B's data (in one shared Postgres) | any read/write on a tenant-owned table | Postgres RLS, deny-by-default, `FORCE ROW LEVEL SECURITY`, a non-owner/no-`BYPASSRLS` app role; per-request `app.current_org` via single-statement `set_config(local)` |
 | Hyperdrive query cache (shared edge) | cached read results keyed on SQL+params, blind to the RLS GUC | tenant reads go only through the **cache-disabled** `HYPERDRIVE_TENANT` binding (C1) |
-| Multi-tenant Worker isolate (one isolate serves many orgs) | plaintext signing/provider secrets held to sign/verify on the hot path | unwrap to a **non-extractable `CryptoKey` handle** (not raw bytes), size-bounded org-scoped LRU; BAA tenants get a tighter/zero cache (M7, ADR-0009e) |
-| App role ↔ secret material at rest | endpoint signing keys + per-source provider secrets | envelope encryption: ciphertext + wrapped DEK in Postgres, KEK only in AWS KMS behind a `KmsProvider` seam; AAD-bound (M6, ADR-0009) |
+| Multi-tenant Worker isolate (one isolate serves many orgs) | plaintext signing/provider secrets held to sign/verify on the hot path | unwrap to a **non-extractable `CryptoKey` handle** (not raw bytes), size-bounded org-scoped LRU; BAA tenants get a tighter/zero cache (M7, ADR-0007) |
+| App role ↔ secret material at rest | endpoint signing keys + per-source provider secrets | envelope encryption: ciphertext + wrapped DEK in Postgres, KEK only in AWS KMS behind a `KmsProvider` seam; AAD-bound (M6) |
 | App role ↔ audit history | attempts to edit/delete/forge audit entries | append-only (INSERT-only grants + reject-`UPDATE`/`DELETE` trigger) + per-org **HMAC-keyed** hash chain (key outside the DB) + periodic WORM head-anchor (H2) |
-| `mcp.`/`api.` bearer tokens ↔ resources | OAuth access tokens / API keys presented to a resource server | `verifyBearer → AuthContext` seam with **audience binding** (RFC 8707/9728); tokens never cookies; identity data in our own Neon (ADR-0010) |
+| `mcp.`/`api.` bearer tokens ↔ resources | OAuth access tokens / API keys presented to a resource server | `verifyBearer → AuthContext` seam with **audience binding** (RFC 8707/9728); tokens never cookies; identity data in our own Neon |
 | Replay target | where a captured event is sent | closed `TargetSchema` union (localhost-tunnel only); no free-form URL; remote targets later require an allowlist + SSRF guard (H6) |
-| Region/jurisdiction boundary | tenant data at rest for residency-bound tenants | EU Neon project + EU-jurisdiction R2 bucket + jurisdiction-namespaced `LISTEN_SESSION` DO (not `locationHint`) (ADR-0009) |
+| Region/jurisdiction boundary | tenant data at rest for residency-bound tenants | EU Neon project + EU-jurisdiction R2 bucket + jurisdiction-namespaced `LISTEN_SESSION` DO (not `locationHint`) |
 | Logs / telemetry | anything written to OTel spans / logs | one "loggable view" boundary; mandatory `redactSecret` + header allowlist; PII/PHI and secrets never logged |
 
 ## data classification
@@ -54,4 +54,4 @@ delivery is out of scope (deferred).
 - **DO ids may be logged out-of-jurisdiction** by the platform.
 - **Replay is at-least-once** — duplicates are possible; consumers dedup via `dedup_key`.
 - **Plaintext key material exists transiently in a shared isolate's memory** (as `CryptoKey` handles); accepted and documented for SOC 2 / HIPAA, with BAA tenants opted out of caching.
-- **`.my` ccTLD** registry/policy tail-risk on `wbhk.my` — open diligence (ADR-0003).
+- **`.my` ccTLD** registry/policy tail-risk on `wbhk.my` — open diligence on the registry's policy and renewal terms.
