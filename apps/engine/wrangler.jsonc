@@ -18,16 +18,20 @@
   // `localConnectionString` is what `wrangler dev` uses, so local dev hits the
   // local Postgres directly (Hyperdrive doesn't run locally). Real ids + the
   // cache-disabled flag are configured per environment via `wrangler hyperdrive`.
+  // localConnectionString carries a placeholder LOCAL password (`postgres`) because
+  // Miniflare/wrangler's Hyperdrive validator requires `user:password@...`. It is a
+  // local-dev value for a throwaway local Postgres only — never a real credential
+  // (no-secrets); real connection details are injected per environment at deploy.
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE_TENANT",
       "id": "<HYPERDRIVE_TENANT_ID>",
-      "localConnectionString": "postgres://postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
       "binding": "HYPERDRIVE_CACHED",
       "id": "<HYPERDRIVE_CACHED_ID>",
-      "localConnectionString": "postgres://postgres@127.0.0.1:5432/webhook_dev",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
   ],
 }
