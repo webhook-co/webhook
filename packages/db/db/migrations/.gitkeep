@@ -1,0 +1,2 @@
+# dbmate migrations live here (NNNNNNNNNNNNNN_name.sql with -- migrate:up / -- migrate:down).
+# The actual schema migrations land in the schema-migrations step.
