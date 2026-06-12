@@ -10,5 +10,8 @@
   },
   "dependencies": {
     "@webhook-co/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260610.1"
   }
 }

@@ -14,7 +14,11 @@
     "test": "vitest run --coverage"
   },
   "dependencies": {
+    "@webhook-co/webhooks-spec": "workspace:*",
     "uuidv7": "^1.2.1",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260610.1"
   }
 }

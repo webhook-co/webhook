@@ -65,6 +65,10 @@ importers:
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260610.1
+        version: 4.20260610.1
 
   apps/auth:
     dependencies:
@@ -96,6 +100,10 @@ importers:
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260610.1
+        version: 4.20260610.1
 
   apps/web:
     dependencies:
@@ -146,6 +154,10 @@ importers:
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../shared
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260610.1
+        version: 4.20260610.1
 
   packages/contract:
     dependencies:
@@ -171,12 +183,19 @@ importers:
 
   packages/shared:
     dependencies:
+      '@webhook-co/webhooks-spec':
+        specifier: workspace:*
+        version: link:../webhooks-spec
       uuidv7:
         specifier: ^1.2.1
         version: 1.2.1
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260610.1
+        version: 4.20260610.1
 
   packages/ui:
     dependencies:
@@ -230,7 +249,11 @@ importers:
         specifier: ^6.0.0
         version: 6.0.0(@types/node@25.9.2)(esbuild@0.27.3)(jiti@2.7.0)(yaml@2.9.0)
 
-  packages/webhooks-spec: {}
+  packages/webhooks-spec:
+    dependencies:
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
 packages:
 

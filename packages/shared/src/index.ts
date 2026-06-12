@@ -1,14 +1,18 @@
+// @webhook-co/shared — the single home for cross-surface types and pure helpers.
+// Runtime-DB-free (no `pg`): web/cli/mcp import types here without pulling in the
+// database client. The verification union + scheme enum + adapter interface live in
+// webhooks-spec and are re-exported here so there is one import site for every surface.
+
 export const SERVICE_NAME = "webhook" as const;
 
-/**
- * Redacts the secret portion of a webhook signing key for safe logging.
- * Keeps only a short, non-reversible prefix so logs never leak full secrets
- * (compliance-by-design: PII/secret scrubbing from logs).
- */
-export function redactSecret(secret: string, visiblePrefix = 4): string {
-  if (secret.length === 0) {
-    return "";
-  }
-  const prefix = secret.slice(0, Math.min(visiblePrefix, secret.length));
-  return `${prefix}${"*".repeat(Math.max(secret.length - prefix.length, 0))}`;
-}
+export * from "@webhook-co/webhooks-spec";
+
+export * from "./enums";
+export * from "./ids";
+export * from "./entities";
+export * from "./watermark";
+export * from "./cursor";
+export * from "./audit";
+export * from "./r2";
+export * from "./envelope";
+export * from "./redaction";
