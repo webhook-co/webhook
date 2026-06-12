@@ -262,6 +262,20 @@ describe("ingest_event() single-statement hot path", () => {
   });
 });
 
+describe("composite org-binding FK (defense-in-depth on RLS)", () => {
+  it("rejects an event whose endpoint belongs to a different org", async () => {
+    // In org A's context, reference org B's endpoint with org_id = A. The composite
+    // (endpoint_id, org_id) FK to endpoints(id, org_id) makes this fail closed even
+    // though RLS's insert WITH CHECK (org_id = A) would otherwise pass.
+    await expect(
+      withTenant(app, orgA.orgId, async (tx) => {
+        await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+                 values (${randomUUID()}, ${orgA.orgId}, ${orgB.endpointId}, ${"x"}, ${1}, ${"xorg"}, ${"content_hash"})`;
+      }),
+    ).rejects.toThrow(/foreign key|violates/i);
+  });
+});
+
 describe("audit_log append-only hash chain (H2)", () => {
   it("enforces contiguous per-org seq starting at 1", async () => {
     await withTenant(app, orgA.orgId, async (tx) => {
@@ -275,6 +289,23 @@ describe("audit_log append-only hash chain (H2)", () => {
                  values (${orgA.orgId}, ${5}, ${"gap"}, ${bytes(33)}, ${bytes(34)})`;
       }),
     ).rejects.toThrow(/contiguous/i);
+  });
+
+  it("rejects a contiguous row whose prev_hash does not match the prior row_hash", async () => {
+    // Self-contained chain on a fresh org: genesis (seq 1) then seq 2 with a WRONG
+    // prev_hash — the core tamper guard (must equal the prior row_hash).
+    const chainOrg = randomUUID();
+    await withTenant(app, chainOrg, async (tx) => {
+      await tx`insert into orgs (id, slug, name) values (${chainOrg}, ${"chainx"}, ${"Chain"})`;
+      await tx`insert into audit_log (org_id, seq, action, prev_hash, row_hash)
+               values (${chainOrg}, ${1}, ${"org.created"}, ${null}, ${bytes(40)})`;
+    });
+    await expect(
+      withTenant(app, chainOrg, async (tx) => {
+        await tx`insert into audit_log (org_id, seq, action, prev_hash, row_hash)
+                 values (${chainOrg}, ${2}, ${"endpoint.created"}, ${bytes(41)}, ${bytes(42)})`;
+      }),
+    ).rejects.toThrow(/prev_hash must equal/i);
   });
 
   it("rejects a genesis row with a non-null prev_hash", async () => {

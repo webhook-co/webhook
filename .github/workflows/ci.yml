@@ -89,9 +89,12 @@ jobs:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup
       - name: Install dbmate
+        env:
+          DBMATE_SHA256: dfd4027141b6e4357158099bdfe6c02b286af70f8e49057937744cf80b38ea1c
         run: |
           curl -fsSL -o /usr/local/bin/dbmate \
             https://github.com/amacneil/dbmate/releases/download/v2.33.0/dbmate-linux-amd64
+          echo "${DBMATE_SHA256}  /usr/local/bin/dbmate" | sha256sum -c -
           chmod +x /usr/local/bin/dbmate
           dbmate --version
       - run: pnpm test:db

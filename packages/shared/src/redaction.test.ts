@@ -7,16 +7,19 @@ describe("redactSecret", () => {
     expect(redactSecret("")).toBe("");
   });
 
-  it("keeps a short visible prefix and masks the rest", () => {
-    expect(redactSecret("whsec_abcdef")).toBe("whse********");
+  it("keeps a short visible prefix and a fixed-width mask (no length leak)", () => {
+    expect(redactSecret("whsec_abcdef")).toBe("whse****");
+    // a longer secret produces the same mask width — length is not disclosed
+    expect(redactSecret("whsec_abcdefghijklmnop")).toBe("whse****");
   });
 
   it("respects a custom visible prefix length", () => {
-    expect(redactSecret("abcdef", 2)).toBe("ab****");
+    expect(redactSecret("abcdefghij", 2)).toBe("ab****");
   });
 
-  it("never reveals more than the secret length", () => {
-    expect(redactSecret("ab", 8)).toBe("ab");
+  it("fully masks a value too short to safely reveal a prefix", () => {
+    expect(redactSecret("ab", 8)).toBe("****");
+    expect(redactSecret("shortish")).toBe("****");
   });
 });
 

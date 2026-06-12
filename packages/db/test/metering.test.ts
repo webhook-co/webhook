@@ -15,8 +15,9 @@ let app: Sql;
 let orgA: string;
 let orgB: string;
 
-const WINDOW = new Date("2026-06-12T00:00:00.000Z");
-
+// Roll up for "today" — rollup_usage date_truncs the arg to the day, and events are
+// stamped with now(), so passing now() always lands them in the window (no fixed-date
+// time-bomb).
 async function seedOrgWithEvents(slug: string, eventCount: number): Promise<string> {
   const orgId = randomUUID();
   const endpointId = randomUUID();
@@ -34,15 +35,23 @@ async function seedOrgWithEvents(slug: string, eventCount: number): Promise<stri
 
 async function rollup(orgId: string): Promise<void> {
   await withTenant(app, orgId, async (tx) => {
-    await tx`select rollup_usage(${WINDOW.toISOString()}::timestamptz)`;
+    await tx`select rollup_usage(now())`;
   });
 }
 
 async function usageCount(orgId: string): Promise<number> {
   return withTenant(app, orgId, async (tx) => {
     const [row] = await tx<{ event_count: number }[]>`
-      select event_count from usage where org_id = ${orgId} and window_start = ${WINDOW.toISOString()}::timestamptz`;
+      select event_count from usage where org_id = ${orgId} order by window_start desc limit 1`;
     return row ? Number(row.event_count) : 0;
+  });
+}
+
+async function hasUsageRow(orgId: string): Promise<boolean> {
+  return withTenant(app, orgId, async (tx) => {
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from usage where org_id = ${orgId}`;
+    return n > 0;
   });
 }
 
@@ -87,8 +96,13 @@ describe("rollup_usage (H3)", () => {
   });
 
   it("a rollup run in org A's context never aggregates org B (RLS-safe)", async () => {
-    await rollup(orgA);
-    // org A's usage row reflects only org A's events.
-    expect(await usageCount(orgA)).toBe(3);
+    // Fresh orgs so neither has a usage row yet; both have events present at once.
+    const a = await seedOrgWithEvents("rollup-iso-a", 3);
+    const b = await seedOrgWithEvents("rollup-iso-b", 5);
+    // Roll up ONLY in A's context. If RLS leaked, A's count would be 8, and/or a usage
+    // row would appear for B.
+    await rollup(a);
+    expect(await usageCount(a)).toBe(3);
+    expect(await hasUsageRow(b)).toBe(false);
   });
 });

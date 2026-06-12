@@ -3,6 +3,7 @@ import {
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
+  ProviderSchema,
   WATERMARK_DELTA_MS,
 } from "@webhook-co/shared";
 import { z } from "zod";
@@ -48,7 +49,7 @@ export const eventsList = defineCapability({
     endpointId: uuid,
     cursor: cursor.optional(),
     limit: z.number().int().positive().max(200).optional(),
-    filter: z.object({ provider: z.string() }).optional(),
+    filter: z.object({ provider: ProviderSchema }).optional(),
   }),
   output: paged(EventSummarySchema),
   errors: ["NOT_FOUND", "UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],

@@ -17,13 +17,16 @@ create function rollup_usage(p_window_start timestamptz) returns bigint
   security invoker
   as $$
 declare
+  v_window timestamptz := date_trunc('day', p_window_start);
   v_rows bigint;
 begin
+  -- Align the window to a day boundary so an unaligned/overlapping key can't
+  -- double-count across windows (metering integrity).
   insert into usage (org_id, window_start, event_count, updated_at)
-  select e.org_id, p_window_start, count(*), now()
+  select e.org_id, v_window, count(*), now()
   from events e
-  where e.received_at >= p_window_start
-    and e.received_at < p_window_start + interval '1 day'
+  where e.received_at >= v_window
+    and e.received_at < v_window + interval '1 day'
   group by e.org_id
   on conflict (org_id, window_start)
   do update set event_count = excluded.event_count, updated_at = now();

@@ -41,11 +41,18 @@ export interface KmsProvider {
   unwrapDek(wrapped: WrappedDek, context: EncryptionContext): Promise<CryptoKey>;
 }
 
-/** Length-prefixed canonical AAD bytes for the encryption context. */
-export function encryptionContextAad(ctx: EncryptionContext): Uint8Array {
+/**
+ * Length-prefixed canonical AAD bytes for the encryption context. `version` is
+ * threaded explicitly (default = current ENVELOPE_VERSION) so a future reader can
+ * reconstruct an older row's AAD from its stored envelope_version and still decrypt.
+ */
+export function encryptionContextAad(
+  ctx: EncryptionContext,
+  version: number = ENVELOPE_VERSION,
+): Uint8Array {
   const seg = (s: string) => `${utf8Encoder.encode(s).length}:${s}`;
   return utf8Encoder.encode(
-    `env${ENVELOPE_VERSION}|${seg(ctx.orgId)}${seg(ctx.endpointId)}${seg(ctx.keyId)}`,
+    `env${version}|${seg(ctx.orgId)}${seg(ctx.endpointId)}${seg(ctx.keyId)}`,
   );
 }
 
@@ -75,26 +82,29 @@ export async function sealSecret(
   plaintext: Uint8Array,
   context: EncryptionContext,
   nonce: Uint8Array = crypto.getRandomValues(new Uint8Array(GCM_NONCE_BYTES)),
+  version: number = ENVELOPE_VERSION,
 ): Promise<SealedSecret> {
   if (nonce.length !== GCM_NONCE_BYTES) {
     throw new Error(`nonce must be ${GCM_NONCE_BYTES} bytes`);
   }
   const ct = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv: nonce, additionalData: encryptionContextAad(context) },
+    { name: "AES-GCM", iv: nonce, additionalData: encryptionContextAad(context, version) },
     dek,
     plaintext,
   );
   return { ciphertext: new Uint8Array(ct), nonce };
 }
 
-/** Decrypt a secret; throws if the ciphertext, nonce, or AAD context doesn't match. */
+/** Decrypt a secret; throws if the ciphertext, nonce, or AAD context doesn't match.
+ *  Pass the row's stored envelope_version so the AAD matches what sealed it. */
 export async function openSecret(
   dek: CryptoKey,
   sealed: SealedSecret,
   context: EncryptionContext,
+  version: number = ENVELOPE_VERSION,
 ): Promise<Uint8Array> {
   const pt = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv: sealed.nonce, additionalData: encryptionContextAad(context) },
+    { name: "AES-GCM", iv: sealed.nonce, additionalData: encryptionContextAad(context, version) },
     dek,
     sealed.ciphertext,
   );

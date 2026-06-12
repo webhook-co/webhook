@@ -58,7 +58,10 @@ create table endpoints (
   ingest_token_hash bytea not null unique,
   name text not null,
   paused boolean not null default false,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Target for the children's composite (id, org_id) FKs so a child row can never
+  -- reference an endpoint owned by a different org (defense-in-depth on top of RLS).
+  unique (id, org_id)
 );
 alter table endpoints enable row level security;
 alter table endpoints force row level security;
@@ -71,7 +74,7 @@ grant select, insert, update, delete on endpoints to webhook_app;
 -- signing_keys (outbound, envelope-encrypted — §0.6) -----------------------------
 create table signing_keys (
   id uuid primary key,
-  endpoint_id uuid not null references endpoints (id) on delete cascade,
+  endpoint_id uuid not null,
   org_id uuid not null references orgs (id) on delete cascade,
   secret_ciphertext bytea not null,
   wrapped_dek bytea not null,
@@ -81,7 +84,8 @@ create table signing_keys (
   envelope_version smallint not null,
   status text not null check (status in ('active', 'retiring', 'revoked')),
   created_at timestamptz not null default now(),
-  expires_at timestamptz
+  expires_at timestamptz,
+  foreign key (endpoint_id, org_id) references endpoints (id, org_id) on delete cascade
 );
 alter table signing_keys enable row level security;
 alter table signing_keys force row level security;
@@ -94,7 +98,7 @@ grant select, insert, update, delete on signing_keys to webhook_app;
 -- provider_secrets (inbound provider secrets, envelope-encrypted — §0.5/§0.6) -----
 create table provider_secrets (
   id uuid primary key,
-  endpoint_id uuid not null references endpoints (id) on delete cascade,
+  endpoint_id uuid not null,
   org_id uuid not null references orgs (id) on delete cascade,
   provider text not null,
   label text,
@@ -105,7 +109,8 @@ create table provider_secrets (
   enc_context jsonb not null default '{}'::jsonb,
   envelope_version smallint not null,
   status text not null check (status in ('active', 'retiring', 'revoked')),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  foreign key (endpoint_id, org_id) references endpoints (id, org_id) on delete cascade
 );
 alter table provider_secrets enable row level security;
 alter table provider_secrets force row level security;
@@ -122,7 +127,7 @@ grant select, insert, update, delete on provider_secrets to webhook_app;
 create table events (
   id uuid primary key,
   org_id uuid not null references orgs (id) on delete cascade,
-  endpoint_id uuid not null references endpoints (id) on delete cascade,
+  endpoint_id uuid not null,
   received_at timestamptz not null default now(),
   payload_r2_key text not null,
   payload_r2_offset bigint,
@@ -139,7 +144,11 @@ create table events (
   verified boolean not null default false,
   verification jsonb,
   created_at timestamptz not null default now(),
-  unique (endpoint_id, dedup_key)
+  unique (endpoint_id, dedup_key),
+  -- the endpoint must belong to the same org as the event (defense-in-depth on RLS)
+  foreign key (endpoint_id, org_id) references endpoints (id, org_id) on delete cascade,
+  -- target for delivery_attempts' composite (event_id, org_id) FK
+  unique (id, org_id)
 );
 
 -- H5: received_at is ALWAYS server time, on every insert path (ingest_event and any
@@ -182,14 +191,15 @@ grant select, insert on events to webhook_ingest;
 create table delivery_attempts (
   id uuid primary key,
   org_id uuid not null references orgs (id) on delete cascade,
-  event_id uuid not null references events (id) on delete cascade,
+  event_id uuid not null,
   target text not null,
   idempotency_key text,
   status text not null,
   status_code integer,
   attempt integer not null default 1,
   error text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  foreign key (event_id, org_id) references events (id, org_id) on delete cascade
 );
 -- H6: persisted replay idempotency — (org_id, idempotency_key) unique when present.
 create unique index delivery_attempts_idempotency_idx

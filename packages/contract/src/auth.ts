@@ -58,13 +58,19 @@ export function buildProtectedResourceMetadata(params: {
   };
 }
 
+/** RFC 6750 error codes a resource server may return in the challenge. */
+export type BearerError = "invalid_request" | "invalid_token" | "insufficient_scope";
+
 /**
  * The WWW-Authenticate challenge a resource server returns on a 401, pointing the
  * client at its PRM document (RFC 9728). `resourceMetadataUrl` is the absolute URL of
- * the /.well-known/oauth-protected-resource document.
+ * the /.well-known/oauth-protected-resource document. Inputs are constrained/encoded so
+ * a value can't break out of the header (no header injection): `error` is a fixed
+ * RFC 6750 token and the URL is percent-encoded for any `"`/control characters.
  */
-export function buildWwwAuthenticate(resourceMetadataUrl: string, error?: string): string {
-  const parts = [`Bearer resource_metadata="${resourceMetadataUrl}"`];
+export function buildWwwAuthenticate(resourceMetadataUrl: string, error?: BearerError): string {
+  const safeUrl = resourceMetadataUrl.replace(/["\\\r\n]/g, encodeURIComponent);
+  const parts = [`Bearer resource_metadata="${safeUrl}"`];
   if (error) parts.push(`error="${error}"`);
   return parts.join(", ");
 }

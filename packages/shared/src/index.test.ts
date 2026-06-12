@@ -8,6 +8,6 @@ describe("@webhook-co/shared barrel", () => {
   });
 
   it("re-exports helpers from submodules (e.g. redactSecret)", () => {
-    expect(redactSecret("whsec_abcdef")).toBe("whse********");
+    expect(redactSecret("whsec_abcdef")).toBe("whse****");
   });
 });

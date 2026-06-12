@@ -45,6 +45,17 @@ describe("envelope AES-256-GCM (M6)", () => {
     await expect(openSecret(dek, sealed, { ...ctx, keyId: "other" })).rejects.toBeTruthy();
   });
 
+  it("rejects a tampered ciphertext (GCM tag) and a tampered nonce", async () => {
+    const dek = await generateDekKey();
+    const sealed = await sealSecret(dek, utf8Encoder.encode("secret"), ctx);
+    const flippedCt = Uint8Array.from(sealed.ciphertext);
+    flippedCt[0] ^= 0x01;
+    await expect(openSecret(dek, { ...sealed, ciphertext: flippedCt }, ctx)).rejects.toBeTruthy();
+    const flippedNonce = Uint8Array.from(sealed.nonce);
+    flippedNonce[0] ^= 0x01;
+    await expect(openSecret(dek, { ...sealed, nonce: flippedNonce }, ctx)).rejects.toBeTruthy();
+  });
+
   it("rejects a wrong-length DEK and a wrong-length nonce", async () => {
     expect(() => importDek(new Uint8Array(16))).toThrow(/DEK must be/);
     const dek = await generateDekKey();

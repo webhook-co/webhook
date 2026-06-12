@@ -3,14 +3,18 @@
 // wedge — §0.1), but they must never be logged unscrubbed: redaction happens at the
 // boundary, here, not in storage.
 
+/** Fixed-width mask — deliberately constant so the secret's length isn't disclosed. */
+const MASK = "****";
+
 /**
- * Redacts the secret portion of a value for safe logging — keeps a short,
- * non-reversible prefix so logs never leak full secrets/tokens.
+ * Redacts a value for safe logging/display — keeps a short, non-reversible prefix for
+ * identification only. The mask is fixed-width (length is never leaked), and a value
+ * too short to safely show a prefix is fully masked.
  */
 export function redactSecret(secret: string, visiblePrefix = 4): string {
   if (secret.length === 0) return "";
-  const prefix = secret.slice(0, Math.min(visiblePrefix, secret.length));
-  return `${prefix}${"*".repeat(Math.max(secret.length - prefix.length, 0))}`;
+  if (secret.length <= visiblePrefix * 2) return MASK;
+  return `${secret.slice(0, visiblePrefix)}${MASK}`;
 }
 
 /**
