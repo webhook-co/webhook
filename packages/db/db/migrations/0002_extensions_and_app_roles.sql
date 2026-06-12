@@ -4,7 +4,7 @@
 -- for org slugs without a functional index.
 create extension if not exists citext;
 
--- Application database roles (plan §0.2, ADR-0012). The request path NEVER connects
+-- Application database roles (plan §0.2). The request path NEVER connects
 -- as the schema owner: a table owner bypasses RLS by default, so an owner connection
 -- (or a SECURITY DEFINER function owned by the owner) would silently skip every
 -- policy. We therefore run all tenant traffic as NON-OWNER, NOSUPERUSER,

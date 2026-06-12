@@ -6,7 +6,7 @@ import { Pool } from "pg";
 // (that's the auth workstream) — it exists so the generator emits the identity
 // tables the freeze migration includes: user / session / account / verification
 // (core) + apikey (the @better-auth/api-key plugin, a standalone package since
-// better-auth 1.5, per ADR-0010). Social login + magic link add no new tables.
+// better-auth 1.5). Social login + magic link add no new tables.
 //
 // The generator runs via `pnpm dlx @better-auth/cli@latest` (see package.json) so the
 // CLI never enters the tracked dependency tree — better-auth never auto-migrates prod;

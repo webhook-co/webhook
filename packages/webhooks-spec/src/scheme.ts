@@ -1,8 +1,8 @@
 import { z } from "zod";
 
 // The webhook signature schemes we recognize. Standard Webhooks is the contract
-// (ADR-0008); the provider schemes cover the inbound verification wedge (§0.5,
-// ADR-0011). `unknown` is a captured-but-unverifiable sender (capture never blocks
+// (ADR-0008); the provider schemes cover the inbound verification wedge (§0.5).
+// `unknown` is a captured-but-unverifiable sender (capture never blocks
 // on a missing adapter — full-fidelity capture is the floor, §0.5).
 export const WEBHOOK_SCHEMES = [
   "standard_webhooks",

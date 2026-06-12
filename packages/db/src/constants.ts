@@ -8,7 +8,7 @@ export const TENANT_GUC = "app.current_org" as const;
 
 /**
  * Database roles. The request path connects as a NON-OWNER, non-BYPASSRLS role so
- * RLS is never silently bypassed (table owners bypass RLS by default — ADR-0012).
+ * RLS is never silently bypassed (table owners bypass RLS by default).
  */
 export const DB_ROLES = {
   /** Owns the schema + runs migrations. Never used on the request path. */
