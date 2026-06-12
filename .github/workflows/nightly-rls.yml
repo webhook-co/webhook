@@ -1,0 +1,62 @@
+name: nightly-rls
+
+# M4: run the RLS / tenant-leak suite nightly against a REAL Neon branch, not just the
+# local/CI Postgres. Neon (PG 15+) can differ from local PG 14 in role/RLS behavior, so
+# the freeze's isolation guarantees are re-verified on the actual managed engine.
+#
+# Auth: the harness auto-detects password mode from TEST_DATABASE_URL (a Neon branch URL
+# has a password + sslmode=require) and mints per-run SCRAM passwords for the
+# webhook_owner/app/ingest roles — no credentials in source. Point NEON_TEST_DATABASE_URL
+# at a disposable Neon BRANCH (the harness creates a fresh database per test file on it).
+#
+# Until the Neon project + secret exist, this workflow SKIPS cleanly (no red nightly).
+
+on:
+  schedule:
+    - cron: "17 7 * * *" # 07:17 UTC daily
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-rls
+  cancel-in-progress: true
+
+jobs:
+  rls-neon:
+    name: rls-neon
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for Neon secret
+        id: guard
+        env:
+          NEON: ${{ secrets.NEON_TEST_DATABASE_URL }}
+        run: |
+          if [ -z "$NEON" ]; then
+            echo "NEON_TEST_DATABASE_URL is not set — skipping. Provision a Neon branch and add" \
+                 "the secret (a branch connection URL with sslmode=require) to enable the nightly" \
+                 "real-engine leak suite (M4)."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v6
+        if: steps.guard.outputs.enabled == 'true'
+      - uses: ./.github/actions/setup
+        if: steps.guard.outputs.enabled == 'true'
+      - name: Install dbmate
+        if: steps.guard.outputs.enabled == 'true'
+        env:
+          DBMATE_SHA256: dfd4027141b6e4357158099bdfe6c02b286af70f8e49057937744cf80b38ea1c
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate \
+            https://github.com/amacneil/dbmate/releases/download/v2.33.0/dbmate-linux-amd64
+          echo "${DBMATE_SHA256}  /usr/local/bin/dbmate" | sha256sum -c -
+          chmod +x /usr/local/bin/dbmate
+          dbmate --version
+      - name: RLS / tenant-leak suite vs Neon branch
+        if: steps.guard.outputs.enabled == 'true'
+        env:
+          TEST_DATABASE_URL: ${{ secrets.NEON_TEST_DATABASE_URL }}
+        run: pnpm test:db
