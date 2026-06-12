@@ -28,3 +28,6 @@ coverage/
 
 # Scratch / temp files
 .tmp-*
+
+# Cursor plan files (local working artifacts, not committed; the rest of .cursor/ stays tracked)
+.cursor/plans/

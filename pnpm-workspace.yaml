@@ -3,3 +3,9 @@ packages:
   - "packages/*"
   - "ee/*"
   - "infra"
+
+# pnpm 10 reads build-script allowlists here (moved out of package.json's "pnpm" field).
+onlyBuiltDependencies:
+  - esbuild
+  - workerd
+  - sharp
