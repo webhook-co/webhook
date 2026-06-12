@@ -5,8 +5,12 @@ import { Pool } from "pg";
 // Schema-generation config for `better-auth generate`. NOT the runtime auth Worker
 // (that's the auth workstream) — it exists so the generator emits the identity
 // tables the freeze migration includes: user / session / account / verification
-// (core) + apikey (the @better-auth/api-key plugin, which in better-auth 1.6.x is a
-// standalone package, per ADR-0010). Social login + magic link add no new tables.
+// (core) + apikey (the @better-auth/api-key plugin, a standalone package since
+// better-auth 1.5, per ADR-0010). Social login + magic link add no new tables.
+//
+// The generator runs via `pnpm dlx @better-auth/cli@latest` (see package.json) so the
+// CLI never enters the tracked dependency tree — better-auth never auto-migrates prod;
+// the emitted DDL is checked in and owned as a dbmate migration.
 //
 // The Pool selects the Postgres dialect; `generate` connects to introspect/diff.
 export const auth = betterAuth({
