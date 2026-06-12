@@ -9,3 +9,13 @@ onlyBuiltDependencies:
   - esbuild
   - workerd
   - sharp
+
+# Security overrides: pin patched transitive versions to clear Dependabot alerts.
+# pnpm 10 reads `overrides` from here (same as the settings above), not package.json.
+#   esbuild 0.28.1 -> fixes GHSA-gv7w-rqvm-qjhr (#8, high) + GHSA-g7r4-m6w7-qqqr (#7, low);
+#     within vite 8's supported "^0.27.0 || ^0.28.0", no build-API breaking changes for our targets.
+#   postcss 8.5.15 -> fixes CVE-2026-41305 / GHSA-qx2v-qp2m-jg93 (#1, medium); >= 8.5.10,
+#     dedupes with vite's existing 8.5.15 and satisfies @tailwindcss/postcss's ^8.5.10.
+overrides:
+  esbuild: 0.28.1
+  postcss: 8.5.15
