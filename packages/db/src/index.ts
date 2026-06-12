@@ -1,10 +1,13 @@
 // @webhook-co/db — the only package that talks to Postgres.
 //
-// It owns: the SQL migrations (db/migrations, run via dbmate), the postgres.js
-// client wired for Hyperdrive (named prepared statements, caching-disabled
-// binding for tenant reads), the `withTenant` / single-statement RLS helper,
-// typed repositories, and the RLS leak-test harness. `packages/shared` stays
+// Owns: the SQL migrations (db/migrations, run via dbmate), the postgres.js client
+// wired for Hyperdrive (named prepared statements; a caching-disabled binding for
+// tenant reads — C1), the withTenant / single-statement RLS helpers, typed
+// repositories, and the RLS leak-test harness. packages/shared stays
 // runtime-DB-free; this package depends on it for types, never the reverse.
-//
-// Real implementations land in the schema-migrations and db-environments steps.
+
 export const DB_PACKAGE = "@webhook-co/db" as const;
+
+export * from "./constants";
+export * from "./env";
+export * from "./client";

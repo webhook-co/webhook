@@ -7,4 +7,27 @@
   "observability": {
     "enabled": true,
   },
+  // Two Hyperdrive bindings (ADR-0002 / review finding C1):
+  //   HYPERDRIVE_TENANT  — query caching DISABLED. ALL tenant-scoped reads use this.
+  //     Hyperdrive's query cache is keyed on SQL+params and is blind to the RLS
+  //     session GUC (app.current_org), so a cached tenant query could serve one
+  //     org's rows to another. Tenant isolation must not rest on cache behavior.
+  //   HYPERDRIVE_CACHED  — query caching ON. Only for non-tenant, cache-safe
+  //     lookups; never for rows gated solely by RLS.
+  // `id` is the per-environment Hyperdrive config id (set at deploy; not a secret).
+  // `localConnectionString` is what `wrangler dev` uses, so local dev hits the
+  // local Postgres directly (Hyperdrive doesn't run locally). Real ids + the
+  // cache-disabled flag are configured per environment via `wrangler hyperdrive`.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE_TENANT",
+      "id": "<HYPERDRIVE_TENANT_ID>",
+      "localConnectionString": "postgres://postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
+      "binding": "HYPERDRIVE_CACHED",
+      "id": "<HYPERDRIVE_CACHED_ID>",
+      "localConnectionString": "postgres://postgres@127.0.0.1:5432/webhook_dev",
+    },
+  ],
 }
