@@ -90,6 +90,28 @@ CI (`test-db` job) the same suite runs against a `postgres:14` service container
 `POSTGRES_HOST_AUTH_METHOD=trust`; each file creates its own database on the service
 for isolation. Set `TEST_DATABASE_URL` to attach to any running Postgres the same way.
 
+**Auth modes.** The harness auto-detects from `TEST_DATABASE_URL`: no password →
+**trust** mode (local cluster / trust-auth CI service); a password (e.g. a Neon URL)
+→ **password** mode, where it mints per-run SCRAM passwords for the
+`webhook_owner`/`webhook_app`/`webhook_ingest` roles (never written to source) and uses
+the URL's `sslmode`. Validate password mode locally against a SCRAM cluster:
+
+```sh
+TEST_DATABASE_URL='postgres://postgres:PW@127.0.0.1:5432/postgres?sslmode=disable' pnpm test:db
+```
+
+**Nightly vs a real Neon branch (M4).** `.github/workflows/nightly-rls.yml` runs the
+same suite against a real Neon branch (PG 15+ can differ from local PG 14 in role/RLS
+behavior). To enable: provision a disposable Neon **branch** and add its connection URL
+(with `sslmode=require`) as the `NEON_TEST_DATABASE_URL` secret. The harness creates a
+fresh database per test file on it. Until the secret exists the workflow skips cleanly.
+
+> Neon specifics to confirm on the first run (PG 15+ / managed, not validated locally):
+> the provider role can `alter schema public owner` (or fall back to `grant create on
+> schema public`), a `CREATEROLE` non-superuser can create the app/ingest roles, and
+> `createClient`/dbmate honor `sslmode=require`. The owner/superuser negative control
+> runs as Neon's (non-superuser) owner role — the immutability trigger still blocks it.
+
 ## Follow-up needing your account
 
 Creating the Neon **dev** and **prod** projects (and wiring their Hyperdrive

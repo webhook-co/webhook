@@ -18,9 +18,10 @@ import { join } from "node:path";
 
 import postgres from "postgres";
 
+import { DB_ROLES } from "../src/constants";
+
 export interface RoleUrl {
-  role?: string;
-  password?: string;
+  role: string;
   database?: string;
 }
 
@@ -28,16 +29,28 @@ export interface EphemeralPostgres {
   host: string;
   port: number;
   database: string;
-  /** Superuser URL — used to bootstrap the schema owner and (in CI) the test DB. */
+  /**
+   * How the created roles authenticate: "trust" (local cluster / a trust-auth CI
+   * service — no passwords) or "password" (a managed Postgres like Neon that requires
+   * SCRAM). The migrate helper sets per-run passwords on the app/ingest roles in
+   * password mode.
+   */
+  auth: "trust" | "password";
+  /** Provider/superuser connection (authed) — bootstraps the owner + the test DB. */
   ownerUrl: string;
-  /** Build a connection URL for an arbitrary role/database on this cluster. */
+  /** A fully-authed connection URL (password + sslmode) for a known role. */
   urlFor: (opts: RoleUrl) => string;
-  /** Tear down: stop the local cluster, or drop the per-run CI database. */
+  /** The per-run password for a created role (password mode), else undefined. */
+  passwordFor: (role: string) => string | undefined;
+  /** Tear down: stop the local cluster, or drop the per-run managed database. */
   stop: () => void | Promise<void>;
 }
 
 const SUPERUSER = "postgres";
 const DEFAULT_DB = "webhook_test";
+
+/** Roles the harness provisions credentials for in password mode. */
+const MANAGED_ROLES = [DB_ROLES.owner, DB_ROLES.app, DB_ROLES.ingest] as const;
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -83,10 +96,13 @@ async function waitReady(host: string, port: number, timeoutMs: number): Promise
 function buildUrl(
   host: string,
   port: number,
-  { role = SUPERUSER, password, database = DEFAULT_DB }: RoleUrl,
+  role: string,
+  password: string | undefined,
+  database: string,
+  sslmode: string,
 ): string {
   const auth = password === undefined ? role : `${role}:${encodeURIComponent(password)}`;
-  return `postgres://${auth}@${host}:${port}/${database}`;
+  return `postgres://${auth}@${host}:${port}/${database}?sslmode=${sslmode}`;
 }
 
 /**
@@ -97,16 +113,32 @@ function buildUrl(
 export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
   const provided = process.env.TEST_DATABASE_URL;
   if (provided && provided.trim() !== "") {
-    // CI: attach to a shared Postgres service (POSTGRES_HOST_AUTH_METHOD=trust) but
-    // create a UNIQUE database per call so each serial test file is isolated, exactly
-    // like the per-file local clusters. The service's superuser owns the create/drop;
-    // every role connects password-less via trust.
+    // Attach to a shared/managed Postgres (a trust-auth CI service OR a managed DB like
+    // a Neon branch) and create a UNIQUE database per call so each serial test file is
+    // isolated, just like the per-file local clusters. Auth is auto-detected from the
+    // provided URL: a password (e.g. Neon) -> password mode (per-run SCRAM passwords
+    // for the created roles, sslmode=require); none -> trust mode (CI service).
     const base = new URL(provided);
     const host = base.hostname;
     const port = Number(base.port || "5432");
     const superRole = decodeURIComponent(base.username) || SUPERUSER;
+    const superPassword = base.password ? decodeURIComponent(base.password) : undefined;
+    const auth: "trust" | "password" = superPassword ? "password" : "trust";
+    const sslmode =
+      base.searchParams.get("sslmode") ?? (auth === "password" ? "require" : "disable");
     const maintenanceDb = base.pathname.replace(/^\//, "") || "postgres";
     const database = `${DEFAULT_DB}_${randomBytes(6).toString("hex")}`;
+
+    // Per-run, in-memory passwords for the created roles (password mode only). Never
+    // stored in source; rotated every run.
+    const passwords: Record<string, string> = {};
+    // eslint-disable-next-line security/detect-possible-timing-attacks -- not a credential compare; this branches on the connection auth MODE
+    if (auth === "password") {
+      for (const role of MANAGED_ROLES) passwords[role] = randomBytes(18).toString("hex");
+    }
+    const passwordFor = (role: string) => passwords[role];
+    const urlFor = ({ role, database: db = database }: RoleUrl) =>
+      buildUrl(host, port, role, role === superRole ? superPassword : passwords[role], db, sslmode);
 
     const admin = postgres(provided, { max: 1, prepare: false, fetch_types: false });
     try {
@@ -119,14 +151,19 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
       host,
       port,
       database,
-      ownerUrl: buildUrl(host, port, { role: superRole, database }),
-      urlFor: (opts) => buildUrl(host, port, { role: superRole, database, ...opts }),
+      auth,
+      passwordFor,
+      ownerUrl: urlFor({ role: superRole }),
+      urlFor,
       stop: async () => {
-        const adm = postgres(buildUrl(host, port, { role: superRole, database: maintenanceDb }), {
-          max: 1,
-          prepare: false,
-          fetch_types: false,
-        });
+        const adm = postgres(
+          buildUrl(host, port, superRole, superPassword, maintenanceDb, sslmode),
+          {
+            max: 1,
+            prepare: false,
+            fetch_types: false,
+          },
+        );
         try {
           await adm.unsafe(`drop database if exists "${database}" with (force)`);
         } finally {
@@ -189,8 +226,11 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     host,
     port,
     database: DEFAULT_DB,
-    ownerUrl: buildUrl(host, port, {}),
-    urlFor: (opts) => buildUrl(host, port, opts),
+    auth: "trust",
+    passwordFor: () => undefined,
+    ownerUrl: buildUrl(host, port, SUPERUSER, undefined, DEFAULT_DB, "disable"),
+    urlFor: ({ role, database = DEFAULT_DB }) =>
+      buildUrl(host, port, role, undefined, database, "disable"),
     stop,
   };
 }
