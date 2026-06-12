@@ -12,7 +12,7 @@ self-merge their own PRs *without* ever being able to bypass CI, the rules are s
 
 - **`main-pull-request.json`** — requires a PR, **1 approval**, dismisses stale approvals on new
   commits, requires **CODEOWNERS** review, and requires **conversation resolution**. The **Admin
-  role is a bypass actor in `pull_request` mode**, so the founder (sole admin, `@choraria`) can
+  role is a bypass actor in `pull_request` mode**, so the org admin / sole maintainer can
   merge their own PRs without a second approver. Merge methods limited to squash/rebase (linear).
 - **`main-status-checks.json`** — requires **status checks** (`install`, `lint`, `format-check`,
   `typecheck`, `test`, `build`, `no-skipped-tests`, `codeql`, `gitleaks`), requires the branch to
@@ -20,9 +20,9 @@ self-merge their own PRs *without* ever being able to bypass CI, the rules are s
   history**, and blocks branch deletion. **`bypass_actors` is empty** — so **no one, including
   admins, can bypass CI.** Signed commits are intentionally **not** required.
 
-> GitHub repository rulesets cannot target an individual user as a bypass actor; the founder is
-> targeted via the **Admin role** (`actor_type: RepositoryRole`, `actor_id: 5`), and they are the
-> sole admin.
+> GitHub repository rulesets cannot target an individual user as a bypass actor; the sole
+> maintainer is targeted via the **Admin role** (`actor_type: RepositoryRole`), which they alone
+> hold.
 
 ## When you can apply these
 
