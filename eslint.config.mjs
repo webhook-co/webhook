@@ -33,6 +33,27 @@ export default tseslint.config(
         "error",
         { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
       ],
+      // C1 (ADR-0002): the cached Hyperdrive binding must NEVER serve tenant-scoped
+      // reads — its query cache is keyed on SQL+params and is blind to the RLS session
+      // GUC, so a cached tenant query could serve one org's rows to another. Every
+      // *value* access to the binding is flagged (this catches both
+      // `createClient(env.HYPERDRIVE_CACHED.connectionString)` and any indirection);
+      // an interface/type declaration of the binding is not a MemberExpression, so it
+      // isn't matched. If a read is genuinely non-tenant/cache-safe, opt in explicitly:
+      //   // eslint-disable-next-line no-restricted-syntax -- cache-safe (C1): <reason>
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "MemberExpression[property.name='HYPERDRIVE_CACHED']",
+          message:
+            "C1 (ADR-0002): the cached Hyperdrive binding must not serve tenant reads — route tenant reads through packages/db on HYPERDRIVE_TENANT. If genuinely cache-safe (non-tenant), disable this line with a `cache-safe (C1): <reason>` justification.",
+        },
+        {
+          selector: "MemberExpression[computed=true] > Literal[value='HYPERDRIVE_CACHED']",
+          message:
+            "C1 (ADR-0002): the cached Hyperdrive binding must not serve tenant reads — route tenant reads through packages/db on HYPERDRIVE_TENANT. If genuinely cache-safe (non-tenant), disable this line with a `cache-safe (C1): <reason>` justification.",
+        },
+      ],
     },
   },
 
