@@ -1,0 +1,51 @@
+/**
+ * Base layer for the webhook.co design system.
+ *
+ * Sets sensible page defaults on the token system and a small set of conveniences.
+ * Optional — apps can skip it and style their own root — but it gives the canonical
+ * page surface, body type, and the reduced-motion contract for free.
+ */
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background: var(--wh-surface-page);
+    color: var(--wh-text-primary);
+    font-family: var(--wh-font-sans);
+    font-size: var(--wh-text-base);
+    line-height: var(--wh-leading-body);
+  }
+
+  /* Tabular, mono figures for ids, timestamps, and table data. */
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--wh-font-mono);
+  }
+
+  /* The system honors reduced-motion unconditionally: entrances resolve instantly,
+     loops stop. Nothing essential ever depends on motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* The standard focus treatment: a 2px offset ring in the focus color. */
+  .focus-ring {
+    outline: none;
+    box-shadow: var(--wh-focus-ring);
+  }
+}

@@ -1,0 +1,126 @@
+/**
+ * Tailwind v4 theme mapping for the webhook.co design system.
+ *
+ * Import this alongside `theme.css` (which declares the runtime `--wh-*` variables and
+ * the dark overrides) in a consuming app, after `@import "tailwindcss"`. Using
+ * `@theme inline` makes every utility resolve to the live variable, so dark mode is a
+ * free swap of the underlying token — no recompiled classes.
+ *
+ *   @import "tailwindcss";
+ *   @import "@webhook-co/ui/styles/theme.css";
+ *   @import "@webhook-co/ui/styles/preset.css";
+ *   @import "@webhook-co/ui/styles/base.css";
+ */
+
+@theme inline {
+  /* ── ink scale ─────────────────────────────────────────── */
+  --color-ink-0: var(--wh-ink-0);
+  --color-ink-25: var(--wh-ink-25);
+  --color-ink-50: var(--wh-ink-50);
+  --color-ink-100: var(--wh-ink-100);
+  --color-ink-200: var(--wh-ink-200);
+  --color-ink-300: var(--wh-ink-300);
+  --color-ink-400: var(--wh-ink-400);
+  --color-ink-500: var(--wh-ink-500);
+  --color-ink-600: var(--wh-ink-600);
+  --color-ink-700: var(--wh-ink-700);
+  --color-ink-800: var(--wh-ink-800);
+  --color-ink-900: var(--wh-ink-900);
+  --color-ink-950: var(--wh-ink-950);
+  --color-ink-1000: var(--wh-ink-1000);
+
+  /* ── semantic surfaces ─────────────────────────────────── */
+  --color-surface: var(--wh-surface-card);
+  --color-surface-page: var(--wh-surface-page);
+  --color-surface-sunken: var(--wh-surface-sunken);
+  --color-surface-raised: var(--wh-surface-raised);
+  --color-surface-inverse: var(--wh-surface-inverse);
+
+  /* ── semantic text (use as text-fg, text-fg-secondary, …) ─ */
+  --color-fg: var(--wh-text-primary);
+  --color-fg-secondary: var(--wh-text-secondary);
+  --color-fg-muted: var(--wh-text-muted);
+  --color-fg-faint: var(--wh-text-faint);
+  --color-fg-on-inverse: var(--wh-text-on-inverse);
+
+  /* ── borders ───────────────────────────────────────────── */
+  --color-hairline: var(--wh-border-hairline);
+  --color-strong: var(--wh-border-strong);
+  --color-focus: var(--wh-border-focus);
+
+  /* ── functional state (the only chroma) ────────────────── */
+  --color-ok: var(--wh-ok);
+  --color-ok-bg: var(--wh-ok-bg);
+  --color-ok-border: var(--wh-ok-border);
+  --color-warn: var(--wh-warn);
+  --color-warn-bg: var(--wh-warn-bg);
+  --color-warn-border: var(--wh-warn-border);
+  --color-danger: var(--wh-danger);
+  --color-danger-bg: var(--wh-danger-bg);
+  --color-danger-border: var(--wh-danger-border);
+  --color-info: var(--wh-info);
+  --color-info-bg: var(--wh-info-bg);
+  --color-info-border: var(--wh-info-border);
+
+  /* ── data-viz ramp ─────────────────────────────────────── */
+  --color-chart-1: var(--wh-chart-1);
+  --color-chart-2: var(--wh-chart-2);
+  --color-chart-3: var(--wh-chart-3);
+  --color-chart-4: var(--wh-chart-4);
+  --color-chart-5: var(--wh-chart-5);
+
+  /* ── type ──────────────────────────────────────────────── */
+  --font-sans: var(--wh-font-sans);
+  --font-mono: var(--wh-font-mono);
+
+  /* Own the whole size scale (clears Tailwind's defaults). */
+  --text-*: initial;
+  --text-xs: var(--wh-text-xs);
+  --text-sm: var(--wh-text-sm);
+  --text-base: var(--wh-text-base);
+  --text-md: var(--wh-text-md);
+  --text-lg: var(--wh-text-lg);
+  --text-xl: var(--wh-text-xl);
+  --text-2xl: var(--wh-text-2xl);
+  --text-3xl: var(--wh-text-3xl);
+  --text-4xl: var(--wh-text-4xl);
+  --text-5xl: var(--wh-text-5xl);
+
+  --font-weight-regular: var(--wh-weight-regular);
+  --font-weight-medium: var(--wh-weight-medium);
+  --font-weight-semibold: var(--wh-weight-semibold);
+  --font-weight-bold: var(--wh-weight-bold);
+
+  --tracking-body: var(--wh-tracking-body);
+  --tracking-tight: var(--wh-tracking-tight);
+  --tracking-heading: var(--wh-tracking-heading);
+  --tracking-display: var(--wh-tracking-display);
+  --tracking-mono-label: var(--wh-tracking-mono-label);
+
+  --leading-tight: var(--wh-leading-tight);
+  --leading-snug: var(--wh-leading-snug);
+  --leading-body: var(--wh-leading-body);
+  --leading-relaxed: var(--wh-leading-relaxed);
+
+  /* ── radii ─────────────────────────────────────────────── */
+  --radius-control: var(--wh-radius-control);
+  --radius-card: var(--wh-radius-card);
+  --radius-modal: var(--wh-radius-modal);
+  --radius-pill: var(--wh-radius-pill);
+
+  /* ── elevation ─────────────────────────────────────────── */
+  --shadow-1: var(--wh-shadow-1);
+  --shadow-2: var(--wh-shadow-2);
+  --shadow-3: var(--wh-shadow-3);
+  --shadow-4: var(--wh-shadow-4);
+
+  /* ── layout measures ───────────────────────────────────── */
+  --container-prose: var(--wh-container-prose);
+  --container-max: var(--wh-container-max);
+
+  /* ── motion (durations + easings as Tailwind tokens) ───── */
+  --ease-swift: var(--wh-ease-swift);
+  --ease-smooth: var(--wh-ease-smooth);
+  --ease-spring: var(--wh-ease-spring);
+  --ease-exit: var(--wh-ease-exit);
+}

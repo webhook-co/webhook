@@ -10,3 +10,8 @@ pnpm-lock.yaml
 # (Prettier rewraps doc tables and lists in ways that fight the house style).
 **/*.md
 **/*.mdc
+
+# Generated design-token stylesheet. Its canonical format is produced by
+# `packages/ui/src/tokens/theme.ts` and enforced by that package's drift test; Prettier
+# must not reformat it or the two would disagree.
+packages/ui/src/styles/theme.css
