@@ -61,6 +61,41 @@ jobs:
       # Coverage thresholds are enforced inside the Vitest config (see packages/shared).
       - run: pnpm test
 
+  # The @webhook-co/db package is excluded from `pnpm test` (it needs a real Postgres
+  # with real non-owner roles to exercise RLS / FORCE / the ingest function / the audit
+  # chain). This job provides that Postgres and runs the schema + RLS + migration-
+  # reversibility suite. POSTGRES_HOST_AUTH_METHOD=trust mirrors the local --auth=trust
+  # harness so the test roles (webhook_owner/app/ingest) connect without passwords (no
+  # secrets in CI); each test file creates its own database on the service for isolation.
+  test-db:
+    name: test-db
+    runs-on: ubuntu-latest
+    needs: install
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - name: Install dbmate
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate \
+            https://github.com/amacneil/dbmate/releases/download/v2.33.0/dbmate-linux-amd64
+          chmod +x /usr/local/bin/dbmate
+          dbmate --version
+      - run: pnpm test:db
+
   build:
     name: build
     runs-on: ubuntu-latest

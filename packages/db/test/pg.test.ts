@@ -12,8 +12,8 @@ describe("ephemeral postgres harness", () => {
     pg = await startEphemeralPostgres();
   }, 60_000);
 
-  afterAll(() => {
-    pg?.stop();
+  afterAll(async () => {
+    await pg?.stop();
   });
 
   it("starts a real postgres and answers queries through the client", async () => {

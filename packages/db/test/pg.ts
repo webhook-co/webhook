@@ -10,10 +10,13 @@
 // shortcut.
 
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import postgres from "postgres";
 
 export interface RoleUrl {
   role?: string;
@@ -25,11 +28,12 @@ export interface EphemeralPostgres {
   host: string;
   port: number;
   database: string;
-  /** Superuser (cluster owner) URL — used to run migrations and create roles. */
+  /** Superuser URL — used to bootstrap the schema owner and (in CI) the test DB. */
   ownerUrl: string;
   /** Build a connection URL for an arbitrary role/database on this cluster. */
   urlFor: (opts: RoleUrl) => string;
-  stop: () => void;
+  /** Tear down: stop the local cluster, or drop the per-run CI database. */
+  stop: () => void | Promise<void>;
 }
 
 const SUPERUSER = "postgres";
@@ -93,18 +97,41 @@ function buildUrl(
 export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
   const provided = process.env.TEST_DATABASE_URL;
   if (provided && provided.trim() !== "") {
-    const u = new URL(provided);
-    const host = u.hostname;
-    const port = Number(u.port || "5432");
-    const database = u.pathname.replace(/^\//, "") || "postgres";
+    // CI: attach to a shared Postgres service (POSTGRES_HOST_AUTH_METHOD=trust) but
+    // create a UNIQUE database per call so each serial test file is isolated, exactly
+    // like the per-file local clusters. The service's superuser owns the create/drop;
+    // every role connects password-less via trust.
+    const base = new URL(provided);
+    const host = base.hostname;
+    const port = Number(base.port || "5432");
+    const superRole = decodeURIComponent(base.username) || SUPERUSER;
+    const maintenanceDb = base.pathname.replace(/^\//, "") || "postgres";
+    const database = `${DEFAULT_DB}_${randomBytes(6).toString("hex")}`;
+
+    const admin = postgres(provided, { max: 1, prepare: false, fetch_types: false });
+    try {
+      await admin.unsafe(`create database "${database}"`);
+    } finally {
+      await admin.end();
+    }
+
     return {
       host,
       port,
       database,
-      ownerUrl: provided,
-      urlFor: (opts) => buildUrl(host, port, { database, ...opts }),
-      stop: () => {
-        /* CI owns the service container lifecycle */
+      ownerUrl: buildUrl(host, port, { role: superRole, database }),
+      urlFor: (opts) => buildUrl(host, port, { role: superRole, database, ...opts }),
+      stop: async () => {
+        const adm = postgres(buildUrl(host, port, { role: superRole, database: maintenanceDb }), {
+          max: 1,
+          prepare: false,
+          fetch_types: false,
+        });
+        try {
+          await adm.unsafe(`drop database if exists "${database}" with (force)`);
+        } finally {
+          await adm.end();
+        }
       },
     };
   }
