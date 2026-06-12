@@ -97,6 +97,21 @@ jobs:
           echo "${DBMATE_SHA256}  /usr/local/bin/dbmate" | sha256sum -c -
           chmod +x /usr/local/bin/dbmate
           dbmate --version
+      # Drift guard: the checked-in Better Auth schema must match what the installed
+      # plugins actually generate. The generator reads apps/auth/src/auth.ts (which
+      # imports the installed better-auth + @better-auth/api-key) and emits the full
+      # schema against an empty DB; we diff that against the source-of-truth file that
+      # migration 0001 is derived from. The CLI runs ephemerally via `pnpm dlx` — it is
+      # deliberately NOT a tracked dep (it hard-pins an older better-auth); see
+      # apps/auth/package.json. Catches both api-key plugin drift and any new core
+      # identity columns a better-auth upgrade introduces.
+      - name: Better Auth schema drift guard
+        run: |
+          psql "postgres://postgres@localhost:5432/postgres" -c 'create database auth_schema_check'
+          ( cd apps/auth && DATABASE_URL="postgres://postgres@localhost:5432/auth_schema_check" \
+            pnpm dlx @better-auth/cli@latest generate --config src/auth.ts --yes \
+            --output "$RUNNER_TEMP/better-auth.schema.sql" )
+          diff -u packages/db/db/migrations/.better-auth.schema.sql "$RUNNER_TEMP/better-auth.schema.sql"
       - run: pnpm test:db
 
   build:
