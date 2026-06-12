@@ -1,0 +1,20 @@
+{
+  "name": "@webhook-co/auth",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "auth:generate": "better-auth generate --config src/auth.ts --yes --output ../../packages/db/db/migrations/.better-auth.schema.sql"
+  },
+  "dependencies": {
+    "@better-auth/api-key": "^1.6.18",
+    "better-auth": "^1.6.18",
+    "pg": "^8.21.0"
+  },
+  "devDependencies": {
+    "@better-auth/cli": "^1.4.21",
+    "@types/pg": "^8.20.0"
+  }
+}
