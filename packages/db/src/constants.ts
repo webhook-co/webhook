@@ -15,6 +15,9 @@ export const DB_ROLES = {
   owner: "webhook_owner",
   /** Request-path reads/writes. Non-owner, no BYPASSRLS, RLS-enforced. */
   app: "webhook_app",
-  /** Insert-only fallback for the unauthenticated ingest hot path (benchmark-gated). */
+  /**
+   * Unauthenticated ingest hot path. Non-owner, no BYPASSRLS, RLS-enforced; scoped to
+   * events only (INSERT + SELECT — SELECT is required by ON CONFLICT's arbiter).
+   */
   ingest: "webhook_ingest",
 } as const;
