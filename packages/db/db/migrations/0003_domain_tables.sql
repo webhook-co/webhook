@@ -6,7 +6,7 @@
 --   * has per-command policies gating on current_org_id() (deny-by-default: an
 --     unset context -> NULL -> zero rows),
 --   * grants DML to webhook_app only (webhook_ingest gets INSERT on events only).
--- Plan §0.1/§0.2, ADR-0012. Ids are UUIDv7, edge-generated (no DB default) for index
+-- Plan §0.1/§0.2. Ids are UUIDv7, edge-generated (no DB default) for index
 -- locality + a stable cursor tiebreaker (§0.10).
 
 -- Tenant context for RLS. STABLE, SECURITY INVOKER (the default). nullif() turns an

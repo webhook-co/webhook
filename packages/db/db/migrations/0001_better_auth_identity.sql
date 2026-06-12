@@ -1,6 +1,6 @@
 -- migrate:up
 
--- Better Auth identity schema (generated, checked in, pinned — ADR-0010, plan §0.8).
+-- Better Auth identity schema (generated, checked in, pinned — plan §0.8).
 -- Source: `pnpm --filter @webhook-co/auth run auth:generate` -> the DDL captured in
 -- db/migrations/.better-auth.schema.sql. We OWN these migrations; Better Auth never
 -- auto-migrates prod. Tables are kept verbatim (quoted camelCase identifiers, text
