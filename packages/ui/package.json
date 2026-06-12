@@ -1,0 +1,47 @@
+{
+  "name": "@webhook-co/ui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "The webhook.co design system — tokens, theme, motion conventions, and React primitives.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens": "./src/tokens/index.ts",
+    "./motion": "./src/motion/index.ts",
+    "./styles/theme.css": "./src/styles/theme.css",
+    "./styles/preset.css": "./src/styles/preset.css",
+    "./styles/base.css": "./src/styles/base.css",
+    "./assets/*": "./assets/*"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage",
+    "gen:theme": "vite-node scripts/generate-theme.ts"
+  },
+  "dependencies": {
+    "@radix-ui/react-slot": "^1.2.5",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "tailwind-merge": "^3.6.0"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tailwindcss": "^4.3.0",
+    "vite-node": "^6.0.0"
+  }
+}

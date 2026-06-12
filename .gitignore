@@ -6,6 +6,7 @@ dist/
 build/
 .turbo/
 .wrangler/
+.next/
 *.tsbuildinfo
 
 # Environment
