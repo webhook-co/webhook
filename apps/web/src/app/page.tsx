@@ -1,5 +1,4 @@
 import { Button, StatusPill, Wordmark } from "@webhook-co/ui";
-import Link from "next/link";
 
 export default function HomePage() {
   return (
@@ -22,9 +21,6 @@ export default function HomePage() {
 
       <div className="flex flex-wrap items-center gap-3">
         <Button asChild>
-          <Link href="/design">View the design system</Link>
-        </Button>
-        <Button asChild variant="secondary">
           <a href="https://github.com" rel="noreferrer">
             Read the source
           </a>

@@ -13,6 +13,7 @@ import {
   ink,
 } from "@webhook-co/ui";
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 
@@ -23,6 +24,11 @@ export const metadata: Metadata = {
   title: "webhook.co — design system showcase",
   description: "A living showcase of the webhook.co design tokens and UI primitives.",
 };
+
+// The living design showcase is a development-only surface. In a production build
+// `next build` runs with NODE_ENV=production, so the guard below fires during static
+// generation and the route is emitted as a 404. Under `pnpm dev` it renders normally.
+const isProduction = process.env.NODE_ENV === "production";
 
 function Section({
   eyebrow,
@@ -47,6 +53,10 @@ function Section({
 const STATES = ["ok", "warn", "danger", "info"] as const;
 
 export default function DesignSystemPage() {
+  if (isProduction) {
+    notFound();
+  }
+
   return (
     <main className="mx-auto flex max-w-[var(--container-max)] flex-col gap-12 px-6 py-16">
       <header className="flex flex-wrap items-center justify-between gap-4">
