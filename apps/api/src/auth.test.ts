@@ -1,4 +1,9 @@
-import { AudienceMismatchError, type AuthContext, type VerifyBearer } from "@webhook-co/contract";
+import {
+  AudienceMismatchError,
+  UnauthenticatedError,
+  type AuthContext,
+  type VerifyBearer,
+} from "@webhook-co/contract";
 import { describe, expect, it } from "vitest";
 
 import { authorize, extractBearer, type ApiAuthDeps } from "./auth";
@@ -39,6 +44,12 @@ describe("extractBearer", () => {
     });
     expect(extractBearer(req)).toBeNull();
   });
+  it("accepts a case-insensitive scheme and extra spaces (RFC 6750/7235)", () => {
+    const req = new Request("https://api.webhook.co/", {
+      headers: { authorization: "bearer   whk_ci" },
+    });
+    expect(extractBearer(req)).toBe("whk_ci");
+  });
 });
 
 describe("authorize — resolves AuthContext + enforces capability scope", () => {
@@ -56,13 +67,25 @@ describe("authorize — resolves AuthContext + enforces capability scope", () =>
     if (!result.ok) expect(result.challenge).toContain('error="invalid_token"');
   });
 
-  it("401s when verifyBearer rejects (bad credential)", async () => {
+  it("401s when verifyBearer throws UnauthenticatedError (bad credential)", async () => {
     const result = await authorize(
-      deps(fakeVerify({ throws: new Error("no principal") })),
+      deps(fakeVerify({ throws: new UnauthenticatedError() })),
       reqWith("whk_bad"),
       "endpoints.list",
     );
     expect(result).toMatchObject({ ok: false, status: 401 });
+  });
+
+  it("PROPAGATES an operational error instead of masking it as a 401", async () => {
+    // A DB/Hyperdrive/KMS outage (not an auth rejection) must surface as a 5xx, not be
+    // silently reclassified as 'your token is invalid'.
+    await expect(
+      authorize(
+        deps(fakeVerify({ throws: new Error("hyperdrive: connection reset") })),
+        reqWith("whk_ok"),
+        "endpoints.list",
+      ),
+    ).rejects.toThrow(/connection reset/);
   });
 
   it("401s (not 403) when the token's audience does not match the resource", async () => {

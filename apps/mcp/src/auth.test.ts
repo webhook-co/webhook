@@ -1,4 +1,4 @@
-import { type AuthContext, type VerifyBearer } from "@webhook-co/contract";
+import { UnauthenticatedError, type AuthContext, type VerifyBearer } from "@webhook-co/contract";
 import { describe, expect, it } from "vitest";
 
 import { authorize, extractBearer, protectedResourceMetadata, type McpAuthDeps } from "./auth";
@@ -64,14 +64,24 @@ describe("authorize — same seam as the API, plus PRM", () => {
     if (!result.ok) expect(result.challenge).toContain('error="insufficient_scope"');
   });
 
-  it("401s when verifyBearer rejects (bad or replayed credential)", async () => {
+  it("401s when verifyBearer throws UnauthenticatedError (bad or replayed credential)", async () => {
     const result = await authorize(
-      deps(fakeVerify({ throws: new Error("no principal") })),
+      deps(fakeVerify({ throws: new UnauthenticatedError() })),
       reqWith("whk_bad"),
       "audit.verify",
     );
     expect(result).toMatchObject({ ok: false, status: 401 });
     if (!result.ok) expect(result.challenge).toContain('error="invalid_token"');
+  });
+
+  it("PROPAGATES an operational error instead of masking it as a 401", async () => {
+    await expect(
+      authorize(
+        deps(fakeVerify({ throws: new Error("hyperdrive: connection reset") })),
+        reqWith("whk_ok"),
+        "audit.verify",
+      ),
+    ).rejects.toThrow(/connection reset/);
   });
 
   it("throws on an unknown capability (programming error, fail closed)", async () => {

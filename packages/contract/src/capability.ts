@@ -36,9 +36,23 @@ export interface CapabilitySemantics {
   readonly watermark?: { readonly deltaMs: number };
 }
 
+/**
+ * The CLOSED set of capability scopes verifyBearer can grant (§0.8). A capability's scope
+ * must be one of these — a typo or an unknown scope is then a compile error, not a
+ * representable-but-broken descriptor. Add a scope here deliberately when a new capability
+ * needs one (mirrors the closed CAPABILITY_ERRORS taxonomy above).
+ */
+export const CAPABILITY_SCOPES = [
+  "endpoints:read",
+  "events:read",
+  "events:replay",
+  "audit:read",
+] as const;
+export type CapabilityScope = (typeof CAPABILITY_SCOPES)[number];
+
 export interface CapabilityAuth {
   /** The OAuth/API-key scope verifyBearer must grant (§0.8). */
-  readonly scope: string;
+  readonly scope: CapabilityScope;
 }
 
 export interface CapabilityDef<
