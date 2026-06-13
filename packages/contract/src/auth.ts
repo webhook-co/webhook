@@ -129,8 +129,14 @@ export type BearerAuthzResult =
  */
 export function extractBearer(authorizationHeader: string | null | undefined): string | null {
   if (!authorizationHeader) return null;
-  const match = /^Bearer[ ]+(.+)$/i.exec(authorizationHeader.trim());
-  return match?.[1]?.trim() || null;
+  // Parse without a regex: a regex like /^Bearer +(.+)$/i has overlapping quantifiers (the
+  // space run and the token both match spaces), which is a polynomial-ReDoS shape on the
+  // attacker-controlled header. Split on the first whitespace run instead — strictly linear.
+  const trimmed = authorizationHeader.trim();
+  const sep = trimmed.search(/\s/);
+  if (sep === -1) return null;
+  if (trimmed.slice(0, sep).toLowerCase() !== "bearer") return null;
+  return trimmed.slice(sep + 1).trim() || null;
 }
 
 /**
