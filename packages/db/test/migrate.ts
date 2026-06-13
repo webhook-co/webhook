@@ -91,7 +91,7 @@ export async function applyRolePasswords(pg: EphemeralPostgres): Promise<void> {
   if (pg.auth !== "password") return;
   const sql = postgres(pg.ownerUrl, { max: 1, prepare: false, fetch_types: false });
   try {
-    for (const role of [DB_ROLES.app, DB_ROLES.ingest]) {
+    for (const role of [DB_ROLES.app, DB_ROLES.ingest, DB_ROLES.authn]) {
       await sql.unsafe(`alter role ${role}${passwordClause(pg, role)}`);
     }
   } finally {
