@@ -132,6 +132,18 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm run no-skipped-tests
 
+  # Enforces the Node<->Workers tsconfig boundary convention: a cross-boundary internal
+  # dependency edge must redirect the dep to its built dist *.d.ts, never recompile its source
+  # across the lib boundary. Keeps a new package from silently reintroducing the friction.
+  tsconfig-boundary:
+    name: tsconfig-boundary
+    runs-on: ubuntu-latest
+    needs: install
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+      - run: pnpm run tsconfig-boundary
+
   # Dependency vulnerability audit. CRITICAL advisories are blocking (this is a crypto/auth
   # surface — a known-critical transitive vuln must never auto-merge); HIGH stays advisory so
   # routine transitive advisories don't wedge unrelated PRs (Dependabot opens fix PRs).
