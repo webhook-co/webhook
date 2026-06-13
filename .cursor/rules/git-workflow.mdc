@@ -1,0 +1,37 @@
+---
+description: Branch hygiene — rebase on main before every PR and keep branches synced.
+globs:
+alwaysApply: true
+---
+
+# Git workflow (branch hygiene)
+
+We open many short-lived branches in parallel. They drift from `main` fast, and stale branches
+produce avoidable merge conflicts, redundant review of already-merged code, and CI that passed
+against an old base. Keep every branch close to `main`.
+
+## Rebase on main — non-negotiable
+
+- **Before opening a PR**, rebase the branch onto the latest `origin/main`:
+  `git fetch origin && git rebase origin/main`. Resolve conflicts locally; never open a PR from a
+  base more than a few commits behind `main`.
+- **Before pushing an update to an open PR** (e.g. addressing review), fetch and rebase onto
+  `origin/main` first, so the PR is reviewed and CI-checked against the current base.
+- **Keep rebasing frequently** while a branch is open — at minimum whenever another PR merges to
+  `main`. Don't let a branch sit behind. If several review branches were cut from the same older
+  `main`, rebase each one as the earlier ones land.
+
+## How
+
+- `git fetch origin && git rebase origin/main` (interactive rebase flags like `-i` are unavailable
+  in the agent harness — do a plain rebase).
+- After a rebase that changes already-pushed history, force-with-lease:
+  `git push --force-with-lease`. Never plain `--force`.
+- Re-run the gate after every rebase: typecheck, the affected test suites, and lint must pass on the
+  rebased tree before pushing. A clean pre-rebase run does not transfer.
+
+## Never weaken the gate
+
+- Never `git commit --no-verify` / `git push --no-verify`. CI required checks are the real gate.
+- Conventional Commits. Branch off `main`; do not commit directly to `main`.
+- Don't self-merge — PRs are the human's to merge unless explicitly told otherwise.
