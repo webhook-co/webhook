@@ -8,12 +8,15 @@
     // (types: ["@cloudflare/workers-types"]) it has no DOM/WebCrypto lib. Resolving
     // @webhook-co/shared to its raw source would make tsc re-typecheck shared's WebCrypto
     // code (crypto.subtle.*) under node-only libs, where @types/node's
-    // Uint8Array<ArrayBufferLike> doesn't satisfy the DOM BufferSource. shared is already
-    // typechecked with its own (workers-types) config and is built before this package
-    // (turbo `^build`), so we consume its emitted declarations instead — the crypto
-    // internals are validated once, in shared, not re-checked here.
+    // Uint8Array<ArrayBufferLike> doesn't satisfy the DOM BufferSource. The same applies
+    // to @webhook-co/webhooks-spec, which shared re-exports (`export * from`), so its
+    // source (e.g. bytes.ts) is reached transitively even when shared resolves to dist.
+    // Both are typechecked under their own (workers-types) configs and built before this
+    // package (turbo `^build`), so we consume their emitted declarations instead — the
+    // crypto internals are validated once, in their own packages, not re-checked here.
     "paths": {
-      "@webhook-co/shared": ["../shared/dist/index.d.ts"]
+      "@webhook-co/shared": ["../shared/dist/index.d.ts"],
+      "@webhook-co/webhooks-spec": ["../webhooks-spec/dist/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts"],
