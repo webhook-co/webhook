@@ -37,7 +37,9 @@ export const VerificationFailureSchema = z.discriminatedUnion("code", [
   z.object({
     code: z.literal("RAW_BODY_MODIFIED"),
     confidence: Confidence,
-    evidence: z.enum(["trailing_whitespace", "reencoded_json", "charset"]).optional(),
+    // Keep this enum in lockstep with the probes in adapters/shared.ts that actually
+    // emit it — only these two are produced today. Add a value here only alongside a probe.
+    evidence: z.enum(["trailing_whitespace", "reencoded_json"]).optional(),
   }),
   z.object({ code: z.literal("PROXY_MUTATED_BYTES"), confidence: Confidence }),
   // generic: no confident sub-diagnosis
@@ -45,7 +47,7 @@ export const VerificationFailureSchema = z.discriminatedUnion("code", [
 ]);
 export type VerificationFailure = z.infer<typeof VerificationFailureSchema>;
 
-export const VerificationResultSchema = z.union([
+export const VerificationResultSchema = z.discriminatedUnion("ok", [
   z.object({ ok: z.literal(true), keyId: z.string(), scheme: WebhookSchemeSchema }),
   z.object({ ok: z.literal(false), reason: VerificationFailureSchema }),
 ]);
