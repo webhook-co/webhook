@@ -49,7 +49,20 @@ const RLS_EXEMPT = new Set([
   "schema_migrations",
 ]);
 
-const bytes = (n: number) => Buffer.from(Array.from({ length: n }, (_, i) => (i * 7 + n) % 256));
+// Deterministic, seed-by-length Buffer for fixture bytea values (NOT random — stable
+// across runs so failures are reproducible). Name says what it is and what it returns.
+const deterministicBuffer = (n: number) =>
+  Buffer.from(Array.from({ length: n }, (_, i) => (i * 7 + n) % 256));
+
+// Tolerance for server-stamped timestamp assertions: covers DB round-trip, scheduler
+// delay, and minor clock jitter between the test clock and the server clock.
+const TIMESTAMP_TOLERANCE_MS = 1_000;
+
+// The ingest role's bounded statement_timeout (H5 watermark invariant). Authoritative
+// value lives in migration 0006_ingest_event.sql (`alter role webhook_ingest set
+// statement_timeout`) and the shared INGEST_STATEMENT_TIMEOUT_MS = 5_000; this string
+// must stay in lockstep with both.
+const INGEST_ROLE_STATEMENT_TIMEOUT = "5s";
 
 interface Seeded {
   orgId: string;
@@ -84,9 +97,9 @@ async function seedOrg(slug: string): Promise<Seeded> {
     await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
              values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep-" + slug})`;
     await tx`insert into signing_keys (id, endpoint_id, org_id, secret_ciphertext, wrapped_dek, kek_ref, enc_nonce, envelope_version, status)
-             values (${randomUUID()}, ${endpointId}, ${orgId}, ${bytes(16)}, ${bytes(16)}, ${"kek/1"}, ${bytes(12)}, ${1}, ${"active"})`;
+             values (${randomUUID()}, ${endpointId}, ${orgId}, ${deterministicBuffer(16)}, ${deterministicBuffer(16)}, ${"kek/1"}, ${deterministicBuffer(12)}, ${1}, ${"active"})`;
     await tx`insert into provider_secrets (id, endpoint_id, org_id, provider, secret_ciphertext, wrapped_dek, kek_ref, enc_nonce, envelope_version, status)
-             values (${randomUUID()}, ${endpointId}, ${orgId}, ${"stripe"}, ${bytes(16)}, ${bytes(16)}, ${"kek/1"}, ${bytes(12)}, ${1}, ${"active"})`;
+             values (${randomUUID()}, ${endpointId}, ${orgId}, ${"stripe"}, ${deterministicBuffer(16)}, ${deterministicBuffer(16)}, ${"kek/1"}, ${deterministicBuffer(12)}, ${1}, ${"active"})`;
     await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
              values (${eventId}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${eventId}`}, ${128}, ${"seed-dedup"}, ${"content_hash"})`;
     await tx`insert into delivery_attempts (id, org_id, event_id, target, status)
@@ -94,8 +107,9 @@ async function seedOrg(slug: string): Promise<Seeded> {
     await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, date_trunc('day', now()), ${1})`;
     await tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${1000}, ${"pause"})`;
     await tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${false})`;
-    await tx`insert into audit_log (org_id, seq, actor, action, prev_hash, row_hash)
-             values (${orgId}, ${1}, ${userId}, ${"org.created"}, ${null}, ${bytes(32)})`;
+    // Genesis row: prev_hash is omitted (defaults to NULL) — a genesis row has no prior.
+    await tx`insert into audit_log (org_id, seq, actor, action, row_hash)
+             values (${orgId}, ${1}, ${userId}, ${"org.created"}, ${deterministicBuffer(32)})`;
     await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes)
              values (${randomUUID()}, ${orgId}, ${randomBytes(32)}, ${"whk"}, ${"whk_" + slug}, ${"key-" + slug}, ${tx.json(["events:read"])})`;
   });
@@ -228,8 +242,8 @@ describe("ingest_event() single-statement hot path", () => {
     const [evt] = await withTenant(app, orgA.orgId, async (tx) => {
       return tx<{ received_at: Date }[]>`select received_at from events where id = ${id}`;
     });
-    expect(evt.received_at.getTime()).toBeGreaterThanOrEqual(before - 1000);
-    expect(evt.received_at.getTime()).toBeLessThanOrEqual(Date.now() + 1000);
+    expect(evt.received_at.getTime()).toBeGreaterThanOrEqual(before - TIMESTAMP_TOLERANCE_MS);
+    expect(evt.received_at.getTime()).toBeLessThanOrEqual(Date.now() + TIMESTAMP_TOLERANCE_MS);
   });
 
   it("dedups on (endpoint_id, dedup_key): a repeat is a no-op success", async () => {
@@ -266,7 +280,7 @@ describe("ingest_event() single-statement hot path", () => {
   it("the ingest role has a bounded statement_timeout (H5 watermark invariant)", async () => {
     const [{ cfg }] = await owner<{ cfg: string[] | null }[]>`
       select rolconfig as cfg from pg_roles where rolname = ${DB_ROLES.ingest}`;
-    expect(cfg ?? []).toContain("statement_timeout=5s");
+    expect(cfg ?? []).toContain(`statement_timeout=${INGEST_ROLE_STATEMENT_TIMEOUT}`);
   });
 });
 
@@ -289,12 +303,12 @@ describe("audit_log append-only hash chain (H2)", () => {
     await withTenant(app, orgA.orgId, async (tx) => {
       // org A already has seq 1 (seeded). seq 2 with the right link is accepted.
       await tx`insert into audit_log (org_id, seq, action, prev_hash, row_hash)
-               values (${orgA.orgId}, ${2}, ${"endpoint.created"}, ${bytes(32)}, ${bytes(33)})`;
+               values (${orgA.orgId}, ${2}, ${"endpoint.created"}, ${deterministicBuffer(32)}, ${deterministicBuffer(33)})`;
     });
     await expect(
       withTenant(app, orgA.orgId, async (tx) => {
         await tx`insert into audit_log (org_id, seq, action, prev_hash, row_hash)
-                 values (${orgA.orgId}, ${5}, ${"gap"}, ${bytes(33)}, ${bytes(34)})`;
+                 values (${orgA.orgId}, ${5}, ${"gap"}, ${deterministicBuffer(33)}, ${deterministicBuffer(34)})`;
       }),
     ).rejects.toThrow(/contiguous/i);
   });
@@ -305,13 +319,14 @@ describe("audit_log append-only hash chain (H2)", () => {
     const chainOrg = randomUUID();
     await withTenant(app, chainOrg, async (tx) => {
       await tx`insert into orgs (id, slug, name) values (${chainOrg}, ${"chainx"}, ${"Chain"})`;
-      await tx`insert into audit_log (org_id, seq, action, prev_hash, row_hash)
-               values (${chainOrg}, ${1}, ${"org.created"}, ${null}, ${bytes(40)})`;
+      // Genesis row: prev_hash omitted (defaults to NULL).
+      await tx`insert into audit_log (org_id, seq, action, row_hash)
+               values (${chainOrg}, ${1}, ${"org.created"}, ${deterministicBuffer(40)})`;
     });
     await expect(
       withTenant(app, chainOrg, async (tx) => {
         await tx`insert into audit_log (org_id, seq, action, prev_hash, row_hash)
-                 values (${chainOrg}, ${2}, ${"endpoint.created"}, ${bytes(41)}, ${bytes(42)})`;
+                 values (${chainOrg}, ${2}, ${"endpoint.created"}, ${deterministicBuffer(41)}, ${deterministicBuffer(42)})`;
       }),
     ).rejects.toThrow(/prev_hash must equal/i);
   });
@@ -322,7 +337,7 @@ describe("audit_log append-only hash chain (H2)", () => {
       withTenant(app, freshOrg, async (tx) => {
         await tx`insert into orgs (id, slug, name) values (${freshOrg}, ${"genx"}, ${"Gen"})`;
         await tx`insert into audit_log (org_id, seq, action, prev_hash, row_hash)
-                 values (${freshOrg}, ${1}, ${"x"}, ${bytes(32)}, ${bytes(33)})`;
+                 values (${freshOrg}, ${1}, ${"x"}, ${deterministicBuffer(32)}, ${deterministicBuffer(33)})`;
       }),
     ).rejects.toThrow(/genesis/i);
   });

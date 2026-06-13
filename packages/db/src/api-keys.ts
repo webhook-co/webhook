@@ -20,7 +20,7 @@
 import { randomUUID } from "node:crypto";
 
 import { withTenant, type Sql } from "./client";
-import { mintCredential, type CredentialHasher } from "./credential";
+import { credentialHashEquals, mintCredential, type CredentialHasher } from "./credential";
 import type { ResolvedPrincipal } from "./credential-cache";
 
 /** Default display prefix for api keys (the non-secret handle). */
@@ -163,8 +163,11 @@ export function makeApiKeyColdLookup(authn: Sql, audience: string) {
       where key_hash = ${keyHash}`;
     const row = rows[0];
     if (!row) return null;
-    // The lookup matched on equality, but never trust that alone — guard revocation and
-    // expiry explicitly so a stale/edge row can't resolve.
+    // The lookup matched on equality, but never resolve a principal off an unverified
+    // compare — re-check the stored hash against the queried hash in constant time
+    // (defense-in-depth; this is exactly what credentialHashEquals exists for). Then guard
+    // revocation and expiry explicitly so a stale/edge row can't resolve.
+    if (!credentialHashEquals(Buffer.from(row.key_hash), keyHash)) return null;
     if (row.revoked_at !== null) return null;
     if (row.expires_at !== null && row.expires_at.getTime() <= Date.now()) return null;
     return { orgId: row.org_id, scopes: toScopes(row.scopes), audience };

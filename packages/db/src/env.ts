@@ -50,5 +50,16 @@ function decodePepper(value: string | undefined, name: string): Buffer {
         `(base64, >=32 bytes) and must never be committed to source.`,
     );
   }
-  return Buffer.from(value, "base64");
+  const trimmed = value.trim();
+  // Node's base64 decoder is LENIENT: it silently drops characters it doesn't recognise,
+  // so a typo'd / wrong-format pepper (whitespace, base64url vs base64 confusion, a stray
+  // character) would decode to a wrong-but-accepted buffer and quietly change every hash.
+  // Validate strict standard base64 first and fail loud instead.
+  if (trimmed.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) {
+    throw new Error(
+      `${name} is not valid base64. The credential pepper is injected as a wrangler/Worker ` +
+        `secret (standard base64, >=32 bytes) and must never be committed to source.`,
+    );
+  }
+  return Buffer.from(trimmed, "base64");
 }
