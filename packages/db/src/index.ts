@@ -12,3 +12,8 @@ export * from "./constants";
 export * from "./env";
 export * from "./client";
 export * from "./audit-append";
+export * from "./credential";
+export * from "./credential-cache";
+export * from "./credential-resolver";
+export * from "./api-keys";
+export * from "./verify-bearer";
