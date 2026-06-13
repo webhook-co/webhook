@@ -4,23 +4,18 @@
     "outDir": "dist",
     "rootDir": "src",
     "types": ["node"],
-    // db is the Node/Postgres package (types: ["node"]), so unlike the Workers packages
-    // (types: ["@cloudflare/workers-types"]) it has no DOM/WebCrypto lib. Resolving
-    // @webhook-co/shared to its raw source would make tsc re-typecheck shared's WebCrypto
-    // code (crypto.subtle.*) under node-only libs, where @types/node's
-    // Uint8Array<ArrayBufferLike> doesn't satisfy the DOM BufferSource. The same applies
-    // to @webhook-co/webhooks-spec, which shared re-exports (`export * from`), so its
-    // source (e.g. bytes.ts) is reached transitively even when shared resolves to dist.
-    // Both are typechecked under their own (workers-types) configs and built before this
-    // package (turbo `^build`), so we consume their emitted declarations instead — the
-    // crypto internals are validated once, in their own packages, not re-checked here.
+    // Node<->Workers tsconfig boundary (see engineering-conventions rule). db is the
+    // Node/Postgres package (types: ["node"]) with no DOM/WebCrypto lib; its internal deps
+    // (contract, shared, + webhooks-spec reached transitively via shared's `export *`) are
+    // all Workers-typed. Resolving them to source would make tsc re-typecheck their
+    // WebCrypto code (crypto.subtle.*) under node libs, where @types/node's
+    // Uint8Array<ArrayBufferLike> doesn't satisfy the DOM BufferSource. Every internal dep
+    // crosses the boundary, so we redirect the whole `@webhook-co/*` scope to the emitted
+    // declarations — built before this package (turbo `^build`) and validated once in their
+    // own (workers-types) configs. The wildcard is self-maintaining: it covers transitive
+    // reach and any future internal dep without re-listing the closure by hand.
     "paths": {
-      "@webhook-co/shared": ["../shared/dist/index.d.ts"],
-      "@webhook-co/webhooks-spec": ["../webhooks-spec/dist/index.d.ts"],
-      // Same discipline as shared/webhooks-spec above: contract is typechecked + built
-      // under its own (workers-types) config, so db consumes its emitted declarations
-      // rather than re-checking contract's zod/WebCrypto-reaching source under node libs.
-      "@webhook-co/contract": ["../contract/dist/index.d.ts"]
+      "@webhook-co/*": ["../*/dist/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts"],

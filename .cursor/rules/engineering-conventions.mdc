@@ -12,6 +12,15 @@ alwaysApply: false
   narrowing. Validate all external input (webhook bodies, API params) at the boundary with a schema.
 - Keep `shared/` the home for cross-surface types. The same operation across CLI / API / web / MCP
   should share types — don't redefine payloads per surface.
+- **Node↔Workers tsconfig boundary.** Packages export source for live cross-package types, but a
+  Node-typed package (`types: ["node"]`) and a Workers-typed one (`types: ["@cloudflare/workers-types"]`)
+  must never recompile each other's source — the lib worlds disagree (e.g. `@types/node`'s
+  `Uint8Array<ArrayBufferLike>` vs the DOM `BufferSource` for WebCrypto). So an internal dependency
+  edge that **crosses** that boundary resolves to the dep's built `dist/*.d.ts` via tsconfig `paths`,
+  not its source; same-world edges stay on source. Use the `@webhook-co/*` → `dist` wildcard when
+  **every** internal dep crosses (db); use an exact `@webhook-co/<pkg>` redirect when only some do
+  (api/mcp → db). The `tsconfig-boundary` guard (`scripts/tsconfig-boundary.mjs`, wired into `lint`
+  and CI) fails the build if a cross-boundary edge isn't redirected.
 
 ## Workers / Durable Objects
 

@@ -15,7 +15,8 @@ self-merge their own PRs *without* ever being able to bypass CI, the rules are s
   role is a bypass actor in `pull_request` mode**, so the org admin / sole maintainer can
   merge their own PRs without a second approver. Merge methods limited to squash/rebase (linear).
 - **`main-status-checks.json`** — requires **status checks** (`install`, `lint`, `format-check`,
-  `typecheck`, `test`, `build`, `no-skipped-tests`, `codeql`, `gitleaks`), requires the branch to
+  `typecheck`, `test`, `build`, `no-skipped-tests`, `tsconfig-boundary`, `codeql`, `gitleaks`),
+  requires the branch to
   be **up to date** (strict), **blocks force-pushes** (`non_fast_forward`), requires **linear
   history**, and blocks branch deletion. **`bypass_actors` is empty** — so **no one, including
   admins, can bypass CI.** Signed commits are intentionally **not** required.
