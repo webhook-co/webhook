@@ -28,12 +28,18 @@ const TENANT_TABLES = [
   { table: "org_limits", col: "org_id" },
   { table: "ingest_paused", col: "org_id" },
   { table: "audit_log", col: "org_id" },
+  { table: "api_keys", col: "org_id" },
 ] as const;
 
 // Better Auth identity tables are GLOBAL (text ids, per-user / api-key), intentionally
 // exempt from per-org RLS in this freeze (auth workstream owns any later scoping).
 // schema_migrations is dbmate's bookkeeping. Documented so the catalog coverage test
 // can subtract them with a reason rather than a bare skip.
+//
+// `apikey` is the better-auth plugin's table and STAYS exempt here per ADR-0008
+// (Option B): our own RLS+FORCE `api_keys` table (in TENANT_TABLES) is the new
+// org-scoped store, but the plugin's `apikey` exemption is removed only in a LATER
+// contract migration once nothing reads it — never in this release.
 const RLS_EXEMPT = new Set([
   "user",
   "session",
@@ -90,6 +96,8 @@ async function seedOrg(slug: string): Promise<Seeded> {
     await tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${false})`;
     await tx`insert into audit_log (org_id, seq, actor, action, prev_hash, row_hash)
              values (${orgId}, ${1}, ${userId}, ${"org.created"}, ${null}, ${bytes(32)})`;
+    await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes)
+             values (${randomUUID()}, ${orgId}, ${randomBytes(32)}, ${"whk"}, ${"whk_" + slug}, ${"key-" + slug}, ${tx.json(["events:read"])})`;
   });
 
   return { orgId, userId, endpointId, eventId };
@@ -395,6 +403,24 @@ describe("catalog-driven RLS coverage (M3)", () => {
       where relkind = 'r' and relnamespace = 'public'::regnamespace
         and pg_get_userbyid(relowner) in (${DB_ROLES.app}, ${DB_ROLES.ingest})`;
     expect(ownedByApp[0]?.n).toBe(0);
+  });
+
+  it("the authn role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
+    // webhook_authn is the bearer-verify role: it reads only the granted api_keys
+    // columns (a separate FOR SELECT policy) and must be RLS-enforced like every other
+    // request-path role — never a superuser, never BYPASSRLS, never a table owner.
+    const [role] = await owner<{ rolname: string; super: boolean; bypass: boolean }[]>`
+      select rolname, rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.authn}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+
+    const ownedByAuthn = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.authn}`;
+    expect(ownedByAuthn[0]?.n).toBe(0);
   });
 });
 
