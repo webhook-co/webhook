@@ -15,5 +15,8 @@ export * from "./cursor";
 export * from "./audit";
 export * from "./r2";
 export * from "./envelope";
+export * from "./kms/local";
+export * from "./kms/lru";
+export * from "./secret-store";
 export * from "./redaction";
 export * from "./metering";
