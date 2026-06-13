@@ -13,15 +13,12 @@
 export const INGEST_STATEMENT_TIMEOUT_MS = 5_000;
 
 /**
- * The watermark delta δ. Must be >= INGEST_STATEMENT_TIMEOUT_MS. Kept equal: the
- * tightest gapless watermark that still satisfies the invariant.
+ * The watermark delta δ. Must be >= INGEST_STATEMENT_TIMEOUT_MS. Kept equal: the tightest
+ * gapless watermark that still satisfies the invariant. The δ >= statement_timeout invariant
+ * is enforced structurally by this definition and asserted in watermark.test.ts — a runtime
+ * guard here would be tautological dead code (δ is literally the timeout), so there isn't one.
  */
 export const WATERMARK_DELTA_MS = INGEST_STATEMENT_TIMEOUT_MS;
-
-if (WATERMARK_DELTA_MS < INGEST_STATEMENT_TIMEOUT_MS) {
-  // Compile-time-ish invariant guard (also asserted in tests): δ >= statement_timeout.
-  throw new Error("WATERMARK_DELTA_MS must be >= INGEST_STATEMENT_TIMEOUT_MS");
-}
 
 /** The newest received_at a durable tail/cursor may return: now - δ. */
 export function watermarkCutoff(now: Date = new Date()): Date {
