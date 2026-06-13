@@ -26,4 +26,21 @@ describe("Input", () => {
     );
     expect(screen.getByLabelText("Signing secret")).toBeInTheDocument();
   });
+
+  it("carries the invalid-state border class when aria-invalid is set", () => {
+    render(<Input aria-label="bad url" aria-invalid />);
+    const input = screen.getByLabelText("bad url");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    expect(input).toHaveClass("aria-[invalid=true]:border-danger-border");
+  });
+
+  it("is disabled and non-interactive when disabled", () => {
+    render(<Input aria-label="locked" disabled />);
+    expect(screen.getByLabelText("locked")).toBeDisabled();
+  });
+
+  it("forwards an explicit type (e.g. password)", () => {
+    render(<Input aria-label="secret" type="password" />);
+    expect(screen.getByLabelText("secret")).toHaveAttribute("type", "password");
+  });
 });
