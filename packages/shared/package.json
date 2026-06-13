@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@webhook-co/webhooks-spec": "workspace:*",
+    "aws4fetch": "^1.0.20",
     "uuidv7": "^1.2.1",
     "zod": "^4.4.3"
   },

@@ -17,6 +17,7 @@ export * from "./audit-chain";
 export * from "./r2";
 export * from "./envelope";
 export * from "./kms/local";
+export * from "./kms/aws";
 export * from "./kms/lru";
 export * from "./secret-store";
 export * from "./redaction";
