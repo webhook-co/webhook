@@ -12,6 +12,7 @@ import {
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
+import { expectNoSecretInSerialized } from "./secret-leak";
 import { InMemoryCredentialCache } from "../src/credential-cache";
 import { createCredentialResolver } from "../src/credential-resolver";
 import { setupSchema } from "./migrate";
@@ -102,8 +103,12 @@ describe("createApiKey -> verify -> list -> revoke", () => {
     const found = items.find((k) => k.id === created.id);
     expect(found?.name).toBe("listed");
     expect(found?.start.startsWith(API_KEY_PREFIX)).toBe(true);
-    // The list item type carries no hash/plaintext field at all.
-    expect(JSON.stringify(items)).not.toContain(created.plaintext.slice(API_KEY_PREFIX.length + 1));
+    // The list item type carries no hash/plaintext field at all — assert the FULL plaintext
+    // and the stored hash hex are absent from the serialized listing (not just a slice).
+    expectNoSecretInSerialized(items, [
+      created.plaintext,
+      hasher.hash(created.plaintext).toString("hex"),
+    ]);
   });
 
   it("revoke stamps revoked_at and the key stops verifying", async () => {

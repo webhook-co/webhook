@@ -48,7 +48,14 @@ export interface CredentialResolverOptions {
 function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
-  return typeof v.orgId === "string" && Array.isArray(v.scopes);
+  // Validate the FULL shape, not just the top-level field kinds — a poisoned/garbled
+  // entry whose scopes array holds non-strings (or whose optional fields are the wrong
+  // type) must NOT pass as a principal. Anything that fails falls through to the cold path.
+  if (typeof v.orgId !== "string" || v.orgId === "") return false;
+  if (!Array.isArray(v.scopes) || !v.scopes.every((s) => typeof s === "string")) return false;
+  if (v.endpointId !== undefined && typeof v.endpointId !== "string") return false;
+  if (v.audience !== undefined && typeof v.audience !== "string") return false;
+  return true;
 }
 
 /**
@@ -68,9 +75,18 @@ export function createCredentialResolver(opts: CredentialResolverOptions): Crede
     for (const keyHash of hashes) {
       const cached = await opts.cache.get(credentialCacheKey(keyHash));
       if (cached !== null) {
-        const parsed: unknown = JSON.parse(cached);
         // A malformed cache entry is treated as a miss (fail closed to the cold path),
-        // never trusted — so a poisoned/garbled value can't forge a principal.
+        // never trusted — so a poisoned/garbled value can't forge a principal. This covers
+        // BOTH a value that is valid JSON of the wrong shape AND a value that is not JSON at
+        // all (a truncated/partial KV write or an externally poisoned entry): JSON.parse
+        // throws on the latter, so it is caught here and reduced to a miss rather than
+        // surfacing as an unhandled 500 that would deny a valid credential for the TTL.
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(cached);
+        } catch {
+          parsed = null;
+        }
         if (isResolvedPrincipal(parsed)) return parsed;
       }
     }

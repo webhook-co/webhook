@@ -81,6 +81,37 @@ describe("createCredentialResolver — hot/cold path (S3)", () => {
     expect(cold).toHaveBeenCalledTimes(1); // garbage entry was not trusted
   });
 
+  it("treats a NON-JSON cache entry as a miss, not an unhandled throw", async () => {
+    // A truncated/partial KV write or an externally poisoned entry is not valid JSON at
+    // all. The resolver must fall through to the cold path, never let JSON.parse throw out
+    // (which would 500 a valid credential for the whole TTL).
+    const cache = new InMemoryCredentialCache();
+    await cache.put(hasher.hash("whk_secret").toString("hex"), "not json at all");
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+
+    const result = await resolver.resolve("whk_secret");
+    expect(result?.orgId).toBe(ORG);
+    expect(cold).toHaveBeenCalledTimes(1); // corrupt entry discarded, cold path ran
+  });
+
+  it("rejects a cached entry whose scopes array holds non-strings (fails closed)", async () => {
+    // Valid JSON, right top-level kinds, but a structurally unsound principal: the guard
+    // must validate scope element types, not just that scopes is an array.
+    const cache = new InMemoryCredentialCache();
+    await cache.put(
+      hasher.hash("whk_secret").toString("hex"),
+      JSON.stringify({ orgId: ORG, scopes: ["events:read", 42] }),
+    );
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+
+    const result = await resolver.resolve("whk_secret");
+    expect(result?.orgId).toBe(ORG);
+    expect(result?.scopes).toEqual(["events:read"]); // the cold principal, not the poisoned one
+    expect(cold).toHaveBeenCalledTimes(1);
+  });
+
   it("invalidateHash deletes by raw hash (admin revoke without the plaintext)", async () => {
     const cache = new InMemoryCredentialCache();
     const delSpy = vi.spyOn(cache, "delete");
