@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "lint": "eslint . && pnpm run no-skipped-tests",
+    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run tsconfig-boundary",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -20,6 +20,7 @@
     "test": "turbo run test --filter=!@webhook-co/db",
     "test:db": "turbo run test --filter=@webhook-co/db",
     "no-skipped-tests": "node scripts/no-skipped-tests.mjs",
+    "tsconfig-boundary": "node scripts/tsconfig-boundary.mjs",
     "prepare": "husky"
   },
   "devDependencies": {

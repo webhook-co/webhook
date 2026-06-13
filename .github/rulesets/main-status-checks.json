@@ -26,6 +26,7 @@
           { "context": "test" },
           { "context": "build" },
           { "context": "no-skipped-tests" },
+          { "context": "tsconfig-boundary" },
           { "context": "codeql" },
           { "context": "gitleaks" }
         ]

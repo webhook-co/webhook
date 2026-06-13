@@ -3,7 +3,15 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types"],
+    // Node<->Workers tsconfig boundary (see engineering-conventions rule). When this Workers
+    // app imports db (Node-typed, e.g. verifyBearer), resolving it to source would make tsc
+    // re-typecheck db's node:crypto code under workers-types and fail. db is the only
+    // cross-boundary internal dep, so we redirect just it to its emitted declarations;
+    // same-world deps (shared, contract) stay on source for live cross-package types.
+    "paths": {
+      "@webhook-co/db": ["../../packages/db/dist/index.d.ts"]
+    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", ".turbo", "src/**/*.test.ts"]
