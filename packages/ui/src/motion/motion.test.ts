@@ -31,6 +31,12 @@ describe("stagger", () => {
     expect(s.transition.staggerChildren).toBeCloseTo(0.12);
     expect(s.transition.delayChildren).toBeCloseTo(0.32);
   });
+
+  it("uses token defaults when called with no arguments", () => {
+    const s = stagger();
+    expect(s.transition.delayChildren).toBe(0);
+    expect(s.transition.staggerChildren).toBeCloseTo(duration.fast / 1000);
+  });
 });
 
 describe("prefersReducedMotion", () => {
