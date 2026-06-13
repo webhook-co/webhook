@@ -20,4 +20,11 @@ export const DB_ROLES = {
    * events only (INSERT + SELECT — SELECT is required by ON CONFLICT's arbiter).
    */
   ingest: "webhook_ingest",
+  /**
+   * Bearer-verify path (api-key lookup). Non-owner, no BYPASSRLS, RLS-enforced; holds a
+   * SELECT-only policy on api_keys via a column-level grant (key_hash, org_id, scopes,
+   * expires_at, revoked_at) — never the display metadata, never any write. A leaked
+   * credential enumerates key metadata but cannot forge or use a key (ADR-0008 Option B).
+   */
+  authn: "webhook_authn",
 } as const;
