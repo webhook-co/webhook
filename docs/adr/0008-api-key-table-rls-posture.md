@@ -51,6 +51,30 @@ table. The two options the auth workstream weighed were:
 The compliance-by-design argument — database-enforced tenant isolation for every org-scoped
 row, with no surface exempted by application logic — is what tips it to Option B.
 
+## hashing posture (keyed HMAC + pepper)
+
+`key_hash` stores **`HMAC-SHA256(pepper, plaintext)`**, not a bare `sha256`. Two deliberate
+choices, on two different axes:
+
+- **Fast hash, not a slow KDF.** The secret is a CSPRNG ≥256-bit token, so its keyspace
+  (2²⁵⁶) is unbruteforcible regardless of hash speed. Slow KDFs (argon2/bcrypt/scrypt) exist
+  to throttle brute force of **low-entropy human passwords**; applied here they would add
+  ~50–100 ms per verify for **zero** security gain and are the wrong tool. (This is also why
+  CodeQL's password-oriented `js/insufficient-password-hash` is a false positive on this path —
+  it cannot distinguish a 256-bit random token from a guessable password. We do not "fix" a
+  true-entropy token by switching to argon2.)
+- **Keyed (peppered), not bare.** The hash is keyed with a server-side **pepper** held
+  **outside the database** — a wrangler/Worker secret or KMS binding, never a column — the same
+  custody discipline as the ADR-0004 audit-chain key. HMAC-SHA256 is as fast as sha256, so no
+  latency cost, but a **database-only** breach (e.g. an attacker exfiltrating `key_hash` via the
+  `webhook_authn` column-grant residual, see threat-model) yields hashes that cannot be matched
+  or confirmed against even a *known* plaintext without also stealing the pepper. Worst case
+  (pepper **and** DB both leak) degrades to bare-sha256 security, still safe for a 256-bit
+  secret — so peppering is strictly additive defense-in-depth. The pepper is **required** (no
+  insecure default; a missing pepper fails loud), and supports rotation via a current + previous
+  pepper list (mint uses current; verify accepts both during the rotation window). The same
+  primitive backs ingest tokens (ADR-0003), so they inherit this posture for free.
+
 ## migration implications
 
 `0001` is merged — never edit it. Option B lands as a **new forward migration** that adds
