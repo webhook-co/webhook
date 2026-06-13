@@ -25,9 +25,10 @@ Truncation (lopping off the tail) is also undetectable without an external ancho
   enforces the structure: a trigger requires contiguous `seq` + `prev_hash` linkage, and
   an immutability trigger rejects `UPDATE`/`DELETE`/`TRUNCATE` (proven against a
   superuser in the leak suite). The unique `(org_id, seq)` is the serialization point.
-- **WORM head-anchor (designed now, cron later).** Periodically anchor the per-org chain
-  head to R2 Object Lock so tail-truncation is detectable. Fields are frozen now; the
-  cron implementation is post-freeze.
+- **WORM head-anchor (designed now, serialized + cron later).** Periodically anchor the
+  per-org chain head to R2 Object Lock so tail-truncation is detectable. The anchor is
+  designed, not yet serialized — there's no frozen anchor payload format in code yet; both
+  the serialized format and the cron that writes it are a post-freeze workstream.
 - **Pseudonymous actor (M1).** `actor` is the Better Auth `user_id`, never raw PII, and
   is not a FK — user erasure never deletes audit history.
 - **Control-plane only.** The chain records low-volume control actions; per-event
