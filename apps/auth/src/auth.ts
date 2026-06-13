@@ -13,6 +13,13 @@ import { Pool } from "pg";
 // the emitted DDL is checked in and owned as a dbmate migration.
 //
 // The Pool selects the Postgres dialect; `generate` connects to introspect/diff.
+//
+// G2 reconcile (WS-D1b): `emailAndPassword` is enabled here only because it changes NO
+// emitted tables (user/session/account/verification are the same DDL with or without it)
+// — it keeps the generated schema stable for the CI drift guard. WS-D2's RUNTIME scope is
+// social login + magic link, NOT password auth; this divergence is intentional and left
+// for WS-D2 to resolve when the runtime auth Worker lands. This file is the
+// schema-GENERATOR config only; it is never the runtime, so the divergence is harmless.
 export const auth = betterAuth({
   database: new Pool({
     connectionString: process.env.DATABASE_URL ?? "postgres://localhost:5432/placeholder",

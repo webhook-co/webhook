@@ -6,9 +6,11 @@
   "main": "src/index.ts",
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage"
   },
   "dependencies": {
+    "@webhook-co/contract": "workspace:*",
     "@webhook-co/shared": "workspace:*"
   },
   "devDependencies": {

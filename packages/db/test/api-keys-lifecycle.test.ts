@@ -1,0 +1,207 @@
+import { randomUUID } from "node:crypto";
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import {
+  API_KEY_PREFIX,
+  createApiKey,
+  listApiKeys,
+  makeApiKeyColdLookup,
+  revokeApiKey,
+} from "../src/api-keys";
+import { createClient, withTenant, type Sql } from "../src/client";
+import { DB_ROLES } from "../src/constants";
+import { hashCredential } from "../src/credential";
+import { InMemoryCredentialCache } from "../src/credential-cache";
+import { createCredentialResolver } from "../src/credential-resolver";
+import { setupSchema } from "./migrate";
+import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+
+// WS-D1b api-key lifecycle + verify-path suite. Exercises the ACTUAL shipped functions
+// (createApiKey/listApiKeys/revokeApiKey + the webhook_authn cold lookup wired into a
+// credential resolver) against a REAL Postgres with REAL non-owner roles, so the
+// two-pool design (S1), the column-level grant, RLS, and revocation->cache-invalidation
+// are all validated on a real engine. (The frozen DB-layer suite api_keys.test.ts —
+// owned by WS-D1a — validates the raw SQL contract; this validates the TS data-access.)
+
+const API_RESOURCE = "https://api.webhook.co";
+
+let pg: EphemeralPostgres;
+let app: Sql; // webhook_app pool — create/list/revoke (tenant DML under RLS)
+let authn: Sql; // webhook_authn pool — verify cold path (column-scoped SELECT)
+let orgA: string;
+let orgB: string;
+
+async function seedOrg(orgId: string): Promise<void> {
+  await withTenant(app, orgId, async (tx) => {
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+  });
+}
+
+/** A verify helper wiring the authn cold lookup behind a (fresh) in-memory cache. */
+function makeResolver(cache = new InMemoryCredentialCache()) {
+  return {
+    cache,
+    resolver: createCredentialResolver({
+      cache,
+      coldLookup: makeApiKeyColdLookup(authn, API_RESOURCE),
+    }),
+  };
+}
+
+beforeAll(async () => {
+  pg = await startEphemeralPostgres();
+  await setupSchema(pg);
+  // TWO POOLS (S1): a webhook_app pool and a SEPARATE webhook_authn pool. webhook_authn
+  // cannot SET ROLE webhook_app — that's the whole point of least-privilege — so the
+  // verify path uses its own connection. In prod the authn pool is wired to the
+  // CACHE-DISABLED Hyperdrive binding; here both hit the ephemeral PG directly.
+  app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+  authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
+
+  orgA = randomUUID();
+  orgB = randomUUID();
+  await seedOrg(orgA);
+  await seedOrg(orgB);
+}, 90_000);
+
+afterAll(async () => {
+  await app?.end();
+  await authn?.end();
+  await pg?.stop();
+});
+
+describe("createApiKey -> verify -> list -> revoke", () => {
+  it("creates a key, returns the plaintext once, and verify discovers its org", async () => {
+    const created = await createApiKey(app, {
+      orgId: orgA,
+      name: "lifecycle",
+      scopes: ["events:read"],
+    });
+    expect(created.plaintext.startsWith(`${API_KEY_PREFIX}_`)).toBe(true);
+    expect(created.orgId).toBe(orgA);
+
+    const { resolver } = makeResolver();
+    const principal = await resolver.resolve(created.plaintext);
+    expect(principal?.orgId).toBe(orgA); // org DISCOVERED from the key
+    expect(principal?.scopes).toEqual(["events:read"]);
+    expect(principal?.audience).toBe(API_RESOURCE);
+  });
+
+  it("lists the org's keys with display metadata only (no hash, no plaintext)", async () => {
+    const created = await createApiKey(app, {
+      orgId: orgA,
+      name: "listed",
+      scopes: ["events:read"],
+    });
+    const items = await listApiKeys(app, orgA);
+    expect(items.length).toBeGreaterThan(0);
+    const found = items.find((k) => k.id === created.id);
+    expect(found?.name).toBe("listed");
+    expect(found?.start.startsWith(API_KEY_PREFIX)).toBe(true);
+    // The list item type carries no hash/plaintext field at all.
+    expect(JSON.stringify(items)).not.toContain(created.plaintext.slice(API_KEY_PREFIX.length + 1));
+  });
+
+  it("revoke stamps revoked_at and the key stops verifying", async () => {
+    const created = await createApiKey(app, { orgId: orgA, name: "revokeme", scopes: [] });
+    const { cache, resolver } = makeResolver();
+
+    expect(await resolver.resolve(created.plaintext)).not.toBeNull(); // warms the cache
+
+    const revoked = await revokeApiKey(app, orgA, created.id);
+    expect(revoked).toBe(true);
+    // Real revocation invalidates the cache too (the surface holds the plaintext/hash).
+    await resolver.invalidate(created.plaintext);
+
+    expect(await resolver.resolve(created.plaintext)).toBeNull();
+    // A second revoke of an already-revoked key is a no-op.
+    expect(await revokeApiKey(app, orgA, created.id)).toBe(false);
+    expect(cache.gets).toBeGreaterThan(0);
+  });
+});
+
+describe("expiry honored on verify", () => {
+  it("an expired key does not resolve", async () => {
+    const created = await createApiKey(app, {
+      orgId: orgA,
+      name: "expired",
+      scopes: [],
+      expiresAt: new Date(Date.now() - 60_000),
+    });
+    const { resolver } = makeResolver();
+    expect(await resolver.resolve(created.plaintext)).toBeNull();
+  });
+
+  it("a future-dated expiry still resolves", async () => {
+    const created = await createApiKey(app, {
+      orgId: orgA,
+      name: "future",
+      scopes: [],
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    const { resolver } = makeResolver();
+    expect(await resolver.resolve(created.plaintext)).not.toBeNull();
+  });
+});
+
+describe("two-pool design (S1): webhook_authn cold lookup is least-privilege", () => {
+  it("the authn pool resolves org via the 5 granted columns", async () => {
+    const created = await createApiKey(app, {
+      orgId: orgA,
+      name: "authn",
+      scopes: ["events:read"],
+    });
+    const cold = makeApiKeyColdLookup(authn, API_RESOURCE);
+    const principal = await cold(hashCredential(created.plaintext));
+    expect(principal?.orgId).toBe(orgA);
+  });
+
+  it("the authn pool CANNOT read an ungranted column (name) — defense the verify path relies on", async () => {
+    await expect(authn`select name from api_keys limit 1`).rejects.toThrow(/permission denied/i);
+  });
+
+  it("the authn pool CANNOT write api_keys (verify-only role)", async () => {
+    await expect(
+      authn`update api_keys set revoked_at = now() where org_id = ${orgA}`,
+    ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+describe("cross-org isolation (RLS) on the app pool", () => {
+  it("org A's app context cannot revoke org B's key", async () => {
+    const bKey = await createApiKey(app, { orgId: orgB, name: "borg", scopes: [] });
+    // Under org A's context the row is invisible -> nothing revoked.
+    expect(await revokeApiKey(app, orgA, bKey.id)).toBe(false);
+    // And it still verifies as org B's (org-discovery never crosses the boundary).
+    const { resolver } = makeResolver();
+    const principal = await resolver.resolve(bKey.plaintext);
+    expect(principal?.orgId).toBe(orgB);
+  });
+});
+
+describe("KV hot path vs cold path vs revocation (S3)", () => {
+  it("hot-path hit avoids a second authn round-trip; revocation forces a cold miss", async () => {
+    const created = await createApiKey(app, { orgId: orgA, name: "kv", scopes: ["events:read"] });
+    const cache = new InMemoryCredentialCache();
+    // Count cold lookups by wrapping the real authn lookup.
+    let coldCalls = 0;
+    const baseCold = makeApiKeyColdLookup(authn, API_RESOURCE);
+    const resolver = createCredentialResolver({
+      cache,
+      coldLookup: async (h) => {
+        coldCalls += 1;
+        return baseCold(h);
+      },
+    });
+
+    await resolver.resolve(created.plaintext); // cold (miss)
+    await resolver.resolve(created.plaintext); // hot (hit)
+    expect(coldCalls).toBe(1);
+
+    await revokeApiKey(app, orgA, created.id);
+    await resolver.invalidate(created.plaintext); // revocation invalidates KV
+    expect(await resolver.resolve(created.plaintext)).toBeNull(); // cold again -> revoked
+    expect(coldCalls).toBe(2);
+  });
+});

@@ -16,7 +16,11 @@
     // crypto internals are validated once, in their own packages, not re-checked here.
     "paths": {
       "@webhook-co/shared": ["../shared/dist/index.d.ts"],
-      "@webhook-co/webhooks-spec": ["../webhooks-spec/dist/index.d.ts"]
+      "@webhook-co/webhooks-spec": ["../webhooks-spec/dist/index.d.ts"],
+      // Same discipline as shared/webhooks-spec above: contract is typechecked + built
+      // under its own (workers-types) config, so db consumes its emitted declarations
+      // rather than re-checking contract's zod/WebCrypto-reaching source under node libs.
+      "@webhook-co/contract": ["../contract/dist/index.d.ts"]
     }
   },
   "include": ["src/**/*.ts"],

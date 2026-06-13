@@ -66,6 +66,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@webhook-co/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -98,6 +101,9 @@ importers:
 
   apps/mcp:
     dependencies:
+      '@webhook-co/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -175,6 +181,9 @@ importers:
 
   packages/db:
     dependencies:
+      '@webhook-co/contract':
+        specifier: workspace:*
+        version: link:../contract
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../shared
