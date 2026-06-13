@@ -17,7 +17,6 @@ import {
   DEK_BYTES,
   GCM_NONCE_BYTES,
   encryptionContextAad,
-  ENVELOPE_VERSION,
   type EncryptionContext,
   type KmsProvider,
   type WrappedDek,
@@ -27,6 +26,14 @@ const DEFAULT_KEK_REF = "local-dev-kek";
 
 /** AES-256 raw KEK length in bytes. */
 const KEK_BYTES = 32;
+
+// The KEK-wrap AAD version is FROZEN, deliberately decoupled from ENVELOPE_VERSION.
+// ENVELOPE_VERSION tracks the SECRET payload format (sealSecret/openSecret), which is
+// allowed to migrate; the local KEK merely wraps a random DEK and only needs an AAD it can
+// reconstruct at unwrap time. Coupling this to ENVELOPE_VERSION would mean a secret-format
+// bump silently changed the wrap AAD and made every previously-wrapped DEK un-unwrappable.
+// Wrap and unwrap MUST use the same value — keep them pinned to this one constant.
+const KEK_WRAP_AAD_VERSION = 1;
 
 export class LocalKmsProvider implements KmsProvider {
   readonly #kek: CryptoKey;
@@ -113,7 +120,11 @@ export class LocalKmsProvider implements KmsProvider {
       "raw",
       body,
       this.#kek,
-      { name: "AES-GCM", iv: nonce, additionalData: encryptionContextAad(context) },
+      {
+        name: "AES-GCM",
+        iv: nonce,
+        additionalData: encryptionContextAad(context, KEK_WRAP_AAD_VERSION),
+      },
       { name: "AES-GCM" },
       false,
       ["encrypt", "decrypt"],
@@ -125,7 +136,7 @@ export class LocalKmsProvider implements KmsProvider {
     const body = await crypto.subtle.wrapKey("raw", dek, this.#kek, {
       name: "AES-GCM",
       iv: nonce,
-      additionalData: encryptionContextAad(context, ENVELOPE_VERSION),
+      additionalData: encryptionContextAad(context, KEK_WRAP_AAD_VERSION),
     });
     return {
       wrappedDek: concatBytes(nonce, new Uint8Array(body)),

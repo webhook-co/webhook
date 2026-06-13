@@ -11,7 +11,7 @@
 // injected, so the same helper works over the local dev KEK today and AWS KMS (WS-B2) later
 // with no caller changes.
 
-import { utf8Decoder, utf8Encoder } from "./bytes";
+import { bytesToB64url, utf8Decoder, utf8Encoder } from "./bytes";
 import {
   ENVELOPE_VERSION,
   openSecret,
@@ -85,26 +85,14 @@ export class SecretStore {
     if (this.#cache === undefined) {
       return this.#kms.unwrapDek(wrapped, context);
     }
-    // Cache key is (orgId, kekRef + wrap nonce) — distinct wraps of the same DEK never alias,
-    // and the cache itself enforces org scoping + the BAA bypass.
-    const wrapRef = `${wrapped.kekRef}:${wrapRefDigest(wrapped.wrappedDek)}`;
+    // Cache key is (orgId, kekRef + the FULL wrapped-DEK bytes) — distinct wraps of the same
+    // DEK never alias. We use the full bytes (base64url), NOT a short digest: on a cache HIT
+    // the loader (unwrapDek) is never called, so a digest collision would hand back another
+    // entry's DEK handle with no AAD check to catch it. The full bytes are the identity, so
+    // collisions are impossible by construction.
+    const wrapRef = `${wrapped.kekRef}:${bytesToB64url(wrapped.wrappedDek)}`;
     return this.#cache.getOrLoad(context.orgId, wrapRef, () =>
       this.#kms.unwrapDek(wrapped, context),
     );
   }
-}
-
-/**
- * A short, stable identifier for a specific wrapped-DEK blob, used only as a cache key suffix.
- * The full wrapped bytes uniquely identify the DEK; we hash to keep the key small. This is a
- * non-cryptographic FNV-1a digest — collisions would only ever co-locate two cache entries
- * for the same org, and the AAD-bound unwrap would still reject a genuinely wrong DEK.
- */
-function wrapRefDigest(bytes: Uint8Array): string {
-  let h = 0x811c9dc5;
-  for (const b of bytes) {
-    h ^= b;
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16);
 }
