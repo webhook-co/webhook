@@ -1,6 +1,7 @@
 import { AudienceMismatchError, type AuthContext } from "@webhook-co/contract";
 import { describe, expect, it } from "vitest";
 
+import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "./credential";
 import { InMemoryCredentialCache, type ResolvedPrincipal } from "./credential-cache";
 import { createCredentialResolver } from "./credential-resolver";
 import {
@@ -14,9 +15,11 @@ const ORG = "22222222-2222-7222-8222-222222222222";
 const API_RESOURCE = "https://api.webhook.co";
 const MCP_RESOURCE = "https://mcp.webhook.co";
 
+const hasher = createCredentialHasher({ current: Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0xd4) });
+
 function resolverFor(principal: ResolvedPrincipal | null) {
   const cache = new InMemoryCredentialCache();
-  return createCredentialResolver({ cache, coldLookup: async () => principal });
+  return createCredentialResolver({ hasher, cache, coldLookup: async () => principal });
 }
 
 describe("makeVerifyBearer (api-key path, §0.8)", () => {

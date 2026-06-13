@@ -20,7 +20,7 @@
 import { randomUUID } from "node:crypto";
 
 import { withTenant, type Sql } from "./client";
-import { mintCredential } from "./credential";
+import { mintCredential, type CredentialHasher } from "./credential";
 import type { ResolvedPrincipal } from "./credential-cache";
 
 /** Default display prefix for api keys (the non-secret handle). */
@@ -57,14 +57,19 @@ export interface ApiKeyListItem {
 }
 
 /**
- * Create an org-scoped api key. Mints a >=256-bit CSPRNG secret, stores ONLY its sha256
- * hash (+ a non-secret display `start`), and returns the plaintext exactly once. Runs as
- * webhook_app under the org's RLS context. The edge generates the uuidv7 id (no DB
- * default) — randomUUID() is a stand-in until the shared uuidv7 mint is wired; both are
- * edge-generated uuids, so the storage contract is unchanged.
+ * Create an org-scoped api key. Mints a >=256-bit CSPRNG secret, stores ONLY its keyed
+ * HMAC-SHA256 hash (peppered, see credential.ts) plus a non-secret display `start`, and
+ * returns the plaintext exactly once. Runs as webhook_app under the org's RLS context. The
+ * `hasher` carries the pepper (injected from a secret, never a literal). The edge generates
+ * the uuidv7 id (no DB default) — randomUUID() is a stand-in until the shared uuidv7 mint
+ * is wired; both are edge-generated uuids, so the storage contract is unchanged.
  */
-export async function createApiKey(app: Sql, input: CreateApiKeyInput): Promise<CreatedApiKey> {
-  const { plaintext, keyHash, start } = mintCredential(API_KEY_PREFIX);
+export async function createApiKey(
+  app: Sql,
+  input: CreateApiKeyInput,
+  hasher: CredentialHasher,
+): Promise<CreatedApiKey> {
+  const { plaintext, keyHash, start } = mintCredential(API_KEY_PREFIX, hasher);
   const id = randomUUID();
   const scopes = [...input.scopes];
   const expiresAt = input.expiresAt ?? null;

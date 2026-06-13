@@ -7,6 +7,8 @@
 // code fork: the same data-access code runs everywhere. Prod and dev never share a
 // connection string (separate Neon projects).
 
+import { createCredentialHasher, type CredentialHasher } from "./credential";
+
 const VAR = "DATABASE_URL";
 
 export function resolveDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -18,4 +20,35 @@ export function resolveDatabaseUrl(env: NodeJS.ProcessEnv = process.env): string
     );
   }
   return url;
+}
+
+const PEPPER_VAR = "CREDENTIAL_PEPPER";
+const PEPPER_PREVIOUS_VAR = "CREDENTIAL_PEPPER_PREVIOUS";
+
+/**
+ * Build the credential hasher from the environment. CREDENTIAL_PEPPER is the active pepper
+ * (base64, >=32 bytes), injected as a wrangler/Worker secret — NEVER committed to source
+ * and never stored in a DB column (same custody as the audit-chain key, ADR-0004).
+ * CREDENTIAL_PEPPER_PREVIOUS is an optional comma-separated list of older peppers still
+ * accepted during a rotation window. The pepper is REQUIRED: there is no insecure default,
+ * so a misconfigured environment fails loud rather than silently minting bare-sha256 hashes.
+ */
+export function resolveCredentialHasher(env: NodeJS.ProcessEnv = process.env): CredentialHasher {
+  const current = decodePepper(env[PEPPER_VAR], PEPPER_VAR);
+  const previous = (env[PEPPER_PREVIOUS_VAR] ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s !== "")
+    .map((b64, i) => decodePepper(b64, `${PEPPER_PREVIOUS_VAR}[${i}]`));
+  return createCredentialHasher({ current, previous });
+}
+
+function decodePepper(value: string | undefined, name: string): Buffer {
+  if (!value || value.trim() === "") {
+    throw new Error(
+      `${name} is not set. The credential pepper is injected as a wrangler/Worker secret ` +
+        `(base64, >=32 bytes) and must never be committed to source.`,
+    );
+  }
+  return Buffer.from(value, "base64");
 }

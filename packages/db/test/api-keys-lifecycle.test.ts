@@ -11,7 +11,7 @@ import {
 } from "../src/api-keys";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { hashCredential } from "../src/credential";
+import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
 import { InMemoryCredentialCache } from "../src/credential-cache";
 import { createCredentialResolver } from "../src/credential-resolver";
 import { setupSchema } from "./migrate";
@@ -25,6 +25,8 @@ import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 // owned by WS-D1a — validates the raw SQL contract; this validates the TS data-access.)
 
 const API_RESOURCE = "https://api.webhook.co";
+// A fixed test pepper (>=32 bytes). In prod the pepper is injected from a wrangler secret.
+const hasher = createCredentialHasher({ current: Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0xe5) });
 
 let pg: EphemeralPostgres;
 let app: Sql; // webhook_app pool — create/list/revoke (tenant DML under RLS)
@@ -43,6 +45,7 @@ function makeResolver(cache = new InMemoryCredentialCache()) {
   return {
     cache,
     resolver: createCredentialResolver({
+      hasher,
       cache,
       coldLookup: makeApiKeyColdLookup(authn, API_RESOURCE),
     }),
@@ -73,11 +76,11 @@ afterAll(async () => {
 
 describe("createApiKey -> verify -> list -> revoke", () => {
   it("creates a key, returns the plaintext once, and verify discovers its org", async () => {
-    const created = await createApiKey(app, {
-      orgId: orgA,
-      name: "lifecycle",
-      scopes: ["events:read"],
-    });
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "lifecycle", scopes: ["events:read"] },
+      hasher,
+    );
     expect(created.plaintext.startsWith(`${API_KEY_PREFIX}_`)).toBe(true);
     expect(created.orgId).toBe(orgA);
 
@@ -89,11 +92,11 @@ describe("createApiKey -> verify -> list -> revoke", () => {
   });
 
   it("lists the org's keys with display metadata only (no hash, no plaintext)", async () => {
-    const created = await createApiKey(app, {
-      orgId: orgA,
-      name: "listed",
-      scopes: ["events:read"],
-    });
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "listed", scopes: ["events:read"] },
+      hasher,
+    );
     const items = await listApiKeys(app, orgA);
     expect(items.length).toBeGreaterThan(0);
     const found = items.find((k) => k.id === created.id);
@@ -104,7 +107,7 @@ describe("createApiKey -> verify -> list -> revoke", () => {
   });
 
   it("revoke stamps revoked_at and the key stops verifying", async () => {
-    const created = await createApiKey(app, { orgId: orgA, name: "revokeme", scopes: [] });
+    const created = await createApiKey(app, { orgId: orgA, name: "revokeme", scopes: [] }, hasher);
     const { cache, resolver } = makeResolver();
 
     expect(await resolver.resolve(created.plaintext)).not.toBeNull(); // warms the cache
@@ -123,23 +126,21 @@ describe("createApiKey -> verify -> list -> revoke", () => {
 
 describe("expiry honored on verify", () => {
   it("an expired key does not resolve", async () => {
-    const created = await createApiKey(app, {
-      orgId: orgA,
-      name: "expired",
-      scopes: [],
-      expiresAt: new Date(Date.now() - 60_000),
-    });
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "expired", scopes: [], expiresAt: new Date(Date.now() - 60_000) },
+      hasher,
+    );
     const { resolver } = makeResolver();
     expect(await resolver.resolve(created.plaintext)).toBeNull();
   });
 
   it("a future-dated expiry still resolves", async () => {
-    const created = await createApiKey(app, {
-      orgId: orgA,
-      name: "future",
-      scopes: [],
-      expiresAt: new Date(Date.now() + 3_600_000),
-    });
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "future", scopes: [], expiresAt: new Date(Date.now() + 3_600_000) },
+      hasher,
+    );
     const { resolver } = makeResolver();
     expect(await resolver.resolve(created.plaintext)).not.toBeNull();
   });
@@ -147,13 +148,13 @@ describe("expiry honored on verify", () => {
 
 describe("two-pool design (S1): webhook_authn cold lookup is least-privilege", () => {
   it("the authn pool resolves org via the 5 granted columns", async () => {
-    const created = await createApiKey(app, {
-      orgId: orgA,
-      name: "authn",
-      scopes: ["events:read"],
-    });
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "authn", scopes: ["events:read"] },
+      hasher,
+    );
     const cold = makeApiKeyColdLookup(authn, API_RESOURCE);
-    const principal = await cold(hashCredential(created.plaintext));
+    const principal = await cold(hasher.hash(created.plaintext));
     expect(principal?.orgId).toBe(orgA);
   });
 
@@ -170,7 +171,7 @@ describe("two-pool design (S1): webhook_authn cold lookup is least-privilege", (
 
 describe("cross-org isolation (RLS) on the app pool", () => {
   it("org A's app context cannot revoke org B's key", async () => {
-    const bKey = await createApiKey(app, { orgId: orgB, name: "borg", scopes: [] });
+    const bKey = await createApiKey(app, { orgId: orgB, name: "borg", scopes: [] }, hasher);
     // Under org A's context the row is invisible -> nothing revoked.
     expect(await revokeApiKey(app, orgA, bKey.id)).toBe(false);
     // And it still verifies as org B's (org-discovery never crosses the boundary).
@@ -182,12 +183,17 @@ describe("cross-org isolation (RLS) on the app pool", () => {
 
 describe("KV hot path vs cold path vs revocation (S3)", () => {
   it("hot-path hit avoids a second authn round-trip; revocation forces a cold miss", async () => {
-    const created = await createApiKey(app, { orgId: orgA, name: "kv", scopes: ["events:read"] });
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "kv", scopes: ["events:read"] },
+      hasher,
+    );
     const cache = new InMemoryCredentialCache();
     // Count cold lookups by wrapping the real authn lookup.
     let coldCalls = 0;
     const baseCold = makeApiKeyColdLookup(authn, API_RESOURCE);
     const resolver = createCredentialResolver({
+      hasher,
       cache,
       coldLookup: async (h) => {
         coldCalls += 1;

@@ -17,7 +17,7 @@
 // NOT cached (caching negatives would let a just-created key 404 for the TTL window, and
 // would let an attacker pin a negative). Only positive resolutions are cached.
 
-import { credentialCacheKey, hashCredential } from "./credential";
+import { credentialCacheKey, type CredentialHasher } from "./credential";
 import {
   CREDENTIAL_CACHE_TTL_SECONDS,
   type CredentialCache,
@@ -37,6 +37,8 @@ export interface CredentialResolver {
 }
 
 export interface CredentialResolverOptions {
+  /** Keyed hasher (HMAC + pepper). Supplies the rotation-aware candidate hashes. */
+  readonly hasher: CredentialHasher;
   readonly cache: CredentialCache;
   readonly coldLookup: ColdLookup;
   /** Cache TTL backstop in seconds. Revocation is the primary invalidation path. */
@@ -57,22 +59,30 @@ export function createCredentialResolver(opts: CredentialResolverOptions): Crede
   const ttl = opts.ttlSeconds ?? CREDENTIAL_CACHE_TTL_SECONDS;
 
   async function resolve(plaintext: string): Promise<ResolvedPrincipal | null> {
-    const keyHash = hashCredential(plaintext);
-    const cacheKey = credentialCacheKey(keyHash);
+    // Candidate hashes: current pepper first, then any previous peppers (rotation window).
+    // The common single-pepper case is exactly one hash -> one cache get / one cold lookup,
+    // identical to the un-peppered path; extra candidates only exist mid-rotation.
+    const hashes = opts.hasher.candidates(plaintext);
 
-    const cached = await opts.cache.get(cacheKey);
-    if (cached !== null) {
-      const parsed: unknown = JSON.parse(cached);
-      // A malformed cache entry is treated as a miss (fail closed to the cold path),
-      // never trusted — so a poisoned/garbled value can't forge a principal.
-      if (isResolvedPrincipal(parsed)) return parsed;
+    // HOT: try the cache for each candidate.
+    for (const keyHash of hashes) {
+      const cached = await opts.cache.get(credentialCacheKey(keyHash));
+      if (cached !== null) {
+        const parsed: unknown = JSON.parse(cached);
+        // A malformed cache entry is treated as a miss (fail closed to the cold path),
+        // never trusted — so a poisoned/garbled value can't forge a principal.
+        if (isResolvedPrincipal(parsed)) return parsed;
+      }
     }
 
-    const resolved = await opts.coldLookup(keyHash);
-    if (resolved === null) return null; // negatives are NOT cached (see header).
-
-    await opts.cache.put(cacheKey, JSON.stringify(resolved), ttl);
-    return resolved;
+    // COLD (miss): minimal-privilege lookup per candidate; cache the hash that matched.
+    for (const keyHash of hashes) {
+      const resolved = await opts.coldLookup(keyHash);
+      if (resolved === null) continue; // negatives are NOT cached (see header).
+      await opts.cache.put(credentialCacheKey(keyHash), JSON.stringify(resolved), ttl);
+      return resolved;
+    }
+    return null;
   }
 
   async function invalidateHash(keyHash: Buffer): Promise<void> {
@@ -80,7 +90,10 @@ export function createCredentialResolver(opts: CredentialResolverOptions): Crede
   }
 
   async function invalidate(plaintext: string): Promise<void> {
-    await invalidateHash(hashCredential(plaintext));
+    // Clear every candidate's entry so a key minted under any accepted pepper is evicted.
+    for (const keyHash of opts.hasher.candidates(plaintext)) {
+      await invalidateHash(keyHash);
+    }
   }
 
   return { resolve, invalidate, invalidateHash };
