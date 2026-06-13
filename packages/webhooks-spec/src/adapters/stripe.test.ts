@@ -203,4 +203,24 @@ describe("stripeAdapter", () => {
     });
     expect(result.ok).toBe(true);
   });
+
+  it("returns the MOST INFORMATIVE diagnosis across multiple failing v1 entries", async () => {
+    // First v1= is malformed hex (MALFORMED_SIGNATURE); second is valid-hex but signed by
+    // an unknown secret (WRONG_SECRET — more informative). The more specific reason must win
+    // even though it comes from a later entry (regression guard against "keep the first").
+    const wrongMac = bytesToHex(
+      await hmacSha256(
+        utf8Encoder.encode("some_other_secret_entirely"),
+        utf8Encoder.encode(`${nowSec}.${BODY}`),
+      ),
+    );
+    const result = await stripeAdapter.verify({
+      rawBody: utf8Encoder.encode(BODY),
+      headers: headers(`t=${nowSec},v1=nothex,v1=${wrongMac}`),
+      secrets: [SECRET, ROTATED],
+      now: NOW,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason.code).toBe("WRONG_SECRET");
+  });
 });

@@ -1,10 +1,11 @@
-// Byte/crypto primitives for the verify adapters. These MIRROR the audited
-// implementations in `packages/shared/src/bytes.ts` (constant-time compare + HMAC
-// key import + hex). They are duplicated here on purpose: webhooks-spec is the leaf
-// of the dependency graph (`packages/shared` depends on it, not the reverse), so it
-// cannot import from `shared` without creating a package cycle that deadlocks the
-// Turborepo `^build` graph. Keep the two copies byte-for-byte identical; if the
-// constant-time compare or key import ever changes, change it in both places.
+// Byte/crypto primitives for the verify adapters. The security-critical ones
+// (timingSafeEqual, importHmacKey, bytesToHex, concatBytes) MIRROR the audited
+// implementations in `packages/shared/src/bytes.ts` byte-for-byte. They are duplicated
+// here on purpose: webhooks-spec is the leaf of the dependency graph (`packages/shared`
+// depends on it, not the reverse), so it cannot import from `shared` without creating a
+// package cycle that deadlocks the Turborepo `^build` graph. The two files are supersets
+// of a shared core, not identical files (each adds its own helpers). A divergence in the
+// mirrored functions is caught by bytes-parity.test.ts; if you change one, change both.
 //
 // Cross-runtime: uses only Web primitives (globalThis.crypto, TextEncoder) available
 // in both Cloudflare Workers and Node.
