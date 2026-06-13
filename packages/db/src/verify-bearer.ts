@@ -11,17 +11,14 @@
 // a typed UnauthenticatedError on no/garbage credential and AudienceMismatchError on a
 // resource mismatch, and the helper `requireScope` below gives surfaces the 403 path.
 
-import { assertAudience, type AuthContext } from "@webhook-co/contract";
+import { assertAudience, UnauthenticatedError, type AuthContext } from "@webhook-co/contract";
 
 import type { CredentialResolver } from "./credential-resolver";
 
-/** Thrown when no credential resolves (no such key / revoked / expired) -> surface 401. */
-export class UnauthenticatedError extends Error {
-  constructor(message = "no valid credential") {
-    super(message);
-    this.name = "UnauthenticatedError";
-  }
-}
+// UnauthenticatedError (no credential resolves -> surface 401) now lives on the contract
+// seam alongside AudienceMismatchError, so the shared authorizeBearer can distinguish an
+// expected auth rejection from an operational fault. Re-exported for existing callers.
+export { UnauthenticatedError };
 
 /** Thrown when an authenticated principal lacks a required scope -> surface 403. */
 export class InsufficientScopeError extends Error {

@@ -5,34 +5,25 @@
 // API surface, verifyBearer is INJECTED — this never imports the api-key implementation.
 
 import {
+  authorizeBearer,
   buildProtectedResourceMetadata,
-  buildWwwAuthenticate,
   CAPABILITY_REGISTRY,
-  type AuthContext,
+  extractBearer as extractBearerHeader,
+  type BearerAuthzDeps,
+  type BearerAuthzResult,
   type ProtectedResourceMetadata,
-  type VerifyBearer,
 } from "@webhook-co/contract";
 
-export type McpAuthzResult =
-  | { readonly ok: true; readonly ctx: AuthContext }
-  | { readonly ok: false; readonly status: 401 | 403; readonly challenge: string };
+export type McpAuthzResult = BearerAuthzResult;
 
-export interface McpAuthDeps {
-  readonly verifyBearer: VerifyBearer;
-  /** This resource's identifier (RFC 8707 audience). */
-  readonly resource: string;
-  /** Absolute URL of the PRM document (RFC 9728). */
-  readonly resourceMetadataUrl: string;
+export interface McpAuthDeps extends BearerAuthzDeps {
   /** The OAuth authorization server(s) an MCP client should use. */
   readonly authorizationServers: readonly string[];
 }
 
-/** Pull a Bearer token out of the Authorization header, or null if absent/malformed. */
+/** Pull a Bearer token out of a request's Authorization header, or null if absent/malformed. */
 export function extractBearer(req: Request): string | null {
-  const header = req.headers.get("authorization");
-  if (!header) return null;
-  const match = /^Bearer (.+)$/.exec(header.trim());
-  return match?.[1] ?? null;
+  return extractBearerHeader(req.headers.get("authorization"));
 }
 
 /**
@@ -49,48 +40,14 @@ export function protectedResourceMetadata(deps: McpAuthDeps): ProtectedResourceM
 }
 
 /**
- * Authorize an MCP tool call against `capabilityName`. Identical seam to the API surface:
- * resolve via verifyBearer (audience-bound), then enforce the capability's scope.
- * 401 (no/invalid credential or wrong audience) vs 403 (under-scoped).
+ * Authorize an MCP tool call against `capabilityName`. Identical seam to the API surface —
+ * a thin adapter over the shared `authorizeBearer` decision (401 vs 403; operational faults
+ * propagate as 5xx). The PRM document above is the MCP-only resource-server obligation.
  */
-export async function authorize(
+export function authorize(
   deps: McpAuthDeps,
   req: Request,
   capabilityName: string,
 ): Promise<McpAuthzResult> {
-  const capability = CAPABILITY_REGISTRY.get(capabilityName);
-  if (!capability) {
-    throw new Error(`unknown capability: ${capabilityName}`);
-  }
-
-  const token = extractBearer(req);
-  // eslint-disable-next-line security/detect-possible-timing-attacks -- a null PRESENCE check, not a secret compare; the real compare is the constant-time hash in @webhook-co/db
-  if (token === null) {
-    return unauthenticated(deps);
-  }
-
-  let ctx: AuthContext;
-  try {
-    ctx = await deps.verifyBearer(token, deps.resource);
-  } catch {
-    return unauthenticated(deps);
-  }
-
-  if (!ctx.scopes.includes(capability.auth.scope)) {
-    return {
-      ok: false,
-      status: 403,
-      challenge: buildWwwAuthenticate(deps.resourceMetadataUrl, "insufficient_scope"),
-    };
-  }
-
-  return { ok: true, ctx };
-}
-
-function unauthenticated(deps: McpAuthDeps): McpAuthzResult {
-  return {
-    ok: false,
-    status: 401,
-    challenge: buildWwwAuthenticate(deps.resourceMetadataUrl, "invalid_token"),
-  };
+  return authorizeBearer(deps, req.headers.get("authorization"), capabilityName);
 }

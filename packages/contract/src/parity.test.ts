@@ -34,7 +34,7 @@ describe("capability parity (§0.9)", () => {
       input: z.object({}),
       output: z.object({}),
       errors: ["UNAUTHORIZED"],
-      auth: { scope: "internal:read" },
+      auth: { scope: "events:read" },
       semantics: {},
       surfaceExempt: { web: "no dashboard view planned", mcp: "not agent-relevant" },
     });
