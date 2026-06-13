@@ -39,3 +39,8 @@ alwaysApply: false
 - Cover edge cases: malformed/oversized payloads, duplicate deliveries, clock skew, partial
   failures, replay. Add a regression test with every bug fix.
 - Prefer `vitest` with the Workers pool for DO/Workers code so tests run against the real runtime.
+- Enforce an invariant in a **test**, not a tautological runtime guard. A `throw` whose condition can
+  never be true (e.g. guarding `A < B` where `A` is defined as `B`) is dead code — assert the
+  invariant in a test instead, where it actually runs.
+- Extract magic values that are **coupled to a schema, migration, or config** into a named constant
+  with a comment pointing at the authoritative source, so the two can't silently drift.
