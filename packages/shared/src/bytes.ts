@@ -20,6 +20,21 @@ export function b64urlToBytes(s: string): Uint8Array {
   return out;
 }
 
+// Standard base64 (the +/ alphabet with `=` padding), distinct from the URL-safe variant above.
+// Needed for wire formats that mandate it — e.g. the AWS KMS JSON API's Plaintext/CiphertextBlob.
+export function bytesToB64(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+
+export function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export function bytesToHex(bytes: Uint8Array): string {
   let s = "";
   for (const b of bytes) s += b.toString(16).padStart(2, "0");
