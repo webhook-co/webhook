@@ -28,6 +28,14 @@ describe("StatusPill", () => {
     expect(screen.getByText("replayed")).toHaveClass("text-info");
   });
 
+  it("lets status override an explicitly-passed tone (documented precedence)", () => {
+    // Both set: status ("failed" -> danger) must win over tone ("info").
+    render(<StatusPill status="failed" tone="info" />);
+    const el = screen.getByText("failed");
+    expect(el).toHaveClass("text-danger");
+    expect(el).not.toHaveClass("text-info");
+  });
+
   it("shows a leading dot by default and hides it on request", () => {
     const { container, rerender } = render(<StatusPill status="failed" />);
     expect(container.querySelector("span[aria-hidden='true']")).not.toBeNull();
