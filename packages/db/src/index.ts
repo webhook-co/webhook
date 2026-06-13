@@ -11,3 +11,4 @@ export const DB_PACKAGE = "@webhook-co/db" as const;
 export * from "./constants";
 export * from "./env";
 export * from "./client";
+export * from "./audit-append";

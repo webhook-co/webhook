@@ -3,7 +3,18 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["node"]
+    "types": ["node"],
+    // db is the Node/Postgres package (types: ["node"]), so unlike the Workers packages
+    // (types: ["@cloudflare/workers-types"]) it has no DOM/WebCrypto lib. Resolving
+    // @webhook-co/shared to its raw source would make tsc re-typecheck shared's WebCrypto
+    // code (crypto.subtle.*) under node-only libs, where @types/node's
+    // Uint8Array<ArrayBufferLike> doesn't satisfy the DOM BufferSource. shared is already
+    // typechecked with its own (workers-types) config and is built before this package
+    // (turbo `^build`), so we consume its emitted declarations instead — the crypto
+    // internals are validated once, in shared, not re-checked here.
+    "paths": {
+      "@webhook-co/shared": ["../shared/dist/index.d.ts"]
+    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", ".turbo", "src/**/*.test.ts", "test/**/*.ts"]
