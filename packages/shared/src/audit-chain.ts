@@ -67,8 +67,11 @@ export async function verifyAuditChain(
   const sorted = [...rows].sort((a, b) => a.seq - b.seq);
 
   let verified = 0;
-  let prevSeq: number | null = null;
-  let prevRowHash: Uint8Array | null = null;
+  // The prior row's (seq, rowHash) move together — null before the genesis row, both
+  // present after it. Modelling them as ONE nullable object makes that invariant visible
+  // to the type system (no `prevRowHash!` non-null assertion, no way to set one without
+  // the other).
+  let prev: { seq: number; rowHash: Uint8Array } | null = null;
 
   for (const row of sorted) {
     if (row.orgId !== orgId) {
@@ -80,7 +83,7 @@ export async function verifyAuditChain(
       );
     }
 
-    if (prevSeq === null) {
+    if (prev === null) {
       // Genesis row.
       if (row.seq !== 1) {
         return broken("bad_genesis_seq", row.seq, `chain must start at seq 1, got ${row.seq}`, 0);
@@ -94,7 +97,7 @@ export async function verifyAuditChain(
         );
       }
     } else {
-      if (row.seq === prevSeq) {
+      if (row.seq === prev.seq) {
         return broken(
           "duplicate_seq",
           row.seq,
@@ -102,15 +105,15 @@ export async function verifyAuditChain(
           verified,
         );
       }
-      if (row.seq !== prevSeq + 1) {
+      if (row.seq !== prev.seq + 1) {
         return broken(
           "seq_gap",
           row.seq,
-          `seq jumped from ${prevSeq} to ${row.seq} (a row is missing)`,
+          `seq jumped from ${prev.seq} to ${row.seq} (a row is missing)`,
           verified,
         );
       }
-      if (row.prevHash === null || !timingSafeEqual(row.prevHash, prevRowHash!)) {
+      if (row.prevHash === null || !timingSafeEqual(row.prevHash, prev.rowHash)) {
         return broken(
           "broken_link",
           row.seq,
@@ -138,8 +141,7 @@ export async function verifyAuditChain(
     }
 
     verified += 1;
-    prevSeq = row.seq;
-    prevRowHash = row.rowHash;
+    prev = { seq: row.seq, rowHash: row.rowHash };
   }
 
   return { ok: true, rowsVerified: verified };
