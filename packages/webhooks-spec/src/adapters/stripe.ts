@@ -39,6 +39,20 @@ function parseHeader(raw: string): ParsedStripeHeader | { error: string } {
   return { timestamp, signatures };
 }
 
+// Rank non-OK diagnoses by how informative they are (higher = more informative), so the
+// best reason across multiple v1= entries is the one returned. A proven body mutation beats
+// a shape-based guess beats a generic miss beats "this v1= wasn't even valid hex".
+const FAILURE_RANK: Record<string, number> = {
+  RAW_BODY_MODIFIED: 5, // we PROVED the bytes changed in transit
+  WRONG_SECRET: 4, // right shape, but no configured secret matched
+  SIGNATURE_MISMATCH: 3, // generic crypto miss
+  NO_MATCHING_KEY: 2, // no secrets configured to try
+  MALFORMED_SIGNATURE: 1, // this v1= value wasn't valid hex
+};
+function failureRank(result: VerificationResult): number {
+  return result.ok ? -1 : (FAILURE_RANK[result.reason.code] ?? 0);
+}
+
 async function verify(input: VerifyInput): Promise<VerificationResult> {
   const headerValue = findHeader(input.headers, HEADER);
   if (headerValue === undefined) {
@@ -85,8 +99,10 @@ async function verify(input: VerifyInput): Promise<VerificationResult> {
   const prefix = utf8Encoder.encode(`${parsed.timestamp}.`);
   const buildMessage = (body: Uint8Array): Uint8Array => concatBytes(prefix, body);
 
-  // Try each v1= signature; the first that verifies (or yields a confident diagnosis)
-  // wins. We keep the best non-OK result to return if none pass.
+  // Try each v1= signature; the first that verifies wins. If none pass, keep the MOST
+  // INFORMATIVE non-OK diagnosis across the entries — not merely the first — so a specific,
+  // proven reason (e.g. RAW_BODY_MODIFIED from one v1=) isn't hidden behind a generic or
+  // malformed one from an earlier entry.
   let best: VerificationResult | undefined;
   for (const sig of parsed.signatures) {
     const result = await verifyHmacHex({
@@ -97,7 +113,7 @@ async function verify(input: VerifyInput): Promise<VerificationResult> {
       buildMessage,
     });
     if (result.ok) return result;
-    best ??= result;
+    if (best === undefined || failureRank(result) > failureRank(best)) best = result;
   }
   return best ?? verificationFailed({ code: "SIGNATURE_MISMATCH" });
 }
