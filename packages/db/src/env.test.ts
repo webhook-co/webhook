@@ -39,6 +39,23 @@ describe("resolveCredentialHasher", () => {
     );
   });
 
+  it("rejects a pepper that is not valid base64 (lenient decoder would mangle it silently)", () => {
+    // '@' is not a base64 character; Node's decoder would silently drop it and accept a
+    // wrong buffer. The validator must reject it loudly instead.
+    expect(() =>
+      resolveCredentialHasher({ CREDENTIAL_PEPPER: "not-valid-base64!@#$ padding wrong" }),
+    ).toThrow(/not valid base64/);
+  });
+
+  it("rejects a base64url pepper (standard base64 only — avoid -/_ confusion)", () => {
+    const urlish = Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0xfb).toString("base64url");
+    // base64url of 0xfb bytes contains '_' (and would for '-' too), which standard base64
+    // rejects — guarding against base64 vs base64url custody mistakes.
+    expect(() => resolveCredentialHasher({ CREDENTIAL_PEPPER: urlish })).toThrow(
+      /not valid base64/,
+    );
+  });
+
   it("accepts a comma-separated CREDENTIAL_PEPPER_PREVIOUS for rotation", () => {
     const hasher = resolveCredentialHasher({
       CREDENTIAL_PEPPER: PEPPER_B64,
