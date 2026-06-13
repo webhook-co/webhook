@@ -340,16 +340,24 @@ describe("audit_log append-only hash chain (H2)", () => {
     ).rejects.toThrow(/permission denied/i);
   });
 
-  it("the immutability trigger blocks UPDATE/DELETE/TRUNCATE even for a superuser", async () => {
-    // The trigger is the last line of defense: even a role that bypasses RLS and has
-    // every privilege (the cluster superuser) cannot rewrite history.
+  it("the immutability trigger blocks UPDATE/DELETE/TRUNCATE even for the most privileged role", async () => {
+    // The trigger is the last line of defense: even a role with every privilege cannot
+    // rewrite history. UPDATE/DELETE run as the cluster superuser (where one exists) to
+    // make the strongest possible claim.
     await expect(
       root`update audit_log set action = ${"tampered"} where org_id = ${orgA.orgId} and seq = ${1}`,
     ).rejects.toThrow(/append-only/i);
     await expect(
       root`delete from audit_log where org_id = ${orgA.orgId} and seq = ${1}`,
     ).rejects.toThrow(/append-only/i);
-    await expect(root`truncate audit_log`).rejects.toThrow(/append-only/i);
+    // TRUNCATE is gated by the TRUNCATE privilege *before* the BEFORE-TRUNCATE trigger
+    // can fire. A true superuser bypasses that check, but managed Postgres (e.g. the Neon
+    // branch the nightly runs against) exposes no cluster superuser — there, the would-be
+    // superuser role lacks TRUNCATE and is denied one layer too early ("permission denied"),
+    // never reaching the trigger. The table owner holds TRUNCATE on every engine and is the
+    // highest-privilege role that actually exists in production, so assert the trigger via
+    // the owner: it reaches and is blocked by the trigger both locally and on Neon.
+    await expect(owner`truncate audit_log`).rejects.toThrow(/append-only/i);
   });
 });
 
