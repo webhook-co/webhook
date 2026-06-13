@@ -76,6 +76,41 @@ export const eventsTail = defineCapability({
   semantics: { streaming: true, paginated: true, watermark: { deltaMs: WATERMARK_DELTA_MS } },
 });
 
+// The audit-chain verifier (§0.7, ADR-0004, H2). Walks an org's tamper-evident audit
+// chain and reports the first break, if any. Surfaced on every GA surface (a compliance
+// operator runs it from the CLI/API/web; an agent runs it over MCP). The output mirrors
+// the verifyAuditChain result in packages/shared — `ok` plus, on failure, the first
+// break (kind + seq + detail).
+const auditBreakKind = z.enum([
+  "wrong_org",
+  "bad_genesis_seq",
+  "bad_genesis_prev_hash",
+  "duplicate_seq",
+  "seq_gap",
+  "broken_link",
+  "hash_mismatch",
+]);
+
+export const auditVerify = defineCapability({
+  name: "audit.verify",
+  input: z.object({}),
+  output: z.discriminatedUnion("ok", [
+    z.object({ ok: z.literal(true), rowsVerified: z.number().int().nonnegative() }),
+    z.object({
+      ok: z.literal(false),
+      rowsVerified: z.number().int().nonnegative(),
+      break: z.object({
+        kind: auditBreakKind,
+        seq: z.number().int().positive(),
+        detail: z.string(),
+      }),
+    }),
+  ]),
+  errors: ["UNAUTHORIZED", "FORBIDDEN", "RATE_LIMITED"],
+  auth: { scope: "audit:read" },
+  semantics: {},
+});
+
 export const eventsReplay = defineCapability({
   name: "events.replay",
   input: z.object({ eventId: uuid, target: TargetSchema, idempotencyKey: z.string().min(1) }),
@@ -85,7 +120,11 @@ export const eventsReplay = defineCapability({
   semantics: { idempotent: true },
 });
 
-/** The frozen wedge capability surface. */
+/**
+ * The capability surface every binding implements. The six wedge capabilities (§0.9)
+ * plus `audit.verify` — the compliance-by-design audit-chain verifier (§0.7, ADR-0004),
+ * surfaced for CLI/API/web/MCP parity.
+ */
 export const CAPABILITIES: readonly AnyCapability[] = [
   endpointsList,
   endpointsGet,
@@ -93,6 +132,7 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   eventsGet,
   eventsTail,
   eventsReplay,
+  auditVerify,
 ];
 
 /** Registry keyed by stable capability name. */
