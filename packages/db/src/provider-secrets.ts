@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { type EncryptionContext, type SealedRecord, type SecretStore } from "@webhook-co/shared";
 
 import { withTenant, type Sql } from "./client";
+import { type CachedSealedSecret } from "./credential-cache";
 
 /** Usable rotation states for an endpoint's provider secret (revoked is excluded from reads). */
 export type ProviderSecretStatus = "active" | "retiring" | "revoked";
@@ -112,6 +113,44 @@ function toSealed(row: ProviderSecretRow): SealedProviderSecret {
     // the unseal AAD tied to the row's identity (a tampered/stale enc_context can't mis-bind it) and
     // drops the redundant jsonb read + parse. enc_context is retained on the row for audit only.
     context: { orgId: row.org_id, endpointId: row.endpoint_id, keyId: row.id },
+  };
+}
+
+/**
+ * Convert a retrieved sealed secret to its JSON-SAFE cached form (byte fields -> base64) for
+ * carrying on the resolved principal through the KV cache. The Buffer<->base64 marshalling lives in
+ * this node-typed package so it type-checks against Buffer; at runtime it runs under the engine's
+ * nodejs_compat (the same way insertIngestEvent / createCredentialHasherFromBase64 use Buffer in the
+ * Worker). The inverse is fromCachedSealedSecret.
+ */
+export function toCachedSealedSecret(secret: SealedProviderSecret): CachedSealedSecret {
+  return {
+    id: secret.id,
+    provider: secret.provider,
+    ciphertextB64: Buffer.from(secret.sealed.ciphertext).toString("base64"),
+    nonceB64: Buffer.from(secret.sealed.nonce).toString("base64"),
+    wrappedDekB64: Buffer.from(secret.sealed.wrapped.wrappedDek).toString("base64"),
+    kekRef: secret.sealed.wrapped.kekRef,
+    envelopeVersion: secret.sealed.envelopeVersion,
+    context: { ...secret.context }, // own copy (symmetry with fromCachedSealedSecret; no aliasing)
+  };
+}
+
+/** Rebuild a usable {sealed record, AAD context, provider} from the JSON-safe cached form. */
+export function fromCachedSealedSecret(cached: CachedSealedSecret): {
+  readonly provider: string;
+  readonly sealed: SealedRecord;
+  readonly context: EncryptionContext;
+} {
+  return {
+    provider: cached.provider,
+    sealed: {
+      ciphertext: Buffer.from(cached.ciphertextB64, "base64"),
+      nonce: Buffer.from(cached.nonceB64, "base64"),
+      wrapped: { wrappedDek: Buffer.from(cached.wrappedDekB64, "base64"), kekRef: cached.kekRef },
+      envelopeVersion: cached.envelopeVersion,
+    },
+    context: { ...cached.context },
   };
 }
 
