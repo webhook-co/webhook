@@ -47,10 +47,27 @@
   // delete/overwrite for the retention period. The cron's credential is scoped to PUT only (no
   // delete rights). `bucket_name` is set per environment at deploy; the dev bucket uses a short
   // retention so test anchors don't lock for years.
+  // R2_PAYLOADS holds one object per received event (key = payloadR2Key(org, endpoint, dedup)),
+  // PUT durably before the metadata insert (durable-before-ACK, ADR-0013). bucket_name is set
+  // per environment at deploy; EU-residency tenants get a jurisdiction-pinned bucket (ADR-0009).
   "r2_buckets": [
     {
       "binding": "R2_AUDIT_ANCHOR",
       "bucket_name": "webhook-audit-anchors-dev",
+    },
+    {
+      "binding": "R2_PAYLOADS",
+      "bucket_name": "webhook-payloads-dev",
+    },
+  ],
+  // KV_CONFIG caches endpoint resolution on the ingest hot path (keyed by ingest-token hash).
+  // KV is the ONLY ingest cache because it can be invalidated on pause/rotate/delete; the cold
+  // path (webhook_authn) runs through the cache-disabled Hyperdrive binding. `id` is the
+  // per-environment namespace id, set at deploy (not a secret); Miniflare provisions a local one.
+  "kv_namespaces": [
+    {
+      "binding": "KV_CONFIG",
+      "id": "<KV_CONFIG_ID>",
     },
   ],
   // Hourly head-anchor cron (ADR-0004). The interval IS the tamper-detection window.
