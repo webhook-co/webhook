@@ -11,6 +11,28 @@
 // can't be invalidated on revocation. KV can: revoke deletes the KV entry, so a
 // revoked credential stops resolving on the very next request.
 
+/**
+ * A sealed provider secret in JSON-SAFE form, carried on the cached principal. The envelope's
+ * byte fields are base64 (Uint8Array doesn't survive JSON.stringify/parse, which is exactly the
+ * KV cache round-trip), so a single KV read delivers the endpoint's verify secrets to the ingest
+ * hot path with no extra DB query. Still inert without the out-of-DB KEK. See provider-secrets.ts
+ * (toCachedSealedSecret / fromCachedSealedSecret) for the conversion to a usable SealedRecord.
+ */
+export interface CachedSealedSecret {
+  readonly id: string;
+  readonly provider: string;
+  /** base64 of the AES-256-GCM ciphertext (+ tag). */
+  readonly ciphertextB64: string;
+  /** base64 of the GCM nonce. */
+  readonly nonceB64: string;
+  /** base64 of the KEK-wrapped DEK. */
+  readonly wrappedDekB64: string;
+  readonly kekRef: string;
+  readonly envelopeVersion: number;
+  /** The AAD context ({orgId, endpointId, keyId}) needed to unseal. JSON-safe strings. */
+  readonly context: { readonly orgId: string; readonly endpointId: string; readonly keyId: string };
+}
+
 /** What a resolved credential maps to. Kept generic so ingest tokens reuse it. */
 export interface ResolvedPrincipal {
   readonly orgId: string;
@@ -30,6 +52,12 @@ export interface ResolvedPrincipal {
    * ingest guard is wired.
    */
   readonly paused?: boolean;
+  /**
+   * The endpoint's sealed provider signing secrets (JSON-safe), carried so the synchronous ingest
+   * verify path reads them from the one KV read. Populated by the ingest-token resolver only;
+   * unused by api keys. Empty array = endpoint has no registered secrets (verify -> unverified).
+   */
+  readonly sealedSecrets?: readonly CachedSealedSecret[];
   /**
    * The resource the credential is bound to (RFC 8707 audience). verifyBearer rejects a
    * credential whose audience != the resource it's presented at. Optional on the cache

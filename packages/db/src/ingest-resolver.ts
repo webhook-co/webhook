@@ -14,8 +14,13 @@
 import { type Sql } from "./client";
 import { type CredentialHasher } from "./credential";
 import { type CredentialCache } from "./credential-cache";
-import { createCredentialResolver, type CredentialResolver } from "./credential-resolver";
+import {
+  createCredentialResolver,
+  type ColdLookup,
+  type CredentialResolver,
+} from "./credential-resolver";
 import { makeEndpointTokenColdLookup } from "./endpoints";
+import { getEndpointProviderSecrets, toCachedSealedSecret } from "./provider-secrets";
 
 export interface IngestResolverOptions {
   /** Keyed hasher (HMAC + pepper) -- the same primitive that minted the ingest token. */
@@ -34,10 +39,31 @@ export interface IngestResolverOptions {
  * write path 404s an unknown token), and `invalidate` evicts on pause/rotate/delete.
  */
 export function createIngestResolver(opts: IngestResolverOptions): CredentialResolver {
+  const resolveEndpoint = makeEndpointTokenColdLookup(opts.authn);
+  // Compose the cold path: resolve the endpoint, then (same webhook_authn connection, same cache
+  // miss) fetch its sealed provider secrets and carry them base64-encoded on the principal. The
+  // resolver caches the whole principal in KV, so a cache HIT serves {endpoint + verify secrets}
+  // from one KV read -- no per-event DB query for secrets. Both reads stay on the cache-disabled
+  // binding.
+  //
+  // STALENESS / REVOCATION LAG (must wire explicit invalidation): the cached principal carries a
+  // snapshot of the endpoint's secrets. A secret ADDED after caching just isn't honored until the
+  // entry refreshes (events verify as unverified meanwhile -- benign, capture is the floor). A
+  // REVOKED secret is the security-relevant case: a principal cached BEFORE the revoke keeps the now-
+  // revoked sealed secret, so verify would keep accepting signatures made with it until the KV entry
+  // expires (TTL backstop) or is invalidated. Until add/revoke is wired to invalidate this resolver's
+  // KV entry (follow-up), the TTL bounds the revocation window -- keep that TTL tight for the ingest
+  // resolver and treat prompt secret revocation as requiring explicit invalidation.
+  const coldLookup: ColdLookup = async (tokenHash) => {
+    const principal = await resolveEndpoint(tokenHash);
+    if (principal === null || principal.endpointId === undefined) return principal;
+    const sealed = await getEndpointProviderSecrets(opts.authn, principal.endpointId);
+    return { ...principal, sealedSecrets: sealed.map(toCachedSealedSecret) };
+  };
   return createCredentialResolver({
     hasher: opts.hasher,
     cache: opts.cache,
-    coldLookup: makeEndpointTokenColdLookup(opts.authn),
+    coldLookup,
     ttlSeconds: opts.ttlSeconds,
   });
 }
