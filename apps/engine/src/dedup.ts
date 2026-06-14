@@ -11,17 +11,23 @@
 // idempotency gate; this only decides the key.
 
 import {
+  bytesToHex,
   detectScheme,
+  findHeader,
   type DedupStrategy,
   type Provider,
   type WebhookScheme,
 } from "@webhook-co/shared";
 
-/** Lowercase hex of a byte string (shared's bytesToHex is package-internal, so keep a local one). */
-function toHex(bytes: Uint8Array): string {
-  let out = "";
-  for (const b of bytes) out += b.toString(16).padStart(2, "0");
-  return out;
+/**
+ * Map a detected scheme to its Provider (null for "unknown"). The `return scheme` below is a
+ * COMPILE-TIME parity check: it only type-checks while `Exclude<WebhookScheme,"unknown">` is exactly
+ * assignable to `Provider`, so adding a scheme without a matching provider (or vice versa) breaks
+ * the build here instead of silently storing a bad provider.
+ */
+function schemeToProvider(scheme: WebhookScheme): Provider | null {
+  if (scheme === "unknown") return null;
+  return scheme;
 }
 
 const utf8Decoder = new TextDecoder();
@@ -40,13 +46,6 @@ export interface DerivedDedup {
 }
 
 type Headers = ReadonlyArray<readonly [string, string]>;
-
-/** Case-insensitive first-match header lookup over the ordered array-of-pairs. */
-function header(headers: Headers, name: string): string | null {
-  const lower = name.toLowerCase();
-  for (const [k, v] of headers) if (k.toLowerCase() === lower) return v;
-  return null;
-}
 
 /** Read `field` from a JSON parse of a COPY of the bytes; null on parse failure or absence. */
 function jsonStringField(raw: Uint8Array, field: string): string | null {
@@ -68,9 +67,9 @@ function extractProviderEventId(
 ): string | null {
   switch (scheme) {
     case "github":
-      return header(headers, "x-github-delivery"); // per-delivery guid (recorded choice)
+      return findHeader(headers, "x-github-delivery") ?? null; // per-delivery guid (recorded choice)
     case "shopify":
-      return header(headers, "x-shopify-webhook-id");
+      return findHeader(headers, "x-shopify-webhook-id") ?? null;
     case "stripe":
       return jsonStringField(raw, "id"); // evt_...
     case "slack":
@@ -93,10 +92,10 @@ export async function deriveDedup(
 ): Promise<DerivedDedup> {
   const contentHash = new Uint8Array(await crypto.subtle.digest("SHA-256", rawBody));
   const scheme = detectScheme(headers);
-  const provider: Provider | null = scheme === "unknown" ? null : scheme;
+  const provider = schemeToProvider(scheme);
 
   // 1. Standard Webhooks id (stable across retries, SW-native senders).
-  const webhookId = header(headers, "webhook-id");
+  const webhookId = findHeader(headers, "webhook-id");
   if (webhookId) {
     return {
       dedupKey: webhookId,
@@ -125,7 +124,7 @@ export async function deriveDedup(
   //    sent in a later bucket isn't collapsed.
   const dedupBucket = Math.floor(now.getTime() / bucketWidthMs);
   return {
-    dedupKey: `${toHex(contentHash)}:${dedupBucket}`,
+    dedupKey: `${bytesToHex(contentHash)}:${dedupBucket}`,
     dedupStrategy: "content_hash",
     provider,
     providerEventId: null,

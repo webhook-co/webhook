@@ -1,19 +1,35 @@
-import { createClient, readAuditChainHeads } from "@webhook-co/db";
-import { importAuditKey, SERVICE_NAME } from "@webhook-co/shared";
+import {
+  createClient,
+  createCredentialHasherFromBase64,
+  createIngestResolver,
+  insertIngestEvent,
+  readAuditChainHeads,
+  type ResolvedPrincipal,
+} from "@webhook-co/db";
+import { importAuditKey, MAX_VERIFIABLE_BODY_BYTES, SERVICE_NAME } from "@webhook-co/shared";
 
 import { runAnchorCron } from "./anchor-cron";
+import { handleIngest, type IngestDeps, type ResolvedEndpoint } from "./ingest";
+import { kvCredentialCache } from "./kv-cache";
 
-// Placeholder webhook engine Worker. Real ingest/verify/deliver logic (Workers + Durable
-// Objects) lands here. Handlers stay thin: validate -> delegate -> respond, and ACK fast.
-// The scheduled() handler runs the WORM head-anchor cron (ADR-0004).
+// The webhook engine Worker. `fetch` is the wbhk.my write path (cookieless, path-token ingest);
+// `scheduled` runs the WORM head-anchor cron (ADR-0004). Handlers stay thin: validate -> delegate
+// -> respond, and ACK fast. The security-critical ingest orchestration lives in handleIngest
+// (unit-tested with fakes); this file wires the real per-request deps and routes to it.
 
 export interface Env {
-  /** Cache-disabled Hyperdrive config for tenant-scoped reads/writes incl. the ingest insert (C1). */
+  /** Cache-disabled Hyperdrive config for authenticated tenant-scoped reads (api./app.). */
   HYPERDRIVE_TENANT: Hyperdrive;
+  /** webhook_authn Hyperdrive (caching OFF): the cold endpoint-token lookup (org-discovery-by-hash). */
+  HYPERDRIVE_AUTHN: Hyperdrive;
+  /** webhook_ingest Hyperdrive (caching OFF): the single-statement ingest_event insert. */
+  HYPERDRIVE_INGEST: Hyperdrive;
   /** R2 bucket holding per-event payload bodies (key = payloadR2Key(org, endpoint, dedup)). */
   R2_PAYLOADS: R2Bucket;
   /** KV namespace caching endpoint resolution (keyed by ingest-token hash). */
   KV_CONFIG: KVNamespace;
+  /** Base64 credential pepper (Worker secret): keys the ingest-token HMAC. Never a DB column. */
+  CREDENTIAL_PEPPER: string;
   /** Hyperdrive config for the webhook_anchor cross-org head read (query caching off). */
   HYPERDRIVE_ANCHOR: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
@@ -22,12 +38,124 @@ export interface Env {
   AUDIT_CHAIN_HMAC_KEY: string;
 }
 
-export default {
-  async fetch(_request: Request): Promise<Response> {
+/**
+ * content_hash dedup-bucket width. 24h ≥ the documented provider retry windows we bucket against
+ * (so a redelivery inside the window collapses; a legitimately-identical body in a later bucket
+ * does not). Only used by the content_hash fallback strategy.
+ */
+const DEDUP_BUCKET_WIDTH_MS = 24 * 60 * 60 * 1000;
+
+/** Per-request ingest deps plus the teardown for the DB clients they hold. */
+export interface IngestDepsHandle {
+  readonly deps: IngestDeps;
+  /** Close the per-request DB clients (call in a finally — even on a thrown handler error). */
+  close(): Promise<void>;
+}
+
+/** Build the per-request ingest deps. Injected in tests so routing is exercised without a live DB. */
+export type MakeIngestDeps = (env: Env) => IngestDepsHandle;
+
+/**
+ * Sanitize a request Content-Type before it becomes R2 object metadata. The header is fully
+ * attacker-controlled; a value with control chars / CRLF / absurd length can make R2.put reject,
+ * and on the durable-before-ACK path a thrown put turns a well-formed event into a capture-blocking
+ * 500 (the provider then retries forever). Keep only printable-ASCII, reasonably-bounded values;
+ * drop anything else (the canonical content-type is still persisted in the events row regardless).
+ */
+export function safeContentType(contentType: string | null): string | undefined {
+  if (contentType === null) return undefined;
+  return /^[\x20-\x7e]{1,255}$/.test(contentType) ? contentType : undefined;
+}
+
+/** Narrow a resolved principal to the ingest path's endpoint shape (null if it carries no endpoint). */
+function toResolvedEndpoint(principal: ResolvedPrincipal | null): ResolvedEndpoint | null {
+  if (principal === null || principal.endpointId === undefined) return null;
+  return {
+    orgId: principal.orgId,
+    endpointId: principal.endpointId,
+    paused: principal.paused ?? false,
+  };
+}
+
+/**
+ * Construct the live ingest deps from the Worker bindings: a KV-cached endpoint resolver over the
+ * webhook_authn cold lookup, an R2 PUT, and the webhook_ingest insert. Two SHORT-LIVED clients per
+ * request (one per role), torn down by close(). The pepper is decoded in-worker (a Workers secret,
+ * never a process env) and createCredentialHasher validates its length.
+ */
+export function buildIngestDeps(env: Env): IngestDepsHandle {
+  const hasher = createCredentialHasherFromBase64(env.CREDENTIAL_PEPPER);
+  // Distinct roles -> distinct connection strings -> distinct clients. Both bindings are
+  // cache-disabled: the cold lookup must reflect live pause/rotate state, and the insert is RLS-gated.
+  const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
+  const ingest = createClient(env.HYPERDRIVE_INGEST.connectionString, { max: 1 });
+  const resolver = createIngestResolver({ hasher, cache: kvCredentialCache(env.KV_CONFIG), authn });
+
+  const deps: IngestDeps = {
+    resolve: async (token) => toResolvedEndpoint(await resolver.resolve(token)),
+    putPayload: async (key, body, contentType) => {
+      // The body is the source of truth (HMAC is over these exact bytes); the content-type is only
+      // advisory metadata, so a malformed one is dropped rather than allowed to fail the PUT.
+      const ct = safeContentType(contentType);
+      await env.R2_PAYLOADS.put(
+        key,
+        body,
+        ct !== undefined ? { httpMetadata: { contentType: ct } } : undefined,
+      );
+    },
+    ingestEvent: (row) => insertIngestEvent(ingest, row),
+    now: () => new Date(),
+    log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+    maxBodyBytes: MAX_VERIFIABLE_BODY_BYTES,
+    dedupBucketWidthMs: DEDUP_BUCKET_WIDTH_MS,
+  };
+
+  return {
+    deps,
+    close: async () => {
+      // Tear down both clients regardless of either's outcome — never leak a pooled connection.
+      await Promise.allSettled([authn.end(), ingest.end()]);
+    },
+  };
+}
+
+/**
+ * The wbhk.my router. GET / is the ONLY liveness probe; every other request is the ingest write
+ * path (handleIngest enforces POST + the rest). Owns per-request DB-client lifecycle: build deps,
+ * delegate, and close() in a finally so a thrown handler error never leaks a connection.
+ */
+export async function handleFetch(
+  request: Request,
+  env: Env,
+  makeDeps: MakeIngestDeps = buildIngestDeps,
+): Promise<Response> {
+  const url = new URL(request.url);
+  if (request.method === "GET" && url.pathname === "/") {
     return new Response(`${SERVICE_NAME}:engine ok`, {
       status: 200,
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
+  }
+
+  const handle = makeDeps(env);
+  try {
+    return await handleIngest(request, handle.deps);
+  } catch (err) {
+    // A binding/connection fault (bad pepper, Hyperdrive down) surfaces in observability as a 500,
+    // never a silent drop or an ACK of an unpersisted event.
+    console.log(JSON.stringify({ message: "ingest.unhandled", error: String(err) }));
+    return new Response("internal error", {
+      status: 500,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  } finally {
+    await handle.close();
+  }
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    return handleFetch(request, env);
   },
 
   async scheduled(

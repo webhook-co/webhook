@@ -25,6 +25,13 @@
   //   HYPERDRIVE_ANCHOR  — query caching DISABLED. The WORM head-anchor cron's cross-org
   //     chain-head read, connecting as the webhook_anchor role (role-targeted SELECT policy +
   //     column grant). Caching off: the read is control-plane and must reflect live heads.
+  //   HYPERDRIVE_AUTHN   — query caching DISABLED. The wbhk.my ingest cold path's
+  //     org-discovery-by-token-hash, connecting as the webhook_authn role (role-targeted SELECT
+  //     policy + column grant on endpoints). KV is the only invalidatable ingest cache; this
+  //     binding's cache stays off so a paused/rotated endpoint is reflected on the next cold miss.
+  //   HYPERDRIVE_INGEST  — query caching DISABLED. The single-statement `SELECT ingest_event(...)`
+  //     insert, connecting as the dedicated webhook_ingest role (INSERT+SELECT on events only,
+  //     statement_timeout=5s). RLS-gated writes must never rest on cache behavior.
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE_TENANT",
@@ -40,6 +47,16 @@
       "binding": "HYPERDRIVE_ANCHOR",
       "id": "<HYPERDRIVE_ANCHOR_ID>",
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
+      "binding": "HYPERDRIVE_AUTHN",
+      "id": "<HYPERDRIVE_AUTHN_ID>",
+      "localConnectionString": "postgres://webhook_authn:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
+      "binding": "HYPERDRIVE_INGEST",
+      "id": "<HYPERDRIVE_INGEST_ID>",
+      "localConnectionString": "postgres://webhook_ingest:postgres@127.0.0.1:5432/webhook_dev",
     },
   ],
   // WORM head-anchor bucket (ADR-0004). Object retention is enforced by an R2 Bucket Lock
