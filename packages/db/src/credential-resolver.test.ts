@@ -112,6 +112,59 @@ describe("createCredentialResolver — hot/cold path", () => {
     expect(cold).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects a cached entry whose sealedSecrets element is malformed (fails closed)", async () => {
+    // Valid JSON with a sealedSecrets array, but an element is missing the base64 fields. The guard
+    // must reject it (fall to the cold path) so the verify step never gets a half-formed secret that
+    // would throw mid-unseal.
+    const cache = new InMemoryCredentialCache();
+    await cache.put(
+      hasher.hash("whk_secret").toString("hex"),
+      JSON.stringify({
+        orgId: ORG,
+        scopes: [],
+        endpointId: "ep-1",
+        sealedSecrets: [{ id: "s1", provider: "stripe" }], // missing ciphertextB64/nonce/etc.
+      }),
+    );
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal({ endpointId: "ep-1" }));
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+
+    const result = await resolver.resolve("whk_secret");
+    expect(result?.endpointId).toBe("ep-1");
+    expect(cold).toHaveBeenCalledTimes(1); // poisoned hot entry ignored; cold path taken
+  });
+
+  it("rejects a cached sealedSecrets element whose base64 field isn't valid base64 (fails closed)", async () => {
+    // Structurally complete, but ciphertextB64 is non-base64 garbage. Buffer.from would decode it to
+    // junk and defer the failure to GCM; the guard must reject it at the cache boundary instead.
+    const cache = new InMemoryCredentialCache();
+    await cache.put(
+      hasher.hash("whk_secret").toString("hex"),
+      JSON.stringify({
+        orgId: ORG,
+        scopes: [],
+        endpointId: "ep-1",
+        sealedSecrets: [
+          {
+            id: "s1",
+            provider: "stripe",
+            ciphertextB64: "!!! not base64 !!!",
+            nonceB64: "AAAA",
+            wrappedDekB64: "AAAA",
+            kekRef: "local-dev-kek",
+            envelopeVersion: 1,
+            context: { orgId: ORG, endpointId: "ep-1", keyId: "k1" },
+          },
+        ],
+      }),
+    );
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal({ endpointId: "ep-1" }));
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+
+    await resolver.resolve("whk_secret");
+    expect(cold).toHaveBeenCalledTimes(1); // poisoned (non-base64) hot entry ignored; cold path taken
+  });
+
   it("invalidateHash deletes by raw hash (admin revoke without the plaintext)", async () => {
     const cache = new InMemoryCredentialCache();
     const delSpy = vi.spyOn(cache, "delete");

@@ -58,7 +58,33 @@ function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
   // or legacy) entry must fall through to the cold path, never resolve with a truthy garble.
   if (v.paused !== undefined && typeof v.paused !== "boolean") return false;
   if (v.audience !== undefined && typeof v.audience !== "string") return false;
+  // sealedSecrets feeds the verify path. A poisoned/partial entry (wrong shape, missing base64
+  // field) must fall through to the cold path, never resolve a half-formed secret list that would
+  // later throw mid-unseal. Validate every element fully.
+  if (v.sealedSecrets !== undefined) {
+    if (!Array.isArray(v.sealedSecrets) || !v.sealedSecrets.every(isCachedSealedSecret))
+      return false;
+  }
   return true;
+}
+
+const STANDARD_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+function isCachedSealedSecret(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const s = value as Record<string, unknown>;
+  const str = (x: unknown): boolean => typeof x === "string" && x !== "";
+  // The byte fields must be non-empty STANDARD base64 — not merely non-empty strings. Node/workerd
+  // base64 decoders are lenient (they drop junk silently), so a non-base64 value would otherwise pass
+  // here and only fail later at GCM decrypt; reject it at the cache boundary so the guard truly fails
+  // closed (the stated intent) rather than deferring a garbled secret into the verify path.
+  const b64 = (x: unknown): boolean => typeof x === "string" && STANDARD_BASE64.test(x);
+  if (!str(s.id) || !str(s.provider) || !str(s.kekRef)) return false;
+  if (!b64(s.ciphertextB64) || !b64(s.nonceB64) || !b64(s.wrappedDekB64)) return false;
+  if (typeof s.envelopeVersion !== "number") return false;
+  const ctx = s.context as Record<string, unknown> | null | undefined;
+  if (typeof ctx !== "object" || ctx === null) return false;
+  return str(ctx.orgId) && str(ctx.endpointId) && str(ctx.keyId);
 }
 
 /**
