@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@webhook-co/db": "workspace:*",
     "@webhook-co/shared": "workspace:*"
   }
 }

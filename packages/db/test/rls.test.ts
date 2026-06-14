@@ -75,6 +75,7 @@ let pg: EphemeralPostgres;
 let app: Sql; // webhook_app — the request-path role
 let ingest: Sql; // webhook_ingest — ingest hot-path role (events INSERT+SELECT)
 let owner: Sql; // webhook_owner — schema owner (non-superuser)
+let anchor: Sql; // webhook_anchor — WORM head-anchor cross-org chain-head reader (WS-C2)
 let root: Sql; // cluster superuser — used only to prove trigger-level immutability
 let orgA: Seeded;
 let orgB: Seeded;
@@ -123,6 +124,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   ingest = createClient(pg.urlFor({ role: DB_ROLES.ingest }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+  anchor = createClient(pg.urlFor({ role: DB_ROLES.anchor }));
   root = createClient(pg.ownerUrl);
   orgA = await seedOrg("aaa");
   orgB = await seedOrg("bbb");
@@ -132,6 +134,7 @@ afterAll(async () => {
   await app?.end();
   await ingest?.end();
   await owner?.end();
+  await anchor?.end();
   await root?.end();
   await pg?.stop();
 });
@@ -444,6 +447,54 @@ describe("catalog-driven RLS coverage (M3)", () => {
       where relkind = 'r' and relnamespace = 'public'::regnamespace
         and pg_get_userbyid(relowner) = ${DB_ROLES.authn}`;
     expect(ownedByAuthn[0]?.n).toBe(0);
+  });
+
+  it("the anchor role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
+    // webhook_anchor is the WORM head-anchor cron role: it reads per-org chain heads across
+    // tenants via a role-targeted SELECT policy + a column grant, and like every other
+    // request/job-path role must never be a superuser, never BYPASSRLS, never a table owner.
+    const [role] = await owner<{ rolname: string; super: boolean; bypass: boolean }[]>`
+      select rolname, rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.anchor}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+
+    const ownedByAnchor = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.anchor}`;
+    expect(ownedByAnchor[0]?.n).toBe(0);
+  });
+});
+
+describe("webhook_anchor cross-org chain-head read (WS-C2)", () => {
+  it("reads every org's head with NO tenant context (role-targeted policy, not BYPASSRLS)", async () => {
+    // The anchor cron sets no app.current_org. The role-targeted FOR SELECT TO webhook_anchor
+    // USING(true) policy is what lets it see all orgs, while FORCE RLS still denies webhook_app
+    // the same (proven by the deny-by-default test above). This is the cross-org read WITHOUT a
+    // BYPASSRLS/SECURITY-DEFINER bypass — both of which FORCE RLS would defeat anyway.
+    const heads = await anchor<{ org_id: string; seq: string; row_hash: Uint8Array }[]>`
+      select distinct on (org_id) org_id, seq, row_hash
+      from audit_log order by org_id, seq desc`;
+    const orgIds = heads.map((h) => h.org_id);
+    // Both seeded orgs are visible from a context-less anchor connection — i.e. it crosses
+    // tenants (other tests may add more orgs, so assert membership, not an exact set).
+    expect(orgIds).toContain(orgA.orgId);
+    expect(orgIds).toContain(orgB.orgId);
+  });
+
+  it("cannot read the audit content columns (column grant is org_id, seq, row_hash only)", async () => {
+    await expect(anchor`select actor from audit_log`).rejects.toThrow(/permission denied/i);
+    await expect(anchor`select action from audit_log`).rejects.toThrow(/permission denied/i);
+    await expect(anchor`select target from audit_log`).rejects.toThrow(/permission denied/i);
+  });
+
+  it("cannot write to audit_log (no INSERT/UPDATE/DELETE grant)", async () => {
+    await expect(
+      anchor`insert into audit_log (org_id, seq, action, row_hash)
+             values (${orgA.orgId}, ${999}, ${"x"}, ${deterministicBuffer(32)})`,
+    ).rejects.toThrow(/permission denied/i);
   });
 });
 

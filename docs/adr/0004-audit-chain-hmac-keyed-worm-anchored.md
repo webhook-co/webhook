@@ -25,10 +25,16 @@ Truncation (lopping off the tail) is also undetectable without an external ancho
   enforces the structure: a trigger requires contiguous `seq` + `prev_hash` linkage, and
   an immutability trigger rejects `UPDATE`/`DELETE`/`TRUNCATE` (proven against a
   superuser in the leak suite). The unique `(org_id, seq)` is the serialization point.
-- **WORM head-anchor (designed now, serialized + cron later).** Periodically anchor the
-  per-org chain head to R2 Object Lock so tail-truncation is detectable. The anchor is
-  designed, not yet serialized — there's no frozen anchor payload format in code yet; both
-  the serialized format and the cron that writes it are a post-freeze workstream.
+- **WORM head-anchor (serialized + cron in WS-C2).** Periodically anchor the per-org chain
+  head to an **R2 bucket under a Bucket Lock** (write-once, no delete/overwrite for the
+  retention period) so tail-truncation is detectable. Note R2 provides **Bucket Locks**
+  (prefix/bucket retention rules), **not** S3 Object Lock — there is no compliance/governance
+  mode; retention is uniformly enforced (no privileged override), which is the WORM property
+  we need, and the anchor writer additionally holds no delete rights. The frozen anchor payload
+  (`{version, orgId, seq, rowHash, anchoredAt}` + an HMAC under the chain key) lives in
+  `packages/shared/src/audit-anchor.ts`; `verifyChainAgainstAnchor` cross-checks the live chain.
+  The inherent detection window equals the cron interval (rows written *and* truncated entirely
+  between two anchors were never captured).
 - **Pseudonymous actor (M1).** `actor` is the Better Auth `user_id`, never raw PII, and
   is not a FK — user erasure never deletes audit history.
 - **Control-plane only.** The chain records low-volume control actions; per-event
