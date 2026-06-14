@@ -17,5 +17,6 @@ export * from "./audit-append";
 export * from "./credential";
 export * from "./credential-cache";
 export * from "./credential-resolver";
+export * from "./ingest-resolver";
 export * from "./api-keys";
 export * from "./verify-bearer";
