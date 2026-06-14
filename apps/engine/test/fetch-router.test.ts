@@ -18,7 +18,10 @@ function fakeHandle(over: Partial<IngestDeps> = {}): {
   let closes = 0;
   const deps: IngestDeps = {
     resolve: async (token): Promise<ResolvedEndpoint | null> =>
-      token === "whep_good" ? { orgId: "o", endpointId: "e", paused: false } : null,
+      token === "whep_good"
+        ? { orgId: "o", endpointId: "e", paused: false, sealedSecrets: [] }
+        : null,
+    verify: async () => ({ verified: false, verification: null }),
     putPayload: async () => undefined,
     ingestEvent: async () => ({ inserted: true }),
     now: () => new Date("2026-06-14T12:00:00Z"),

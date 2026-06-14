@@ -33,6 +33,10 @@ export interface IngestEventInput {
   readonly provider: string | null;
   readonly providerEventId: string | null;
   readonly dedupBucket: number | null;
+  /** Provider-signature verification outcome (best-effort at capture). false = unverified. */
+  readonly verified: boolean;
+  /** The structured verification diagnostic (stored jsonb), or null when not attempted. */
+  readonly verification: unknown;
 }
 
 /**
@@ -44,9 +48,10 @@ export async function insertIngestEvent(
   sql: Sql,
   row: IngestEventInput,
 ): Promise<{ inserted: boolean }> {
-  // bytea wants a Buffer; jsonb is passed as a JSON string and cast. Trailing function args
-  // (external_id, verified, verification) keep their defaults (null, false, null) — capture floor.
+  // bytea wants a Buffer; jsonb is passed as a JSON string and cast. external_id stays null (no
+  // SW external-id wiring yet); verified/verification carry the best-effort verification outcome.
   const contentHash = row.contentHash === null ? null : Buffer.from(row.contentHash);
+  const verification = row.verification === null ? null : JSON.stringify(row.verification);
   const rows = await sql<{ inserted: boolean }[]>`
     select inserted from ingest_event(
       ${row.id}::uuid,
@@ -61,7 +66,10 @@ export async function insertIngestEvent(
       ${JSON.stringify(row.headers)}::jsonb,
       ${row.provider},
       ${row.providerEventId},
-      ${row.dedupBucket}::bigint
+      ${row.dedupBucket}::bigint,
+      null::text,
+      ${row.verified},
+      ${verification}::jsonb
     )`;
   // ingest_event ALWAYS returns exactly one (event_id, inserted) row. Anything else (an empty or
   // multi-row result) means a broken contract — fail loud so the caller 500s and the provider

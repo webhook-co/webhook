@@ -62,6 +62,8 @@ function row(over: Partial<IngestEventInput> = {}): IngestEventInput {
     provider: "stripe",
     providerEventId: "evt_123",
     dedupBucket: null,
+    verified: false,
+    verification: null,
     ...over,
   };
 }
@@ -147,5 +149,22 @@ describe("insertIngestEvent (webhook_ingest, full capture row)", () => {
 
   it("throws (does NOT report a phantom inserted=false) if ingest_event returns no row", async () => {
     await expect(insertIngestEvent(emptyResultSql, row())).rejects.toThrow();
+  });
+
+  it("persists the verification outcome (verified=true + the diagnostic jsonb)", async () => {
+    const verification = { ok: true, keyId: "secret_0", scheme: "stripe" };
+    const r = row({ verified: true, verification });
+    await insertIngestEvent(ingest, r);
+
+    const [stored] = await withTenant(app, orgId, async (tx) => {
+      return tx<{ verified: boolean; verification: unknown }[]>`
+        select verified, verification from events where id = ${r.id}`;
+    });
+    expect(stored?.verified).toBe(true);
+    const v =
+      typeof stored?.verification === "string"
+        ? JSON.parse(stored.verification)
+        : stored?.verification;
+    expect(v).toEqual(verification);
   });
 });

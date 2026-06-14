@@ -6,11 +6,26 @@ import {
   readAuditChainHeads,
   type ResolvedPrincipal,
 } from "@webhook-co/db";
-import { importAuditKey, MAX_VERIFIABLE_BODY_BYTES, SERVICE_NAME } from "@webhook-co/shared";
+import {
+  b64ToBytes,
+  importAuditKey,
+  LocalKmsProvider,
+  MAX_VERIFIABLE_BODY_BYTES,
+  OrgScopedDekCache,
+  SecretStore,
+  SERVICE_NAME,
+} from "@webhook-co/shared";
 
 import { runAnchorCron } from "./anchor-cron";
-import { handleIngest, type IngestDeps, type ResolvedEndpoint } from "./ingest";
+import {
+  handleIngest,
+  type IngestDeps,
+  type ResolvedEndpoint,
+  type VerificationOutcome,
+  type VerifyIngestInput,
+} from "./ingest";
 import { kvCredentialCache } from "./kv-cache";
+import { makeVerifyIngest } from "./verify";
 
 // The webhook engine Worker. `fetch` is the wbhk.my write path (cookieless, path-token ingest);
 // `scheduled` runs the WORM head-anchor cron (ADR-0004). Handlers stay thin: validate -> delegate
@@ -30,6 +45,12 @@ export interface Env {
   KV_CONFIG: KVNamespace;
   /** Base64 credential pepper (Worker secret): keys the ingest-token HMAC. Never a DB column. */
   CREDENTIAL_PEPPER: string;
+  /**
+   * Base64 KEK (Worker secret) for the local KMS provider — unwraps the per-secret DEKs that seal
+   * provider signing secrets (envelope.ts / ADR-0007). The dev/self-host custodian; AWS KMS swaps in
+   * behind the same KmsProvider seam at the construction site. Never a DB column.
+   */
+  KEK: string;
   /** Hyperdrive config for the webhook_anchor cross-org head read (query caching off). */
   HYPERDRIVE_ANCHOR: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
@@ -44,6 +65,42 @@ export interface Env {
  * does not). Only used by the content_hash fallback strategy.
  */
 const DEDUP_BUCKET_WIDTH_MS = 24 * 60 * 60 * 1000;
+
+// Isolate-scoped DEK handle cache (ADR-0007): unwrapped, non-extractable CryptoKey handles, bounded
+// and org-scoped, reused across requests in this isolate so the KMS unwrap is amortized off the hot
+// path. The verify function (KEK import + SecretStore + adapter loop) is likewise built once per
+// isolate, lazily on first verify.
+const DEK_CACHE = new OrgScopedDekCache({ maxEntries: 256 });
+type VerifyFn = (input: VerifyIngestInput) => Promise<VerificationOutcome>;
+let verifyFnPromise: Promise<VerifyFn> | undefined;
+
+/**
+ * Lazily build the per-isolate verify function from the KEK secret (LocalKmsProvider — the
+ * dev/self-host custodian behind the KmsProvider seam; AWS KMS swaps in later). Memoized so the KEK
+ * import + SecretStore happen once per isolate. A REJECTED init (bad/missing KEK) is NOT cached: the
+ * memo is cleared so a later request retries rather than the isolate being poisoned for its lifetime
+ * (handleIngest's verify guard still degrades a failing build to verified=false, never blocking
+ * capture).
+ */
+function getVerifyFn(env: Env): Promise<VerifyFn> {
+  if (verifyFnPromise === undefined) {
+    verifyFnPromise = (async () => {
+      // b64ToBytes uses the Workers `atob` global (no Buffer in the worker type env) and throws on
+      // non-base64. LocalKmsProvider.fromRawKek enforces the 32-byte length.
+      const kms = await LocalKmsProvider.fromRawKek(b64ToBytes(env.KEK));
+      const store = new SecretStore(kms, DEK_CACHE);
+      return makeVerifyIngest(
+        store,
+        () => new Date(),
+        (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+      );
+    })().catch((err: unknown) => {
+      verifyFnPromise = undefined; // don't cache a failed init — let the next request retry
+      throw err;
+    });
+  }
+  return verifyFnPromise;
+}
 
 /** Per-request ingest deps plus the teardown for the DB clients they hold. */
 export interface IngestDepsHandle {
@@ -74,6 +131,7 @@ function toResolvedEndpoint(principal: ResolvedPrincipal | null): ResolvedEndpoi
     orgId: principal.orgId,
     endpointId: principal.endpointId,
     paused: principal.paused ?? false,
+    sealedSecrets: principal.sealedSecrets ?? [],
   };
 }
 
@@ -93,6 +151,9 @@ export function buildIngestDeps(env: Env): IngestDepsHandle {
 
   const deps: IngestDeps = {
     resolve: async (token) => toResolvedEndpoint(await resolver.resolve(token)),
+    // Synchronous best-effort verification. The verify fn (KMS + DEK cache + adapters) is built once
+    // per isolate; a thrown init/unseal is caught by handleIngest's guard (capture is never blocked).
+    verify: async (input) => (await getVerifyFn(env))(input),
     putPayload: async (key, body, contentType) => {
       // The body is the source of truth (HMAC is over these exact bytes); the content-type is only
       // advisory metadata, so a malformed one is dropped rather than allowed to fail the PUT.
@@ -175,11 +236,10 @@ export default {
 
 /** Wire the real deps (anchor DB connection, R2 anchor bucket, HMAC key) and run the cron. */
 async function runAuditAnchorCron(env: Env): Promise<void> {
-  // Decode + validate the HMAC key BEFORE opening a connection. The secret is standard base64
-  // (shared's base64 helpers are package-internal; atob is a Workers global). A too-short key
-  // would otherwise silently MAC every anchor under a weak key and lock the bad anchors in for the
-  // whole retention term.
-  const raw = Uint8Array.from(atob(env.AUDIT_CHAIN_HMAC_KEY), (c) => c.charCodeAt(0));
+  // Decode + validate the HMAC key BEFORE opening a connection. A too-short key would otherwise
+  // silently MAC every anchor under a weak key and lock the bad anchors in for the whole retention
+  // term. b64ToBytes (shared) is the one cross-runtime base64 decoder.
+  const raw = b64ToBytes(env.AUDIT_CHAIN_HMAC_KEY);
   if (raw.length < 32) {
     throw new Error(`AUDIT_CHAIN_HMAC_KEY must decode to >= 32 bytes, got ${raw.length}`);
   }

@@ -10,7 +10,7 @@ export * from "@webhook-co/webhooks-spec";
 // Cross-runtime byte primitives (Workers + Node). Surfaced on the package entry so Worker-context
 // callers reuse the canonical encoders instead of re-deriving hex/base64 (which would risk the
 // dedup_key / pepper encodings drifting from the rest of the system).
-export { bytesToHex, bytesToB64 } from "./bytes";
+export { bytesToHex, bytesToB64, b64ToBytes } from "./bytes";
 
 export * from "./enums";
 export * from "./ids";
