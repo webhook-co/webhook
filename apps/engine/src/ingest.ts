@@ -13,12 +13,14 @@
 // store the normalized array-of-pairs (unscrubbed; full-fidelity protection is RLS + encryption +
 // retention, not redaction). Only the raw BODY bytes are byte-exact, which is all HMAC needs.
 
+import { type CachedSealedSecret } from "@webhook-co/db";
 import {
   newId,
   payloadR2Key,
   redactHeadersForLog,
   type DedupStrategy,
   type Provider,
+  type VerificationResult,
 } from "@webhook-co/shared";
 
 import { deriveDedup } from "./dedup";
@@ -28,6 +30,26 @@ export interface ResolvedEndpoint {
   readonly orgId: string;
   readonly endpointId: string;
   readonly paused: boolean;
+  /** The endpoint's sealed provider signing secrets, delivered on the principal for verify. */
+  readonly sealedSecrets: readonly CachedSealedSecret[];
+}
+
+/** What handleIngest hands the verify dep to attempt provider-signature verification. */
+export interface VerifyIngestInput {
+  readonly rawBody: Uint8Array;
+  readonly headers: ReadonlyArray<readonly [string, string]>;
+  /** The detected provider (null = unrecognized sender -> no adapter -> unverified). */
+  readonly provider: Provider | null;
+  /** Authoritative org/endpoint (the AAD is rebuilt from these, not the cached secret context). */
+  readonly orgId: string;
+  readonly endpointId: string;
+  readonly sealedSecrets: readonly CachedSealedSecret[];
+}
+
+/** The verification outcome stored on the event. `verification` is the structured diagnostic (jsonb). */
+export interface VerificationOutcome {
+  readonly verified: boolean;
+  readonly verification: VerificationResult | null;
 }
 
 /** The full-fidelity capture row handed to ingest_event (variant B). */
@@ -45,11 +67,19 @@ export interface IngestRow {
   readonly provider: Provider | null;
   readonly providerEventId: string | null;
   readonly dedupBucket: number | null;
+  readonly verified: boolean;
+  readonly verification: VerificationResult | null;
 }
 
 export interface IngestDeps {
   /** Resolve a path token to its endpoint (KV hot -> cold). null = unknown token (404). */
   resolve(token: string): Promise<ResolvedEndpoint | null>;
+  /**
+   * Provider-signature verification (best-effort). MUST NOT throw on a verification problem — it
+   * returns a diagnostic outcome. handleIngest also guards the call so a thrown impl never blocks
+   * capture (events are still stored, verified=false).
+   */
+  verify(input: VerifyIngestInput): Promise<VerificationOutcome>;
   /** Durably PUT the raw body to R2 BEFORE the metadata insert (durable-before-ACK, ADR-0013). */
   putPayload(key: string, body: Uint8Array, contentType: string | null): Promise<void>;
   /** Insert event metadata via ingest_event (variant B). inserted=false on a dedup no-op. */
@@ -149,6 +179,24 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     return plain(500, "internal error");
   }
 
+  // Provider-signature verification — AFTER the body is durable (so verify cycles never delay
+  // durability) and BEFORE the insert (verified/verification are insert columns). Best-effort and
+  // GUARDED: a thrown verify (KMS down, a corrupt secret) must NEVER block capture — we fall back to
+  // verified=false and still store the event (capture is the floor; it's verifiable retroactively).
+  let outcome: VerificationOutcome = { verified: false, verification: null };
+  try {
+    outcome = await deps.verify({
+      rawBody: raw,
+      headers,
+      provider: derived.provider,
+      orgId: endpoint.orgId,
+      endpointId: endpoint.endpointId,
+      sealedSecrets: endpoint.sealedSecrets,
+    });
+  } catch (err) {
+    deps.log("ingest.verify_failed", { endpointId: endpoint.endpointId, error: String(err) });
+  }
+
   // Metadata insert (the dedup gate). On failure -> 500; the R2 object survives for the orphan sweep,
   // and the provider's retry re-PUTs the same deterministic key and re-attempts the insert.
   let inserted: boolean;
@@ -167,6 +215,8 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       provider: derived.provider,
       providerEventId: derived.providerEventId,
       dedupBucket: derived.dedupBucket,
+      verified: outcome.verified,
+      verification: outcome.verification,
     }));
   } catch (err) {
     deps.log("ingest.insert_failed", { endpointId: endpoint.endpointId, error: String(err) });
@@ -179,6 +229,7 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     inserted,
     dedupStrategy: derived.dedupStrategy,
     provider: derived.provider,
+    verified: outcome.verified,
     bytes: raw.byteLength,
     headers: redactHeadersForLog(headers), // signature/auth headers never logged verbatim
   });

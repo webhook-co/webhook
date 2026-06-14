@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { handleIngest, type IngestDeps, type IngestRow } from "../src/ingest";
+import {
+  handleIngest,
+  type IngestDeps,
+  type IngestRow,
+  type VerifyIngestInput,
+} from "../src/ingest";
 
 const ORG = "be000000-0000-4000-8000-000000000001";
 const EP = "be000000-0000-4000-8000-000000000002";
@@ -9,15 +14,21 @@ const GOOD = "whep_good-token";
 interface Calls {
   put: { key: string; body: Uint8Array; contentType: string | null }[];
   ingest: IngestRow[];
+  verify: VerifyIngestInput[];
   logs: { event: string; fields: Record<string, unknown> }[];
   order: string[];
 }
 
 function makeDeps(over: Partial<IngestDeps> = {}): { deps: IngestDeps; calls: Calls } {
-  const calls: Calls = { put: [], ingest: [], logs: [], order: [] };
+  const calls: Calls = { put: [], ingest: [], verify: [], logs: [], order: [] };
   const deps: IngestDeps = {
     resolve: async (token) =>
-      token === GOOD ? { orgId: ORG, endpointId: EP, paused: false } : null,
+      token === GOOD ? { orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [] } : null,
+    verify: async (input) => {
+      calls.order.push("verify");
+      calls.verify.push(input);
+      return { verified: false, verification: null };
+    },
     putPayload: async (key, body, contentType) => {
       calls.order.push("put");
       calls.put.push({ key, body, contentType });
@@ -77,7 +88,7 @@ describe("handleIngest — the wbhk.my write path", () => {
 
   it("returns 429 + Retry-After for a paused endpoint (founder decision: reject, don't drop)", async () => {
     const { deps, calls } = makeDeps({
-      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true }),
+      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true, sealedSecrets: [] }),
     });
     const res = await handleIngest(req(GOOD), deps);
     expect(res.status).toBe(429);
@@ -125,7 +136,7 @@ describe("handleIngest — the wbhk.my write path", () => {
       deps,
     );
     expect(res.status).toBe(200);
-    expect(calls.order).toEqual(["put", "ingest"]); // ordering is the whole point
+    expect(calls.order).toEqual(["put", "verify", "ingest"]); // durable PUT, then verify, then insert
     // the insert carries the derived dedup + the captured fields
     const row = calls.ingest[0]!;
     expect(row.orgId).toBe(ORG);
@@ -138,6 +149,62 @@ describe("handleIngest — the wbhk.my write path", () => {
     // cookieless, no CORS
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("verifies AFTER the durable R2 PUT and writes the outcome (verified + diagnostic) to the insert", async () => {
+    const verification = { ok: true, keyId: "secret_0", scheme: "stripe" };
+    const secret = {
+      id: "sec-1",
+      provider: "stripe",
+      ciphertextB64: "AAAA",
+      nonceB64: "AAAA",
+      wrappedDekB64: "AAAA",
+      kekRef: "local-dev-kek",
+      envelopeVersion: 1,
+      context: { orgId: ORG, endpointId: EP, keyId: "sec-1" },
+    } as const;
+    const { deps, calls } = makeDeps({
+      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [secret] }),
+      verify: async (input) => {
+        calls.order.push("verify");
+        calls.verify.push(input);
+        return { verified: true, verification };
+      },
+    });
+    const res = await handleIngest(
+      req(GOOD, {
+        body: `{"id":"evt_abc"}`,
+        headers: { "stripe-signature": "t=1,v1=x", "content-type": "application/json" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    // durable-before-verify: the body is durable (R2) before we spend verify cycles, then insert.
+    expect(calls.order).toEqual(["put", "verify", "ingest"]);
+    // verify got the raw bytes, the detected provider, the authoritative org/endpoint, and the secrets.
+    const vin = calls.verify[0]!;
+    expect(vin.provider).toBe("stripe");
+    expect(vin.orgId).toBe(ORG);
+    expect(vin.endpointId).toBe(EP);
+    expect(vin.sealedSecrets).toEqual([secret]);
+    expect(new TextDecoder().decode(vin.rawBody)).toBe(`{"id":"evt_abc"}`);
+    // the outcome is persisted on the event row
+    const row = calls.ingest[0]!;
+    expect(row.verified).toBe(true);
+    expect(row.verification).toEqual(verification);
+  });
+
+  it("a thrown verify never blocks capture: the event is still stored (verified=false) and ACKed 200", async () => {
+    const { deps, calls } = makeDeps({
+      verify: async () => {
+        throw new Error("kms down");
+      },
+    });
+    const res = await handleIngest(req(GOOD), deps);
+    expect(res.status).toBe(200);
+    expect(calls.ingest).toHaveLength(1); // captured despite the verify failure
+    expect(calls.ingest[0]!.verified).toBe(false);
+    expect(calls.ingest[0]!.verification).toBeNull();
   });
 
   it("a dedup no-op (inserted=false) still ACKs 200", async () => {
