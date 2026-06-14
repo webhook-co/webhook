@@ -75,13 +75,41 @@ export async function variantC(sql: Sql, p: BenchInsert): Promise<VariantResult>
   return { inserted: Boolean(inserted), dbMs: performance.now() - t0 };
 }
 
+// Benchmark-only inputs are server-derived (UUIDs from crypto.randomUUID; constants), so these
+// always pass — the guard exists so the string-interpolated SQL below can never become an injection
+// vector if the call site changes or the function is lifted elsewhere. Validated BEFORE the timer so
+// it never counts toward variant D's measured `dbMs`.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-9a-f][0-9a-f]{3}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const SAFE_TOKEN_RE = /^[A-Za-z0-9._:/=-]+$/; // r2 keys, dedup keys, dedup strategy
+
+function assertBenchSafe(p: BenchInsert): void {
+  if (!UUID_RE.test(p.id) || !UUID_RE.test(p.orgId) || !UUID_RE.test(p.endpointId)) {
+    throw new Error("variantD: non-UUID id/orgId/endpointId — refusing to interpolate");
+  }
+  if (!SAFE_TOKEN_RE.test(p.payloadR2Key) || !SAFE_TOKEN_RE.test(p.dedupKey)) {
+    throw new Error("variantD: unsafe payloadR2Key/dedupKey — refusing to interpolate");
+  }
+  if (!SAFE_TOKEN_RE.test(p.dedupStrategy)) {
+    throw new Error("variantD: unsafe dedupStrategy — refusing to interpolate");
+  }
+  if (!Number.isInteger(p.payloadBytes) || p.payloadBytes < 0) {
+    throw new Error("variantD: payloadBytes must be a non-negative integer");
+  }
+}
+
 /**
- * D — combined simple-query batch (SESSION `SET` + INSERT) in one round-trip, no function. Values are
- * server-derived; the dedup_key / keys are generated (no quotes), so the simple-query interpolation
- * is benchmark-safe. The SESSION set persists on the connection until Hyperdrive resets it on return
- * — the safety caveat that makes B (transaction-local) the safer of the two one-round-trip paths.
+ * D — combined simple-query batch (SESSION `SET` + INSERT) in one round-trip, no function.
+ *
+ * ⚠️ BENCHMARK-ONLY. This is the ONLY path here that string-interpolates into raw SQL (the
+ * simple-query protocol can't parameterize a multi-statement `SET; INSERT` batch). It is safe ONLY
+ * because every value is server-derived and `assertBenchSafe` re-checks that before we build the
+ * string. **Never copy this construction onto a request path** — production ingest is variant B's
+ * parameterized `ingest_event(...)`. The SESSION set also persists on the physical connection until
+ * Hyperdrive resets it on pool return — the safety caveat that makes B (transaction-local) the safer
+ * of the two one-round-trip paths.
  */
 export async function variantD(sql: Sql, p: BenchInsert): Promise<VariantResult> {
+  assertBenchSafe(p);
   const t0 = performance.now();
   await sql.unsafe(
     `set app.current_org = '${p.orgId}';
