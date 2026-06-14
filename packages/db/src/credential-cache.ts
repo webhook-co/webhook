@@ -23,6 +23,14 @@ export interface ResolvedPrincipal {
    */
   readonly endpointId?: string;
   /**
+   * The endpoint's paused flag, carried by the ingest-token resolver so the hot path reads
+   * pause state from ONE KV read (never a synchronous DB count). Unused by api keys
+   * (org-scoped, no endpoint). Today this is the per-endpoint `endpoints.paused` flag only;
+   * the org-level metering soft-cap pause (`ingest_paused`) will be OR'd in here when the
+   * ingest guard is wired.
+   */
+  readonly paused?: boolean;
+  /**
    * The resource the credential is bound to (RFC 8707 audience). verifyBearer rejects a
    * credential whose audience != the resource it's presented at. Optional on the cache
    * type so the ingest resolver (audience-less) reuses the shape; the api-key path

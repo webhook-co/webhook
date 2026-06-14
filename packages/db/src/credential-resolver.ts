@@ -54,6 +54,9 @@ function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
   if (typeof v.orgId !== "string" || v.orgId === "") return false;
   if (!Array.isArray(v.scopes) || !v.scopes.every((s) => typeof s === "string")) return false;
   if (v.endpointId !== undefined && typeof v.endpointId !== "string") return false;
+  // paused is a security-relevant gate signal for the ingest path — a non-boolean (poisoned
+  // or legacy) entry must fall through to the cold path, never resolve with a truthy garble.
+  if (v.paused !== undefined && typeof v.paused !== "boolean") return false;
   if (v.audience !== undefined && typeof v.audience !== "string") return false;
   return true;
 }
