@@ -8,6 +8,12 @@ import { runAnchorCron } from "./anchor-cron";
 // The scheduled() handler runs the WORM head-anchor cron (ADR-0004).
 
 export interface Env {
+  /** Cache-disabled Hyperdrive config for tenant-scoped reads/writes incl. the ingest insert (C1). */
+  HYPERDRIVE_TENANT: Hyperdrive;
+  /** R2 bucket holding per-event payload bodies (key = payloadR2Key(org, endpoint, dedup)). */
+  R2_PAYLOADS: R2Bucket;
+  /** KV namespace caching endpoint resolution (keyed by ingest-token hash). */
+  KV_CONFIG: KVNamespace;
   /** Hyperdrive config for the webhook_anchor cross-org head read (query caching off). */
   HYPERDRIVE_ANCHOR: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
