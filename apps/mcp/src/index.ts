@@ -4,10 +4,10 @@ import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
 import { mcpApiHandler } from "./api-handler";
 import { mcpDefaultHandler } from "./default-handler";
 
-// The mcp. OAuth issuer + resource server (§0.8, WS-D2a; ADR-0010 r2). Co-located on mcp.:
+// The mcp. OAuth issuer + resource server, co-located on mcp.:
 // @cloudflare/workers-oauth-provider runs here as our own OAuth 2.1 issuer for mcp.-scoped access
-// tokens AND validates them as the resource server. The PRD §6 "issuer on auth., separate resource
-// server on mcp." split is infeasible — the library's tokens are opaque + KV-bound to the issuing
+// tokens AND validates them as the resource server. Splitting the issuer onto auth. with a separate
+// resource server on mcp. is infeasible — the library's tokens are opaque + KV-bound to the issuing
 // Worker (no JWT/introspection/cross-Worker validation) — so mcp. issues+validates its own tokens
 // and federates user LOGIN to Better Auth on auth. (the identity origin). The provider serves the
 // RFC 9728 PRM, RFC 8414 metadata, RFC 7591 DCR, and the /token endpoint; it enforces RFC 8707
@@ -41,7 +41,7 @@ export default new OAuthProvider({
   // RFC 9728 PRM: advertise our canonical resource + this co-located issuer as the auth server.
   // The resource identifier is the origin (the stable RFC 8707 audience), while the protected API
   // is at /mcp. The end-to-end resource-binding on a VALID access token (origin-bound token reaching
-  // /mcp) can only be exercised once the /authorize login flow can mint a token — verify it in WS-D2b.
+  // /mcp) can only be exercised once the /authorize login flow can mint a token — verify it then.
   resourceMetadata: {
     resource: MCP_RESOURCE,
     authorization_servers: [MCP_RESOURCE],

@@ -15,7 +15,7 @@ export interface ClientOptions {
  * drops a startup round-trip (Cloudflare's recommended setting). Create the client
  * inside the request handler in Workers — never at module/global scope.
  *
- * IMPORTANT (review finding C1): for tenant-scoped reads the caller MUST pass the
+ * IMPORTANT (review finding): for tenant-scoped reads the caller MUST pass the
  * connection string from the CACHE-DISABLED Hyperdrive binding (HYPERDRIVE_TENANT).
  * Hyperdrive query caching is keyed on SQL+params and is blind to the RLS session
  * GUC, so a cached tenant query can serve one org's rows to another. This factory

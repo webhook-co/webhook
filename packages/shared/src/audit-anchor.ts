@@ -3,7 +3,7 @@ import { z } from "zod";
 import { b64ToBytes, bytesToB64, timingSafeEqual, utf8Encoder } from "./bytes";
 import type { StoredAuditRow } from "./audit-chain";
 
-// The WORM head-anchor format + cross-check (§0.7, ADR-0004, WS-C2). Periodically the
+// The WORM head-anchor format + cross-check (ADR-0004). Periodically the
 // anchor cron records each org's chain head — (seq, row_hash) at a point in time — as a
 // small, HMAC-signed object in an R2 bucket under a retention lock (write-once, no delete).
 // Later, the verifier fetches the latest anchor and cross-checks it against the live chain:

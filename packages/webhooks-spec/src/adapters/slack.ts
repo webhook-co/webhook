@@ -1,6 +1,6 @@
-// Slack verify adapter — SCAFFOLD (WS-A follow-up; fill in the construction).
+// Slack verify adapter — SCAFFOLD (follow-up; fill in the construction).
 //
-// Construction (documented, for the next workstream):
+// Construction (documented, for the follow-up):
 //   Headers: X-Slack-Request-Timestamp: <unix seconds>
 //            X-Slack-Signature: v0=<hex>
 //   Message: `v0:{timestamp}:{rawBody}` (colon-joined, with the literal version tag).
@@ -9,7 +9,7 @@
 //   Rotation: accept any non-revoked signing secret.
 //   See https://api.slack.com/authentication/verifying-requests-from-slack
 //
-// TODO(ws-a-followup): implement. This is close to the Stripe shape — reuse
+// TODO: implement. This is close to the Stripe shape — reuse
 // `verifyHmacHex` from ./shared with a `buildMessage` of `v0:{ts}:` + rawBody and the
 // same timestamp-skew enforcement Stripe does. Until then, return an honest
 // UNSUPPORTED_SCHEME so capture/ACK is never blocked.
@@ -27,7 +27,7 @@ function verify(input: VerifyInput): VerificationResult {
   if (headerValue === undefined) {
     return verificationFailed({ code: "MISSING_HEADER", header: HEADER, scheme: SCHEME });
   }
-  // Scaffold: construction not yet implemented. Diagnose rather than throw (§0.5).
+  // Scaffold: construction not yet implemented. Diagnose rather than throw.
   return verificationFailed({ code: "UNSUPPORTED_SCHEME", observedHeaders: [HEADER] });
 }
 

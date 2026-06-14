@@ -29,7 +29,7 @@ describe("cursor codec", () => {
     expect(token).toMatch(/^[\w-]+\.[\w-]+$/);
   });
 
-  it("rejects a cursor signed with a different key (M5 tamper-evidence)", async () => {
+  it("rejects a cursor signed with a different key (tamper-evidence)", async () => {
     const token = await encodeCursor(cursor, key);
     await expect(decodeCursor(token, otherKey)).rejects.toBeInstanceOf(InvalidCursorError);
   });

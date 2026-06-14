@@ -1,7 +1,7 @@
 // Test-side migration runner: bootstrap the non-owner ownership model and drive
 // dbmate against an ephemeral cluster.
 //
-// The freeze's RLS guarantees only hold if the table OWNER is a non-superuser
+// The schema's RLS guarantees only hold if the table OWNER is a non-superuser
 // (a superuser, and a table owner without FORCE RLS, bypass policies). So in tests —
 // exactly as in prod — migrations run as a dedicated non-superuser `webhook_owner`
 // that owns the schema, and the app/ingest roles created by the migrations are
@@ -9,7 +9,7 @@
 //
 // Two auth modes (pg.auth):
 //   - "trust": local ephemeral (--auth=trust) or a trust-auth CI service — no passwords.
-//   - "password": a managed Postgres (e.g. a Neon branch, M4 nightly) that requires
+//   - "password": a managed Postgres (e.g. a Neon branch, nightly run) that requires
 //     SCRAM. The harness mints per-run, in-memory passwords; we set them on the owner
 //     (here) and on the app/ingest roles (applyRolePasswords) so they can log in. The
 //     passwords are never written to source and rotate every run.

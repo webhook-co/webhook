@@ -32,7 +32,7 @@ describe("capability registry", () => {
     }
   });
 
-  it("validates events.replay input and rejects a free-form URL target (H6)", () => {
+  it("validates events.replay input and rejects a free-form URL target", () => {
     const ok = eventsReplay.input.safeParse({
       eventId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
       target: { kind: "localhost-tunnel", sessionId: "sess_1" },
@@ -58,12 +58,12 @@ describe("capability registry", () => {
     expect(missing.success).toBe(false);
   });
 
-  it("carries the gapless watermark on events.tail (§0.10, H5)", () => {
+  it("carries the gapless watermark on events.tail", () => {
     expect(eventsTail.semantics.streaming).toBe(true);
     expect(eventsTail.semantics.watermark?.deltaMs).toBeGreaterThan(0);
   });
 
-  it("surfaces audit.verify on every GA surface with a read scope (§0.7 parity)", () => {
+  it("surfaces audit.verify on every GA surface with a read scope", () => {
     expect(auditVerify.auth.scope).toBe("audit:read");
     // No surfaceExempt — it must reach CLI/API/web/MCP identically.
     expect(auditVerify.surfaceExempt).toBeUndefined();

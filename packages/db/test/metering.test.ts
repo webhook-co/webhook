@@ -7,7 +7,7 @@ import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
-// Usage rollup (H3): events-derived, exactly-once via the dedup unique, RLS-safe and
+// Usage rollup: events-derived, exactly-once via the dedup unique, RLS-safe and
 // idempotent. No counter lives in ingest_event — usage is recomputed from events.
 
 let pg: EphemeralPostgres;
@@ -68,7 +68,7 @@ afterAll(async () => {
   await pg?.stop();
 });
 
-describe("rollup_usage (H3)", () => {
+describe("rollup_usage", () => {
   it("counts exactly the org's events for the window", async () => {
     await rollup(orgA);
     await rollup(orgB);

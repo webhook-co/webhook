@@ -1,6 +1,6 @@
-// API-key lifecycle + the authn cold-path lookup (WS-D1b, §0.8, ADR-0008 Option B).
+// API-key lifecycle + the authn cold-path lookup (ADR-0008 Option B).
 //
-// TWO POOLS, STATED HONESTLY (S1) — this is NOT a "switch role" trick:
+// TWO POOLS, STATED HONESTLY — this is NOT a "switch role" trick:
 //   * webhook_app  owns create / list / revoke. These are ordinary tenant DML under
 //     RLS, run inside withTenant(app, orgId, ...) so app.current_org pins the org.
 //   * webhook_authn owns ONLY the verify cold path: a global-by-hash SELECT of the five
@@ -11,7 +11,7 @@
 //     tenant context pinned to THAT org. Two round-trips per authenticated request; fine
 //     OFF the ingest hot path (the hot path uses the KV cache, see credential-resolver).
 //
-// CACHING (S1 binding decision): the authn cold lookup is sensitive (a credential-hash ->
+// CACHING (binding decision): the authn cold lookup is sensitive (a credential-hash ->
 // org map) and MUST run through the CACHE-DISABLED Hyperdrive binding (HYPERDRIVE_TENANT
 // style), NEVER HYPERDRIVE_CACHED — Hyperdrive's query cache can't be invalidated on
 // revocation. The KV layer (credential-resolver) is the only authn cache, because KV
@@ -143,7 +143,7 @@ interface AuthnVerifyRow {
 }
 
 /**
- * The webhook_authn COLD lookup (S1): resolve a key hash to its owning org + scopes, or
+ * The webhook_authn COLD lookup: resolve a key hash to its owning org + scopes, or
  * null. ORG-DISCOVERY-BY-HASH — there is no expected org before the lookup; the presented
  * key determines its org (that's why webhook_authn holds a FOR SELECT USING(true) policy
  * + a column-scoped grant). Honors revocation and expiry. Runs as webhook_authn through

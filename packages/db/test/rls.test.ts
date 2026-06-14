@@ -7,7 +7,7 @@ import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
-// Tenant-isolation leak suite (plan §0.2 "tenant-leak tests", rls-leak-tests todo).
+// Tenant-isolation leak suite (the "tenant-leak tests", rls-leak-tests todo).
 // Runs against a REAL Postgres with REAL non-owner roles — an in-memory/superuser PG
 // would bypass RLS and invalidate every assertion here. The schema owner is a
 // non-superuser (test/migrate.ts), so FORCE ROW LEVEL SECURITY is meaningful and the
@@ -32,7 +32,7 @@ const TENANT_TABLES = [
 ] as const;
 
 // Better Auth identity tables are GLOBAL (text ids, per-user / api-key), intentionally
-// exempt from per-org RLS in this freeze (auth workstream owns any later scoping).
+// exempt from per-org RLS here (the auth layer owns any later scoping).
 // schema_migrations is dbmate's bookkeeping. Documented so the catalog coverage test
 // can subtract them with a reason rather than a bare skip.
 //
@@ -58,7 +58,7 @@ const deterministicBuffer = (n: number) =>
 // delay, and minor clock jitter between the test clock and the server clock.
 const TIMESTAMP_TOLERANCE_MS = 1_000;
 
-// The ingest role's bounded statement_timeout (H5 watermark invariant). Authoritative
+// The ingest role's bounded statement_timeout (watermark invariant). Authoritative
 // value lives in migration 0006_ingest_event.sql (`alter role webhook_ingest set
 // statement_timeout`) and the shared INGEST_STATEMENT_TIMEOUT_MS = 5_000; this string
 // must stay in lockstep with both.
@@ -75,7 +75,7 @@ let pg: EphemeralPostgres;
 let app: Sql; // webhook_app — the request-path role
 let ingest: Sql; // webhook_ingest — ingest hot-path role (events INSERT+SELECT)
 let owner: Sql; // webhook_owner — schema owner (non-superuser)
-let anchor: Sql; // webhook_anchor — WORM head-anchor cross-org chain-head reader (WS-C2)
+let anchor: Sql; // webhook_anchor — WORM head-anchor cross-org chain-head reader
 let root: Sql; // cluster superuser — used only to prove trigger-level immutability
 let orgA: Seeded;
 let orgB: Seeded;
@@ -280,7 +280,7 @@ describe("ingest_event() single-statement hot path", () => {
     await expect(ingest`select * from orgs limit 1`).rejects.toThrow(/permission denied/i);
   });
 
-  it("the ingest role has a bounded statement_timeout (H5 watermark invariant)", async () => {
+  it("the ingest role has a bounded statement_timeout (watermark invariant)", async () => {
     const [{ cfg }] = await owner<{ cfg: string[] | null }[]>`
       select rolconfig as cfg from pg_roles where rolname = ${DB_ROLES.ingest}`;
     expect(cfg ?? []).toContain(`statement_timeout=${INGEST_ROLE_STATEMENT_TIMEOUT}`);
@@ -301,7 +301,7 @@ describe("composite org-binding FK (defense-in-depth on RLS)", () => {
   });
 });
 
-describe("audit_log append-only hash chain (H2)", () => {
+describe("audit_log append-only hash chain", () => {
   it("enforces contiguous per-org seq starting at 1", async () => {
     await withTenant(app, orgA.orgId, async (tx) => {
       // org A already has seq 1 (seeded). seq 2 with the right link is accepted.
@@ -379,7 +379,7 @@ describe("audit_log append-only hash chain (H2)", () => {
   });
 });
 
-describe("catalog-driven RLS coverage (M3)", () => {
+describe("catalog-driven RLS coverage", () => {
   it("every non-exempt base table has RLS enabled and forced", async () => {
     const tables = await owner<{ relname: string; rls: boolean; force: boolean }[]>`
       select relname, relrowsecurity as rls, relforcerowsecurity as force
@@ -468,7 +468,7 @@ describe("catalog-driven RLS coverage (M3)", () => {
   });
 });
 
-describe("webhook_anchor cross-org chain-head read (WS-C2)", () => {
+describe("webhook_anchor cross-org chain-head read", () => {
   it("reads every org's head with NO tenant context (role-targeted policy, not BYPASSRLS)", async () => {
     // The anchor cron sets no app.current_org. The role-targeted FOR SELECT TO webhook_anchor
     // USING(true) policy is what lets it see all orgs, while FORCE RLS still denies webhook_app
@@ -498,9 +498,9 @@ describe("webhook_anchor cross-org chain-head read (WS-C2)", () => {
   });
 });
 
-describe("no unexpected SECURITY DEFINER functions (M2)", () => {
+describe("no unexpected SECURITY DEFINER functions", () => {
   it("has zero SECURITY DEFINER functions in the public schema", async () => {
-    // The freeze intentionally ships no SECURITY DEFINER routine (all helpers are
+    // The schema intentionally ships no SECURITY DEFINER routine (all helpers are
     // INVOKER, so RLS is never silently bypassed). If a future migration adds one, it
     // must be reviewed and allowlisted here with a documented reason.
     const definers = await owner<{ proname: string }[]>`

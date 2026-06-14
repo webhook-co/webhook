@@ -7,12 +7,12 @@ import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
-// api_keys DB-layer suite (WS-D1a, ADR-0008 Option B). Runs against a REAL Postgres
+// api_keys DB-layer suite (ADR-0008 Option B). Runs against a REAL Postgres
 // with REAL non-owner roles so RLS, the column-level grant to webhook_authn, and the
 // hash-at-rest discipline are all validated on a real engine (an in-memory/superuser
 // PG would bypass RLS and the privilege system, invalidating every assertion).
 //
-// Two roles exercise the split (S2):
+// Two roles exercise the split:
 //   * webhook_app  — request-path create/list/revoke (full per-command RLS).
 //   * webhook_authn — bearer-verify read path; a separate FOR SELECT policy + a
 //     column-level grant on (key_hash, org_id, scopes, expires_at, revoked_at) only.
@@ -223,7 +223,7 @@ describe("cross-org isolation (webhook_app is RLS-bound to its own org's keys)",
   });
 });
 
-describe("webhook_authn column-level grant (S2) and write denial", () => {
+describe("webhook_authn column-level grant and write denial", () => {
   it("can SELECT exactly the granted columns of api_keys", async () => {
     // Granted: key_hash, org_id, scopes, expires_at, revoked_at.
     await authn`select key_hash, org_id, scopes, expires_at, revoked_at from api_keys limit 1`;

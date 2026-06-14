@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 // The webhook signature schemes we recognize. Standard Webhooks is the contract
-// (ADR-0008); the provider schemes cover the inbound verification wedge (§0.5).
+// (ADR-0008); the provider schemes cover the inbound verification wedge.
 // `unknown` is a captured-but-unverifiable sender (capture never blocks
-// on a missing adapter — full-fidelity capture is the floor, §0.5).
+// on a missing adapter — full-fidelity capture is the floor).
 export const WEBHOOK_SCHEMES = [
   "standard_webhooks",
   "stripe",
@@ -18,7 +18,7 @@ export type WebhookScheme = z.infer<typeof WebhookSchemeSchema>;
 
 /**
  * Per-scheme timestamp-skew tolerance, in seconds, frozen here so every surface and
- * the inbound verifier share one replay window (§0.5). Schemes without a signed
+ * the inbound verifier share one replay window. Schemes without a signed
  * timestamp (GitHub, Shopify) keep a value for interface uniformity; their adapters
  * ignore it. 300s (5 min) matches Slack's and Stripe's documented defaults.
  */

@@ -1,4 +1,4 @@
-// The concrete verifyBearer for the API-key path (§0.8). Surfaces (api/mcp) depend on
+// The concrete verifyBearer for the API-key path. Surfaces (api/mcp) depend on
 // the contract's VerifyBearer seam, NOT on this implementation directly — this is the
 // one place api keys (today) and OAuth tokens (later) get wired behind the same call.
 //

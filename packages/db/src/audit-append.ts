@@ -1,5 +1,5 @@
-// The audit append-service library (§0.7, ADR-0004). A clean, transport-agnostic
-// function Phase-1 control-plane emitters (endpoint-created, key-rotated, replay, …)
+// The audit append-service library (ADR-0004). A clean, transport-agnostic
+// function control-plane emitters (endpoint-created, key-rotated, replay, …)
 // call to write the next tamper-evident audit row. It:
 //   1. takes a per-org Postgres advisory lock (xact-scoped, auto-released on commit),
 //   2. reads the current chain head (seq + row_hash) under that lock,

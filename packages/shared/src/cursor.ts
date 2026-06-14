@@ -7,10 +7,10 @@ import {
   utf8Encoder,
 } from "./bytes";
 
-// The opaque pagination/resume cursor (§0.10, M5). Encodes (received_at, id) — a
+// The opaque pagination/resume cursor. Encodes (received_at, id) — a
 // stable total order with a UUIDv7 tiebreaker — used identically by the CLI (resume
 // token), the API (pagination cursor), and MCP. The cursor is HMAC-signed so a client
-// can't forge or tamper with it (M5): a surface hands the cursor back to us verbatim
+// can't forge or tamper with it: a surface hands the cursor back to us verbatim
 // and we reject anything whose MAC doesn't verify.
 
 const HMAC_BYTES = 16; // 128-bit truncated HMAC-SHA256 tag — plenty for tamper-evidence.

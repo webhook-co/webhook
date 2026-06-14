@@ -1,4 +1,4 @@
-// AWS KMS KEK custodian for the KMS seam (§0.6, WS-B2; ADR-0002 cross-cloud deviation).
+// AWS KMS KEK custodian for the KMS seam (ADR-0002 cross-cloud deviation).
 //
 // The day-one production `KmsProvider`: a symmetric KMS key (the KEK) wraps/unwraps DEKs via
 // AWS KMS `GenerateDataKey` / `Decrypt` over HTTPS, signed with SigV4 (aws4fetch — there is no
@@ -9,7 +9,7 @@
 // endpoint_id, key_id} is passed on GenerateDataKey and MUST be passed identically on Decrypt
 // or KMS refuses to unwrap — the cross-cloud analogue of the WebCrypto AAD in `LocalKmsProvider`.
 // The plaintext DEK only ever exists transiently here: it is imported straight into a
-// NON-EXTRACTABLE AES-GCM handle (M7) and the raw bytes are scrubbed immediately after. KMS
+// NON-EXTRACTABLE AES-GCM handle and the raw bytes are scrubbed immediately after. KMS
 // never sees the secret or the plaintext DEK at rest — only the row's wrapped DEK + ciphertext do.
 
 import { AwsClient } from "aws4fetch";
@@ -105,7 +105,7 @@ export class AwsKmsProvider implements KmsProvider {
     });
     const plaintext = decodeKmsBlob(res.Plaintext, "Plaintext");
     const wrappedDek = decodeKmsBlob(res.CiphertextBlob, "CiphertextBlob");
-    // importDek validates the 32-byte length and imports NON-EXTRACTABLE (M7) by default.
+    // importDek validates the 32-byte length and imports NON-EXTRACTABLE by default.
     const dek = await importDek(plaintext);
     plaintext.fill(0); // scrub the raw DEK now that it lives only inside the opaque handle.
     return { dek, wrapped: { wrappedDek, kekRef: this.#keyArn } };

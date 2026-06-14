@@ -1,4 +1,4 @@
-// The full-chain audit verifier (§0.7, ADR-0004, H2). A pure, DB-free walker over a
+// The full-chain audit verifier (ADR-0004). A pure, DB-free walker over a
 // per-org set of stored audit rows that proves the chain is intact:
 //   1. every row belongs to the org being verified,
 //   2. seq is contiguous from the genesis (seq 1) with no gaps or duplicates,
@@ -8,7 +8,7 @@
 //
 // It is intentionally storage-agnostic: the db package reads the rows under RLS and
 // hands them here, so the same walker is reusable from a CLI export, an API endpoint,
-// the MCP surface, or the (post-freeze) WORM head-anchor cron. The HMAC key is passed
+// the MCP surface, or the WORM head-anchor cron. The HMAC key is passed
 // in from the runtime binding — it is NEVER available to the DB role (ADR-0004).
 
 import type { AuditEntry } from "./audit";

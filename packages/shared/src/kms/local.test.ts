@@ -19,13 +19,13 @@ describe("LocalKmsProvider (dev/CI KEK)", () => {
     expect(utf8Decoder.decode(opened)).toBe("whsec_a_provider_secret");
   });
 
-  it("returns a non-extractable DEK handle from generateDek (M7)", async () => {
+  it("returns a non-extractable DEK handle from generateDek", async () => {
     const kms = await LocalKmsProvider.generate();
     const { dek } = await kms.generateDek(ctx);
     expect(dek.extractable).toBe(false);
   });
 
-  it("returns a non-extractable DEK handle from unwrapDek (M7)", async () => {
+  it("returns a non-extractable DEK handle from unwrapDek", async () => {
     const kms = await LocalKmsProvider.generate();
     const { wrapped } = await kms.generateDek(ctx);
     const unwrapped = await kms.unwrapDek(wrapped, ctx);

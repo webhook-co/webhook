@@ -13,7 +13,7 @@ async function newStore() {
   return new SecretStore(kms);
 }
 
-describe("SecretStore (Phase-1 seal/open helper)", () => {
+describe("SecretStore (seal/open helper)", () => {
   it("seals on write and opens the same plaintext on read", async () => {
     const store = await newStore();
     const record = await store.seal(utf8Encoder.encode("whsec_value"), ctx);

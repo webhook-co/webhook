@@ -1,5 +1,5 @@
 // Opaque-credential primitives shared by EVERY bearer-ish credential in the system
-// (api keys today; ingest tokens in phase 1). One mint/hash discipline, one resolver
+// (api keys today; ingest tokens on the ingest path). One mint/hash discipline, one resolver
 // pattern — so the two credential families can never drift into two implementations.
 //
 // Discipline (ADR-0003 / ADR-0008 Option B): a credential is a CSPRNG >=256-bit secret,

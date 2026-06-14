@@ -5,7 +5,7 @@ import { runAnchorCron } from "./anchor-cron";
 
 // Placeholder webhook engine Worker. Real ingest/verify/deliver logic (Workers + Durable
 // Objects) lands here. Handlers stay thin: validate -> delegate -> respond, and ACK fast.
-// The scheduled() handler runs the WORM head-anchor cron (WS-C2, ADR-0004).
+// The scheduled() handler runs the WORM head-anchor cron (ADR-0004).
 
 export interface Env {
   /** Hyperdrive config for the webhook_anchor cross-org head read (query caching off). */

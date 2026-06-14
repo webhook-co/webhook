@@ -22,7 +22,7 @@ function resolverFor(principal: ResolvedPrincipal | null) {
   return createCredentialResolver({ hasher, cache, coldLookup: async () => principal });
 }
 
-describe("makeVerifyBearer (api-key path, §0.8)", () => {
+describe("makeVerifyBearer (api-key path)", () => {
   it("resolves a valid key to an AuthContext with org + scopes", async () => {
     const verify = makeVerifyBearer(
       resolverFor({ orgId: ORG, scopes: ["events:read"], audience: API_RESOURCE }),

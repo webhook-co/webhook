@@ -16,7 +16,7 @@ const ctx: EncryptionContext = { orgId: "org_kat", endpointId: "ep_kat", keyId: 
 const dekBytes = new Uint8Array(Array.from({ length: DEK_BYTES }, (_, i) => i));
 const nonce = new Uint8Array(Array.from({ length: GCM_NONCE_BYTES }, (_, i) => i));
 
-describe("envelope AES-256-GCM (M6)", () => {
+describe("envelope AES-256-GCM", () => {
   it("matches the known-answer vector (locks the format + AAD)", async () => {
     // Vector independently computed with WebCrypto AES-256-GCM over the same key,
     // nonce, AAD (env1|7:org_kat6:ep_kat7:key_kat), and plaintext.
@@ -64,7 +64,7 @@ describe("envelope AES-256-GCM (M6)", () => {
     );
   });
 
-  it("generates non-extractable DEK handles (M7)", async () => {
+  it("generates non-extractable DEK handles", async () => {
     const dek = await generateDekKey();
     expect(dek.extractable).toBe(false);
   });

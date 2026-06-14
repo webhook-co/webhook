@@ -16,15 +16,15 @@ data-access code runs everywhere. Prod and dev never share a connection string.
 - **Dev/staging (hosted):** a Neon project (free), ideally with Neon branching so
   each PR gets an isolated copy-on-write DB. _Needs the Neon account — provisioned
   when we move past local._
-- **Production:** a separate Neon project (region-pinned; ingest compute always-on
-  per the plan; an EU project added later for residency).
+- **Production:** a separate Neon project (region-pinned; ingest compute always-on;
+  an EU project added later for residency).
 
 In Workers, the connection string comes from a Hyperdrive binding, not
 `DATABASE_URL`. There are **two** bindings (see `apps/engine/wrangler.jsonc`):
 
 - `HYPERDRIVE_TENANT` — query caching **disabled**; used for **all** tenant-scoped
   reads (Hyperdrive's cache is keyed on SQL+params and is blind to the RLS session
-  GUC, so caching tenant rows could cross tenants — review finding C1).
+  GUC, so caching tenant rows could cross tenants).
 - `HYPERDRIVE_CACHED` — caching on; only for non-tenant, cache-safe lookups.
 
 `wrangler dev` uses each binding's `localConnectionString`, so local dev hits a
@@ -39,25 +39,25 @@ DATABASE_URL=postgres://... pnpm --filter @webhook-co/db migrate:up
 DATABASE_URL=postgres://... pnpm --filter @webhook-co/db migrate:down
 ```
 
-The freeze migrations:
+The migrations:
 
 1. `0001_better_auth_identity` — the pinned, generated Better Auth schema
    (`user`/`session`/`account`/`verification`/`apikey`). Global identity, **exempt**
-   from per-org RLS (the auth workstream owns any later scoping).
+   from per-org RLS (the auth layer owns any later scoping).
 2. `0002_extensions_and_app_roles` — `citext`; the non-owner `webhook_app` and
    `webhook_ingest` roles (idempotent; no passwords — credentials are injected out of
    band, trust auth locally/CI).
 3. `0003_domain_tables` — `orgs … delivery_attempts`, indexes (incl. the tunnel index
    `events(endpoint_id, received_at, id)` and unique `(endpoint_id, dedup_key)`),
    RLS + `FORCE` + per-command policies, grants, and the server-stamped `received_at`
-   trigger (H5).
-4. `0004_metering` — `usage` / `org_limits` / `ingest_paused` (H3; single-dimension,
+   trigger.
+4. `0004_metering` — `usage` / `org_limits` / `ingest_paused` (single-dimension,
    no prices).
 5. `0005_audit_log` — append-only, per-org HMAC-chained audit log: contiguous-seq +
-   prev-hash trigger and an immutability (no UPDATE/DELETE/TRUNCATE) trigger (H2).
+   prev-hash trigger and an immutability (no UPDATE/DELETE/TRUNCATE) trigger.
 6. `0006_ingest_event` — the single-statement `ingest_event()` (`SECURITY INVOKER`,
    `set_config(local)`, `ON CONFLICT DO NOTHING`) and the ingest-role
-   `statement_timeout` that bounds the tunnel watermark (H5).
+   `statement_timeout` that bounds the tunnel watermark.
 
 The non-owner ownership model is load-bearing: migrations run as a **non-superuser**
 `webhook_owner` that owns the schema, so `FORCE ROW LEVEL SECURITY` actually polices
@@ -100,7 +100,7 @@ the URL's `sslmode`. Validate password mode locally against a SCRAM cluster:
 TEST_DATABASE_URL='postgres://postgres:PW@127.0.0.1:5432/postgres?sslmode=disable' pnpm test:db
 ```
 
-**Nightly vs a real Neon branch (M4).** `.github/workflows/nightly-rls.yml` runs the
+**Nightly vs a real Neon branch.** `.github/workflows/nightly-rls.yml` runs the
 same suite against a real Neon branch (PG 15+ can differ from local PG 14 in role/RLS
 behavior). To enable: provision a disposable Neon **branch** and add its connection URL
 (with `sslmode=require`) as the `NEON_TEST_DATABASE_URL` secret. The harness creates a

@@ -3,7 +3,7 @@
 - status: accepted
 - date: 2026-06-12
 - scope: `packages/db`, `apps/engine` (ingest path)
-- review id: H4 (high)
+- review severity: high
 
 ## context
 
@@ -24,7 +24,7 @@ backup, or cache leak hands an attacker working tokens.
   constant-time compare can be applied at the app layer where a raw secret is involved).
 
 Token→org resolution itself (a pre-tenant lookup that can't carry RLS context) is the
-phase-1 ingest Worker's concern; the freeze fixes the column, the unique index, and the
+ingest Worker's concern; this decision fixes the column, the unique index, and the
 hashing rule.
 
 ## consequences

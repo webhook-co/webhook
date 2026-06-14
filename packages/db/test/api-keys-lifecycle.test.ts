@@ -18,12 +18,12 @@ import { createCredentialResolver } from "../src/credential-resolver";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
-// WS-D1b api-key lifecycle + verify-path suite. Exercises the ACTUAL shipped functions
+// api-key lifecycle + verify-path suite. Exercises the ACTUAL shipped functions
 // (createApiKey/listApiKeys/revokeApiKey + the webhook_authn cold lookup wired into a
 // credential resolver) against a REAL Postgres with REAL non-owner roles, so the
-// two-pool design (S1), the column-level grant, RLS, and revocation->cache-invalidation
-// are all validated on a real engine. (The frozen DB-layer suite api_keys.test.ts —
-// owned by WS-D1a — validates the raw SQL contract; this validates the TS data-access.)
+// two-pool design, the column-level grant, RLS, and revocation->cache-invalidation
+// are all validated on a real engine. (The DB-layer suite api_keys.test.ts
+// validates the raw SQL contract; this validates the TS data-access.)
 
 const API_RESOURCE = "https://api.webhook.co";
 // A fixed test pepper (>=32 bytes). In prod the pepper is injected from a wrangler secret.
@@ -56,7 +56,7 @@ function makeResolver(cache = new InMemoryCredentialCache()) {
 beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
-  // TWO POOLS (S1): a webhook_app pool and a SEPARATE webhook_authn pool. webhook_authn
+  // TWO POOLS: a webhook_app pool and a SEPARATE webhook_authn pool. webhook_authn
   // cannot SET ROLE webhook_app — that's the whole point of least-privilege — so the
   // verify path uses its own connection. In prod the authn pool is wired to the
   // CACHE-DISABLED Hyperdrive binding; here both hit the ephemeral PG directly.
@@ -151,7 +151,7 @@ describe("expiry honored on verify", () => {
   });
 });
 
-describe("two-pool design (S1): webhook_authn cold lookup is least-privilege", () => {
+describe("two-pool design: webhook_authn cold lookup is least-privilege", () => {
   it("the authn pool resolves org via the 5 granted columns", async () => {
     const created = await createApiKey(
       app,
@@ -186,7 +186,7 @@ describe("cross-org isolation (RLS) on the app pool", () => {
   });
 });
 
-describe("KV hot path vs cold path vs revocation (S3)", () => {
+describe("KV hot path vs cold path vs revocation", () => {
   it("hot-path hit avoids a second authn round-trip; revocation forces a cold miss", async () => {
     const created = await createApiKey(
       app,

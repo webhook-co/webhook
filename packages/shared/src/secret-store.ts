@@ -1,4 +1,4 @@
-// Secret-store helper: the thin Phase-1 seam over the envelope + KMS primitives (§0.6).
+// Secret-store helper: the thin seam over the envelope + KMS primitives.
 //
 // Callers (signing-key custody, inbound provider secrets) want two operations, not five:
 //   - seal(plaintext, ctx)  -> a self-contained record to persist
@@ -8,7 +8,7 @@
 // the DEK (AAD-bound to ctx), and return the ciphertext + wrapped DEK + envelope version — the
 // exact set a row stores. On read we unwrap the DEK (optionally via the org-scoped LRU, which
 // caches the non-extractable handle per ADR-0007) and open the secret. The KMS custodian is
-// injected, so the same helper works over the local dev KEK today and AWS KMS (WS-B2) later
+// injected, so the same helper works over the local dev KEK today and AWS KMS later
 // with no caller changes.
 
 import { bytesToB64url, utf8Decoder, utf8Encoder } from "./bytes";

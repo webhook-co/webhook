@@ -1,13 +1,13 @@
-// Local/dev KEK custodian for the KMS seam (§0.6, WS-B1).
+// Local/dev KEK custodian for the KMS seam.
 //
 // This is the dev/CI-default `KmsProvider`: a process-local AES-256-GCM key-encryption key
 // (KEK) that wraps/unwraps DEKs entirely in WebCrypto, no live infra. It sits behind the exact
-// same `KmsProvider` interface the AWS KMS custodian (WS-B2) will implement later, so callers
+// same `KmsProvider` interface the AWS KMS custodian will implement later, so callers
 // never branch on which custodian is in play — only the construction site changes.
 //
 // Wrapping uses `crypto.subtle.wrapKey`/`unwrapKey` so the plaintext DEK bytes never transit
 // JS: a freshly generated (transiently extractable) DEK is wrapped under the KEK, then the
-// usable handle handed back is re-derived as NON-EXTRACTABLE (M7). `unwrapKey` likewise yields
+// usable handle handed back is re-derived as NON-EXTRACTABLE. `unwrapKey` likewise yields
 // a non-extractable AES-GCM handle. The KEK's encryption context (AAD) binds the wrap to
 // {org_id, endpoint_id, key_id}, so a DEK wrapped for one context cannot be unwrapped under
 // another (confused-deputy protection), mirroring the secret-layer AAD in `envelope.ts`.
@@ -85,7 +85,7 @@ export class LocalKmsProvider implements KmsProvider {
 
   async generateDek(context: EncryptionContext): Promise<{ dek: CryptoKey; wrapped: WrappedDek }> {
     // Generate the DEK transiently extractable so it can be wrapped under the KEK, then wrap
-    // it. The handle we return to the caller is re-imported as non-extractable (M7) — the
+    // it. The handle we return to the caller is re-imported as non-extractable — the
     // extractable copy is never returned and goes out of scope immediately after wrapping.
     const extractableDek = (await crypto.subtle.generateKey(
       { name: "AES-GCM", length: 256 },
@@ -115,7 +115,7 @@ export class LocalKmsProvider implements KmsProvider {
     const body = wrapped.wrappedDek.subarray(GCM_NONCE_BYTES);
 
     // `unwrapKey` verifies the GCM tag against the AAD; a context or kekRef mismatch, or any
-    // tamper, throws here. The result is a NON-EXTRACTABLE AES-GCM handle (M7).
+    // tamper, throws here. The result is a NON-EXTRACTABLE AES-GCM handle.
     return crypto.subtle.unwrapKey(
       "raw",
       body,
@@ -145,7 +145,7 @@ export class LocalKmsProvider implements KmsProvider {
   }
 }
 
-/** Import raw DEK bytes as a non-extractable AES-GCM handle (M7), validating the length. */
+/** Import raw DEK bytes as a non-extractable AES-GCM handle, validating the length. */
 async function importNonExtractableDek(raw: Uint8Array): Promise<CryptoKey> {
   if (raw.length !== DEK_BYTES) {
     throw new Error(`DEK must be ${DEK_BYTES} bytes, got ${raw.length}`);

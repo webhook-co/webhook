@@ -1,4 +1,4 @@
-// Tunnel safety-lag watermark constants (§0.10, H5). The durable resume scan only
+// Tunnel safety-lag watermark constants. The durable resume scan only
 // returns rows with received_at <= now() - δ, where δ >= the ingest statement_timeout.
 // Because an in-flight ingest can't commit a row with a received_at older than its own
 // statement_timeout window, no row can appear behind a cursor that has passed the
