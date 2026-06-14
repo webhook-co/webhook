@@ -1,8 +1,12 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   // Ingest benchmark Worker — deployed ONLY for the benchmark window, then torn down with the bench
-  // Neon branch. Separate from the production engine config (no cron, no R2): just the ingest insert
-  // path over a production-shaped Hyperdrive binding.
+  // Neon branch + Hyperdrive config + R2 bucket. Separate from the production engine config (no cron):
+  // the ingest insert path (variants A–D) plus variant R, which adds the durable-before-ACK R2 PUT in
+  // front of the variant-B insert so the end-to-end ACK budget can be measured WITH the R2 PUT (the
+  // half WS-E never measured). The real Hyperdrive id + R2 bucket are created at deploy time
+  // (`wrangler hyperdrive create` / `wrangler r2 bucket create`) and injected via a throwaway config —
+  // never committed here (no-secrets / no real ids in source).
   "name": "webhook-bench",
   "main": "src/bench/worker.ts",
   "compatibility_date": "2024-11-06",
@@ -17,6 +21,13 @@
       "binding": "HYPERDRIVE",
       "id": "<BENCH_HYPERDRIVE_ID>",
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+  ],
+  // Throwaway bucket for variant R's payload PUT (one object per request; deleted with the run).
+  "r2_buckets": [
+    {
+      "binding": "R2",
+      "bucket_name": "<BENCH_R2_BUCKET>",
     },
   ],
 }
