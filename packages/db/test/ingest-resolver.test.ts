@@ -4,10 +4,18 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
+import {
+  createCredentialHasher,
+  credentialCacheKey,
+  CREDENTIAL_PEPPER_MIN_BYTES,
+} from "../src/credential";
 import { InMemoryCredentialCache } from "../src/credential-cache";
 import { createCredentialResolver } from "../src/credential-resolver";
-import { createEndpoint, makeEndpointTokenColdLookup } from "../src/endpoints";
+import {
+  createEndpoint,
+  getEndpointIngestTokenHash,
+  makeEndpointTokenColdLookup,
+} from "../src/endpoints";
 import { createIngestResolver } from "../src/ingest-resolver";
 import { createOrg } from "../src/orgs";
 import { setupSchema } from "./migrate";
@@ -98,5 +106,50 @@ describe("hot path vs cold path accounting", () => {
     await resolver.resolve(`whep_${randomUUID()}`);
     await resolver.resolve(`whep_${randomUUID()}`);
     expect(coldCalls).toBe(3);
+  });
+});
+
+describe("getEndpointIngestTokenHash (the cross-surface invalidation seam, ADR-0015)", () => {
+  it("returns the hash whose cache key is EXACTLY where the resolver cached the principal", async () => {
+    const ep = await createEndpoint(app, { orgId, name: "seam-key" }, hasher);
+    const cache = new InMemoryCredentialCache();
+    const resolver = createIngestResolver({ hasher, cache, authn });
+    await resolver.resolve(ep.plaintext); // warm the cache (writes credentialCacheKey(<matched hash>))
+
+    // A control-plane mutator holds the endpoint id, NOT the path-token plaintext. The stored token
+    // hash -> credentialCacheKey() must land on the very entry the resolver wrote.
+    const hash = await getEndpointIngestTokenHash(app, orgId, ep.id);
+    expect(hash).not.toBeNull();
+    expect(await cache.get(credentialCacheKey(hash!))).not.toBeNull();
+
+    // invalidateHash(thatHash) evicts that exact entry.
+    await resolver.invalidateHash(hash!);
+    expect(await cache.get(credentialCacheKey(hash!))).toBeNull();
+  });
+
+  it("lets a secret mutation evict an endpoint's cached principal using only its id (no plaintext)", async () => {
+    const ep = await createEndpoint(app, { orgId, name: "seam-evict" }, hasher);
+    const cache = new InMemoryCredentialCache();
+    const resolver = createIngestResolver({ hasher, cache, authn });
+    expect((await resolver.resolve(ep.plaintext))?.paused).toBe(false); // warm (paused=false)
+
+    await withTenant(app, orgId, async (tx) => {
+      await tx`update endpoints set paused = true where id = ${ep.id}`;
+    });
+    // Stale cache still says paused=false (stands in for a stale sealedSecrets snapshot)...
+    expect((await resolver.resolve(ep.plaintext))?.paused).toBe(false);
+    // ...evict via the id-derived hash (exactly what a provider-secret add/revoke would do).
+    const hash = await getEndpointIngestTokenHash(app, orgId, ep.id);
+    await resolver.invalidateHash(hash!);
+    expect((await resolver.resolve(ep.plaintext))?.paused).toBe(true);
+  });
+
+  it("is org-scoped under RLS and null for an unknown endpoint id", async () => {
+    const ep = await createEndpoint(app, { orgId, name: "seam-rls" }, hasher);
+    const otherOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Other" })).id;
+    // Another org's tenant context cannot read this endpoint's token hash (RLS).
+    expect(await getEndpointIngestTokenHash(app, otherOrg, ep.id)).toBeNull();
+    // An unknown id under the right org is also null.
+    expect(await getEndpointIngestTokenHash(app, orgId, randomUUID())).toBeNull();
   });
 });
