@@ -37,10 +37,22 @@ export function migrationCount(): number {
     .length;
 }
 
-// Generated passwords are hex (no quote/backslash), so single-quoting in DDL is safe.
+// DDL here is built with sql.unsafe() because role/password/database DDL (CREATE ROLE, ALTER ROLE
+// ... PASSWORD, GRANT) is a utility statement Postgres will NOT accept bind parameters for — so we
+// can't use postgres.js parameterization and must interpolate. The inputs are trusted (role names
+// from DB_ROLES, hex passwords minted by the harness), but we still escape them defensively so a
+// future value with a quote can't break out: identifiers via quoteIdent, string literals via
+// quoteLiteral (the same escaping Postgres' own quote_ident/quote_literal apply).
+function quoteIdent(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+function quoteLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
 function passwordClause(pg: EphemeralPostgres, role: string): string {
   const pw = pg.passwordFor(role);
-  return pw ? ` password '${pw}'` : "";
+  return pw ? ` password ${quoteLiteral(pw)}` : "";
 }
 
 /**
@@ -53,29 +65,31 @@ export async function bootstrapOwner(pg: EphemeralPostgres): Promise<void> {
   const sql = postgres(pg.ownerUrl, { max: 1, prepare: false, fetch_types: false });
   try {
     const owner = DB_ROLES.owner;
+    const ownerIdent = quoteIdent(owner);
+    const ownerPw = pg.passwordFor(owner);
     // Roles are cluster-global, so on a shared server (CI service / a Neon branch)
     // webhook_owner may already exist from a prior test file. Create if missing, then
     // (password mode) ALWAYS reset its password to this run's value — otherwise a
     // stale password from the previous file would make dbmate's owner login fail.
     const resetPw =
-      pg.auth === "password"
-        ? `alter role ${owner} login password '${pg.passwordFor(owner)}';`
+      pg.auth === "password" && ownerPw
+        ? `alter role ${ownerIdent} login password ${quoteLiteral(ownerPw)};`
         : "";
     await sql.unsafe(`
       do $$
       begin
-        if not exists (select 1 from pg_roles where rolname = '${owner}') then
-          create role ${owner} login createrole nosuperuser nobypassrls;
+        if not exists (select 1 from pg_roles where rolname = ${quoteLiteral(owner)}) then
+          create role ${ownerIdent} login createrole nosuperuser nobypassrls;
         end if;
       end
       $$;
       ${resetPw}
-      grant all on database "${pg.database}" to ${owner};
+      grant all on database ${quoteIdent(pg.database)} to ${ownerIdent};
       -- Grant CREATE+USAGE on public rather than transferring schema ownership: on
       -- PG 16+/Neon, ALTER SCHEMA ... OWNER requires SET-ROLE membership the provider
       -- role lacks, and the grant is all webhook_owner needs (tables it creates are
       -- owned by it, so FORCE RLS still polices the owner). Portable across PG 14/17.
-      grant all on schema public to ${owner};
+      grant all on schema public to ${ownerIdent};
     `);
   } finally {
     await sql.end();
@@ -94,7 +108,7 @@ export async function applyRolePasswords(pg: EphemeralPostgres): Promise<void> {
   const sql = postgres(pg.ownerUrl, { max: 1, prepare: false, fetch_types: false });
   try {
     for (const role of [DB_ROLES.app, DB_ROLES.ingest, DB_ROLES.authn, DB_ROLES.anchor]) {
-      await sql.unsafe(`alter role ${role}${passwordClause(pg, role)}`);
+      await sql.unsafe(`alter role ${quoteIdent(role)}${passwordClause(pg, role)}`);
     }
   } finally {
     await sql.end();
