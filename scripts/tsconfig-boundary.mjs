@@ -50,7 +50,10 @@ function redirectsToDist(paths, depName) {
     if (depName.startsWith(prefix) && depName.endsWith(suffix)) targets.push(...value);
   }
   // A target lands in dist declarations, e.g. ../shared/dist/index.d.ts or ../*/dist/index.d.ts.
-  return targets.some((t) => /(^|\/)dist\/.*\.d\.ts$/.test(t.replace(/\*/g, "x")));
+  // Swap any path wildcard for a literal non-separator char first, so a `../*/dist/...` mapping
+  // still matches the `dist/*.d.ts` shape (the `*` itself isn't a real path segment).
+  const WILDCARD_PLACEHOLDER = "x";
+  return targets.some((t) => /(^|\/)dist\/.*\.d\.ts$/.test(t.replace(/\*/g, WILDCARD_PLACEHOLDER)));
 }
 
 // Discover workspace packages: a directory with both package.json and tsconfig.json.
@@ -102,7 +105,8 @@ if (violations.length > 0) {
     );
     console.error(
       `    Add to compilerOptions.paths:  "${depName}": ["<rel>/dist/index.d.ts"]` +
-        `  (or the "@webhook-co/*": ["<rel>/*/dist/index.d.ts"] wildcard when every internal dep crosses).\n`,
+        `  where <rel> is the relative path from this package to ${depName} (e.g. "../shared" or "../db"),` +
+        `  or use "@webhook-co/*": ["<rel>/*/dist/index.d.ts"] when every internal dep crosses.\n`,
     );
   }
   console.error("A node-typed package recompiling a workers-typed dep's source (or vice versa)");
