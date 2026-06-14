@@ -24,6 +24,8 @@ function toHex(bytes: Uint8Array): string {
   return out;
 }
 
+const utf8Decoder = new TextDecoder();
+
 export interface DerivedDedup {
   readonly dedupKey: string;
   readonly dedupStrategy: DedupStrategy;
@@ -49,7 +51,7 @@ function header(headers: Headers, name: string): string | null {
 /** Read `field` from a JSON parse of a COPY of the bytes; null on parse failure or absence. */
 function jsonStringField(raw: Uint8Array, field: string): string | null {
   try {
-    const parsed: unknown = JSON.parse(new TextDecoder().decode(raw));
+    const parsed: unknown = JSON.parse(utf8Decoder.decode(raw));
     if (typeof parsed !== "object" || parsed === null) return null;
     const value = (parsed as Record<string, unknown>)[field];
     return typeof value === "string" && value.length > 0 ? value : null;

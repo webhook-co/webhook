@@ -59,6 +59,24 @@ describe("deriveDedup — first-match strategy (sw_webhook_id -> provider_event_
     const bucket = Math.floor(NOW.getTime() / BUCKET_WIDTH_MS);
     expect(d.dedupBucket).toBe(bucket);
     expect(d.dedupKey).toBe(`${hex}:${bucket}`); // bucket folded into the key so same body in a later bucket is distinct
+    expect(d.provider).toBeNull(); // an unrecognized sender records no provider
+  });
+
+  it("a Standard-Webhooks sender WITHOUT a webhook-id falls through to content_hash but still records the provider", async () => {
+    const body = enc(`{"data":1}`);
+    // webhook-signature present (detected as standard_webhooks) but no webhook-id header.
+    const d = await deriveDedup(
+      body,
+      [
+        ["webhook-signature", "v1,abc"],
+        ["webhook-timestamp", "1718366400"],
+      ],
+      NOW,
+      BUCKET_WIDTH_MS,
+    );
+    expect(d.dedupStrategy).toBe("content_hash");
+    expect(d.provider).toBe("standard_webhooks");
+    expect(d.dedupBucket).not.toBeNull();
   });
 
   it("falls through to content_hash when the provider body can't be parsed for an id", async () => {
