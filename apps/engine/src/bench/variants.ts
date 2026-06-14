@@ -1,4 +1,5 @@
 import type { Sql } from "@webhook-co/db";
+import { payloadR2Key } from "@webhook-co/shared";
 
 // The four RLS-insert variants for the p99 ingest benchmark. Each performs ONE
 // logical "ingest insert" and returns the DB round-trip time (performance.now() around the DB call)
@@ -33,6 +34,8 @@ export interface VariantResult {
   readonly inserted: boolean;
   /** DB round-trip in milliseconds (the span the variants actually differ on). */
   readonly dbMs: number;
+  /** R2 PUT round-trip in milliseconds — present only for variant R (the durable-before-ACK shape). */
+  readonly r2Ms?: number;
 }
 
 export type Variant = "A" | "B" | "C" | "D";
@@ -120,6 +123,28 @@ export async function variantD(sql: Sql, p: BenchInsert): Promise<VariantResult>
   // The simple-query protocol doesn't surface a row count here; the unique dedup_key guarantees an
   // insert, so report true. (Correctness — that D actually inserts under RLS — is asserted in tests.)
   return { inserted: true, dbMs: performance.now() - t0 };
+}
+
+/**
+ * R — the production durable-before-ACK shape (ADR-0013): R2 PUT of the body FIRST, then the
+ * variant-B `ingest_event(...)` insert, then ACK. Reports `r2Ms` (the R2 put) and `dbMs` (the
+ * insert) separately so the end-to-end ACK budget can be checked WITH the R2 PUT in the path — the
+ * half WS-E never measured. Uses the REAL deterministic key `payloadR2Key(org, endpoint, dedup)` so
+ * the object placement matches production exactly. Distinct signature (takes the R2 bucket), so it is
+ * NOT in VARIANT_FNS — the worker routes /run/R to it directly.
+ */
+export async function variantR(sql: Sql, r2: R2Bucket, p: BenchInsert): Promise<VariantResult> {
+  const key = await payloadR2Key(p.orgId, p.endpointId, p.dedupKey);
+  const body = new Uint8Array(p.payloadBytes);
+  const tR2 = performance.now();
+  await r2.put(key, body);
+  const r2Ms = performance.now() - tR2;
+  const tDb = performance.now();
+  const rows = await sql<{ inserted: boolean }[]>`
+    select inserted from ingest_event(
+      ${p.id}::uuid, ${p.orgId}::uuid, ${p.endpointId}::uuid,
+      ${key}, ${p.payloadBytes}::bigint, ${p.dedupKey}, ${p.dedupStrategy})`;
+  return { inserted: rows[0]?.inserted === true, dbMs: performance.now() - tDb, r2Ms };
 }
 
 export const VARIANT_FNS: Record<Variant, (sql: Sql, p: BenchInsert) => Promise<VariantResult>> = {

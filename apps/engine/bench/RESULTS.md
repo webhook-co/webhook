@@ -102,3 +102,57 @@ here.)
 
 _The bench Worker, the Hyperdrive config, and `events_bench`/the RLS-off floor exist only for this
 measurement and never ship on a production route._
+
+---
+
+# Variant R — R2-inclusive durable-before-ACK (the ADR-0013 gate)
+
+> Decision: **ship PUT-first synchronous durable-before-ACK; the Postgres-staging fallback stays
+> unbuilt.** The original A–D run measured only the DB insert; variant **R** adds the durable-before-ACK
+> **R2 PUT in front of the variant-B insert** (`payloadR2Key` → `R2.put` → `ingest_event`) so the
+> end-to-end ACK budget is measured *with* the R2 PUT — the half WS-E never covered.
+
+## How it was run (2026-06-14)
+
+Same production shape as A–D: a Cloudflare Worker → caching-off Hyperdrive → a throwaway Neon branch
+of `webhook-ci` (**us-east-2, pg17**, migrations `0001–0011` + `setup.sql`), connecting as
+`webhook_ingest`, plus a throwaway R2 bucket. The Worker reports `r2Ms` (the PUT), `dbMs` (the insert),
+and `totalMs` (the handler total) **from inside the isolate**, so the numbers below are the ACK budget
+itself — free of the load driver's own network latency. **~2,600 requests, 0 errors.** Branch +
+Worker + Hyperdrive torn down after.
+
+## Results (ms; p50 / p95 / p99 / p99.9 — worker-internal `totalMs`, with DB + R2 splits)
+
+| scenario | n | err | total | DB | R2 |
+|---|---|---|---|---|---|
+| **R** steady 5 KB (40 rps × 25 s) | 916 | 0 | 416 / 533 / 586 / **690** | 248 / 355 / 397 / 437 | 161 / 211 / 279 / 340 |
+| **R** burst 5 KB (80-wide × 8) | 640 | 0 | 468 / 713 / 803 / **849** | 265 / 483 / 550 / 566 | 179 / 259 / 323 / 431 |
+| **R** burst 64 KB (50-wide × 6) | 300 | 0 | 436 / 646 / 659 / **687** | 258 / 460 / 474 / 482 | 175 / 224 / 249 / 264 |
+| **R** burst 256 KB (40-wide × 4) | 160 | 0 | 454 / 680 / 694 / **700** | 262 / 462 / 470 / 480 | 197 / 265 / 330 / 349 |
+| B baseline burst (80-wide × 6) | 480 | 0 | 262 / 466 / 477 / **482** | 262 / 466 / 477 / 482 | — |
+| **R** cold 5 KB (60 s idle → 50-wide × 2) | 100 | 0 | 619 / 731 / 767 / **1331** | 393 / 461 / 467 / 473 | 199 / 298 / 489 / 1083 |
+
+## Verdict (acceptance — durable-before-ACK)
+
+1. **PUT-first clears Shopify's budget with wide margin.** R's worst sustained-burst total p99.9 is
+   **849 ms** and its cold (idle→reconnect) total p99.9 is **1331 ms** — both sit **~3.8–5.9× inside**
+   the Shopify ~5 s total budget (and inside the ~1 s connect budget for the steady/burst p50–p99).
+2. **The R2 PUT is cheap and size-insensitive.** It adds ~160–430 ms at the tail and barely grows from
+   5 KB → 256 KB (R2 stays inside Cloudflare's network — no cross-cloud hop). Vs the B baseline (total
+   p99.9 482 ms), the PUT adds ~370 ms at the burst p99.9 — leaving the combined path ~6× inside budget.
+3. **No staging fallback needed.** R did not breach the budget, so the Postgres-staging fallback
+   (ADR-0013) stays a documented contingency, never code. `Promise.all(PUT, insert)` remains rejected
+   (it would reintroduce the unrecoverable crash window for no latency win we need).
+
+So the riskiest assumption in the write path — *the R2-PUT-inclusive ACK clears the budget* — is
+**confirmed on the real production-shaped path.** Slice 5 (the `wbhk.my` write path) is unblocked.
+
+## Reproducing the R run
+
+```sh
+# Steps 1–3 as above, plus an R2 bucket + the R2 binding (see wrangler.bench.jsonc), then:
+BENCH_URL=https://webhook-bench.<acct>.workers.dev BENCH_VARIANTS=R COLD_VARIANTS=R R_SIZE=5120 \
+  node apps/engine/bench/driver.mjs
+# tear down: wrangler delete; wrangler hyperdrive delete <id>; empty + delete the R2 bucket;
+#            delete the Neon branch.
+```

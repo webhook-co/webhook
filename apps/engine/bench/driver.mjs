@@ -1,14 +1,18 @@
 #!/usr/bin/env node
-// p99 ingest benchmark load driver. Drives the deployed bench Worker through steady, burst,
-// and cold-reconnect scenarios for the four variants and aggregates p50/p95/p99/p99.9 of end-to-end
-// ACK (this driver's clock) AND the in-Worker DB round-trip (returned in the response), then prints a
-// markdown report + the keep-B / reject-C verdict.
+// p99 ingest benchmark load driver. Drives the deployed bench Worker through steady, burst, and
+// cold-reconnect scenarios and aggregates p50/p95/p99/p99.9 of the in-Worker DB round-trip, the R2
+// PUT (variant R), and the worker-internal total (the ACK-budget number) — plus this driver's own
+// end-to-end ACK clock — then prints a markdown report + verdict.
+//
+// Variants: A–D are the DB-insert variants (keep-B / reject-C). **R** is the durable-before-ACK shape
+// (R2 PUT + variant-B insert) — the gate for ADR-0013; run it with `BENCH_VARIANTS=R`.
 //
 // Usage:
-//   BENCH_URL=https://webhook-bench.<acct>.workers.dev node apps/engine/bench/driver.mjs
+//   BENCH_URL=https://webhook-bench.<acct>.workers.dev node apps/engine/bench/driver.mjs           # A–D
+//   BENCH_URL=... BENCH_VARIANTS=R COLD_VARIANTS=R R_SIZE=5120 node apps/engine/bench/driver.mjs    # the R2 gate
 // Tunables (env): STEADY_RPS, STEADY_SECS, BURST_CONC, BURST_ROUNDS, COLD_IDLE_MS, COLD_CONC,
-//   COLD_VARIANTS (default "A,B"), BENCH_VARIANTS (default "A,B,C,D"). Defaults are short to keep
-//   the always-on Neon window (and cost) small.
+//   COLD_VARIANTS (default "A,B"), BENCH_VARIANTS (default "A,B,C,D"), R_SIZE (variant-R body bytes,
+//   default 5120). Defaults are short to keep the always-on Neon window (and cost) small.
 
 const BASE = process.env.BENCH_URL;
 if (!BASE) {
@@ -27,30 +31,43 @@ function pct(sorted, p) {
 }
 function summarize(results) {
   const ok = results.filter((r) => r.ok);
-  const ack = ok.map((r) => r.ackMs).sort((a, b) => a - b);
-  const db = ok
-    .map((r) => r.dbMs)
-    .filter((x) => typeof x === "number")
-    .sort((a, b) => a - b);
+  const sorted = (k) =>
+    ok
+      .map((r) => r[k])
+      .filter((x) => typeof x === "number")
+      .sort((a, b) => a - b);
   const q = (s) => ({ p50: pct(s, 50), p95: pct(s, 95), p99: pct(s, 99), p999: pct(s, 99.9) });
   return {
     n: results.length,
     ok: ok.length,
     errors: results.length - ok.length,
-    ack: q(ack),
-    db: q(db),
+    ack: q(sorted("ackMs")),
+    db: q(sorted("dbMs")),
+    // r2 + worker total are present only for variant R. worker total (measured INSIDE the isolate)
+    // is the ACK-budget number — it excludes this driver's own network latency to the edge.
+    r2: q(sorted("r2Ms")),
+    total: q(sorted("totalMs")),
   };
 }
+
+// Variant R sweeps a realistic body size (?size=, default 5 KB ~ the PRD avg payload); A-D don't.
+const sizeQuery = (variant) => (variant === "R" ? `?size=${num("R_SIZE", 5120)}` : "");
 
 async function oneRequest(variant) {
   const t0 = performance.now();
   try {
-    const res = await fetch(`${BASE}/run/${variant}`, { method: "POST" });
+    const res = await fetch(`${BASE}/run/${variant}${sizeQuery(variant)}`, { method: "POST" });
     const body = await res.json().catch(() => ({}));
-    const dbMs = typeof body.dbMs === "number" ? body.dbMs : null;
-    return { ackMs: performance.now() - t0, dbMs, ok: res.ok && body.error === undefined };
+    const n = (x) => (typeof x === "number" ? x : null);
+    return {
+      ackMs: performance.now() - t0,
+      dbMs: n(body.dbMs),
+      r2Ms: n(body.r2Ms),
+      totalMs: n(body.totalMs),
+      ok: res.ok && body.error === undefined,
+    };
   } catch {
-    return { ackMs: performance.now() - t0, dbMs: null, ok: false };
+    return { ackMs: performance.now() - t0, dbMs: null, r2Ms: null, totalMs: null, ok: false };
   }
 }
 
@@ -108,14 +125,17 @@ async function main() {
     lines.push(
       `## ${scenario}`,
       ``,
-      `| variant | n | err | ACK p50/95/99/99.9 | DB p50/95/99/99.9 |`,
-      `|---|---|---|---|---|`,
+      `worker-total = the ACK-budget number (measured inside the isolate; excludes driver→edge latency).`,
+      `R2 is present only for variant R.`,
+      ``,
+      `| variant | n | err | worker-total p50/95/99/99.9 | DB p50/95/99/99.9 | R2 p50/95/99/99.9 |`,
+      `|---|---|---|---|---|---|`,
     );
     for (const v of VARIANTS) {
       const r = data[v][scenario];
       if (!r) continue;
       const s = summarize(r);
-      lines.push(`| ${v} | ${s.n} | ${s.errors} | ${fmt(s.ack)} | ${fmt(s.db)} |`);
+      lines.push(`| ${v} | ${s.n} | ${s.errors} | ${fmt(s.total)} | ${fmt(s.db)} | ${fmt(s.r2)} |`);
     }
     lines.push(``);
   }
@@ -140,6 +160,17 @@ async function main() {
     ``,
     `_Keep B if its DB delta over A is small AND its cold/burst ACK p99.9 clears ~5 s with margin; formally reject C._`,
   );
+  if (data.R) {
+    const rBurst = summarize(data.R.burst ?? []).total.p999;
+    const rCold = data.R.cold ? summarize(data.R.cold).total.p999 : NaN;
+    lines.push(
+      ``,
+      `## Verdict (durable-before-ACK gate, variant R — ADR-0013)`,
+      ``,
+      `- R worst worker-total p99.9: burst **${Number.isNaN(rBurst) ? "n/a" : rBurst.toFixed(1)} ms** / cold **${Number.isNaN(rCold) ? "n/a" : rCold.toFixed(1)} ms** vs Shopify ~5000 ms budget.`,
+      `- _Ship PUT-first synchronous durable-before-ACK if R's cold/burst worker-total p99.9 clears ~5 s with margin (the Postgres-staging fallback stays unbuilt)._`,
+    );
+  }
 
   console.log(lines.join("\n"));
 }
