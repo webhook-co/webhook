@@ -66,6 +66,39 @@ export interface IngestDeps {
 
 const PAUSED_RETRY_AFTER_SECONDS = 60;
 
+/**
+ * Read a request body stream, bounding it AS IT STREAMS: return null the moment the running total
+ * exceeds `maxBytes` (and cancel the stream so the rest is never pulled), rather than buffering an
+ * arbitrarily large body and checking its size afterward (review finding C1). A null stream (no
+ * body) yields an empty array.
+ */
+export async function readCappedBody(
+  stream: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<Uint8Array | null> {
+  if (stream === null) return new Uint8Array(0);
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel(); // abort early — don't drain a too-large body into memory
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
 function plain(status: number, body: string, headers: Record<string, string> = {}): Response {
   // No Set-Cookie, no Access-Control-* — wbhk.my is cookieless + no-CORS by construction.
   return new Response(body, {
@@ -92,13 +125,14 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     return plain(429, "endpoint paused", { "retry-after": String(PAUSED_RETRY_AFTER_SECONDS) });
   }
 
-  // Body cap: reject early on a too-large Content-Length, then bound the actual read (a lying/absent
-  // Content-Length is caught after the read — a strict streaming cap is a hardening follow-up).
+  // Body cap: reject early on a too-large Content-Length, then bound the actual read as it streams —
+  // a lying/absent Content-Length can't smuggle an oversized body in (readCappedBody aborts the read
+  // the moment the running total breaches the cap, never buffering the whole body first).
   const declared = Number(request.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > deps.maxBodyBytes)
     return plain(413, "payload too large");
-  const raw = new Uint8Array(await request.arrayBuffer());
-  if (raw.byteLength > deps.maxBodyBytes) return plain(413, "payload too large");
+  const raw = await readCappedBody(request.body, deps.maxBodyBytes);
+  if (raw === null) return plain(413, "payload too large");
 
   // Capture: exact body bytes + normalized headers (see the header-fidelity note above).
   const headers: [string, string][] = [...request.headers];

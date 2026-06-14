@@ -77,6 +77,39 @@ export function createCredentialHasher(peppers: CredentialPeppers): CredentialHa
   };
 }
 
+/**
+ * Strictly decode a standard-base64 pepper to bytes. Node's base64 decoder is LENIENT — it
+ * silently drops characters it doesn't recognise — so a typo'd / wrong-format pepper (whitespace,
+ * base64url `-`/`_` vs base64 confusion, a stray char) would decode to a wrong-but-accepted buffer
+ * and quietly change EVERY hash. Reject anything that isn't strict standard base64 first, then
+ * decode. The single strict decoder for every pepper entry point (env-based and base64-string-based).
+ */
+export function decodeBase64Pepper(value: string): Buffer {
+  const trimmed = value.trim();
+  if (trimmed.length === 0 || trimmed.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) {
+    throw new Error(
+      "credential pepper is not valid standard base64 (>=32 bytes, base64 not base64url)",
+    );
+  }
+  return Buffer.from(trimmed, "base64");
+}
+
+/**
+ * Build a CredentialHasher from base64-encoded peppers. The decode (and the Buffer it produces)
+ * stays in this node-typed package so Worker call sites — which carry the pepper as a base64
+ * secret string and have no `Buffer` in their type env — pass strings and never touch Buffer. The
+ * decode is STRICT (decodeBase64Pepper); length (>=32 bytes) is then enforced by createCredentialHasher.
+ */
+export function createCredentialHasherFromBase64(
+  currentBase64: string,
+  previousBase64?: readonly string[],
+): CredentialHasher {
+  return createCredentialHasher({
+    current: decodeBase64Pepper(currentBase64),
+    previous: previousBase64?.map((p) => decodeBase64Pepper(p)),
+  });
+}
+
 function assertPepperLength(pepper: Buffer): void {
   if (pepper.length < CREDENTIAL_PEPPER_MIN_BYTES) {
     throw new Error(
