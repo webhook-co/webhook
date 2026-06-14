@@ -95,6 +95,9 @@ importers:
 
   apps/engine:
     dependencies:
+      '@webhook-co/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared

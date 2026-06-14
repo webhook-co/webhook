@@ -2,7 +2,15 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["@cloudflare/workers-types"]
+    "types": ["@cloudflare/workers-types"],
+    // Node<->Workers tsconfig boundary (see engineering-conventions rule). This Workers app
+    // imports db (Node-typed: the anchor head read + client) for the WORM-anchor cron; resolving
+    // it to source would re-typecheck db's node:* code under workers-types and fail. db is the
+    // only cross-boundary internal dep, so redirect just it to its emitted declarations; same-world
+    // deps (shared) stay on source for live cross-package types.
+    "paths": {
+      "@webhook-co/db": ["../../packages/db/dist/index.d.ts"]
+    }
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist", ".turbo", "test"]

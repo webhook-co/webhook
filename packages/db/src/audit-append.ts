@@ -17,7 +17,7 @@
 
 import { computeAuditRowHash, type AuditEntry, type StoredAuditRow } from "@webhook-co/shared";
 
-import type { TenantTx } from "./client";
+import type { Sql, TenantTx } from "./client";
 
 /** The caller-supplied fields for a new audit row (seq is assigned by the service). */
 export interface AuditAppendInput {
@@ -113,5 +113,31 @@ export async function readAuditChain(tx: TenantTx, orgId: string): Promise<Store
     target: r.target,
     prevHash: toBytes(r.prev_hash),
     rowHash: toBytes(r.row_hash)!,
+  }));
+}
+
+/** A per-org audit-chain head: the latest (seq, row_hash) for an org. */
+export interface AuditChainHead {
+  readonly orgId: string;
+  readonly seq: number;
+  readonly rowHash: Uint8Array;
+}
+
+/**
+ * Read EVERY org's current chain head (latest seq + row_hash), for the WORM head-anchor cron.
+ * Runs on a webhook_anchor connection — NOT a tenant tx: that role's role-targeted SELECT policy
+ * (FOR SELECT TO webhook_anchor USING (true)) grants the cross-org read, and its COLUMN grant
+ * limits it to (org_id, seq, row_hash). Orgs with no audit rows have no chain to anchor and are
+ * simply absent. `distinct on (org_id) ... order by org_id, seq desc` yields one head per org.
+ */
+export async function readAuditChainHeads(sql: Sql): Promise<AuditChainHead[]> {
+  const rows = await sql<{ org_id: string; seq: string | number; row_hash: Uint8Array }[]>`
+    select distinct on (org_id) org_id, seq, row_hash
+    from audit_log
+    order by org_id, seq desc`;
+  return rows.map((r) => ({
+    orgId: r.org_id,
+    seq: Number(r.seq),
+    rowHash: Uint8Array.from(r.row_hash),
   }));
 }

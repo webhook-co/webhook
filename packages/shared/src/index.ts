@@ -14,6 +14,7 @@ export * from "./watermark";
 export * from "./cursor";
 export * from "./audit";
 export * from "./audit-chain";
+export * from "./audit-anchor";
 export * from "./r2";
 export * from "./envelope";
 export * from "./kms/local";
