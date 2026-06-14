@@ -58,6 +58,33 @@ export async function createEndpoint(
   return { id, orgId: input.orgId, name: input.name, paused: false, start, plaintext };
 }
 
+/**
+ * Read an endpoint's stored ingest-token hash (endpoints.ingest_token_hash), or null if no such
+ * endpoint is visible under the org's RLS context. This is the CROSS-SURFACE INVALIDATION SEAM
+ * (ADR-0015): a control-plane mutation that changes what the ingest resolver caches for an endpoint
+ * -- today a provider-secret add/revoke, which changes the sealedSecrets snapshot carried on the
+ * cached principal -- holds the endpoint id, not the wbhk.my path-token plaintext, so it cannot call
+ * resolver.invalidate(plaintext). It instead evicts by hash: `resolver.invalidateHash(hash)` (== a KV
+ * delete of credentialCacheKey(hash)). The resolver caches the principal under
+ * credentialCacheKey(<the matched candidate hash>), which IS this stored hash, so the derived key
+ * hits exactly that entry. Runs as webhook_app under the org's RLS context (the same posture as
+ * createEndpoint / revokeApiKey); a cross-org or unknown id is RLS-invisible -> null. The token hash
+ * is a keyed HMAC (inert without the pepper) and is already the public KV key, so returning it leaks
+ * nothing the cache layer doesn't already expose.
+ */
+export async function getEndpointIngestTokenHash(
+  app: Sql,
+  orgId: string,
+  endpointId: string,
+): Promise<Buffer | null> {
+  const rows = await withTenant(app, orgId, async (tx) => {
+    return tx<{ ingest_token_hash: Buffer }[]>`
+      select ingest_token_hash from endpoints where id = ${endpointId}`;
+  });
+  const row = rows[0];
+  return row ? Buffer.from(row.ingest_token_hash) : null;
+}
+
 interface EndpointResolveRow {
   id: string;
   org_id: string;

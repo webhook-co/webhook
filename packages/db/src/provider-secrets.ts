@@ -177,3 +177,44 @@ export async function getEndpointProviderSecrets(
     order by created_at desc, id desc`;
   return rows.map(toSealed);
 }
+
+/**
+ * Revoke a provider secret by id (status -> 'revoked') under the org's RLS context. A revoked secret
+ * is excluded from getEndpointProviderSecrets, so the verify path stops honoring it. Returns true iff
+ * a row transitioned -- a missing / cross-org (RLS-invisible) / already-revoked id yields false.
+ *
+ * Like revokeApiKey, this touches ONLY the row of record. The CALLER is responsible for (a) appending
+ * the control-plane audit entry and (b) invalidating the ingest resolver's cached principal for the
+ * endpoint -- the revoked secret rides on that cached principal (sealedSecrets snapshot) until the KV
+ * entry is evicted, so without invalidation a forged signature keeps verifying until the TTL backstop.
+ * Derive the eviction key with getEndpointIngestTokenHash + resolver.invalidateHash (see ADR-0015).
+ */
+export async function revokeProviderSecret(app: Sql, orgId: string, id: string): Promise<boolean> {
+  const count = await withTenant(app, orgId, async (tx) => {
+    const res = await tx`
+      update provider_secrets set status = 'revoked'
+      where id = ${id} and status <> 'revoked'`;
+    return res.count;
+  });
+  return count > 0;
+}
+
+/**
+ * Retire a provider secret by id (status 'active' -> 'retiring') under the org's RLS context. Retiring
+ * is the rotation grace state, NOT a revocation: getEndpointProviderSecrets still returns 'retiring'
+ * secrets, so the verify path keeps honoring it. Returns true iff an ACTIVE row transitioned (already
+ * retiring/revoked, missing, or cross-org -> false).
+ *
+ * No cache invalidation is required for retire on its own: the cached principal carries the secret's
+ * ciphertext (not its status), and the honored set is unchanged, so verification behaviour does not
+ * change. (Revocation, which removes the secret from the honored set, is the case that needs eviction.)
+ */
+export async function retireProviderSecret(app: Sql, orgId: string, id: string): Promise<boolean> {
+  const count = await withTenant(app, orgId, async (tx) => {
+    const res = await tx`
+      update provider_secrets set status = 'retiring'
+      where id = ${id} and status = 'active'`;
+    return res.count;
+  });
+  return count > 0;
+}
