@@ -7,7 +7,7 @@
 // code fork: the same data-access code runs everywhere. Prod and dev never share a
 // connection string (separate Neon projects).
 
-import { createCredentialHasher, type CredentialHasher } from "./credential";
+import { createCredentialHasher, decodeBase64Pepper, type CredentialHasher } from "./credential";
 
 const VAR = "DATABASE_URL";
 
@@ -50,16 +50,15 @@ function decodePepper(value: string | undefined, name: string): Buffer {
         `(base64, >=32 bytes) and must never be committed to source.`,
     );
   }
-  const trimmed = value.trim();
-  // Node's base64 decoder is LENIENT: it silently drops characters it doesn't recognise,
-  // so a typo'd / wrong-format pepper (whitespace, base64url vs base64 confusion, a stray
-  // character) would decode to a wrong-but-accepted buffer and quietly change every hash.
-  // Validate strict standard base64 first and fail loud instead.
-  if (trimmed.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(trimmed)) {
+  // Strict standard-base64 decode (rejects base64url / wrong-length / stray chars that Node's
+  // lenient decoder would silently mangle into a wrong-but-accepted pepper). Shared with the
+  // Worker-side base64 entry point so both paths fail loud on the same malformed input.
+  try {
+    return decodeBase64Pepper(value);
+  } catch {
     throw new Error(
       `${name} is not valid base64. The credential pepper is injected as a wrangler/Worker ` +
         `secret (standard base64, >=32 bytes) and must never be committed to source.`,
     );
   }
-  return Buffer.from(trimmed, "base64");
 }

@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createCredentialHasher,
+  createCredentialHasherFromBase64,
   credentialCacheKey,
   credentialHashEquals,
   CREDENTIAL_PEPPER_MIN_BYTES,
@@ -100,6 +101,39 @@ describe("credentialHashEquals", () => {
 
   it("returns false (does not throw) on a length mismatch", () => {
     expect(credentialHashEquals(Buffer.from("short"), hasherA.hash("whk_x"))).toBe(false);
+  });
+});
+
+describe("createCredentialHasherFromBase64", () => {
+  it("builds a hasher equivalent to one over the decoded pepper (Workers-secret entry point)", () => {
+    const b64 = PEPPER_A.toString("base64");
+    const fromB64 = createCredentialHasherFromBase64(b64);
+    // Same pepper bytes -> identical HMAC, so a token minted under either verifies under both.
+    expect(fromB64.hash("whk_same").equals(hasherA.hash("whk_same"))).toBe(true);
+  });
+
+  it("accepts previous peppers (rotation) so a key minted under an old pepper still resolves", () => {
+    const current = PEPPER_B.toString("base64");
+    const previous = [PEPPER_A.toString("base64")];
+    const rotated = createCredentialHasherFromBase64(current, previous);
+    const candidates = rotated.candidates("whk_rot").map((b) => b.toString("hex"));
+    expect(candidates).toContain(hasherB.hash("whk_rot").toString("hex")); // current
+    expect(candidates).toContain(hasherA.hash("whk_rot").toString("hex")); // previous (old pepper)
+  });
+
+  it("rejects a too-short decoded pepper (length is validated, not silently accepted)", () => {
+    const shortB64 = Buffer.alloc(16, 0x01).toString("base64");
+    expect(() => createCredentialHasherFromBase64(shortB64)).toThrow(/pepper/i);
+  });
+
+  it("rejects non-strict base64 instead of letting Node's lenient decoder silently drop chars", () => {
+    // base64url chars (-/_) and bad-length strings would decode to a WRONG-but-accepted buffer
+    // under Node's lenient decoder, quietly changing every hash. They must throw, not be accepted.
+    const valid = Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0x42).toString("base64");
+    expect(() => createCredentialHasherFromBase64(`${valid.slice(0, -1)}-`)).toThrow(/base64/i); // base64url '-'
+    expect(() => createCredentialHasherFromBase64("AAA")).toThrow(/base64/i); // length not % 4
+    // A previous-pepper entry is validated the same way (the rotation list isn't a bypass).
+    expect(() => createCredentialHasherFromBase64(valid, ["not*valid*base64"])).toThrow(/base64/i);
   });
 });
 

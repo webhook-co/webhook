@@ -14,6 +14,14 @@ describe("engine ingest bindings", () => {
     expect(typeof bindings.HYPERDRIVE_TENANT.connectionString).toBe("string");
   });
 
+  it("exposes the webhook_authn Hyperdrive binding (cold endpoint-token lookup)", () => {
+    expect(typeof bindings.HYPERDRIVE_AUTHN.connectionString).toBe("string");
+  });
+
+  it("exposes the webhook_ingest Hyperdrive binding (the ingest_event insert)", () => {
+    expect(typeof bindings.HYPERDRIVE_INGEST.connectionString).toBe("string");
+  });
+
   it("exposes the per-event R2 payloads bucket", () => {
     expect(typeof bindings.R2_PAYLOADS.put).toBe("function");
     expect(typeof bindings.R2_PAYLOADS.get).toBe("function");
