@@ -3,7 +3,7 @@
 - status: accepted
 - date: 2026-06-12
 - scope: `packages/db`, `packages/shared`
-- review id: H2 (high)
+- review severity: high
 
 ## context
 
@@ -19,13 +19,13 @@ Truncation (lopping off the tail) is also undetectable without an external ancho
   **HMAC key lives outside the database role**. A database compromise alone can't forge
   a chain. The canonical, length-prefixed serialization is frozen in
   `packages/shared` (`audit.ts`) so the chain is reproducible across surfaces and by the
-  (post-freeze) verifier.
+  verifier.
 - **Per-org monotonic sequence.** Each row carries a contiguous per-org `seq`; the chain
   is per-org (a global chain would serialize all audit writes system-wide). The database
   enforces the structure: a trigger requires contiguous `seq` + `prev_hash` linkage, and
   an immutability trigger rejects `UPDATE`/`DELETE`/`TRUNCATE` (proven against a
   superuser in the leak suite). The unique `(org_id, seq)` is the serialization point.
-- **WORM head-anchor (serialized + cron in WS-C2).** Periodically anchor the per-org chain
+- **WORM head-anchor (serialized + cron).** Periodically anchor the per-org chain
   head to an **R2 bucket under a Bucket Lock** (write-once, no delete/overwrite for the
   retention period) so tail-truncation is detectable. Note R2 provides **Bucket Locks**
   (prefix/bucket retention rules), **not** S3 Object Lock — there is no compliance/governance
@@ -35,7 +35,7 @@ Truncation (lopping off the tail) is also undetectable without an external ancho
   `packages/shared/src/audit-anchor.ts`; `verifyChainAgainstAnchor` cross-checks the live chain.
   The inherent detection window equals the cron interval (rows written *and* truncated entirely
   between two anchors were never captured).
-- **Pseudonymous actor (M1).** `actor` is the Better Auth `user_id`, never raw PII, and
+- **Pseudonymous actor.** `actor` is the Better Auth `user_id`, never raw PII, and
   is not a FK — user erasure never deletes audit history.
 - **Control-plane only.** The chain records low-volume control actions; per-event
   capture stays in `events` / `delivery_attempts`, off the chain's serialized write path.

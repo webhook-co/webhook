@@ -2,7 +2,7 @@
 //
 // Owns: the SQL migrations (db/migrations, run via dbmate), the postgres.js client
 // wired for Hyperdrive (named prepared statements; a caching-disabled binding for
-// tenant reads — C1), the withTenant / single-statement RLS helpers, typed
+// tenant reads), the withTenant / single-statement RLS helpers, typed
 // repositories, and the RLS leak-test harness. packages/shared stays
 // runtime-DB-free; this package depends on it for types, never the reverse.
 

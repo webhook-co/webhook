@@ -1,4 +1,4 @@
-// Soft-cap signal + rate-limit seam (H3). Single-dimension (events). NO prices/tiers
+// Soft-cap signal + rate-limit seam. Single-dimension (events). NO prices/tiers
 // in this repo. Usage is rolled up from events (packages/db rollup_usage); the cap ->
 // pause decision is computed by that job and written to ingest_paused; the ingest hot
 // path only ever READS a cheap cached `paused` flag (on KV endpoint resolution), never
@@ -39,9 +39,9 @@ export function shouldPauseForCap(
 }
 
 /**
- * The abuse rate-limit seam. The concrete implementations land in phase 1:
- * Cloudflare Rate Limiting at the edge + a per-token Durable Object token-bucket. The
- * freeze fixes the interface so the ingest path binds to it, not to a specific engine.
+ * The abuse rate-limit seam. The concrete implementations land on the ingest path:
+ * Cloudflare Rate Limiting at the edge + a per-token Durable Object token-bucket. This
+ * seam fixes the interface so the ingest path binds to it, not to a specific engine.
  */
 export interface RateLimitDecision {
   readonly allowed: boolean;

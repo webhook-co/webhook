@@ -11,7 +11,7 @@ function principal(over: Partial<ResolvedPrincipal> = {}): ResolvedPrincipal {
   return { orgId: ORG, scopes: ["events:read"], ...over };
 }
 
-describe("createCredentialResolver — hot/cold path (S3)", () => {
+describe("createCredentialResolver — hot/cold path", () => {
   it("COLD on first resolve (cache miss), then HOT on the second (no second cold lookup)", async () => {
     const cache = new InMemoryCredentialCache();
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
@@ -126,7 +126,7 @@ describe("createCredentialResolver — hot/cold path (S3)", () => {
   });
 });
 
-describe("createCredentialResolver — pepper rotation (S3 + rotation)", () => {
+describe("createCredentialResolver — pepper rotation", () => {
   it("a key minted under the PREVIOUS pepper still resolves during the rotation window", async () => {
     const oldPepper = Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0xa1);
     const newPepper = Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0xb2);

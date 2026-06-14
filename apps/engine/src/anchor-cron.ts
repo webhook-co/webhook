@@ -1,6 +1,6 @@
 import { anchorR2Key, buildAnchor } from "@webhook-co/shared";
 
-// The WORM head-anchor cron logic (§0.7, ADR-0004, WS-C2). Pure + dependency-injected so it
+// The WORM head-anchor cron logic (ADR-0004). Pure + dependency-injected so it
 // unit-tests with fakes; the engine's scheduled() handler wires the real deps (a webhook_anchor
 // DB connection, the R2 anchor bucket, the audit HMAC key from a secret). For each org's chain
 // head it writes one immutable anchor object, keyed by (org, seq), via a CREATE-ONLY put: an

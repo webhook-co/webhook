@@ -1,7 +1,7 @@
-// The auth seam every bearer surface depends on (§0.8) + the RFC 9728 resource-server
+// The auth seam every bearer surface depends on + the RFC 9728 resource-server
 // obligations on mcp. Surfaces depend on AuthContext, never on Better Auth or the
 // OAuth provider directly. The concrete verifyBearer (resolving API keys today, OAuth
-// access tokens tomorrow) lands in the auth workstream; the freeze fixes the shapes
+// access tokens tomorrow) lands separately; this contract fixes the shapes
 // and the audience-binding rule. The shared bearer-authorize decision (extract token ->
 // verify -> scope -> 401/403) lives here too, so every surface binds ONE implementation.
 
@@ -9,7 +9,7 @@ import { CAPABILITY_REGISTRY } from "./capabilities";
 
 export interface AuthContext {
   readonly orgId: string;
-  /** Pseudonymous user id when a user principal is present (M1). */
+  /** Pseudonymous user id when a user principal is present. */
   readonly userId?: string;
   readonly scopes: readonly string[];
 }

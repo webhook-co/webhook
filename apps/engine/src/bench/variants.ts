@@ -1,6 +1,6 @@
 import type { Sql } from "@webhook-co/db";
 
-// The four RLS-insert variants for the WS-E p99 ingest benchmark (wedge §0.2). Each performs ONE
+// The four RLS-insert variants for the p99 ingest benchmark. Each performs ONE
 // logical "ingest insert" and returns the DB round-trip time (performance.now() around the DB call)
 // plus whether a row was inserted. The driver layers end-to-end ACK timing on top. The variants
 // differ ONLY in how per-request tenant context + the insert reach Postgres through Hyperdrive's

@@ -3,17 +3,17 @@
 - status: accepted (Option B)
 - date: 2026-06-13
 - scope: `packages/db` (identity migration), `apps/auth`
-- supersedes/relates: ADR-0003 (ingest tokens random + hashed), internal ADR-0010 (auth via Better Auth)
+- supersedes/relates: ADR-0003 (ingest tokens random + hashed); the auth design (Better Auth for identity + the API-key path)
 
 ## context
 
-better-auth owns identity **and** api keys (internal ADR-0010). The freeze checked in the
+better-auth owns identity **and** api keys in the original auth design. The initial schema checked in the
 generated identity schema as migration
 [`0001_better_auth_identity.sql`](../../packages/db/db/migrations/0001_better_auth_identity.sql):
 `user` / `session` / `account` / `verification` (core) plus `apikey` (the
 `@better-auth/api-key` plugin). These identity tables are **global**, not org-scoped, and are
 therefore an explicit, documented **exemption** from the per-org `FORCE ROW LEVEL SECURITY`
-that every tenant table carries — the M3 catalog-coverage test lists them as known exemptions.
+that every tenant table carries — the RLS catalog-coverage test lists them as known exemptions.
 
 The `apikey` table is keyed by `referenceId` (the org id) but is managed by the plugin, not by
 our tenant-scoped data layer. So today an api key's tenant scoping is enforced by application
@@ -21,15 +21,14 @@ logic and the plugin, **not** by Postgres RLS.
 
 The better-auth upgrade (PR #10) kept the plugin on the latest better-auth and did **not** change
 this posture — it deliberately left the RLS question to this decision, which now resolves it in
-favor of a first-party table (see decision below). The full analysis lives in
-`build-plans/better-auth-apikey-research.md` in the separate internal repo (§4 Option A vs
-Option B, §6 open items).
+favor of a first-party table (see decision below). The Option A vs Option B analysis and the open
+items were worked through separately; this ADR records the conclusion.
 
 ## decision
 
 We take **Option B**: api keys become a first-party `api_keys` table under our own
 `ROW LEVEL SECURITY` + `FORCE`, rather than staying on better-auth's plugin-managed `apikey`
-table. The two options the auth workstream weighed were:
+table. The two options weighed were:
 
 - **Option A — keep better-auth's `apikey` table as a documented RLS exemption (status quo).**
   Zero new runtime code; inherits the plugin's batteries (permissions, refill, rate-limit,
@@ -45,8 +44,8 @@ table. The two options the auth workstream weighed were:
   True tenant isolation at the database layer; one hashing/verify discipline across ingest
   tokens and api keys; removes the api-key path's dependency on the plugin. The cost we accept:
   we re-implement correctness-critical auth code (the exact surface 1.6.x just hardened) and
-  diverge from ADR-0010's "better-auth owns api keys" — so this decision carries an ADR-0010
-  amendment recording that api keys are now first-party.
+  diverge from the original "better-auth owns api keys" design — so this decision amends that design,
+  recording that api keys are now first-party.
 
 The compliance-by-design argument — database-enforced tenant isolation for every org-scoped
 row, with no surface exempted by application logic — is what tips it to Option B.
@@ -86,11 +85,11 @@ and stays a documented RLS exemption — `api_keys` comes under coverage on the 
 
 ## consequences / revisit trigger
 
-- The expand migration brings `api_keys` under the M3 RLS catalog-coverage check. The `apikey`
+- The expand migration brings `api_keys` under the RLS catalog-coverage check. The `apikey`
   exemption stays on the known-exemption list until the contract migration drops the table —
   removing it earlier would fail the coverage test against a table that still exists.
 - Runtime api-key verification lands behind the `verifyBearer(token) → AuthContext` seam
-  (internal ADR-0010), now hitting the first-party `api_keys` table rather than the plugin.
+  (the auth design's bearer-verify boundary), now hitting the first-party `api_keys` table rather than the plugin.
 - We accept the cost of re-implementing the create / verify / list / revoke path that better-auth
   1.6.x just hardened; the test suite has to cover that surface to earn the database-enforced
   isolation Option B buys.

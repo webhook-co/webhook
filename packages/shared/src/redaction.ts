@@ -1,6 +1,6 @@
 // The loggable-view / redaction boundary. Mandatory on EVERY log/telemetry/audit
 // path. events.headers and R2 bodies are stored UNSCRUBBED (that's the inspection
-// wedge — §0.1), but they must never be logged unscrubbed: redaction happens at the
+// wedge), but they must never be logged unscrubbed: redaction happens at the
 // boundary, here, not in storage.
 
 /** Fixed-width mask — deliberately constant so the secret's length isn't disclosed. */

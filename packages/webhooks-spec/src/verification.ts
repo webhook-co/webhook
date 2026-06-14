@@ -2,7 +2,7 @@ import { z } from "zod";
 
 import { WebhookSchemeSchema, type WebhookScheme } from "./scheme";
 
-// The verification result is a typed DISCRIMINATED UNION, not a boolean (§0.4). One
+// The verification result is a typed DISCRIMINATED UNION, not a boolean. One
 // definition consumed by correctness code and every surface (CLI/web/MCP), stored on
 // the event as the structured `verification` field so an inspection long after the
 // fact can still explain a failure. Heuristic sub-diagnoses MUST carry `confidence`

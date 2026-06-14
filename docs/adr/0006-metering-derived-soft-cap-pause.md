@@ -3,14 +3,14 @@
 - status: accepted
 - date: 2026-06-12
 - scope: `packages/db`, `packages/shared`, `apps/engine` (ingest path)
-- review id: H3 (high)
+- review severity: high
 
 ## context
 
 Metering must be accurate, single-dimension (events), and replay-safe — but it must not
 add write contention to the unauthenticated ingest hot path. A naive per-event counter
-inside `ingest_event` would reintroduce per-org serialization on the exact path §0.2
-works to keep as a single, lock-light statement. Pricing transparency also calls for a
+inside `ingest_event` would reintroduce per-org serialization on the exact path the
+ingest design works to keep as a single, lock-light statement. Pricing transparency also calls for a
 soft cap that **pauses rather than bill-shocks**.
 
 ## decision
@@ -27,7 +27,7 @@ soft cap that **pauses rather than bill-shocks**.
   returns the agreed status; `pause_policy` is `pause` (default) or `allow`.
 - **Rate-limit seam.** Abuse control is a seam (`RateLimiter`, `packages/shared`):
   Cloudflare Rate Limiting at the edge + a per-token Durable Object token-bucket, both
-  implemented in phase 1.
+  implemented on the ingest path.
 - **No prices/tiers/cost figures in this repo.** Schema is `usage`, `org_limits`
   (numeric cap + policy enum), `ingest_paused` (migration `0004`). Billing/Stripe is a
   separate later system.

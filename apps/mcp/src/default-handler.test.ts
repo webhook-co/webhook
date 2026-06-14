@@ -8,7 +8,7 @@ const get = (path: string) =>
   mcpDefaultHandler.fetch(new Request(`https://mcp.webhook.co${path}`), env);
 
 describe("mcpDefaultHandler", () => {
-  it("returns 501 for /authorize (the login + consent UI lands in WS-D2b)", async () => {
+  it("returns 501 for /authorize (the login + consent UI lands later)", async () => {
     expect((await get("/authorize")).status).toBe(501);
   });
 

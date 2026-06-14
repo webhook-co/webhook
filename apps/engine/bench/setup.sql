@@ -1,4 +1,4 @@
--- WS-E benchmark setup (wedge §0.2). Run ONCE on the throwaway bench Neon branch AFTER the
+-- p99 ingest benchmark setup. Run ONCE on the throwaway bench Neon branch AFTER the
 -- migrations — NEVER a production migration. Provides variant A's RLS-off floor table and the
 -- seeded org + endpoint all four variants insert against.
 --
@@ -47,7 +47,7 @@ grant insert, select on events_bench to webhook_ingest;
 select set_config('app.current_org', 'be000000-0000-4000-8000-000000000001', false);
 
 insert into orgs (id, slug, name)
-  values ('be000000-0000-4000-8000-000000000001', 'bench', 'WS-E Bench Org')
+  values ('be000000-0000-4000-8000-000000000001', 'bench', 'Ingest Bench Org')
   on conflict (id) do nothing;
 
 insert into endpoints (id, org_id, ingest_token_hash, name)

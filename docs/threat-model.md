@@ -1,10 +1,10 @@
-# threat model & data classification (Phase 0 freeze)
+# threat model & data classification
 
-The shared adversary model for the wedge spine. Every fan-out workstream (engine,
+The shared adversary model for the wedge spine. Every component (engine,
 auth, KMS, audit, tunnel, CLI, MCP) binds to this rather than re-deriving its own.
-It is a freeze artifact: it enumerates the trust boundaries, classifies the data,
-and names the control that protects each. Controls trace to the ADRs and the
-build plan; this doc does not restate their detail.
+It enumerates the trust boundaries, classifies the data,
+and names the control that protects each. Controls trace to the ADRs;
+this doc does not restate their detail.
 
 Scope: the inbound wedge — receive on `wbhk.my`, verify, dedup, persist, inspect,
 replay-to-localhost — plus the identity/auth and metering foundations. Outbound
@@ -14,14 +14,14 @@ delivery is out of scope (deferred).
 
 | boundary | what crosses it | primary control(s) |
 | --- | --- | --- |
-| Public internet → `wbhk.my` ingest (unauthenticated, cookieless) | untrusted webhook requests from anyone who knows a path token | path-token routing with `404` on unknown; CSPRNG token hashed at rest (H4); body-size cap (`413`); rate-limit + per-token token-bucket (H3); `Host`/SNI validation; cookieless apex (no ambient auth) |
+| Public internet → `wbhk.my` ingest (unauthenticated, cookieless) | untrusted webhook requests from anyone who knows a path token | path-token routing with `404` on unknown; CSPRNG token hashed at rest; body-size cap (`413`); rate-limit + per-token token-bucket; `Host`/SNI validation; cookieless apex (no ambient auth) |
 | Tenant A's request ↔ tenant B's data (in one shared Postgres) | any read/write on a tenant-owned table | Postgres RLS, deny-by-default, `FORCE ROW LEVEL SECURITY`, a non-owner/no-`BYPASSRLS` app role; per-request `app.current_org` via single-statement `set_config(local)` |
-| Hyperdrive query cache (shared edge) | cached read results keyed on SQL+params, blind to the RLS GUC | tenant reads go only through the **cache-disabled** `HYPERDRIVE_TENANT` binding (C1) |
-| Multi-tenant Worker isolate (one isolate serves many orgs) | plaintext signing/provider secrets held to sign/verify on the hot path | unwrap to a **non-extractable `CryptoKey` handle** (not raw bytes), size-bounded org-scoped LRU; BAA tenants get a tighter/zero cache (M7, ADR-0007) |
-| App role ↔ secret material at rest | endpoint signing keys + per-source provider secrets | envelope encryption: ciphertext + wrapped DEK in Postgres, KEK only in AWS KMS behind a `KmsProvider` seam; AAD-bound (M6) |
-| App role ↔ audit history | attempts to edit/delete/forge audit entries | append-only (INSERT-only grants + reject-`UPDATE`/`DELETE` trigger) + per-org **HMAC-keyed** hash chain (key outside the DB) + periodic WORM head-anchor (H2) |
+| Hyperdrive query cache (shared edge) | cached read results keyed on SQL+params, blind to the RLS GUC | tenant reads go only through the **cache-disabled** `HYPERDRIVE_TENANT` binding |
+| Multi-tenant Worker isolate (one isolate serves many orgs) | plaintext signing/provider secrets held to sign/verify on the hot path | unwrap to a **non-extractable `CryptoKey` handle** (not raw bytes), size-bounded org-scoped LRU; BAA tenants get a tighter/zero cache (ADR-0007) |
+| App role ↔ secret material at rest | endpoint signing keys + per-source provider secrets | envelope encryption: ciphertext + wrapped DEK in Postgres, KEK only in AWS KMS behind a `KmsProvider` seam; AAD-bound |
+| App role ↔ audit history | attempts to edit/delete/forge audit entries | append-only (INSERT-only grants + reject-`UPDATE`/`DELETE` trigger) + per-org **HMAC-keyed** hash chain (key outside the DB) + periodic WORM head-anchor |
 | `mcp.`/`api.` bearer tokens ↔ resources | OAuth access tokens / API keys presented to a resource server | `verifyBearer → AuthContext` seam with **audience binding** (RFC 8707/9728); tokens never cookies; identity data in our own Neon |
-| Replay target | where a captured event is sent | closed `TargetSchema` union (localhost-tunnel only); no free-form URL; remote targets later require an allowlist + SSRF guard (H6) |
+| Replay target | where a captured event is sent | closed `TargetSchema` union (localhost-tunnel only); no free-form URL; remote targets later require an allowlist + SSRF guard |
 | Region/jurisdiction boundary | tenant data at rest for residency-bound tenants | EU Neon project + EU-jurisdiction R2 bucket + jurisdiction-namespaced `LISTEN_SESSION` DO (not `locationHint`) |
 | Logs / telemetry | anything written to OTel spans / logs | one "loggable view" boundary; mandatory `redactSecret` + header allowlist; PII/PHI and secrets never logged |
 
@@ -35,19 +35,19 @@ delivery is out of scope (deferred).
 | Per-source provider secrets | high — third party's secret | Postgres (envelope-encrypted, separate table) | same envelope + cache model as signing keys; distinct table (opposite trust direction) | until removed |
 | `ingest_token` | bearer capability to write events | Postgres stores **only a keyed `HMAC-SHA256` hash** (peppered; shared credential primitive) | random CSPRNG, peppered-hash at rest, constant-time lookup, KV keyed by hash; shown once | endpoint lifetime |
 | `api_key` | bearer capability to call the API as an org | Postgres `api_keys`, stores **only a keyed `HMAC-SHA256` hash** (`key_hash`, peppered — pepper held outside the DB) | RLS + FORCE; random ≥256-bit CSPRNG, peppered-hash at rest, constant-time compare, shown once; write path is `webhook_app`, verify path is the column-scoped, SELECT-only `webhook_authn` (ADR-0008 Option B) | until revoked/expired |
-| Identity / PII (users) | personal data (GDPR) | Postgres (Better Auth schema) | RLS where org-scoped; erasable; audit refers to it only by pseudonymous `user_id` (M1) | until erasure |
+| Identity / PII (users) | personal data (GDPR) | Postgres (Better Auth schema) | RLS where org-scoped; erasable; audit refers to it only by pseudonymous `user_id` | until erasure |
 | Audit log | integrity-critical, low-PII | Postgres (append-only, hash-chained) | immutability + HMAC chain + WORM anchor; actor = `user_id`, never raw PII | long (compliance) |
 | Usage/metering counters | billing-relevant | Postgres (`usage`, derived from `events`) | exactly-once via the dedup unique constraint; no hidden counters | billing windows |
 | Session cookies | auth, `app.` only | host-only cookie on `app.` | host-only (no parent-domain), CSRF posture; no `cookieCache`+KV in the wedge | session |
 
 ## key adversary scenarios
 
-- **Cross-tenant read.** Defeated by RLS (deny-by-default + `FORCE` + non-owner role) *and* the cache-disabled tenant binding (RLS alone is insufficient because the Hyperdrive cache can't see the RLS GUC — C1). Red-first leak tests, incl. an owner/`SECURITY DEFINER` negative control, gate the freeze.
-- **Leaked/abused ingest token.** Token is hashed at rest (a DB/backup/cache leak yields no usable token); abuse is bounded by rate-limit + the soft-cap pause (H3/H4).
-- **Audit tampering / truncation.** Append-only + HMAC-keyed per-org chain + WORM head-anchor make edits, forgeries, and tail-truncation detectable (H2).
-- **Secret disclosure from a shared isolate.** Hot path holds only non-extractable `CryptoKey` handles, size-bounded and org-scoped; BAA tenants zero-cache (M7).
-- **SSRF / confused-deputy via replay (esp. MCP agent).** Replay target is a closed union today; remote targets are a future, separately-scoped kind behind an SSRF guard (H6).
-- **Tunnel row-skip (silent data loss on the hero feature).** The bounded safety-lag watermark (server-assigned `received_at`, `δ ≥ statement_timeout`, primary reads) makes the durable tail provably gapless (H5).
+- **Cross-tenant read.** Defeated by RLS (deny-by-default + `FORCE` + non-owner role) *and* the cache-disabled tenant binding (RLS alone is insufficient because the Hyperdrive cache can't see the RLS GUC). Red-first leak tests, incl. an owner/`SECURITY DEFINER` negative control, gate the change.
+- **Leaked/abused ingest token.** Token is hashed at rest (a DB/backup/cache leak yields no usable token); abuse is bounded by rate-limit + the soft-cap pause.
+- **Audit tampering / truncation.** Append-only + HMAC-keyed per-org chain + WORM head-anchor make edits, forgeries, and tail-truncation detectable.
+- **Secret disclosure from a shared isolate.** Hot path holds only non-extractable `CryptoKey` handles, size-bounded and org-scoped; BAA tenants zero-cache.
+- **SSRF / confused-deputy via replay (esp. MCP agent).** Replay target is a closed union today; remote targets are a future, separately-scoped kind behind an SSRF guard.
+- **Tunnel row-skip (silent data loss on the hero feature).** The bounded safety-lag watermark (server-assigned `received_at`, `δ ≥ statement_timeout`, primary reads) makes the durable tail provably gapless.
 
 ## residuals (documented, not solved here)
 

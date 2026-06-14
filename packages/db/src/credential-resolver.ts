@@ -1,5 +1,5 @@
-// The ONE opaque-credential -> tenant resolver (S3). Both api keys (today) and ingest
-// tokens (phase 1) have the identical shape: a presented plaintext credential whose
+// The ONE opaque-credential -> tenant resolver. Both api keys (today) and ingest
+// tokens (later) have the identical shape: a presented plaintext credential whose
 // minimal-privilege lookup role (webhook_authn / webhook_ingest) cannot resolve the
 // owning org through ordinary table grants, so resolution needs a narrow, column-scoped
 // cold path plus a hot cache. Implementing this once means the ingest resolver REUSES

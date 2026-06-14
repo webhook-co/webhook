@@ -11,7 +11,7 @@ function fullBindings() {
   return b;
 }
 
-describe("capability parity (§0.9)", () => {
+describe("capability parity", () => {
   it("passes when every capability is bound on every GA surface", () => {
     expect(() => assertCapabilityParity(CAPABILITIES, fullBindings())).not.toThrow();
   });

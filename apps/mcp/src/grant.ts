@@ -1,6 +1,6 @@
 import type { AuthContext } from "@webhook-co/contract";
 
-// The trust boundary where an OAuth grant becomes our AuthContext (§0.8, WS-D2a).
+// The trust boundary where an OAuth grant becomes our AuthContext.
 //
 // @cloudflare/workers-oauth-provider validates the access token (opaque, KV-backed) and hands
 // the grant's `props` to the API handler as `ctx.props: unknown`. Those props were set when the
@@ -13,7 +13,7 @@ import type { AuthContext } from "@webhook-co/contract";
 /** The props minted into an OAuth grant (completeAuthorization) — exactly the AuthContext shape. */
 export interface McpGrantProps {
   readonly orgId: string;
-  /** Pseudonymous user id of the principal who authorized the grant (M1). */
+  /** Pseudonymous user id of the principal who authorized the grant. */
   readonly userId?: string;
   readonly scopes: readonly string[];
 }

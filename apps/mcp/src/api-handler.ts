@@ -1,7 +1,7 @@
 import { grantPropsToAuthContext } from "./grant";
 import type { AuthedExecutionContext, McpEnv } from "./env";
 
-// The authenticated MCP API handler (§0.8, WS-D2a). The OAuthProvider routes a request here ONLY
+// The authenticated MCP API handler. The OAuthProvider routes a request here ONLY
 // after it has validated the access token (opaque, KV-backed) AND enforced the RFC 8707 resource
 // binding, exposing the grant on `ctx.props`. So this handler never re-checks the token — it turns
 // the already-authenticated grant into our AuthContext (the trust boundary in grant.ts).

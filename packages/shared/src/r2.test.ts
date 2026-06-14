@@ -5,7 +5,7 @@ import { endpointPrefix, payloadR2Key } from "./r2";
 const org = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const ep = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
 
-describe("R2 key model (H1)", () => {
+describe("R2 key model", () => {
   it("is deterministic in (endpoint_id, dedup_key) — a retry maps to the same key", async () => {
     const a = await payloadR2Key(org, ep, "dedup-1");
     const b = await payloadR2Key(org, ep, "dedup-1");
