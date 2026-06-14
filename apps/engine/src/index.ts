@@ -2,6 +2,7 @@ import {
   createClient,
   createCredentialHasherFromBase64,
   createIngestResolver,
+  CREDENTIAL_CACHE_TTL_SECONDS,
   insertIngestEvent,
   readAuditChainHeads,
   type ResolvedPrincipal,
@@ -147,7 +148,17 @@ export function buildIngestDeps(env: Env): IngestDepsHandle {
   // cache-disabled: the cold lookup must reflect live pause/rotate state, and the insert is RLS-gated.
   const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
   const ingest = createClient(env.HYPERDRIVE_INGEST.connectionString, { max: 1 });
-  const resolver = createIngestResolver({ hasher, cache: kvCredentialCache(env.KV_CONFIG), authn });
+  const resolver = createIngestResolver({
+    hasher,
+    cache: kvCredentialCache(env.KV_CONFIG),
+    authn,
+    // Backstop only. A provider-secret mutation evicts THIS endpoint's cached principal explicitly
+    // (getEndpointIngestTokenHash + resolver.invalidateHash; ADR-0015), so invalidation -- not this
+    // TTL -- is the primary freshness path. Kept at the shared default rather than tightened: the
+    // cold path is the expensive cross-cloud Postgres RTT, and the revocation window is bounded by
+    // invalidation. Passed explicitly so the value is a visible decision, not an inherited default.
+    ttlSeconds: CREDENTIAL_CACHE_TTL_SECONDS,
+  });
 
   const deps: IngestDeps = {
     resolve: async (token) => toResolvedEndpoint(await resolver.resolve(token)),

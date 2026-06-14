@@ -11,6 +11,8 @@ import { createOrg } from "../src/orgs";
 import {
   addProviderSecret,
   getEndpointProviderSecrets,
+  retireProviderSecret,
+  revokeProviderSecret,
   type SealedProviderSecret,
 } from "../src/provider-secrets";
 import { setupSchema } from "./migrate";
@@ -96,9 +98,7 @@ describe("addProviderSecret + getEndpointProviderSecrets", () => {
       { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_dead" },
       store,
     );
-    await withTenant(app, orgA, async (tx) => {
-      await tx`update provider_secrets set status = 'revoked' where id = ${revoked.id}`;
-    });
+    expect(await revokeProviderSecret(app, orgA, revoked.id)).toBe(true);
 
     const secrets = await getEndpointProviderSecrets(authn, ep);
     expect(secrets.map((s) => s.id)).toEqual([newer.id, older.id]); // newest first, revoked gone
@@ -144,5 +144,91 @@ describe("webhook_authn cold read (org-discovery, least-privilege)", () => {
     await expect(
       authn`update provider_secrets set status = 'revoked' where org_id = ${orgA}`,
     ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+describe("revokeProviderSecret + retireProviderSecret (lifecycle, webhook_app under RLS)", () => {
+  it("revoke flips status to revoked and the secret drops out of the verify cold read", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "revoke-me" }, hasher)).id;
+    const s = await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_revoke" },
+      store,
+    );
+    // active -> honored by the verify cold path
+    expect((await getEndpointProviderSecrets(authn, ep)).map((x) => x.id)).toContain(s.id);
+
+    expect(await revokeProviderSecret(app, orgA, s.id)).toBe(true);
+
+    // revoked -> excluded from the cold read; verify no longer honors signatures made with it
+    // (once the resolver's cached principal is invalidated; see getEndpointIngestTokenHash + ADR-0015).
+    expect((await getEndpointProviderSecrets(authn, ep)).map((x) => x.id)).not.toContain(s.id);
+  });
+
+  it("revoke is idempotent: re-revoking an already-revoked secret returns false", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "double-revoke" }, hasher)).id;
+    const s = await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_x" },
+      store,
+    );
+    expect(await revokeProviderSecret(app, orgA, s.id)).toBe(true);
+    expect(await revokeProviderSecret(app, orgA, s.id)).toBe(false);
+  });
+
+  it("retire marks the secret 'retiring' but KEEPS it honored (rotation grace, not revocation)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "retire-me" }, hasher)).id;
+    const s = await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_retire" },
+      store,
+    );
+    expect(await retireProviderSecret(app, orgA, s.id)).toBe(true);
+
+    const got = (await getEndpointProviderSecrets(authn, ep)).find((x) => x.id === s.id);
+    expect(got).toBeDefined();
+    expect(got!.status).toBe("retiring"); // still returned -> still verified during the grace window
+  });
+
+  it("retire only transitions an ACTIVE secret: retiring a revoked secret returns false", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "retire-revoked" }, hasher)).id;
+    const s = await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_y" },
+      store,
+    );
+    expect(await revokeProviderSecret(app, orgA, s.id)).toBe(true);
+    expect(await retireProviderSecret(app, orgA, s.id)).toBe(false);
+  });
+
+  it("revoke can KILL a retiring secret mid-rotation (retiring -> revoked, dropped from the cold read)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "revoke-retiring" }, hasher)).id;
+    const s = await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_grace" },
+      store,
+    );
+    // Move it into the rotation grace state (retiring -> still honored)...
+    expect(await retireProviderSecret(app, orgA, s.id)).toBe(true);
+    expect((await getEndpointProviderSecrets(authn, ep)).map((x) => x.id)).toContain(s.id);
+
+    // ...then revoke it OUTRIGHT. revoke's guard is `status <> 'revoked'`, so retiring -> revoked
+    // is allowed (this is the kill-a-leaked-secret-during-rotation path); it then drops from the
+    // cold read. (Guards revoke against being wrongly narrowed to active-only.)
+    expect(await revokeProviderSecret(app, orgA, s.id)).toBe(true);
+    expect((await getEndpointProviderSecrets(authn, ep)).map((x) => x.id)).not.toContain(s.id);
+  });
+
+  it("is org-scoped under RLS: org A cannot revoke org B's secret (and B's stays honored)", async () => {
+    const epB = (await createEndpoint(app, { orgId: orgB, name: "borg-revoke" }, hasher)).id;
+    const sB = await addProviderSecret(
+      app,
+      { orgId: orgB, endpointId: epB, provider: "github", plaintext: "ghsecret-revoke" },
+      store,
+    );
+    // org A's tenant context can't see org B's row (RLS) -> the update matches zero rows -> false.
+    expect(await revokeProviderSecret(app, orgA, sB.id)).toBe(false);
+    // ...and org B's secret was NOT collaterally revoked.
+    expect((await getEndpointProviderSecrets(authn, epB)).map((x) => x.id)).toContain(sB.id);
   });
 });

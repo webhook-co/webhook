@@ -46,14 +46,16 @@ export function createIngestResolver(opts: IngestResolverOptions): CredentialRes
   // from one KV read -- no per-event DB query for secrets. Both reads stay on the cache-disabled
   // binding.
   //
-  // STALENESS / REVOCATION LAG (must wire explicit invalidation): the cached principal carries a
-  // snapshot of the endpoint's secrets. A secret ADDED after caching just isn't honored until the
-  // entry refreshes (events verify as unverified meanwhile -- benign, capture is the floor). A
-  // REVOKED secret is the security-relevant case: a principal cached BEFORE the revoke keeps the now-
-  // revoked sealed secret, so verify would keep accepting signatures made with it until the KV entry
-  // expires (TTL backstop) or is invalidated. Until add/revoke is wired to invalidate this resolver's
-  // KV entry (follow-up), the TTL bounds the revocation window -- keep that TTL tight for the ingest
-  // resolver and treat prompt secret revocation as requiring explicit invalidation.
+  // STALENESS / REVOCATION LAG (freshness contract -- ADR-0015): the cached principal carries a
+  // snapshot of the endpoint's secrets. A secret ADDED after caching isn't honored until the entry
+  // refreshes (events verify as unverified meanwhile -- benign, capture is the floor). A REVOKED
+  // secret is the security-relevant case: a principal cached BEFORE the revoke keeps the now-revoked
+  // sealed secret, so verify keeps accepting signatures made with it until the entry is evicted (or
+  // the TTL backstop expires). The decided fix: the control-plane mutation surface evicts this
+  // endpoint's entry by hash -- getEndpointIngestTokenHash + invalidateHash (== a KV delete on the
+  // shared KV_CONFIG namespace). That live wiring lands WITH the provider-secret management surface
+  // (no such runtime surface adds/revokes a secret yet); until then the TTL is the only bound, and
+  // explicit invalidation is the primary path once that surface exists.
   const coldLookup: ColdLookup = async (tokenHash) => {
     const principal = await resolveEndpoint(tokenHash);
     if (principal === null || principal.endpointId === undefined) return principal;
