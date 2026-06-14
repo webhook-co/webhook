@@ -1,8 +1,8 @@
 import { utf8Encoder } from "./bytes";
 
-// Envelope-encryption format + the KmsProvider seam (§0.6, M6, M7). The freeze fixes
+// Envelope-encryption format + the KmsProvider seam. This module fixes
 // the FORMAT and the interface; the concrete KMS custodian (AWS KMS day-one) and the
-// org-scoped plaintext cache are the post-freeze KMS workstream.
+// org-scoped plaintext cache come later.
 //
 // Two tiers: a KEK lives in a real KMS (only ever wraps/unwraps a DEK); a random
 // AES-256 DEK encrypts the actual secret locally with AES-256-GCM. The row stores the
@@ -11,7 +11,7 @@ import { utf8Encoder } from "./bytes";
 // for confused-deputy / tamper protection; envelope_version lets the format migrate.
 
 export const ENVELOPE_VERSION = 1 as const;
-export const GCM_NONCE_BYTES = 12; // 96-bit nonce (M6)
+export const GCM_NONCE_BYTES = 12; // 96-bit nonce
 export const DEK_BYTES = 32; // AES-256
 export const GCM_TAG_BYTES = 16;
 
@@ -31,13 +31,13 @@ export interface WrappedDek {
 /**
  * The KMS seam. Open core depends on this interface + the envelope format + a single
  * default implementation; /ee adds per-tenant KEK custody and customer-held KMS.
- * unwrapDek MUST return a NON-EXTRACTABLE CryptoKey handle, never raw key bytes (M7),
+ * unwrapDek MUST return a NON-EXTRACTABLE CryptoKey handle, never raw key bytes,
  * so a cached DEK can't be exfiltrated from a shared isolate's memory.
  */
 export interface KmsProvider {
   /** Generate a fresh DEK; return the usable (non-extractable) handle + its wrapped form. */
   generateDek(context: EncryptionContext): Promise<{ dek: CryptoKey; wrapped: WrappedDek }>;
-  /** Unwrap a stored wrapped DEK to a non-extractable AES-GCM CryptoKey handle (M7). */
+  /** Unwrap a stored wrapped DEK to a non-extractable AES-GCM CryptoKey handle. */
   unwrapDek(wrapped: WrappedDek, context: EncryptionContext): Promise<CryptoKey>;
 }
 
@@ -57,7 +57,7 @@ export function encryptionContextAad(
 }
 
 /**
- * Import raw DEK bytes as an AES-GCM CryptoKey. Defaults to NON-EXTRACTABLE (M7) —
+ * Import raw DEK bytes as an AES-GCM CryptoKey. Defaults to NON-EXTRACTABLE —
  * pass extractable only for tooling/KATs, never for cached hot-path keys.
  */
 export function importDek(raw: Uint8Array, extractable = false): Promise<CryptoKey> {

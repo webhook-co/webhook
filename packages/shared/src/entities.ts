@@ -8,7 +8,7 @@ import {
   ProviderSchema,
 } from "./enums";
 
-// Cross-surface entity schemas + inferred types (§0.12). One definition consumed by
+// Cross-surface entity schemas + inferred types. One definition consumed by
 // CLI/API/web/MCP and mapped to/from the DB by packages/db repositories. snake_case
 // columns become camelCase fields at this boundary. Dates accept ISO strings or Date
 // (z.coerce.date) so the same schema validates DB rows and JSON over the wire.
@@ -82,7 +82,7 @@ export const DeliveryAttemptSchema = z.object({
 });
 export type DeliveryAttempt = z.infer<typeof DeliveryAttemptSchema>;
 
-/** Soft-cap limits view (org_limits, H3). No prices — cap + behavior only. */
+/** Soft-cap limits view (org_limits). No prices — cap + behavior only. */
 export const OrgLimitsSchema = z.object({
   orgId: uuid,
   eventCap: z.number().int().nonnegative().nullable(),

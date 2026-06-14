@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // WS-E benchmark Worker — deployed ONLY for the benchmark window, then torn down with the bench
+  // Ingest benchmark Worker — deployed ONLY for the benchmark window, then torn down with the bench
   // Neon branch. Separate from the production engine config (no cron, no R2): just the ingest insert
   // path over a production-shaped Hyperdrive binding.
   "name": "webhook-bench",

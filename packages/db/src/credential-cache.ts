@@ -1,4 +1,4 @@
-// The cache seam for the opaque-credential -> tenant resolver (S3). Abstracted behind a
+// The cache seam for the opaque-credential -> tenant resolver. Abstracted behind a
 // tiny interface so the resolver is unit-testable with an in-memory mock and so the
 // production binding (Cloudflare Workers KV) is injected at the edge — this Node-only
 // package never imports Workers types.
@@ -11,14 +11,14 @@
 // can't be invalidated on revocation. KV can: revoke deletes the KV entry, so a
 // revoked credential stops resolving on the very next request.
 
-/** What a resolved credential maps to. Kept generic so ingest tokens reuse it (S3). */
+/** What a resolved credential maps to. Kept generic so ingest tokens reuse it. */
 export interface ResolvedPrincipal {
   readonly orgId: string;
   /** Capability scopes for an api key; empty for a credential that carries none. */
   readonly scopes: readonly string[];
   /**
    * Optional opaque endpoint/resource id the credential is bound to. Unused by api
-   * keys (org-scoped); the phase-1 ingest-token resolver populates it so the SAME
+   * keys (org-scoped); the ingest-token resolver populates it so the SAME
    * cache + resolver serve `token -> {endpoint_id, org_id}` without a fork.
    */
   readonly endpointId?: string;

@@ -1,9 +1,9 @@
-// Standard Webhooks verify adapter — SCAFFOLD (WS-A follow-up; fill in the construction).
+// Standard Webhooks verify adapter — SCAFFOLD (follow-up; fill in the construction).
 //
 // Standard Webhooks is THE contract for this product (ADR-0008); this adapter is the
 // receive-side counterpart to the signer. Do not hand-roll — follow the spec exactly.
 //
-// Construction (documented, for the next workstream):
+// Construction (documented, for the follow-up):
 //   Headers: webhook-id:        <msg id>
 //            webhook-timestamp:  <unix seconds>
 //            webhook-signature:  space-separated list of `v1,<base64>` entries
@@ -15,7 +15,7 @@
 //   Rotation: accept any non-revoked secret.
 //   See https://www.standardwebhooks.com/ and STANDARD_WEBHOOKS_VERSION ("v1").
 //
-// TODO(ws-a-followup): implement base64-MAC + `whsec_`/base64 key decode + multi-sig
+// TODO: implement base64-MAC + `whsec_`/base64 key decode + multi-sig
 // header parsing, reusing the timestamp-skew enforcement and rotation machinery. Until
 // then this returns an honest UNSUPPORTED_SCHEME so capture/ACK is never blocked.
 
@@ -32,7 +32,7 @@ function verify(input: VerifyInput): VerificationResult {
   if (headerValue === undefined) {
     return verificationFailed({ code: "MISSING_HEADER", header: HEADER, scheme: SCHEME });
   }
-  // Scaffold: construction not yet implemented. Diagnose rather than throw (§0.5).
+  // Scaffold: construction not yet implemented. Diagnose rather than throw.
   return verificationFailed({ code: "UNSUPPORTED_SCHEME", observedHeaders: [HEADER] });
 }
 

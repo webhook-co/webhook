@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { INGEST_STATEMENT_TIMEOUT_MS, WATERMARK_DELTA_MS, watermarkCutoff } from "./watermark";
 
-describe("tunnel watermark (H5)", () => {
+describe("tunnel watermark", () => {
   it("keeps δ >= the ingest statement_timeout (gapless invariant)", () => {
     expect(WATERMARK_DELTA_MS).toBeGreaterThanOrEqual(INGEST_STATEMENT_TIMEOUT_MS);
   });

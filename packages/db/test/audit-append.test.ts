@@ -40,7 +40,7 @@ afterAll(async () => {
   await pg?.stop();
 });
 
-describe("appendAuditEntry (append-service, §0.7)", () => {
+describe("appendAuditEntry (append-service)", () => {
   it("writes a genesis row at seq 1 with a null prev_hash, and it verifies", async () => {
     const orgId = await seedOrg("audit-genesis");
     const written = await withTenant(app, orgId, (tx) =>

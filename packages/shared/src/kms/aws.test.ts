@@ -99,14 +99,14 @@ describe("AwsKmsProvider (mocked KMS)", () => {
     expect(utf8Decoder.decode(opened)).toBe("whsec_a_provider_secret");
   });
 
-  it("returns a non-extractable DEK handle from generateDek (M7)", async () => {
+  it("returns a non-extractable DEK handle from generateDek", async () => {
     installFakeKms();
     const kms = AwsKmsProvider.fromConfig(CONFIG);
     const { dek } = await kms.generateDek(ctx);
     expect(dek.extractable).toBe(false);
   });
 
-  it("returns a non-extractable DEK handle from unwrapDek (M7)", async () => {
+  it("returns a non-extractable DEK handle from unwrapDek", async () => {
     installFakeKms();
     const kms = AwsKmsProvider.fromConfig(CONFIG);
     const { wrapped } = await kms.generateDek(ctx);

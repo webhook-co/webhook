@@ -1,7 +1,7 @@
-# WS-E — p99 ingest benchmark results
+# p99 ingest benchmark results
 
 > Decision: **keep variant B (RLS-on `ingest_event()`), formally reject variant C (explicit
-> transaction).** Both acceptance gates from the wedge plan (§0.2) pass with wide margin. Run on a
+> transaction).** Both acceptance gates pass with wide margin. Run on a
 > production-shaped path: a Cloudflare Worker → Hyperdrive (caching off) → Neon Postgres, connecting
 > as the non-owner, RLS-enforced `webhook_ingest` role.
 
@@ -18,8 +18,8 @@
   end-to-end ACK (driver clock) and the DB round-trip (Worker clock).
 - **Compute posture:** the branch ran at fixed 0.25 CU with Neon's default autosuspend (~300 s),
   which exceeds the 90 s cold-idle, so the compute stayed warm throughout and the "cold" scenario
-  measures **Hyperdrive reconnect**, not Neon compute spin-up — exactly the scenario wedge §0.2 asks
-  for (always-on ingest is the standing production posture; this models its reconnect tail). Total
+  measures **Hyperdrive reconnect**, not Neon compute spin-up — exactly the scenario the acceptance
+  gate asks for (always-on ingest is the standing production posture; this models its reconnect tail). Total
   run 278 s; **0 errors** across all variants and scenarios.
 
 ## The four variants
@@ -58,7 +58,7 @@
 | A | 50 | 0 | 489.1 / 636.7 / 647.3 / 647.3 | 286.0 / 509.0 / 514.0 / 514.0 |
 | **B** | 50 | 0 | 367.3 / 556.9 / 559.6 / **559.6** | 302.0 / 526.0 / 532.0 / 532.0 |
 
-## Verdict (acceptance, wedge §0.2)
+## Verdict (acceptance)
 
 1. **Keep B — RLS overhead is negligible.** B's steady DB p99 (451 ms) is **−7 ms** vs the RLS-off
    floor A (458 ms): the per-command RLS policies + the `SECURITY INVOKER` `ingest_event()` call +
@@ -72,7 +72,7 @@
    p99.9 560 ms — sits **~7–9× inside** the Shopify ~5 s delivery-timeout budget.
 
 **No fallback needed:** B did not fail, so the insert-only-role fallback and the double-failure
-architecture escalation in the plan are not triggered.
+architecture escalation are not triggered.
 
 ## A note on D (faster, but not selected)
 

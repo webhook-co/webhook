@@ -11,7 +11,7 @@ import { z } from "zod";
 import { defineCapability, type AnyCapability } from "./capability";
 import { TargetSchema } from "./target";
 
-// The six wedge capabilities to freeze (§0.9). Inputs are small Zod objects; outputs
+// The six wedge capabilities. Inputs are small Zod objects; outputs
 // reuse the shared entity schemas (one definition). The cursor is the opaque string
 // from packages/shared (HMAC-signed); pagination wraps items + nextCursor.
 
@@ -76,7 +76,7 @@ export const eventsTail = defineCapability({
   semantics: { streaming: true, paginated: true, watermark: { deltaMs: WATERMARK_DELTA_MS } },
 });
 
-// The audit-chain verifier (§0.7, ADR-0004, H2). Walks an org's tamper-evident audit
+// The audit-chain verifier (ADR-0004). Walks an org's tamper-evident audit
 // chain and reports the first break, if any. Surfaced on every GA surface (a compliance
 // operator runs it from the CLI/API/web; an agent runs it over MCP). The output mirrors
 // the verifyAuditChain result in packages/shared — `ok` plus, on failure, the first
@@ -121,8 +121,8 @@ export const eventsReplay = defineCapability({
 });
 
 /**
- * The capability surface every binding implements. The six wedge capabilities (§0.9)
- * plus `audit.verify` — the compliance-by-design audit-chain verifier (§0.7, ADR-0004),
+ * The capability surface every binding implements. The six wedge capabilities
+ * plus `audit.verify` — the compliance-by-design audit-chain verifier (ADR-0004),
  * surfaced for CLI/API/web/MCP parity.
  */
 export const CAPABILITIES: readonly AnyCapability[] = [

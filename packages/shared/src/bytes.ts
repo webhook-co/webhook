@@ -63,7 +63,7 @@ export function concatBytes(...arrays: Uint8Array[]): Uint8Array {
 /**
  * Import raw key bytes as a non-extractable HMAC-SHA256 CryptoKey. Cache and reuse the
  * returned handle — don't re-import per request, and don't retain the raw bytes (the
- * non-extractable handle is the thing to keep, per M7's spirit).
+ * non-extractable handle is the thing to keep).
  */
 export function importHmacKey(raw: Uint8Array): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, [

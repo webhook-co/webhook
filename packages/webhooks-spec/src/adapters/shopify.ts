@@ -1,6 +1,6 @@
-// Shopify verify adapter — SCAFFOLD (WS-A follow-up; fill in the construction).
+// Shopify verify adapter — SCAFFOLD (follow-up; fill in the construction).
 //
-// Construction (documented, for the next workstream):
+// Construction (documented, for the follow-up):
 //   Header:  X-Shopify-Hmac-Sha256: <base64>
 //   Message: the raw request body verbatim (no timestamp).
 //   MAC:     HMAC-SHA256(secret, rawBody), BASE64-encoded (NOT hex like Stripe/GitHub).
@@ -9,7 +9,7 @@
 //   Rotation: accept any non-revoked secret.
 //   See https://shopify.dev/docs/apps/webhooks/configuration/https#verify-webhook
 //
-// TODO(ws-a-followup): implement base64-MAC verification. `verifyHmacHex` in ./shared
+// TODO: implement base64-MAC verification. `verifyHmacHex` in ./shared
 // assumes a hex digest; add a base64 sibling (or generalize the encoding) and reuse the
 // same mutation-probe + rotation machinery. Until then this returns an honest
 // UNSUPPORTED_SCHEME so capture/ACK is never blocked.
@@ -28,7 +28,7 @@ function verify(input: VerifyInput): VerificationResult {
     return verificationFailed({ code: "MISSING_HEADER", header: HEADER, scheme: SCHEME });
   }
   // Scaffold: construction not yet implemented. Diagnose rather than throw — capture
-  // and ACK must never block on a missing adapter implementation (§0.5).
+  // and ACK must never block on a missing adapter implementation.
   return verificationFailed({ code: "UNSUPPORTED_SCHEME", observedHeaders: [HEADER] });
 }
 

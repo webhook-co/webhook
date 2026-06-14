@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// WS-E benchmark load driver (wedge §0.2). Drives the deployed bench Worker through steady, burst,
+// p99 ingest benchmark load driver. Drives the deployed bench Worker through steady, burst,
 // and cold-reconnect scenarios for the four variants and aggregates p50/p95/p99/p99.9 of end-to-end
 // ACK (this driver's clock) AND the in-Worker DB round-trip (returned in the response), then prints a
 // markdown report + the keep-B / reject-C verdict.
@@ -98,7 +98,7 @@ async function main() {
   // ---- report ----
   const lines = [];
   lines.push(
-    `# WS-E p99 ingest benchmark`,
+    `# p99 ingest benchmark`,
     ``,
     `Target: \`${BASE}\` · duration ${((Date.now() - t0) / 1000).toFixed(0)}s`,
     ``,
@@ -126,7 +126,7 @@ async function main() {
   const bColdAck = data.B?.cold ? summarize(data.B.cold).ack.p999 : NaN;
   const cBurstAck = summarize(data.C?.burst ?? []).ack.p99;
   const bBurstAck = summarize(data.B?.burst ?? []).ack.p99;
-  lines.push(`## Verdict (acceptance, wedge §0.2)`, ``);
+  lines.push(`## Verdict (acceptance)`, ``);
   lines.push(
     `- B p99 DB delta over A (steady): **${bDeltaSteady.toFixed(2)} ms** (expect sub-ms to low-ms).`,
   );

@@ -1,6 +1,6 @@
 import { bytesToHex, utf8Encoder } from "./bytes";
 
-// Per-event R2 object key (§0.1 layout, hardened by H1). The object NAME is
+// Per-event R2 object key. The object NAME is
 // hash(endpoint_id, dedup_key), NOT the event UUIDv7 and NOT content_hash:
 //   * same dedup_key (a retry) -> same key -> idempotent PUT, no orphan churn;
 //   * distinct events -> distinct keys -> per-event-delete retention stays safe;

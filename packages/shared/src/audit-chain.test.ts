@@ -4,7 +4,7 @@ import type { AuditEntry } from "./audit";
 import { computeAuditRowHash, importAuditKey } from "./audit";
 import { verifyAuditChain, type StoredAuditRow } from "./audit-chain";
 
-// The full-chain walker is the post-freeze verifier (ADR-0004, H2). These are pure
+// The full-chain walker is the audit verifier (ADR-0004). These are pure
 // unit tests over an in-memory chain; the db package drives the same walker against a
 // real Postgres in test/audit-append.test.ts.
 

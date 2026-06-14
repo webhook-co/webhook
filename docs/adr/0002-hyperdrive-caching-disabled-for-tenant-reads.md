@@ -3,7 +3,7 @@
 - status: accepted
 - date: 2026-06-12
 - scope: `apps/engine`, `packages/db`
-- review id: C1 (critical)
+- review severity: critical
 
 ## context
 

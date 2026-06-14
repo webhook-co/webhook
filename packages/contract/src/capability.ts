@@ -1,9 +1,9 @@
 import type { z } from "zod";
 
-// The transport-agnostic capability registry (§0.9). A capability is a typed
+// The transport-agnostic capability registry. A capability is a typed
 // descriptor — stable name, Zod input/output, typed error taxonomy, auth scope, and
 // semantics — that every surface (api/cli/mcp/web) binds to identically. This is THE
-// freeze: bindings differ, operations don't.
+// fixed contract: bindings differ, operations don't.
 
 /** GA surfaces every capability must reach (constitution: CLI/API/web/MCP parity). */
 export const SURFACES = ["api", "cli", "mcp", "web"] as const;
@@ -29,7 +29,7 @@ export interface CapabilitySemantics {
   /** Cursor-pull tail (events.tail) — the canonical, MCP-consumable tail. */
   readonly streaming?: boolean;
   /**
-   * The bounded safety-lag watermark contract (§0.10, H5): the durable tail only
+   * The bounded safety-lag watermark contract: the durable tail only
    * returns rows older than now() - deltaMs, and the durable cursor never advances
    * past that. Part of the events.tail contract so every pull-tailer is gapless.
    */
@@ -37,7 +37,7 @@ export interface CapabilitySemantics {
 }
 
 /**
- * The CLOSED set of capability scopes verifyBearer can grant (§0.8). A capability's scope
+ * The CLOSED set of capability scopes verifyBearer can grant. A capability's scope
  * must be one of these — a typo or an unknown scope is then a compile error, not a
  * representable-but-broken descriptor. Add a scope here deliberately when a new capability
  * needs one (mirrors the closed CAPABILITY_ERRORS taxonomy above).
@@ -51,7 +51,7 @@ export const CAPABILITY_SCOPES = [
 export type CapabilityScope = (typeof CAPABILITY_SCOPES)[number];
 
 export interface CapabilityAuth {
-  /** The OAuth/API-key scope verifyBearer must grant (§0.8). */
+  /** The OAuth/API-key scope verifyBearer must grant. */
   readonly scope: CapabilityScope;
 }
 

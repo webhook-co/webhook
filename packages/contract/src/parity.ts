@@ -1,6 +1,6 @@
 import { requiredSurfaces, SURFACES, type AnyCapability, type SurfaceId } from "./capability";
 
-// The parity-conformance check (§0.9): every capability must be bound on each GA
+// The parity-conformance check: every capability must be bound on each GA
 // surface it requires, or be explicitly surfaceExempt with a reason. This is the
 // machinery; each surface package registers its real bindings and a CI test calls
 // assertCapabilityParity with them. Parity is a check, not a hope.

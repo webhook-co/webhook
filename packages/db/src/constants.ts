@@ -1,7 +1,7 @@
 // Database identifiers shared by the client, the test harness, and (by literal
 // duplication) the SQL migrations. Migrations are raw SQL and can't import these,
 // so any change here must be mirrored in db/migrations — covered by the RLS
-// catalog tests (M3) which assert the live role/policy shape.
+// catalog tests which assert the live role/policy shape.
 
 /** Session GUC carrying the current tenant for RLS policies (set is_local=true). */
 export const TENANT_GUC = "app.current_org" as const;
@@ -28,7 +28,7 @@ export const DB_ROLES = {
    */
   authn: "webhook_authn",
   /**
-   * WORM head-anchor cron (WS-C2, ADR-0004). Non-owner, no BYPASSRLS, RLS-enforced; holds a
+   * WORM head-anchor cron (ADR-0004). Non-owner, no BYPASSRLS, RLS-enforced; holds a
    * role-targeted `FOR SELECT TO webhook_anchor USING (true)` policy on audit_log plus a
    * COLUMN-level grant on (org_id, seq, row_hash) only — so it reads per-org chain heads across
    * tenants but never the audit content (actor/action/target), and can't write or forge (the HMAC

@@ -2,13 +2,13 @@ import { z } from "zod";
 
 import { concatBytes, importHmacKey, timingSafeEqual, utf8Encoder } from "./bytes";
 
-// The canonical audit serialization + per-org HMAC-keyed hash chain (§0.7, H2, M1).
+// The canonical audit serialization + per-org HMAC-keyed hash chain.
 // Frozen here so the chain is reproducible and verifiable across every surface and by
-// the (post-freeze) audit verifier. The HMAC key lives OUTSIDE the DB role, so a DB
+// the audit verifier. The HMAC key lives OUTSIDE the DB role, so a DB
 // compromise can't forge a chain; the DB only enforces the chain STRUCTURE
 // (contiguous seq + prev_hash linkage + immutability — see migration 0005).
 //
-// actor is the pseudonymous Better Auth user_id (M1), never raw PII. created_at is
+// actor is the pseudonymous Better Auth user_id, never raw PII. created_at is
 // NOT part of the canonical form: the DB trigger stamps it server-side after the app
 // computes the hash, and the table's immutability already protects it from edits.
 

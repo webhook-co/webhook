@@ -48,7 +48,7 @@ describe("RFC 9728 protected-resource metadata", () => {
   });
 });
 
-describe("closed replay target (H6)", () => {
+describe("closed replay target", () => {
   it("accepts the localhost tunnel and rejects anything else", () => {
     expect(TargetSchema.safeParse({ kind: "localhost-tunnel", sessionId: "s1" }).success).toBe(
       true,

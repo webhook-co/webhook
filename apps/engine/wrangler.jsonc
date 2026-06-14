@@ -42,7 +42,7 @@
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
   ],
-  // WORM head-anchor bucket (WS-C2, ADR-0004). Object retention is enforced by an R2 Bucket Lock
+  // WORM head-anchor bucket (ADR-0004). Object retention is enforced by an R2 Bucket Lock
   // (R2 has Bucket Locks, NOT S3 Object Lock) on the `audit-anchors/` prefix — write-once, no
   // delete/overwrite for the retention period. The cron's credential is scoped to PUT only (no
   // delete rights). `bucket_name` is set per environment at deploy; the dev bucket uses a short

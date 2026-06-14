@@ -3,7 +3,7 @@
 - status: accepted
 - date: 2026-06-12
 - scope: `packages/contract`
-- review id: H6 (high)
+- review severity: high
 
 ## context
 

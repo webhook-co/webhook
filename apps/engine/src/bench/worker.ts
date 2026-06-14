@@ -2,7 +2,7 @@ import { createClient } from "@webhook-co/db";
 
 import { VARIANT_FNS, VARIANTS, type BenchInsert, type Variant } from "./variants";
 
-// The WS-E benchmark Worker (wedge §0.2). A throwaway, separately-deployed Worker
+// The p99 ingest benchmark Worker. A throwaway, separately-deployed Worker
 // (wrangler.bench.jsonc) that reuses the production-shaped Hyperdrive config (query caching OFF,
 // connecting as webhook_ingest) so the numbers reflect the real ingest hot path. `POST /run/:variant`
 // performs ONE ingest insert via that variant and returns the DB round-trip + total handler time; the
