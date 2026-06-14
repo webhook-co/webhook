@@ -7,9 +7,10 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --coverage"
+    "test": "vitest run"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.8.0",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/shared": "workspace:*"
   },
