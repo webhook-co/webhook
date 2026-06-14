@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webhook-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-11-06",
+  "observability": {
+    "enabled": true,
+  },
+  // The OAuthProvider's required token / grant / client store (opaque tokens stored hashed; grant
+  // props encrypted under the token). Miniflare provides a local KV in tests; the real namespace id
+  // is set per environment at deploy. No DB binding here: the OAuth/auth layer reads the org context
+  // from the grant props, so the mcp. Worker needs DB/Hyperdrive only once the MCP tool dispatch
+  // (a later binding) actually queries tenant data.
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "<OAUTH_KV_ID>",
+    },
+  ],
+  // The MCP resource server runs on mcp.webhook.co (bearer-token, cookieless, API-class). The route
+  // / custom domain is attached per environment at deploy.
+}

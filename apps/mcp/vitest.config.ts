@@ -1,16 +1,17 @@
+import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
-// The MCP auth-surface tests are pure (token extraction, scope enforcement, the 401/403
-// challenge, and the RFC 9728 PRM document), with verifyBearer injected as a fake — so
-// they run in plain Node. The runtime MCP Worker gets its own workerd suite when it lands.
+// The mcp. surface is now a real OAuth issuer+resource Worker (WS-D2a), so its tests run inside the
+// real Workers runtime (workerd) via Miniflare — the only way to exercise the OAuthProvider, its KV
+// token store, and the RFC 9728 / 8414 discovery endpoints against the actual runtime. The pure
+// handler tests (grant, api-handler, default-handler) run here too; they only use Web APIs.
 export default defineConfig({
+  plugins: [
+    cloudflareTest({
+      wrangler: { configPath: "./wrangler.jsonc" },
+    }),
+  ],
   test: {
-    environment: "node",
-    include: ["src/**/*.test.ts"],
-    coverage: {
-      provider: "v8",
-      include: ["src/**/*.ts"],
-      exclude: ["src/**/*.test.ts"],
-    },
+    include: ["src/**/*.test.ts", "test/**/*.test.ts"],
   },
 });

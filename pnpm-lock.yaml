@@ -104,6 +104,9 @@ importers:
 
   apps/mcp:
     dependencies:
+      '@cloudflare/workers-oauth-provider':
+        specifier: ^0.8.0
+        version: 0.8.0
       '@webhook-co/contract':
         specifier: workspace:*
         version: link:../../packages/contract
@@ -490,6 +493,9 @@ packages:
     engines: {node: '>=16'}
     cpu: [x64]
     os: [win32]
+
+  '@cloudflare/workers-oauth-provider@0.8.0':
+    resolution: {integrity: sha512-Vb2mjT9R+rLS9FcHgd5+ab4u7SP0ZB7x7t9M94JNMdN5e2ogRf3NOUCPW6NhBCTPwKu36VrfrYPPNGjOek4VYQ==}
 
   '@cloudflare/workers-types@4.20260610.1':
     resolution: {integrity: sha512-Mk/f3lUygeIHzQ4HnJjU/JvGg/kllgp9gISty9nylHE/2M2MFeKO+hgAKSgiPpmwUbuhewdYGgqFGgT/ADK0/g==}
@@ -2928,6 +2934,8 @@ snapshots:
 
   '@cloudflare/workerd-windows-64@1.20260609.1':
     optional: true
+
+  '@cloudflare/workers-oauth-provider@0.8.0': {}
 
   '@cloudflare/workers-types@4.20260610.1': {}
 
