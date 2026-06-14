@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // WS-E benchmark Worker — deployed ONLY for the benchmark window, then torn down with the bench
+  // Neon branch. Separate from the production engine config (no cron, no R2): just the ingest insert
+  // path over a production-shaped Hyperdrive binding.
+  "name": "webhook-bench",
+  "main": "src/bench/worker.ts",
+  "compatibility_date": "2024-11-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+  },
+  // Query caching OFF (the tenant-read discipline, C1), connecting as webhook_ingest, pointing at the
+  // always-on bench Neon branch. The real id is created at deploy time via `wrangler hyperdrive create`.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE",
+      "id": "<BENCH_HYPERDRIVE_ID>",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+  ],
+}
