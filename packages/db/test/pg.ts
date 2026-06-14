@@ -50,7 +50,13 @@ const SUPERUSER = "postgres";
 const DEFAULT_DB = "webhook_test";
 
 /** Roles the harness provisions credentials for in password mode. */
-const MANAGED_ROLES = [DB_ROLES.owner, DB_ROLES.app, DB_ROLES.ingest, DB_ROLES.authn] as const;
+const MANAGED_ROLES = [
+  DB_ROLES.owner,
+  DB_ROLES.app,
+  DB_ROLES.ingest,
+  DB_ROLES.authn,
+  DB_ROLES.anchor,
+] as const;
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

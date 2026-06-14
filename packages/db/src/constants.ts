@@ -27,4 +27,13 @@ export const DB_ROLES = {
    * credential enumerates key metadata but cannot forge or use a key (ADR-0008 Option B).
    */
   authn: "webhook_authn",
+  /**
+   * WORM head-anchor cron (WS-C2, ADR-0004). Non-owner, no BYPASSRLS, RLS-enforced; holds a
+   * role-targeted `FOR SELECT TO webhook_anchor USING (true)` policy on audit_log plus a
+   * COLUMN-level grant on (org_id, seq, row_hash) only — so it reads per-org chain heads across
+   * tenants but never the audit content (actor/action/target), and can't write or forge (the HMAC
+   * key lives outside the DB). The cross-org read is RLS-native: FORCE RLS would defeat a
+   * SECURITY-DEFINER/owner bypass, and BYPASSRLS is forbidden here.
+   */
+  anchor: "webhook_anchor",
 } as const;
