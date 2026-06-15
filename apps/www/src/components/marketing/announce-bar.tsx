@@ -1,5 +1,6 @@
 import { cn } from "@webhook-co/ui";
 
+import { Pill } from "@/components/ui/pill";
 import { container, focusRing } from "@/lib/styles";
 
 /**
@@ -15,9 +16,7 @@ export function AnnounceBar() {
           "flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 py-[9px] text-center text-sm text-fg-secondary",
         )}
       >
-        <span className="rounded-pill bg-surface-inverse px-2 py-0.5 font-mono text-[10px] uppercase tracking-mono-label text-fg-on-inverse">
-          soon
-        </span>
+        <Pill>soon</Pill>
         <span>
           The webhook.co MCP server — turn any webhook into an agent event.{" "}
           <a
