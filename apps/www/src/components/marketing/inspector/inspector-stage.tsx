@@ -4,6 +4,8 @@ import { cn } from "@webhook-co/ui";
 import { Pause, Play } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { SurfaceCompanion } from "@/components/marketing/surfaces/surface-companion";
+import { SectionEyebrow } from "@/components/ui/section-eyebrow";
 import { SectionHeading } from "@/components/ui/section-heading";
 import { container, focusRing, sectionPad } from "@/lib/styles";
 import { FAIL_REASON_LABEL, type SigStatus, type StreamRow } from "./stream-data";
@@ -22,6 +24,9 @@ import { useLiveStream } from "./use-live-stream";
 export function InspectorStage() {
   const { state, isPlaying, toggle } = useLiveStream();
   const [replays, setReplays] = useState<Record<string, number>>({});
+  // Which event the four surfaces render. null = follow the newest row; a string = pinned by a click.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedRow = (selectedId && state.rows.find((r) => r.id === selectedId)) || state.rows[0]!;
 
   // Forget replay marks once a row has scrolled off, so the map can't grow without bound.
   useEffect(() => {
@@ -38,6 +43,11 @@ export function InspectorStage() {
     });
   }, [state.rows]);
 
+  // If a pinned row scrolls off, fall back to following the newest again.
+  useEffect(() => {
+    if (selectedId && !state.rows.some((r) => r.id === selectedId)) setSelectedId(null);
+  }, [state.rows, selectedId]);
+
   function replay(id: string) {
     setReplays((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
   }
@@ -53,7 +63,7 @@ export function InspectorStage() {
         Here&rsquo;s what that looks like.
       </SectionHeading>
 
-      <div className="grid gap-4 min-[861px]:grid-cols-[1fr_290px]">
+      <div className="mx-auto max-w-[960px]">
         <div className="overflow-hidden rounded-card border border-hairline bg-surface shadow-2">
           <header className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-2.5">
             <div className="flex items-center gap-2.5 font-mono text-xs text-fg-muted">
@@ -96,8 +106,10 @@ export function InspectorStage() {
                 key={row.id}
                 row={row}
                 isNewest={index === 0}
+                isPinned={selectedId === row.id}
                 replayCount={replays[row.id] ?? 0}
                 onReplay={() => replay(row.id)}
+                onTogglePin={() => setSelectedId((cur) => (cur === row.id ? null : row.id))}
               />
             ))}
           </ul>
@@ -108,24 +120,14 @@ export function InspectorStage() {
           </p>
         </div>
 
-        <aside
-          aria-hidden="true"
-          className="relative hidden flex-col gap-3 overflow-hidden rounded-card border border-hairline bg-surface-sunken p-4 font-mono text-xs text-fg-muted min-[861px]:flex"
-        >
-          {state.seq > 0 && <span key={state.seq} className="agent-flash" />}
-          <span className="text-fg-secondary">agent trace</span>
-          <div className="flex flex-col gap-2 leading-relaxed">
-            <span>
-              <span className="text-fg-faint">←</span> webhook.received
-            </span>
-            <span className="text-fg-faint"> verify → dedup → store</span>
-            <span>
-              <span className="text-info">→</span> agent event
-            </span>
-            <span className="text-fg-faint"> tools: replay, verify</span>
-          </div>
-          <span className="mt-auto text-fg-faint">mcp.webhook.co</span>
-        </aside>
+        {/* The selected event (the newest, or whichever row you click) rendered across all four
+            surfaces — parity you can see, not just read. */}
+        <div className="mt-4">
+          <SectionEyebrow rule={false} className="mb-2.5">
+            the same event, every surface
+          </SectionEyebrow>
+          <SurfaceCompanion row={selectedRow} />
+        </div>
       </div>
     </section>
   );
@@ -134,20 +136,28 @@ export function InspectorStage() {
 function InspectorRow({
   row,
   isNewest,
+  isPinned,
   replayCount,
   onReplay,
+  onTogglePin,
 }: {
   row: StreamRow;
   isNewest: boolean;
+  isPinned: boolean;
   replayCount: number;
   onReplay: () => void;
+  onTogglePin: () => void;
 }) {
   // Only appended rows animate in; the seed rows render at rest so the first paint is calm.
   const appended = row.id.startsWith("evt-");
   return (
     <li
       data-enter={isNewest && appended ? "" : undefined}
-      className="inspector-row relative flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-hairline px-4 py-2.5 first:border-t-0"
+      className={cn(
+        "inspector-row relative flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-hairline px-4 py-2.5 first:border-t-0",
+        // Highlight only an explicit pin; while following the newest event no row is "stuck" lit.
+        isPinned && "shadow-[inset_2px_0_0_var(--wh-info)]",
+      )}
     >
       {/* A faint tint sweeps the row on each replay. Keyed by count so it re-fires per click, and a
           separate layer so it never clobbers the newest row's entrance animation. */}
@@ -158,19 +168,32 @@ function InspectorRow({
           className="replay-flash pointer-events-none absolute inset-0"
         />
       )}
-      <span
-        aria-hidden="true"
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-control bg-surface-sunken font-mono text-[10px] font-semibold text-fg-secondary"
+      {/* The badge + name pin this event into the four-surface view (toggle: press again to follow the
+          newest again). A sibling of Replay — never nested — so the two controls stay independent. */}
+      <button
+        type="button"
+        onClick={onTogglePin}
+        aria-pressed={isPinned}
+        aria-label={`Inspect ${row.provider} ${row.event} across surfaces`}
+        className={cn(
+          focusRing,
+          "flex min-w-0 flex-1 items-center gap-3 rounded-control text-left",
+        )}
       >
-        {row.badge}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
-        <span className="text-fg-secondary">{row.provider}</span>
-        <span aria-hidden="true" className="text-fg-faint">
-          {" · "}
+        <span
+          aria-hidden="true"
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-control bg-surface-sunken font-mono text-[10px] font-semibold text-fg-secondary"
+        >
+          {row.badge}
         </span>
-        {row.event}
-      </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
+          <span className="text-fg-secondary">{row.provider}</span>
+          <span aria-hidden="true" className="text-fg-faint">
+            {" · "}
+          </span>
+          {row.event}
+        </span>
+      </button>
       <Sig status={row.status} />
       <span className="shrink-0 font-mono text-xs tabular-nums text-fg-muted">
         {row.latencyMs}ms

@@ -46,6 +46,7 @@ const TONE_CLASS = {
   mut: "text-fg-secondary",
   ok: "text-ok",
   info: "text-info",
+  danger: "text-danger",
 } as const;
 
 function makeTok(tone: keyof typeof TONE_CLASS) {
@@ -59,6 +60,7 @@ export const Tok = {
   Mut: makeTok("mut"),
   Ok: makeTok("ok"),
   Info: makeTok("info"),
+  Danger: makeTok("danger"),
 };
 
 /**

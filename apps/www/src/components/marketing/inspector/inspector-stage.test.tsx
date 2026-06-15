@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -16,7 +16,8 @@ describe("InspectorStage", () => {
     expect(
       screen.getByRole("heading", { level: 2, name: /every webhook, the moment it lands/i }),
     ).toBeInTheDocument();
-    expect(screen.getByText("github")).toBeInTheDocument();
+    // "github" now appears in the stream row AND in the surfaces companion for the selected event.
+    expect(screen.getAllByText("github").length).toBeGreaterThan(0);
     // SEED_COUNTER (1284) rendered via toLocaleString → "1,284".
     expect(screen.getByText(/1,284/)).toBeInTheDocument();
     // The seed carries both a verified and a failed event so the static frame shows both.
@@ -50,5 +51,36 @@ describe("InspectorStage", () => {
     mockMatchMedia(true);
     const { container } = render(<InspectorStage />);
     expect(container.querySelector("ul")).toHaveAttribute("aria-live", "off");
+  });
+
+  it("follows the newest event by default, with no pin pressed", () => {
+    mockMatchMedia(true);
+    render(<InspectorStage />);
+    // Nothing is pinned: the surfaces simply follow the newest (verified github) event.
+    expect(
+      screen.getByRole("button", { name: /inspect github push across surfaces/i }),
+    ).toHaveAttribute("aria-pressed", "false");
+    const group = screen.getByRole("group", { name: /across all four surfaces/i });
+    expect(within(group).getAllByText("github").length).toBeGreaterThan(0);
+    expect(within(group).queryByText(/timestamp too old/i)).not.toBeInTheDocument();
+  });
+
+  it("toggles a pin: click selects an event, click again returns to following the newest", async () => {
+    mockMatchMedia(true); // paused so rows don't shift mid-test
+    render(<InspectorStage />);
+    const shopifyPin = screen.getByRole("button", {
+      name: /inspect shopify orders\.create across surfaces/i,
+    });
+    const group = () => screen.getByRole("group", { name: /across all four surfaces/i });
+
+    expect(shopifyPin).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(shopifyPin);
+    expect(shopifyPin).toHaveAttribute("aria-pressed", "true");
+    expect(within(group()).getAllByText(/timestamp too old/i).length).toBeGreaterThan(0);
+
+    // Click again → un-pin → back to following the newest (verified github) event.
+    await userEvent.click(shopifyPin);
+    expect(shopifyPin).toHaveAttribute("aria-pressed", "false");
+    expect(within(group()).queryByText(/timestamp too old/i)).not.toBeInTheDocument();
   });
 });

@@ -36,7 +36,6 @@ describe("HomePage", () => {
     const titles = [
       /a webhook is an event/i,
       /every webhook, the moment it lands/i,
-      /the same event, wherever you work/i,
       /turn a received webhook into an agent event/i,
       /a permanent url, full inspection/i,
       /received once, in order, never dropped/i,

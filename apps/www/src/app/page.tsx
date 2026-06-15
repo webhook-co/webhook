@@ -10,7 +10,6 @@ import { Nav } from "@/components/marketing/nav";
 import { Resources } from "@/components/marketing/resources";
 import { Reveal } from "@/components/marketing/reveal";
 import { Showcases } from "@/components/marketing/showcases";
-import { SurfacesTabs } from "@/components/marketing/surfaces/surfaces-tabs";
 import { TrustBand } from "@/components/marketing/trust-band";
 import { focusRing } from "@/lib/styles";
 
@@ -36,7 +35,6 @@ export default function HomePage() {
         <Reveal>
           <Manifesto />
         </Reveal>
-        <SurfacesTabs />
         <Reveal>
           <Showcases />
         </Reveal>
