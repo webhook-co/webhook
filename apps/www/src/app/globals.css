@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+/* Design tokens (runtime CSS variables + dark overrides), the Tailwind theme mapping,
+   and the base layer — all from the shared design system. */
+@import "@webhook-co/ui/styles/theme.css";
+@import "@webhook-co/ui/styles/preset.css";
+@import "@webhook-co/ui/styles/base.css";
+
+/* The marketing site's bespoke layer: the page-level @keyframes and the handful of
+   token-only classes (dot-grid, frosted nav) that can't be expressed as Tailwind utilities. */
+@import "./marketing.css";
+
+/* Tailwind can't see class names inside node_modules, so point it at the real source
+   of the design-system package (resolved through the workspace, not the symlink). */
+@source "../../../../packages/ui/src/**/*.{ts,tsx}";
+
+/* Wire the self-hosted Geist faces (loaded in the root layout) into the type tokens.
+   The design-system default of "Geist" still applies for consumers that don't supply
+   their own faces. */
+:root {
+  --wh-font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --wh-font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", "Cascadia Code", monospace;
+}
