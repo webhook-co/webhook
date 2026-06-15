@@ -24,6 +24,7 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
     const baseUrl = resolveApiBaseUrl({
       flag: flags.apiUrl,
       env: this.process.env?.[ENV_API_URL_VAR],
+      stored: await this.store.getApiBaseUrl(),
     });
     const client = createApiClient({ baseUrl, apiKey: cred.apiKey, fetch: this.io.fetch });
     const identity = await client.whoami(); // throws ApiError (a CliError) on 401/etc — handled by the app

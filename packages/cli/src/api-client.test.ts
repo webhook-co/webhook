@@ -12,14 +12,18 @@ import { CAPABILITY_EXIT, EXIT } from "./output/exit-codes.js";
 const BASE = "https://api.test.example";
 const KEY = "whk_test_key";
 
-/** A fake fetch returning a fixed Response; records the URL + headers it was called with. */
+/** A fake fetch returning a fixed Response; records the URL, headers, and method it was called with. */
 function fakeFetch(res: Response): {
   fetch: typeof fetch;
-  calls: { url: string; headers: Headers }[];
+  calls: { url: string; headers: Headers; method: string }[];
 } {
-  const calls: { url: string; headers: Headers }[] = [];
+  const calls: { url: string; headers: Headers; method: string }[] = [];
   const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
-    calls.push({ url: String(url), headers: new Headers(init?.headers) });
+    calls.push({
+      url: String(url),
+      headers: new Headers(init?.headers),
+      method: init?.method ?? "GET",
+    });
     return res;
   }) as unknown as typeof fetch;
   return { fetch, calls };
@@ -89,10 +93,20 @@ describe("createApiClient.whoami", () => {
 });
 
 describe("resolveApiBaseUrl", () => {
-  it("prefers flag › env › default", () => {
-    expect(resolveApiBaseUrl({ flag: "https://f", env: "https://e" })).toBe("https://f");
-    expect(resolveApiBaseUrl({ env: "https://e" })).toBe("https://e");
+  it("prefers flag › env › stored › default", () => {
+    expect(resolveApiBaseUrl({ flag: "https://f", env: "https://e", stored: "https://s" })).toBe(
+      "https://f",
+    );
+    expect(resolveApiBaseUrl({ env: "https://e", stored: "https://s" })).toBe("https://e");
+    expect(resolveApiBaseUrl({ stored: "https://s" })).toBe("https://s");
     expect(resolveApiBaseUrl({})).toBe(DEFAULT_API_BASE_URL);
+  });
+
+  it("re-validates a stored value (a tampered http:// stored base URL is rejected)", () => {
+    expect(() => resolveApiBaseUrl({ stored: "http://evil.example" })).toThrow(InvalidApiUrlError);
+    expect(resolveApiBaseUrl({ stored: "https://api.self-host.example/" })).toBe(
+      "https://api.self-host.example",
+    );
   });
 
   it("requires https for an override (rejecting http + non-URLs), and strips a trailing slash", () => {
@@ -114,5 +128,134 @@ describe("resolveApiBaseUrl", () => {
   it("allows plaintext http ONLY for loopback dev hosts", () => {
     expect(resolveApiBaseUrl({ flag: "http://localhost:8787" })).toBe("http://localhost:8787");
     expect(resolveApiBaseUrl({ flag: "http://127.0.0.1:8787" })).toBe("http://127.0.0.1:8787");
+  });
+});
+
+// Valid v4 UUIDs so the shared contract schemas (z.uuid()) accept the fixtures.
+const EP_ID = "11111111-1111-4111-8111-111111111111";
+const ORG_ID = "22222222-2222-4222-8222-222222222222";
+const EV_ID = "33333333-3333-4333-8333-333333333333";
+
+const endpoint = {
+  id: EP_ID,
+  orgId: ORG_ID,
+  name: "orders-prod",
+  paused: false,
+  createdAt: "2026-05-01T00:00:00.000Z",
+};
+const eventSummary = {
+  id: EV_ID,
+  orgId: ORG_ID,
+  endpointId: EP_ID,
+  receivedAt: "2026-05-02T14:23:07.000Z",
+  provider: "stripe",
+  dedupKey: "dk_1",
+  dedupStrategy: "sw_webhook_id",
+  verified: true,
+};
+const fullEvent = {
+  ...eventSummary,
+  payloadR2Key: "r2/key",
+  payloadBytes: 321,
+  contentType: "application/json",
+  headers: [["content-type", "application/json"]],
+  providerEventId: null,
+  externalId: null,
+  verification: null,
+};
+
+describe("createApiClient read methods", () => {
+  it("endpointsList GETs /v1/endpoints (no query when no params) and parses the page", async () => {
+    const { fetch, calls } = fakeFetch(json({ items: [endpoint], nextCursor: null }));
+    const page = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsList();
+    expect(calls[0].url).toBe(`${BASE}/v1/endpoints`);
+    expect(calls[0].method).toBe("GET");
+    expect(calls[0].headers.get("authorization")).toBe(`Bearer ${KEY}`);
+    expect(page.nextCursor).toBeNull();
+    expect(page.items[0].id).toBe(EP_ID);
+    expect(page.items[0].createdAt).toBeInstanceOf(Date);
+  });
+
+  it("endpointsList encodes cursor + limit as query params", async () => {
+    const { fetch, calls } = fakeFetch(json({ items: [], nextCursor: "next_c" }));
+    await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsList({
+      cursor: "c1",
+      limit: 25,
+    });
+    const u = new URL(calls[0].url);
+    expect(u.pathname).toBe("/v1/endpoints");
+    expect(u.searchParams.get("cursor")).toBe("c1");
+    expect(u.searchParams.get("limit")).toBe("25");
+  });
+
+  it("endpointsGet GETs /v1/endpoints/:id and parses the entity", async () => {
+    const { fetch, calls } = fakeFetch(json(endpoint));
+    const ep = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsGet(EP_ID);
+    expect(calls[0].url).toBe(`${BASE}/v1/endpoints/${EP_ID}`);
+    expect(ep.name).toBe("orders-prod");
+    expect(ep.paused).toBe(false);
+  });
+
+  it("endpointsGet maps a 404 to ApiError(NOT_FOUND)", async () => {
+    const { fetch } = fakeFetch(new Response(null, { status: 404 }));
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch })
+      .endpointsGet(EP_ID)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("NOT_FOUND");
+    expect((err as ApiError).exitCode).toBe(CAPABILITY_EXIT.NOT_FOUND);
+  });
+
+  it("eventsList encodes cursor + limit + provider and targets the nested path", async () => {
+    const { fetch, calls } = fakeFetch(json({ items: [eventSummary], nextCursor: "ev_next" }));
+    const page = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).eventsList(EP_ID, {
+      cursor: "c2",
+      limit: 5,
+      provider: "stripe",
+    });
+    const u = new URL(calls[0].url);
+    expect(u.pathname).toBe(`/v1/endpoints/${EP_ID}/events`);
+    expect(u.searchParams.get("cursor")).toBe("c2");
+    expect(u.searchParams.get("limit")).toBe("5");
+    expect(u.searchParams.get("provider")).toBe("stripe");
+    expect(page.nextCursor).toBe("ev_next");
+    expect(page.items[0].verified).toBe(true);
+  });
+
+  it("eventsGet GETs /v1/events/:id and parses the full event", async () => {
+    const { fetch, calls } = fakeFetch(json(fullEvent));
+    const ev = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).eventsGet(EV_ID);
+    expect(calls[0].url).toBe(`${BASE}/v1/events/${EV_ID}`);
+    expect(ev.payloadBytes).toBe(321);
+    expect(ev.receivedAt).toBeInstanceOf(Date);
+  });
+
+  it("auditVerify POSTs /v1/audit/verify (bodyless) and parses the ok arm", async () => {
+    const { fetch, calls } = fakeFetch(json({ ok: true, rowsVerified: 7 }));
+    const result = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).auditVerify();
+    expect(calls[0].url).toBe(`${BASE}/v1/audit/verify`);
+    expect(calls[0].method).toBe("POST");
+    expect(result).toEqual({ ok: true, rowsVerified: 7 });
+  });
+
+  it("auditVerify parses the break arm", async () => {
+    const broken = {
+      ok: false,
+      rowsVerified: 2,
+      break: { kind: "hash_mismatch", seq: 3, detail: "row 3 hash mismatch" },
+    };
+    const { fetch } = fakeFetch(json(broken));
+    const result = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).auditVerify();
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.break.kind).toBe("hash_mismatch");
+  });
+
+  it("rejects a malformed list response shape as UNEXPECTED (no capability code)", async () => {
+    const { fetch } = fakeFetch(json({ items: "nope" }));
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch })
+      .endpointsList()
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBeUndefined();
   });
 });

@@ -13,6 +13,10 @@ export interface CredentialBackend {
   set(profile: string, cred: StoredCredential): Promise<void>;
   erase(profile: string): Promise<void>;
   list(): Promise<string[]>;
+  /** The persisted per-profile API base URL, or undefined when unset (config, not a secret). */
+  getApiBaseUrl(profile: string): Promise<string | undefined>;
+  /** Persist the per-profile API base URL (a writable backend only). */
+  setApiBaseUrl(profile: string, apiBaseUrl: string): Promise<void>;
 }
 
 export interface StoragePolicy {
@@ -25,6 +29,10 @@ export interface CredentialStore {
   set(cred: StoredCredential, profile?: string): Promise<void>;
   erase(profile?: string): Promise<void>;
   list(): Promise<string[]>;
+  /** The sticky per-profile API base URL (read precedence = backend order), or undefined when unset. */
+  getApiBaseUrl(profile?: string): Promise<string | undefined>;
+  /** Persist the sticky per-profile API base URL to the first writable backend. */
+  setApiBaseUrl(apiBaseUrl: string, profile?: string): Promise<void>;
 }
 
 export function resolveStore(
@@ -58,6 +66,20 @@ export function resolveStore(
         for (const name of await backend.list()) names.add(name);
       }
       return [...names];
+    },
+    async getApiBaseUrl(profile = DEFAULT_PROFILE) {
+      for (const backend of backends) {
+        const hit = await backend.getApiBaseUrl(profile);
+        if (hit !== undefined) return hit;
+      }
+      return undefined;
+    },
+    async setApiBaseUrl(apiBaseUrl, profile = DEFAULT_PROFILE) {
+      // The base URL is configuration, not a secret, so it persists to the first writable backend
+      // regardless of the secure-storage policy (that policy only governs where the CREDENTIAL lives).
+      const target = backends.find((b) => b.canWrite);
+      if (!target) throw new SecureStorageRequiredError();
+      await target.setApiBaseUrl(profile, apiBaseUrl);
     },
   };
 }

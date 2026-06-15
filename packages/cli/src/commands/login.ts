@@ -57,13 +57,20 @@ export const loginCommand = buildCommand<LoginFlags, [], AppContext>({
     const baseUrl = resolveApiBaseUrl({
       flag: flags.apiUrl,
       env: this.process.env?.[ENV_API_URL_VAR],
+      stored: await this.store.getApiBaseUrl(),
     });
     const client = createApiClient({ baseUrl, apiKey: key, fetch: this.io.fetch });
     // Validate BEFORE persisting — a rejected key (ApiError) propagates and nothing is stored.
     const identity = await client.whoami();
 
     // WBHK_API_KEY is the never-persisted headless path; only an interactively/piped key is saved.
-    if (source !== "env") await this.store.set({ apiKey: key });
+    if (source !== "env") {
+      await this.store.set({ apiKey: key });
+      // Make the base URL sticky too — but ONLY when explicitly overridden, so a plain `login` never
+      // overwrites a stored value. Persist the validated, normalized URL (so a later read re-validates
+      // the same clean origin). The env-only path above persists nothing, base URL included.
+      if (flags.apiUrl !== undefined) await this.store.setApiBaseUrl(baseUrl);
+    }
 
     const handle = redactSecret(key);
     if (resolveFormat(flags.output) === "json") {

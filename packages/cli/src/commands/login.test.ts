@@ -11,16 +11,21 @@ import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-
 function memStore(initial: StoredCredential | null = null): {
   store: CredentialStore;
   current: () => StoredCredential | null;
+  baseUrl: () => string | undefined;
 } {
   let cred = initial;
+  let baseUrl: string | undefined;
   return {
     store: {
       get: async () => cred,
       set: async (c) => void (cred = c),
       erase: async () => void (cred = null),
       list: async () => (cred ? ["default"] : []),
+      getApiBaseUrl: async () => baseUrl,
+      setApiBaseUrl: async (u) => void (baseUrl = u),
     },
     current: () => cred,
+    baseUrl: () => baseUrl,
   };
 }
 
@@ -111,6 +116,34 @@ describe("wbhk login", () => {
     const t = makeTestContext({ store: mem.store, stdin: "whk_x", fetch: capturingFetch });
     await run(app, ["login", "--stdin", "--api-url", "https://api.dev.example"], t.ctx);
     expect(calls[0]).toBe("https://api.dev.example/v1/whoami");
+  });
+
+  it("persists --api-url as the sticky base URL on a stdin login", async () => {
+    const mem = memStore();
+    const t = makeTestContext({ store: mem.store, stdin: "whk_x", fetch: okFetch(IDENTITY) });
+    await run(app, ["login", "--stdin", "--api-url", "https://api.dev.example/"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    // The NORMALIZED origin is stored (trailing slash stripped), not the raw flag.
+    expect(mem.baseUrl()).toBe("https://api.dev.example");
+  });
+
+  it("does NOT persist a base URL on a plain stdin login (no --api-url to make sticky)", async () => {
+    const mem = memStore();
+    const t = makeTestContext({ store: mem.store, stdin: "whk_x", fetch: okFetch(IDENTITY) });
+    await run(app, ["login", "--stdin"], t.ctx);
+    expect(mem.baseUrl()).toBeUndefined();
+  });
+
+  it("persists NOTHING (key or base URL) on the WBHK_API_KEY env path", async () => {
+    const mem = memStore();
+    const t = makeTestContext({
+      store: mem.store,
+      env: { WBHK_API_KEY: "whk_env", WBHK_API_URL: "https://api.dev.example" },
+      fetch: okFetch(IDENTITY),
+    });
+    await run(app, ["login"], t.ctx);
+    expect(mem.current()).toBeNull();
+    expect(mem.baseUrl()).toBeUndefined();
   });
 
   it("emits JSON (with the redacted key + persisted flag) with --output json", async () => {

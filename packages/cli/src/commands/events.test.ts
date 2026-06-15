@@ -1,0 +1,126 @@
+import { run } from "@stricli/core";
+import { describe, expect, it } from "vitest";
+
+import { app } from "../app.js";
+import type { CredentialStore } from "../config/store.js";
+import { makeTestContext } from "../context.js";
+import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
+
+const ORG = "22222222-2222-4222-8222-222222222222";
+const EP = "11111111-1111-4111-8111-111111111111";
+const EV = "33333333-3333-4333-8333-333333333333";
+
+function loggedInStore(): CredentialStore {
+  let baseUrl: string | undefined;
+  return {
+    get: async () => ({ apiKey: "whk_test" }),
+    set: async () => undefined,
+    erase: async () => undefined,
+    list: async () => ["default"],
+    getApiBaseUrl: async () => baseUrl,
+    setApiBaseUrl: async (u) => void (baseUrl = u),
+  };
+}
+
+const json = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const okFetch = (body: unknown): typeof fetch =>
+  (async () => json(body)) as unknown as typeof fetch;
+function capturingFetch(body: unknown): { fetch: typeof fetch; urls: string[] } {
+  const urls: string[] = [];
+  const fetch = (async (url: string | URL | Request) => {
+    urls.push(String(url));
+    return json(body);
+  }) as unknown as typeof fetch;
+  return { fetch, urls };
+}
+
+const summary = (over: Record<string, unknown> = {}) => ({
+  id: EV,
+  orgId: ORG,
+  endpointId: EP,
+  receivedAt: "2026-05-02T14:23:07.000Z",
+  provider: null,
+  dedupKey: "dk_1",
+  dedupStrategy: "sw_webhook_id",
+  verified: false,
+  ...over,
+});
+
+const fullEvent = {
+  ...summary({ provider: "stripe", verified: true }),
+  payloadR2Key: "r2/k",
+  payloadBytes: 321,
+  contentType: "application/json",
+  headers: [["content-type", "application/json"]],
+  providerEventId: null,
+  externalId: null,
+  verification: { ok: true, keyId: "key_1", scheme: "stripe" },
+};
+
+describe("wbhk events list", () => {
+  it("renders a table with an em dash for a null provider and the verified word", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [summary()], nextCursor: null }),
+    });
+    await run(app, ["events", "list", EP], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain("PROVIDER");
+    expect(t.stdout()).toContain("—");
+    expect(t.stdout()).toContain("unverified");
+  });
+
+  it("passes the --provider filter through to the request", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["events", "list", EP, "--provider", "stripe"], t.ctx);
+    const u = new URL(cap.urls[0]);
+    expect(u.pathname).toBe(`/v1/endpoints/${EP}/events`);
+    expect(u.searchParams.get("provider")).toBe("stripe");
+  });
+
+  it("rejects an unknown --provider as a usage error", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list", EP, "--provider", "bogus"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+
+  it("emits the envelope with --output json", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [summary()], nextCursor: "ev_next" }),
+    });
+    await run(app, ["events", "list", EP, "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout());
+    expect(parsed.nextCursor).toBe("ev_next");
+    expect(parsed.items[0].id).toBe(EV);
+  });
+});
+
+describe("wbhk events get", () => {
+  it("renders a full event with the verification scheme on success", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(fullEvent) });
+    await run(app, ["events", "get", EV], t.ctx);
+    expect(t.stdout()).toContain("verified (stripe)");
+    expect(t.stdout()).toContain("321 bytes");
+  });
+
+  it("requires a credential", async () => {
+    const t = makeTestContext({
+      store: {
+        get: async () => null,
+        set: async () => undefined,
+        erase: async () => undefined,
+        list: async () => [],
+        getApiBaseUrl: async () => undefined,
+        setApiBaseUrl: async () => undefined,
+      },
+    });
+    await run(app, ["events", "get", EV], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.UNAUTHORIZED);
+  });
+});

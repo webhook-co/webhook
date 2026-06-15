@@ -29,5 +29,13 @@ export function createEnvBackend(
     async list() {
       return [];
     },
+    // The env backend carries no base URL — WBHK_API_URL is resolved directly by resolveApiBaseUrl
+    // (its own precedence rung), not surfaced through the credential store.
+    async getApiBaseUrl() {
+      return undefined;
+    },
+    async setApiBaseUrl() {
+      throw new BackendNotWritableError(id);
+    },
   };
 }
