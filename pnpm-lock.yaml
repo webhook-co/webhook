@@ -69,6 +69,9 @@ importers:
       '@webhook-co/contract':
         specifier: workspace:*
         version: link:../../packages/contract
+      '@webhook-co/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared

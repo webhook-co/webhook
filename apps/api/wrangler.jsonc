@@ -1,0 +1,43 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webhook-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-11-06",
+  "observability": {
+    "enabled": true,
+  },
+  // The public REST API on api.webhook.co (bearer-token, cookieless). Consumed server-to-server
+  // today (the CLI + the MCP server), so NO CORS is set. The PRD's "CORS allowlist = app only"
+  // applies once the browser dashboard (the deferred frontend epic) calls it; CORS lands then.
+  // The route / custom domain is attached per environment at deploy.
+  //
+  // Two cache-DISABLED Hyperdrive bindings: AUTHN for the api-key cold lookup
+  // (org-discovery-by-hash as webhook_authn) and TENANT for the RLS-scoped reads as webhook_app.
+  // Query caching must stay off — the cold lookup must reflect live revoke/rotate state, and tenant
+  // reads are RLS-gated (the cache can't see the RLS GUC). localConnectionString is the dev/test PG;
+  // real Hyperdrive ids are set per environment at deploy.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE_AUTHN",
+      "id": "<HYPERDRIVE_AUTHN_ID>",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
+      "binding": "HYPERDRIVE_TENANT",
+      "id": "<HYPERDRIVE_TENANT_ID>",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+  ],
+  // Caches resolved principals keyed by api-key hash; invalidated on revoke (KV can be invalidated,
+  // Hyperdrive's query cache can't). Miniflare provides a local KV in tests; real id set at deploy.
+  "kv_namespaces": [
+    {
+      "binding": "KV_AUTHZ",
+      "id": "<KV_AUTHZ_ID>",
+    },
+  ],
+  // Worker secrets (set via `wrangler secret put`, never committed):
+  //   CREDENTIAL_PEPPER       base64, >=32 bytes — keys the api-key HMAC (same pepper as elsewhere)
+  //   CURSOR_KEY              base64, 32 bytes — HMAC for opaque pagination cursors
+  //   AUDIT_CHAIN_HMAC_KEY    base64, 32 bytes — the audit-chain key (same key the rows are signed with)
+}
