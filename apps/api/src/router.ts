@@ -56,6 +56,20 @@ function matchRoute(
     if (provider !== null) input.filter = { provider };
     return { capability: "events.list", input };
   }
+  if (
+    method === "GET" &&
+    rest.length === 4 &&
+    rest[0] === "endpoints" &&
+    rest[2] === "events" &&
+    rest[3] === "tail"
+  ) {
+    // events.tail is cursor-pull: one watermark-bounded forward page per request. The opaque
+    // sinceCursor resumes; omit it to start from the oldest visible event.
+    const input: Record<string, unknown> = { endpointId: rest[1] };
+    const sinceCursor = query.get("sinceCursor");
+    if (sinceCursor !== null) input.sinceCursor = sinceCursor;
+    return { capability: "events.tail", input };
+  }
   if (method === "GET" && rest.length === 2 && rest[0] === "events") {
     return { capability: "events.get", input: { eventId: rest[1] } };
   }

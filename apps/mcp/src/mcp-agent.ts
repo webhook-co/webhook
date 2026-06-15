@@ -43,6 +43,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   "endpoints.get": "Get a single webhook endpoint by id.",
   "events.list": "List received events for an endpoint (paginated; optional provider filter).",
   "events.get": "Get a received event by id — headers, verification result, and payload pointer.",
+  "events.tail":
+    "Tail an endpoint's events forward from a cursor (oldest-first, up to the safety watermark); pass the returned nextCursor back to continue.",
   "audit.verify": "Verify the org's tamper-evident audit chain; reports the first break, if any.",
 };
 

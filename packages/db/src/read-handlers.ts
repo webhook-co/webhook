@@ -12,14 +12,21 @@ import {
   endpointsList,
   eventsGet,
   eventsList,
+  eventsTail,
   type AnyCapability,
   type AuthContext,
 } from "@webhook-co/contract";
-import { decodeCursor, encodeCursor, verifyAuditChain, type Cursor } from "@webhook-co/shared";
+import {
+  decodeCursor,
+  encodeCursor,
+  verifyAuditChain,
+  watermarkCutoff,
+  type Cursor,
+} from "@webhook-co/shared";
 
 import { readAuditChain } from "./audit-append";
 import { withTenant, type Sql } from "./client";
-import { getEndpoint, getEvent, listEndpoints, listEvents } from "./reads";
+import { getEndpoint, getEvent, listEndpoints, listEvents, tailEvents } from "./reads";
 
 export interface ReadHandlerDeps {
   /** webhook_app over the cache-disabled tenant binding — tenant reads run here. */
@@ -93,6 +100,27 @@ export function createReadHandlers(deps: ReadHandlerDeps): ReadHandlers {
       const endpoint = await getEndpoint(tx, endpointId);
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
       return listEvents(tx, { endpointId, cursor: decoded, limit, provider: filter?.provider });
+    });
+    return { items: page.items, nextCursor: await encode(page.nextCursor) };
+  });
+
+  handlers.set(eventsTail.name, async (ctx, input) => {
+    ensureScope(ctx, eventsTail);
+    const { endpointId, sinceCursor } = parse(eventsTail, input) as {
+      endpointId: string;
+      sinceCursor?: string;
+    };
+    const decoded = await decode(sinceCursor);
+    const page = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
+      // Same NOT_FOUND-vs-empty distinction as events.list. The watermark cutoff (now - δ) is
+      // computed per call so a slow caller can't pin an old cutoff; it makes the tail gapless.
+      const endpoint = await getEndpoint(tx, endpointId);
+      if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
+      return tailEvents(tx, {
+        endpointId,
+        sinceCursor: decoded,
+        watermarkCutoff: watermarkCutoff(new Date()),
+      });
     });
     return { items: page.items, nextCursor: await encode(page.nextCursor) };
   });

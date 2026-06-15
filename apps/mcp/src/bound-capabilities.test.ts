@@ -9,9 +9,16 @@ import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
 describe("MCP bound capabilities", () => {
   const names = MCP_BOUND_CAPABILITIES.map((c) => c.name).sort();
 
-  it("binds exactly the 5 read capabilities today", () => {
+  it("binds the 5 reads + events.tail cursor-pull as of slice 11", () => {
     expect(names).toEqual(
-      ["audit.verify", "endpoints.get", "endpoints.list", "events.get", "events.list"].sort(),
+      [
+        "audit.verify",
+        "endpoints.get",
+        "endpoints.list",
+        "events.get",
+        "events.list",
+        "events.tail",
+      ].sort(),
     );
   });
 
@@ -22,8 +29,7 @@ describe("MCP bound capabilities", () => {
     expect(names).toEqual(required);
   });
 
-  it("excludes the capabilities that are mcp-exempt until slices 11/12", () => {
-    expect(names).not.toContain("events.tail");
+  it("still excludes events.replay (mcp-exempt until slice 12)", () => {
     expect(names).not.toContain("events.replay");
   });
 });
