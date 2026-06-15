@@ -3,15 +3,24 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "wbhk": "./dist/bin.js"
+  },
   "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage",
+    "bundle": "bun build --compile --minify --sourcemap src/bin.ts --outfile dist/wbhk"
   },
   "dependencies": {
-    "@webhook-co/shared": "workspace:*"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260610.1"
+    "@stricli/core": "^1.2.7",
+    "@webhook-co/contract": "workspace:*",
+    "@webhook-co/shared": "workspace:*",
+    "zod": "^4.4.3"
   }
 }

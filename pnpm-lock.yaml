@@ -182,13 +182,18 @@ importers:
 
   packages/cli:
     dependencies:
+      '@stricli/core':
+        specifier: ^1.2.7
+        version: 1.2.7
+      '@webhook-co/contract':
+        specifier: workspace:*
+        version: link:../contract
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../shared
-    devDependencies:
-      '@cloudflare/workers-types':
-        specifier: ^4.20260610.1
-        version: 4.20260610.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
 
   packages/contract:
     dependencies:
@@ -1141,6 +1146,9 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@stricli/core@1.2.7':
+    resolution: {integrity: sha512-a0HxA/cSWjqHj/9GM+cfc/zGNmBdxVTQQpHIEvY1AbDEgo4ZU84cTCbtywYEQOHw2wIc6Vu+PKv+ZQoqZwkHnQ==}
 
   '@swc/helpers@0.5.15':
     resolution: {integrity: sha512-JQ5TuMi45Owi4/BIMAJBoSQoOJu12oOk/gADqlcUL9JEdHB8vyjUSsxqeNXnmXHjYKMi2WcYtezGEEhqUI/E2g==}
@@ -3365,6 +3373,8 @@ snapshots:
   '@speed-highlight/core@1.2.16': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@stricli/core@1.2.7': {}
 
   '@swc/helpers@0.5.15':
     dependencies:
