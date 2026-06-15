@@ -5,6 +5,7 @@
 // (makeVerifyBearer over the credential resolver); this surface only knows the seam.
 
 import {
+  authenticateBearer,
   authorizeBearer,
   extractBearer as extractBearerHeader,
   type BearerAuthzResult,
@@ -33,4 +34,13 @@ export function authorize(
   capabilityName: string,
 ): Promise<AuthzResult> {
   return authorizeBearer(deps, req.headers.get("authorization"), capabilityName);
+}
+
+/**
+ * Authenticate a request WITHOUT a capability scope (the identity path behind `GET /v1/whoami`).
+ * Thin adapter over the shared `authenticateBearer` decision; a valid credential for this resource
+ * is sufficient. Same 401-vs-5xx split as authorize, just no scope step.
+ */
+export function authenticate(deps: ApiAuthDeps, req: Request): Promise<AuthzResult> {
+  return authenticateBearer(deps, req.headers.get("authorization"));
 }
