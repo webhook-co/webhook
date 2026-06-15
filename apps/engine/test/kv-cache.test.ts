@@ -1,12 +1,13 @@
+import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { env } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
 import type { Env } from "../src/index";
-import { kvCredentialCache } from "../src/kv-cache";
 
 // The KV-backed CredentialCache the ingest resolver's hot path uses. KV is the ONLY ingest cache
-// (it can be invalidated on pause/rotate/delete; Hyperdrive's query cache can't). Exercised against
-// Miniflare's real KV so the get/put/delete adapter matches the CredentialCache seam exactly.
+// (it can be invalidated on pause/rotate/delete; Hyperdrive's query cache can't). The adapter is
+// shared by every bearer Worker (@webhook-co/shared/kv-cache); this exercises it against the
+// engine's real Miniflare KV so the get/put/delete adapter matches the CredentialCache seam exactly.
 const bindings = env as unknown as Env;
 
 describe("kvCredentialCache", () => {

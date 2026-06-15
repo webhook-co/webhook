@@ -11,8 +11,12 @@
   },
   "dependencies": {
     "@cloudflare/workers-oauth-provider": "^0.8.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@webhook-co/contract": "workspace:*",
-    "@webhook-co/shared": "workspace:*"
+    "@webhook-co/db": "workspace:*",
+    "@webhook-co/shared": "workspace:*",
+    "agents": "0.16.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260610.1"
