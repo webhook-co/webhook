@@ -208,3 +208,103 @@
     background: var(--wh-danger-bg);
   }
 }
+
+/* ── S3 live inspector ──────────────────────────────────────────────────────── */
+/* The stage's motion: a new row sliding in, the "live" dot pinging, an agent-trace flash per event,
+ * and a one-shot tint when the user replays a row. Static structure (rows, badges, statuses, the
+ * Replay buttons) renders unconditionally; only the movement is gated on `no-preference`. */
+
+.inspector-live-dot {
+  position: relative;
+}
+
+.agent-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* The pulsing ring around the green "live" dot. Lives in ::after so reduced motion drops it whole. */
+  .inspector-live-dot::after {
+    content: "";
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 1.5px solid var(--wh-ok);
+    animation: ping 1.8s var(--wh-ease-smooth) infinite;
+  }
+  /* The newest appended row slides down into place, once. */
+  .inspector-row[data-enter] {
+    animation: rowEnter var(--wh-dur-base) var(--wh-ease-swift) both;
+  }
+  /* A faint tint sweeps a row when the user replays it (the "replayed N×" stamp is the real result).
+     It's a separate overlay layer so it never competes with the row's own entrance animation. */
+  .replay-flash {
+    animation: replayFlash 0.6s var(--wh-ease-smooth);
+  }
+  /* The agent-trace card flashes as each event lands. */
+  .agent-flash {
+    animation: agentFlash 0.7s var(--wh-ease-smooth);
+  }
+}
+
+@keyframes rowEnter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes replayFlash {
+  0% {
+    background: color-mix(in srgb, var(--wh-info) 12%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+@keyframes agentFlash {
+  0% {
+    background: color-mix(in srgb, var(--wh-info) 14%, transparent);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+@keyframes ping {
+  0% {
+    opacity: 0.6;
+    transform: scale(0.75);
+  }
+  70%,
+  100% {
+    opacity: 0;
+    transform: scale(1.8);
+  }
+}
+
+/* ── S3 scroll reveal ───────────────────────────────────────────────────────── */
+/* `.reveal-hidden` is the one class that intentionally sets opacity:0 — but it is applied *only by JS*
+ * (useScrollReveal), *only* when motion is welcome and the element starts below the fold, and *only*
+ * just before the observer flips it to `.reveal-in`. It never ships in the SSR HTML, so content can't
+ * get stuck hidden. base.css additionally collapses the `.reveal-in` transition under reduced motion. */
+.reveal-hidden {
+  opacity: 0;
+  transform: translateY(16px);
+}
+
+.reveal-in {
+  opacity: 1;
+  transform: none;
+  transition:
+    opacity var(--wh-dur-slow) var(--wh-ease-smooth),
+    transform var(--wh-dur-slow) var(--wh-ease-smooth);
+}

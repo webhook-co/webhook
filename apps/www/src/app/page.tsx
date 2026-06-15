@@ -4,10 +4,13 @@ import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { Footer } from "@/components/marketing/footer";
 import { Hero } from "@/components/marketing/hero";
+import { InspectorStage } from "@/components/marketing/inspector/inspector-stage";
 import { Manifesto } from "@/components/marketing/manifesto";
 import { Nav } from "@/components/marketing/nav";
 import { Resources } from "@/components/marketing/resources";
+import { Reveal } from "@/components/marketing/reveal";
 import { Showcases } from "@/components/marketing/showcases";
+import { SurfacesTabs } from "@/components/marketing/surfaces/surfaces-tabs";
 import { TrustBand } from "@/components/marketing/trust-band";
 import { focusRing } from "@/lib/styles";
 
@@ -29,12 +32,23 @@ export default function HomePage() {
       </header>
       <main id="main">
         <Hero />
-        <Manifesto />
-        {/* S3 inserts the live-inspector stage + the surfaces tablist here. */}
-        <Showcases />
-        <Resources />
-        <TrustBand />
-        <FinalCta />
+        <InspectorStage />
+        <Reveal>
+          <Manifesto />
+        </Reveal>
+        <SurfacesTabs />
+        <Reveal>
+          <Showcases />
+        </Reveal>
+        <Reveal>
+          <Resources />
+        </Reveal>
+        <Reveal>
+          <TrustBand />
+        </Reveal>
+        <Reveal>
+          <FinalCta />
+        </Reveal>
       </main>
       <Footer />
     </>
