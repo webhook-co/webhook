@@ -7,7 +7,7 @@ import {
   eventsReplay,
   eventsTail,
 } from "./capabilities";
-import { CAPABILITY_ERRORS } from "./capability";
+import { CAPABILITY_ERRORS, requiredSurfaces } from "./capability";
 
 const EXPECTED_NAMES = [
   "endpoints.list",
@@ -63,10 +63,13 @@ describe("capability registry", () => {
     expect(eventsTail.semantics.watermark?.deltaMs).toBeGreaterThan(0);
   });
 
-  it("surfaces audit.verify on every GA surface with a read scope", () => {
+  it("surfaces audit.verify on CLI/API/MCP with a read scope (web deferred with the dashboard)", () => {
     expect(auditVerify.auth.scope).toBe("audit:read");
-    // No surfaceExempt — it must reach CLI/API/web/MCP identically.
-    expect(auditVerify.surfaceExempt).toBeUndefined();
+    // The compliance verifier reaches the live bearer surfaces identically; only `web` is
+    // exempt, and only because the whole dashboard epic is deferred (same reason as every
+    // read capability). It is NOT exempt on cli/api/mcp.
+    expect(requiredSurfaces(auditVerify)).toEqual(["api", "cli", "mcp"]);
+    expect(Object.keys(auditVerify.surfaceExempt ?? {})).toEqual(["web"]);
   });
 
   it("round-trips the audit.verify ok and break outputs", () => {

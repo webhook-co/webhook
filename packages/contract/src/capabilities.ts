@@ -18,6 +18,16 @@ import { TargetSchema } from "./target";
 const uuid = z.uuid();
 const cursor = z.string();
 
+// Documented parity exemptions (each capability declares which GA surfaces it is NOT yet bound
+// on, with a reason — see parity.ts). These are the durable, dated reasons the conformance gate
+// reads back; lifting one is the checklist item that fails the build if a surface forgets to bind.
+/** The browser dashboard (read views) is deferred to the frontend epic — no web binding yet. */
+const WEB_DEFERRED = "dashboard read views deferred to the frontend epic";
+/** events.tail's live server (LISTEN_SESSION DO + gapless cursor pull) lands in slice 11. */
+const TAIL_SLICE_11 = "cursor-pull tail server lands in slice 11";
+/** events.replay's replay-to-localhost engine lands in slice 12. */
+const REPLAY_SLICE_12 = "replay-to-localhost engine lands in slice 12";
+
 function paged<T extends z.ZodTypeAny>(item: T) {
   return z.object({ items: z.array(item), nextCursor: cursor.nullable() });
 }
@@ -32,6 +42,7 @@ export const endpointsList = defineCapability({
   errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:read" },
   semantics: { paginated: true },
+  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 export const endpointsGet = defineCapability({
@@ -41,6 +52,7 @@ export const endpointsGet = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "RATE_LIMITED"],
   auth: { scope: "endpoints:read" },
   semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 export const eventsList = defineCapability({
@@ -55,6 +67,7 @@ export const eventsList = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "events:read" },
   semantics: { paginated: true },
+  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 export const eventsGet = defineCapability({
@@ -64,6 +77,7 @@ export const eventsGet = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "RATE_LIMITED"],
   auth: { scope: "events:read" },
   semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 export const eventsTail = defineCapability({
@@ -74,6 +88,9 @@ export const eventsTail = defineCapability({
   auth: { scope: "events:read" },
   // Canonical = cursor pull (so MCP can consume it), with the gapless watermark.
   semantics: { streaming: true, paginated: true, watermark: { deltaMs: WATERMARK_DELTA_MS } },
+  // Bound today only on the CLI's command tree (`listen`); the live tail server (the
+  // LISTEN_SESSION DO + cursor pull) lands in slice 11, when the api/mcp exemptions lift.
+  surfaceExempt: { web: WEB_DEFERRED, api: TAIL_SLICE_11, mcp: TAIL_SLICE_11 },
 });
 
 // The audit-chain verifier (ADR-0004). Walks an org's tamper-evident audit
@@ -109,6 +126,7 @@ export const auditVerify = defineCapability({
   errors: ["UNAUTHORIZED", "FORBIDDEN", "RATE_LIMITED"],
   auth: { scope: "audit:read" },
   semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 export const eventsReplay = defineCapability({
@@ -118,6 +136,9 @@ export const eventsReplay = defineCapability({
   errors: ["NOT_FOUND", "ENDPOINT_PAUSED", "TARGET_UNREACHABLE", "UNAUTHORIZED", "RATE_LIMITED"],
   auth: { scope: "events:replay" },
   semantics: { idempotent: true },
+  // Bound today only on the CLI's command tree (`replay`); the replay-to-localhost engine
+  // lands in slice 12, when the api/mcp exemptions lift.
+  surfaceExempt: { web: WEB_DEFERRED, api: REPLAY_SLICE_12, mcp: REPLAY_SLICE_12 },
 });
 
 /**

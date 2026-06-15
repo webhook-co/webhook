@@ -16,6 +16,7 @@ import {
   SecretStore,
   SERVICE_NAME,
 } from "@webhook-co/shared";
+import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { runAnchorCron } from "./anchor-cron";
 import {
@@ -25,7 +26,6 @@ import {
   type VerificationOutcome,
   type VerifyIngestInput,
 } from "./ingest";
-import { kvCredentialCache } from "./kv-cache";
 import { makeVerifyIngest } from "./verify";
 
 // The webhook engine Worker. `fetch` is the wbhk.my write path (cookieless, path-token ingest);
