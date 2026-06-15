@@ -69,6 +69,36 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     expect(seen).toEqual({ endpointId: EP, filter: { provider: "stripe" } });
   });
 
+  it("builds events.tail input from the path + optional sinceCursor", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "events.tail": async (_ctx, input) => {
+          seen = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    await handleRequest(get(`/v1/endpoints/${EP}/events/tail?sinceCursor=abc.def`), deps);
+    expect(seen).toEqual({ endpointId: EP, sinceCursor: "abc.def" });
+  });
+
+  it("builds events.tail input with no cursor when sinceCursor is absent", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "events.tail": async (_ctx, input) => {
+          seen = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    await handleRequest(get(`/v1/endpoints/${EP}/events/tail`), deps);
+    expect(seen).toEqual({ endpointId: EP });
+  });
+
   it("dispatches POST /v1/audit/verify", async () => {
     const deps: ApiDeps = {
       authDeps: authDeps(verify(scoped)),

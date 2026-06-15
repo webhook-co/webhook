@@ -74,14 +74,21 @@ describe("capability parity", () => {
 describe("capability parity — current GA surfaces conformance", () => {
   // The real registered sets, mirrored here from each surface:
   //   cli  — packages/cli CAPABILITY_COMMANDS (all 7: `listen`/`replay` map tail/replay)
-  //   api  — apps/api router (the 5 read capabilities)
-  //   mcp  — apps/mcp McpAgent tools (the same 5 read capabilities)
+  //   api  — apps/api router (the 5 reads + events.tail cursor-pull, slice 11)
+  //   mcp  — apps/mcp McpAgent tools (the same 6 capabilities)
   //   web  — none (dashboard deferred)
-  const READS = ["endpoints.list", "endpoints.get", "events.list", "events.get", "audit.verify"];
+  const API_MCP_BOUND = [
+    "endpoints.list",
+    "endpoints.get",
+    "events.list",
+    "events.get",
+    "events.tail",
+    "audit.verify",
+  ];
   function liveBindings() {
     const b = emptyBindings();
     for (const cap of CAPABILITIES) b.cli.add(cap.name); // CLI surfaces all 7 commands
-    for (const name of READS) {
+    for (const name of API_MCP_BOUND) {
       b.api.add(name);
       b.mcp.add(name);
     }
@@ -100,10 +107,11 @@ describe("capability parity — current GA surfaces conformance", () => {
     );
   });
 
-  it("keeps exemptions tight: tail+replay are cli-only, web is exempt everywhere", () => {
+  it("keeps exemptions tight: tail is api/cli/mcp, replay is cli-only, web is exempt everywhere", () => {
     const tail = CAPABILITIES.find((c) => c.name === "events.tail");
     const replay = CAPABILITIES.find((c) => c.name === "events.replay");
-    expect(requiredSurfaces(tail!)).toEqual(["cli"]);
+    // events.tail bound on api+mcp as of slice 11 (cursor pull); replay stays cli-only until slice 12.
+    expect(requiredSurfaces(tail!)).toEqual(["api", "cli", "mcp"]);
     expect(requiredSurfaces(replay!)).toEqual(["cli"]);
     for (const cap of CAPABILITIES) {
       expect(requiredSurfaces(cap), `${cap.name} must not require web yet`).not.toContain("web");
