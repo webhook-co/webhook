@@ -9,9 +9,9 @@ import {
   createReadHandlers,
   makeApiKeyColdLookup,
   makeVerifyBearer,
-  type CredentialCache,
 } from "@webhook-co/db";
 import { b64ToBytes, importAuditKey, importCursorKey, SERVICE_NAME } from "@webhook-co/shared";
+import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { handleRequest, type ApiDeps } from "./router.js";
 
@@ -53,16 +53,6 @@ const RESOURCE_METADATA: ProtectedResourceMetadata = buildProtectedResourceMetad
 interface DepsHandle {
   readonly deps: ApiDeps;
   close(): Promise<void>;
-}
-
-// Workers-KV adapter for the credential resolver's hot cache (mirrors apps/engine/kv-cache).
-function kvCredentialCache(kv: KVNamespace): CredentialCache {
-  return {
-    get: (key) => kv.get(key),
-    put: (key, value, ttlSeconds) =>
-      kv.put(key, value, ttlSeconds !== undefined ? { expirationTtl: ttlSeconds } : undefined),
-    delete: (key) => kv.delete(key),
-  };
 }
 
 /**

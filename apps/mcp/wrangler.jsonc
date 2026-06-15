@@ -3,20 +3,64 @@
   "name": "webhook-mcp",
   "main": "src/index.ts",
   "compatibility_date": "2024-11-06",
+  // nodejs_compat: the MCP tool dispatch runs the shared @webhook-co/db reads inside the Durable
+  // Object, and the Postgres client (postgres.js, via Hyperdrive) needs Node built-ins in workerd.
+  "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
   },
+  // The McpAgent runs as a Durable Object (SQLite-backed). `WebhookMcp.serve("/mcp")` resolves the
+  // namespace by the default binding name MCP_OBJECT; the class is exported from src/index.ts.
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "MCP_OBJECT",
+        "class_name": "WebhookMcp",
+      },
+    ],
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["WebhookMcp"],
+    },
+  ],
   // The OAuthProvider's required token / grant / client store (opaque tokens stored hashed; grant
   // props encrypted under the token). Miniflare provides a local KV in tests; the real namespace id
-  // is set per environment at deploy. No DB binding here: the OAuth/auth layer reads the org context
-  // from the grant props, so the mcp. Worker needs DB/Hyperdrive only once the MCP tool dispatch
-  // (a later binding) actually queries tenant data.
+  // is set per environment at deploy. KV_AUTHZ caches resolved api-key principals (keyed by hash),
+  // invalidated on revoke (KV can be invalidated, Hyperdrive's query cache can't).
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
       "id": "<OAUTH_KV_ID>",
     },
+    {
+      "binding": "KV_AUTHZ",
+      "id": "<KV_AUTHZ_ID>",
+    },
+  ],
+  // Two cache-DISABLED Hyperdrive bindings: AUTHN for the api-key cold lookup (org-discovery-by-hash
+  // as webhook_authn, on resolveExternalToken) and TENANT for the RLS-scoped reads as webhook_app
+  // inside the DO. Query caching must stay off — the cold lookup must reflect live revoke/rotate
+  // state, and tenant reads are RLS-gated (the cache can't see the RLS GUC). localConnectionString
+  // is the dev/test PG; real Hyperdrive ids are set per environment at deploy.
+  "hyperdrive": [
+    {
+      "binding": "HYPERDRIVE_AUTHN",
+      "id": "<HYPERDRIVE_AUTHN_ID>",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
+      "binding": "HYPERDRIVE_TENANT",
+      "id": "<HYPERDRIVE_TENANT_ID>",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
   ],
   // The MCP resource server runs on mcp.webhook.co (bearer-token, cookieless, API-class). The route
   // / custom domain is attached per environment at deploy.
+  //
+  // Worker secrets (set via `wrangler secret put`, never committed):
+  //   CREDENTIAL_PEPPER       base64, >=32 bytes — keys the api-key HMAC (same pepper as elsewhere)
+  //   CURSOR_KEY              base64, 32 bytes — HMAC for opaque pagination cursors
+  //   AUDIT_CHAIN_HMAC_KEY    base64, 32 bytes — the audit-chain key (same key the rows are signed with)
 }

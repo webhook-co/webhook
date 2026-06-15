@@ -1,8 +1,18 @@
 import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
+import {
+  createClient,
+  createCredentialHasherFromBase64,
+  createCredentialResolver,
+  makeApiKeyColdLookup,
+  makeVerifyBearer,
+} from "@webhook-co/db";
+import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
-import { mcpApiHandler } from "./api-handler";
 import { mcpDefaultHandler } from "./default-handler";
+import { resolveApiKeyToProps } from "./external-token";
+import { WebhookMcp } from "./mcp-agent";
+import type { McpEnv } from "./env";
 
 // The mcp. OAuth issuer + resource server, co-located on mcp.:
 // @cloudflare/workers-oauth-provider runs here as our own OAuth 2.1 issuer for mcp.-scoped access
@@ -12,6 +22,11 @@ import { mcpDefaultHandler } from "./default-handler";
 // and federates user LOGIN to Better Auth on auth. (the identity origin). The provider serves the
 // RFC 9728 PRM, RFC 8414 metadata, RFC 7591 DCR, and the /token endpoint; it enforces RFC 8707
 // resource binding and S256-only PKCE. We never hand-roll OAuth.
+//
+// The protected /mcp route is served by the WebhookMcp Durable Object (McpAgent), which registers
+// the read capabilities as MCP tools. API-key callers (the CLI today; OAuth-token login is deferred)
+// authenticate through resolveExternalToken — the provider calls it for any bearer it didn't mint,
+// and we resolve it as an api key bound to MCP_RESOURCE, handing back the principal as grant props.
 
 /** Our canonical MCP resource identifier (RFC 9728 `resource` / RFC 8707 audience). */
 export const MCP_RESOURCE = "https://mcp.webhook.co";
@@ -21,12 +36,16 @@ export const SCOPES_SUPPORTED: string[] = [
   ...new Set([...CAPABILITY_REGISTRY.values()].map((c) => c.auth.scope)),
 ].sort();
 
+// The McpAgent Durable Object class must be exported from the Worker entry so wrangler can bind it
+// (durable_objects.bindings[].class_name = "WebhookMcp").
+export { WebhookMcp } from "./mcp-agent";
+
 export default new OAuthProvider({
   // The single MCP endpoint. Requests here are validated (token + RFC 8707 resource) before the
   // apiHandler runs; everything else (PRM, metadata, /token, /register, /authorize) is the provider
-  // or the defaultHandler.
+  // or the defaultHandler. The McpAgent serves the JSON-RPC tool transport at this path.
   apiRoute: ["/mcp"],
-  apiHandler: mcpApiHandler,
+  apiHandler: WebhookMcp.serve("/mcp"),
   defaultHandler: mcpDefaultHandler,
 
   authorizeEndpoint: "/authorize",
@@ -38,10 +57,35 @@ export default new OAuthProvider({
   allowImplicitFlow: false,
   allowPlainPKCE: false,
 
+  // The api-key bridge (ADR-0010/0011): called for any bearer NOT minted by this provider — today
+  // every caller, since the /authorize login that mints provider tokens is deferred. We resolve the
+  // key through the SAME verifyBearer seam apps/api uses (audience = MCP_RESOURCE) and return the
+  // principal as grant props + the bound audience (the provider re-checks it against the resource).
+  // A short-lived authn client per call (the pepper is decoded BEFORE it opens, so a bad secret
+  // fails fast without leaking a connection); torn down in finally. null = not authenticated (401);
+  // an operational fault propagates (the provider answers 5xx, never a masked 401).
+  resolveExternalToken: async ({ token, env }) => {
+    const e = env as McpEnv;
+    const hasher = createCredentialHasherFromBase64(e.CREDENTIAL_PEPPER);
+    const authn = createClient(e.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
+    try {
+      const resolver = createCredentialResolver({
+        hasher,
+        cache: kvCredentialCache(e.KV_AUTHZ),
+        coldLookup: makeApiKeyColdLookup(authn, MCP_RESOURCE),
+      });
+      return await resolveApiKeyToProps(
+        { verifyBearer: makeVerifyBearer(resolver), resource: MCP_RESOURCE },
+        token,
+      );
+    } finally {
+      await authn.end();
+    }
+  },
+
   // RFC 9728 PRM: advertise our canonical resource + this co-located issuer as the auth server.
   // The resource identifier is the origin (the stable RFC 8707 audience), while the protected API
-  // is at /mcp. The end-to-end resource-binding on a VALID access token (origin-bound token reaching
-  // /mcp) can only be exercised once the /authorize login flow can mint a token — verify it then.
+  // is at /mcp.
   resourceMetadata: {
     resource: MCP_RESOURCE,
     authorization_servers: [MCP_RESOURCE],
