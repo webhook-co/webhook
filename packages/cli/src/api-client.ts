@@ -1,14 +1,24 @@
-import { AuthContextSchema, type AuthContext, type CapabilityError } from "@webhook-co/contract";
+import {
+  AuthContextSchema,
+  auditVerify as auditVerifyCap,
+  endpointsGet as endpointsGetCap,
+  endpointsList as endpointsListCap,
+  eventsGet as eventsGetCap,
+  eventsList as eventsListCap,
+  type AuthContext,
+  type CapabilityError,
+} from "@webhook-co/contract";
+import type { Endpoint, Event, EventSummary } from "@webhook-co/shared";
+import type { z } from "zod";
 
 import { CliError, InvalidApiUrlError } from "./errors.js";
 import { EXIT, exitCodeForCapabilityError } from "./output/exit-codes.js";
 
 // The CLI's Bearer HTTP client for the webhook.co REST API (api.webhook.co). It attaches the API key
 // as `Authorization: Bearer …`, maps an HTTP status back to the closed CapabilityError taxonomy (the
-// inverse of apps/api's http-status map), and parses responses against the shared contract schema.
-// `fetch` is injected so the client + every command is node-tested with no network. Slice 9 ships
-// `whoami()` (the identity/validate call) + the error+parse machinery; the read-capability methods
-// reuse this client in Slice 10.
+// inverse of apps/api's http-status map), and parses every response against the SHARED contract output
+// schema for that capability — so the CLI can't drift from the server's shape. `fetch` is injected so
+// the client + every command is node-tested with no network.
 
 /** The canonical hosted API. Overridable via `--api-url` or `WBHK_API_URL` (self-host / dev). */
 export const DEFAULT_API_BASE_URL = "https://api.webhook.co";
@@ -64,9 +74,39 @@ function errorForStatus(status: number): ApiError {
     : new ApiError(undefined, `the api returned an unexpected response (HTTP ${status})`);
 }
 
+/** A single page of a paginated read: a slice of items + the opaque cursor for the next page (null at end). */
+export interface Page<T> {
+  readonly items: readonly T[];
+  readonly nextCursor: string | null;
+}
+
+/** Pagination inputs shared by the list calls. */
+export interface ListParams {
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+/** events.list adds an optional provider filter. */
+export interface EventsListParams extends ListParams {
+  readonly provider?: string;
+}
+
+/** The audit-chain verification result (the shared `audit.verify` output: ok + rowsVerified, or a break). */
+export type AuditVerifyResult = z.infer<typeof auditVerifyCap.output>;
+
 export interface ApiClient {
   /** Resolve the caller's own identity — validates the key (`GET /v1/whoami`). */
   whoami(): Promise<AuthContext>;
+  /** A page of the org's endpoints (`GET /v1/endpoints`). */
+  endpointsList(params?: ListParams): Promise<Page<Endpoint>>;
+  /** A single endpoint by id (`GET /v1/endpoints/:id`). */
+  endpointsGet(endpointId: string): Promise<Endpoint>;
+  /** A page of an endpoint's captured events (`GET /v1/endpoints/:id/events`). */
+  eventsList(endpointId: string, params?: EventsListParams): Promise<Page<EventSummary>>;
+  /** A single event in full fidelity by id (`GET /v1/events/:id`). */
+  eventsGet(eventId: string): Promise<Event>;
+  /** Verify the org's tamper-evident audit chain (`POST /v1/audit/verify`). */
+  auditVerify(): Promise<AuditVerifyResult>;
 }
 
 export interface ApiClientDeps {
@@ -76,12 +116,22 @@ export interface ApiClientDeps {
   readonly fetch: typeof fetch;
 }
 
+/** Append a query string from the defined params only (absent keys are omitted, never sent as empty). */
+function withQuery(path: string, params: Record<string, string | number | undefined>): string {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) query.set(key, String(value));
+  }
+  const qs = query.toString();
+  return qs.length > 0 ? `${path}?${qs}` : path;
+}
+
 export function createApiClient(deps: ApiClientDeps): ApiClient {
-  async function getJson(path: string): Promise<unknown> {
+  async function request(path: string, method: "GET" | "POST"): Promise<unknown> {
     let res: Response;
     try {
       res = await deps.fetch(`${deps.baseUrl}${path}`, {
-        method: "GET",
+        method,
         headers: { authorization: `Bearer ${deps.apiKey}`, accept: "application/json" },
       });
     } catch {
@@ -93,13 +143,49 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     return res.json();
   }
 
+  const getJson = (path: string): Promise<unknown> => request(path, "GET");
+  const postJson = (path: string): Promise<unknown> => request(path, "POST");
+
+  // Parse a response against its shared contract schema; an unexpected shape is UNEXPECTED (never a
+  // capability code), so a server/version skew surfaces as "unexpected response", not a misleading 4xx.
+  function parseOrThrow<S extends z.ZodTypeAny>(
+    schema: S,
+    body: unknown,
+    what: string,
+  ): z.infer<S> {
+    const parsed = schema.safeParse(body);
+    if (!parsed.success) {
+      throw new ApiError(undefined, `the api returned an unexpected ${what} response`);
+    }
+    return parsed.data;
+  }
+
   return {
     async whoami(): Promise<AuthContext> {
-      const parsed = AuthContextSchema.safeParse(await getJson("/v1/whoami"));
-      if (!parsed.success) {
-        throw new ApiError(undefined, "the api returned an unexpected identity response");
-      }
-      return parsed.data;
+      return parseOrThrow(AuthContextSchema, await getJson("/v1/whoami"), "identity");
+    },
+    async endpointsList(params = {}): Promise<Page<Endpoint>> {
+      const path = withQuery("/v1/endpoints", { cursor: params.cursor, limit: params.limit });
+      return parseOrThrow(endpointsListCap.output, await getJson(path), "endpoints");
+    },
+    async endpointsGet(endpointId): Promise<Endpoint> {
+      const path = `/v1/endpoints/${encodeURIComponent(endpointId)}`;
+      return parseOrThrow(endpointsGetCap.output, await getJson(path), "endpoint");
+    },
+    async eventsList(endpointId, params = {}): Promise<Page<EventSummary>> {
+      const path = withQuery(`/v1/endpoints/${encodeURIComponent(endpointId)}/events`, {
+        cursor: params.cursor,
+        limit: params.limit,
+        provider: params.provider,
+      });
+      return parseOrThrow(eventsListCap.output, await getJson(path), "events");
+    },
+    async eventsGet(eventId): Promise<Event> {
+      const path = `/v1/events/${encodeURIComponent(eventId)}`;
+      return parseOrThrow(eventsGetCap.output, await getJson(path), "event");
+    },
+    async auditVerify(): Promise<AuditVerifyResult> {
+      return parseOrThrow(auditVerifyCap.output, await postJson("/v1/audit/verify"), "audit");
     },
   };
 }
@@ -108,16 +194,16 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 /**
- * Resolve the API base URL: `--api-url` flag › `WBHK_API_URL` env › default. (Persisting a per-profile
- * base URL is deferred — the credential store doesn't surface it yet; ADR-0012.) The resolved URL is
- * the destination for the bearer API key, so it MUST be https:// — http:// is rejected except for
- * loopback dev — otherwise an override could downgrade to plaintext or redirect the live credential to
- * an attacker-chosen host. The value must be a clean origin (no query/fragment); the NORMALIZED
- * origin+path is returned (validating the parsed URL then concatenating the raw string would let a
- * query/whitespace value produce a malformed request target). Anything else throws InvalidApiUrlError.
+ * Resolve the API base URL: `--api-url` flag › `WBHK_API_URL` env › stored profile value › default.
+ * The resolved URL is the destination for the bearer API key, so it MUST be https:// — http:// is
+ * rejected except for loopback dev — otherwise an override (or a tampered stored value) could downgrade
+ * to plaintext or redirect the live credential to an attacker-chosen host. The value must be a clean
+ * origin (no query/fragment); the NORMALIZED origin+path is returned (validating the parsed URL then
+ * concatenating the raw string would let a query/whitespace value produce a malformed request target).
+ * Anything else throws InvalidApiUrlError — so a persisted base URL is re-validated on every read.
  */
-export function resolveApiBaseUrl(opts: { flag?: string; env?: string }): string {
-  const raw = opts.flag ?? opts.env ?? DEFAULT_API_BASE_URL;
+export function resolveApiBaseUrl(opts: { flag?: string; env?: string; stored?: string }): string {
+  const raw = opts.flag ?? opts.env ?? opts.stored ?? DEFAULT_API_BASE_URL;
   let url: URL;
   try {
     url = new URL(raw);

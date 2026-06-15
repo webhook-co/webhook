@@ -7,6 +7,10 @@ export const EXIT = {
   SUCCESS: 0,
   UNEXPECTED: 1,
   USAGE: 2,
+  // `audit verify` succeeded as a call but DETECTED a chain break — a meaningful non-zero so
+  // a cron/CI run alerts, distinct from a transport/usage failure. Low generic code (not a
+  // per-capability error, since the request itself returned 200).
+  AUDIT_BREAK: 3,
   NOT_IMPLEMENTED: 64,
 } as const;
 

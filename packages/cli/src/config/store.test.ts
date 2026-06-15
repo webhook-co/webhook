@@ -10,6 +10,7 @@ function memoryBackend(
   opts: { secure: boolean; canWrite: boolean; seed?: Record<string, StoredCredential> },
 ): CredentialBackend {
   const store = new Map<string, StoredCredential>(Object.entries(opts.seed ?? {}));
+  const baseUrls = new Map<string, string>();
   return {
     id,
     secure: opts.secure,
@@ -27,6 +28,13 @@ function memoryBackend(
     },
     async list() {
       return [...store.keys()];
+    },
+    async getApiBaseUrl(profile) {
+      return baseUrls.get(profile);
+    },
+    async setApiBaseUrl(profile, apiBaseUrl) {
+      if (!opts.canWrite) throw new BackendNotWritableError(id);
+      baseUrls.set(profile, apiBaseUrl);
     },
   };
 }
@@ -113,6 +121,39 @@ describe("resolveStore", () => {
     const store = resolveStore([env, file], { requireSecureStorage: false });
     await expect(store.list()).resolves.toEqual(
       expect.arrayContaining([DEFAULT_PROFILE, "staging"]),
+    );
+  });
+});
+
+describe("resolveStore — sticky apiBaseUrl", () => {
+  it("reads the base URL in backend precedence order (first defined wins)", async () => {
+    const env = memoryBackend("env", { secure: false, canWrite: false });
+    const file = memoryBackend("file", { secure: false, canWrite: true });
+    await file.setApiBaseUrl(DEFAULT_PROFILE, "https://stored.example");
+    const store = resolveStore([env, file], { requireSecureStorage: false });
+    await expect(store.getApiBaseUrl()).resolves.toBe("https://stored.example");
+  });
+
+  it("returns undefined when no backend has a base URL", async () => {
+    const file = memoryBackend("file", { secure: false, canWrite: true });
+    const store = resolveStore([file], { requireSecureStorage: false });
+    await expect(store.getApiBaseUrl()).resolves.toBeUndefined();
+  });
+
+  it("persists the base URL to the first writable backend, ignoring the secure-storage policy", async () => {
+    // The base URL is config, not a secret — requireSecureStorage gates the credential, not this.
+    const env = memoryBackend("env", { secure: false, canWrite: false });
+    const file = memoryBackend("file", { secure: false, canWrite: true });
+    const store = resolveStore([env, file], { requireSecureStorage: true });
+    await store.setApiBaseUrl("https://api.self.example");
+    await expect(file.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBe("https://api.self.example");
+  });
+
+  it("refuses to persist a base URL when no backend can write", async () => {
+    const env = memoryBackend("env", { secure: false, canWrite: false });
+    const store = resolveStore([env], { requireSecureStorage: false });
+    await expect(store.setApiBaseUrl("https://x.example")).rejects.toBeInstanceOf(
+      SecureStorageRequiredError,
     );
   });
 });

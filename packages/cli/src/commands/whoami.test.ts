@@ -9,11 +9,14 @@ import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-
 
 function memStore(initial: StoredCredential | null = null): CredentialStore {
   let cred = initial;
+  let baseUrl: string | undefined;
   return {
     get: async () => cred,
     set: async (c) => void (cred = c),
     erase: async () => void (cred = null),
     list: async () => (cred ? ["default"] : []),
+    getApiBaseUrl: async () => baseUrl,
+    setApiBaseUrl: async (u) => void (baseUrl = u),
   };
 }
 

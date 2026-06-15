@@ -1,0 +1,159 @@
+import { run } from "@stricli/core";
+import { describe, expect, it } from "vitest";
+
+import { app } from "../app.js";
+import type { CredentialStore } from "../config/store.js";
+import { makeTestContext } from "../context.js";
+import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
+
+// Valid v4 UUIDs so the shared contract schemas accept the fixtures.
+const ORG = "22222222-2222-4222-8222-222222222222";
+const EP1 = "11111111-1111-4111-8111-111111111111";
+const EP2 = "11111111-1111-4111-8111-111111111112";
+
+function loggedInStore(): CredentialStore {
+  let baseUrl: string | undefined;
+  return {
+    get: async () => ({ apiKey: "whk_test" }),
+    set: async () => undefined,
+    erase: async () => undefined,
+    list: async () => ["default"],
+    getApiBaseUrl: async () => baseUrl,
+    setApiBaseUrl: async (u) => void (baseUrl = u),
+  };
+}
+
+function emptyStore(): CredentialStore {
+  return {
+    get: async () => null,
+    set: async () => undefined,
+    erase: async () => undefined,
+    list: async () => [],
+    getApiBaseUrl: async () => undefined,
+    setApiBaseUrl: async () => undefined,
+  };
+}
+
+const json = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+const okFetch = (body: unknown): typeof fetch =>
+  (async () => json(body)) as unknown as typeof fetch;
+const statusFetch = (status: number): typeof fetch =>
+  (async () => new Response(null, { status })) as unknown as typeof fetch;
+function sequenceFetch(...responses: Response[]): typeof fetch {
+  let i = 0;
+  return (async () => responses[Math.min(i++, responses.length - 1)]) as unknown as typeof fetch;
+}
+
+const endpoint = (id: string, name: string, paused = false) => ({
+  id,
+  orgId: ORG,
+  name,
+  paused,
+  createdAt: "2026-05-01T00:00:00.000Z",
+});
+
+describe("wbhk endpoints list", () => {
+  it("renders a table with a status word", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [endpoint(EP1, "orders-prod")], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain("NAME");
+    expect(t.stdout()).toContain("orders-prod");
+    expect(t.stdout()).toContain("active");
+  });
+
+  it("emits the {items,nextCursor} envelope with --output json", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [endpoint(EP1, "orders-prod")], nextCursor: "c_next" }),
+    });
+    await run(app, ["endpoints", "list", "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout());
+    expect(parsed.nextCursor).toBe("c_next");
+    expect(parsed.items[0].id).toBe(EP1);
+  });
+
+  it("prints a stderr hint (stdout stays clean of the token) when more results exist", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [endpoint(EP1, "a")], nextCursor: "tok_123" }),
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(t.stderr()).toContain("more results");
+    expect(t.stdout()).not.toContain("tok_123");
+  });
+
+  it("--all follows the cursor across pages and shows all rows without a hint", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: sequenceFetch(
+        json({ items: [endpoint(EP1, "page-one")], nextCursor: "c2" }),
+        json({ items: [endpoint(EP2, "page-two")], nextCursor: null }),
+      ),
+    });
+    await run(app, ["endpoints", "list", "--all"], t.ctx);
+    expect(t.stdout()).toContain("page-one");
+    expect(t.stdout()).toContain("page-two");
+    expect(t.stderr()).not.toContain("more results");
+  });
+
+  it("--all stops safely if the server returns a non-advancing cursor", async () => {
+    // okFetch returns the SAME nextCursor on every call; the guard must break, not loop forever.
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [endpoint(EP1, "stuck")], nextCursor: "stable" }),
+    });
+    await run(app, ["endpoints", "list", "--all"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain("stuck");
+  });
+
+  it("prints a friendly line for an empty page", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(t.stdout()).toContain("no endpoints.");
+  });
+
+  it("requires a credential (NotLoggedInError → UNAUTHORIZED exit)", async () => {
+    const t = makeTestContext({ store: emptyStore() });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.UNAUTHORIZED);
+    expect(t.stderr().toLowerCase()).toContain("not logged in");
+  });
+
+  it("rejects a non-numeric --limit as a usage error", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list", "--limit", "abc"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+});
+
+describe("wbhk endpoints get", () => {
+  it("renders a single endpoint as a key:value block", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch(endpoint(EP1, "orders-prod", true)),
+    });
+    await run(app, ["endpoints", "get", EP1], t.ctx);
+    expect(t.stdout()).toContain("name:");
+    expect(t.stdout()).toContain("orders-prod");
+    expect(t.stdout()).toContain("paused");
+  });
+
+  it("maps a 404 to the NOT_FOUND exit code", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: statusFetch(404) });
+    await run(app, ["endpoints", "get", EP1], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.NOT_FOUND);
+    expect(t.stderr().toLowerCase()).toContain("not found");
+  });
+});

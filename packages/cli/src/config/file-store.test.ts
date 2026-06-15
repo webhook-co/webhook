@@ -113,6 +113,28 @@ describe("file-store backend", () => {
     await expect(backend.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_a" });
   });
 
+  it("round-trips the per-profile apiBaseUrl alongside the credential", async () => {
+    const dir = await freshDir();
+    const backend = createFileBackend({ dir, platform: "linux" });
+
+    await expect(backend.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBeUndefined();
+
+    await backend.set(DEFAULT_PROFILE, { apiKey: "whk_with_url" });
+    await backend.setApiBaseUrl(DEFAULT_PROFILE, "https://api.self.example");
+
+    // The base URL persists, and setting it does NOT clobber the stored credential.
+    await expect(backend.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBe("https://api.self.example");
+    await expect(backend.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_with_url" });
+  });
+
+  it("setting a credential preserves an already-stored apiBaseUrl", async () => {
+    const dir = await freshDir();
+    const backend = createFileBackend({ dir, platform: "linux" });
+    await backend.setApiBaseUrl(DEFAULT_PROFILE, "https://api.self.example");
+    await backend.set(DEFAULT_PROFILE, { apiKey: "whk_later" });
+    await expect(backend.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBe("https://api.self.example");
+  });
+
   it("refuses to read or modify a pre-existing loose file (the user must fix it first)", async () => {
     const dir = await freshDir();
     await mkdir(dir, { recursive: true, mode: 0o700 });

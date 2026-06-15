@@ -113,5 +113,15 @@ export function createFileBackend(opts: { dir: string } & FsOptions): Credential
       const config = await readOrEmpty();
       return Object.keys(config.profiles);
     },
+    async getApiBaseUrl(profile) {
+      const config = await readOrEmpty();
+      return config.profiles[profile]?.apiBaseUrl;
+    },
+    async setApiBaseUrl(profile, apiBaseUrl) {
+      const config = await readOrEmpty();
+      const existing = config.profiles[profile] ?? {};
+      config.profiles[profile] = { ...existing, apiBaseUrl };
+      await write(config);
+    },
   };
 }

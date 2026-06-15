@@ -27,4 +27,12 @@ describe("env-store backend", () => {
     await expect(backend.erase(DEFAULT_PROFILE)).rejects.toBeInstanceOf(BackendNotWritableError);
     await expect(backend.list()).resolves.toEqual([]);
   });
+
+  it("carries no base URL and refuses to persist one (WBHK_API_URL is resolved elsewhere)", async () => {
+    const backend = createEnvBackend({ [ENV_API_KEY_VAR]: "whk_x" });
+    await expect(backend.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBeUndefined();
+    await expect(
+      backend.setApiBaseUrl(DEFAULT_PROFILE, "https://x.example"),
+    ).rejects.toBeInstanceOf(BackendNotWritableError);
+  });
 });

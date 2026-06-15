@@ -71,7 +71,7 @@ describe("CLI app behavior", () => {
 
   it("runs a not-yet-built command as a clear, non-zero stub", async () => {
     const t = makeTestContext();
-    await run(app, ["endpoints", "list"], t.ctx);
+    await run(app, ["listen"], t.ctx); // a slice-12 stub
     expect(t.stderr().toLowerCase()).toContain("isn't built yet");
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.NOT_IMPLEMENTED);
   });
@@ -84,9 +84,9 @@ describe("CLI app behavior", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
   });
 
-  it("accepts the shared --output flag on capability commands", async () => {
+  it("accepts the shared --output flag on a stub command", async () => {
     const t = makeTestContext();
-    await run(app, ["endpoints", "list", "--output", "json"], t.ctx);
+    await run(app, ["listen", "--output", "json"], t.ctx);
     // recognized flag → falls through to the stub, not a usage error
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.NOT_IMPLEMENTED);
   });
