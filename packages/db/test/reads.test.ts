@@ -41,6 +41,7 @@ async function seedEvent(
   opts: { provider?: string | null } = {},
 ): Promise<string> {
   const id = newId();
+  const externalId: string | null = null; // explicit typed NULL (no bare null in the SQL template)
   await withTenant(app, orgId, async (tx) => {
     await tx`
       insert into events
@@ -52,7 +53,7 @@ async function seedEvent(
            ["content-type", "application/json"],
            ["x-test", "1"],
          ])},
-         ${newId()}, ${"content_hash"}, ${opts.provider ?? null}, ${"evt_123"}, ${null},
+         ${newId()}, ${"content_hash"}, ${opts.provider ?? null}, ${"evt_123"}, ${externalId},
          ${true}, ${tx.json({ ok: true, keyId: "key_1", scheme: "stripe" })})`;
   });
   return id;
