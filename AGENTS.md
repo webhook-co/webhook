@@ -116,7 +116,7 @@ This repo ships a "company-as-agents" governance layer. Cursor reads `.cursor/`;
 | `git-workflow` | always | Rebase on `main` before every PR; keep branches synced and rebase frequently. |
 | `engineering-conventions` | `**/*.ts` | TypeScript / Workers conventions, error handling, testing. |
 | `infra-devops` | `infra/**` | Cloudflare-forward guardrails; protect the delivery seam; no destructive infra without review. |
-| `design-ux` | `apps/web/**` | Accessibility and design-system / token conventions. |
+| `design-ux` | `apps/web/**`, `apps/www/**` | Accessibility and design-system / token conventions. |
 | `data` | `**/db/**`, `**/migrations/**` | PII/PHI handling, safe migrations, metering integrity. |
 | `writing-voice` | docs / web (agent-requested) | Keep docs and UI copy on-voice. |
 

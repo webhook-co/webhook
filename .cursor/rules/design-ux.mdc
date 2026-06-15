@@ -1,10 +1,10 @@
 ---
-description: Accessibility and design-system conventions for the web dashboard.
-globs: apps/web/**
+description: Accessibility and design-system conventions for the web dashboard and marketing site.
+globs: apps/web/**,apps/www/**
 alwaysApply: false
 ---
 
-# Design & UX (web dashboard)
+# Design & UX (web surfaces)
 
 - **Accessibility is a requirement, not a polish pass.** Target WCAG 2.2 AA: semantic HTML, labeled
   controls, visible focus states, keyboard operability for every interaction, and sufficient color
@@ -14,8 +14,9 @@ alwaysApply: false
   into a single component.
 - **Sentence case** for headings, buttons, and labels. Brand names stay lowercase (`webhook.co`,
   `wbhk.my`). UI copy follows the `writing-voice` rule: clear, developer-peer, quietly opinionated.
-- **Respect user preferences:** honor `prefers-reduced-motion`, support light/dark, and don't trap
-  focus or autoplay motion.
+- **Respect user preferences:** honor `prefers-reduced-motion`, support theming where it's offered
+  (the dashboard is light/dark; the marketing site is light-only), and don't trap focus or autoplay
+  motion.
 - **States are part of the design.** Always handle loading, empty, error, and permission-denied
   states — empty states should teach the next action. Inspection/replay views must stay fast and
   legible with large payloads.

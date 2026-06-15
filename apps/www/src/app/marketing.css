@@ -1,0 +1,86 @@
+/* marketing.css — the webhook.co homepage's bespoke layer.
+ *
+ * Everything that can be a token-backed Tailwind utility lives inline in the JSX. This file
+ * holds only what utilities can't express: the page-level @keyframes and a few token-only
+ * classes (the hero dot-grid + its radial mask, the frosted sticky nav). Every value resolves
+ * to a design-system token (`--wh-*`); no magic numbers, no off-palette colour.
+ *
+ * Reduced motion: the shared base.css already collapses animation/transition to ~0 globally
+ * under `prefers-reduced-motion: reduce`. We additionally declare the *animations* only inside
+ * a `no-preference` block, so the static styling (the dots, the nav) always renders and only the
+ * movement is conditional. Nothing essential depends on motion. */
+
+/* ── hero dot-grid background ──────────────────────────────────────────────── */
+.hero-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* Fade the grid out toward the edges so it reads as atmosphere, not a pattern. */
+  -webkit-mask-image: radial-gradient(120% 80% at 50% 22%, #000 30%, transparent 78%);
+  mask-image: radial-gradient(120% 80% at 50% 22%, #000 30%, transparent 78%);
+}
+
+.hero-dots {
+  position: absolute;
+  /* Bleed past the edges so the 22px drift never reveals a seam. */
+  inset: -22px;
+  background-image: radial-gradient(var(--wh-ink-300) 1.1px, transparent 1.4px);
+  background-size: 22px 22px;
+  opacity: 0.4;
+}
+
+/* ── frosted sticky nav ────────────────────────────────────────────────────── */
+.site-nav {
+  background: color-mix(in srgb, var(--wh-surface-page) 86%, transparent);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+
+/* ── motion (declared only when the user welcomes it) ──────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .hero-dots {
+    animation: dotsDrift 60s linear infinite;
+  }
+
+  /* One-shot staggered entrance. `both` fill-mode means each child ends at its visible
+     state, so the SSR HTML never paints hidden and there's no flash if JS never runs. */
+  .hero-rise > * {
+    animation: heroRise var(--wh-dur-slow) var(--wh-ease-smooth) both;
+  }
+  .hero-rise > *:nth-child(1) {
+    animation-delay: 120ms;
+  }
+  .hero-rise > *:nth-child(2) {
+    animation-delay: 205ms;
+  }
+  .hero-rise > *:nth-child(3) {
+    animation-delay: 290ms;
+  }
+  .hero-rise > *:nth-child(4) {
+    animation-delay: 375ms;
+  }
+  .hero-rise > *:nth-child(5) {
+    animation-delay: 460ms;
+  }
+}
+
+@keyframes dotsDrift {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 22px 22px;
+  }
+}
+
+@keyframes heroRise {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
