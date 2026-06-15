@@ -8,6 +8,9 @@ import {
   type Command,
 } from "@stricli/core";
 
+import { auditVerifyCommand } from "./commands/audit.js";
+import { endpointsGetCommand, endpointsListCommand } from "./commands/endpoints.js";
+import { eventsGetCommand, eventsListCommand } from "./commands/events.js";
 import { loginCommand } from "./commands/login.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
@@ -55,23 +58,23 @@ function capabilityStub(path: readonly string[], slice: string): Command<AppCont
 
 const endpointsRoute = buildRouteMap({
   routes: {
-    list: capabilityStub(["endpoints", "list"], "slice 10"),
-    get: capabilityStub(["endpoints", "get"], "slice 10"),
+    list: endpointsListCommand,
+    get: endpointsGetCommand,
   },
   docs: { brief: "inspect your endpoints" },
 });
 
 const eventsRoute = buildRouteMap({
   routes: {
-    list: capabilityStub(["events", "list"], "slice 10"),
-    get: capabilityStub(["events", "get"], "slice 10"),
+    list: eventsListCommand,
+    get: eventsGetCommand,
   },
   docs: { brief: "inspect captured events" },
 });
 
 const auditRoute = buildRouteMap({
   routes: {
-    verify: capabilityStub(["audit", "verify"], "slice 10"),
+    verify: auditVerifyCommand,
   },
   docs: { brief: "verify the tamper-evident audit chain" },
 });
