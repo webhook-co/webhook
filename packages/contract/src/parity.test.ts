@@ -59,7 +59,9 @@ describe("capability parity", () => {
   });
 
   it("throws a readable error listing violations", () => {
-    expect(() => assertCapabilityParity(CAPABILITIES, emptyBindings())).toThrow(/parity violations/);
+    expect(() => assertCapabilityParity(CAPABILITIES, emptyBindings())).toThrow(
+      /parity violations/,
+    );
   });
 });
 
@@ -93,7 +95,9 @@ describe("capability parity — current GA surfaces conformance", () => {
   it("would fail if a read capability were dropped from a required surface", () => {
     const b = liveBindings();
     b.api.delete("events.get");
-    expect(() => assertCapabilityParity(CAPABILITIES, b)).toThrow(/events\.get is not bound on api/);
+    expect(() => assertCapabilityParity(CAPABILITIES, b)).toThrow(
+      /events\.get is not bound on api/,
+    );
   });
 
   it("keeps exemptions tight: tail+replay are cli-only, web is exempt everywhere", () => {

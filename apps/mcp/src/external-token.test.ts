@@ -59,8 +59,8 @@ describe("resolveApiKeyToProps", () => {
     const verifyBearer: VerifyBearer = async () => {
       throw new Error("hyperdrive connection reset");
     };
-    await expect(
-      resolveApiKeyToProps({ verifyBearer, resource: RESOURCE }, "tok"),
-    ).rejects.toThrow("hyperdrive connection reset");
+    await expect(resolveApiKeyToProps({ verifyBearer, resource: RESOURCE }, "tok")).rejects.toThrow(
+      "hyperdrive connection reset",
+    );
   });
 });

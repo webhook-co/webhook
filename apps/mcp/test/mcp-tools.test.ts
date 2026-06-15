@@ -105,7 +105,10 @@ async function handshake(): Promise<{ sessionId: string; protocolVersion: string
   const result = init.message?.result as { protocolVersion?: string } | undefined;
   const protocolVersion = result?.protocolVersion ?? "2025-06-18";
   // Per the MCP lifecycle, the client confirms with an `initialized` notification.
-  await rpc({ jsonrpc: "2.0", method: "notifications/initialized" }, { sessionId, protocolVersion });
+  await rpc(
+    { jsonrpc: "2.0", method: "notifications/initialized" },
+    { sessionId, protocolVersion },
+  );
   return { sessionId: sessionId as string, protocolVersion };
 }
 
@@ -158,7 +161,10 @@ describe("mcp tool surface — unauthenticated", () => {
   it("rejects the MCP endpoint with 401 when no bearer is presented", async () => {
     const res = await SELF.fetch(`${ORIGIN}/mcp`, {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
     });
     expect(res.status).toBe(401);

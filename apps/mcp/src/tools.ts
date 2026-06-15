@@ -33,7 +33,9 @@ export function genericToolError(): McpToolResult {
 /** A client-facing capability fault rendered for the wire: the closed-taxonomy code + its message. */
 function faultResult(fault: CapabilityFault): McpToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify({ error: fault.code, message: fault.message }) }],
+    content: [
+      { type: "text", text: JSON.stringify({ error: fault.code, message: fault.message }) },
+    ],
     isError: true,
   };
 }

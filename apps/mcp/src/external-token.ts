@@ -25,7 +25,11 @@ export interface ExternalTokenDeps {
 
 /** The grant props the provider stores + hands to the apiHandler (exactly the AuthContext shape). */
 export interface ExternalTokenResult {
-  readonly props: { readonly orgId: string; readonly userId?: string; readonly scopes: readonly string[] };
+  readonly props: {
+    readonly orgId: string;
+    readonly userId?: string;
+    readonly scopes: readonly string[];
+  };
   readonly audience: string;
 }
 
