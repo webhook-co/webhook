@@ -25,7 +25,10 @@ export function SurfacesTabs() {
         verified event, seen from each.
       </SectionHeading>
 
-      <Tabs aria-label="Webhook surfaces" idBase="surfaces" defaultId="mcp" items={SURFACES} />
+      {/* A focused, centered code card — the terminal reads better narrow than full-bleed. */}
+      <div className="mx-auto max-w-[600px]">
+        <Tabs aria-label="Webhook surfaces" idBase="surfaces" defaultId="mcp" items={SURFACES} />
+      </div>
     </section>
   );
 }
