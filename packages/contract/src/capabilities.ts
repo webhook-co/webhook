@@ -23,8 +23,6 @@ const cursor = z.string();
 // reads back; lifting one is the checklist item that fails the build if a surface forgets to bind.
 /** The browser dashboard (read views) is deferred to the frontend epic — no web binding yet. */
 const WEB_DEFERRED = "dashboard read views deferred to the frontend epic";
-/** events.tail's live server (LISTEN_SESSION DO + gapless cursor pull) lands in slice 11. */
-const TAIL_SLICE_11 = "cursor-pull tail server lands in slice 11";
 /** events.replay's replay-to-localhost engine lands in slice 12. */
 const REPLAY_SLICE_12 = "replay-to-localhost engine lands in slice 12";
 
@@ -86,11 +84,11 @@ export const eventsTail = defineCapability({
   output: paged(EventSummarySchema),
   errors: ["NOT_FOUND", "UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "events:read" },
-  // Canonical = cursor pull (so MCP can consume it), with the gapless watermark.
+  // Canonical = cursor pull (so MCP can consume it), with the gapless watermark. The live WS tunnel
+  // (LISTEN_SESSION DO) is a separate CLI transport over the same watermark+cursor; api/mcp bind the
+  // cursor-pull form. Bound on cli/api/mcp as of slice 11; the web read view stays deferred.
   semantics: { streaming: true, paginated: true, watermark: { deltaMs: WATERMARK_DELTA_MS } },
-  // Bound today only on the CLI's command tree (`listen`); the live tail server (the
-  // LISTEN_SESSION DO + cursor pull) lands in slice 11, when the api/mcp exemptions lift.
-  surfaceExempt: { web: WEB_DEFERRED, api: TAIL_SLICE_11, mcp: TAIL_SLICE_11 },
+  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 // The audit-chain verifier (ADR-0004). Walks an org's tamper-evident audit

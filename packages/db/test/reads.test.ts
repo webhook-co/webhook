@@ -11,7 +11,7 @@ import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/cred
 import { createEndpoint } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
 import { createReadHandlers, type ReadHandlers } from "../src/read-handlers";
-import { getEndpoint, getEvent, listEndpoints, listEvents } from "../src/reads";
+import { getEndpoint, getEvent, listEndpoints, listEvents, tailEvents } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
@@ -31,9 +31,19 @@ let orgA: string;
 let orgB: string;
 let epA: string; // an endpoint in org A with several events
 let epB: string; // an endpoint in org B (cross-org target)
+let epTail: string; // org A endpoint with 3 events at controlled (backdated) receive times
 
 const ctxA: AuthContext = { orgId: "", scopes: ["endpoints:read", "events:read", "audit:read"] };
 const ctxB: AuthContext = { orgId: "", scopes: ["endpoints:read", "events:read", "audit:read"] };
+
+// Deterministic receive times for the tail fixtures, far in the past so any watermark cutoff
+// (now - δ) admits them. eTail1 < eTail2 < eTail3 by received_at.
+const TAIL_BASE = new Date("2026-06-01T00:00:00.000Z");
+const tailAt = (ms: number): Date => new Date(TAIL_BASE.getTime() + ms);
+const TAIL_FAR_FUTURE = tailAt(60_000); // a cutoff that admits all three
+let eTail1: string;
+let eTail2: string;
+let eTail3: string;
 
 async function seedEvent(
   orgId: string,
@@ -56,6 +66,25 @@ async function seedEvent(
          ${newId()}, ${"content_hash"}, ${opts.provider ?? null}, ${"evt_123"}, ${externalId},
          ${true}, ${tx.json({ ok: true, keyId: "key_1", scheme: "stripe" })})`;
   });
+  return id;
+}
+
+// Seed an event, then backdate received_at to an exact time. The received_at trigger is
+// `before insert` only (it stamps now() on insert), so a later UPDATE under the org's tenant
+// context positions the row deterministically relative to a chosen watermark cutoff. webhook_app
+// holds UPDATE on events + the events_update RLS policy (org_id = current_org_id()).
+async function seedEventAt(
+  orgId: string,
+  endpointId: string,
+  receivedAt: Date,
+  provider: string | null = null,
+): Promise<string> {
+  const id = await seedEvent(orgId, endpointId, { provider });
+  await withTenant(
+    app,
+    orgId,
+    (tx) => tx`update events set received_at = ${receivedAt} where id = ${id}`,
+  );
   return id;
 }
 
@@ -82,6 +111,12 @@ beforeAll(async () => {
   await seedEvent(orgA, epA, { provider: "github" });
   await seedEvent(orgA, epA, { provider: "stripe" });
   await seedEvent(orgB, epB, { provider: "stripe" });
+
+  // org A: a tail endpoint with 3 events at fixed, well-past receive times.
+  epTail = (await createEndpoint(app, { orgId: orgA, name: "ep-tail" }, hasher)).id;
+  eTail1 = await seedEventAt(orgA, epTail, tailAt(1000), "stripe");
+  eTail2 = await seedEventAt(orgA, epTail, tailAt(2000), "github");
+  eTail3 = await seedEventAt(orgA, epTail, tailAt(3000), "stripe");
 
   // org A: a small valid audit chain (genesis + 2).
   await withTenant(app, orgA, async (tx) => {
@@ -149,6 +184,39 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(page.items[0]?.provider).toBe("github");
   });
 
+  it("listEvents does not skip same-millisecond events across a backward keyset page", async () => {
+    // The DESC sibling of the tail's stall: a ms cursor over µs storage skips a same-ms neighbour
+    // whose true µs is below the boundary's truncated cursor. The ms-truncated keyset must surface both.
+    const epPrec = (await createEndpoint(app, { orgId: orgA, name: "ep-precision-list" }, hasher))
+      .id;
+    const p1 = await seedEvent(orgA, epPrec, { provider: "stripe" });
+    const p2 = await seedEvent(orgA, epPrec, { provider: "stripe" });
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-11T12:00:00.007300+00' where id = ${p1}`,
+    );
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-11T12:00:00.007900+00' where id = ${p2}`,
+    );
+    const seen = new Set<string>();
+    let cursor: Cursor | undefined;
+    let pages = 0;
+    for (;;) {
+      const page = await withTenant(app, orgA, (tx) =>
+        listEvents(tx, { endpointId: epPrec, cursor, limit: 1 }),
+      );
+      for (const ev of page.items) seen.add(ev.id);
+      pages += 1;
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+      expect(pages).toBeLessThan(6);
+    }
+    expect(seen).toEqual(new Set([p1, p2])); // both surfaced — no skip
+  });
+
   it("getEvent returns the full-fidelity event (headers + verification + payload ref)", async () => {
     const id = (await withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: epA, limit: 1 })))
       .items[0]!.id;
@@ -182,6 +250,28 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
 
   it("events.list returns NOT_FOUND for an endpoint the org does not own", async () => {
     await expectFault(handlers.get("events.list")!(ctxA, { endpointId: epB }), "NOT_FOUND");
+  });
+
+  it("events.tail returns a forward page of summaries up to the watermark", async () => {
+    const page = (await handlers.get("events.tail")!(ctxA, { endpointId: epTail })) as {
+      items: { id: string }[];
+      nextCursor: string | null;
+    };
+    expect(page.items.map((e) => e.id)).toEqual([eTail1, eTail2, eTail3]); // oldest-first
+    expect(page.nextCursor).toBeNull(); // 3 events < the default page size
+  });
+
+  it("events.tail returns NOT_FOUND for an endpoint the org does not own", async () => {
+    await expectFault(handlers.get("events.tail")!(ctxA, { endpointId: epB }), "NOT_FOUND");
+  });
+
+  it("events.tail rejects an under-scoped caller (FORBIDDEN) and a tampered cursor", async () => {
+    const noScope: AuthContext = { orgId: orgA, scopes: [] };
+    await expectFault(handlers.get("events.tail")!(noScope, { endpointId: epTail }), "FORBIDDEN");
+    await expectFault(
+      handlers.get("events.tail")!(ctxA, { endpointId: epTail, sinceCursor: "garbage.deadbeef" }),
+      "VALIDATION_ERROR",
+    );
   });
 
   it("rejects an under-scoped caller with FORBIDDEN", async () => {
@@ -218,5 +308,112 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
     };
     expect(broken.ok).toBe(false);
     expect(broken.break?.kind).toBe("hash_mismatch");
+  });
+});
+
+describe("tailEvents (forward, watermark-bounded)", () => {
+  it("returns events oldest-first up to the watermark", async () => {
+    const page = await withTenant(app, orgA, (tx) =>
+      tailEvents(tx, { endpointId: epTail, watermarkCutoff: TAIL_FAR_FUTURE, limit: 50 }),
+    );
+    expect(page.items.map((e) => e.id)).toEqual([eTail1, eTail2, eTail3]);
+  });
+
+  it("paginates forward with a keyset cursor (advances + terminates, no dupes)", async () => {
+    const seen: string[] = [];
+    let cursor: Cursor | undefined;
+    let pages = 0;
+    for (;;) {
+      const page = await withTenant(app, orgA, (tx) =>
+        tailEvents(tx, {
+          endpointId: epTail,
+          sinceCursor: cursor,
+          watermarkCutoff: TAIL_FAR_FUTURE,
+          limit: 2,
+        }),
+      );
+      for (const ev of page.items) seen.push(ev.id);
+      pages += 1;
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+      expect(pages).toBeLessThan(10); // guard against a non-terminating cursor
+    }
+    expect(seen).toEqual([eTail1, eTail2, eTail3]); // forward order, each exactly once
+    expect(pages).toBe(2); // 2 + 1 at limit 2
+  });
+
+  it("resumes strictly after sinceCursor", async () => {
+    const first = await withTenant(app, orgA, (tx) =>
+      tailEvents(tx, { endpointId: epTail, watermarkCutoff: TAIL_FAR_FUTURE, limit: 1 }),
+    );
+    expect(first.items.map((e) => e.id)).toEqual([eTail1]);
+    expect(first.nextCursor).not.toBeNull();
+    const rest = await withTenant(app, orgA, (tx) =>
+      tailEvents(tx, {
+        endpointId: epTail,
+        sinceCursor: first.nextCursor!,
+        watermarkCutoff: TAIL_FAR_FUTURE,
+        limit: 50,
+      }),
+    );
+    expect(rest.items.map((e) => e.id)).toEqual([eTail2, eTail3]);
+  });
+
+  it("withholds events newer than the watermark cutoff", async () => {
+    // A cutoff between eTail2 (+2000) and eTail3 (+3000): eTail3 is withheld until it clears.
+    const page = await withTenant(app, orgA, (tx) =>
+      tailEvents(tx, { endpointId: epTail, watermarkCutoff: tailAt(2500), limit: 50 }),
+    );
+    expect(page.items.map((e) => e.id)).toEqual([eTail1, eTail2]);
+    expect(page.items.map((e) => e.id)).not.toContain(eTail3);
+  });
+
+  it("is org-scoped: a cross-org endpoint yields no rows under RLS", async () => {
+    const page = await withTenant(app, orgA, (tx) =>
+      tailEvents(tx, { endpointId: epB, watermarkCutoff: TAIL_FAR_FUTURE, limit: 50 }),
+    );
+    expect(page.items).toEqual([]);
+  });
+
+  it("paginates same-millisecond events without duplicating or stalling (precision regression)", async () => {
+    // Two events in the SAME millisecond with non-zero microsecond fractions — the exact case
+    // a ms-resolution cursor over a µs-precision column gets wrong: the boundary row's true µs is
+    // > its own truncated cursor, so a naive (received_at, id) > keyset re-emits it forever.
+    const epPrec = (await createEndpoint(app, { orgId: orgA, name: "ep-precision-tail" }, hasher))
+      .id;
+    const p1 = await seedEvent(orgA, epPrec, { provider: "stripe" });
+    const p2 = await seedEvent(orgA, epPrec, { provider: "stripe" });
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-10T12:00:00.005200+00' where id = ${p1}`,
+    );
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-10T12:00:00.005800+00' where id = ${p2}`,
+    );
+    const cutoff = new Date("2026-06-10T13:00:00.000Z");
+    const seen: string[] = [];
+    let cursor: Cursor | undefined;
+    let pages = 0;
+    for (;;) {
+      const page = await withTenant(app, orgA, (tx) =>
+        tailEvents(tx, {
+          endpointId: epPrec,
+          sinceCursor: cursor,
+          watermarkCutoff: cutoff,
+          limit: 1,
+        }),
+      );
+      for (const ev of page.items) seen.push(ev.id);
+      pages += 1;
+      if (page.nextCursor === null) break;
+      cursor = page.nextCursor;
+      expect(pages).toBeLessThan(6); // a precision stall would spin here forever
+    }
+    expect(seen.length).toBe(2); // each exactly once — no boundary duplicate
+    expect([...seen].sort()).toEqual([p1, p2].sort()); // both surfaced (id orders within the ms)
+    expect(pages).toBe(2);
   });
 });
