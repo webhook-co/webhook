@@ -21,6 +21,22 @@ export const CAPABILITY_ERRORS = [
 ] as const;
 export type CapabilityError = (typeof CAPABILITY_ERRORS)[number];
 
+/**
+ * A capability handler's typed failure, carrying a closed-taxonomy `code`. Surfaces map
+ * the code to their transport (HTTP status / MCP tool error) — the single error type that
+ * flows from a capability handler out to every binding, so the mapping lives in one place
+ * per surface and can't drift from the taxonomy.
+ */
+export class CapabilityFault extends Error {
+  constructor(
+    readonly code: CapabilityError,
+    message?: string,
+  ) {
+    super(message ?? code);
+    this.name = "CapabilityFault";
+  }
+}
+
 export interface CapabilitySemantics {
   /** Safe to retry with the same input + idempotency key (events.replay). */
   readonly idempotent?: boolean;
