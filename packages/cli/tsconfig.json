@@ -3,7 +3,21 @@
   "compilerOptions": {
     "outDir": "dist",
     "rootDir": "src",
-    "types": ["@cloudflare/workers-types"]
+    "types": ["node"],
+    // Node<->Workers tsconfig boundary (see engineering-conventions rule). The CLI is a
+    // Node program (types: ["node"]) — it reads files, spawns processes, and runs on a
+    // Node/Bun host. Its internal deps (contract, shared, + webhooks-spec reached
+    // transitively via shared's `export *`) are all Workers-typed. Resolving them to
+    // source would make tsc re-typecheck their WebCrypto code (crypto.subtle.*) under
+    // node libs, where @types/node's Uint8Array<ArrayBufferLike> doesn't satisfy the DOM
+    // BufferSource. Every internal dep crosses the boundary, so we redirect the whole
+    // `@webhook-co/*` scope to the emitted declarations — built before this package
+    // (turbo `^build`) and validated once in their own (workers-types) configs. Mirrors
+    // packages/db, the other node-typed package.
+    "paths": {
+      "@webhook-co/*": ["../*/dist/index.d.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", ".turbo", "src/**/*.test.ts"]
 }
