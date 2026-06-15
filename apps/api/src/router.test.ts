@@ -1,5 +1,6 @@
 import {
   CapabilityFault,
+  UnauthenticatedError,
   type AuthContext,
   type BearerAuthzDeps,
   type VerifyBearer,
@@ -127,5 +128,49 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
   it("404s an unknown path", async () => {
     const deps: ApiDeps = { authDeps: authDeps(verify(scoped)), handlers: handlersOf({}) };
     expect((await handleRequest(get("/v1/nonsense"), deps)).status).toBe(404);
+  });
+});
+
+describe("handleRequest — GET /v1/whoami (scope-free identity)", () => {
+  it("returns the authenticated principal with NO scope required (even a scopeless key)", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ orgId: ORG, scopes: [] })),
+      handlers: handlersOf({}),
+    };
+    const res = await handleRequest(get("/v1/whoami"), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ orgId: ORG, scopes: [] });
+  });
+
+  it("includes the scopes and a userId when present", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ orgId: ORG, userId: "usr_1", scopes: ["events:read"] })),
+      handlers: handlersOf({}),
+    };
+    const res = await handleRequest(get("/v1/whoami"), deps);
+    expect(await res.json()).toEqual({ orgId: ORG, userId: "usr_1", scopes: ["events:read"] });
+  });
+
+  it("401s with invalid_token when no credential is present", async () => {
+    const deps: ApiDeps = { authDeps: authDeps(verify(scoped)), handlers: handlersOf({}) };
+    const res = await handleRequest(get("/v1/whoami", null), deps);
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate")).toContain('error="invalid_token"');
+  });
+
+  it("401s when the credential doesn't resolve (unauthenticated)", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ throws: new UnauthenticatedError() })),
+      handlers: handlersOf({}),
+    };
+    expect((await handleRequest(get("/v1/whoami"), deps)).status).toBe(401);
+  });
+
+  it("propagates an operational fault as a 5xx (never a masked 401)", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ throws: new Error("hyperdrive down") })),
+      handlers: handlersOf({}),
+    };
+    await expect(handleRequest(get("/v1/whoami"), deps)).rejects.toThrow(/hyperdrive down/);
   });
 });
