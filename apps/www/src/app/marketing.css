@@ -84,3 +84,127 @@
     transform: none;
   }
 }
+
+/* ── S2 showcase visuals ───────────────────────────────────────────────────── */
+/* The looping bits of the four showcase visuals. Each needs a gradient, color-mix, inset shadow,
+ * or per-nth-child delay that Tailwind utilities can't express cleanly, so they live here. Values
+ * are token-backed (`--wh-*`); loop *durations* are literal seconds (the duration tokens cap at
+ * 420ms, like `dotsDrift 60s` above). All motion is gated on `no-preference`; the static structure
+ * (rows, nodes, ✕ chips, the highlighted line's tint) renders regardless so nothing depends on it. */
+
+/* MCP & agents — the info-tinted scan sweeping the trace card. */
+.trace-sweep {
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  height: 42%;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in srgb, var(--wh-info) 9%, transparent) 50%,
+    transparent
+  );
+}
+
+/* Capture/replay — the replayed terminal line. Bleeds to the body edges (negative inline margin
+ * against the terminal's 18px padding) and pulses an info tint. */
+.term-hl {
+  display: block;
+  margin-inline: -18px;
+  padding-inline: 18px;
+  background: color-mix(in srgb, var(--wh-info) 8%, transparent);
+  box-shadow: inset 2px 0 0 var(--wh-info);
+}
+
+/* Ingestion & delivery — the dot flowing along the happy-path lane. */
+.flow-dot {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wh-info);
+  box-shadow: 0 0 0 3px var(--wh-info-bg);
+  transform: translate(-50%, -50%);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .trace-sweep {
+    animation: scanDown 3.6s var(--wh-ease-smooth) infinite;
+  }
+  .term-hl {
+    animation: hlPulse 3s var(--wh-ease-smooth) infinite;
+  }
+  .flow-dot {
+    animation: flow 3.4s var(--wh-ease-smooth) infinite;
+  }
+  /* Verification — each row briefly flashes a danger tint, in sequence. */
+  .verify-row {
+    animation: rowCheck 4.2s var(--wh-ease-smooth) infinite;
+  }
+  .verify-row:nth-child(2) {
+    animation-delay: 1.4s;
+  }
+  .verify-row:nth-child(3) {
+    animation-delay: 2.8s;
+  }
+}
+
+/* The two purely-decorative loops are hidden outright when motion isn't welcome. */
+@media (prefers-reduced-motion: reduce) {
+  .trace-sweep,
+  .flow-dot {
+    display: none;
+  }
+}
+
+@keyframes scanDown {
+  0% {
+    transform: translateY(-110%);
+  }
+  100% {
+    transform: translateY(280%);
+  }
+}
+
+@keyframes hlPulse {
+  0%,
+  100% {
+    background: color-mix(in srgb, var(--wh-info) 5%, transparent);
+    box-shadow: inset 2px 0 0 color-mix(in srgb, var(--wh-info) 55%, transparent);
+  }
+  50% {
+    background: color-mix(in srgb, var(--wh-info) 16%, transparent);
+    box-shadow: inset 2px 0 0 var(--wh-info);
+  }
+}
+
+@keyframes flow {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+
+@keyframes rowCheck {
+  0%,
+  26%,
+  100% {
+    background: transparent;
+  }
+  7% {
+    background: var(--wh-danger-bg);
+  }
+}

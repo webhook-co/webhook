@@ -2,6 +2,7 @@ import { Button, cn } from "@webhook-co/ui";
 import { Lock, Scale, ShieldCheck } from "lucide-react";
 
 import { GithubIcon } from "@/components/ui/brand-icons";
+import { Pill } from "@/components/ui/pill";
 import { focusRing } from "@/lib/styles";
 
 const trustSignals = [
@@ -26,9 +27,7 @@ export function Hero() {
             "mb-6 inline-flex items-center gap-2 rounded-pill border border-hairline bg-surface py-1 pr-3 pl-1.5 text-sm text-fg-secondary shadow-1 transition-colors hover:text-fg",
           )}
         >
-          <span className="rounded-pill bg-surface-inverse px-2 py-0.5 font-mono text-[10px] uppercase tracking-mono-label text-fg-on-inverse">
-            new
-          </span>
+          <Pill>new</Pill>
           <span>MCP-native webhooks</span>
           <span aria-hidden="true">→</span>
         </a>

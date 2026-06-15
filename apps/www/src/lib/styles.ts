@@ -7,6 +7,9 @@
 /** The centered marketing column: the max content width + the horizontal gutter. */
 export const container = "mx-auto max-w-[var(--container-max)] px-6";
 
+/** The default vertical rhythm for a top-level content band. */
+export const sectionPad = "py-[clamp(44px,5.5vw,76px)]";
+
 /**
  * The design-system focus ring, shown only on keyboard focus (`:focus-visible`). Pair it with a
  * `rounded-*` on the element so the ring follows the corners.
