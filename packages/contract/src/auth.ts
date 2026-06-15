@@ -5,6 +5,8 @@
 // and the audience-binding rule. The shared bearer-authorize decision (extract token ->
 // verify -> scope -> 401/403) lives here too, so every surface binds ONE implementation.
 
+import { z } from "zod";
+
 import { CAPABILITY_REGISTRY } from "./capabilities";
 
 export interface AuthContext {
@@ -13,6 +15,16 @@ export interface AuthContext {
   readonly userId?: string;
   readonly scopes: readonly string[];
 }
+
+/**
+ * Wire schema for an AuthContext — the typed contract for the identity (`whoami`) response, so the
+ * server shapes it and the client parses it against ONE definition. Mirrors the AuthContext interface.
+ */
+export const AuthContextSchema = z.object({
+  orgId: z.string().min(1),
+  userId: z.string().optional(),
+  scopes: z.array(z.string()),
+});
 
 /**
  * verifyBearer resolves a presented token to an AuthContext AND enforces audience
@@ -184,6 +196,36 @@ export async function authorizeBearer(
       status: 403,
       challenge: buildWwwAuthenticate(deps.resourceMetadataUrl, "insufficient_scope"),
     };
+  }
+
+  return { ok: true, ctx };
+}
+
+/**
+ * Scope-free authentication: resolve the bearer to an AuthContext (audience-bound inside
+ * verifyBearer) WITHOUT enforcing any capability scope. The identity primitive behind `whoami` and
+ * any "who am I" surface — a valid credential for this resource is sufficient. Same 401-vs-5xx split
+ * as authorizeBearer (an expected auth rejection → 401; an operational fault → rethrow), only without
+ * the scope step. Not tied to a capability (ADR-0014: login/identity is the auth boundary, not a capability).
+ */
+export async function authenticateBearer(
+  deps: BearerAuthzDeps,
+  authorizationHeader: string | null | undefined,
+): Promise<BearerAuthzResult> {
+  const token = extractBearer(authorizationHeader);
+  // eslint-disable-next-line security/detect-possible-timing-attacks -- a null PRESENCE check, not a secret compare; the real compare is the constant-time hash in @webhook-co/db
+  if (token === null) {
+    return bearerUnauthenticated(deps.resourceMetadataUrl);
+  }
+
+  let ctx: AuthContext;
+  try {
+    ctx = await deps.verifyBearer(token, deps.resource);
+  } catch (err) {
+    if (isExpectedAuthRejection(err)) {
+      return bearerUnauthenticated(deps.resourceMetadataUrl);
+    }
+    throw err; // operational fault → 5xx at the surface boundary, never a masked 401
   }
 
   return { ok: true, ctx };

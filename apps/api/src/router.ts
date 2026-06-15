@@ -1,7 +1,7 @@
-import { CapabilityFault } from "@webhook-co/contract";
+import { AuthContextSchema, CapabilityFault } from "@webhook-co/contract";
 import type { ReadHandlers } from "@webhook-co/db";
 
-import { authorize, type ApiAuthDeps } from "./auth.js";
+import { authenticate, authorize, type ApiAuthDeps } from "./auth.js";
 import { httpStatusForCapabilityError } from "./http-status.js";
 
 // The REST router for the read-capabilities surface. It maps an HTTP request to a contract
@@ -72,6 +72,27 @@ function jsonError(code: string, message: string, status: number): Response {
 export async function handleRequest(request: Request, deps: ApiDeps): Promise<Response> {
   const url = new URL(request.url);
   const segments = url.pathname.split("/").filter((s) => s.length > 0);
+
+  // The identity endpoint: authenticated but scope-free (NOT a capability — see ADR-0012). Returns
+  // the caller's own resolved principal so the CLI can validate a key + show `whoami`. Handled before
+  // capability routing because it has no scope and binds no read handler.
+  if (
+    request.method === "GET" &&
+    segments.length === 2 &&
+    segments[0] === "v1" &&
+    segments[1] === "whoami"
+  ) {
+    const authn = await authenticate(deps.authDeps, request);
+    if (!authn.ok) {
+      return new Response(null, {
+        status: authn.status,
+        headers: { "www-authenticate": authn.challenge },
+      });
+    }
+    // Shape the response through the shared schema so it can't drift from the AuthContext contract.
+    return Response.json(AuthContextSchema.parse(authn.ctx));
+  }
+
   const route = matchRoute(request.method, segments, url.searchParams);
   // A routing miss is distinct from a capability NOT_FOUND fault (which carries the JSON error shape).
   if (route === null) {

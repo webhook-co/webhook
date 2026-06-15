@@ -76,11 +76,12 @@ describe("CLI app behavior", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.NOT_IMPLEMENTED);
   });
 
-  it("runs a not-yet-built auth command (login) as a clear, non-zero stub", async () => {
-    const t = makeTestContext();
+  it("wires the real `login` command (no key + non-interactive → a usage error, not a stub)", async () => {
+    const t = makeTestContext(); // no WBHK_API_KEY, not a TTY, no --stdin
     await run(app, ["login"], t.ctx);
-    expect(t.stderr().toLowerCase()).toContain("isn't built yet");
-    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.NOT_IMPLEMENTED);
+    expect(t.stderr().toLowerCase()).toContain("no api key provided");
+    expect(t.stderr().toLowerCase()).not.toContain("isn't built yet");
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
   });
 
   it("accepts the shared --output flag on capability commands", async () => {

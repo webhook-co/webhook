@@ -8,6 +8,8 @@ import {
   type Command,
 } from "@stricli/core";
 
+import { loginCommand } from "./commands/login.js";
+import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
 import { CliError, NotImplementedError } from "./errors.js";
 import { EXIT } from "./output/exit-codes.js";
@@ -51,15 +53,6 @@ function capabilityStub(path: readonly string[], slice: string): Command<AppCont
   });
 }
 
-/** An auth-seam command stub (login/whoami) — not a capability, no --output flag. */
-function authStub(path: readonly string[], slice: string): Command<AppContext> {
-  return buildCommand<Record<never, never>, [], AppContext>({
-    func: () => new NotImplementedError(path, slice),
-    parameters: {},
-    docs: { brief: `${path.join(" ")} — lands in ${slice}` },
-  });
-}
-
 const endpointsRoute = buildRouteMap({
   routes: {
     list: capabilityStub(["endpoints", "list"], "slice 10"),
@@ -85,8 +78,8 @@ const auditRoute = buildRouteMap({
 
 const root = buildRouteMap({
   routes: {
-    login: authStub(["login"], "slice 9"),
-    whoami: authStub(["whoami"], "slice 9"),
+    login: loginCommand,
+    whoami: whoamiCommand,
     endpoints: endpointsRoute,
     events: eventsRoute,
     audit: auditRoute,

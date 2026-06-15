@@ -6,9 +6,24 @@ import { createEnvBackend } from "./config/env-store.js";
 import { createFileBackend } from "./config/file-store.js";
 import { resolveConfigDir } from "./config/paths.js";
 import { resolveStore, type CredentialStore } from "./config/store.js";
+import { makeRealIo } from "./io.js";
 
 /** Env var that forces a hard fail rather than persisting a plaintext credential. */
 export const REQUIRE_SECURE_STORAGE_VAR = "WBHK_REQUIRE_SECURE_STORAGE";
+
+// The host I/O seams a command needs beyond the process streams: an HTTP client (the API), a piped-
+// stdin reader (`--stdin`), and an interactive hidden-secret prompt. Grouped + injected so login/whoami
+// are node-tested with fakes; the real implementations (TTY + globals) live in io.ts (coverage-excluded).
+export interface IoSeams {
+  /** HTTP client for the REST API (the runtime `fetch` in production; a fake in tests). */
+  readonly fetch: typeof fetch;
+  /** Whether stdin is an interactive TTY — gates whether an interactive prompt is possible. */
+  readonly isInteractive: boolean;
+  /** Prompt on stderr and read one line from stdin without echoing it (secret entry). */
+  promptSecret(message: string): Promise<string>;
+  /** Read all of piped stdin to EOF, trimmed (the `--stdin` key path). */
+  readStdin(): Promise<string>;
+}
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
 // fake. All system access flows through here (stricli's "isolated context" model), so
@@ -29,6 +44,7 @@ export interface HostProcess {
 export interface AppContext extends ApplicationContext {
   readonly store: CredentialStore;
   readonly colorEnabled: boolean;
+  readonly io: IoSeams;
 }
 
 function isTruthyEnv(value: string | undefined): boolean {
@@ -49,13 +65,18 @@ function resolveColor(proc: HostProcess): boolean {
   return depth > 4;
 }
 
-export function buildContext(proc: HostProcess, opts?: { homedir?: string }): AppContext {
+export function buildContext(
+  proc: HostProcess,
+  opts?: { homedir?: string; io?: IoSeams; store?: CredentialStore },
+): AppContext {
   const home = opts?.homedir ?? osHomedir();
   const configDir = resolveConfigDir(proc.env, home);
-  const store = resolveStore(
-    [createEnvBackend(proc.env), createFileBackend({ dir: configDir, platform: proc.platform })],
-    { requireSecureStorage: isTruthyEnv(proc.env[REQUIRE_SECURE_STORAGE_VAR]) },
-  );
+  const store =
+    opts?.store ??
+    resolveStore(
+      [createEnvBackend(proc.env), createFileBackend({ dir: configDir, platform: proc.platform })],
+      { requireSecureStorage: isTruthyEnv(proc.env[REQUIRE_SECURE_STORAGE_VAR]) },
+    );
   return {
     process: {
       stdout: proc.stdout,
@@ -70,6 +91,8 @@ export function buildContext(proc: HostProcess, opts?: { homedir?: string }): Ap
     },
     store,
     colorEnabled: resolveColor(proc),
+    // Real host I/O by default; tests inject fakes (makeTestContext) so commands never touch globals.
+    io: opts?.io ?? makeRealIo(),
   };
 }
 
@@ -79,6 +102,16 @@ export function buildContext(proc: HostProcess, opts?: { homedir?: string }): Ap
 export function makeTestContext(opts?: {
   env?: Record<string, string | undefined>;
   homedir?: string;
+  /** Fake fetch for the API client (defaults to one that throws if a command calls it unexpectedly). */
+  fetch?: typeof fetch;
+  /** What `io.readStdin()` resolves to (the `--stdin` path). */
+  stdin?: string;
+  /** What `io.promptSecret()` resolves to (the interactive path); also implies isInteractive. */
+  promptResponse?: string;
+  /** Whether stdin is an interactive TTY (defaults to true when promptResponse is given, else false). */
+  isInteractive?: boolean;
+  /** Override the credential store (an in-memory fake) so command tests never touch disk. */
+  store?: CredentialStore;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -89,6 +122,23 @@ export function makeTestContext(opts?: {
     platform: "linux",
     exitCode: undefined,
   };
-  const ctx = buildContext(proc, { homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home" });
+  const unconfigured = (name: string) => (): never => {
+    throw new Error(`test io.${name} not configured`);
+  };
+  const io: IoSeams = {
+    fetch: opts?.fetch ?? (unconfigured("fetch") as unknown as typeof fetch),
+    isInteractive: opts?.isInteractive ?? opts?.promptResponse !== undefined,
+    promptSecret:
+      opts?.promptResponse !== undefined
+        ? async () => opts.promptResponse as string
+        : unconfigured("promptSecret"),
+    readStdin:
+      opts?.stdin !== undefined ? async () => opts.stdin as string : unconfigured("readStdin"),
+  };
+  const ctx = buildContext(proc, {
+    homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",
+    io,
+    store: opts?.store,
+  });
   return { ctx, stdout: () => out.join(""), stderr: () => err.join("") };
 }
