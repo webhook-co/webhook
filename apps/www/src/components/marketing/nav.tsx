@@ -1,9 +1,9 @@
 import { Button, cn, Wordmark } from "@webhook-co/ui";
 
+import { NavMenus } from "@/components/marketing/nav-menus";
 import { container, focusRing } from "@/lib/styles";
 
-// Top-level nav links. The Product / Developers dropdown menus arrive in a later slice with
-// their keyboard-accessible disclosure behaviour; the shell ships links only.
+// Plain top-level links; the Product / Developers dropdowns are the <NavMenus/> client island.
 const navLinks = [
   { label: "Pricing", href: "#" },
   { label: "Changelog", href: "#" },
@@ -22,6 +22,7 @@ export function Nav() {
         </a>
 
         <nav aria-label="Main" className="flex items-center gap-0.5 max-[940px]:hidden">
+          <NavMenus />
           {navLinks.map((link) => (
             <a
               key={link.label}

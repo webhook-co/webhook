@@ -1,9 +1,19 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { mockMatchMedia } from "@/lib/test-utils";
 import HomePage from "./page";
 
 describe("HomePage", () => {
+  // Render deterministically: reduced motion pauses the live stream (no interval) and resolves the
+  // scroll reveals immediately, so the static tree is stable to assert against.
+  beforeEach(() => {
+    mockMatchMedia(true);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("renders the hero headline as the single h1", () => {
     render(<HomePage />);
     expect(
@@ -25,6 +35,8 @@ describe("HomePage", () => {
     render(<HomePage />);
     const titles = [
       /a webhook is an event/i,
+      /every webhook, the moment it lands/i,
+      /the same event, wherever you work/i,
       /turn a received webhook into an agent event/i,
       /a permanent url, full inspection/i,
       /received once, in order, never dropped/i,
@@ -36,6 +48,33 @@ describe("HomePage", () => {
     for (const name of titles) {
       expect(screen.getByRole("heading", { level: 2, name })).toBeInTheDocument();
     }
+  });
+
+  it("renders the live-inspector stage with its seed counter and accessible summary", () => {
+    render(<HomePage />);
+    expect(
+      screen.getByRole("region", { name: /every webhook, the moment it lands/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/an illustrative live feed/i)).toBeInTheDocument();
+    expect(screen.getByText(/1,284/)).toBeInTheDocument();
+  });
+
+  it("renders the surfaces tablist with MCP selected by default", () => {
+    render(<HomePage />);
+    expect(screen.getByRole("tab", { name: "MCP" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByRole("tab", { name: "CLI" })).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("renders the Product and Developers nav dropdowns, collapsed by default", () => {
+    render(<HomePage />);
+    expect(screen.getByRole("button", { name: /^product$/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: /^developers$/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
   });
 
   it("marks the not-yet-GA showcases as 'soon' and leaves the live wedge unmarked", () => {
@@ -54,8 +93,10 @@ describe("HomePage", () => {
 
   it("renders the replay terminal line and the real Standard Webhooks link", () => {
     render(<HomePage />);
-    expect(screen.getByText(/replayed/i)).toBeInTheDocument();
-    // Scoped to the verification section — the footer also links "Standard Webhooks".
+    // Scoped to the capture·replay showcase — "replayed" also appears in the surfaces web panel.
+    const capture = screen.getByRole("region", { name: /a permanent url, full inspection/i });
+    expect(within(capture).getByText(/replayed/i)).toBeInTheDocument();
+    // Scoped to the verification section — the footer and nav also link "Standard Webhooks".
     const verification = screen.getByRole("region", { name: /when a signature fails/i });
     expect(within(verification).getByRole("link", { name: "Standard Webhooks" })).toHaveAttribute(
       "href",
