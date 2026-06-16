@@ -20,6 +20,7 @@ import {
   type KmsProvider,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
+  readSecretBinding,
   SecretStore,
   SERVICE_NAME,
 } from "@webhook-co/shared";
@@ -55,32 +56,36 @@ export interface Env {
   R2_PAYLOADS: R2Bucket;
   /** KV namespace caching endpoint resolution (keyed by ingest-token hash). */
   KV_CONFIG: KVNamespace;
-  /** Base64 credential pepper (Worker secret): keys the ingest-token HMAC. Never a DB column. */
-  CREDENTIAL_PEPPER: string;
+  // Secrets are Cloudflare Secrets Store bindings (`secrets_store_secrets`, injected at deploy) — read
+  // via `await readSecretBinding(env.X)`. The shared trio (CREDENTIAL_PEPPER / CURSOR_KEY /
+  // AUDIT_CHAIN_HMAC_KEY) is ONE account secret bound into engine + api + mcp (byte-identical by
+  // construction). None are DB columns.
+  /** Base64 credential pepper: keys the ingest-token + api-key HMAC (same pepper across surfaces). */
+  CREDENTIAL_PEPPER: SecretsStoreSecret;
   // AWS KMS KEK custodian (ADR-0007 / ADR-0009 day-one KMS) for the KmsProvider seam — wraps/unwraps
   // the per-secret DEKs that seal provider signing secrets (envelope.ts). AwsKmsProvider calls
-  // GenerateDataKey/Decrypt over SigV4; the KEK itself never leaves AWS. The LocalKmsProvider is the
-  // dev/CI custodian behind the same seam (injected in tests). None of the four below are DB columns.
-  /** The symmetric KMS key ARN (the KEK). Non-secret config, but injected at deploy like the rest. */
-  KMS_KEY_ARN: string;
-  /** AWS region of the KMS key (e.g. "us-east-1"). */
-  AWS_REGION: string;
+  // GenerateDataKey/Decrypt over SigV4; the KEK itself never leaves AWS. ARN/region aren't strictly
+  // secret but ride the same store for uniform handling + to keep the account-id ARN out of the repo.
+  /** The symmetric KMS key ARN (the KEK). */
+  KMS_KEY_ARN: SecretsStoreSecret;
+  /** AWS region of the KMS key (e.g. "us-east-2"). */
+  AWS_REGION: SecretsStoreSecret;
   /** Access key id of the least-privilege IAM principal (kms:GenerateDataKey + kms:Decrypt on the ARN). */
-  AWS_ACCESS_KEY_ID: string;
-  /** Secret access key of that principal (Worker secret). */
-  AWS_SECRET_ACCESS_KEY: string;
+  AWS_ACCESS_KEY_ID: SecretsStoreSecret;
+  /** Secret access key of that principal. */
+  AWS_SECRET_ACCESS_KEY: SecretsStoreSecret;
   /** Hyperdrive config for the webhook_anchor cross-org head read (query caching off). */
   HYPERDRIVE_ANCHOR: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
   R2_AUDIT_ANCHOR: R2Bucket;
-  /** Base64 audit-chain HMAC key (Worker secret) — the same key the chain rows are signed with. */
-  AUDIT_CHAIN_HMAC_KEY: string;
+  /** Base64 audit-chain HMAC key — the same key the chain rows are signed with (shared across surfaces). */
+  AUDIT_CHAIN_HMAC_KEY: SecretsStoreSecret;
   /** Per-session hibernatable listen-tunnel Durable Objects (Slice 11b, ADR-0014). */
   LISTEN_SESSION: DurableObjectNamespace;
   /** KV caching resolved principals for the tunnel bearer chain (mirrors apps/api KV_AUTHZ). */
   KV_AUTHZ: KVNamespace;
-  /** Base64 HMAC key (Worker secret) for opaque pagination cursors — must match apps/api CURSOR_KEY. */
-  CURSOR_KEY: string;
+  /** Base64 HMAC key for opaque pagination cursors — must equal apps/api CURSOR_KEY (shared secret). */
+  CURSOR_KEY: SecretsStoreSecret;
 }
 
 /**
@@ -104,11 +109,13 @@ let verifyFnPromise: Promise<VerifyFn> | undefined;
  * if any required config is missing, so a misconfigured deploy surfaces at construction, not at the
  * first unseal. `AwsKmsProvider.fromConfig` is synchronous and makes no network call here.
  */
-export function kmsProviderFromEnv(env: Env): KmsProvider {
-  const keyArn = env.KMS_KEY_ARN;
-  const region = env.AWS_REGION;
-  const accessKeyId = env.AWS_ACCESS_KEY_ID;
-  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
+export async function kmsProviderFromEnv(env: Env): Promise<KmsProvider> {
+  const [keyArn, region, accessKeyId, secretAccessKey] = await Promise.all([
+    readSecretBinding(env.KMS_KEY_ARN),
+    readSecretBinding(env.AWS_REGION),
+    readSecretBinding(env.AWS_ACCESS_KEY_ID),
+    readSecretBinding(env.AWS_SECRET_ACCESS_KEY),
+  ]);
   if (!keyArn || !region || !accessKeyId || !secretAccessKey) {
     throw new Error(
       "AWS KMS config incomplete: KMS_KEY_ARN, AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY are all required",
@@ -139,7 +146,7 @@ export function buildVerifyFn(kms: KmsProvider, now: () => Date = () => new Date
  */
 export function getVerifyFn(env: Env): Promise<VerifyFn> {
   if (verifyFnPromise === undefined) {
-    verifyFnPromise = (async () => buildVerifyFn(kmsProviderFromEnv(env)))().catch(
+    verifyFnPromise = (async () => buildVerifyFn(await kmsProviderFromEnv(env)))().catch(
       (err: unknown) => {
         verifyFnPromise = undefined; // don't cache a failed init — let the next request retry
         throw err;
@@ -157,7 +164,7 @@ export interface IngestDepsHandle {
 }
 
 /** Build the per-request ingest deps. Injected in tests so routing is exercised without a live DB. */
-export type MakeIngestDeps = (env: Env) => IngestDepsHandle;
+export type MakeIngestDeps = (env: Env) => Promise<IngestDepsHandle>;
 
 /**
  * Sanitize a request Content-Type before it becomes R2 object metadata. The header is fully
@@ -188,8 +195,8 @@ function toResolvedEndpoint(principal: ResolvedPrincipal | null): ResolvedEndpoi
  * request (one per role), torn down by close(). The pepper is decoded in-worker (a Workers secret,
  * never a process env) and createCredentialHasher validates its length.
  */
-export function buildIngestDeps(env: Env): IngestDepsHandle {
-  const hasher = createCredentialHasherFromBase64(env.CREDENTIAL_PEPPER);
+export async function buildIngestDeps(env: Env): Promise<IngestDepsHandle> {
+  const hasher = createCredentialHasherFromBase64(await readSecretBinding(env.CREDENTIAL_PEPPER));
   // Distinct roles -> distinct connection strings -> distinct clients. Both bindings are
   // cache-disabled: the cold lookup must reflect live pause/rotate state, and the insert is RLS-gated.
   const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
@@ -252,15 +259,15 @@ export interface ListenAuthHandle {
   close(): Promise<void>;
 }
 /** Build the listen-upgrade auth deps. Injected in tests so the upgrade is exercised without a DB. */
-export type MakeListenAuth = (env: Env) => ListenAuthHandle;
+export type MakeListenAuth = (env: Env) => Promise<ListenAuthHandle>;
 
 /**
  * Construct the listen-upgrade deps from the bindings: the api-key bearer chain (mirrors apps/api — a
  * KV-cached resolver over the webhook_authn cold lookup, audience-bound to API_RESOURCE) plus a
  * short-lived tenant client for the endpoint existence guard. Both clients torn down by close().
  */
-export function buildListenAuth(env: Env): ListenAuthHandle {
-  const hasher = createCredentialHasherFromBase64(env.CREDENTIAL_PEPPER);
+export async function buildListenAuth(env: Env): Promise<ListenAuthHandle> {
+  const hasher = createCredentialHasherFromBase64(await readSecretBinding(env.CREDENTIAL_PEPPER));
   const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
   const tenant = createClient(env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
   const resolver = createCredentialResolver({
@@ -297,7 +304,7 @@ export async function handleListenUpgrade(
   makeAuth: MakeListenAuth = buildListenAuth,
 ): Promise<Response> {
   const url = new URL(request.url);
-  const handle = makeAuth(env);
+  const handle = await makeAuth(env);
   try {
     const authz = await authorizeBearer(
       handle.authDeps,
@@ -372,7 +379,7 @@ export async function handleFetch(
     return handleListenUpgrade(request, env);
   }
 
-  const handle = makeDeps(env);
+  const handle = await makeDeps(env);
   try {
     return await handleIngest(request, handle.deps);
   } catch (err) {
@@ -413,7 +420,7 @@ async function runAuditAnchorCron(env: Env): Promise<void> {
   // Decode + validate the HMAC key BEFORE opening a connection. A too-short key would otherwise
   // silently MAC every anchor under a weak key and lock the bad anchors in for the whole retention
   // term. b64ToBytes (shared) is the one cross-runtime base64 decoder.
-  const raw = b64ToBytes(env.AUDIT_CHAIN_HMAC_KEY);
+  const raw = b64ToBytes(await readSecretBinding(env.AUDIT_CHAIN_HMAC_KEY));
   if (raw.length < 32) {
     throw new Error(`AUDIT_CHAIN_HMAC_KEY must decode to >= 32 bytes, got ${raw.length}`);
   }

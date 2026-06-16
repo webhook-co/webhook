@@ -29,8 +29,18 @@ export class InvalidCursorError extends Error {
   }
 }
 
-/** Import raw key bytes as a non-extractable HMAC key for cursor signing. */
+/** Bytes in the cursor HMAC key (CURSOR_KEY). */
+const CURSOR_KEY_BYTES = 32;
+
+/**
+ * Import raw key bytes as a non-extractable HMAC key for cursor signing. CURSOR_KEY is a 32-byte
+ * secret shared across surfaces; reject any other length so a misconfigured/truncated key fails loud
+ * at construction rather than silently signing cursors with a weak/mismatched key.
+ */
 export function importCursorKey(raw: Uint8Array): Promise<CryptoKey> {
+  if (raw.length !== CURSOR_KEY_BYTES) {
+    throw new Error(`CURSOR_KEY must be ${CURSOR_KEY_BYTES} bytes, got ${raw.length}`);
+  }
   return importHmacKey(raw);
 }
 

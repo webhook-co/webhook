@@ -14,10 +14,12 @@ export interface McpEnv {
   HYPERDRIVE_TENANT: Hyperdrive;
   /** KV caching resolved principals (keyed by api-key hash); invalidated on revoke. */
   KV_AUTHZ: KVNamespace;
-  /** Base64 credential pepper (Worker secret): keys the api-key HMAC. Never a DB column. */
-  CREDENTIAL_PEPPER: string;
-  /** Base64 HMAC key (Worker secret) for opaque pagination cursors. */
-  CURSOR_KEY: string;
-  /** Base64 audit-chain HMAC key (Worker secret) — the same key the chain rows are signed with. */
-  AUDIT_CHAIN_HMAC_KEY: string;
+  // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
+  // below is ONE account secret each, shared byte-identically with engine + api. Never DB columns.
+  /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */
+  CREDENTIAL_PEPPER: SecretsStoreSecret;
+  /** Base64 HMAC key for opaque pagination cursors (must equal the other surfaces' CURSOR_KEY). */
+  CURSOR_KEY: SecretsStoreSecret;
+  /** Base64 audit-chain HMAC key — the same key the chain rows are signed with. */
+  AUDIT_CHAIN_HMAC_KEY: SecretsStoreSecret;
 }

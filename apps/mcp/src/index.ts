@@ -7,6 +7,7 @@ import {
   makeApiKeyColdLookup,
   makeVerifyBearer,
 } from "@webhook-co/db";
+import { readSecretBinding } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { mcpDefaultHandler } from "./default-handler";
@@ -66,7 +67,7 @@ export default new OAuthProvider({
   // an operational fault propagates (the provider answers 5xx, never a masked 401).
   resolveExternalToken: async ({ token, env }) => {
     const e = env as McpEnv;
-    const hasher = createCredentialHasherFromBase64(e.CREDENTIAL_PEPPER);
+    const hasher = createCredentialHasherFromBase64(await readSecretBinding(e.CREDENTIAL_PEPPER));
     const authn = createClient(e.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
     try {
       const resolver = createCredentialResolver({

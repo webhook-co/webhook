@@ -36,8 +36,11 @@
       "id": "<KV_AUTHZ_ID>",
     },
   ],
-  // Worker secrets (set via `wrangler secret put`, never committed):
-  //   CREDENTIAL_PEPPER       base64, >=32 bytes — keys the api-key HMAC (same pepper as elsewhere)
-  //   CURSOR_KEY              base64, 32 bytes — HMAC for opaque pagination cursors
-  //   AUDIT_CHAIN_HMAC_KEY    base64, 32 bytes — the audit-chain key (same key the rows are signed with)
+  // Cloudflare Secrets Store bindings (`secrets_store_secrets`) — read via `await readSecretBinding(env.X)`.
+  // The binding blocks are injected per environment at deploy (the overlay), NOT committed (store ids
+  // stay out of the repo); tests inject plain-string `bindings` and readSecretBinding bridges both.
+  // All three are ONE shared account secret each, byte-identical with engine + mcp:
+  //   CREDENTIAL_PEPPER       base64 >=32 bytes — keys the api-key HMAC (same pepper as elsewhere)
+  //   CURSOR_KEY              base64 32 bytes — HMAC for opaque pagination cursors (must match elsewhere)
+  //   AUDIT_CHAIN_HMAC_KEY    base64 >=32 bytes — the audit-chain key (same key the rows are signed with)
 }

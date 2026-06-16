@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import type { AnyCapability, AuthContext } from "@webhook-co/contract";
 import { createClient, createReadHandlers } from "@webhook-co/db";
-import { b64ToBytes, importAuditKey, importCursorKey } from "@webhook-co/shared";
+import { b64ToBytes, importAuditKey, importCursorKey, readSecretBinding } from "@webhook-co/shared";
 import type { z } from "zod";
 
 import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
@@ -71,9 +71,13 @@ export class WebhookMcp extends McpAgent<McpEnv> {
   }
 
   async init(): Promise<void> {
+    const [cursorRaw, auditRaw] = await Promise.all([
+      readSecretBinding(this.env.CURSOR_KEY),
+      readSecretBinding(this.env.AUDIT_CHAIN_HMAC_KEY),
+    ]);
     [this.cursorKey, this.auditKey] = await Promise.all([
-      importCursorKey(b64ToBytes(this.env.CURSOR_KEY)),
-      importAuditKey(b64ToBytes(this.env.AUDIT_CHAIN_HMAC_KEY)),
+      importCursorKey(b64ToBytes(cursorRaw)),
+      importAuditKey(b64ToBytes(auditRaw)),
     ]);
 
     for (const cap of MCP_BOUND_CAPABILITIES) {

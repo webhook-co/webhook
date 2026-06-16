@@ -28,3 +28,4 @@ export * from "./kms/lru";
 export * from "./secret-store";
 export * from "./redaction";
 export * from "./metering";
+export * from "./secrets";

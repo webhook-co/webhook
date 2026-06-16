@@ -6,6 +6,7 @@ import {
   decodeCursor,
   encodeCursor,
   importCursorKey,
+  readSecretBinding,
   WATERMARK_DELTA_MS,
   type Cursor,
   type EventSummary,
@@ -53,7 +54,7 @@ export async function drainPages(
 /** The slice of the engine `Env` the listen-session DO needs (tenant reads + the cursor HMAC key). */
 export interface ListenEnv {
   readonly HYPERDRIVE_TENANT: Hyperdrive;
-  readonly CURSOR_KEY: string;
+  readonly CURSOR_KEY: SecretsStoreSecret;
 }
 
 /** Trusted upgrade-handler headers carrying the bearer-derived binding (never from a client frame). */
@@ -98,7 +99,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
     super(ctx, env);
     // Import the cursor HMAC key before any handler runs (re-runs on each hibernation wake).
     ctx.blockConcurrencyWhile(async () => {
-      this.cursorKey = await importCursorKey(b64ToBytes(env.CURSOR_KEY));
+      this.cursorKey = await importCursorKey(b64ToBytes(await readSecretBinding(env.CURSOR_KEY)));
     });
     // Protocol ping/pong is auto-answered without waking the DO — a hibernation-friendly keepalive.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
