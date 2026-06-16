@@ -9,7 +9,7 @@ export type ShowcaseProps = {
   /** Stable id for the heading + `aria-labelledby` wiring. */
   id: string;
   eyebrow: string;
-  title: string;
+  title: ReactNode;
   body: ReactNode;
   link: { label: string; href: string };
   visual: ReactNode;
