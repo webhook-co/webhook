@@ -35,7 +35,6 @@ describe("HomePage", () => {
     render(<HomePage />);
     const titles = [
       /a webhook is an event/i,
-      /every webhook, the moment it lands/i,
       /the same event, wherever you work/i,
       /turn a received webhook into an agent event/i,
       /a permanent url, full inspection/i,
@@ -50,13 +49,11 @@ describe("HomePage", () => {
     }
   });
 
-  it("renders the live-inspector stage with its seed counter and accessible summary", () => {
+  it("renders the live inspector inside the hero with its seed counter and accessible summary", () => {
     render(<HomePage />);
-    expect(
-      screen.getByRole("region", { name: /every webhook, the moment it lands/i }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/an illustrative live feed/i)).toBeInTheDocument();
-    expect(screen.getByText(/1,284/)).toBeInTheDocument();
+    const inspector = screen.getByRole("group", { name: /live webhook inspector/i });
+    expect(within(inspector).getByText(/1,284/)).toBeInTheDocument();
+    expect(within(inspector).getByText(/an illustrative live feed/i)).toBeInTheDocument();
   });
 
   it("renders the surfaces tablist with MCP selected by default", () => {
