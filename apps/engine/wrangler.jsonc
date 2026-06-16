@@ -94,12 +94,15 @@
       "id": "<KV_AUTHZ_ID>",
     },
   ],
-  // Worker secrets (injected per environment at deploy — never committed, no-secrets):
+  // Worker secrets/config (injected per environment at deploy — never committed, no-secrets):
   //   CREDENTIAL_PEPPER  base64 >=32 bytes — keys the ingest-token + api-key HMAC (same pepper).
-  //   KEK                base64 32 bytes  — the local-KMS KEK (ADR-0007).
   //   AUDIT_CHAIN_HMAC_KEY base64 >=32 bytes — the audit-chain MAC key (ADR-0004).
   //   CURSOR_KEY         base64 32 bytes  — HMAC for opaque pagination/tunnel cursors. MUST equal
   //                      apps/api's CURSOR_KEY so cursors verify across surfaces (Slice 11b).
+  //   AWS KMS (ADR-0007 / ADR-0009 day-one KMS) — the KEK custodian (AwsKmsProvider, GenerateDataKey/
+  //     Decrypt over SigV4). KMS_KEY_ARN + AWS_REGION identify the symmetric KEK; AWS_ACCESS_KEY_ID +
+  //     AWS_SECRET_ACCESS_KEY are a least-privilege principal scoped to kms:GenerateDataKey +
+  //     kms:Decrypt on that ARN only. The KEK never leaves AWS. (Slice B moves these to Secrets Store.)
   // Per-session hibernatable listen-tunnel DO (Slice 11b, ADR-0014): SQLite-backed (cursor + binding
   // in storage, survives hibernation). One DO per `wbhk listen` session, keyed by the server-minted
   // sessionId. The ONLY Durable Object in the wedge — ingest stays stateless (no DO on the hot path).

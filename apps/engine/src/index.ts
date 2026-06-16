@@ -14,9 +14,10 @@ import {
   type ResolvedPrincipal,
 } from "@webhook-co/db";
 import {
+  AwsKmsProvider,
   b64ToBytes,
   importAuditKey,
-  LocalKmsProvider,
+  type KmsProvider,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
   SecretStore,
@@ -56,12 +57,18 @@ export interface Env {
   KV_CONFIG: KVNamespace;
   /** Base64 credential pepper (Worker secret): keys the ingest-token HMAC. Never a DB column. */
   CREDENTIAL_PEPPER: string;
-  /**
-   * Base64 KEK (Worker secret) for the local KMS provider — unwraps the per-secret DEKs that seal
-   * provider signing secrets (envelope.ts / ADR-0007). The dev/self-host custodian; AWS KMS swaps in
-   * behind the same KmsProvider seam at the construction site. Never a DB column.
-   */
-  KEK: string;
+  // AWS KMS KEK custodian (ADR-0007 / ADR-0009 day-one KMS) for the KmsProvider seam — wraps/unwraps
+  // the per-secret DEKs that seal provider signing secrets (envelope.ts). AwsKmsProvider calls
+  // GenerateDataKey/Decrypt over SigV4; the KEK itself never leaves AWS. The LocalKmsProvider is the
+  // dev/CI custodian behind the same seam (injected in tests). None of the four below are DB columns.
+  /** The symmetric KMS key ARN (the KEK). Non-secret config, but injected at deploy like the rest. */
+  KMS_KEY_ARN: string;
+  /** AWS region of the KMS key (e.g. "us-east-1"). */
+  AWS_REGION: string;
+  /** Access key id of the least-privilege IAM principal (kms:GenerateDataKey + kms:Decrypt on the ARN). */
+  AWS_ACCESS_KEY_ID: string;
+  /** Secret access key of that principal (Worker secret). */
+  AWS_SECRET_ACCESS_KEY: string;
   /** Hyperdrive config for the webhook_anchor cross-org head read (query caching off). */
   HYPERDRIVE_ANCHOR: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
@@ -85,36 +92,59 @@ const DEDUP_BUCKET_WIDTH_MS = 24 * 60 * 60 * 1000;
 
 // Isolate-scoped DEK handle cache (ADR-0007): unwrapped, non-extractable CryptoKey handles, bounded
 // and org-scoped, reused across requests in this isolate so the KMS unwrap is amortized off the hot
-// path. The verify function (KEK import + SecretStore + adapter loop) is likewise built once per
+// path. The verify function (KMS provider + SecretStore + adapter loop) is likewise built once per
 // isolate, lazily on first verify.
 const DEK_CACHE = new OrgScopedDekCache({ maxEntries: 256 });
-type VerifyFn = (input: VerifyIngestInput) => Promise<VerificationOutcome>;
+export type VerifyFn = (input: VerifyIngestInput) => Promise<VerificationOutcome>;
 let verifyFnPromise: Promise<VerifyFn> | undefined;
 
 /**
- * Lazily build the per-isolate verify function from the KEK secret (LocalKmsProvider — the
- * dev/self-host custodian behind the KmsProvider seam; AWS KMS swaps in later). Memoized so the KEK
- * import + SecretStore happen once per isolate. A REJECTED init (bad/missing KEK) is NOT cached: the
- * memo is cleared so a later request retries rather than the isolate being poisoned for its lifetime
- * (handleIngest's verify guard still degrades a failing build to verified=false, never blocking
- * capture).
+ * Build the production KEK custodian — AWS KMS (ADR-0007 / ADR-0009 day-one KMS), behind the shared
+ * KmsProvider seam so callers never branch on the custodian. Fails fast (like the credential pepper)
+ * if any required config is missing, so a misconfigured deploy surfaces at construction, not at the
+ * first unseal. `AwsKmsProvider.fromConfig` is synchronous and makes no network call here.
  */
-function getVerifyFn(env: Env): Promise<VerifyFn> {
+export function kmsProviderFromEnv(env: Env): KmsProvider {
+  const keyArn = env.KMS_KEY_ARN;
+  const region = env.AWS_REGION;
+  const accessKeyId = env.AWS_ACCESS_KEY_ID;
+  const secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
+  if (!keyArn || !region || !accessKeyId || !secretAccessKey) {
+    throw new Error(
+      "AWS KMS config incomplete: KMS_KEY_ARN, AWS_REGION, AWS_ACCESS_KEY_ID, and AWS_SECRET_ACCESS_KEY are all required",
+    );
+  }
+  return AwsKmsProvider.fromConfig({ keyArn, region, accessKeyId, secretAccessKey });
+}
+
+/**
+ * Compose the verify fn over a KEK custodian: a SecretStore (with the isolate DEK cache) + the frozen
+ * adapter loop. Exported so tests inject a hermetic LocalKmsProvider rather than reaching AWS — prod
+ * passes the AWS custodian from kmsProviderFromEnv. `now` supplies the verification clock (default:
+ * real time); makeVerifyIngest itself never throws (it degrades to verified=false).
+ */
+export function buildVerifyFn(kms: KmsProvider, now: () => Date = () => new Date()): VerifyFn {
+  const store = new SecretStore(kms, DEK_CACHE);
+  return makeVerifyIngest(store, now, (event, fields) =>
+    console.log(JSON.stringify({ message: event, ...fields })),
+  );
+}
+
+/**
+ * Lazily build the per-isolate verify function over the AWS KMS custodian. Memoized so the provider +
+ * SecretStore construction happens once per isolate. A REJECTED init (incomplete KMS config) is NOT
+ * cached: the memo is cleared so a later request retries rather than the isolate being poisoned for
+ * its lifetime (handleIngest's verify guard still degrades a failing build to verified=false, never
+ * blocking capture).
+ */
+export function getVerifyFn(env: Env): Promise<VerifyFn> {
   if (verifyFnPromise === undefined) {
-    verifyFnPromise = (async () => {
-      // b64ToBytes uses the Workers `atob` global (no Buffer in the worker type env) and throws on
-      // non-base64. LocalKmsProvider.fromRawKek enforces the 32-byte length.
-      const kms = await LocalKmsProvider.fromRawKek(b64ToBytes(env.KEK));
-      const store = new SecretStore(kms, DEK_CACHE);
-      return makeVerifyIngest(
-        store,
-        () => new Date(),
-        (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
-      );
-    })().catch((err: unknown) => {
-      verifyFnPromise = undefined; // don't cache a failed init — let the next request retry
-      throw err;
-    });
+    verifyFnPromise = (async () => buildVerifyFn(kmsProviderFromEnv(env)))().catch(
+      (err: unknown) => {
+        verifyFnPromise = undefined; // don't cache a failed init — let the next request retry
+        throw err;
+      },
+    );
   }
   return verifyFnPromise;
 }
