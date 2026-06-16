@@ -36,11 +36,10 @@ let epTail: string; // org A endpoint with 3 events at controlled (backdated) re
 const ctxA: AuthContext = { orgId: "", scopes: ["endpoints:read", "events:read", "audit:read"] };
 const ctxB: AuthContext = { orgId: "", scopes: ["endpoints:read", "events:read", "audit:read"] };
 
-// Deterministic receive times for the tail fixtures, far in the past so any watermark cutoff
-// (now - δ) admits them. eTail1 < eTail2 < eTail3 by received_at.
+// Deterministic receive times for the tail fixtures, far in the past so they're always well below
+// the gapless watermark (now() - δ, computed Postgres-side). eTail1 < eTail2 < eTail3 by received_at.
 const TAIL_BASE = new Date("2026-06-01T00:00:00.000Z");
 const tailAt = (ms: number): Date => new Date(TAIL_BASE.getTime() + ms);
-const TAIL_FAR_FUTURE = tailAt(60_000); // a cutoff that admits all three
 let eTail1: string;
 let eTail2: string;
 let eTail3: string;
@@ -314,7 +313,7 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
 describe("tailEvents (forward, watermark-bounded)", () => {
   it("returns events oldest-first up to the watermark", async () => {
     const page = await withTenant(app, orgA, (tx) =>
-      tailEvents(tx, { endpointId: epTail, watermarkCutoff: TAIL_FAR_FUTURE, limit: 50 }),
+      tailEvents(tx, { endpointId: epTail, limit: 50 }),
     );
     expect(page.items.map((e) => e.id)).toEqual([eTail1, eTail2, eTail3]);
   });
@@ -325,12 +324,7 @@ describe("tailEvents (forward, watermark-bounded)", () => {
     let pages = 0;
     for (;;) {
       const page = await withTenant(app, orgA, (tx) =>
-        tailEvents(tx, {
-          endpointId: epTail,
-          sinceCursor: cursor,
-          watermarkCutoff: TAIL_FAR_FUTURE,
-          limit: 2,
-        }),
+        tailEvents(tx, { endpointId: epTail, sinceCursor: cursor, limit: 2 }),
       );
       for (const ev of page.items) seen.push(ev.id);
       pages += 1;
@@ -344,35 +338,65 @@ describe("tailEvents (forward, watermark-bounded)", () => {
 
   it("resumes strictly after sinceCursor", async () => {
     const first = await withTenant(app, orgA, (tx) =>
-      tailEvents(tx, { endpointId: epTail, watermarkCutoff: TAIL_FAR_FUTURE, limit: 1 }),
+      tailEvents(tx, { endpointId: epTail, limit: 1 }),
     );
     expect(first.items.map((e) => e.id)).toEqual([eTail1]);
     expect(first.nextCursor).not.toBeNull();
     const rest = await withTenant(app, orgA, (tx) =>
-      tailEvents(tx, {
-        endpointId: epTail,
-        sinceCursor: first.nextCursor!,
-        watermarkCutoff: TAIL_FAR_FUTURE,
-        limit: 50,
-      }),
+      tailEvents(tx, { endpointId: epTail, sinceCursor: first.nextCursor!, limit: 50 }),
     );
     expect(rest.items.map((e) => e.id)).toEqual([eTail2, eTail3]);
   });
 
-  it("withholds events newer than the watermark cutoff", async () => {
-    // A cutoff between eTail2 (+2000) and eTail3 (+3000): eTail3 is withheld until it clears.
+  it("withholds events newer than the Postgres-side watermark (now() - δ)", async () => {
+    // The watermark is computed DB-side, so position rows relative to the DB clock: a row ~2s old is
+    // inside the 5s window (withheld); a row ~30s old has cleared it (returned). δ = WATERMARK_DELTA_MS
+    // (5s), so these offsets sit ~3s / ~25s from the boundary — no timing flakiness.
+    const epWm = (await createEndpoint(app, { orgId: orgA, name: "ep-watermark" }, hasher)).id;
+    const recent = await seedEvent(orgA, epWm, { provider: "stripe" });
+    const old = await seedEvent(orgA, epWm, { provider: "stripe" });
+    await withTenant(app, orgA, async (tx) => {
+      await tx`update events set received_at = now() - interval '2 seconds' where id = ${recent}`;
+      await tx`update events set received_at = now() - interval '30 seconds' where id = ${old}`;
+    });
     const page = await withTenant(app, orgA, (tx) =>
-      tailEvents(tx, { endpointId: epTail, watermarkCutoff: tailAt(2500), limit: 50 }),
+      tailEvents(tx, { endpointId: epWm, limit: 50 }),
     );
-    expect(page.items.map((e) => e.id)).toEqual([eTail1, eTail2]);
-    expect(page.items.map((e) => e.id)).not.toContain(eTail3);
+    expect(page.items.map((e) => e.id)).toEqual([old]); // the cleared row only
+    expect(page.items.map((e) => e.id)).not.toContain(recent); // still inside the watermark window
   });
 
   it("is org-scoped: a cross-org endpoint yields no rows under RLS", async () => {
     const page = await withTenant(app, orgA, (tx) =>
-      tailEvents(tx, { endpointId: epB, watermarkCutoff: TAIL_FAR_FUTURE, limit: 50 }),
+      tailEvents(tx, { endpointId: epB, limit: 50 }),
     );
     expect(page.items).toEqual([]);
+  });
+
+  it("isolates CONCURRENT tenant polls — no cross-tenant leakage under set_config(local)", async () => {
+    // The watermark+cursor are pooling-safe only if each poll's org context (set_config(..., local))
+    // stays pinned to its own transaction. Race two orgs' tails on the shared pool and assert neither
+    // sees the other's rows — the regression that would fire if the GUC leaked across connections.
+    const epIsoA = (await createEndpoint(app, { orgId: orgA, name: "ep-iso-a" }, hasher)).id;
+    const epIsoB = (await createEndpoint(app, { orgId: orgB, name: "ep-iso-b" }, hasher)).id;
+    const aEvents = [
+      await seedEventAt(orgA, epIsoA, tailAt(10_000)),
+      await seedEventAt(orgA, epIsoA, tailAt(11_000)),
+    ];
+    const bEvent = await seedEventAt(orgB, epIsoB, tailAt(10_000));
+
+    const [aPage, bPage] = await Promise.all([
+      withTenant(app, orgA, (tx) => tailEvents(tx, { endpointId: epIsoA, limit: 50 })),
+      withTenant(app, orgB, (tx) => tailEvents(tx, { endpointId: epIsoB, limit: 50 })),
+    ]);
+    expect([...aPage.items.map((e) => e.id)].sort()).toEqual([...aEvents].sort());
+    expect(bPage.items.map((e) => e.id)).toEqual([bEvent]);
+
+    // Cross-org: org A polling org B's endpoint sees nothing, even concurrently.
+    const cross = await withTenant(app, orgA, (tx) =>
+      tailEvents(tx, { endpointId: epIsoB, limit: 50 }),
+    );
+    expect(cross.items).toEqual([]);
   });
 
   it("paginates same-millisecond events without duplicating or stalling (precision regression)", async () => {
@@ -393,18 +417,12 @@ describe("tailEvents (forward, watermark-bounded)", () => {
       orgA,
       (tx) => tx`update events set received_at = '2026-06-10T12:00:00.005800+00' where id = ${p2}`,
     );
-    const cutoff = new Date("2026-06-10T13:00:00.000Z");
     const seen: string[] = [];
     let cursor: Cursor | undefined;
     let pages = 0;
     for (;;) {
       const page = await withTenant(app, orgA, (tx) =>
-        tailEvents(tx, {
-          endpointId: epPrec,
-          sinceCursor: cursor,
-          watermarkCutoff: cutoff,
-          limit: 1,
-        }),
+        tailEvents(tx, { endpointId: epPrec, sinceCursor: cursor, limit: 1 }),
       );
       for (const ev of page.items) seen.push(ev.id);
       pages += 1;

@@ -16,13 +16,7 @@ import {
   type AnyCapability,
   type AuthContext,
 } from "@webhook-co/contract";
-import {
-  decodeCursor,
-  encodeCursor,
-  verifyAuditChain,
-  watermarkCutoff,
-  type Cursor,
-} from "@webhook-co/shared";
+import { decodeCursor, encodeCursor, verifyAuditChain, type Cursor } from "@webhook-co/shared";
 
 import { readAuditChain } from "./audit-append";
 import { withTenant, type Sql } from "./client";
@@ -112,15 +106,12 @@ export function createReadHandlers(deps: ReadHandlerDeps): ReadHandlers {
     };
     const decoded = await decode(sinceCursor);
     const page = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
-      // Same NOT_FOUND-vs-empty distinction as events.list. The watermark cutoff (now - δ) is
-      // computed per call so a slow caller can't pin an old cutoff; it makes the tail gapless.
+      // Same NOT_FOUND-vs-empty distinction as events.list. tailEvents computes the gapless watermark
+      // cutoff (now() - δ) Postgres-side, so a slow caller can't pin an old cutoff and there's no
+      // Worker↔Postgres clock skew in the gapless invariant.
       const endpoint = await getEndpoint(tx, endpointId);
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
-      return tailEvents(tx, {
-        endpointId,
-        sinceCursor: decoded,
-        watermarkCutoff: watermarkCutoff(new Date()),
-      });
+      return tailEvents(tx, { endpointId, sinceCursor: decoded });
     });
     return { items: page.items, nextCursor: await encode(page.nextCursor) };
   });

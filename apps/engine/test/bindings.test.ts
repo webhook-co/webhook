@@ -31,4 +31,16 @@ describe("engine ingest bindings", () => {
     expect(typeof bindings.KV_CONFIG.get).toBe("function");
     expect(typeof bindings.KV_CONFIG.put).toBe("function");
   });
+
+  // Slice 11b: the CLI listen tunnel adds the per-session DO namespace + the KV_AUTHZ credential
+  // cache for its bearer chain. Assert Miniflare provisions both from wrangler.jsonc.
+  it("exposes the LISTEN_SESSION Durable Object namespace", () => {
+    expect(typeof bindings.LISTEN_SESSION.idFromName).toBe("function");
+    expect(typeof bindings.LISTEN_SESSION.get).toBe("function");
+  });
+
+  it("exposes the KV_AUTHZ namespace for the tunnel bearer chain", () => {
+    expect(typeof bindings.KV_AUTHZ.get).toBe("function");
+    expect(typeof bindings.KV_AUTHZ.put).toBe("function");
+  });
 });
