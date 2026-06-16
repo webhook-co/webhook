@@ -8,6 +8,7 @@ import {
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
+  WATERMARK_DELTA_MS,
   type Cursor,
   type Endpoint,
   type Event,
@@ -157,28 +158,33 @@ export interface TailEventsOptions {
   readonly endpointId: string;
   /** Resume position; the scan returns rows strictly AFTER it (omit to start from the oldest). */
   readonly sinceCursor?: Cursor;
-  /** The newest received_at the tail may return — the caller passes watermarkCutoff(now). */
-  readonly watermarkCutoff: Date;
   readonly limit?: number;
 }
 
 // The forward sibling of listEvents: a watermark-bounded tail. Where listEvents browses newest-first
 // (received_at DESC, < cursor), the tail reads oldest-first (received_at ASC, > cursor) so a consumer
-// advances chronologically, and it only returns rows at or before the watermark cutoff. The cutoff is
-// what makes the tail gapless on resume: an in-flight ingest (statement_timeout = WATERMARK_DELTA_MS)
-// cannot commit a row with a received_at older than now - δ, so once a cursor passes the watermark no
-// later-committed row can fall behind it. Backed by events_tunnel_idx (endpoint_id, received_at, id).
+// advances chronologically, and it only returns rows at or before the gapless watermark `now() - δ`.
+// The watermark is what makes the tail gapless on resume: an in-flight ingest (statement_timeout =
+// WATERMARK_DELTA_MS) cannot commit a row with a received_at older than now() - δ, so once a cursor
+// passes the watermark no later-committed row can fall behind it.
+//
+// The cutoff is computed Postgres-side (`now()`), NOT from a caller-supplied Date: received_at is
+// stamped by the events trigger with the DB clock, so comparing it to the DB's own now() keeps δ
+// exactly the statement_timeout with no Worker↔Postgres clock skew eroding the safety margin. The
+// filter stays on the RAW received_at (µs) — the gapless proof needs δ to be exactly the timeout, so
+// it must NOT be ms-truncated (unlike the keyset comparison, which matches the ms-resolution cursor).
+// Backed by events_tunnel_idx (endpoint_id, received_at, id).
 export async function tailEvents(
   tx: TenantTx,
   opts: TailEventsOptions,
 ): Promise<Page<EventSummary>> {
   const limit = clampLimit(opts.limit);
-  const { endpointId, sinceCursor, watermarkCutoff } = opts;
+  const { endpointId, sinceCursor } = opts;
   const rows = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified
     from events
     where endpoint_id = ${endpointId}
-      and received_at <= ${watermarkCutoff}::timestamptz
+      and received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')
       ${sinceCursor ? tx`and (date_trunc('milliseconds', received_at), id) > (${sinceCursor.receivedAt}::timestamptz, ${sinceCursor.id}::uuid)` : tx``}
     order by date_trunc('milliseconds', received_at) asc, id asc
     limit ${limit + 1}`;

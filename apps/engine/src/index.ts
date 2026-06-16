@@ -1,10 +1,16 @@
+import { authorizeBearer, type BearerAuthzDeps } from "@webhook-co/contract";
 import {
   createClient,
   createCredentialHasherFromBase64,
+  createCredentialResolver,
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
+  getEndpoint,
   insertIngestEvent,
+  makeApiKeyColdLookup,
+  makeVerifyBearer,
   readAuditChainHeads,
+  withTenant,
   type ResolvedPrincipal,
 } from "@webhook-co/db";
 import {
@@ -27,6 +33,10 @@ import {
   type VerifyIngestInput,
 } from "./ingest";
 import { makeVerifyIngest } from "./verify";
+
+// The per-session listen-tunnel Durable Object (Slice 11b, ADR-0014); wrangler binds it via
+// LISTEN_SESSION. Re-exported here so the class is registered on the engine Worker entrypoint.
+export { ListenSession, POLL_INTERVAL_MS } from "./listen-session";
 
 // The webhook engine Worker. `fetch` is the wbhk.my write path (cookieless, path-token ingest);
 // `scheduled` runs the WORM head-anchor cron (ADR-0004). Handlers stay thin: validate -> delegate
@@ -58,6 +68,12 @@ export interface Env {
   R2_AUDIT_ANCHOR: R2Bucket;
   /** Base64 audit-chain HMAC key (Worker secret) — the same key the chain rows are signed with. */
   AUDIT_CHAIN_HMAC_KEY: string;
+  /** Per-session hibernatable listen-tunnel Durable Objects (Slice 11b, ADR-0014). */
+  LISTEN_SESSION: DurableObjectNamespace;
+  /** KV caching resolved principals for the tunnel bearer chain (mirrors apps/api KV_AUTHZ). */
+  KV_AUTHZ: KVNamespace;
+  /** Base64 HMAC key (Worker secret) for opaque pagination cursors — must match apps/api CURSOR_KEY. */
+  CURSOR_KEY: string;
 }
 
 /**
@@ -191,10 +207,119 @@ export function buildIngestDeps(env: Env): IngestDepsHandle {
   };
 }
 
+// The resource identifier (RFC 8707 audience) the tunnel's bearer tokens must be bound to. The CLI
+// listen tunnel is the events.tail capability over a WebSocket transport, so it reuses the api.
+// audience — existing api keys tunnel unchanged (ADR-0014). MUST match apps/api's API_RESOURCE.
+export const API_RESOURCE = "https://api.webhook.co";
+const LISTEN_PRM_URL = `${API_RESOURCE}/.well-known/oauth-protected-resource`;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Per-upgrade auth deps: the bearer authorize gate + the endpoint existence guard (both injectable). */
+export interface ListenAuthHandle {
+  readonly authDeps: BearerAuthzDeps;
+  /** True if the endpoint exists for the org under RLS — the NOT_FOUND-vs-spin-a-DO guard. */
+  endpointExists(orgId: string, endpointId: string): Promise<boolean>;
+  close(): Promise<void>;
+}
+/** Build the listen-upgrade auth deps. Injected in tests so the upgrade is exercised without a DB. */
+export type MakeListenAuth = (env: Env) => ListenAuthHandle;
+
 /**
- * The wbhk.my router. GET / is the ONLY liveness probe; every other request is the ingest write
- * path (handleIngest enforces POST + the rest). Owns per-request DB-client lifecycle: build deps,
- * delegate, and close() in a finally so a thrown handler error never leaks a connection.
+ * Construct the listen-upgrade deps from the bindings: the api-key bearer chain (mirrors apps/api — a
+ * KV-cached resolver over the webhook_authn cold lookup, audience-bound to API_RESOURCE) plus a
+ * short-lived tenant client for the endpoint existence guard. Both clients torn down by close().
+ */
+export function buildListenAuth(env: Env): ListenAuthHandle {
+  const hasher = createCredentialHasherFromBase64(env.CREDENTIAL_PEPPER);
+  const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
+  const tenant = createClient(env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+  const resolver = createCredentialResolver({
+    hasher,
+    cache: kvCredentialCache(env.KV_AUTHZ),
+    coldLookup: makeApiKeyColdLookup(authn, API_RESOURCE),
+  });
+  return {
+    authDeps: {
+      verifyBearer: makeVerifyBearer(resolver),
+      resource: API_RESOURCE,
+      resourceMetadataUrl: LISTEN_PRM_URL,
+    },
+    endpointExists: async (orgId, endpointId) =>
+      (await withTenant(tenant, orgId, (tx) => getEndpoint(tx, endpointId))) !== null,
+    close: async () => {
+      // Tear down both clients regardless of either's outcome — never leak a pooled connection.
+      await Promise.allSettled([authn.end(), tenant.end()]);
+    },
+  };
+}
+
+/**
+ * The wbhk.my CLI listen-tunnel upgrade. Bearer-authorizes the events.tail capability (cookieless,
+ * Authorization header — never a ?token= that would leak into request logs), validates + existence-
+ * checks the endpoint under the bearer-derived org's RLS (a clean 404 before spinning a DO), then
+ * forwards the upgrade to the per-session LISTEN_SESSION DO with the binding on trusted X-Listen-*
+ * headers (set server-side from the verified principal, NEVER from a client). The client learns its
+ * session id from the DO's `ready` frame; a reconnect passes ?sessionId= to resume on the same DO.
+ */
+export async function handleListenUpgrade(
+  request: Request,
+  env: Env,
+  makeAuth: MakeListenAuth = buildListenAuth,
+): Promise<Response> {
+  const url = new URL(request.url);
+  const handle = makeAuth(env);
+  try {
+    const authz = await authorizeBearer(
+      handle.authDeps,
+      request.headers.get("authorization"),
+      "events.tail",
+    );
+    if (!authz.ok) {
+      // 401 (no/invalid/misdirected credential) or 403 (under-scoped) — no socket, RFC 6750 challenge.
+      return new Response(null, {
+        status: authz.status,
+        headers: { "www-authenticate": authz.challenge },
+      });
+    }
+
+    const endpointId = url.searchParams.get("endpointId");
+    if (!endpointId || !UUID_RE.test(endpointId)) {
+      return new Response("invalid or missing endpointId", { status: 400 });
+    }
+    // Existence guard under the bearer-derived org's RLS: a cross-org or unknown id is NOT_FOUND
+    // (and indistinguishable — a caller can't probe another org's endpoints).
+    if (!(await handle.endpointExists(authz.ctx.orgId, endpointId))) {
+      return new Response("endpoint not found", { status: 404 });
+    }
+
+    // Per-session DO: a fresh id on first connect, or the client's id on reconnect (sticky resume).
+    const sessionId = url.searchParams.get("sessionId") ?? crypto.randomUUID();
+    const stub = env.LISTEN_SESSION.get(env.LISTEN_SESSION.idFromName(sessionId));
+
+    // Forward the upgrade with the binding on trusted headers, overwriting any client-supplied ones.
+    const headers = new Headers(request.headers);
+    headers.set("x-listen-org-id", authz.ctx.orgId);
+    headers.set("x-listen-endpoint-id", endpointId);
+    headers.set("x-listen-session-id", sessionId);
+    // Forward the resume cursor only if it's shaped like one (opaque base64url `<payload>.<mac>`).
+    // A control char (CR/LF) would otherwise make headers.set throw → an ungraceful 500; a malformed
+    // value is simply dropped (the DO then resumes from its durable cursor / the oldest). The DO
+    // still HMAC-verifies it, so this charset check is purely about not crashing on junk input.
+    const since = url.searchParams.get("sinceCursor");
+    if (since && /^[A-Za-z0-9._-]+$/.test(since)) headers.set("x-listen-since-cursor", since);
+    else headers.delete("x-listen-since-cursor");
+
+    return stub.fetch(new Request(request, { headers }));
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * The wbhk.my router. GET / is the ONLY liveness probe; the /listen WebSocket upgrade is the CLI
+ * tunnel; every other request is the ingest write path (handleIngest enforces POST + the rest). Owns
+ * per-request DB-client lifecycle: build deps, delegate, and close() in a finally so a thrown handler
+ * error never leaks a connection.
  */
 export async function handleFetch(
   request: Request,
@@ -207,6 +332,14 @@ export async function handleFetch(
       status: 200,
       headers: { "content-type": "text/plain; charset=utf-8" },
     });
+  }
+
+  // The CLI listen tunnel: a bearer-authed WebSocket upgrade (separate auth/deps from ingest).
+  if (url.pathname === "/listen") {
+    if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+      return new Response("expected a websocket upgrade", { status: 426 });
+    }
+    return handleListenUpgrade(request, env);
   }
 
   const handle = makeDeps(env);
