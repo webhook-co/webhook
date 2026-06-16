@@ -34,13 +34,11 @@ describe("HomePage", () => {
   it("renders every content section title as an h2", () => {
     render(<HomePage />);
     const titles = [
-      /a webhook is an event/i,
       /the same event, wherever you work/i,
       /turn a received webhook into an agent event/i,
       /a permanent url, full inspection/i,
       /received once, in order, never dropped/i,
       /when a signature fails/i,
-      /start where it makes sense for you/i,
       /private by default, open at the core/i,
       /point a webhook at it/i,
     ];
@@ -101,13 +99,18 @@ describe("HomePage", () => {
     );
   });
 
-  it("renders the resource cards and the closing call to action", () => {
+  it("renders the closing call to action", () => {
     render(<HomePage />);
-    // Scoped to the resources section — the footer carries the same link labels.
-    const resources = screen.getByRole("region", { name: /start where it makes sense for you/i });
-    expect(within(resources).getByRole("link", { name: /quickstart/i })).toBeInTheDocument();
-    expect(within(resources).getByRole("link", { name: /api reference/i })).toBeInTheDocument();
+    // "Start free" / "Read the docs" appear in both the hero and the final CTA — assert presence,
+    // not an exact count, so the count rides on the hero regardless of the final CTA's button set.
     expect(screen.getAllByRole("link", { name: /start free/i }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole("link", { name: /read the docs/i }).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the resource links discoverable in the footer (the Resources section was removed)", () => {
+    render(<HomePage />);
+    const developers = screen.getByRole("navigation", { name: /developers/i });
+    expect(within(developers).getByRole("link", { name: /quickstart/i })).toBeInTheDocument();
+    expect(within(developers).getByRole("link", { name: /api reference/i })).toBeInTheDocument();
   });
 });
