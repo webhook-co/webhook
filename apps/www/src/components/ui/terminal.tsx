@@ -62,15 +62,9 @@ export const Tok = {
 };
 
 /**
- * One monospace row in the terminal. `highlight` marks the replayed line — its pulsing tint lives in
- * `marketing.css` (`.term-hl`) since it needs a `color-mix` + inset shadow that Tailwind utilities
- * can't express cleanly. Rows are flex blocks (not literal `<pre>` whitespace) so Prettier can't
- * reflow the rendered output.
+ * One monospace row in the terminal. Rows are flex blocks (not literal `<pre>` whitespace) so
+ * Prettier can't reflow the rendered output.
  */
-export function TerminalLine({
-  highlight = false,
-  className,
-  ...props
-}: ComponentPropsWithoutRef<"div"> & { highlight?: boolean }) {
-  return <div className={cn("whitespace-pre", highlight && "term-hl", className)} {...props} />;
+export function TerminalLine({ className, ...props }: ComponentPropsWithoutRef<"div">) {
+  return <div className={cn("whitespace-pre", className)} {...props} />;
 }

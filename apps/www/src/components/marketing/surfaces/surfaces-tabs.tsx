@@ -43,16 +43,16 @@ const SURFACES: readonly TabItem[] = [
         <TerminalLine>
           <Tok.Dim>→</Tok.Dim> events.get
           {"  "}
-          <Tok.Mut>{'{ id: "evt_1Qx84K" }'}</Tok.Mut>
+          <Tok.Mut>{'{ id: "evt_2Nf7Rb" }'}</Tok.Mut>
         </TerminalLine>
         <TerminalLine aria-hidden="true"> </TerminalLine>
         <TerminalLine>
           {"  "}provider{"   "}
-          <Tok.Mut>stripe</Tok.Mut>
+          <Tok.Mut>linear</Tok.Mut>
         </TerminalLine>
         <TerminalLine>
           {"  "}event{"      "}
-          <Tok.Mut>invoice.paid</Tok.Mut>
+          <Tok.Mut>issue.updated</Tok.Mut>
         </TerminalLine>
         <TerminalLine>
           {"  "}signature{"  "}
@@ -60,7 +60,7 @@ const SURFACES: readonly TabItem[] = [
         </TerminalLine>
         <TerminalLine>
           {"  "}status{"     "}
-          <Tok.Dim>200 · 38ms</Tok.Dim>
+          <Tok.Dim>200 · 41ms</Tok.Dim>
         </TerminalLine>
       </Terminal>
     ),
@@ -75,12 +75,12 @@ const SURFACES: readonly TabItem[] = [
           <Tok.Dim>$</Tok.Dim> wbhk listen
         </TerminalLine>
         <TerminalLine>
-          <Tok.Mut>→ capturing at</Tok.Mut> https://3f2a.wbhk.my
+          <Tok.Mut>→ capturing at</Tok.Mut> https://7b9d.wbhk.my
         </TerminalLine>
         <TerminalLine aria-hidden="true"> </TerminalLine>
         <TerminalLine>
           <Tok.Dim>14:02:11</Tok.Dim>
-          {"  stripe  invoice.paid  "}
+          {"  linear  issue.updated "}
           <Tok.Ok>✓ verified</Tok.Ok>
           {"  "}
           <Tok.Dim>→ 200</Tok.Dim>
@@ -88,6 +88,13 @@ const SURFACES: readonly TabItem[] = [
         <TerminalLine>
           <Tok.Dim>14:02:38</Tok.Dim>
           {"  github  push          "}
+          <Tok.Ok>✓ verified</Tok.Ok>
+          {"  "}
+          <Tok.Dim>→ 200</Tok.Dim>
+        </TerminalLine>
+        <TerminalLine>
+          <Tok.Dim>14:03:02</Tok.Dim>
+          {"  resend  email.bounced "}
           <Tok.Ok>✓ verified</Tok.Ok>
           {"  "}
           <Tok.Dim>→ 200</Tok.Dim>
@@ -114,7 +121,7 @@ const SURFACES: readonly TabItem[] = [
         </TerminalLine>
         <TerminalLine>
           {'  "data": [{ "id": '}
-          <Tok.Ok>&quot;evt_1Qx84K&quot;</Tok.Ok>, &quot;verified&quot;: <Tok.Info>true</Tok.Info>
+          <Tok.Ok>&quot;evt_2Nf7Rb&quot;</Tok.Ok>, &quot;verified&quot;: <Tok.Info>true</Tok.Info>
           {" }]"}
         </TerminalLine>
         <TerminalLine>
@@ -128,28 +135,32 @@ const SURFACES: readonly TabItem[] = [
     label: "Web app",
     icon: <AppWindow size={15} />,
     panel: (
-      <Terminal title="webhook.co/events" meta="evt_1Qx84K">
+      <Terminal title="webhook.co/events" meta="evt_2Nf7Rb">
         <TerminalLine>
           provider{"   "}
-          <Tok.Mut>stripe</Tok.Mut>
+          <Tok.Mut>linear</Tok.Mut>
         </TerminalLine>
         <TerminalLine>
           event{"      "}
-          <Tok.Mut>invoice.paid</Tok.Mut>
+          <Tok.Mut>issue.updated</Tok.Mut>
         </TerminalLine>
         <TerminalLine>
           signature{"  "}
           <Tok.Ok>✓ verified</Tok.Ok>
           {"  "}
-          <Tok.Dim>whsec_…3f2a</Tok.Dim>
+          <Tok.Dim>whsec_…7b9d</Tok.Dim>
         </TerminalLine>
         <TerminalLine>
           received{"   "}
           <Tok.Dim>14:02:11.840</Tok.Dim>
         </TerminalLine>
         <TerminalLine>
+          size{"       "}
+          <Tok.Dim>2.1 KB</Tok.Dim>
+        </TerminalLine>
+        <TerminalLine>
           status{"     "}
-          <Tok.Dim>200 · 38ms ·</Tok.Dim> <Tok.Info>replayed 1×</Tok.Info>
+          <Tok.Dim>200 · 41ms ·</Tok.Dim> <Tok.Info>replayed 1×</Tok.Info>
         </TerminalLine>
       </Terminal>
     ),

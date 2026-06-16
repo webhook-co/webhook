@@ -9,6 +9,9 @@ import type { ReactNode } from "react";
 export function DeliveryPipeline() {
   return (
     <div className="rounded-card border border-hairline bg-surface px-5 pt-6 pb-5 shadow-2">
+      <p className="mb-5 font-mono text-[11.5px] text-fg-muted">
+        event <span className="text-fg-secondary">twilio · message.received</span>
+      </p>
       <Lane tag="happy path" tone="ok">
         <PipeNode>receive</PipeNode>
         <PipeLink />

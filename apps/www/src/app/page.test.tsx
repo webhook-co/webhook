@@ -35,9 +35,7 @@ describe("HomePage", () => {
     render(<HomePage />);
     const titles = [
       /the same event, wherever you work/i,
-      /turn a received webhook into an agent event/i,
-      /a permanent url, full inspection/i,
-      /received once, in order, never dropped/i,
+      /received once, in order, never silently dropped/i,
       /when a signature fails/i,
       /private by default, open at the core/i,
       /point a webhook at it/i,
@@ -72,25 +70,16 @@ describe("HomePage", () => {
     );
   });
 
-  it("marks the not-yet-GA showcases as 'soon' and leaves the live wedge unmarked", () => {
+  it("marks the not-yet-GA delivery showcase as 'soon'", () => {
     render(<HomePage />);
-    const mcp = screen.getByRole("region", {
-      name: /turn a received webhook into an agent event/i,
-    });
     const delivery = screen.getByRole("region", {
-      name: /received once, in order, never dropped/i,
+      name: /received once, in order, never silently dropped/i,
     });
-    const capture = screen.getByRole("region", { name: /a permanent url, full inspection/i });
-    expect(within(mcp).getByText("soon")).toBeInTheDocument();
     expect(within(delivery).getByText("soon")).toBeInTheDocument();
-    expect(within(capture).queryByText("soon")).not.toBeInTheDocument();
   });
 
-  it("renders the replay terminal line and the real Standard Webhooks link", () => {
+  it("renders the real Standard Webhooks link in the verification showcase", () => {
     render(<HomePage />);
-    // Scoped to the capture·replay showcase — "replayed" also appears in the surfaces web panel.
-    const capture = screen.getByRole("region", { name: /a permanent url, full inspection/i });
-    expect(within(capture).getByText(/replayed/i)).toBeInTheDocument();
     // Scoped to the verification section — the footer and nav also link "Standard Webhooks".
     const verification = screen.getByRole("region", { name: /when a signature fails/i });
     expect(within(verification).getByRole("link", { name: "Standard Webhooks" })).toHaveAttribute(
