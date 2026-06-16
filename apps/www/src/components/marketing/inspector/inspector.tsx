@@ -4,22 +4,25 @@ import { cn } from "@webhook-co/ui";
 import { Pause, Play } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { SectionHeading } from "@/components/ui/section-heading";
-import { container, focusRing, sectionPad } from "@/lib/styles";
+import { focusRing } from "@/lib/styles";
 import { FAIL_REASON_LABEL, type SigStatus, type StreamRow } from "./stream-data";
 import { useLiveStream } from "./use-live-stream";
 
 /**
- * The live-inspector stage — the homepage's signature element. An illustrative stream of webhook
- * events arriving, getting signature-checked, and staying ready to replay. The cycling logic lives in
- * `useLiveStream` (over the pure engine); this file is the view plus its interaction state (replay).
+ * The live inspector — the homepage's signature element, embedded directly in the hero as its right
+ * column. An illustrative stream of webhook events arriving, getting signature-checked, and staying
+ * ready to replay. The cycling logic lives in `useLiveStream` (over the pure engine); this file is
+ * the card view plus its interaction state (replay).
+ *
+ * Headless of any section/heading chrome: the hero's h1 is the page's only heading, so the inspector
+ * is labeled by `role="group"` + its own visible "live · N events" header rather than an <h2>.
  *
  * Accessibility, deliberately: the auto-update is pausable (WCAG 2.2.2) via a real pause/play button;
  * reduced-motion users start paused but can opt in; the moving list is `aria-live="off"` with one
  * visually-hidden summary so screen readers get context without per-row spam; and Replay is a real,
  * keyboard-operable button that produces a real local result (a "replayed N×" stamp), not a fake glyph.
  */
-export function InspectorStage() {
+export function Inspector() {
   const { state, isPlaying, toggle } = useLiveStream();
   const [replays, setReplays] = useState<Record<string, number>>({});
 
@@ -43,91 +46,63 @@ export function InspectorStage() {
   }
 
   return (
-    <section aria-labelledby="inspector-title" className={cn(container, sectionPad)}>
-      <SectionHeading
-        id="inspector-title"
-        eyebrow="live inspector"
-        title="Every webhook, the moment it lands"
-      >
-        A signed URL captures each request, checks its signature, and keeps it ready to replay.
-        Here&rsquo;s what that looks like.
-      </SectionHeading>
-
-      <div className="grid gap-4 min-[861px]:grid-cols-[1fr_290px]">
-        <div className="overflow-hidden rounded-card border border-hairline bg-surface shadow-2">
-          <header className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-2.5">
-            <div className="flex items-center gap-2.5 font-mono text-xs text-fg-muted">
-              <span className="inline-flex items-center gap-1.5">
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "size-1.5 rounded-full",
-                    isPlaying ? "inspector-live-dot bg-ok" : "bg-fg-faint",
-                  )}
-                />
-                {isPlaying ? "live" : "paused"}
-              </span>
-              <span aria-hidden="true" className="text-fg-faint">
-                ·
-              </span>
-              <span className="tabular-nums">{state.counter.toLocaleString()} events</span>
-            </div>
-            <button
-              type="button"
-              onClick={toggle}
-              aria-label={isPlaying ? "Pause the event stream" : "Play the event stream"}
+    <div
+      role="group"
+      aria-label="Live webhook inspector"
+      className="overflow-hidden rounded-card border border-hairline bg-surface shadow-2"
+    >
+      <header className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-2.5">
+        <div className="flex items-center gap-2.5 font-mono text-xs text-fg-muted">
+          <span className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden="true"
               className={cn(
-                focusRing,
-                "inline-flex items-center gap-1.5 rounded-control border border-hairline px-2.5 py-1 font-mono text-xs text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+                "size-1.5 rounded-full",
+                isPlaying ? "inspector-live-dot bg-ok" : "bg-fg-faint",
               )}
-            >
-              {isPlaying ? (
-                <Pause size={12} aria-hidden="true" />
-              ) : (
-                <Play size={12} aria-hidden="true" />
-              )}
-              <span aria-hidden="true">{isPlaying ? "Pause" : "Play"}</span>
-            </button>
-          </header>
-
-          <ul aria-live="off">
-            {state.rows.map((row, index) => (
-              <InspectorRow
-                key={row.id}
-                row={row}
-                isNewest={index === 0}
-                replayCount={replays[row.id] ?? 0}
-                onReplay={() => replay(row.id)}
-              />
-            ))}
-          </ul>
-
-          <p className="sr-only">
-            An illustrative live feed of incoming webhook events plays here, each showing its
-            provider, signature status, and latency.
-          </p>
+            />
+            {isPlaying ? "live" : "paused"}
+          </span>
+          <span aria-hidden="true" className="text-fg-faint">
+            ·
+          </span>
+          <span className="tabular-nums">{state.counter.toLocaleString()} events</span>
         </div>
-
-        <aside
-          aria-hidden="true"
-          className="relative hidden flex-col gap-3 overflow-hidden rounded-card border border-hairline bg-surface-sunken p-4 font-mono text-xs text-fg-muted min-[861px]:flex"
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={isPlaying ? "Pause the event stream" : "Play the event stream"}
+          className={cn(
+            focusRing,
+            "inline-flex items-center gap-1.5 rounded-control border border-hairline px-2.5 py-1 font-mono text-xs text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+          )}
         >
-          {state.seq > 0 && <span key={state.seq} className="agent-flash" />}
-          <span className="text-fg-secondary">agent trace</span>
-          <div className="flex flex-col gap-2 leading-relaxed">
-            <span>
-              <span className="text-fg-faint">←</span> webhook.received
-            </span>
-            <span className="text-fg-faint"> verify → dedup → store</span>
-            <span>
-              <span className="text-info">→</span> agent event
-            </span>
-            <span className="text-fg-faint"> tools: replay, verify</span>
-          </div>
-          <span className="mt-auto text-fg-faint">mcp.webhook.co</span>
-        </aside>
-      </div>
-    </section>
+          {isPlaying ? (
+            <Pause size={12} aria-hidden="true" />
+          ) : (
+            <Play size={12} aria-hidden="true" />
+          )}
+          <span aria-hidden="true">{isPlaying ? "Pause" : "Play"}</span>
+        </button>
+      </header>
+
+      <ul aria-live="off">
+        {state.rows.map((row, index) => (
+          <InspectorRow
+            key={row.id}
+            row={row}
+            isNewest={index === 0}
+            replayCount={replays[row.id] ?? 0}
+            onReplay={() => replay(row.id)}
+          />
+        ))}
+      </ul>
+
+      <p className="sr-only">
+        An illustrative live feed of incoming webhook events plays here, each showing its provider,
+        signature status, and latency.
+      </p>
+    </div>
   );
 }
 

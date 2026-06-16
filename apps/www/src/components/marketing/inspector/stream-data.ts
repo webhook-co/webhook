@@ -9,7 +9,7 @@
  * an effect-driven interval that only runs after the component mounts on the client.
  *
  * The numbers are illustrative — this is a marketing demo of what inspection looks like, not a real
- * feed. The UI says so out loud (see `inspector-stage.tsx`).
+ * feed. The UI says so out loud (see `inspector.tsx`).
  */
 
 /** Why a signature check failed. Mirrors the real verification failure modes we surface elsewhere. */
