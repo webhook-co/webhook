@@ -81,12 +81,32 @@
   // KV is the ONLY ingest cache because it can be invalidated on pause/rotate/delete; the cold
   // path (webhook_authn) runs through the cache-disabled Hyperdrive binding. `id` is the
   // per-environment namespace id, set at deploy (not a secret); Miniflare provisions a local one.
+  // KV_AUTHZ caches resolved api-key principals for the CLI listen-tunnel bearer chain (Slice 11b),
+  // the same namespace + shape apps/api uses (keyed by api-key hash; invalidated on revoke). The
+  // tunnel reuses the api. audience, so a key cached by either surface verifies at both.
   "kv_namespaces": [
     {
       "binding": "KV_CONFIG",
       "id": "<KV_CONFIG_ID>",
     },
+    {
+      "binding": "KV_AUTHZ",
+      "id": "<KV_AUTHZ_ID>",
+    },
   ],
+  // Worker secrets (injected per environment at deploy — never committed, no-secrets):
+  //   CREDENTIAL_PEPPER  base64 >=32 bytes — keys the ingest-token + api-key HMAC (same pepper).
+  //   KEK                base64 32 bytes  — the local-KMS KEK (ADR-0007).
+  //   AUDIT_CHAIN_HMAC_KEY base64 >=32 bytes — the audit-chain MAC key (ADR-0004).
+  //   CURSOR_KEY         base64 32 bytes  — HMAC for opaque pagination/tunnel cursors. MUST equal
+  //                      apps/api's CURSOR_KEY so cursors verify across surfaces (Slice 11b).
+  // Per-session hibernatable listen-tunnel DO (Slice 11b, ADR-0014): SQLite-backed (cursor + binding
+  // in storage, survives hibernation). One DO per `wbhk listen` session, keyed by the server-minted
+  // sessionId. The ONLY Durable Object in the wedge — ingest stays stateless (no DO on the hot path).
+  "durable_objects": {
+    "bindings": [{ "name": "LISTEN_SESSION", "class_name": "ListenSession" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ListenSession"] }],
   // Hourly head-anchor cron (ADR-0004). The interval IS the tamper-detection window.
   "triggers": {
     "crons": ["0 * * * *"],

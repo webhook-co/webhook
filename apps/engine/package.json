@@ -10,7 +10,12 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",
-    "@webhook-co/shared": "workspace:*"
+    "@webhook-co/shared": "workspace:*",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260610.1"
   }
 }
