@@ -1,9 +1,6 @@
 import { Button, cn } from "@webhook-co/ui";
 
-import { container, focusRing, sectionPad } from "@/lib/styles";
-
-const metaLinkClass =
-  "rounded-control border-b border-strong text-fg-secondary transition-colors hover:border-fg hover:text-fg";
+import { container, sectionPad } from "@/lib/styles";
 
 export function FinalCta() {
   return (
@@ -25,17 +22,6 @@ export function FinalCta() {
         <Button asChild variant="secondary" size="md">
           <a href="#">Read the docs</a>
         </Button>
-      </div>
-      <div className="mt-6 flex flex-wrap items-center justify-center gap-3 font-mono text-xs text-fg-muted">
-        <a href="#" className={cn(focusRing, metaLinkClass)}>
-          Star us on GitHub
-        </a>
-        <span aria-hidden="true">·</span>
-        <span>Apache-2.0</span>
-        <span aria-hidden="true">·</span>
-        <a href="#" className={cn(focusRing, metaLinkClass)}>
-          Status
-        </a>
       </div>
     </section>
   );

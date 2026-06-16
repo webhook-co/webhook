@@ -4,9 +4,7 @@ import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { Footer } from "@/components/marketing/footer";
 import { Hero } from "@/components/marketing/hero";
-import { Manifesto } from "@/components/marketing/manifesto";
 import { Nav } from "@/components/marketing/nav";
-import { Resources } from "@/components/marketing/resources";
 import { Reveal } from "@/components/marketing/reveal";
 import { Showcases } from "@/components/marketing/showcases";
 import { SurfacesTabs } from "@/components/marketing/surfaces/surfaces-tabs";
@@ -31,15 +29,9 @@ export default function HomePage() {
       </header>
       <main id="main">
         <Hero />
-        <Reveal>
-          <Manifesto />
-        </Reveal>
         <SurfacesTabs />
         <Reveal>
           <Showcases />
-        </Reveal>
-        <Reveal>
-          <Resources />
         </Reveal>
         <Reveal>
           <TrustBand />
