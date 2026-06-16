@@ -3,11 +3,20 @@ import { ShieldCheck } from "lucide-react";
 
 const FAILURES = [
   {
+    provider: "github",
+    event: "issues.opened",
     code: "raw_body_modified",
     why: "A proxy or framework re-serialized the body before verification.",
   },
-  { code: "timestamp_too_old", why: "The request fell outside the replay window." },
   {
+    provider: "shopify",
+    event: "orders.create",
+    code: "timestamp_too_old",
+    why: "The request fell outside the replay window.",
+  },
+  {
+    provider: "stripe",
+    event: "invoice.paid",
     code: "wrong_secret_test_vs_live",
     why: "The signature is valid, just against the other environment's secret.",
   },
@@ -29,14 +38,22 @@ export function VerifyCard() {
             index > 0 && "border-t border-hairline",
           )}
         >
-          <span className="inline-flex items-center gap-[9px] font-mono text-[13px] font-medium text-fg">
+          <span className="inline-flex flex-wrap items-center gap-[9px] font-mono text-[13px] font-medium text-fg">
             <span
               className="grid h-[17px] w-[17px] place-items-center rounded-pill border border-danger-border bg-danger-bg text-[10px] text-danger"
               aria-hidden="true"
             >
               ✕
             </span>
-            {failure.code}
+            <span className="inline-flex items-center gap-1.5">
+              <span className="text-fg-secondary">
+                {failure.provider} · {failure.event}
+              </span>
+              <span className="text-fg-faint" aria-hidden="true">
+                —
+              </span>
+              {failure.code}
+            </span>
           </span>
           <span className="pl-[26px] text-[13px] text-fg-muted">{failure.why}</span>
         </div>

@@ -1,5 +1,5 @@
 import { Button, cn } from "@webhook-co/ui";
-import { Lock, Scale, ShieldCheck } from "lucide-react";
+import { Lock, Scale } from "lucide-react";
 
 import { Inspector } from "@/components/marketing/inspector/inspector";
 import { GithubIcon } from "@/components/ui/brand-icons";
@@ -9,7 +9,6 @@ import { focusRing } from "@/lib/styles";
 const trustSignals = [
   { icon: GithubIcon, label: "Open source" },
   { icon: Scale, label: "Apache-2.0" },
-  { icon: ShieldCheck, label: "Standard Webhooks" },
   { icon: Lock, label: "Private by default" },
 ];
 
