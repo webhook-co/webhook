@@ -63,6 +63,12 @@
   .hero-rise > *:nth-child(5) {
     animation-delay: 460ms;
   }
+
+  /* The hero's right column (the live inspector) settles in as one unit, slightly after the thesis
+     so the headline reads first. Reuses the same keyframe; gated on no-preference like the rest. */
+  .hero-rise-inspector {
+    animation: heroRise var(--wh-dur-slow) var(--wh-ease-smooth) 320ms both;
+  }
 }
 
 @keyframes dotsDrift {
@@ -210,19 +216,12 @@
 }
 
 /* ── S3 live inspector ──────────────────────────────────────────────────────── */
-/* The stage's motion: a new row sliding in, the "live" dot pinging, an agent-trace flash per event,
- * and a one-shot tint when the user replays a row. Static structure (rows, badges, statuses, the
- * Replay buttons) renders unconditionally; only the movement is gated on `no-preference`. */
+/* The inspector's motion: a new row sliding in, the "live" dot pinging, and a one-shot tint when the
+ * user replays a row. Static structure (rows, badges, statuses, the Replay buttons) renders
+ * unconditionally; only the movement is gated on `no-preference`. */
 
 .inspector-live-dot {
   position: relative;
-}
-
-.agent-flash {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  border-radius: inherit;
 }
 
 @media (prefers-reduced-motion: no-preference) {
@@ -244,10 +243,6 @@
   .replay-flash {
     animation: replayFlash 0.6s var(--wh-ease-smooth);
   }
-  /* The agent-trace card flashes as each event lands. */
-  .agent-flash {
-    animation: agentFlash 0.7s var(--wh-ease-smooth);
-  }
 }
 
 @keyframes rowEnter {
@@ -264,15 +259,6 @@
 @keyframes replayFlash {
   0% {
     background: color-mix(in srgb, var(--wh-info) 12%, transparent);
-  }
-  100% {
-    background: transparent;
-  }
-}
-
-@keyframes agentFlash {
-  0% {
-    background: color-mix(in srgb, var(--wh-info) 14%, transparent);
   }
   100% {
     background: transparent;

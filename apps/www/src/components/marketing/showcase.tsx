@@ -43,9 +43,18 @@ export function Showcase({
         "grid grid-cols-2 items-center gap-[clamp(36px,6vw,84px)] py-[clamp(26px,3vw,38px)] max-[940px]:grid-cols-1",
       )}
     >
-      <div className={cn("flex flex-col", flip && "min-[941px]:order-2")}>
+      <div
+        className={cn(
+          "flex flex-col",
+          flip && "min-[941px]:order-2",
+          // Centered while stacked (≤940px), matching the centered hero and the capped visual below;
+          // capped so the centered lines don't run the full stacked width.
+          "max-[940px]:mx-auto max-[940px]:max-w-[600px] max-[940px]:items-center max-[940px]:text-center",
+        )}
+      >
+        {/* The eyebrow's leading rule floats oddly when centered, so drop it once stacked. */}
         <div className="mb-4 flex items-center gap-2.5">
-          <SectionEyebrow>{eyebrow}</SectionEyebrow>
+          <SectionEyebrow className="max-[940px]:before:hidden">{eyebrow}</SectionEyebrow>
           {badge ? <Pill>{badge.label}</Pill> : null}
         </div>
         <h2
@@ -58,7 +67,9 @@ export function Showcase({
         <ShowcaseLink href={link.href}>{link.label}</ShowcaseLink>
       </div>
 
-      <div className="transition-transform duration-300 ease-smooth hover:-translate-y-1">
+      {/* On desktop the visual fills its grid track; once stacked (≤940px) cap + center it so the
+          "device" doesn't stretch full-bleed — same treatment as the hero inspector. */}
+      <div className="transition-transform duration-300 ease-smooth hover:-translate-y-1 max-[940px]:mx-auto max-[940px]:w-full max-[940px]:max-w-[520px]">
         {visual}
       </div>
     </section>

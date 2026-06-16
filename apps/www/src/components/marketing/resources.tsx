@@ -39,7 +39,9 @@ export function Resources() {
           Start where it makes sense for you
         </h2>
       </div>
-      <div className="mt-10 grid grid-cols-3 gap-4 max-[940px]:grid-cols-2 max-[560px]:grid-cols-1">
+      {/* 3-up on desktop. Once it drops to 2-up (≤940) and 1-up (≤560) the grid is capped + centered
+          so the cards stay compact rectangles instead of stretching wide and spaced-out. */}
+      <div className="mt-10 grid grid-cols-3 gap-4 max-[940px]:mx-auto max-[940px]:max-w-[520px] max-[940px]:grid-cols-2 max-[560px]:max-w-[260px] max-[560px]:grid-cols-1">
         {RESOURCES.map(({ icon: Icon, title, line }) => (
           <a
             key={title}

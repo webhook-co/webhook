@@ -4,7 +4,6 @@ import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { Footer } from "@/components/marketing/footer";
 import { Hero } from "@/components/marketing/hero";
-import { InspectorStage } from "@/components/marketing/inspector/inspector-stage";
 import { Manifesto } from "@/components/marketing/manifesto";
 import { Nav } from "@/components/marketing/nav";
 import { Resources } from "@/components/marketing/resources";
@@ -32,7 +31,6 @@ export default function HomePage() {
       </header>
       <main id="main">
         <Hero />
-        <InspectorStage />
         <Reveal>
           <Manifesto />
         </Reveal>
