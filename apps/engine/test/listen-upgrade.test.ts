@@ -22,18 +22,19 @@ function fakeAuth(opts: {
   verifyThrows?: Error;
   exists?: boolean;
 }): MakeListenAuth {
-  return () => ({
-    authDeps: {
-      verifyBearer: async () => {
-        if (opts.verifyThrows) throw opts.verifyThrows;
-        return opts.ctx as AuthContext;
+  return () =>
+    Promise.resolve({
+      authDeps: {
+        verifyBearer: async () => {
+          if (opts.verifyThrows) throw opts.verifyThrows;
+          return opts.ctx as AuthContext;
+        },
+        resource: "https://api.webhook.co",
+        resourceMetadataUrl: "https://api.webhook.co/.well-known/oauth-protected-resource",
       },
-      resource: "https://api.webhook.co",
-      resourceMetadataUrl: "https://api.webhook.co/.well-known/oauth-protected-resource",
-    },
-    endpointExists: async () => opts.exists ?? true,
-    close: async () => {},
-  });
+      endpointExists: async () => opts.exists ?? true,
+      close: async () => {},
+    });
 }
 
 function listenReq(opts: {

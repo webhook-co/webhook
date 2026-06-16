@@ -10,7 +10,13 @@ import {
   makeApiKeyColdLookup,
   makeVerifyBearer,
 } from "@webhook-co/db";
-import { b64ToBytes, importAuditKey, importCursorKey, SERVICE_NAME } from "@webhook-co/shared";
+import {
+  b64ToBytes,
+  importAuditKey,
+  importCursorKey,
+  readSecretBinding,
+  SERVICE_NAME,
+} from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { handleRequest, type ApiDeps } from "./router.js";
@@ -36,12 +42,14 @@ export interface Env {
   HYPERDRIVE_TENANT: Hyperdrive;
   /** KV caching resolved principals (keyed by api-key hash); invalidated on revoke. */
   KV_AUTHZ: KVNamespace;
-  /** Base64 credential pepper (Worker secret): keys the api-key HMAC. Never a DB column. */
-  CREDENTIAL_PEPPER: string;
-  /** Base64 HMAC key (Worker secret) for opaque pagination cursors. */
-  CURSOR_KEY: string;
-  /** Base64 audit-chain HMAC key (Worker secret) — the same key the chain rows are signed with. */
-  AUDIT_CHAIN_HMAC_KEY: string;
+  // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
+  // below is ONE account secret each, shared byte-identically with engine + mcp. Never DB columns.
+  /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */
+  CREDENTIAL_PEPPER: SecretsStoreSecret;
+  /** Base64 HMAC key for opaque pagination cursors (must equal the other surfaces' CURSOR_KEY). */
+  CURSOR_KEY: SecretsStoreSecret;
+  /** Base64 audit-chain HMAC key — the same key the chain rows are signed with. */
+  AUDIT_CHAIN_HMAC_KEY: SecretsStoreSecret;
 }
 
 // Built once at module load (pure); served on the public PRM route with no tenant deps.
@@ -62,12 +70,17 @@ interface DepsHandle {
  * (Workers secrets, never process env). Mirrors apps/engine/buildIngestDeps.
  */
 async function buildDeps(env: Env): Promise<DepsHandle> {
-  // Decode + validate ALL config (pepper + keys) BEFORE opening any DB client, so a bad/missing
-  // secret fails fast without leaking an unclosed connection (these are the only throw-prone steps).
-  const hasher = createCredentialHasherFromBase64(env.CREDENTIAL_PEPPER);
+  // Resolve the Secrets Store bindings, then decode + validate ALL config (pepper + keys) BEFORE
+  // opening any DB client, so a bad/missing secret fails fast without leaking an unclosed connection.
+  const [pepper, cursorRaw, auditRaw] = await Promise.all([
+    readSecretBinding(env.CREDENTIAL_PEPPER),
+    readSecretBinding(env.CURSOR_KEY),
+    readSecretBinding(env.AUDIT_CHAIN_HMAC_KEY),
+  ]);
+  const hasher = createCredentialHasherFromBase64(pepper);
   const [cursorKey, auditKey] = await Promise.all([
-    importCursorKey(b64ToBytes(env.CURSOR_KEY)),
-    importAuditKey(b64ToBytes(env.AUDIT_CHAIN_HMAC_KEY)),
+    importCursorKey(b64ToBytes(cursorRaw)),
+    importAuditKey(b64ToBytes(auditRaw)),
   ]);
   const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
   const tenant = createClient(env.HYPERDRIVE_TENANT.connectionString, { max: 1 });

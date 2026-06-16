@@ -1,4 +1,5 @@
 import { createCredentialHasherFromBase64, credentialCacheKey } from "@webhook-co/db";
+import { readSecretBinding } from "@webhook-co/shared";
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
@@ -23,7 +24,10 @@ const READ_TOOLS = [
 
 /** Seed the KV credential-cache hot path so resolveExternalToken resolves TOKEN without Postgres. */
 async function seedApiKey(scopes: readonly string[]): Promise<void> {
-  const hasher = createCredentialHasherFromBase64(env.CREDENTIAL_PEPPER as string);
+  // The pepper is a SecretsStoreSecret binding in prod; the test env injects a plain string, so
+  // readSecretBinding bridges both — the same way resolveExternalToken reads it.
+  const pepper = await readSecretBinding(env.CREDENTIAL_PEPPER as SecretsStoreSecret | string);
+  const hasher = createCredentialHasherFromBase64(pepper);
   const keyHash = hasher.candidates(TOKEN)[0];
   await (env.KV_AUTHZ as KVNamespace).put(
     credentialCacheKey(keyHash),

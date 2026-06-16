@@ -20,26 +20,29 @@ import { buildVerifyFn, getVerifyFn, kmsProviderFromEnv, type Env } from "../src
 
 // AWS's own documented placeholder credentials (account 111122223333, the AKIA…EXAMPLE key): clearly
 // fake, and the `…EXAMPLE` suffix matches the gitleaks allowlist so a secret scanner won't flag them.
-// No AWS call is made by any test here, so the values are only ever shape-checked.
+// No AWS call is made by any test here, so the values are only ever shape-checked. They are PLAIN
+// STRINGS even though Env now types these as SecretsStoreSecret — readSecretBinding bridges the two
+// (the prod path is a real binding's .get(); tests inject strings), so the cast is the test seam.
+const KEY_ARN = "arn:aws:kms:us-east-2:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab";
 const AWS_ENV = {
-  KMS_KEY_ARN: "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab",
-  AWS_REGION: "us-east-1",
+  KMS_KEY_ARN: KEY_ARN,
+  AWS_REGION: "us-east-2",
   AWS_ACCESS_KEY_ID: "AKIAIOSFODNN7EXAMPLE",
   AWS_SECRET_ACCESS_KEY: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 } as unknown as Env;
 
 describe("kmsProviderFromEnv (prod KEK custodian = AWS KMS)", () => {
-  it("builds an AwsKmsProvider whose kekRef is the configured key ARN", () => {
-    const kms = kmsProviderFromEnv(AWS_ENV);
+  it("builds an AwsKmsProvider whose kekRef is the configured key ARN", async () => {
+    const kms = await kmsProviderFromEnv(AWS_ENV);
     expect(kms).toBeInstanceOf(AwsKmsProvider);
-    expect(kms.kekRef).toBe(AWS_ENV.KMS_KEY_ARN);
+    expect(kms.kekRef).toBe(KEY_ARN);
   });
 
   it.each(["KMS_KEY_ARN", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"] as const)(
-    "throws fail-fast when %s is missing (no provider built under partial config)",
-    (field) => {
+    "rejects fail-fast when %s is missing (no provider built under partial config)",
+    async (field) => {
       const env = { ...AWS_ENV, [field]: "" } as unknown as Env;
-      expect(() => kmsProviderFromEnv(env)).toThrow();
+      await expect(kmsProviderFromEnv(env)).rejects.toThrow(/AWS KMS config incomplete/);
     },
   );
 });

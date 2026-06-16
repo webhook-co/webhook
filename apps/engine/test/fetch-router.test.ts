@@ -57,7 +57,7 @@ describe("handleFetch routing + lifecycle", () => {
     let built = 0;
     const res = await handleFetch(get("/"), bindings, () => {
       built += 1;
-      return fakeHandle().handle;
+      return Promise.resolve(fakeHandle().handle);
     });
     expect(res.status).toBe(200);
     expect(await res.text()).toBe("webhook:engine ok");
@@ -66,21 +66,21 @@ describe("handleFetch routing + lifecycle", () => {
 
   it("routes a POST token path to ingest and closes the deps afterward", async () => {
     const f = fakeHandle();
-    const res = await handleFetch(post("/whep_good"), bindings, () => f.handle);
+    const res = await handleFetch(post("/whep_good"), bindings, () => Promise.resolve(f.handle));
     expect(res.status).toBe(200);
     expect(f.closed()).toBe(1); // per-request clients torn down
   });
 
   it("an unknown token still routes to ingest (404), and deps are closed", async () => {
     const f = fakeHandle();
-    const res = await handleFetch(post("/whep_nope"), bindings, () => f.handle);
+    const res = await handleFetch(post("/whep_nope"), bindings, () => Promise.resolve(f.handle));
     expect(res.status).toBe(404);
     expect(f.closed()).toBe(1);
   });
 
   it("a GET on a token path is NOT the health probe — it routes to ingest (405)", async () => {
     const f = fakeHandle();
-    const res = await handleFetch(get("/whep_good"), bindings, () => f.handle);
+    const res = await handleFetch(get("/whep_good"), bindings, () => Promise.resolve(f.handle));
     expect(res.status).toBe(405); // ingest rejects non-POST; only GET / is health
     expect(f.closed()).toBe(1);
   });
@@ -91,7 +91,7 @@ describe("handleFetch routing + lifecycle", () => {
         throw new Error("hyperdrive down");
       },
     });
-    const res = await handleFetch(post("/whep_good"), bindings, () => f.handle);
+    const res = await handleFetch(post("/whep_good"), bindings, () => Promise.resolve(f.handle));
     expect(res.status).toBe(500);
     expect(f.closed()).toBe(1); // no leaked DB connections on the error path
   });

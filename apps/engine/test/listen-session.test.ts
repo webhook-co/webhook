@@ -3,6 +3,7 @@ import {
   b64ToBytes,
   encodeCursor,
   importCursorKey,
+  readSecretBinding,
   type Cursor,
   type EventSummary,
 } from "@webhook-co/shared";
@@ -39,7 +40,9 @@ const EMPTY_POLL: PollFn = async () => [];
 
 let cursorKey: CryptoKey;
 beforeAll(async () => {
-  cursorKey = await importCursorKey(b64ToBytes(bindings.CURSOR_KEY));
+  // CURSOR_KEY is a SecretsStoreSecret binding in prod; the test env injects a plain string, so
+  // readSecretBinding bridges both (matches how the DO reads it).
+  cursorKey = await importCursorKey(b64ToBytes(await readSecretBinding(bindings.CURSOR_KEY)));
 });
 
 function summaryAt(receivedAt: Date): EventSummary {

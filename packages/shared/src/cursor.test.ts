@@ -10,6 +10,13 @@ beforeAll(async () => {
   otherKey = await importCursorKey(new Uint8Array(Array.from({ length: 32 }, (_, i) => i + 1)));
 });
 
+describe("importCursorKey", () => {
+  it("rejects a key that is not 32 bytes (misconfigured/truncated CURSOR_KEY fails loud)", () => {
+    expect(() => importCursorKey(new Uint8Array(16))).toThrow(/32 bytes/);
+    expect(() => importCursorKey(new Uint8Array(64))).toThrow(/32 bytes/);
+  });
+});
+
 describe("cursor codec", () => {
   const cursor = {
     receivedAt: new Date("2026-06-12T20:00:00.123Z"),
