@@ -1,28 +1,15 @@
-import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 
+import { StructuredData } from "@/components/marketing/structured-data";
+import { siteMetadata, siteViewport } from "./metadata";
 import "./globals.css";
 
-const title = "webhook.co: the webhook platform built for the agent era";
-const description =
-  "Capture any webhook, inspect every request, and replay it to localhost in one command. " +
-  "Then turn it into an event your agents can act on. MCP-native. Private by default.";
-
-export const metadata: Metadata = {
-  metadataBase: new URL("https://webhook.co"),
-  title,
-  description,
-  openGraph: {
-    title,
-    description,
-    url: "https://webhook.co",
-    siteName: "webhook.co",
-    type: "website",
-  },
-  twitter: { card: "summary_large_image", title, description },
-};
+// Metadata + viewport live in ./metadata (a font/CSS-free module) so they can be unit-tested
+// without dragging next/font into the test runner. Re-exported here for Next to pick them up.
+export const metadata = siteMetadata;
+export const viewport = siteViewport;
 
 // The marketing site is light-only by design (the design system reserves the dark toggle for
 // the app), so there is no theme-init script and no `data-theme` — the tokens resolve to their
@@ -31,7 +18,10 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        <StructuredData />
+        {children}
+      </body>
     </html>
   );
 }
