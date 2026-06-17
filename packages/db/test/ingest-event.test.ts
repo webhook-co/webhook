@@ -193,4 +193,37 @@ describe("insertIngestEvent (webhook_ingest, full capture row)", () => {
       ["content-type", "application/json"],
     ]);
   });
+
+  it("round-trips through getEvent: a non-null verification reads back as an object, not a string", async () => {
+    // The sibling of the headers fix: verification is the OTHER jsonb param. Without sql.json it
+    // double-encodes to a jsonb string and getEvent's EventSchema.parse (verification is
+    // VerificationResultSchema.nullable()) would throw `expected object, received string`. The
+    // pre-existing raw-column test (above) parses the string back and would NOT catch a regression;
+    // this getEvent round-trip does.
+    const verification = { ok: true, keyId: "secret_0", scheme: "stripe" } as const;
+    const r = row({ verified: true, verification });
+    await insertIngestEvent(ingest, r);
+
+    const [shape] = await withTenant(app, orgId, async (tx) => {
+      return tx<
+        { t: string }[]
+      >`select jsonb_typeof(verification) as t from events where id = ${r.id}`;
+    });
+    expect(shape?.t).toBe("object");
+
+    const ev = await withTenant(app, orgId, (tx) => getEvent(tx, r.id));
+    expect(ev?.verification).toEqual(verification);
+  });
+
+  it("normalizes an undefined verification to SQL NULL instead of throwing on sql.json(undefined)", async () => {
+    // verification is typed `unknown`; sql.json(undefined) throws postgres.js UNDEFINED_VALUE. The
+    // `?? null` normalize means a row that leaves verification undefined stores SQL NULL, not a 500.
+    const r = row({ verification: undefined });
+    await expect(insertIngestEvent(ingest, r)).resolves.toEqual({ inserted: true });
+
+    const [stored] = await withTenant(app, orgId, async (tx) => {
+      return tx<{ v: unknown }[]>`select verification as v from events where id = ${r.id}`;
+    });
+    expect(stored?.v).toBeNull();
+  });
 });

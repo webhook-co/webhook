@@ -69,6 +69,11 @@ export async function addProviderSecret(
   };
   const sealed = await store.sealString(input.plaintext, context);
   await withTenant(app, input.orgId, async (tx) => {
+    // enc_context is jsonb — bind via tx.json so postgres.js serializes it EXACTLY once. A manual
+    // JSON.stringify(...)::jsonb double-encodes (postgres.js re-encodes the string, storing a jsonb
+    // STRING, not the object) — the same antipattern fixed in ingest-event.ts. This column is
+    // audit-only (unseal rebuilds the AAD from the row's id/org/endpoint columns, see below), so
+    // nothing reads it today, but storing the correct shape keeps the audit row queryable as jsonb.
     await tx`
       insert into provider_secrets (
         id, endpoint_id, org_id, provider, label,
@@ -77,7 +82,7 @@ export async function addProviderSecret(
       values (
         ${id}, ${input.endpointId}, ${input.orgId}, ${input.provider}, ${input.label ?? null},
         ${Buffer.from(sealed.ciphertext)}, ${Buffer.from(sealed.wrapped.wrappedDek)},
-        ${sealed.wrapped.kekRef}, ${Buffer.from(sealed.nonce)}, ${JSON.stringify(context)}::jsonb,
+        ${sealed.wrapped.kekRef}, ${Buffer.from(sealed.nonce)}, ${tx.json(context as unknown as Parameters<typeof tx.json>[0])}::jsonb,
         ${sealed.envelopeVersion}, 'active'
       )`;
   });
