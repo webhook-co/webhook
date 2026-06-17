@@ -46,12 +46,10 @@ export function useScrollReveal<T extends HTMLElement>() {
     // fire (otherwise it could stay stuck at opacity:0). threshold 0.1 is enough of a delay.
     const observer = new IntersectionObserver(
       (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            setState({ armed: true, revealed: true });
-            observer.disconnect();
-            break;
-          }
+        // One observed element ⇒ at most one entry per delivery, so check it directly (no loop).
+        if (entries[0]?.isIntersecting) {
+          setState({ armed: true, revealed: true });
+          observer.disconnect();
         }
       },
       { threshold: 0.1 },
