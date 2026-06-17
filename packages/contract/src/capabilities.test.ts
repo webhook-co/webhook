@@ -14,6 +14,7 @@ const EXPECTED_NAMES = [
   "endpoints.get",
   "events.list",
   "events.get",
+  "events.getPayload",
   "events.tail",
   "events.replay",
   "audit.verify",

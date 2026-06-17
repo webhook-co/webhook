@@ -40,6 +40,17 @@
       "id": "<KV_AUTHZ_ID>",
     },
   ],
+  // The payloads bucket (shared with engine, which WRITES it). The api only ever GETs from it —
+  // events.getPayload streams a captured event's stored body after an RLS metadata read (ADR-0015).
+  // Read-only is a usage discipline (a scoped token is a future hardening), not a binding mode.
+  // Miniflare provides a local R2 in `wrangler dev`; the dev→prod bucket rename happens in the deploy
+  // overlay (gen-wrangler-prod.mjs maps webhook-payloads-dev → -prod).
+  "r2_buckets": [
+    {
+      "binding": "R2_PAYLOADS",
+      "bucket_name": "webhook-payloads-dev",
+    },
+  ],
   // Cloudflare Secrets Store bindings (`secrets_store_secrets`) — read via `await readSecretBinding(env.X)`.
   // The binding blocks are injected per environment at deploy (the overlay), NOT committed (store ids
   // stay out of the repo); tests inject plain-string `bindings` and readSecretBinding bridges both.

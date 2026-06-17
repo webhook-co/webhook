@@ -1,5 +1,6 @@
-import { AuthContextSchema, CapabilityFault } from "@webhook-co/contract";
+import { AuthContextSchema, CapabilityFault, type AuthContext } from "@webhook-co/contract";
 import type { ReadHandlers } from "@webhook-co/db";
+import { bytesToB64 } from "@webhook-co/shared";
 
 import { authenticate, authorize, type ApiAuthDeps } from "./auth.js";
 import { httpStatusForCapabilityError } from "./http-status.js";
@@ -14,6 +15,12 @@ import { httpStatusForCapabilityError } from "./http-status.js";
 export interface ApiDeps {
   readonly authDeps: ApiAuthDeps;
   readonly handlers: ReadHandlers;
+  /**
+   * The payloads R2 bucket — consumed ONLY by the events.getPayload route (the other routes are pure
+   * DB reads through `handlers`). Optional in this router bag because it's route-specific; production
+   * (index.ts) always wires it, and the payload route fails loud (5xx) if it's ever absent.
+   */
+  readonly payloads?: R2Bucket;
 }
 
 interface Route {
@@ -73,6 +80,11 @@ function matchRoute(
   if (method === "GET" && rest.length === 2 && rest[0] === "events") {
     return { capability: "events.get", input: { eventId: rest[1] } };
   }
+  if (method === "GET" && rest.length === 3 && rest[0] === "events" && rest[2] === "payload") {
+    // events.getPayload: the raw stored body (base64 envelope). Not a DB ReadHandler — dispatched
+    // specially in handleRequest (it does the RLS metadata read THEN an R2 GET). ADR-0015.
+    return { capability: "events.getPayload", input: { eventId: rest[1] } };
+  }
   if (method === "POST" && rest.length === 2 && rest[0] === "audit" && rest[1] === "verify") {
     return { capability: "audit.verify", input: {} };
   }
@@ -126,13 +138,17 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
     });
   }
 
-  const handler = deps.handlers.get(route.capability);
-  if (handler === undefined) {
-    // A routed capability with no bound handler is a wiring bug, not a client error.
-    throw new Error(`no handler bound for capability: ${route.capability}`);
-  }
-
+  // Dispatch inside the fault-mapping try/catch. events.getPayload is special-cased: it is NOT a DB
+  // ReadHandler — it does the RLS metadata read (via the events.get handler) then streams the R2 body.
   try {
+    if (route.capability === "events.getPayload") {
+      return await handlePayload(deps, authz.ctx, String(route.input.eventId));
+    }
+    const handler = deps.handlers.get(route.capability);
+    if (handler === undefined) {
+      // A routed capability with no bound handler is a wiring bug, not a client error.
+      throw new Error(`no handler bound for capability: ${route.capability}`);
+    }
     return Response.json(await handler(authz.ctx, route.input));
   } catch (err) {
     if (err instanceof CapabilityFault) {
@@ -140,4 +156,35 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
     }
     throw err; // operational -> the fetch boundary maps it to 5xx
   }
+}
+
+/**
+ * events.getPayload: read the event's metadata under RLS (reusing the shared events.get handler — so
+ * ownership + NOT_FOUND are enforced once, in one place), then stream its stored body from R2 as a
+ * base64 envelope (ADR-0015). A missing R2 object for a row that DOES exist is a NOT_FOUND (the body
+ * was pruned, or a half-completed write), not a 5xx. The api only ever GETs R2 here.
+ */
+async function handlePayload(deps: ApiDeps, ctx: AuthContext, eventId: string): Promise<Response> {
+  if (deps.payloads === undefined) {
+    // The payload route is mounted but no R2 binding was wired — an operational wiring bug, not a
+    // client error; it propagates to the 5xx boundary.
+    throw new Error("events.getPayload routed without an R2_PAYLOADS binding");
+  }
+  const eventsGet = deps.handlers.get("events.get");
+  if (eventsGet === undefined) throw new Error("no handler bound for capability: events.get");
+  // events.get returns an EventSchema-validated row (getEvent runs EventSchema.parse), so
+  // payloadR2Key is a guaranteed string (z.string()) — a projection drift throws upstream rather
+  // than yielding an undefined key. The cast only narrows the ReadHandler's `unknown` return.
+  const event = (await eventsGet(ctx, { eventId })) as {
+    payloadR2Key: string;
+    contentType: string | null;
+  };
+  const obj = await deps.payloads.get(event.payloadR2Key);
+  if (obj === null) throw new CapabilityFault("NOT_FOUND", "payload body not found");
+  const bytes = new Uint8Array(await obj.arrayBuffer());
+  return Response.json({
+    contentType: event.contentType,
+    bytes: bytes.byteLength,
+    bodyBase64: bytesToB64(bytes),
+  });
 }

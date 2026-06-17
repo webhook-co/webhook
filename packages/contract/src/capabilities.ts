@@ -25,6 +25,13 @@ const cursor = z.string();
 const WEB_DEFERRED = "dashboard read views deferred to the frontend epic";
 /** events.replay's replay-to-localhost engine lands in slice 12. */
 const REPLAY_SLICE_12 = "replay-to-localhost engine lands in slice 12";
+/**
+ * events.getPayload is exempt on mcp: raw payload bytes don't fit the MCP text-tool model, and the
+ * McpAgent has no R2 binding — an agent reads event metadata via events.get. Revisit if an agent
+ * payload-preview is needed (would add R2 to apps/mcp + a text/base64 representation). See ADR-0015.
+ */
+const PAYLOAD_MCP_EXEMPT =
+  "raw payload bytes; the McpAgent has no R2 binding (agents use events.get)";
 
 function paged<T extends z.ZodTypeAny>(item: T) {
   return z.object({ items: z.array(item), nextCursor: cursor.nullable() });
@@ -76,6 +83,27 @@ export const eventsGet = defineCapability({
   auth: { scope: "events:read" },
   semantics: {},
   surfaceExempt: { web: WEB_DEFERRED },
+});
+
+export const eventsGetPayload = defineCapability({
+  name: "events.getPayload",
+  input: z.object({ eventId: uuid }),
+  // The raw body, base64-wrapped in a JSON envelope (ADR-0015): keeps the all-JSON, schema-validated
+  // contract uniform (raw bytes would need a bespoke binary transport + a non-JSON client path),
+  // is lossless for binary payloads + exact-byte signature fidelity, and is MCP-shaped if ever bound
+  // there. `bytes` is the decoded length (a cheap integrity check for the client).
+  output: z.object({
+    contentType: z.string().nullable(),
+    bytes: z.number().int().nonnegative(),
+    bodyBase64: z.string(),
+  }),
+  // Errors mirror events.get (getPayload reuses that handler's RLS read): a non-uuid id surfaces as
+  // the shared get-by-id VALIDATION_ERROR (400), same as events.get — not separately enumerated.
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "RATE_LIMITED"],
+  auth: { scope: "events:read" },
+  semantics: {},
+  // Bound on api + cli; web stays deferred with the dashboard epic; mcp is exempt (see above).
+  surfaceExempt: { web: WEB_DEFERRED, mcp: PAYLOAD_MCP_EXEMPT },
 });
 
 export const eventsTail = defineCapability({
@@ -149,6 +177,7 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   endpointsGet,
   eventsList,
   eventsGet,
+  eventsGetPayload,
   eventsTail,
   eventsReplay,
   auditVerify,

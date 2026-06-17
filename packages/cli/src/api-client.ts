@@ -4,11 +4,12 @@ import {
   endpointsGet as endpointsGetCap,
   endpointsList as endpointsListCap,
   eventsGet as eventsGetCap,
+  eventsGetPayload as eventsGetPayloadCap,
   eventsList as eventsListCap,
   type AuthContext,
   type CapabilityError,
 } from "@webhook-co/contract";
-import type { Endpoint, Event, EventSummary } from "@webhook-co/shared";
+import { b64ToBytes, type Endpoint, type Event, type EventSummary } from "@webhook-co/shared";
 import type { z } from "zod";
 
 import { CliError, InvalidApiUrlError } from "./errors.js";
@@ -105,6 +106,8 @@ export interface ApiClient {
   eventsList(endpointId: string, params?: EventsListParams): Promise<Page<EventSummary>>;
   /** A single event in full fidelity by id (`GET /v1/events/:id`). */
   eventsGet(eventId: string): Promise<Event>;
+  /** The captured event's raw body bytes (`GET /v1/events/:id/payload` → base64 envelope, decoded). */
+  eventsGetPayload(eventId: string): Promise<{ contentType: string | null; body: Uint8Array }>;
   /** Verify the org's tamper-evident audit chain (`POST /v1/audit/verify`). */
   auditVerify(): Promise<AuditVerifyResult>;
 }
@@ -183,6 +186,18 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     async eventsGet(eventId): Promise<Event> {
       const path = `/v1/events/${encodeURIComponent(eventId)}`;
       return parseOrThrow(eventsGetCap.output, await getJson(path), "event");
+    },
+    async eventsGetPayload(eventId): Promise<{ contentType: string | null; body: Uint8Array }> {
+      const path = `/v1/events/${encodeURIComponent(eventId)}/payload`;
+      const env = parseOrThrow(eventsGetPayloadCap.output, await getJson(path), "payload");
+      // Decode the base64 envelope back to exact bytes (the wire shape is JSON; see ADR-0015), then
+      // cross-check the decoded length against the envelope's `bytes` — a truncated/corrupted body
+      // surfaces as an explicit UNEXPECTED error, never a silently short payload handed to a replay.
+      const body = b64ToBytes(env.bodyBase64);
+      if (body.byteLength !== env.bytes) {
+        throw new ApiError(undefined, "the api returned a corrupted payload response");
+      }
+      return { contentType: env.contentType, body };
     },
     async auditVerify(): Promise<AuditVerifyResult> {
       return parseOrThrow(auditVerifyCap.output, await postJson("/v1/audit/verify"), "audit");

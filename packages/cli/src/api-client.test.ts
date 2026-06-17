@@ -1,3 +1,4 @@
+import { bytesToB64 } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -254,6 +255,43 @@ describe("createApiClient read methods", () => {
     const { fetch } = fakeFetch(json({ items: "nope" }));
     const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch })
       .endpointsList()
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBeUndefined();
+  });
+
+  it("eventsGetPayload GETs /v1/events/:id/payload and decodes the envelope to exact bytes", async () => {
+    const body = new TextEncoder().encode('{"hello":"world"}');
+    const { fetch, calls } = fakeFetch(
+      json({
+        contentType: "application/json",
+        bytes: body.byteLength,
+        bodyBase64: bytesToB64(body),
+      }),
+    );
+    const res = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).eventsGetPayload(
+      EV_ID,
+    );
+    expect(calls[0].url).toBe(`${BASE}/v1/events/${EV_ID}/payload`);
+    expect(res.contentType).toBe("application/json");
+    expect([...res.body]).toEqual([...body]);
+  });
+
+  it("eventsGetPayload maps a 404 to ApiError(NOT_FOUND)", async () => {
+    const { fetch } = fakeFetch(new Response(null, { status: 404 }));
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch })
+      .eventsGetPayload(EV_ID)
+      .catch((e: unknown) => e);
+    expect((err as ApiError).code).toBe("NOT_FOUND");
+  });
+
+  it("eventsGetPayload rejects a corrupted envelope whose bytes disagree with the decoded length", async () => {
+    const body = new TextEncoder().encode("abc");
+    const { fetch } = fakeFetch(
+      json({ contentType: null, bytes: 999, bodyBase64: bytesToB64(body) }),
+    );
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch })
+      .eventsGetPayload(EV_ID)
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBeUndefined();
