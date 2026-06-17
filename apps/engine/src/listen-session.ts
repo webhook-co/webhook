@@ -1,18 +1,18 @@
 import { DurableObject } from "cloudflare:workers";
 
-import { createClient, tailEvents, withTenant, type Page } from "@webhook-co/db";
+import { createClient, latestTailCursor, tailEvents, withTenant, type Page } from "@webhook-co/db";
 import {
   b64ToBytes,
   decodeCursor,
   encodeCursor,
+  encodeServerFrame,
   importCursorKey,
+  parseClientFrame,
   readSecretBinding,
   WATERMARK_DELTA_MS,
   type Cursor,
   type EventSummary,
 } from "@webhook-co/shared";
-
-import { encodeServerFrame, parseClientFrame } from "./listen-protocol";
 
 /**
  * Poll cadence for the watermark-bounded tail scan (ADR-0014). The gapless watermark (δ=5s) already
@@ -62,6 +62,8 @@ const HDR_ORG = "x-listen-org-id";
 const HDR_ENDPOINT = "x-listen-endpoint-id";
 const HDR_SESSION = "x-listen-session-id";
 const HDR_SINCE = "x-listen-since-cursor";
+/** `?since=now`: a new session starts from the current tail position (skip the backlog). */
+const HDR_SINCE_NOW = "x-listen-since-now";
 
 /** The org/endpoint/session this DO is pinned to, persisted once on first connect. */
 interface Binding {
@@ -135,6 +137,12 @@ export class ListenSession extends DurableObject<ListenEnv> {
         } catch {
           /* ignore an invalid initial cursor */
         }
+      } else if (request.headers.get(HDR_SINCE_NOW) === "1") {
+        // ?since=now: start this NEW session from the current position — persist the latest cursor at
+        // the watermark so the first poll tails only NEW events (skip the backlog). null (empty
+        // endpoint) → leave the cursor unset (oldest == now when there's no history yet).
+        const latest = await this.latestCursor(orgId, endpointId);
+        if (latest) await this.persistCursor(latest);
       }
     }
 
@@ -262,6 +270,20 @@ export class ListenSession extends DurableObject<ListenEnv> {
           ),
         resume,
       );
+    } finally {
+      await tenant.end();
+    }
+  }
+
+  /**
+   * The current tail position (the latest event ≤ watermark) for a `?since=now` new session, or null
+   * when the endpoint has no visible events. One short-lived RLS-scoped client. Overridable in tests
+   * (inject a canned cursor; no live Postgres).
+   */
+  protected async latestCursor(orgId: string, endpointId: string): Promise<Cursor | null> {
+    const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+    try {
+      return await withTenant(tenant, orgId, (tx) => latestTailCursor(tx, { endpointId }));
     } finally {
       await tenant.end();
     }

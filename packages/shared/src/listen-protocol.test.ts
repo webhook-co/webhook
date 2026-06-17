@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   ServerFrameSchema,
+  encodeClientFrame,
   encodeServerFrame,
   parseClientFrame,
+  parseServerFrame,
   type ServerFrame,
-} from "../src/listen-protocol";
+} from "./listen-protocol";
 
 // A valid events.tail summary (the event-frame payload). UUIDs + enum values must be real or
 // EventSummarySchema rejects them — provider/dedupStrategy come from the shared enums.
@@ -71,5 +73,37 @@ describe("listen-protocol — server frames", () => {
   it("carries a recoverable error frame", () => {
     const frame: ServerFrame = { type: "error", code: "POLL_DEGRADED", message: "transient" };
     expect(ServerFrameSchema.parse(JSON.parse(encodeServerFrame(frame)))).toEqual(frame);
+  });
+});
+
+describe("listen-protocol — client-side (the CLI consuming the tunnel)", () => {
+  it("parseServerFrame accepts a ready frame", () => {
+    expect(
+      parseServerFrame(JSON.stringify({ type: "ready", sessionId: "s1", watermarkDeltaMs: 5000 })),
+    ).toEqual({ type: "ready", sessionId: "s1", watermarkDeltaMs: 5000 });
+  });
+
+  it("parseServerFrame round-trips an event frame (ISO → Date) and decodes an ArrayBuffer", () => {
+    const frame: ServerFrame = { type: "event", summary: summary(), cursor: "cur" };
+    const wire = encodeServerFrame(frame);
+    const parsed = parseServerFrame(new TextEncoder().encode(wire).buffer);
+    expect(parsed?.type).toBe("event");
+    if (parsed?.type === "event") {
+      expect(parsed.summary.receivedAt).toBeInstanceOf(Date);
+      expect(parsed.summary.id).toBe(frame.summary.id);
+    }
+  });
+
+  it("parseServerFrame returns null on garbage or a client-only frame type", () => {
+    expect(parseServerFrame("{not json")).toBeNull();
+    // an `ack` is a CLIENT frame — the client must not accept it as a server frame.
+    expect(parseServerFrame(JSON.stringify({ type: "ack", cursor: "c" }))).toBeNull();
+  });
+
+  it("encodeClientFrame round-trips an ack through the server's parseClientFrame", () => {
+    expect(parseClientFrame(encodeClientFrame({ type: "ack", cursor: "c9" }))).toEqual({
+      type: "ack",
+      cursor: "c9",
+    });
   });
 });

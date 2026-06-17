@@ -11,9 +11,33 @@ import { makeRealIo } from "./io.js";
 /** Env var that forces a hard fail rather than persisting a plaintext credential. */
 export const REQUIRE_SECURE_STORAGE_VAR = "WBHK_REQUIRE_SECURE_STORAGE";
 
+/** Lifecycle callbacks the `wbhk listen` command drives a tunnel socket with. */
+export interface WsHandlers {
+  readonly onOpen: () => void;
+  /** A text frame arrived (the runtime decodes Buffer/ArrayBuffer to a string first). */
+  readonly onMessage: (data: string) => void;
+  readonly onClose: (code: number, reason: string) => void;
+  readonly onError: (err: Error) => void;
+}
+/** The minimal socket the listen command holds: send a frame, or close the connection. */
+export interface WsSocket {
+  send(data: string): void;
+  close(): void;
+}
+/**
+ * Open a WebSocket to `url` with request headers (the bearer-authed `/listen` tunnel). Injected so
+ * `wbhk listen` is unit-tested with a fake socket (no network). The real impl wraps the `ws` package
+ * — the global WHATWG `WebSocket` cannot set an Authorization header on the upgrade; `ws` can.
+ */
+export type ConnectWebSocket = (
+  url: string,
+  opts: { headers: Readonly<Record<string, string>>; handlers: WsHandlers },
+) => WsSocket;
+
 // The host I/O seams a command needs beyond the process streams: an HTTP client (the API), a piped-
-// stdin reader (`--stdin`), and an interactive hidden-secret prompt. Grouped + injected so login/whoami
-// are node-tested with fakes; the real implementations (TTY + globals) live in io.ts (coverage-excluded).
+// stdin reader (`--stdin`), an interactive hidden-secret prompt, and the listen tunnel socket. Grouped
+// + injected so commands are node-tested with fakes; the real implementations (TTY + globals + the ws
+// client) live in io.ts (coverage-excluded).
 export interface IoSeams {
   /** HTTP client for the REST API (the runtime `fetch` in production; a fake in tests). */
   readonly fetch: typeof fetch;
@@ -23,6 +47,8 @@ export interface IoSeams {
   promptSecret(message: string): Promise<string>;
   /** Read all of piped stdin to EOF, trimmed (the `--stdin` key path). */
   readStdin(): Promise<string>;
+  /** Open the bearer-authed listen tunnel WebSocket (the `ws` client in prod; a fake in tests). */
+  connectWebSocket: ConnectWebSocket;
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -112,6 +138,8 @@ export function makeTestContext(opts?: {
   isInteractive?: boolean;
   /** Override the credential store (an in-memory fake) so command tests never touch disk. */
   store?: CredentialStore;
+  /** Fake tunnel-socket factory for `wbhk listen` (drives ready/event/close in tests). */
+  connectWebSocket?: ConnectWebSocket;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -134,6 +162,8 @@ export function makeTestContext(opts?: {
         : unconfigured("promptSecret"),
     readStdin:
       opts?.stdin !== undefined ? async () => opts.stdin as string : unconfigured("readStdin"),
+    connectWebSocket:
+      opts?.connectWebSocket ?? (unconfigured("connectWebSocket") as unknown as ConnectWebSocket),
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",

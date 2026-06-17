@@ -347,6 +347,11 @@ export async function handleListenUpgrade(
     const since = url.searchParams.get("sinceCursor");
     if (since && /^[A-Za-z0-9._-]+$/.test(since)) headers.set("x-listen-since-cursor", since);
     else headers.delete("x-listen-since-cursor");
+    // `?since=now` (the CLI from-now default): a NEW session starts from the CURRENT position (skip the
+    // backlog, tail only new events). Mutually exclusive with sinceCursor (the CLI sets one or neither);
+    // the DO computes the boundary cursor server-side. Trusted header, overwriting any client-supplied.
+    if (url.searchParams.get("since") === "now") headers.set("x-listen-since-now", "1");
+    else headers.delete("x-listen-since-now");
 
     return stub.fetch(new Request(request, { headers }));
   } finally {
