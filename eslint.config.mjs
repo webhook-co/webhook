@@ -61,7 +61,13 @@ export default tseslint.config(
   // Build/tooling scripts and config files run in Node and legitimately touch the
   // filesystem with computed paths.
   {
-    files: ["scripts/**/*.{mjs,js,ts}", "**/*.config.{mjs,js,ts}", "**/bench/**/*.mjs"],
+    files: [
+      "scripts/**/*.{mjs,js,ts}",
+      "apps/*/scripts/**/*.{mjs,js,ts}",
+      "packages/*/scripts/**/*.{mjs,js,ts}",
+      "**/*.config.{mjs,js,ts}",
+      "**/bench/**/*.mjs",
+    ],
     languageOptions: {
       globals: { ...globals.node },
     },
