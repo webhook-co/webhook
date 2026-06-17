@@ -46,7 +46,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Assign and request review from the code owner
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
