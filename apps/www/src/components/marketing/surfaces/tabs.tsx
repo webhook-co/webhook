@@ -33,7 +33,7 @@ export function Tabs({
   const [selected, setSelected] = useState(defaultId ?? items[0]?.id);
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+  function onKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     const current = items.findIndex((item) => item.id === selected);
     let next: number;
     switch (event.key) {
@@ -63,11 +63,13 @@ export function Tabs({
 
   return (
     <div>
+      {/* Arrow/Home/End handling lives on each tab button (the focusable element under roving
+          tabindex), not the tablist container — the active tab always holds focus, so it receives
+          the key event directly. */}
       <div
         role="tablist"
         aria-label={ariaLabel}
         aria-orientation="horizontal"
-        onKeyDown={onKeyDown}
         className="flex flex-wrap gap-1.5"
       >
         {items.map((item, index) => {
@@ -85,6 +87,7 @@ export function Tabs({
               aria-controls={`${idBase}-panel-${item.id}`}
               tabIndex={isSelected ? 0 : -1}
               onClick={() => setSelected(item.id)}
+              onKeyDown={onKeyDown}
               className={cn(
                 focusRing,
                 "inline-flex items-center gap-2 rounded-control px-3.5 py-2 text-sm font-medium transition-colors",

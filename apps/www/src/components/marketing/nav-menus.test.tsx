@@ -2,6 +2,8 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import { axeComponent } from "@/test/axe";
+
 import { NavMenus } from "./nav-menus";
 
 function renderWithOutside() {
@@ -78,6 +80,13 @@ describe("NavMenus", () => {
       relatedTarget: screen.getByRole("button", { name: "outside" }),
     });
     expect(product).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("has no axe violations (closed and open)", async () => {
+    const { container } = render(<NavMenus />);
+    expect(await axeComponent(container)).toHaveNoViolations();
+    await userEvent.click(trigger(/^product$/i));
+    expect(await axeComponent(container)).toHaveNoViolations();
   });
 
   it("removes its document listeners on unmount", async () => {

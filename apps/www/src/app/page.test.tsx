@@ -2,6 +2,8 @@ import { render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { mockMatchMedia } from "@/lib/test-utils";
+import { axeComponent } from "@/test/axe";
+
 import HomePage from "./page";
 
 describe("HomePage", () => {
@@ -101,5 +103,10 @@ describe("HomePage", () => {
     const developers = screen.getByRole("navigation", { name: /developers/i });
     expect(within(developers).getByRole("link", { name: /quickstart/i })).toBeInTheDocument();
     expect(within(developers).getByRole("link", { name: /api reference/i })).toBeInTheDocument();
+  });
+
+  it("composes without axe violations (semantics — contrast is the real-browser job's)", async () => {
+    const { container } = render(<HomePage />);
+    expect(await axeComponent(container)).toHaveNoViolations();
   });
 });
