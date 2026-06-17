@@ -274,6 +274,8 @@ export async function buildListenAuth(env: Env): Promise<ListenAuthHandle> {
     hasher,
     cache: kvCredentialCache(env.KV_AUTHZ),
     coldLookup: makeApiKeyColdLookup(authn, API_RESOURCE),
+    // The tunnel bearer reuses the api audience; stamp it (KV_AUTHZ is shared with api/mcp).
+    resource: API_RESOURCE,
   });
   return {
     authDeps: {
