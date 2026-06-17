@@ -6,6 +6,7 @@ import {
   type VerifyBearer,
 } from "@webhook-co/contract";
 import type { ReadHandlers } from "@webhook-co/db";
+import { b64ToBytes } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { handleRequest, type ApiDeps } from "./router.js";
@@ -202,5 +203,87 @@ describe("handleRequest — GET /v1/whoami (scope-free identity)", () => {
       handlers: handlersOf({}),
     };
     await expect(handleRequest(get("/v1/whoami"), deps)).rejects.toThrow(/hyperdrive down/);
+  });
+});
+
+describe("handleRequest — GET /v1/events/:id/payload (events.getPayload)", () => {
+  const EVENT_ID = "55555555-5555-7555-8555-555555555555";
+
+  // A fake R2 bucket: `body` bytes wrapped as an R2 object, or null for a missing object.
+  function r2(body: Uint8Array | null): R2Bucket {
+    return {
+      get: async () =>
+        body === null
+          ? null
+          : ({ arrayBuffer: async () => body.buffer } as unknown as R2ObjectBody),
+    } as unknown as R2Bucket;
+  }
+  // events.get resolves the metadata (RLS-checked upstream); the payload route reuses it for the key.
+  const eventsGetOk = (
+    payloadR2Key = "org/x/ep/y/z",
+    contentType: string | null = "application/json",
+  ): ReadHandlers =>
+    handlersOf({ "events.get": async () => ({ id: EVENT_ID, payloadR2Key, contentType }) });
+
+  it("returns a base64 envelope whose bytes round-trip exactly", async () => {
+    const body = new TextEncoder().encode('{"hello":"world"}');
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: eventsGetOk(),
+      payloads: r2(body),
+    };
+    const res = await handleRequest(get(`/v1/events/${EVENT_ID}/payload`), deps);
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      contentType: string | null;
+      bytes: number;
+      bodyBase64: string;
+    };
+    expect(json.contentType).toBe("application/json");
+    expect(json.bytes).toBe(body.byteLength);
+    expect([...b64ToBytes(json.bodyBase64)]).toEqual([...body]);
+  });
+
+  it("404s when the event isn't found (the events.get RLS fault maps through)", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "events.get": async () => {
+          throw new CapabilityFault("NOT_FOUND", "event not found");
+        },
+      }),
+      payloads: r2(new Uint8Array()),
+    };
+    const res = await handleRequest(get(`/v1/events/${EVENT_ID}/payload`), deps);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "NOT_FOUND" });
+  });
+
+  it("404s when the row exists but the R2 body object is missing", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: eventsGetOk(),
+      payloads: r2(null),
+    };
+    const res = await handleRequest(get(`/v1/events/${EVENT_ID}/payload`), deps);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "NOT_FOUND" });
+  });
+
+  it("401s without a credential", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: eventsGetOk(),
+      payloads: r2(new Uint8Array()),
+    };
+    const res = await handleRequest(get(`/v1/events/${EVENT_ID}/payload`, null), deps);
+    expect(res.status).toBe(401);
+  });
+
+  it("propagates a 5xx when the R2 binding is absent (a wiring bug, not a client error)", async () => {
+    const deps: ApiDeps = { authDeps: authDeps(verify(scoped)), handlers: eventsGetOk() };
+    await expect(handleRequest(get(`/v1/events/${EVENT_ID}/payload`), deps)).rejects.toThrow(
+      /R2_PAYLOADS/,
+    );
   });
 });

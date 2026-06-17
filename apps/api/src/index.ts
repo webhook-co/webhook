@@ -42,6 +42,13 @@ export interface Env {
   HYPERDRIVE_TENANT: Hyperdrive;
   /** KV caching resolved principals (keyed by api-key hash); invalidated on revoke. */
   KV_AUTHZ: KVNamespace;
+  /**
+   * The payloads bucket (shared with engine, which writes it). The api only ever GETs from it —
+   * events.getPayload streams a captured event's stored body after an RLS metadata read (ADR-0015).
+   * The binding is a standard R2 binding; read-only is a usage discipline (a scoped token is a future
+   * hardening), so never call put/delete here.
+   */
+  R2_PAYLOADS: R2Bucket;
   // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
   // below is ONE account secret each, shared byte-identically with engine + mcp. Never DB columns.
   /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */
@@ -98,6 +105,7 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
       resourceMetadataUrl: `${API_RESOURCE}${PRM_PATH}`,
     },
     handlers: createReadHandlers({ tenant, cursorKey, auditKey }),
+    payloads: env.R2_PAYLOADS,
   };
   return {
     deps,

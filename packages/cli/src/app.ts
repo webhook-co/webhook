@@ -10,7 +10,7 @@ import {
 
 import { auditVerifyCommand } from "./commands/audit.js";
 import { endpointsGetCommand, endpointsListCommand } from "./commands/endpoints.js";
-import { eventsGetCommand, eventsListCommand } from "./commands/events.js";
+import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
 import { loginCommand } from "./commands/login.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
@@ -29,6 +29,7 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "endpoints.get": ["endpoints", "get"],
   "events.list": ["events", "list"],
   "events.get": ["events", "get"],
+  "events.getPayload": ["events", "payload"],
   "events.tail": ["listen"],
   "events.replay": ["replay"],
   "audit.verify": ["audit", "verify"],
@@ -68,6 +69,7 @@ const eventsRoute = buildRouteMap({
   routes: {
     list: eventsListCommand,
     get: eventsGetCommand,
+    payload: eventsPayloadCommand,
   },
   docs: { brief: "inspect captured events" },
 });

@@ -87,11 +87,13 @@ describe("capability parity — current GA surfaces conformance", () => {
   ];
   function liveBindings() {
     const b = emptyBindings();
-    for (const cap of CAPABILITIES) b.cli.add(cap.name); // CLI surfaces all 7 commands
+    for (const cap of CAPABILITIES) b.cli.add(cap.name); // CLI surfaces every command
     for (const name of API_MCP_BOUND) {
       b.api.add(name);
       b.mcp.add(name);
     }
+    // events.getPayload is bound on api (+ cli, above) but exempt on mcp (no R2 binding) — slice 12a.
+    b.api.add("events.getPayload");
     return b;
   }
 
@@ -107,12 +109,15 @@ describe("capability parity — current GA surfaces conformance", () => {
     );
   });
 
-  it("keeps exemptions tight: tail is api/cli/mcp, replay is cli-only, web is exempt everywhere", () => {
+  it("keeps exemptions tight: tail api/cli/mcp, replay cli-only, getPayload api/cli, web exempt everywhere", () => {
     const tail = CAPABILITIES.find((c) => c.name === "events.tail");
     const replay = CAPABILITIES.find((c) => c.name === "events.replay");
+    const getPayload = CAPABILITIES.find((c) => c.name === "events.getPayload");
     // events.tail bound on api+mcp as of slice 11 (cursor pull); replay stays cli-only until slice 12.
     expect(requiredSurfaces(tail!)).toEqual(["api", "cli", "mcp"]);
     expect(requiredSurfaces(replay!)).toEqual(["cli"]);
+    // getPayload is bound on api + cli; mcp is exempt (no R2 binding); web with the dashboard epic.
+    expect(requiredSurfaces(getPayload!)).toEqual(["api", "cli"]);
     for (const cap of CAPABILITIES) {
       expect(requiredSurfaces(cap), `${cap.name} must not require web yet`).not.toContain("web");
     }

@@ -1,4 +1,5 @@
 import { run } from "@stricli/core";
+import { bytesToB64 } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { app } from "../app.js";
@@ -122,5 +123,37 @@ describe("wbhk events get", () => {
     });
     await run(app, ["events", "get", EV], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.UNAUTHORIZED);
+  });
+});
+
+describe("wbhk events payload", () => {
+  const envelope = (body: Uint8Array, contentType: string | null = "application/json") => ({
+    contentType,
+    bytes: body.byteLength,
+    bodyBase64: bytesToB64(body),
+  });
+
+  it("writes the raw body verbatim in text mode (no added newline)", async () => {
+    const body = new TextEncoder().encode('{"order":42}');
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(envelope(body)) });
+    await run(app, ["events", "payload", EV], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toBe('{"order":42}');
+  });
+
+  it("emits the lossless base64 envelope with --output json", async () => {
+    const body = Uint8Array.from([0x00, 0x01, 0x02, 0xfe, 0xff]);
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(envelope(body, null)) });
+    await run(app, ["events", "payload", EV, "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout());
+    expect(parsed.contentType).toBeNull();
+    expect(parsed.bodyBase64).toBe(bytesToB64(body));
+  });
+
+  it("targets the /payload path", async () => {
+    const cap = capturingFetch(envelope(new TextEncoder().encode("x")));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["events", "payload", EV], t.ctx);
+    expect(new URL(cap.urls[0]).pathname).toBe(`/v1/events/${EV}/payload`);
   });
 });
