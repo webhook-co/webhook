@@ -48,10 +48,12 @@ export async function insertIngestEvent(
   sql: Sql,
   row: IngestEventInput,
 ): Promise<{ inserted: boolean }> {
-  // bytea wants a Buffer; jsonb is passed as a JSON string and cast. external_id stays null (no
-  // SW external-id wiring yet); verified/verification carry the best-effort verification outcome.
+  // bytea wants a Buffer; jsonb values go through sql.json() so postgres.js serializes them EXACTLY
+  // once. A manual JSON.stringify(...)::jsonb DOUBLE-encodes — postgres.js re-encodes the string, so
+  // the column stores a jsonb STRING instead of an array/object, which then fails the read-side
+  // EventSchema (e.g. `headers: expected array, received string`). external_id stays null (no SW
+  // external-id wiring yet); verified/verification carry the best-effort verification outcome.
   const contentHash = row.contentHash === null ? null : Buffer.from(row.contentHash);
-  const verification = row.verification === null ? null : JSON.stringify(row.verification);
   const rows = await sql<{ inserted: boolean }[]>`
     select inserted from ingest_event(
       ${row.id}::uuid,
@@ -63,13 +65,13 @@ export async function insertIngestEvent(
       ${row.dedupStrategy},
       ${row.contentType},
       ${contentHash}::bytea,
-      ${JSON.stringify(row.headers)}::jsonb,
+      ${sql.json(row.headers)}::jsonb,
       ${row.provider},
       ${row.providerEventId},
       ${row.dedupBucket}::bigint,
       null::text,
       ${row.verified},
-      ${verification}::jsonb
+      ${sql.json(row.verification as Parameters<typeof sql.json>[0])}::jsonb
     )`;
   // ingest_event ALWAYS returns exactly one (event_id, inserted) row. Anything else (an empty or
   // multi-row result) means a broken contract — fail loud so the caller 500s and the provider
