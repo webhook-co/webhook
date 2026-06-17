@@ -3,6 +3,10 @@
   "name": "webhook-api",
   "main": "src/index.ts",
   "compatibility_date": "2024-11-06",
+  // nodejs_compat: the runtime Worker hashes api keys with node:crypto (the shared credential hasher)
+  // and reads Postgres through postgres.js over Hyperdrive — both need Node built-ins in workerd.
+  // (Matches apps/engine + apps/mcp; the auth-surface tests run in plain Node so they never exercised this.)
+  "compatibility_flags": ["nodejs_compat"],
   "observability": {
     "enabled": true,
   },
