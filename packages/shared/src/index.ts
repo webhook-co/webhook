@@ -15,6 +15,7 @@ export { bytesToHex, bytesToB64, b64ToBytes } from "./bytes";
 export * from "./enums";
 export * from "./ids";
 export * from "./entities";
+export * from "./listen-protocol";
 export * from "./watermark";
 export * from "./cursor";
 export * from "./audit";

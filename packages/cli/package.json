@@ -21,6 +21,10 @@
     "@stricli/core": "^1.2.7",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/shared": "workspace:*",
+    "ws": "^8.20.1",
     "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.1"
   }
 }

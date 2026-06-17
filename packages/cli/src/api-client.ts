@@ -12,7 +12,7 @@ import {
 import { b64ToBytes, type Endpoint, type Event, type EventSummary } from "@webhook-co/shared";
 import type { z } from "zod";
 
-import { CliError, InvalidApiUrlError } from "./errors.js";
+import { CliError, InvalidApiUrlError, InvalidTunnelUrlError } from "./errors.js";
 import { EXIT, exitCodeForCapabilityError } from "./output/exit-codes.js";
 
 // The CLI's Bearer HTTP client for the webhook.co REST API (api.webhook.co). It attaches the API key
@@ -26,6 +26,12 @@ export const DEFAULT_API_BASE_URL = "https://api.webhook.co";
 
 /** Env var overriding the API base URL (sticky alternative to the per-invocation `--api-url`). */
 export const ENV_API_URL_VAR = "WBHK_API_URL";
+
+/** The canonical listen-tunnel origin (the engine on the cookieless ingestion apex). */
+export const DEFAULT_TUNNEL_URL = "wss://wbhk.my";
+
+/** Env var overriding the tunnel URL (self-host / dev), the sticky alternative to `--tunnel-url`. */
+export const ENV_TUNNEL_URL_VAR = "WBHK_TUNNEL_URL";
 
 /**
  * A typed API failure. A closed-taxonomy `code` maps to its stable CLI exit code; an absent code
@@ -230,5 +236,26 @@ export function resolveApiBaseUrl(opts: { flag?: string; env?: string; stored?: 
   // A base URL carries no query/fragment; reject rather than silently mangle `${base}/v1/…`.
   if (url.search !== "" || url.hash !== "") throw new InvalidApiUrlError(raw);
   // Return the normalized origin+path (drops whitespace; strips a trailing slash) so concatenation is safe.
+  return (url.origin + url.pathname).replace(/\/+$/, "");
+}
+
+/**
+ * Resolve the listen-tunnel base URL: `--tunnel-url` flag › `WBHK_TUNNEL_URL` env › stored › default.
+ * The bearer api key rides the tunnel UPGRADE handshake, so the URL MUST be wss:// — ws:// is rejected
+ * except for loopback dev — otherwise an override (or a tampered stored value) could downgrade to
+ * plaintext or redirect the live credential to an attacker-chosen host. No query/fragment (would mangle
+ * `${base}/listen`); the normalized origin+path is returned. Re-validated on every read.
+ */
+export function resolveTunnelUrl(opts: { flag?: string; env?: string; stored?: string }): string {
+  const raw = opts.flag ?? opts.env ?? opts.stored ?? DEFAULT_TUNNEL_URL;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new InvalidTunnelUrlError(raw);
+  }
+  const loopbackWsOk = url.protocol === "ws:" && LOOPBACK_HOSTS.has(url.hostname);
+  if (url.protocol !== "wss:" && !loopbackWsOk) throw new InvalidTunnelUrlError(raw);
+  if (url.search !== "" || url.hash !== "") throw new InvalidTunnelUrlError(raw);
   return (url.origin + url.pathname).replace(/\/+$/, "");
 }

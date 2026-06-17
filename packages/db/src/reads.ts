@@ -192,6 +192,27 @@ export async function tailEvents(
   return buildPage(rows, limit, toEventSummary, (r) => ({ receivedAt: r.received_at, id: r.id }));
 }
 
+/**
+ * The cursor of the LATEST event at/below the gapless watermark for an endpoint, or null if there is
+ * none — the "current position" a `?since=now` listen session starts from, so it tails only NEW events
+ * and skips the backlog. (The cli-only seed can't get this: events.tail returns no cursor when caught
+ * up.) Same watermark + ms-resolution keyset as tailEvents, ordered DESC to take the max
+ * (received_at, id). Backed by events_tunnel_idx (endpoint_id, received_at, id).
+ */
+export async function latestTailCursor(
+  tx: TenantTx,
+  opts: { readonly endpointId: string },
+): Promise<Cursor | null> {
+  const [r] = await tx<{ received_at: Date; id: string }[]>`
+    select received_at, id
+    from events
+    where endpoint_id = ${opts.endpointId}
+      and received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')
+    order by date_trunc('milliseconds', received_at) desc, id desc
+    limit 1`;
+  return r ? { receivedAt: r.received_at, id: r.id } : null;
+}
+
 export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> {
   const [r] = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,

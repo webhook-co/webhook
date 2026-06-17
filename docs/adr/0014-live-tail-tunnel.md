@@ -117,6 +117,17 @@ Relates to ADR-0011 (the shared read surface + `events.tail` + parity), ADR-0005
   for very high listener counts, and jurisdiction-namespaced DO ids for EU residency
   (`LISTEN_SESSION.jurisdiction(...)`, per the residency model).
 
+## amendment — `?since=now` (PR2, wedge phase 2)
+
+The CLI's "from now" default (`wbhk listen` with no `--since`) tails only NEW events, but the opaque
+cursor has no client-constructible time form and a cli-only seed can't get one (events.tail returns no
+`nextCursor` when caught up — the common small-backlog case). So the upgrade accepts a `?since=now`
+hint: on a NEW session (no durable cursor and no `?sinceCursor`), the DO seeds its resume cursor from
+`latestTailCursor` — the latest event at/below the watermark, computed server-side under the session's
+RLS — so the first poll skips the backlog. An empty endpoint leaves the cursor unset (oldest == now).
+Reconnects still resume from the durable acked cursor. This is a minimal unblock; the broader
+`--since` / cursor / cross-run-session design is a tracked follow-up.
+
 ## deviation from the canonical plan (flagged)
 
 This supersedes `wedge-spine-plan.md` §0.10 (push + no-timer) under the reliability-first priority.

@@ -2,6 +2,8 @@ import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 
+import { WebSocket as WsWebSocket } from "ws";
+
 import type { IoSeams } from "./context.js";
 
 // The host I/O boundary: the real `fetch`, piped-stdin reader, and interactive hidden-secret prompt.
@@ -36,5 +38,35 @@ export function makeRealIo(): IoSeams {
     isInteractive: process.stdin.isTTY === true,
     promptSecret,
     readStdin: async () => (await text(process.stdin)).trim(),
+    // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
+    // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
+    connectWebSocket: (url, { headers, handlers }) => {
+      const ws = new WsWebSocket(url, { headers });
+      ws.on("open", () => handlers.onOpen());
+      ws.on("message", (data) => handlers.onMessage(data.toString()));
+      ws.on("close", (code, reason) => handlers.onClose(code, reason.toString()));
+      ws.on("error", (err) =>
+        handlers.onError(err instanceof Error ? err : new Error(String(err))),
+      );
+      // send/close can throw on a non-OPEN socket (a routine drop). Swallow so the throw never escapes
+      // the `ws` event callback as an uncaught exception — the reconnect loop recovers and at-least-once
+      // redelivers any un-acked event. Mirrors the DO's safeSend.
+      return {
+        send: (data: string) => {
+          try {
+            ws.send(data);
+          } catch {
+            /* socket not open; reconnect + redelivery recovers */
+          }
+        },
+        close: () => {
+          try {
+            ws.close();
+          } catch {
+            /* already closing/closed */
+          }
+        },
+      };
+    },
   };
 }

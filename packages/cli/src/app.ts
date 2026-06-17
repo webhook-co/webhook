@@ -11,6 +11,7 @@ import {
 import { auditVerifyCommand } from "./commands/audit.js";
 import { endpointsGetCommand, endpointsListCommand } from "./commands/endpoints.js";
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
+import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
@@ -88,7 +89,7 @@ const root = buildRouteMap({
     endpoints: endpointsRoute,
     events: eventsRoute,
     audit: auditRoute,
-    listen: capabilityStub(["listen"], "slice 12"),
+    listen: listenCommand,
     replay: capabilityStub(["replay"], "slice 12"),
   },
   docs: { brief: "webhook.co — capture, inspect, and replay webhooks" },
