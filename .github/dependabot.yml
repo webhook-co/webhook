@@ -6,21 +6,53 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 10
+    # Group order matters: Dependabot assigns each dependency to the FIRST group it
+    # matches, so the most specific group (better-auth) is declared first.
     groups:
+      # better-auth and its plugins are published in lockstep from one upstream monorepo
+      # and share a peer-version contract — they must always move together, or a split
+      # bump leaves a version skew the upstream never tests. No update-types filter, so
+      # this also keeps a major bump of the family in a single PR. (Without this, the
+      # siblings arrive as separate, mutually-conflicting PRs on apps/auth + the lockfile.)
+      better-auth:
+        patterns:
+          - "better-auth"
+          - "@better-auth/*"
       # Batch low-risk dev-tooling bumps into a single PR to cut review noise.
       dev-tooling:
         dependency-type: development
         update-types:
           - minor
           - patch
+      # Batch routine production minor/patch bumps too, to cut PR volume. Production
+      # *major* bumps are intentionally excluded so they still arrive as individual PRs
+      # for deliberate review. better-auth is excluded here — it has its own group above.
+      production-minor:
+        dependency-type: production
+        update-types:
+          - minor
+          - patch
+        exclude-patterns:
+          - "better-auth"
+          - "@better-auth/*"
     labels:
       - dependencies
 
-  # Keep GitHub Actions (including the local composite action) patched.
+  # Keep GitHub Actions (including the local composite action) patched. Actions are
+  # SHA-pinned with a `# vX.Y.Z` comment; Dependabot bumps both the SHA and the comment.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: weekly
+    # Batch routine action minor/patch bumps; a *major* action bump (e.g. a breaking
+    # github-script upgrade) stays an individual PR so the breaking-change notes get read.
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
     labels:
       - dependencies
       - github-actions
