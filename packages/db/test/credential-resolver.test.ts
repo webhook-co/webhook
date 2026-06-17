@@ -65,6 +65,8 @@ describe("createCredentialResolver — audience stamping over a shared cache", (
       cache: new InMemoryCredentialCache(),
       coldLookup: coldReturning(undefined).fn,
     });
+    // whep_ = an ingest endpoint token (the ingest resolver omits `resource`) — deliberately distinct
+    // from the whk_ api-key plaintexts in the other cases, to model the ingest path this case names.
     expect((await r.resolve("whep_x"))?.audience).toBeUndefined();
   });
 
