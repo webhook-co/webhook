@@ -60,7 +60,12 @@ const APPS = {
   api: {
     domain: "api.webhook.co",
     secrets: SHARED,
-    placeholders: ["<HYPERDRIVE_AUTHN_ID>", "<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
+    placeholders: [
+      "<HYPERDRIVE_AUTHN_ID>",
+      "<HYPERDRIVE_TENANT_ID>",
+      "<KV_AUTHZ_ID>",
+      "webhook-payloads-dev",
+    ],
   },
   mcp: {
     domain: "mcp.webhook.co",
