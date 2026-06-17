@@ -26,6 +26,7 @@ const HDR = {
   ENDPOINT: "x-listen-endpoint-id",
   SESSION: "x-listen-session-id",
   SINCE: "x-listen-since-cursor",
+  SINCE_NOW: "x-listen-since-now",
 } as const;
 
 interface Binding {
@@ -77,7 +78,7 @@ async function ackCursor(cur: Cursor): Promise<string> {
 function connect(
   stub: DurableObjectStub,
   b: Binding,
-  opts: { since?: string } = {},
+  opts: { since?: string; sinceNow?: boolean } = {},
 ): Promise<Response> {
   const headers: Record<string, string> = {
     Upgrade: "websocket",
@@ -86,8 +87,12 @@ function connect(
     [HDR.SESSION]: b.sessionId,
   };
   if (opts.since) headers[HDR.SINCE] = opts.since;
+  if (opts.sinceNow) headers[HDR.SINCE_NOW] = "1";
   return stub.fetch("https://engine.example/listen", { headers });
 }
+
+/** The DO with the latest-cursor seam exposed for injection (no live Postgres in the pool). */
+type WithLatest = ListenSession & { latestCursor: () => Promise<Cursor | null> };
 
 /** Inject the poll seam (defaults to empty) THEN connect — so the auto-firing alarm never hits PG. */
 async function openSession(
@@ -132,6 +137,41 @@ describe("ListenSession — connect + stream", () => {
 
     const count = await runInDurableObject(stub, (_i, state) => state.getWebSockets().length);
     expect(count).toBe(1);
+  });
+});
+
+describe("ListenSession — ?since=now", () => {
+  it("seeds the durable cursor from the current position on a new session", async () => {
+    const b = newBinding();
+    const latest: Cursor = {
+      receivedAt: new Date("2026-06-10T12:00:09.000Z"),
+      id: crypto.randomUUID(),
+    };
+    const stub = stubFor(b.sessionId);
+    await runInDurableObject(stub, (inst) => {
+      (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as WithLatest).latestCursor = async () => latest;
+    });
+    const res = await connect(stub, b, { sinceNow: true });
+
+    expect(res.status).toBe(101);
+    // The cursor is seeded to the current position, so the first poll tails only NEW events.
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toEqual({
+      receivedAtMs: latest.receivedAt.getTime(),
+      id: latest.id,
+    });
+  });
+
+  it("leaves the cursor unset when the endpoint has no events (empty → oldest == now)", async () => {
+    const b = newBinding();
+    const stub = stubFor(b.sessionId);
+    await runInDurableObject(stub, (inst) => {
+      (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as WithLatest).latestCursor = async () => null;
+    });
+    await connect(stub, b, { sinceNow: true });
+
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toBeUndefined();
   });
 });
 

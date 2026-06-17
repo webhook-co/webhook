@@ -11,7 +11,14 @@ import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/cred
 import { createEndpoint } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
 import { createReadHandlers, type ReadHandlers } from "../src/read-handlers";
-import { getEndpoint, getEvent, listEndpoints, listEvents, tailEvents } from "../src/reads";
+import {
+  getEndpoint,
+  getEvent,
+  latestTailCursor,
+  listEndpoints,
+  listEvents,
+  tailEvents,
+} from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
@@ -433,5 +440,38 @@ describe("tailEvents (forward, watermark-bounded)", () => {
     expect(seen.length).toBe(2); // each exactly once — no boundary duplicate
     expect([...seen].sort()).toEqual([p1, p2].sort()); // both surfaced (id orders within the ms)
     expect(pages).toBe(2);
+  });
+});
+
+describe("latestTailCursor (the ?since=now boundary)", () => {
+  it("returns the latest event at/below the watermark (the newest of the tail set)", async () => {
+    const c = await withTenant(app, orgA, (tx) => latestTailCursor(tx, { endpointId: epTail }));
+    expect(c).not.toBeNull();
+    expect(c!.id).toBe(eTail3); // eTail1 < eTail2 < eTail3 by received_at
+  });
+
+  it("returns null for an endpoint with no events", async () => {
+    const epEmpty = (await createEndpoint(app, { orgId: orgA, name: "ep-empty-now" }, hasher)).id;
+    const c = await withTenant(app, orgA, (tx) => latestTailCursor(tx, { endpointId: epEmpty }));
+    expect(c).toBeNull();
+  });
+
+  it("excludes events newer than the watermark (a just-arrived event is not yet 'now')", async () => {
+    const epRecent = (await createEndpoint(app, { orgId: orgA, name: "ep-recent-now" }, hasher)).id;
+    const recent = await seedEvent(orgA, epRecent, { provider: "stripe" });
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = now() - interval '2 seconds' where id = ${recent}`,
+    );
+    // The only event is inside the 5s watermark window → not visible to the tail → no 'now' cursor.
+    expect(
+      await withTenant(app, orgA, (tx) => latestTailCursor(tx, { endpointId: epRecent })),
+    ).toBeNull();
+  });
+
+  it("is org-scoped under RLS (a cross-org endpoint yields null)", async () => {
+    const c = await withTenant(app, orgA, (tx) => latestTailCursor(tx, { endpointId: epB }));
+    expect(c).toBeNull();
   });
 });

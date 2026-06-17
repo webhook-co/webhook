@@ -1,10 +1,11 @@
-import { EventSummarySchema } from "@webhook-co/shared";
 import { z } from "zod";
 
-// The `wbhk listen` tunnel wire protocol (Slice 11b, ADR-0014): JSON text frames over the WebSocket.
-// Summaries-only (the events.tail element, never a payload body), single-lane (everything delivered
-// at/below the gapless watermark), at-least-once (the consumer dedups by cursor/id). Engine-local —
-// the CLI (11c) re-declares the tiny client-side view it needs rather than importing this module.
+import { EventSummarySchema } from "./entities";
+
+// The `wbhk listen` tunnel wire protocol (ADR-0014): JSON text frames over the WebSocket. Summaries-
+// only (the events.tail element, never a payload body), single-lane (everything delivered at/below
+// the gapless watermark), at-least-once (the consumer dedups by cursor/id). Lives here in shared so
+// the engine (server) and the CLI (client) bind ONE definition — neither re-declares the frames.
 
 /** server→client, first frame after the upgrade: announces the session id + the watermark lag. */
 export const ReadyFrameSchema = z.object({
@@ -68,5 +69,28 @@ export function parseClientFrame(raw: string | ArrayBuffer): ClientFrame | null 
 
 /** Serialize a server frame to the JSON text sent over the socket (Date → ISO inside the summary). */
 export function encodeServerFrame(frame: ServerFrame): string {
+  return JSON.stringify(frame);
+}
+
+/**
+ * Parse + validate an inbound SERVER frame (the client side of the protocol — the CLI consuming the
+ * tunnel). Returns `null` on ANY malformed input (bad JSON, unknown `type`, ill-typed fields) so the
+ * client can skip a garbled frame rather than throw. Accepts the `string | ArrayBuffer` the runtime
+ * delivers. Symmetric with `parseClientFrame` (the server's side).
+ */
+export function parseServerFrame(raw: string | ArrayBuffer): ServerFrame | null {
+  const text = typeof raw === "string" ? raw : new TextDecoder().decode(raw);
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  const result = ServerFrameSchema.safeParse(json);
+  return result.success ? result.data : null;
+}
+
+/** Serialize a client frame (today only `ack`) to the JSON text the client sends to the server. */
+export function encodeClientFrame(frame: ClientFrame): string {
   return JSON.stringify(frame);
 }

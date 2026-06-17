@@ -51,3 +51,15 @@ export class InvalidApiUrlError extends CliError {
     this.userMessage = `invalid api url \`${value}\` — must be an https:// URL (http:// is allowed only for localhost).`;
   }
 }
+
+/** A `--tunnel-url` / WBHK_TUNNEL_URL override that isn't a wss:// URL (ws:// only for loopback dev).
+ *  Same reasoning as InvalidApiUrlError — the bearer key rides the tunnel upgrade handshake. */
+export class InvalidTunnelUrlError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage: string;
+  constructor(value: string) {
+    super(`invalid tunnel url: ${value}`);
+    this.name = "InvalidTunnelUrlError";
+    this.userMessage = `invalid tunnel url \`${value}\` — must be a wss:// URL (ws:// is allowed only for localhost).`;
+  }
+}
