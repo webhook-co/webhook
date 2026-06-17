@@ -66,7 +66,10 @@ export const light: SemanticTheme = {
     focus: ink[950],
   },
   state: {
-    ok: { fg: "#16a34a", bg: "#f0fdf4", border: "#bbf7d0" },
+    // ok.fg darkened green-600 → green-700: #16a34a was 3.29:1 on the white card (failed WCAG AA
+    // 1.4.3 for the small "verified" status text). #15803d is ~5:1. The tint bg/border are
+    // unchanged. Dark theme uses its own (brighter) ok green for dark surfaces.
+    ok: { fg: "#15803d", bg: "#f0fdf4", border: "#bbf7d0" },
     warn: { fg: "#d97706", bg: "#fffbeb", border: "#fde68a" },
     danger: { fg: "#dc2626", bg: "#fef2f2", border: "#fecaca" },
     info: { fg: "#2563eb", bg: "#eff6ff", border: "#bfdbfe" },
@@ -86,7 +89,11 @@ export const dark: SemanticTheme = {
     primary: "#edf2f7",
     secondary: "#a9b4c4",
     muted: "#7e8ca0",
-    faint: "#5a6878",
+    // Lightened from #5a6878 (≈3.4:1 on the #0b0f14 dark page — failed WCAG AA 1.4.3) to clear
+    // 4.5:1 while staying a step dimmer than `muted`, so the dark "terminal" island keeps its
+    // dim/muted/full text tiers. (#5a6878 only ever carried decorative/aria-hidden text in the
+    // light theme, but is real visible terminal text in dark.)
+    faint: "#727f95",
     onInverse: ink[950],
   },
   border: {
