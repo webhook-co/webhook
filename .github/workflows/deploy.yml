@@ -9,7 +9,7 @@ name: deploy-wedge
 # workers_dev:false / routes / secrets_store_secrets, emitting the gitignored wrangler.prod.jsonc that
 # the deploy reads. Secret VALUES never enter CI — only the CF token (secret) + the non-secret ids.
 #
-#   push to main / manual dispatch -> generate, then `wrangler deploy` all three (production)
+#   push to main / dispatch from main -> generate, then `wrangler deploy` all three (production)
 #   pull_request                   -> generate, then `wrangler deploy --dry-run` (validates config +
 #                                     bundle without deploying)
 #
@@ -70,7 +70,9 @@ jobs:
       - name: Generate prod wrangler configs (overlay)
         run: node scripts/gen-wrangler-prod.mjs
       - name: Deploy production (engine / api / mcp)
-        if: github.event_name != 'pull_request'
+        # main-only: a push to main, or a workflow_dispatch with main selected. Without the ref guard a
+        # dispatch from a feature branch would ship unreviewed code straight to prod — keep the gate real.
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         run: |
           for app in engine api mcp; do
             echo "::group::deploy $app"

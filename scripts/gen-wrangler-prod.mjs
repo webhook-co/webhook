@@ -86,6 +86,14 @@ for (const [app, cfg] of Object.entries(APPS)) {
   }
   const leftover = txt.match(/<[A-Z_]+_ID>/g);
   if (leftover) throw new Error(`${app}: unreplaced placeholders ${leftover.join(", ")}`);
+  // Defense-in-depth beyond the `<..._ID>` regex: no TOKEN key may survive into the prod config. The
+  // loop above replaces the ones we expect; this catches a token PRESENT in the committed wrangler.jsonc
+  // but missing from cfg.placeholders (e.g. a newly-added `*-dev` bucket), which would otherwise ship a
+  // prod config still pointing at a dev resource. Safe from false positives: no TOKEN key is a substring
+  // of any replacement value or of the injected keys.
+  const survived = Object.keys(TOKEN).filter((k) => txt.includes(k));
+  if (survived.length)
+    throw new Error(`${app}: tokens leaked unreplaced into prod config: ${survived.join(", ")}`);
 
   // 2) inject the per-environment top-level keys right after the opening brace (JSONC tolerates it).
   const inject = {
