@@ -74,6 +74,9 @@ export default new OAuthProvider({
         hasher,
         cache: kvCredentialCache(e.KV_AUTHZ),
         coldLookup: makeApiKeyColdLookup(authn, MCP_RESOURCE),
+        // Stamp this surface's audience — KV_AUTHZ is shared with api, so a key api cached must
+        // resolve here as mcp's audience, not api's (the cross-surface 401 bug, ADR-0010/0011).
+        resource: MCP_RESOURCE,
       });
       return await resolveApiKeyToProps(
         { verifyBearer: makeVerifyBearer(resolver), resource: MCP_RESOURCE },
