@@ -11,7 +11,10 @@
     "test": "vitest run",
     "test:seo": "node scripts/check-seo-html.mjs",
     "test:a11y": "playwright test",
-    "test:lighthouse": "lhci autorun"
+    "test:lighthouse": "lhci autorun",
+    "check:export": "node scripts/check-export.mjs",
+    "deploy": "wrangler deploy",
+    "deploy:dry": "wrangler deploy --dry-run"
   },
   "dependencies": {
     "@webhook-co/ui": "workspace:*",

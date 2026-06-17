@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webhook-www",
+  // The marketing site is a pure static export (apps/www `output: "export"` → ./out). This is an
+  // ASSETS-ONLY Worker: no `main`, no `binding`, no Worker code — Cloudflare serves ./out directly.
+  // Set to a current date per Cloudflare's guidance; no runtime semantics ride on it (no script).
+  "compatibility_date": "2026-06-15",
+  // Production is served only on the custom domain www.webhook.co (attached at the zone — NOT
+  // committed here, mirroring apps/api + apps/mcp). Keep the production *.workers.dev route off;
+  // per-version preview URLs stay on so CI can validate/preview a build without touching prod.
+  "workers_dev": false,
+  "preview_urls": true,
+  "assets": {
+    "directory": "./out",
+    // Next emits extensionless HTML; auto-trailing-slash matches `trailingSlash: false` + the
+    // no-trailing-slash canonical/sitemap URLs without introducing a redirect loop.
+    "html_handling": "auto-trailing-slash",
+    // Serve out/404.html (emitted from app/not-found.tsx) — with a 404 status — for any unmatched
+    // path. (`binding` is intentionally absent: it's only valid alongside a Worker `main`.)
+    "not_found_handling": "404-page",
+  },
+  // No `account_id` here (no-secrets: account/zone ids never land in the repo) — wrangler reads it
+  // from CLOUDFLARE_ACCOUNT_ID at deploy. No `routes`/`custom_domain` either: www.webhook.co is
+  // bound at the zone per environment. Caching + security headers + HSTS + CSP ship in
+  // public/_headers (copied into ./out), which Workers Static Assets honors natively.
+}

@@ -37,3 +37,6 @@ the container-delivery lane behind the seam.
 
 Put environment-specific checklists, binding maps, and step-by-step rollback drills in
 `references/` (e.g. `references/rollback.md`) and link them here rather than inlining detail.
+
+- [`references/www-static-assets.md`](references/www-static-assets.md) — deploy `apps/www` to
+  www.webhook.co (assets-only Worker, `_headers`, apex→www redirect, HSTS, GitHub Actions CD).
