@@ -88,6 +88,8 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
     hasher,
     cache: kvCredentialCache(env.KV_AUTHZ),
     coldLookup: makeApiKeyColdLookup(authn, API_RESOURCE),
+    // Stamp this surface's audience on every resolved principal — KV_AUTHZ is shared with mcp/engine.
+    resource: API_RESOURCE,
   });
   const deps: ApiDeps = {
     authDeps: {

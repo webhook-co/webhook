@@ -43,6 +43,26 @@ export interface CredentialResolverOptions {
   readonly coldLookup: ColdLookup;
   /** Cache TTL backstop in seconds. Revocation is the primary invalidation path. */
   readonly ttlSeconds?: number;
+  /**
+   * The presenting surface's RFC-8707 resource (audience), for audience-bound surfaces — the api-key
+   * path at api / mcp / the listen tunnel. When set, the resolver stamps THIS resource as the
+   * resolved principal's `audience`, on BOTH the cache-hit and cold paths.
+   *
+   * Why: KV_AUTHZ is a SINGLE namespace shared across api + mcp + engine, the cache key is the bare
+   * credential hash, and api keys are org credentials valid across the org's surfaces (no per-key
+   * audience). Without this, a cache entry populated by one surface (e.g. api, stamping
+   * `audience=https://api.webhook.co`) is served to another (mcp), whose `verifyBearer` then rejects
+   * it on an audience mismatch. Stamping the presenting surface's resource here makes the shared
+   * cache audience-agnostic — one entry per key, so revoke/invalidate stays complete — while each
+   * surface still sees its own audience. Omit for the ingest path (endpoint tokens carry no audience).
+   *
+   * SAFE only because api keys have NO per-key audience today (they're org-wide, valid across the
+   * org's surfaces) and OAuth/provider-minted tokens are validated elsewhere, never through this
+   * resolver. If a per-key audience is ever read on THIS path (the future OAuth seam in
+   * makeApiKeyColdLookup), this unconditional overwrite must become conditional so a credential's
+   * intrinsic audience isn't silently widened to the presenting surface.
+   */
+  readonly resource?: string;
 }
 
 function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
@@ -94,6 +114,14 @@ function isCachedSealedSecret(value: unknown): boolean {
 export function createCredentialResolver(opts: CredentialResolverOptions): CredentialResolver {
   const ttl = opts.ttlSeconds ?? CREDENTIAL_CACHE_TTL_SECONDS;
 
+  // Authoritatively stamp the presenting surface's audience on a resolved principal. The cache is
+  // shared across surfaces (bare-hash key), so a hit populated elsewhere may carry another surface's
+  // audience; overwriting here (and on the cold path, for symmetry) is what keeps the shared cache
+  // from leaking one surface's audience to another. No-op when this resolver isn't audience-bound
+  // (ingest), preserving the endpoint-token principal's audience-less shape.
+  const stampAudience = (p: ResolvedPrincipal): ResolvedPrincipal =>
+    opts.resource === undefined ? p : { ...p, audience: opts.resource };
+
   async function resolve(plaintext: string): Promise<ResolvedPrincipal | null> {
     // Candidate hashes: current pepper first, then any previous peppers (rotation window).
     // The common single-pepper case is exactly one hash -> one cache get / one cold lookup,
@@ -116,7 +144,7 @@ export function createCredentialResolver(opts: CredentialResolverOptions): Crede
         } catch {
           parsed = null;
         }
-        if (isResolvedPrincipal(parsed)) return parsed;
+        if (isResolvedPrincipal(parsed)) return stampAudience(parsed);
       }
     }
 
@@ -125,7 +153,7 @@ export function createCredentialResolver(opts: CredentialResolverOptions): Crede
       const resolved = await opts.coldLookup(keyHash);
       if (resolved === null) continue; // negatives are NOT cached (see header).
       await opts.cache.put(credentialCacheKey(keyHash), JSON.stringify(resolved), ttl);
-      return resolved;
+      return stampAudience(resolved);
     }
     return null;
   }
