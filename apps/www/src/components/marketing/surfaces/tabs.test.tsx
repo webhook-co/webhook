@@ -2,6 +2,8 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
+import { axeComponent } from "@/test/axe";
+
 import { Tabs, type TabItem } from "./tabs";
 
 const ITEMS: TabItem[] = [
@@ -59,5 +61,12 @@ describe("Tabs", () => {
     expect(tab("Web")).toHaveAttribute("aria-selected", "true");
     await userEvent.keyboard("{Home}");
     expect(tab("MCP")).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("has no axe violations (default, and after selecting another tab)", async () => {
+    const { container } = setup();
+    expect(await axeComponent(container)).toHaveNoViolations();
+    await userEvent.click(tab("CLI"));
+    expect(await axeComponent(container)).toHaveNoViolations();
   });
 });

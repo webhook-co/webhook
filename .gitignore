@@ -29,6 +29,12 @@ next-env.d.ts
 # Test coverage
 coverage/
 
+# Playwright + Lighthouse-CI output
+test-results/
+playwright-report/
+.last-run.json
+.lighthouseci/
+
 # macOS
 .DS_Store
 

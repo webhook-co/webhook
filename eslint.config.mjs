@@ -1,5 +1,6 @@
 import js from "@eslint/js";
 import prettier from "eslint-config-prettier";
+import jsxA11y from "eslint-plugin-jsx-a11y";
 import security from "eslint-plugin-security";
 import globals from "globals";
 import tseslint from "typescript-eslint";
@@ -64,6 +65,7 @@ export default tseslint.config(
     files: [
       "scripts/**/*.{mjs,js,ts}",
       "apps/*/scripts/**/*.{mjs,js,ts}",
+      "apps/*/playwright/**/*.{mjs,js,ts}",
       "packages/*/scripts/**/*.{mjs,js,ts}",
       "**/*.config.{mjs,js,ts}",
       "**/bench/**/*.mjs",
@@ -85,6 +87,21 @@ export default tseslint.config(
     },
     rules: {
       "security/detect-non-literal-fs-filename": "off",
+    },
+  },
+
+  // Accessibility linting for the marketing site. Scoped to apps/www (the dashboard, apps/web,
+  // is a separate follow-up so its findings don't ride along here). The design-ux rule already
+  // mandates a11y here; this enforces it at lint time.
+  {
+    files: ["apps/www/**/*.{jsx,tsx}"],
+    ...jsxA11y.flatConfigs.recommended,
+    rules: {
+      ...jsxA11y.flatConfigs.recommended.rules,
+      // The nav/footer/CTA links are intentional `href="#"` placeholders pending real routes.
+      // Warn (don't error) so they're visible without blocking CI — the repo lint is bare
+      // `eslint .` with no --max-warnings. Flip back to the recommended "error" once routes exist.
+      "jsx-a11y/anchor-is-valid": "warn",
     },
   },
 

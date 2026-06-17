@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mockMatchMedia } from "@/lib/test-utils";
+import { axeComponent } from "@/test/axe";
+
 import { Inspector } from "./inspector";
 
 describe("Inspector", () => {
@@ -50,5 +52,11 @@ describe("Inspector", () => {
     mockMatchMedia(true);
     const { container } = render(<Inspector />);
     expect(container.querySelector("ul")).toHaveAttribute("aria-live", "off");
+  });
+
+  it("has no axe violations", async () => {
+    mockMatchMedia(true); // paused → deterministic seed frame
+    const { container } = render(<Inspector />);
+    expect(await axeComponent(container)).toHaveNoViolations();
   });
 });
