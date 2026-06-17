@@ -12,6 +12,7 @@ import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/cred
 import { createEndpoint } from "../src/endpoints";
 import { insertIngestEvent, type IngestEventInput } from "../src/ingest-event";
 import { createOrg } from "../src/orgs";
+import { getEvent } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
@@ -166,5 +167,30 @@ describe("insertIngestEvent (webhook_ingest, full capture row)", () => {
         ? JSON.parse(stored.verification)
         : stored?.verification;
     expect(v).toEqual(verification);
+  });
+
+  it("round-trips through getEvent: ingest-written headers read back as an array, not a string", async () => {
+    const r = row({
+      headers: [
+        ["x-test", "1"],
+        ["content-type", "application/json"],
+      ],
+    });
+    await insertIngestEvent(ingest, r);
+
+    // Storage-shape guard: the jsonb column must hold an ARRAY, never a JSON.stringify-then-cast
+    // double-encoded STRING (the bug that 500'd events.get over Hyperdrive in prod).
+    const [shape] = await withTenant(app, orgId, async (tx) => {
+      return tx<{ t: string }[]>`select jsonb_typeof(headers) as t from events where id = ${r.id}`;
+    });
+    expect(shape?.t).toBe("array");
+
+    // Read contract: getEvent runs EventSchema.parse — the exact path that threw when headers came
+    // back as a string. Closes the missing insert→read round-trip (reads.test seeds rows manually).
+    const ev = await withTenant(app, orgId, (tx) => getEvent(tx, r.id));
+    expect(ev?.headers).toEqual([
+      ["x-test", "1"],
+      ["content-type", "application/json"],
+    ]);
   });
 });
