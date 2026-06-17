@@ -1,0 +1,87 @@
+name: deploy-wedge
+
+# CD for the wedge Workers (engine -> wbhk.my, api -> api.webhook.co, mcp -> mcp.webhook.co).
+# Mirrors deploy-www.yml: third-party Marketplace actions are blocked by org policy, so this calls
+# wrangler directly via pnpm (wrangler is a root devDep); only actions/* are used, SHA-pinned.
+#
+# The committed apps/<app>/wrangler.jsonc are placeholders (no real ids — no-secrets). The generator
+# (scripts/gen-wrangler-prod.mjs) reads the resource ids from repo VARIABLES + injects account_id /
+# workers_dev:false / routes / secrets_store_secrets, emitting the gitignored wrangler.prod.jsonc that
+# the deploy reads. Secret VALUES never enter CI — only the CF token (secret) + the non-secret ids.
+#
+#   push to main / manual dispatch -> generate, then `wrangler deploy` all three (production)
+#   pull_request                   -> generate, then `wrangler deploy --dry-run` (validates config +
+#                                     bundle without deploying)
+#
+# NOT a required status check (lives outside ci.yml); a deploy failure never blocks a merge. Custom
+# domains are bound once at the zone (human-reviewed) — a normal deploy only refreshes the Worker.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/engine/**"
+      - "apps/api/**"
+      - "apps/mcp/**"
+      - "packages/**"
+      - "scripts/gen-wrangler-prod.mjs"
+      - ".github/workflows/deploy.yml"
+      - "pnpm-lock.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/engine/**"
+      - "apps/api/**"
+      - "apps/mcp/**"
+      - "packages/**"
+      - "scripts/gen-wrangler-prod.mjs"
+      - ".github/workflows/deploy.yml"
+      - "pnpm-lock.yaml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-wedge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: deploy-wedge
+    runs-on: ubuntu-latest
+    # Same-repo only: fork PRs don't receive secrets/vars, so a deploy/dry-run can't authenticate.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SECRETS_STORE_ID: ${{ vars.SECRETS_STORE_ID }}
+      HYPERDRIVE_TENANT_ID: ${{ vars.HYPERDRIVE_TENANT_ID }}
+      HYPERDRIVE_CACHED_ID: ${{ vars.HYPERDRIVE_CACHED_ID }}
+      HYPERDRIVE_ANCHOR_ID: ${{ vars.HYPERDRIVE_ANCHOR_ID }}
+      HYPERDRIVE_AUTHN_ID: ${{ vars.HYPERDRIVE_AUTHN_ID }}
+      HYPERDRIVE_INGEST_ID: ${{ vars.HYPERDRIVE_INGEST_ID }}
+      KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}
+      KV_AUTHZ_ID: ${{ vars.KV_AUTHZ_ID }}
+      OAUTH_KV_ID: ${{ vars.OAUTH_KV_ID }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - name: Generate prod wrangler configs (overlay)
+        run: node scripts/gen-wrangler-prod.mjs
+      - name: Deploy production (engine / api / mcp)
+        if: github.event_name != 'pull_request'
+        run: |
+          for app in engine api mcp; do
+            echo "::group::deploy $app"
+            pnpm exec wrangler deploy -c "apps/$app/wrangler.prod.jsonc"
+            echo "::endgroup::"
+          done
+      - name: Validate deploy (dry-run)
+        if: github.event_name == 'pull_request'
+        run: |
+          for app in engine api mcp; do
+            echo "::group::dry-run $app"
+            pnpm exec wrangler deploy --dry-run -c "apps/$app/wrangler.prod.jsonc"
+            echo "::endgroup::"
+          done
