@@ -1,0 +1,60 @@
+name: deploy-www
+
+# First CD in the repo: deploys the apps/www static export to Cloudflare Workers Static Assets at
+# www.webhook.co. Third-party Marketplace actions are blocked by the org policy (see
+# .github/actions/setup), so this calls wrangler directly via pnpm — only actions/* are used, each
+# pinned by commit SHA (the convention from #73). wrangler is a root devDep, so no extra install.
+#
+#   push to main  -> build, verify artifacts, deploy production (www.webhook.co)
+#   pull_request  -> build, verify artifacts, `wrangler deploy --dry-run` (validates config + the
+#                    asset bundle without deploying; needs no pre-existing worker)
+#
+# This is NOT a required status check (it lives outside ci.yml); a deploy failure never blocks a
+# merge. The custom domain + apex redirect are bound once at the zone (human-reviewed), so a normal
+# deploy only refreshes the worker's assets and never touches routing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/www/**"
+      - "packages/ui/**"
+      - ".github/workflows/deploy-www.yml"
+      - "pnpm-lock.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/www/**"
+      - "packages/ui/**"
+      - ".github/workflows/deploy-www.yml"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-www-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: deploy-www
+    runs-on: ubuntu-latest
+    # Same-repo only: fork PRs don't receive secrets, so a deploy/dry-run can't authenticate there.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - name: Build static export
+        run: pnpm --filter @webhook-co/www build
+      - name: Verify export artifacts
+        run: pnpm --filter @webhook-co/www check:export
+      - name: Deploy production (www.webhook.co)
+        if: github.event_name == 'push'
+        run: pnpm --filter @webhook-co/www exec wrangler deploy
+      - name: Validate deploy (dry-run)
+        if: github.event_name == 'pull_request'
+        run: pnpm --filter @webhook-co/www exec wrangler deploy --dry-run

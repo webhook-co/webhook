@@ -1,0 +1,24 @@
+# Response headers for www.webhook.co. Next copies public/* into the export, so this ships as
+# out/_headers, which Cloudflare Workers Static Assets honors natively. The worker only ever serves
+# www.webhook.co (workers_dev:false; the apex is a separate zone redirect), so these host-wide rules
+# never reach api./mcp. — which is why HSTS can live here without includeSubDomains.
+
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  # Two years, www-only. NO includeSubDomains / preload: this zone also fronts api.webhook.co and
+  # mcp.webhook.co, and HSTS with includeSubDomains is sticky and can't be cleanly walked back.
+  Strict-Transport-Security: max-age=63072000
+  # 'unsafe-inline' on script-src is required: Next's static export hydrates via inline
+  # self.__next_f.push(...) scripts, and a static _headers file can't mint per-request nonces — a
+  # bare 'self' would still return 200 but silently break interactivity. style-src inline covers
+  # Next/Geist's injected styles. Tighten to per-build hashes later if we add a build step for it.
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
+
+# Only /_next/static/* is content-hashed (JS/CSS chunks + the self-hosted Geist fonts under
+# /_next/static/media/*), so only it is safe to cache immutably. Cloudflare otherwise defaults
+# static assets to max-age=0; HTML keeps that default so deploys go live immediately.
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
