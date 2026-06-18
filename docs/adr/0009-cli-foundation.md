@@ -11,13 +11,13 @@
 lean, auditable, scriptable binary that authenticates with an API key, mirrors the seven
 `packages/contract` capabilities, and handles credentials under the same discipline as the rest
 of the stack (peppered-hash at rest server-side, never logged in plaintext; the loggable-view
-redaction boundary in `docs/threat-model.md`). ADR-0014 already settled *what* CLI login is —
-`wbhk login` / paste-or-env-var, OS keychain when available else a `0600` file, tokens redacted
-everywhere. This ADR settles *how* the CLI is built, because those are load-bearing engineering
+redaction boundary in `docs/threat-model.md`). *What* CLI login is — `wbhk login` / paste-or-env-var,
+OS keychain when available else a `0600` file, tokens redacted everywhere — was already settled. This ADR settles *how* the CLI is built, because those are load-bearing engineering
 decisions (a parser parses untrusted argv; a credential store touches secrets) that should be
-recorded rather than rediscovered. Relates to ADR-0014 (first-credential bootstrap), ADR-0010
-(auth — API key as bearer), ADR-0008 / ADR-0003 (credential hashing), ADR-0005 (closed replay
-target), ADR-0001 (open-core licensing).
+recorded rather than rediscovered. Relates to ADR-0008 / ADR-0003 (credential hashing) and ADR-0005
+(closed replay target); the bearer-auth model (API key for CLI/API), the first-credential bootstrap,
+and the open-core licensing boundary (Apache-2.0; see AGENTS.md) are foundational decisions settled
+elsewhere.
 
 ## decision
 

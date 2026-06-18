@@ -16,7 +16,7 @@ future web dashboard's payload-inspection panel.
 
 Capability **parity is a non-negotiable** (constitution; ADR-0011 makes reads a shared `api.`+`mcp.`
 surface). The decisive constraint: the **web dashboard reads from `api.`** (CORS allowlist = app) and
-**cannot reach `wbhk.my` from a browser** — that apex is cookieless, no-CORS by design (ADR-0003).
+**cannot reach `wbhk.my` from a browser** — that apex is cookieless, no-CORS by design (an AGENTS.md non-negotiable: cookieless ingestion on a separate apex).
 So serving the body from the engine (`wbhk.my`) would make payload inspection unreachable for web —
 a parity break. The body lives in R2 (engine-written, one object per event, ≤1 MiB cap), and `apps/api`
 had no R2 binding.

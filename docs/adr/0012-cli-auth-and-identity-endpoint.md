@@ -10,17 +10,18 @@
 Slice 9 builds the CLI's auth seam — `wbhk login` (capture + validate + store an API key) and
 `wbhk whoami` (show the authenticated org + scopes). Two load-bearing decisions needed recording:
 *how* the CLI validates a key and reads identity, and *how* it captures the key safely. The bearer
-model (API key for CLI/API; ADR-0010) and the credential storage (`0600` file / env / keychain seam;
-ADR-0009, ADR-0014) are already settled; this ADR records the surface those decisions imply. Relates
-to ADR-0014 (login is the auth boundary, not a capability), ADR-0010 (bearer), ADR-0011 (the read
-server `verifyBearer` seam), ADR-0009 (CLI foundation), ADR-0008/0003 (key hashing posture).
+model (API key for CLI/API) and the credential storage (`0600` file / env / keychain seam; ADR-0009)
+are already settled; this ADR records the surface those decisions imply. Relates to ADR-0011 (the
+read server `verifyBearer` seam), ADR-0009 (CLI foundation), and ADR-0008/0003 (key hashing posture);
+that login is the auth boundary (not a capability) and the bearer-auth model are settled separately.
 
 ## decision
 
 1. **A dedicated identity endpoint, `GET /v1/whoami` on `apps/api`** — authenticated but **scope-free**,
    returning the caller's own principal `{orgId, scopes, userId?}`. It is an **auth primitive, not a
    capability**: it has no scope, serves no privileged data, and is therefore outside the capability
-   registry + parity gate (consistent with ADR-0014's "login/identity is not a capability"). Chosen
+   registry + parity gate (consistent with the principle that login/identity is the auth seam, not a
+capability). Chosen
    over validating with `endpoints.list?limit=1` (the first sketch), which couples "is this key valid"
    to the `endpoints:read` scope *and* a non-empty org — an audit-only key, or a fresh org with no
    endpoints, would fail to "log in" or show its org. The contract gains `authenticateBearer` (the
