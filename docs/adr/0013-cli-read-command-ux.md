@@ -16,10 +16,10 @@ first list/table output and its first pagination, and it forces three decisions 
 style for every future read surface: how human output is rendered, how cursor pagination is exposed,
 and whether the API base URL is sticky. No new server work — the REST endpoints shipped in Slice 8.2.
 
-We surveyed how mature developer CLIs handle these (svix, gh, kubectl, aws, stripe, fly, hookdeck, and
-clig.dev). The headline findings: every CLI that renders a *table* shows status as a **word**, never a
-raw boolean (only the JSON-dumping tools, e.g. svix, surface `disabled: true`); the gold standard
-(`gh`) switches table→TSV based on TTY, while `aws`/`svix` instead make the format an explicit flag;
+We surveyed how mature developer CLIs handle these (`gh`, `kubectl`, `aws`, `fly`, and the clig.dev
+guidance). The headline findings: every CLI that renders a *table* shows status as a **word**, never a
+raw boolean (only JSON-dumping tools surface a raw `disabled: true`); the gold standard (`gh`) switches
+table→TSV based on TTY, while `aws` instead makes the format an explicit flag;
 relative timestamps and id-truncation are common but both need state we don't have cheaply (a clock
 seam / a reliable stdout-TTY signal).
 
@@ -35,7 +35,7 @@ seam / a reliable stdout-TTY signal).
   kubectl/gh idiom). A small dependency-free `renderTable` measures **visible** width (ANSI stripped)
   so a colored cell stays aligned.
 - **Status is a colored word, not a boolean**: endpoints `active` / `paused` (our own field's noun,
-  not svix's `disabled`); events `verified` / `unverified`; a null provider renders as `—`.
+  a status word, not a raw boolean); events `verified` / `unverified`; a null provider renders as `—`.
 - **Full UUIDs + absolute timestamps in text.** Because we don't auto-switch to full-when-piped, ids
   must always be shown in full so they stay copy-pasteable into `… get <id>`; and a webhook/compliance
   tool should show exact times. Relative timestamps and id-truncation are deferred (they need a clock
@@ -84,7 +84,6 @@ while the result is still printed to stdout in both modes. An intact chain exits
 
 ## Sources
 
-svix CLI (JSON output; `--iterator`), gh (`tableprinter` TTY-vs-TSV; `--limit`), kubectl (UPPERCASE
-headers; STATUS word; AGE), aws (`--output table`; `NextToken` in the payload), stripe (cursor +
-`--limit`), fly/hookdeck (status words; `--limit`/`--next`), and clig.dev (TTY heuristic; NO_COLOR;
-keep machine streams clean).
+`gh` (`tableprinter` TTY-vs-TSV; `--limit`), `kubectl` (UPPERCASE headers; STATUS word; AGE), `aws`
+(`--output table`; `NextToken` in the payload), `fly` (status words; `--limit`/`--next`), and clig.dev
+(TTY heuristic; NO_COLOR; keep machine streams clean).

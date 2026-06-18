@@ -43,9 +43,8 @@ had no R2 binding.
    `ReadHandler`), inside the same `CapabilityFault → HTTP status` mapping.
 
 4. **A read-only `R2_PAYLOADS` binding on the api Worker** (the same bucket the engine writes).
-   "Read-only" is a usage discipline — the api only ever calls `.get` — not a binding mode; a scoped
-   R2 token is a future hardening. The deploy overlay reuses the existing `webhook-payloads-dev → -prod`
-   token map (`gen-wrangler-prod.mjs`).
+   The api reads payload objects only — it calls `.get` and nothing else. The deploy overlay reuses
+   the existing `webhook-payloads-dev → -prod` mapping (`gen-wrangler-prod.mjs`).
 
 ## consequences
 
