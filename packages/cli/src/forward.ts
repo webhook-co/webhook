@@ -44,9 +44,12 @@ export function parseForwardTarget(raw: string): URL {
   return url;
 }
 
-export type ForwardOutcome =
-  | { readonly ok: true; readonly status: number; readonly latencyMs: number }
-  | { readonly ok: false; readonly reason: string };
+export interface ForwardSuccess {
+  readonly ok: true;
+  readonly status: number;
+  readonly latencyMs: number;
+}
+export type ForwardOutcome = ForwardSuccess | { readonly ok: false; readonly reason: string };
 
 export interface ForwardInput {
   readonly targetUrl: string;
@@ -57,6 +60,8 @@ export interface ForwardInput {
 export interface ForwardSeams {
   readonly fetch: typeof fetch;
   readonly now: () => number;
+  /** Abort an in-flight POST (Ctrl+C) so a hung local server can't block shutdown. */
+  readonly signal?: AbortSignal;
 }
 
 /**
@@ -82,6 +87,8 @@ export async function forwardToLocalhost(
       // redirect could re-send the captured payload + provider signature to an off-machine host. A
       // 3xx surfaces as the local response (status 3xx → not delivered), the same as any non-2xx.
       redirect: "manual",
+      // Abort an in-flight POST on Ctrl+C so a hung local server can't block shutdown.
+      signal: seams.signal,
     } as Parameters<typeof fetch>[1]);
     return {
       ok: true,
@@ -93,7 +100,8 @@ export async function forwardToLocalhost(
   }
 }
 
-/** A 2xx local response = a successful delivery (the cursor-gate for streaming forward). */
+/** A 2xx local response = a successful delivery (the cursor-gate for streaming forward). Not a type
+ *  guard: a non-2xx is still `ok:true` (reached), so narrow via `outcome.ok` at the call site. */
 export function isDelivered(outcome: ForwardOutcome): boolean {
   return outcome.ok && outcome.status >= 200 && outcome.status < 300;
 }
