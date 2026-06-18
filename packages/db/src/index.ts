@@ -24,3 +24,4 @@ export * from "./api-keys";
 export * from "./verify-bearer";
 export * from "./reads";
 export * from "./read-handlers";
+export * from "./replay";
