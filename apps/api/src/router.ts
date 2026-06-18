@@ -1,5 +1,5 @@
 import { AuthContextSchema, CapabilityFault, type AuthContext } from "@webhook-co/contract";
-import type { ReadHandlers } from "@webhook-co/db";
+import type { ReadHandlers, ReplayHandler } from "@webhook-co/db";
 import { bytesToB64 } from "@webhook-co/shared";
 
 import { authenticate, authorize, type ApiAuthDeps } from "./auth.js";
@@ -21,6 +21,12 @@ export interface ApiDeps {
    * (index.ts) always wires it, and the payload route fails loud (5xx) if it's ever absent.
    */
   readonly payloads?: R2Bucket;
+  /**
+   * The events.replay handler (records a delivery_attempt). Route-specific like `payloads` — it's a
+   * WRITE, NOT a shared read handler, and is bound ONLY by apps/api (mcp is exempt: the localhost
+   * tunnel target is CLI-intrinsic). Optional in the bag; production wires it, the route 5xxs if absent.
+   */
+  readonly replay?: ReplayHandler;
 }
 
 interface Route {
@@ -85,6 +91,11 @@ function matchRoute(
     // specially in handleRequest (it does the RLS metadata read THEN an R2 GET). ADR-0015.
     return { capability: "events.getPayload", input: { eventId: rest[1] } };
   }
+  if (method === "POST" && rest.length === 3 && rest[0] === "events" && rest[2] === "replay") {
+    // events.replay: eventId from the path; target + idempotencyKey come from the JSON body (merged
+    // in handleReplay). A WRITE — records a delivery_attempt; dispatched specially, not via `handlers`.
+    return { capability: "events.replay", input: { eventId: rest[1] } };
+  }
   if (method === "POST" && rest.length === 2 && rest[0] === "audit" && rest[1] === "verify") {
     return { capability: "audit.verify", input: {} };
   }
@@ -144,6 +155,9 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
     if (route.capability === "events.getPayload") {
       return await handlePayload(deps, authz.ctx, String(route.input.eventId));
     }
+    if (route.capability === "events.replay") {
+      return await handleReplay(deps, authz.ctx, String(route.input.eventId), request);
+    }
     const handler = deps.handlers.get(route.capability);
     if (handler === undefined) {
       // A routed capability with no bound handler is a wiring bug, not a client error.
@@ -187,4 +201,30 @@ async function handlePayload(deps: ApiDeps, ctx: AuthContext, eventId: string): 
     bytes: bytes.byteLength,
     bodyBase64: bytesToB64(bytes),
   });
+}
+
+/**
+ * events.replay: a WRITE. The eventId comes from the path; target + idempotencyKey from the JSON body.
+ * We merge them (the path eventId is authoritative) and hand the full input to the bound replay
+ * handler, which enforces the events:replay scope, validates the body against the capability schema
+ * (bad/missing fields → VALIDATION_ERROR), and records the delivery_attempt. The api NEVER contacts
+ * the localhost target — the CLI does that and calls this after a local 2xx.
+ */
+async function handleReplay(
+  deps: ApiDeps,
+  ctx: AuthContext,
+  eventId: string,
+  request: Request,
+): Promise<Response> {
+  if (deps.replay === undefined) {
+    throw new Error("no replay handler bound"); // wiring bug -> 5xx
+  }
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
+  }
+  const input = { ...(typeof body === "object" && body !== null ? body : {}), eventId };
+  return Response.json(await deps.replay(ctx, input));
 }

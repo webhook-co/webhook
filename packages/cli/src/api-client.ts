@@ -6,10 +6,18 @@ import {
   eventsGet as eventsGetCap,
   eventsGetPayload as eventsGetPayloadCap,
   eventsList as eventsListCap,
+  eventsReplay as eventsReplayCap,
   type AuthContext,
   type CapabilityError,
+  type Target,
 } from "@webhook-co/contract";
-import { b64ToBytes, type Endpoint, type Event, type EventSummary } from "@webhook-co/shared";
+import {
+  b64ToBytes,
+  type DeliveryAttempt,
+  type Endpoint,
+  type Event,
+  type EventSummary,
+} from "@webhook-co/shared";
 import type { z } from "zod";
 
 import { CliError, InvalidApiUrlError, InvalidTunnelUrlError } from "./errors.js";
@@ -116,6 +124,12 @@ export interface ApiClient {
   eventsGetPayload(eventId: string): Promise<{ contentType: string | null; body: Uint8Array }>;
   /** Verify the org's tamper-evident audit chain (`POST /v1/audit/verify`). */
   auditVerify(): Promise<AuditVerifyResult>;
+  /** Record a replay-to-localhost delivery attempt (`POST /v1/events/:id/replay`) — idempotent. */
+  eventsReplay(input: {
+    eventId: string;
+    target: Target;
+    idempotencyKey: string;
+  }): Promise<DeliveryAttempt>;
 }
 
 export interface ApiClientDeps {
@@ -136,12 +150,17 @@ function withQuery(path: string, params: Record<string, string | number | undefi
 }
 
 export function createApiClient(deps: ApiClientDeps): ApiClient {
-  async function request(path: string, method: "GET" | "POST"): Promise<unknown> {
+  async function request(path: string, method: "GET" | "POST", body?: unknown): Promise<unknown> {
     let res: Response;
     try {
       res = await deps.fetch(`${deps.baseUrl}${path}`, {
         method,
-        headers: { authorization: `Bearer ${deps.apiKey}`, accept: "application/json" },
+        headers: {
+          authorization: `Bearer ${deps.apiKey}`,
+          accept: "application/json",
+          ...(body !== undefined ? { "content-type": "application/json" } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
     } catch {
       // A transport failure (DNS/TLS/connection) — not a CapabilityError. The cause is omitted so a
@@ -153,7 +172,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   }
 
   const getJson = (path: string): Promise<unknown> => request(path, "GET");
-  const postJson = (path: string): Promise<unknown> => request(path, "POST");
+  const postJson = (path: string, body?: unknown): Promise<unknown> => request(path, "POST", body);
 
   // Parse a response against its shared contract schema; an unexpected shape is UNEXPECTED (never a
   // capability code), so a server/version skew surfaces as "unexpected response", not a misleading 4xx.
@@ -193,6 +212,14 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       const path = `/v1/events/${encodeURIComponent(eventId)}`;
       return parseOrThrow(eventsGetCap.output, await getJson(path), "event");
     },
+    async eventsReplay(input): Promise<DeliveryAttempt> {
+      const path = `/v1/events/${encodeURIComponent(input.eventId)}/replay`;
+      const json = await postJson(path, {
+        target: input.target,
+        idempotencyKey: input.idempotencyKey,
+      });
+      return parseOrThrow(eventsReplayCap.output, json, "replay");
+    },
     async eventsGetPayload(eventId): Promise<{ contentType: string | null; body: Uint8Array }> {
       const path = `/v1/events/${encodeURIComponent(eventId)}/payload`;
       const env = parseOrThrow(eventsGetPayloadCap.output, await getJson(path), "payload");
@@ -212,7 +239,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
 }
 
 /** Loopback hosts where plaintext http:// is acceptable (local dev / self-host on the same machine). */
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 
 /**
  * Resolve the API base URL: `--api-url` flag › `WBHK_API_URL` env › stored profile value › default.

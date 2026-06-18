@@ -1,0 +1,179 @@
+import { randomUUID } from "node:crypto";
+
+import { newId } from "@webhook-co/shared";
+import { type AuthContext } from "@webhook-co/contract";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { createClient, withTenant, type Sql } from "../src/client";
+import { DB_ROLES } from "../src/constants";
+import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
+import { createEndpoint } from "../src/endpoints";
+import { createOrg } from "../src/orgs";
+import { createReplayHandler, recordDeliveryAttempt, type ReplayHandler } from "../src/replay";
+import { setupSchema } from "./migrate";
+import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+
+// events.replay (the api-only handler) + recordDeliveryAttempt, against a REAL Postgres with the
+// non-owner webhook_app role under RLS. Proves: scope -> FORBIDDEN, bad input -> VALIDATION_ERROR,
+// invisible/cross-org event -> NOT_FOUND, paused endpoint -> ENDPOINT_PAUSED, a successful forward
+// records one "forwarded" row, and (org_id, idempotency_key) makes a repeat call idempotent (H6).
+
+const hasher = createCredentialHasher({ current: Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0xe5) });
+
+let pg: EphemeralPostgres;
+let app: Sql;
+let handler: ReplayHandler;
+let orgA: string;
+let orgB: string;
+let epA: string; // active endpoint in org A
+let epPaused: string; // paused endpoint in org A
+let evA: string; // an event on epA
+let evPaused: string; // an event on epPaused
+let evB: string; // an event in org B (cross-org)
+
+const ctxA: AuthContext = { orgId: "", scopes: ["events:replay"] };
+const TARGET = { kind: "localhost-tunnel", sessionId: "sess-1" } as const;
+
+async function seedEvent(orgId: string, endpointId: string): Promise<string> {
+  const id = newId();
+  const externalId: string | null = null;
+  await withTenant(app, orgId, async (tx) => {
+    await tx`
+      insert into events
+        (id, org_id, endpoint_id, payload_r2_key, payload_bytes, content_type, headers,
+         dedup_key, dedup_strategy, provider, provider_event_id, external_id, verified, verification)
+      values
+        (${id}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${id}`}, ${1234},
+         ${"application/json"}, ${tx.json([["content-type", "application/json"]])},
+         ${newId()}, ${"content_hash"}, ${"stripe"}, ${"evt_1"}, ${externalId}, ${true},
+         ${tx.json({ ok: true, keyId: "key_1", scheme: "stripe" })})`;
+  });
+  return id;
+}
+
+/** Resolve a (possibly rejecting) handler call to its CapabilityFault code, or null on success. */
+async function faultCode(p: Promise<unknown>): Promise<string | null> {
+  try {
+    await p;
+    return null;
+  } catch (e) {
+    return (e as { code?: string }).code ?? "THREW";
+  }
+}
+
+async function countAttempts(orgId: string): Promise<number> {
+  const [r] = await withTenant(
+    app,
+    orgId,
+    (tx) => tx<{ n: string }[]>`select count(*)::text as n from delivery_attempts`,
+  );
+  return Number(r!.n);
+}
+
+beforeAll(async () => {
+  pg = await startEphemeralPostgres();
+  await setupSchema(pg);
+  app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+  handler = createReplayHandler({ tenant: app });
+
+  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  ctxA.orgId = orgA;
+
+  epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
+  epPaused = (await createEndpoint(app, { orgId: orgA, name: "ep-paused" }, hasher)).id;
+  await withTenant(
+    app,
+    orgA,
+    (tx) => tx`update endpoints set paused = true where id = ${epPaused}`,
+  );
+  const epB = (await createEndpoint(app, { orgId: orgB, name: "ep-b" }, hasher)).id;
+
+  evA = await seedEvent(orgA, epA);
+  evPaused = await seedEvent(orgA, epPaused);
+  evB = await seedEvent(orgB, epB);
+});
+
+afterAll(async () => {
+  await app?.end();
+  await pg?.stop();
+});
+
+describe("recordDeliveryAttempt (idempotency)", () => {
+  it("inserts a row, and a repeat with the same key returns the SAME attempt (no duplicate)", async () => {
+    const before = await countAttempts(orgA);
+    const first = await withTenant(app, orgA, (tx) =>
+      recordDeliveryAttempt(tx, {
+        orgId: orgA,
+        eventId: evA,
+        target: "t",
+        idempotencyKey: "idem-dup",
+        status: "forwarded",
+      }),
+    );
+    const second = await withTenant(app, orgA, (tx) =>
+      recordDeliveryAttempt(tx, {
+        orgId: orgA,
+        eventId: evA,
+        target: "t",
+        idempotencyKey: "idem-dup",
+        status: "forwarded",
+      }),
+    );
+    expect(second.id).toBe(first.id); // same row returned
+    expect(await countAttempts(orgA)).toBe(before + 1); // exactly one inserted
+  });
+});
+
+describe("createReplayHandler (events.replay)", () => {
+  it("FORBIDDEN without the events:replay scope", async () => {
+    const ctx: AuthContext = { orgId: orgA, scopes: ["events:read"] };
+    expect(
+      await faultCode(handler(ctx, { eventId: evA, target: TARGET, idempotencyKey: "k1" })),
+    ).toBe("FORBIDDEN");
+  });
+
+  it("VALIDATION_ERROR on a free-form URL target / missing idempotency key", async () => {
+    expect(
+      await faultCode(
+        handler(ctxA, {
+          eventId: evA,
+          target: { kind: "url", url: "http://x" },
+          idempotencyKey: "k",
+        }),
+      ),
+    ).toBe("VALIDATION_ERROR");
+    expect(
+      await faultCode(handler(ctxA, { eventId: evA, target: TARGET, idempotencyKey: "" })),
+    ).toBe("VALIDATION_ERROR");
+  });
+
+  it("NOT_FOUND for an unknown event and for a cross-org event (RLS)", async () => {
+    expect(
+      await faultCode(handler(ctxA, { eventId: newId(), target: TARGET, idempotencyKey: "k2" })),
+    ).toBe("NOT_FOUND");
+    expect(
+      await faultCode(handler(ctxA, { eventId: evB, target: TARGET, idempotencyKey: "k3" })),
+    ).toBe("NOT_FOUND");
+  });
+
+  it("ENDPOINT_PAUSED when the event's endpoint is paused", async () => {
+    expect(
+      await faultCode(handler(ctxA, { eventId: evPaused, target: TARGET, idempotencyKey: "k4" })),
+    ).toBe("ENDPOINT_PAUSED");
+  });
+
+  it("records a 'forwarded' delivery attempt and is idempotent on the key", async () => {
+    const a = await handler(ctxA, { eventId: evA, target: TARGET, idempotencyKey: "k-go" });
+    expect(a).toMatchObject({
+      eventId: evA,
+      orgId: orgA,
+      status: "forwarded",
+      statusCode: null,
+      idempotencyKey: "k-go",
+      target: JSON.stringify(TARGET),
+    });
+    const again = await handler(ctxA, { eventId: evA, target: TARGET, idempotencyKey: "k-go" });
+    expect((again as { id: string }).id).toBe((a as { id: string }).id); // idempotent
+  });
+});

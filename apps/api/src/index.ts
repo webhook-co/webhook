@@ -7,6 +7,7 @@ import {
   createCredentialHasherFromBase64,
   createCredentialResolver,
   createReadHandlers,
+  createReplayHandler,
   makeApiKeyColdLookup,
   makeVerifyBearer,
 } from "@webhook-co/db";
@@ -106,6 +107,7 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
     },
     handlers: createReadHandlers({ tenant, cursorKey, auditKey }),
     payloads: env.R2_PAYLOADS,
+    replay: createReplayHandler({ tenant }),
   };
   return {
     deps,

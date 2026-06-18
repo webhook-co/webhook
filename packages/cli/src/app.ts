@@ -1,11 +1,9 @@
 import {
   buildApplication,
-  buildCommand,
   buildRouteMap,
   text_en,
   type Application,
   type ApplicationText,
-  type Command,
 } from "@stricli/core";
 
 import { auditVerifyCommand } from "./commands/audit.js";
@@ -13,9 +11,10 @@ import { endpointsGetCommand, endpointsListCommand } from "./commands/endpoints.
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
 import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
+import { replayCommand } from "./commands/replay.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
-import { CliError, NotImplementedError } from "./errors.js";
+import { CliError } from "./errors.js";
 import { EXIT } from "./output/exit-codes.js";
 import { formatCliError } from "./output/format.js";
 
@@ -35,28 +34,6 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "events.replay": ["replay"],
   "audit.verify": ["audit", "verify"],
 };
-
-// Every command is registered now (so the surface is complete and parity holds) but returns
-// a clear NotImplementedError until its slice lands. Returning an Error (vs throwing) is
-// stricli's "safe command error" path → formatted via commandErrorResult below.
-
-/** A capability-backed command stub, carrying the shared --output flag. */
-function capabilityStub(path: readonly string[], slice: string): Command<AppContext> {
-  return buildCommand<{ output: "text" | "json" }, [], AppContext>({
-    func: () => new NotImplementedError(path, slice),
-    parameters: {
-      flags: {
-        output: {
-          kind: "enum",
-          values: ["text", "json"],
-          brief: "output format",
-          default: "text",
-        },
-      },
-    },
-    docs: { brief: `${path.join(" ")} — lands in ${slice}` },
-  });
-}
 
 const endpointsRoute = buildRouteMap({
   routes: {
@@ -90,7 +67,7 @@ const root = buildRouteMap({
     events: eventsRoute,
     audit: auditRoute,
     listen: listenCommand,
-    replay: capabilityStub(["replay"], "slice 12"),
+    replay: replayCommand,
   },
   docs: { brief: "webhook.co — capture, inspect, and replay webhooks" },
 });
