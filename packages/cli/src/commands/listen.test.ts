@@ -6,6 +6,7 @@ import { app } from "../app.js";
 import type { CredentialStore } from "../config/store.js";
 import type { ConnectWebSocket, WsHandlers } from "../context.js";
 import { makeTestContext } from "../context.js";
+import type { ForwardInput, ForwardOutcome } from "../forward.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
 import { backoffMs, formatListenEvent, runListen, type ListenSince } from "./listen.js";
 
@@ -284,6 +285,154 @@ describe("runListen", () => {
   });
 });
 
+describe("runListen — forward mode (--forward)", () => {
+  const BODY = new TextEncoder().encode("payload-bytes");
+  // Forwards run on a serial async chain (fetch → post → record → ack); flush several task turns.
+  const flush = async (): Promise<void> => {
+    for (let i = 0; i < 8; i += 1) await tick();
+  };
+  function fakeForward(post: () => ForwardOutcome) {
+    const posted: ForwardInput[] = [];
+    const recorded: string[] = [];
+    const dep = {
+      targetUrl: "http://localhost:3000/hook",
+      fetchPayload: async () => ({
+        headers: [["content-type", "application/json"]] as const,
+        body: BODY,
+      }),
+      post: async (input: ForwardInput): Promise<ForwardOutcome> => {
+        posted.push(input);
+        return post();
+      },
+      record: async (_id: string, cursor: string): Promise<void> => void recorded.push(cursor),
+    };
+    return { posted, recorded, dep };
+  }
+
+  it("forwards each event, acks on a local 2xx, and records server-side", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const f = fakeForward(() => ({ ok: true, status: 200, latencyMs: 3 }));
+    const p = runListen({ ...depsFor(t, out, ac.signal), forward: f.dep });
+    await tick();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    await flush();
+
+    expect(f.posted).toHaveLength(1);
+    expect(new TextDecoder().decode(f.posted[0]!.body)).toBe("payload-bytes"); // exact bytes forwarded
+    expect(f.recorded).toEqual(["c1"]);
+    expect(t.sent).toContain(JSON.stringify({ type: "ack", cursor: "c1" }));
+    expect(out.emit.join("")).toContain("forwarded");
+
+    ac.abort();
+    await p;
+  });
+
+  it("retries a non-2xx / unreachable forward until a local 2xx, acking only once", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    let n = 0;
+    const f = fakeForward(() =>
+      n++ === 0 ? { ok: false, reason: "ECONNREFUSED" } : { ok: true, status: 202, latencyMs: 1 },
+    );
+    const p = runListen({ ...depsFor(t, out, ac.signal), forward: f.dep });
+    await tick();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    await flush();
+
+    expect(f.posted.length).toBeGreaterThanOrEqual(2); // refused once, then delivered
+    expect(t.sent.filter((s) => s === JSON.stringify({ type: "ack", cursor: "c1" }))).toHaveLength(
+      1,
+    );
+    expect(f.recorded).toEqual(["c1"]); // recorded once, only after the 2xx
+
+    ac.abort();
+    await p;
+  });
+
+  it("does not re-forward a redelivered event, but re-acks it", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const f = fakeForward(() => ({ ok: true, status: 200, latencyMs: 1 }));
+    const p = runListen({ ...depsFor(t, out, ac.signal), forward: f.dep });
+    await tick();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    const ev = encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" });
+    t.h().onMessage(ev);
+    t.h().onMessage(ev); // at-least-once redelivery of the same cursor
+    await flush();
+
+    expect(f.posted).toHaveLength(1); // forwarded exactly once
+    expect(f.recorded).toEqual(["c1"]); // recorded exactly once
+    expect(t.sent.filter((s) => s === JSON.stringify({ type: "ack", cursor: "c1" }))).toHaveLength(
+      2,
+    );
+
+    ac.abort();
+    await p;
+  });
+
+  it("does not ack when recording fails; the redelivery retries forward + record", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    let recordCalls = 0;
+    const forward = {
+      targetUrl: "http://localhost:3000/hook",
+      fetchPayload: async () => ({
+        headers: [["content-type", "application/json"]] as const,
+        body: BODY,
+      }),
+      post: async (): Promise<ForwardOutcome> => ({ ok: true, status: 200, latencyMs: 1 }),
+      record: async (): Promise<void> => {
+        recordCalls += 1;
+        if (recordCalls === 1) throw new Error("api 503");
+      },
+    };
+    const p = runListen({ ...depsFor(t, out, ac.signal), forward });
+    await tick();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    const ev = encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" });
+    t.h().onMessage(ev); // record throws → not acked, not marked seen
+    await flush();
+    expect(t.sent.filter((s) => s.includes('"cursor":"c1"'))).toHaveLength(0);
+
+    t.h().onMessage(ev); // redelivery → record succeeds → acked
+    await flush();
+    expect(recordCalls).toBe(2);
+    expect(t.sent.filter((s) => s.includes('"cursor":"c1"'))).toHaveLength(1);
+
+    ac.abort();
+    await p;
+  });
+
+  it("emits NDJSON for each forward when --output json", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const f = fakeForward(() => ({ ok: true, status: 200, latencyMs: 7 }));
+    const p = runListen({ ...depsFor(t, out, ac.signal), format: "json", forward: f.dep });
+    await tick();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    await flush();
+
+    const line = out.emit.find((l) => l.includes("forwarded"))!;
+    expect(line.trimEnd()).not.toContain("\n"); // single line (NDJSON)
+    const parsed = JSON.parse(line) as { forwarded: string; status: number };
+    expect(parsed.forwarded).toBe(EV);
+    expect(parsed.status).toBe(200);
+
+    ac.abort();
+    await p;
+  });
+});
+
 describe("wbhk listen command (wiring)", () => {
   it("requires a credential", async () => {
     const t = makeTestContext({
@@ -305,5 +454,12 @@ describe("wbhk listen command (wiring)", () => {
     await run(app, ["listen", EP, "--tunnel-url", "http://evil.example"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
     expect(t.stderr().toLowerCase()).toContain("wss://");
+  });
+
+  it("rejects a non-loopback --forward target as a usage error", async () => {
+    const t = makeTestContext({ store: loggedInStore() });
+    await run(app, ["listen", EP, "--forward", "http://evil.example"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("localhost");
   });
 });

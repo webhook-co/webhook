@@ -6,17 +6,31 @@ import {
   type ServerFrame,
 } from "@webhook-co/shared";
 
-import { ENV_TUNNEL_URL_VAR, resolveTunnelUrl } from "../api-client.js";
-import type { AppContext, ConnectWebSocket } from "../context.js";
+import {
+  createApiClient,
+  ENV_API_URL_VAR,
+  ENV_TUNNEL_URL_VAR,
+  resolveApiBaseUrl,
+  resolveTunnelUrl,
+} from "../api-client.js";
+import type { AppContext, ConnectWebSocket, WsSocket } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
+import {
+  forwardToLocalhost,
+  isDelivered,
+  parseForwardTarget,
+  type ForwardInput,
+  type ForwardOutcome,
+} from "../forward.js";
 import { colorize } from "../output/color.js";
 import { resolveFormat, type OutputFormat } from "../output/format.js";
 
 // `wbhk listen <endpointId>` — the live tail. Opens the bearer-authed `/listen` WebSocket tunnel
 // (ADR-0014), prints each captured event as it arrives, and acks it so the durable cursor advances
 // (at-least-once; the client dedups). Reconnects with capped backoff across drops, reusing the
-// session id so the engine resumes from the durable cursor. The forward-to-localhost half is slice
-// 12c (PR3); this is inspection only.
+// session id so the engine resumes from the durable cursor. With `--forward <localhost-url>` it
+// re-delivers each event to a local server instead of printing — cursor-gated at-least-once (ack +
+// record the delivery only after a local 2xx; reuses the forwarder + events.replay from ADR-0016).
 //
 // `--since` (the engine resumes from an OPAQUE, engine-signed cursor; the CLI can't construct a time
 // cursor, so "now" is a server-side hint):
@@ -30,6 +44,8 @@ const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 30_000;
 /** Bounds the dedup memory of a long session; far above the at-least-once redelivery window. */
 const SEEN_CURSOR_CAP = 50_000;
+
+const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** Capped exponential backoff with full jitter (attempt is 1-based). */
 export function backoffMs(attempt: number, rand: () => number = Math.random): number {
@@ -58,6 +74,42 @@ export type ListenSince =
   | { readonly kind: "beginning" }
   | { readonly kind: "cursor"; readonly cursor: string };
 
+/** Forward mode (`--forward`): re-deliver each tailed event to a local server, cursor-gated. */
+export interface ListenForwardDeps {
+  readonly targetUrl: string;
+  /** Fetch the event's captured headers + exact body (events.get + events.getPayload). */
+  readonly fetchPayload: (
+    eventId: string,
+  ) => Promise<{ headers: readonly (readonly [string, string])[]; body: Uint8Array }>;
+  /** POST to the loopback target (forwardToLocalhost bound with the io fetch + clock). */
+  readonly post: (input: ForwardInput) => Promise<ForwardOutcome>;
+  /** Record the forward server-side (events.replay), keyed by the event cursor (idempotent). */
+  readonly record: (eventId: string, cursor: string) => Promise<void>;
+}
+
+/** A backoff wait that resolves immediately on abort, so Ctrl+C isn't delayed by a pending sleep. */
+function abortableSleep(
+  signal: AbortSignal,
+  sleep: (ms: number) => Promise<void>,
+  ms: number,
+): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) {
+      resolve();
+      return;
+    }
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    signal.addEventListener("abort", finish, { once: true });
+    void sleep(ms).then(finish);
+  });
+}
+
 export interface RunListenDeps {
   readonly connect: ConnectWebSocket;
   readonly tunnelUrl: string;
@@ -65,6 +117,8 @@ export interface RunListenDeps {
   readonly endpointId: string;
   /** Where to start on the FIRST connect (--since). Reconnects always resume from the durable cursor. */
   readonly since: ListenSince;
+  /** When set, forward each event to a local server (cursor-gated) instead of just printing it. */
+  readonly forward?: ListenForwardDeps;
   readonly emit: (line: string) => void;
   readonly note: (line: string) => void;
   readonly format: OutputFormat;
@@ -91,6 +145,74 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
   const remember = (cursor: string): void => {
     if (seen.size >= SEEN_CURSOR_CAP) seen.delete(seen.values().next().value as string);
     seen.add(cursor);
+  };
+
+  // Forward mode: a SERIAL chain preserves event order + cursor-gating (ack only after a local 2xx).
+  // Each event captures its arrival socket; if that socket closes before the forward finishes, the
+  // best-effort ack is a no-op and the un-acked event redelivers on reconnect — the (now-seen)
+  // redelivery re-acks via the live socket. A link never rejects (errors are noted), so the chain
+  // can't break.
+  let forwardChain: Promise<void> = Promise.resolve();
+
+  const forwardWithRetry = async (summary: EventSummary): Promise<boolean> => {
+    const fwd = deps.forward;
+    if (!fwd) return false;
+    for (let n = 1; !deps.signal.aborted; n += 1) {
+      let payload:
+        | { headers: readonly (readonly [string, string])[]; body: Uint8Array }
+        | undefined;
+      try {
+        payload = await fwd.fetchPayload(summary.id);
+      } catch (err) {
+        deps.note(`fetching ${summary.id} failed: ${errMsg(err)} — retrying\n`);
+      }
+      if (payload) {
+        const outcome = await fwd.post({
+          targetUrl: fwd.targetUrl,
+          headers: payload.headers,
+          body: payload.body,
+        });
+        if (outcome.ok && isDelivered(outcome)) {
+          deps.emit(
+            deps.format === "json"
+              ? `${JSON.stringify({ forwarded: summary.id, target: fwd.targetUrl, status: outcome.status, latencyMs: outcome.latencyMs })}\n`
+              : `forwarded ${summary.id} → ${fwd.targetUrl} · ${outcome.status} · ${outcome.latencyMs}ms\n`,
+          );
+          return true;
+        }
+        deps.note(
+          `forward ${summary.id} → ${outcome.ok ? `HTTP ${outcome.status}` : outcome.reason} — retrying\n`,
+        );
+      }
+      await abortableSleep(deps.signal, deps.sleep, backoffMs(n));
+    }
+    return false;
+  };
+
+  const processForward = async (
+    summary: EventSummary,
+    cursor: string,
+    sock: WsSocket,
+  ): Promise<void> => {
+    try {
+      if (deps.signal.aborted) return;
+      if (!seen.has(cursor)) {
+        if (!(await forwardWithRetry(summary))) return; // aborted before a 2xx → leave un-acked
+        try {
+          await deps.forward?.record(summary.id, cursor);
+        } catch (err) {
+          // Recording failed (transient): do NOT ack or mark seen — the un-acked event redelivers and
+          // the forward + record retry (at-least-once; the local server dedups by webhook-id).
+          deps.note(`recording the forward of ${summary.id} failed: ${errMsg(err)} — will retry\n`);
+          return;
+        }
+        remember(cursor);
+      }
+      // Best-effort ack (advance the durable cursor); a closed socket no-ops and redelivery re-acks.
+      sock.send(encodeClientFrame({ type: "ack", cursor }));
+    } catch (err) {
+      deps.note(`forward of ${summary.id} errored: ${errMsg(err)}\n`);
+    }
   };
 
   while (!deps.signal.aborted) {
@@ -132,7 +254,15 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
               deps.note(`tunnel notice [${frame.code}]: ${frame.message}\n`);
               return;
             }
-            // event frame: ack always (advance the durable cursor) but print only once.
+            // event frame.
+            if (deps.forward) {
+              // forward mode: serialize forward+ack (cursor-gated). Capture THIS socket for the ack.
+              const sock = socket;
+              const ev = frame;
+              forwardChain = forwardChain.then(() => processForward(ev.summary, ev.cursor, sock));
+              return;
+            }
+            // inspection mode: ack always (advance the durable cursor) but print only once.
             if (!seen.has(frame.cursor)) {
               remember(frame.cursor);
               deps.emit(
@@ -165,25 +295,18 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
     firstConnect = false;
     if (!shouldReconnect || deps.signal.aborted) break;
     attempt += 1;
-    // Abortable backoff: wake immediately on Ctrl+C instead of blocking for up to the full backoff.
-    await new Promise<void>((resolve) => {
-      let done = false;
-      const finish = (): void => {
-        if (done) return;
-        done = true;
-        deps.signal.removeEventListener("abort", finish);
-        resolve();
-      };
-      deps.signal.addEventListener("abort", finish, { once: true });
-      void deps.sleep(backoffMs(attempt)).then(finish);
-    });
+    await abortableSleep(deps.signal, deps.sleep, backoffMs(attempt));
   }
+  // Drain any in-flight / queued forwards before returning (clean shutdown).
+  await forwardChain;
 }
 
 interface ListenFlags {
   output: OutputFormat;
   tunnelUrl?: string;
   since: string;
+  forward?: string;
+  apiUrl?: string;
 }
 
 export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
@@ -205,6 +328,47 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
           : { kind: "cursor", cursor: flags.since };
 
     const controller = new AbortController();
+
+    // --forward: re-deliver each event to a local server (cursor-gated at-least-once) instead of just
+    // printing. Needs the api client (fetch the captured body + record) + a validated loopback target.
+    let forward: ListenForwardDeps | undefined;
+    if (flags.forward !== undefined) {
+      parseForwardTarget(flags.forward); // throws InvalidForwardUrlError (usage) on a non-loopback target
+      const apiBaseUrl = resolveApiBaseUrl({
+        flag: flags.apiUrl,
+        env: this.process.env?.[ENV_API_URL_VAR],
+        stored: await this.store.getApiBaseUrl(),
+      });
+      const client = createApiClient({
+        baseUrl: apiBaseUrl,
+        apiKey: cred.apiKey,
+        fetch: this.io.fetch,
+      });
+      const targetUrl = flags.forward;
+      const forwardSessionId = crypto.randomUUID(); // a logical id for this forward run's records
+      forward = {
+        targetUrl,
+        fetchPayload: async (eventId) => {
+          const event = await client.eventsGet(eventId);
+          const { body } = await client.eventsGetPayload(eventId);
+          return { headers: event.headers, body };
+        },
+        post: (input) =>
+          forwardToLocalhost(
+            { fetch: this.io.fetch, now: () => Date.now(), signal: controller.signal },
+            input,
+          ),
+        record: async (eventId, cursor) => {
+          // cursor as the idempotency key → a redelivered event records exactly once.
+          await client.eventsReplay({
+            eventId,
+            target: { kind: "localhost-tunnel", sessionId: forwardSessionId },
+            idempotencyKey: cursor,
+          });
+        },
+      };
+    }
+
     const onSignal = (): void => controller.abort();
     // A closed stdout (e.g. `wbhk listen | head`) raises EPIPE; abort + exit cleanly rather than crash.
     const onStdoutError = (): void => controller.abort();
@@ -218,6 +382,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         apiKey: cred.apiKey,
         endpointId,
         since,
+        forward,
         emit: (line) => this.process.stdout.write(line),
         note: (line) => this.process.stderr.write(line),
         format: resolveFormat(flags.output),
@@ -252,7 +417,21 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         brief: "override the tunnel URL (wss://)",
         optional: true,
       },
+      forward: {
+        kind: "parsed",
+        parse: (value: string) => value,
+        brief: "forward each event to a local URL, e.g. http://localhost:3000/webhooks",
+        optional: true,
+      },
+      apiUrl: {
+        kind: "parsed",
+        parse: (value: string) => value,
+        brief: "override the API base URL (used by --forward to fetch the body + record)",
+        optional: true,
+      },
     },
   },
-  docs: { brief: "stream an endpoint's events live (Ctrl+C to stop)" },
+  docs: {
+    brief: "stream an endpoint's events live, or --forward them to localhost (Ctrl+C to stop)",
+  },
 });
