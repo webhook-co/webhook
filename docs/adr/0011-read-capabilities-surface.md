@@ -13,7 +13,7 @@ replay (12) all consume: the five read capabilities — `endpoints.list/get`, `e
 `mcp.webhook.co`). The constitution makes CLI/API/web/MCP parity a non-negotiable, so a capability
 added to one surface must reach the others. The risk this ADR addresses is **drift**: two
 hand-written copies of "list an org's endpoints under RLS, paginate, map errors" inevitably diverge
-in subtle, security-relevant ways. Relates to ADR-0010 (bearer model — API key for CLI/API, OAuth
+in subtle, security-relevant ways. Relates to the bearer-auth model (API key for CLI/API, OAuth
 for MCP/agents; the `verifyBearer → AuthContext` seam), ADR-0004 (audit chain — `audit.verify`),
 ADR-0005 (closed replay target — `events.replay`, deferred here), ADR-0002 (Hyperdrive caching off
 for tenant reads), and `docs/threat-model.md` (RLS tenant isolation, loggable-view redaction).
@@ -40,7 +40,7 @@ for tenant reads), and `docs/threat-model.md` (RLS tenant isolation, loggable-vi
    `new_sqlite_classes` migration.
 
 3. **API keys reach MCP via `resolveExternalToken`, not a second token type.** OAuth-access-token
-   validation stays MCP-only (ADR-0010: the library's tokens are opaque + KV-bound to the issuing
+   validation stays MCP-only (the OAuth library's tokens are opaque + KV-bound to the issuing
    Worker). The OAuthProvider calls `resolveExternalToken` for any bearer it did not mint — today
    every caller, since the `/authorize` login that mints provider tokens is deferred — and we resolve
    it as an API key through the **same `verifyBearer` seam `apps/api` uses** (audience =
