@@ -90,21 +90,13 @@ for tenant reads), and `docs/threat-model.md` (RLS tenant isolation, loggable-vi
   `agents/mcp` + `partyserver` + the MCP SDK reach the Worker bundle. `nodejs_compat` + the DO
   migration are now part of the mcp deploy config.
 
-## security note — MCP session binding (known, deferred-hardening)
+## security note — MCP session binding
 
-The McpAgent Durable Object is keyed by the `Mcp-Session-Id`, and `this.props` (the grant the tools
-authorize against) is set **once**, from the request that *initializes* the session — McpAgent
-`onStart` runs only on the first request per DO wake; warm requests don't refresh it. So a session is
-**bound to its initializing principal**, and the session id is a *bearer-equivalent secret*: the
-platform mints it unguessably (`newUniqueId()`) and returns it only to that caller over TLS. A second
-authenticated principal could read the initializer's org **only** by obtaining that secret session id
-(theft / a buggy client that shares it across tenants) — the streamable-HTTP handler routes purely by
-session id and surfaces no per-request principal to the tool handler, so we do not additionally
-re-bind the principal per call. The MCP-layer auth code is otherwise correct: `orgId` is taken only
-from the validated grant, every read is RLS-scoped and scope-gated, and faults never leak internals.
-
-This is acceptable for this slice because callers are org-scoped API keys that each open their own
-session; cross-principal session reuse becomes reachable only once the **deferred** OAuth user-login
-(`/authorize`) mints multi-user tokens. The follow-up when that lands: principal-namespaced session
-routing (route to `streamable-http:${orgId}:${sessionId}` so a session id is only valid within its
-org) or a per-request principal re-check. Tracked; do not enable multi-user OAuth login without it.
+The McpAgent Durable Object is keyed by the `Mcp-Session-Id`, and the grant the tools authorize against
+(`this.props`) is bound **once**, from the request that initializes the session — so a session is bound
+to its initializing principal. The session id is a bearer-equivalent secret: the platform mints it
+unguessably (`newUniqueId()`) and returns it only to that caller over TLS. The MCP-layer auth is
+strict: `orgId` comes only from the validated grant, every read is RLS-scoped and scope-gated, and
+faults never leak internals. Today every caller is an org-scoped API key that opens its own session, so
+this binding is sufficient; the per-principal binding model is revisited as part of the future
+multi-user OAuth user-login work (tracked internally).
