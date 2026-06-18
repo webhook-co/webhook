@@ -33,8 +33,8 @@ Truncation (lopping off the tail) is also undetectable without an external ancho
   we need, and the anchor writer additionally holds no delete rights. The frozen anchor payload
   (`{version, orgId, seq, rowHash, anchoredAt}` + an HMAC under the chain key) lives in
   `packages/shared/src/audit-anchor.ts`; `verifyChainAgainstAnchor` cross-checks the live chain.
-  The inherent detection window equals the cron interval (rows written *and* truncated entirely
-  between two anchors were never captured).
+  The inherent detection window equals the cron interval — a fundamental property of any periodic
+  anchor (it attests to what existed at anchor time).
 - **Pseudonymous actor.** `actor` is the Better Auth `user_id`, never raw PII, and
   is not a FK — user erasure never deletes audit history.
 - **Control-plane only.** The chain records low-volume control actions; per-event

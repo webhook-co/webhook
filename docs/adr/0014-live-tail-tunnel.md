@@ -24,9 +24,9 @@ calculus:
 
 1. The push is *best-effort*. With no timer, a connected-but-idle client whose wake is dropped (or
    whose reconnect lands with no subsequent write to trigger a push) silently stalls — the classic
-   "the notification is the truth" anti-pattern. Robust systems (and the durable webhook relays we
-   surveyed — Hookdeck, Svix, Stripe's `listen`) treat the notification as a hint and an authoritative
-   query/cursor as the truth.
+   "the notification is the truth" anti-pattern. Robust systems (and the durable webhook-relay / live-
+   tail tools we surveyed) treat the notification as a hint and an authoritative query/cursor as the
+   truth.
 2. The push requires an **active-session registry** + an ingest→DO RPC, coupling the *stateless ingest
    path* (a constitutional non-negotiable: "no Durable Object on ingest") to the tunnel and adding a
    poisonable, cross-tenant-sensitive surface.
