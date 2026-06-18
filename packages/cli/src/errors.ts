@@ -63,3 +63,15 @@ export class InvalidTunnelUrlError extends CliError {
     this.userMessage = `invalid tunnel url \`${value}\` — must be a wss:// URL (ws:// is allowed only for localhost).`;
   }
 }
+
+/** A `--forward` target that isn't an http(s):// loopback URL. Replay is replay-to-LOCALHOST: sending a
+ *  captured payload + its provider signature to a non-local host would leak it off the machine. */
+export class InvalidForwardUrlError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage: string;
+  constructor(value: string) {
+    super(`invalid forward url: ${value}`);
+    this.name = "InvalidForwardUrlError";
+    this.userMessage = `invalid forward url \`${value}\` — must be an http:// or https:// URL pointing at localhost (127.0.0.1 / ::1).`;
+  }
+}

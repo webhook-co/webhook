@@ -69,26 +69,12 @@ describe("CLI app behavior", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
   });
 
-  it("runs a not-yet-built command as a clear, non-zero stub", async () => {
-    const t = makeTestContext();
-    await run(app, ["replay"], t.ctx); // `replay` is still a slice-12 stub (listen now ships)
-    expect(t.stderr().toLowerCase()).toContain("isn't built yet");
-    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.NOT_IMPLEMENTED);
-  });
-
   it("wires the real `login` command (no key + non-interactive → a usage error, not a stub)", async () => {
     const t = makeTestContext(); // no WBHK_API_KEY, not a TTY, no --stdin
     await run(app, ["login"], t.ctx);
     expect(t.stderr().toLowerCase()).toContain("no api key provided");
     expect(t.stderr().toLowerCase()).not.toContain("isn't built yet");
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
-  });
-
-  it("accepts the shared --output flag on a stub command", async () => {
-    const t = makeTestContext();
-    await run(app, ["replay", "--output", "json"], t.ctx);
-    // recognized flag → falls through to the stub, not a usage error
-    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.NOT_IMPLEMENTED);
   });
 
   it("does not pollute Object.prototype from a __proto__ flag injection", async () => {

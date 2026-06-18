@@ -23,8 +23,9 @@ const cursor = z.string();
 // reads back; lifting one is the checklist item that fails the build if a surface forgets to bind.
 /** The browser dashboard (read views) is deferred to the frontend epic — no web binding yet. */
 const WEB_DEFERRED = "dashboard read views deferred to the frontend epic";
-/** events.replay's replay-to-localhost engine lands in slice 12. */
-const REPLAY_SLICE_12 = "replay-to-localhost engine lands in slice 12";
+/** events.replay's mcp exemption — the localhost-tunnel target is CLI-intrinsic (no agent localhost). */
+const REPLAY_MCP_EXEMPT =
+  "the localhost-tunnel target is CLI-intrinsic — an agent has no user-localhost session (remote targets are a future Target kind per ADR-0005)";
 /**
  * events.getPayload is exempt on mcp: raw payload bytes don't fit the MCP text-tool model, and the
  * McpAgent has no R2 binding — an agent reads event metadata via events.get. Revisit if an agent
@@ -162,9 +163,9 @@ export const eventsReplay = defineCapability({
   errors: ["NOT_FOUND", "ENDPOINT_PAUSED", "TARGET_UNREACHABLE", "UNAUTHORIZED", "RATE_LIMITED"],
   auth: { scope: "events:replay" },
   semantics: { idempotent: true },
-  // Bound today only on the CLI's command tree (`replay`); the replay-to-localhost engine
-  // lands in slice 12, when the api/mcp exemptions lift.
-  surfaceExempt: { web: WEB_DEFERRED, api: REPLAY_SLICE_12, mcp: REPLAY_SLICE_12 },
+  // Bound on the CLI (`replay` / `listen --forward`) + api (records the delivery_attempt server-side,
+  // PR3). mcp stays exempt: the localhost-tunnel target is CLI-intrinsic (an agent has no localhost).
+  surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_MCP_EXEMPT },
 });
 
 /**

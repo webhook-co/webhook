@@ -35,6 +35,16 @@ function get(path: string, token: string | null = "whk_ok"): Request {
     headers: token ? { authorization: `Bearer ${token}` } : {},
   });
 }
+function post(path: string, body: unknown, token: string | null = "whk_ok"): Request {
+  return new Request(`${RESOURCE}${path}`, {
+    method: "POST",
+    headers: {
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
 const scoped: AuthContext = { orgId: ORG, scopes: ["endpoints:read", "events:read", "audit:read"] };
 
 describe("handleRequest — routing, auth, input construction, error mapping", () => {
@@ -285,5 +295,118 @@ describe("handleRequest — GET /v1/events/:id/payload (events.getPayload)", () 
     await expect(handleRequest(get(`/v1/events/${EVENT_ID}/payload`), deps)).rejects.toThrow(
       /R2_PAYLOADS/,
     );
+  });
+});
+
+describe("handleRequest — POST /v1/events/:id/replay (events.replay)", () => {
+  const EVENT_ID = "55555555-5555-7555-8555-555555555555";
+  const replayScoped: AuthContext = { orgId: ORG, scopes: ["events:replay"] };
+  const TARGET = { kind: "localhost-tunnel", sessionId: "s1" };
+  const attempt = {
+    id: "a1",
+    orgId: ORG,
+    eventId: EVENT_ID,
+    target: JSON.stringify(TARGET),
+    idempotencyKey: "k1",
+    status: "forwarded",
+    statusCode: null,
+    attempt: 1,
+    error: null,
+    createdAt: "2026-06-18T00:00:00.000Z",
+  };
+
+  it("merges the path eventId with the JSON body and calls the replay handler", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(replayScoped)),
+      handlers: handlersOf({}),
+      replay: async (_ctx, input) => {
+        seen = input;
+        return attempt;
+      },
+    };
+    const res = await handleRequest(
+      post(`/v1/events/${EVENT_ID}/replay`, { target: TARGET, idempotencyKey: "k1" }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ target: TARGET, idempotencyKey: "k1", eventId: EVENT_ID });
+    expect(await res.json()).toMatchObject({ status: "forwarded" });
+  });
+
+  it("the path eventId is authoritative over a spoofed body eventId", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(replayScoped)),
+      handlers: handlersOf({}),
+      replay: async (_ctx, input) => {
+        seen = input;
+        return attempt;
+      },
+    };
+    await handleRequest(
+      post(`/v1/events/${EVENT_ID}/replay`, {
+        eventId: "spoofed",
+        target: TARGET,
+        idempotencyKey: "k",
+      }),
+      deps,
+    );
+    expect((seen as { eventId: string }).eventId).toBe(EVENT_ID);
+  });
+
+  it("maps a handler ENDPOINT_PAUSED fault to 409", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(replayScoped)),
+      handlers: handlersOf({}),
+      replay: async () => {
+        throw new CapabilityFault("ENDPOINT_PAUSED", "endpoint is paused");
+      },
+    };
+    const res = await handleRequest(
+      post(`/v1/events/${EVENT_ID}/replay`, { target: TARGET, idempotencyKey: "k" }),
+      deps,
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: "ENDPOINT_PAUSED" });
+  });
+
+  it("400s a malformed JSON body as VALIDATION_ERROR", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(replayScoped)),
+      handlers: handlersOf({}),
+      replay: async () => attempt,
+    };
+    const req = new Request(`${RESOURCE}/v1/events/${EVENT_ID}/replay`, {
+      method: "POST",
+      headers: { authorization: "Bearer whk_ok", "content-type": "application/json" },
+      body: "{not json",
+    });
+    const res = await handleRequest(req, deps);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "VALIDATION_ERROR" });
+  });
+
+  it("403s without the events:replay scope", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({}),
+      replay: async () => attempt,
+    };
+    const res = await handleRequest(
+      post(`/v1/events/${EVENT_ID}/replay`, { target: TARGET, idempotencyKey: "k" }),
+      deps,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it("propagates a 5xx when the replay handler is not bound (wiring bug)", async () => {
+    const deps: ApiDeps = { authDeps: authDeps(verify(replayScoped)), handlers: handlersOf({}) };
+    await expect(
+      handleRequest(
+        post(`/v1/events/${EVENT_ID}/replay`, { target: TARGET, idempotencyKey: "k" }),
+        deps,
+      ),
+    ).rejects.toThrow(/replay handler/);
   });
 });
