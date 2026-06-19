@@ -8,9 +8,8 @@ import { themeInitScript } from "@webhook-co/ui";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "webhook.co — design system",
-  description:
-    "The webhook.co design system: tokens, theming, and primitives for a monochrome, machined, and quiet product surface.",
+  title: "webhook.co",
+  description: "The webhook.co dashboard.",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
