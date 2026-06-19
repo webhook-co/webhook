@@ -15,6 +15,7 @@ export * from "./orgs";
 export * from "./endpoints";
 export * from "./audit-append";
 export * from "./auth-audit";
+export * from "./auto-approve";
 export * from "./credential";
 export * from "./credential-cache";
 export * from "./credential-resolver";
