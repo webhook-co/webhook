@@ -3,13 +3,12 @@ import {
   type ProtectedResourceMetadata,
 } from "@webhook-co/contract";
 import {
+  API_RESOURCE,
   createClient,
   createCredentialHasherFromBase64,
-  createCredentialResolver,
   createReadHandlers,
   createReplayHandler,
-  makeApiKeyColdLookup,
-  makeVerifyBearer,
+  makeApiKeyAuthDeps,
 } from "@webhook-co/db";
 import {
   b64ToBytes,
@@ -30,8 +29,7 @@ import { handleRequest, type ApiDeps } from "./router.js";
 // DB clients and tears them down in a finally. The routing/auth/mapping live in router.ts (DI,
 // node-tested); this file wires the real per-request deps (mirrors apps/engine).
 
-/** Our canonical resource identifier — the RFC 8707 audience API keys are bound to at this surface. */
-export const API_RESOURCE = "https://api.webhook.co";
+// API_RESOURCE (the RFC 8707 audience this surface binds api keys to) is single-sourced in @webhook-co/db.
 const PRM_PATH = "/.well-known/oauth-protected-resource";
 /** The OAuth token issuer for this resource (co-located on mcp.; ADR-0010). */
 const TOKEN_ISSUER = "https://mcp.webhook.co";
@@ -92,17 +90,16 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
   ]);
   const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
   const tenant = createClient(env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
-  const resolver = createCredentialResolver({
-    hasher,
-    cache: kvCredentialCache(env.KV_AUTHZ),
-    coldLookup: makeApiKeyColdLookup(authn, API_RESOURCE),
-    // Stamp this surface's audience on every resolved principal — KV_AUTHZ is shared with mcp/engine.
-    resource: API_RESOURCE,
-  });
   const deps: ApiDeps = {
     authDeps: {
-      verifyBearer: makeVerifyBearer(resolver),
-      resource: API_RESOURCE,
+      // The api-key bearer chain, single-sourced; resource drives the cold-lookup binding + the
+      // audience stamp (KV_AUTHZ is shared with mcp/engine, so one entry per key stays revoke-complete).
+      ...makeApiKeyAuthDeps({
+        hasher,
+        authn,
+        cache: kvCredentialCache(env.KV_AUTHZ),
+        resource: API_RESOURCE,
+      }),
       resourceMetadataUrl: `${API_RESOURCE}${PRM_PATH}`,
     },
     handlers: createReadHandlers({ tenant, cursorKey, auditKey }),

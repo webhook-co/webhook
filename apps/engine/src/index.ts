@@ -1,14 +1,13 @@
 import { authorizeBearer, type BearerAuthzDeps } from "@webhook-co/contract";
 import {
+  API_RESOURCE,
   createClient,
   createCredentialHasherFromBase64,
-  createCredentialResolver,
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
   getEndpoint,
   insertIngestEvent,
-  makeApiKeyColdLookup,
-  makeVerifyBearer,
+  makeApiKeyAuthDeps,
   readAuditChainHeads,
   withTenant,
   type ResolvedPrincipal,
@@ -247,8 +246,7 @@ export async function buildIngestDeps(env: Env): Promise<IngestDepsHandle> {
 
 // The resource identifier (RFC 8707 audience) the tunnel's bearer tokens must be bound to. The CLI
 // listen tunnel is the events.tail capability over a WebSocket transport, so it reuses the api.
-// audience — existing api keys tunnel unchanged (ADR-0014). MUST match apps/api's API_RESOURCE.
-export const API_RESOURCE = "https://api.webhook.co";
+// audience — existing api keys tunnel unchanged (ADR-0014). API_RESOURCE is single-sourced in @webhook-co/db.
 const LISTEN_PRM_URL = `${API_RESOURCE}/.well-known/oauth-protected-resource`;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -271,17 +269,15 @@ export async function buildListenAuth(env: Env): Promise<ListenAuthHandle> {
   const hasher = createCredentialHasherFromBase64(await readSecretBinding(env.CREDENTIAL_PEPPER));
   const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
   const tenant = createClient(env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
-  const resolver = createCredentialResolver({
-    hasher,
-    cache: kvCredentialCache(env.KV_AUTHZ),
-    coldLookup: makeApiKeyColdLookup(authn, API_RESOURCE),
-    // The tunnel bearer reuses the api audience; stamp it (KV_AUTHZ is shared with api/mcp).
-    resource: API_RESOURCE,
-  });
   return {
     authDeps: {
-      verifyBearer: makeVerifyBearer(resolver),
-      resource: API_RESOURCE,
+      // The tunnel bearer chain, single-sourced; reuses the api audience (KV_AUTHZ shared with api/mcp).
+      ...makeApiKeyAuthDeps({
+        hasher,
+        authn,
+        cache: kvCredentialCache(env.KV_AUTHZ),
+        resource: API_RESOURCE,
+      }),
       resourceMetadataUrl: LISTEN_PRM_URL,
     },
     endpointExists: async (orgId, endpointId) =>
