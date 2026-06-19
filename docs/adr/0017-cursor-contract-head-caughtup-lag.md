@@ -68,9 +68,13 @@ verbatim. `LagSchema` + `LISTEN_LAG_CAP` live in `packages/shared` so the read c
 - `tailMeta` adds two indexed probes (the `LIMIT 1` head + the `limit cap + 1` count) per tail call,
   alongside the page scan. The cost is bounded (both ride `events_tunnel_idx`); fold into the page scan
   only if measurement shows it matters.
-- The watermark + keyset predicate is now hand-copied across `listEvents`/`tailEvents`/
-  `latestTailCursor`/`tailMeta`; a follow-up should extract a shared SQL fragment so the byte-for-byte
-  invariant is enforced once rather than by review.
+- The watermark + keyset predicate was hand-copied across `listEvents`/`tailEvents`/
+  `latestTailCursor`/`tailMeta`. **Extracted (slice FU-2)** to three module-private fragment helpers in
+  `reads.ts` — `belowWatermark` (the RAW-`received_at` watermark; δ stays un-truncated), `keysetAfter`
+  (forward `>`) and `keysetBefore` (newest-first `<`, both `date_trunc('milliseconds', …)` with the
+  `::timestamptz`/`::uuid` casts) — so the byte-for-byte ms-on-wire / µs-in-rows invariant is enforced in
+  one place rather than by review. `listEndpoints` (`created_at`) and `resolveSince` stay inline (scoping
+  the helpers to the `events` keyset avoids identifier injection for the off-table call site).
 - **Tunnel (slice B1b, implemented):** the same `{ caughtUp, lag }` is surfaced over the `/listen`
   tunnel as an additive `StatusFrame` in `ServerFrameSchema` — emitted at connect (the initial caughtUp
   + capped lag, from the seeded resume position) and once on the behind→caught-up transition (a
