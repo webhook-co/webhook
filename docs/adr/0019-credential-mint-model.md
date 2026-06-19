@@ -110,5 +110,12 @@ A0c builds the issuance functions over this seam (`packages/db/src/grants.ts` + 
   binding the exported `insertApiKey` primitive could otherwise allow is now structurally impossible
   (defense in depth; `auth_grant.unique(id, org_id)` exists for this). NULL `grant_id` (standalone
   keys) is unaffected.
-- **Deferred to A0c-4:** `revokeGrant` (cascade + KV-invalidation hashes), `revokeApiKey`, and the
-  read helpers (`listGrants` / `listApiKeysForGrant`).
+- **A0c-4 (revoke + read):** `revokeApiKey` (single, RFC 7009-style) and `revokeGrant` (cascade) flip
+  `revoked_at`/`status`, audit `key_revoked`/`grant_revoked`, and **return the revoked key hashes** so
+  the caller (Lane C revoke-glue) evicts the KV credential cache — the DB cascade stops new cold
+  resolutions; the KV eviction closes the ~300s cold-path TTL window (a documented, load-bearing Lane C
+  responsibility). Both are idempotent + RLS-scoped (a cross-org/already-revoked target is a no-op with
+  no audit). `mintKeyForGrant` takes a `FOR UPDATE` row lock on the grant so a refresh serializes
+  against a concurrent `revokeGrant` (no key escapes the cascade). Read helpers `listGrants` /
+  `listApiKeysForGrant` return display metadata only (no `key_hash`/plaintext), RLS-scoped — the
+  management/dashboard read shape (Lane C `keys.*`/`grants.*`, Lane E dashboard).

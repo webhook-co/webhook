@@ -7,7 +7,7 @@ import {
   createApiKey,
   listApiKeys,
   makeApiKeyColdLookup,
-  revokeApiKey,
+  revokeApiKeyInTx,
 } from "../src/api-keys";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
@@ -17,6 +17,12 @@ import { InMemoryCredentialCache } from "../src/credential-cache";
 import { createCredentialResolver } from "../src/credential-resolver";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+
+/** Revoke a key by id under the org's RLS context (the tx-level primitive). Returns whether it flipped. */
+async function revokeApiKey(app: Sql, orgId: string, id: string): Promise<boolean> {
+  const { revoked } = await withTenant(app, orgId, (tx) => revokeApiKeyInTx(tx, id));
+  return revoked;
+}
 
 // api-key lifecycle + verify-path suite. Exercises the ACTUAL shipped functions
 // (createApiKey/listApiKeys/revokeApiKey + the webhook_authn cold lookup wired into a

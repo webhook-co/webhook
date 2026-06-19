@@ -13,7 +13,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { insertApiKey } from "./api-keys";
+import { insertApiKey, revokeApiKeyInTx, type RevokedKeyRow } from "./api-keys";
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { type CredentialHasher } from "./credential";
 import { appendAuthAuditEntry } from "./auth-audit";
@@ -313,8 +313,12 @@ export async function mintKeyForGrant(
   auditKey: CryptoKey,
 ): Promise<MintedKey> {
   return withTenant(app, input.orgId, async (tx) => {
+    // FOR UPDATE locks the grant row so a concurrent revokeGrant (which row-locks the grant via its
+    // UPDATE) serializes against this refresh — closing the race where a key minted mid-revoke would
+    // escape the cascade. After acquiring the lock we see the committed status, so a just-revoked
+    // grant throws rather than yielding an orphan key.
     const [grant] = await tx<{ status: GrantStatus; user_id: string }[]>`
-      select status, user_id from auth_grant where id = ${input.grantId}`;
+      select status, user_id from auth_grant where id = ${input.grantId} for update`;
     if (!grant) throw new Error("mintKeyForGrant: grant not found");
     if (grant.status !== "active") {
       throw new Error(`mintKeyForGrant: grant is not active (status=${grant.status})`);
@@ -383,4 +387,139 @@ export async function approveGrant(
       auditKey,
     );
   });
+}
+
+export interface RevokeApiKeyInput {
+  readonly orgId: string;
+  readonly keyId: string;
+  /** The user_id revoking, or null for a system revoke. */
+  readonly revokedBy?: string | null;
+}
+
+/**
+ * Revoke a SINGLE api key (RFC 7009-style). Atomic (row revoke + key_revoked audit). Returns whether a
+ * row flipped and its key_hash so the caller (Lane C revoke-glue) evicts the credential cache — the
+ * cache is the only authn cache that survives revocation within the cold-path TTL, so the caller MUST
+ * invalidateHash(keyHash) on a true result. A no-op revoke (already revoked / RLS-invisible) writes no
+ * audit row.
+ */
+export async function revokeApiKey(
+  app: Sql,
+  input: RevokeApiKeyInput,
+  auditKey: CryptoKey,
+): Promise<RevokedKeyRow> {
+  return withTenant(app, input.orgId, async (tx) => {
+    const result = await revokeApiKeyInTx(tx, input.keyId);
+    if (result.revoked) {
+      await appendAuthAuditEntry(tx, auditKey, {
+        orgId: input.orgId,
+        actor: input.revokedBy ?? null,
+        eventType: "key_revoked",
+        targetId: input.keyId,
+      });
+    }
+    return result;
+  });
+}
+
+export interface RevokeGrantInput {
+  readonly orgId: string;
+  readonly grantId: string;
+  readonly revokedBy?: string | null;
+  readonly reason?: string | null;
+}
+
+export interface RevokedGrant {
+  /** True if the grant flipped to revoked (false = not found / RLS-invisible / already revoked). */
+  readonly revoked: boolean;
+  /** The hashes of the child keys this revoke cascaded to — the caller evicts each from the cache. */
+  readonly revokedKeyHashes: Buffer[];
+}
+
+/**
+ * Revoke a grant and CASCADE to its child keys. Atomic (grant update + child-key revoke + grant_revoked
+ * audit). Idempotent: a missing/RLS-invisible/already-revoked grant returns { revoked: false }. Returns
+ * the revoked child keys' hashes so the caller (Lane C revoke-glue) evicts each from the credential
+ * cache (the cascade in the DB stops new resolutions; the KV eviction closes the cold-path TTL window).
+ * The child api_keys also cascade-DELETE if the grant row is ever hard-deleted (composite FK 0015), but
+ * the lifecycle path is this soft revoke, which preserves the rows + the audit trail.
+ */
+export async function revokeGrant(
+  app: Sql,
+  input: RevokeGrantInput,
+  auditKey: CryptoKey,
+): Promise<RevokedGrant> {
+  return withTenant(app, input.orgId, async (tx) => {
+    const grantRows = await tx<{ id: string }[]>`
+      update auth_grant
+      set status = 'revoked', revoked_by = ${input.revokedBy ?? null}, revoked_at = now(),
+          revocation_reason = ${input.reason ?? null}
+      where id = ${input.grantId} and status <> 'revoked'
+      returning id`;
+    if (grantRows.length === 0) {
+      return { revoked: false, revokedKeyHashes: [] };
+    }
+    const keyRows = await tx<{ key_hash: Buffer }[]>`
+      update api_keys
+      set revoked_at = now(), updated_at = now()
+      where grant_id = ${input.grantId} and revoked_at is null
+      returning key_hash`;
+    const revokedKeyHashes = keyRows.map((r) => Buffer.from(r.key_hash));
+    await appendAuthAuditEntry(tx, auditKey, {
+      orgId: input.orgId,
+      actor: input.revokedBy ?? null,
+      eventType: "grant_revoked",
+      targetId: input.grantId,
+      metadata: { reason: input.reason ?? null, revokedKeyCount: revokedKeyHashes.length },
+    });
+    return { revoked: true, revokedKeyHashes };
+  });
+}
+
+/** A grant listing row: control-plane display metadata only (no secrets). */
+export interface GrantListItem {
+  readonly id: string;
+  readonly status: GrantStatus;
+  readonly authMethod: AuthMethod;
+  readonly deviceName: string | null;
+  readonly createdAt: Date;
+  readonly lastUsedAt: Date | null;
+  readonly approvedAt: Date | null;
+  readonly revokedAt: Date | null;
+  readonly expiresAt: Date | null;
+}
+
+/** List an org's grants (newest first). Display metadata only — the management/dashboard read shape. */
+export async function listGrants(app: Sql, orgId: string): Promise<GrantListItem[]> {
+  const rows = await withTenant(app, orgId, async (tx) => {
+    return tx<
+      {
+        id: string;
+        status: GrantStatus;
+        auth_method: AuthMethod;
+        device_name: string | null;
+        created_at: Date;
+        last_used_at: Date | null;
+        approved_at: Date | null;
+        revoked_at: Date | null;
+        expires_at: Date | null;
+      }[]
+    >`
+      select id, status, auth_method, device_name, created_at, last_used_at, approved_at,
+             revoked_at, expires_at
+      from auth_grant
+      where org_id = ${orgId}
+      order by created_at desc`;
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    status: r.status,
+    authMethod: r.auth_method,
+    deviceName: r.device_name,
+    createdAt: r.created_at,
+    lastUsedAt: r.last_used_at,
+    approvedAt: r.approved_at,
+    revokedAt: r.revoked_at,
+    expiresAt: r.expires_at,
+  }));
 }
