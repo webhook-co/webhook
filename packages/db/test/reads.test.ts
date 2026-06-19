@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { importAuditKey, importCursorKey, newId, type Cursor } from "@webhook-co/shared";
+import {
+  importAuditKey,
+  importCursorKey,
+  newId,
+  parseSince,
+  type Cursor,
+} from "@webhook-co/shared";
 import { type AuthContext } from "@webhook-co/contract";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -17,6 +23,7 @@ import {
   latestTailCursor,
   listEndpoints,
   listEvents,
+  resolveSince,
   tailEvents,
   tailMeta,
 } from "../src/reads";
@@ -277,6 +284,28 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
     await expectFault(handlers.get("events.tail")!(noScope, { endpointId: epTail }), "FORBIDDEN");
     await expectFault(
       handlers.get("events.tail")!(ctxA, { endpointId: epTail, sinceCursor: "garbage.deadbeef" }),
+      "VALIDATION_ERROR",
+    );
+  });
+
+  it("events.tail resolves a server-side --since into a forward page (beginning = oldest)", async () => {
+    const page = (await handlers.get("events.tail")!(ctxA, {
+      endpointId: epTail,
+      since: "beginning",
+    })) as { items: { id: string }[] };
+    expect(page.items.map((e) => e.id)).toEqual([eTail1, eTail2, eTail3]);
+  });
+
+  it("events.tail rejects since + sinceCursor together (mutually exclusive)", async () => {
+    await expectFault(
+      handlers.get("events.tail")!(ctxA, { endpointId: epTail, since: "now", sinceCursor: "a.b" }),
+      "VALIDATION_ERROR",
+    );
+  });
+
+  it("events.tail rejects an invalid --since value", async () => {
+    await expectFault(
+      handlers.get("events.tail")!(ctxA, { endpointId: epTail, since: "latest" }),
       "VALIDATION_ERROR",
     );
   });
@@ -583,5 +612,92 @@ describe("tailMeta (watermark head + capped backlog count)", () => {
     for (let i = 0; i < 5; i++) await seedEventAt(orgA, epCap, tailAt(20_000 + i * 1000), "stripe");
     const meta = await withTenant(app, orgA, (tx) => tailMeta(tx, { endpointId: epCap, cap: 2 }));
     expect(meta.backlogCount).toBe(3); // cap+1 = "more than 2" — NOT 5, so the scan stopped in SQL
+  });
+});
+
+describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
+  // Resolve a --since value to a synthetic cursor server-side, then tail from it. No time→cursor table
+  // lookup: the synthetic `(date_trunc('ms', T), 0-uuid)` rides the existing tailEvents keyset, so the
+  // clamp semantics (before-earliest → beginning, future → empty) emerge from the keyset + watermark.
+  async function tailFrom(endpointId: string, sinceStr: string): Promise<string[]> {
+    const parsed = parseSince(sinceStr);
+    if (parsed.kind === "invalid") throw new Error(`unexpected invalid --since: ${sinceStr}`);
+    return withTenant(app, orgA, async (tx) => {
+      const cursor = await resolveSince(tx, { endpointId, since: parsed });
+      const page = await tailEvents(tx, { endpointId, sinceCursor: cursor, limit: 50 });
+      return page.items.map((e) => e.id);
+    });
+  }
+
+  it("beginning → from the oldest event, inclusive", async () => {
+    expect(await tailFrom(epTail, "beginning")).toEqual([eTail1, eTail2, eTail3]);
+  });
+
+  it("now → empty (only NEW events past the watermark head; the old backlog is skipped)", async () => {
+    expect(await tailFrom(epTail, "now")).toEqual([]);
+  });
+
+  it("now skips the ENTIRE backlog including same-millisecond events (uses the head, not a synthetic ms)", async () => {
+    const epNow = (await createEndpoint(app, { orgId: orgA, name: "ep-since-now" }, hasher)).id;
+    const a = await seedEvent(orgA, epNow, { provider: "stripe" });
+    const b = await seedEvent(orgA, epNow, { provider: "stripe" });
+    // both in the same ms, well below the watermark — `now` must skip BOTH (a synthetic watermark-ms
+    // boundary would re-surface them; the real head cursor excludes the whole same-ms backlog).
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-04T00:00:00.003100+00' where id = ${a}`,
+    );
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-04T00:00:00.003900+00' where id = ${b}`,
+    );
+    expect(await tailFrom(epNow, "now")).toEqual([]);
+  });
+
+  it("a timestamp before the earliest event clamps to beginning ('whichever is greater')", async () => {
+    expect(await tailFrom(epTail, "2026-05-01T00:00:00Z")).toEqual([eTail1, eTail2, eTail3]);
+  });
+
+  it("a future timestamp clamps to empty (resume live)", async () => {
+    expect(await tailFrom(epTail, "2027-01-01T00:00:00Z")).toEqual([]);
+  });
+
+  it("a timestamp between events yields the events at/after it (>= T)", async () => {
+    // eTail1@..01.000, eTail2@..02.000, eTail3@..03.000 → T=..01.500 selects eTail2, eTail3.
+    expect(await tailFrom(epTail, "2026-06-01T00:00:01.500Z")).toEqual([eTail2, eTail3]);
+  });
+
+  it("a timestamp AT a same-millisecond cluster includes EVERY event at that ms (R4 — no skip)", async () => {
+    const epMs = (await createEndpoint(app, { orgId: orgA, name: "ep-since-ms" }, hasher)).id;
+    const m1 = await seedEvent(orgA, epMs, { provider: "stripe" });
+    const m2 = await seedEvent(orgA, epMs, { provider: "stripe" });
+    // both in the same ms (.007), µs differ; the synthetic (ms(T), 0-uuid) sorts below every real id
+    // at that ms, so neither is skipped regardless of id order.
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-05T00:00:00.007200+00' where id = ${m1}`,
+    );
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-05T00:00:00.007800+00' where id = ${m2}`,
+    );
+    const got = await tailFrom(epMs, "2026-06-05T00:00:00.007Z");
+    expect([...got].sort()).toEqual([m1, m2].sort()); // both surfaced — no same-ms drop
+  });
+
+  it("resolve-once is stable for a timestamp (no clock drift between calls)", async () => {
+    const parsed = parseSince("2026-06-01T00:00:01.500Z");
+    if (parsed.kind === "invalid") throw new Error("x");
+    const c1 = await withTenant(app, orgA, (tx) =>
+      resolveSince(tx, { endpointId: epTail, since: parsed }),
+    );
+    const c2 = await withTenant(app, orgA, (tx) =>
+      resolveSince(tx, { endpointId: epTail, since: parsed }),
+    );
+    expect(c1).toEqual(c2);
   });
 });
