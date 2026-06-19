@@ -39,6 +39,18 @@ export { Checkbox } from "./components/checkbox";
 export { CopyButton, type CopyButtonProps } from "./components/copy-button";
 export { Banner, bannerVariants, type BannerProps } from "./components/banner";
 export {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+  TableCaption,
+  TableEmpty,
+  type TableProps,
+  type TableEmptyProps,
+} from "./components/table";
+export {
   Dialog,
   DialogTrigger,
   DialogClose,
