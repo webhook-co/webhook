@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { GeistMono } from "geist/font/mono";
 import { GeistSans } from "geist/font/sans";
 
-import { themeInitScript } from "@/components/theme-toggle";
+import { themeInitScript } from "@webhook-co/ui";
 
 import "./globals.css";
 

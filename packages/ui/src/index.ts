@@ -88,6 +88,7 @@ export {
   type DeliveryStatus,
 } from "./components/status";
 export { Mark, Wordmark, type MarkProps, type WordmarkProps } from "./components/mark";
+export { ThemeToggle, themeInitScript } from "./components/theme-toggle";
 
 // ── utilities ───────────────────────────────────────────────────────────────
 export { cn } from "./lib/cn";

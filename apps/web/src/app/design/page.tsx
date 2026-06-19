@@ -9,6 +9,7 @@ import {
   Input,
   Label,
   StatusPill,
+  ThemeToggle,
   Wordmark,
   ink,
 } from "@webhook-co/ui";
@@ -18,7 +19,6 @@ import type { ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 
 import { MotionDemo } from "@/components/motion-demo";
-import { ThemeToggle } from "@/components/theme-toggle";
 
 export const metadata: Metadata = {
   title: "webhook.co — design system showcase",
