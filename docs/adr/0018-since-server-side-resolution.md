@@ -73,9 +73,22 @@ The handler resolves `--since` **after** the `getEndpoint` NOT_FOUND guard, in t
 - Server-side `--since` lands on the pull surface (`api.` + `mcp.`) with total-function semantics and no
   schema change. The same-millisecond-no-skip property is proven against real Postgres + RLS in the db
   pool (the `resolveSince` clamp matrix).
-- **Follow-on (engine tunnel):** the `/listen` upgrade still uses the `?since=now` sentinel; generalising
-  it to the full `?since=<grammar>` (resolve in the upgrade handler → the existing signed-cursor header,
-  no DO change) is a focused follow-on, sequenced after B1b's tunnel work rather than re-touching
-  `listen-session.ts` in the same slice.
+- **Engine tunnel (slice FU-1, implemented):** the `/listen` upgrade now accepts the full
+  `?since=<grammar>`. The upgrade handler validates the grammar (`parseSince` → a clean `400` before a DO
+  is spun), rejects `since`+`sinceCursor` together (`400`, mirroring the pull surface), and forwards the
+  raw validated spec on a trusted `x-listen-since-spec` header (deleted-then-set, so a client-supplied
+  one never survives); the **`x-listen-since-now` sentinel is retired**. Resolution happens **in the DO**
+  (a new `resolveSinceCursor` reusing the tenant-method shape — `withTenant(orgId, tx => resolveSince(…))`),
+  NOT in the handler: the DO already resolved `?since=now` server-side (`latestCursor` → `persistCursor`
+  a raw cursor) and persists the resolved `Cursor` directly, so this avoids an `encodeCursor`/`CURSOR_KEY`
+  round-trip in the upgrade worker and a redundant encode→decode. `?since=now` is unchanged for callers
+  (the CLI still sends the `?since=now` query param). The seed is resolved **before** the binding is
+  persisted, **first bind only** (a reconnect ignores `?since=` and resumes from the durable acked cursor).
+  - **Fail mode (subsumes the unguarded `?since=now` throw):** the seed is **load-bearing**, unlike the
+    advisory connect-status probe. A resolution error returns **`503` before `acceptWebSocket`** (no
+    binding left behind → the CLI's retry re-seeds from a fresh first bind) — it is **never** swallowed
+    into an unset cursor, which would flood a `--since now` session with the entire backlog (the opposite
+    of the request). `undefined` (beginning / clamp-to-beginning) is a normal return → cursor unset =
+    oldest-inclusive, still a `101`.
 - The `safe-regex` lint on the RFC3339 pattern is a conservative false positive (anchored `^…$`, only
   bounded quantifiers, star-height 1 → linear, not ReDoS-able); suppressed with a justification inline.
