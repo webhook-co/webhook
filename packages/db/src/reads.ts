@@ -65,6 +65,29 @@ function buildPage<R, T>(
   return { items: page.map(mapItem), nextCursor: hasMore && last ? cursorOf(last) : null };
 }
 
+// The two load-bearing event-read predicates, defined ONCE so the four event reads (listEvents,
+// tailEvents, latestTailCursor, tailMeta) can't drift apart on the ms-on-wire / µs-in-rows seam.
+// These are the silent-gap surface: a stray change here (truncating the watermark, flipping an
+// operator, dropping a cast) reintroduces a gap without failing an obvious test, so they live in one
+// place under one comment.
+
+// The gapless watermark, bound on the RAW received_at (µs). δ must be EXACTLY the ingest
+// statement_timeout, so this stays un-truncated (unlike the keyset) — see the precision note above.
+function belowWatermark(tx: TenantTx) {
+  return tx`received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')`;
+}
+
+// The ms-resolution keyset on received_at — date_trunc('milliseconds', …) to match the cursor's
+// resolution, with `id` as the stable tiebreaker. Forward tail uses `>` (events strictly after the
+// resume position); the newest-first browse uses `<`. Returns the leading `and …` so the call site
+// stays `${cursor ? keysetAfter(tx, cursor) : tx``}`.
+function keysetAfter(tx: TenantTx, c: Cursor) {
+  return tx`and (date_trunc('milliseconds', received_at), id) > (${c.receivedAt}::timestamptz, ${c.id}::uuid)`;
+}
+function keysetBefore(tx: TenantTx, c: Cursor) {
+  return tx`and (date_trunc('milliseconds', received_at), id) < (${c.receivedAt}::timestamptz, ${c.id}::uuid)`;
+}
+
 interface EndpointRow {
   id: string;
   org_id: string;
@@ -149,7 +172,7 @@ export async function listEvents(
     from events
     where endpoint_id = ${endpointId}
     ${provider ? tx`and provider = ${provider}` : tx``}
-    ${cursor ? tx`and (date_trunc('milliseconds', received_at), id) < (${cursor.receivedAt}::timestamptz, ${cursor.id}::uuid)` : tx``}
+    ${cursor ? keysetBefore(tx, cursor) : tx``}
     order by date_trunc('milliseconds', received_at) desc, id desc
     limit ${limit + 1}`;
 
@@ -186,8 +209,8 @@ export async function tailEvents(
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified
     from events
     where endpoint_id = ${endpointId}
-      and received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')
-      ${sinceCursor ? tx`and (date_trunc('milliseconds', received_at), id) > (${sinceCursor.receivedAt}::timestamptz, ${sinceCursor.id}::uuid)` : tx``}
+      and ${belowWatermark(tx)}
+      ${sinceCursor ? keysetAfter(tx, sinceCursor) : tx``}
     order by date_trunc('milliseconds', received_at) asc, id asc
     limit ${limit + 1}`;
 
@@ -209,7 +232,7 @@ export async function latestTailCursor(
     select received_at, id
     from events
     where endpoint_id = ${opts.endpointId}
-      and received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')
+      and ${belowWatermark(tx)}
     order by date_trunc('milliseconds', received_at) desc, id desc
     limit 1`;
   return r ? { receivedAt: r.received_at, id: r.id } : null;
@@ -237,8 +260,8 @@ export async function tailMeta(
       select 1
       from events
       where endpoint_id = ${endpointId}
-        and received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')
-        ${sinceCursor ? tx`and (date_trunc('milliseconds', received_at), id) > (${sinceCursor.receivedAt}::timestamptz, ${sinceCursor.id}::uuid)` : tx``}
+        and ${belowWatermark(tx)}
+        ${sinceCursor ? keysetAfter(tx, sinceCursor) : tx``}
       limit ${cap + 1}
     ) s`;
   return { headCursor, backlogCount: row?.n ?? 0 };
