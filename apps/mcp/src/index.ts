@@ -3,9 +3,8 @@ import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
 import {
   createClient,
   createCredentialHasherFromBase64,
-  createCredentialResolver,
-  makeApiKeyColdLookup,
-  makeVerifyBearer,
+  makeApiKeyAuthDeps,
+  MCP_RESOURCE,
 } from "@webhook-co/db";
 import { readSecretBinding } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
@@ -29,8 +28,7 @@ import type { McpEnv } from "./env";
 // authenticate through resolveExternalToken — the provider calls it for any bearer it didn't mint,
 // and we resolve it as an api key bound to MCP_RESOURCE, handing back the principal as grant props.
 
-/** Our canonical MCP resource identifier (RFC 9728 `resource` / RFC 8707 audience). */
-export const MCP_RESOURCE = "https://mcp.webhook.co";
+// MCP_RESOURCE (RFC 9728 `resource` / RFC 8707 audience) is single-sourced in @webhook-co/db.
 
 /** The distinct capability scopes the MCP surface understands (RFC 8414 `scopes_supported`). */
 export const SCOPES_SUPPORTED: string[] = [
@@ -70,16 +68,17 @@ export default new OAuthProvider({
     const hasher = createCredentialHasherFromBase64(await readSecretBinding(e.CREDENTIAL_PEPPER));
     const authn = createClient(e.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
     try {
-      const resolver = createCredentialResolver({
-        hasher,
-        cache: kvCredentialCache(e.KV_AUTHZ),
-        coldLookup: makeApiKeyColdLookup(authn, MCP_RESOURCE),
-        // Stamp this surface's audience — KV_AUTHZ is shared with api, so a key api cached must
-        // resolve here as mcp's audience, not api's (the cross-surface 401 bug, ADR-0010/0011).
-        resource: MCP_RESOURCE,
-      });
+      // The api-key bearer chain, single-sourced; resource drives the cold-lookup binding + the audience
+      // stamp (KV_AUTHZ is shared with api, so a key api cached must resolve here as mcp's audience, not
+      // api's — the cross-surface 401 bug, ADR-0010/0011). The resolveExternalToken/resolveApiKeyToProps
+      // wrapping stays local (the provider's external-token contract).
       return await resolveApiKeyToProps(
-        { verifyBearer: makeVerifyBearer(resolver), resource: MCP_RESOURCE },
+        makeApiKeyAuthDeps({
+          hasher,
+          authn,
+          cache: kvCredentialCache(e.KV_AUTHZ),
+          resource: MCP_RESOURCE,
+        }),
         token,
       );
     } finally {
