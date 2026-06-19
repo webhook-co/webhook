@@ -64,5 +64,10 @@ describe("ThemeToggle", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
     expect(window.localStorage.getItem("wh-theme")).toBe("dark");
     expect(screen.getByRole("button", { name: /switch to light theme/i })).toBeInTheDocument();
+
+    // toggling back returns to light (covers the dark→light path)
+    await userEvent.click(screen.getByRole("button", { name: /switch to light theme/i }));
+    expect(document.documentElement.getAttribute("data-theme")).toBe("light");
+    expect(window.localStorage.getItem("wh-theme")).toBe("light");
   });
 });
