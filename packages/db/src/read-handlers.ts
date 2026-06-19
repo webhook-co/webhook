@@ -16,7 +16,14 @@ import {
   type AnyCapability,
   type AuthContext,
 } from "@webhook-co/contract";
-import { decodeCursor, encodeCursor, verifyAuditChain, type Cursor } from "@webhook-co/shared";
+import {
+  decodeCursor,
+  encodeCursor,
+  parseSince,
+  verifyAuditChain,
+  type Cursor,
+  type Since,
+} from "@webhook-co/shared";
 
 import { readAuditChain } from "./audit-append";
 import { withTenant, type Sql } from "./client";
@@ -26,6 +33,7 @@ import {
   latestTailCursor,
   listEndpoints,
   listEvents,
+  resolveSince,
   tailEvents,
   tailMeta,
 } from "./reads";
@@ -120,10 +128,24 @@ export function createReadHandlers(deps: ReadHandlerDeps): ReadHandlers {
 
   handlers.set(eventsTail.name, async (ctx, input) => {
     ensureScope(ctx, eventsTail);
-    const { endpointId, sinceCursor } = parse(eventsTail, input) as {
+    const { endpointId, sinceCursor, since } = parse(eventsTail, input) as {
       endpointId: string;
       sinceCursor?: string;
+      since?: string;
     };
+    // `since` (a server-resolved grammar) and `sinceCursor` (an opaque resume cursor) are mutually
+    // exclusive — a caller passes one or neither (mirrors the engine /listen exclusivity).
+    if (since !== undefined && sinceCursor !== undefined) {
+      throw new CapabilityFault("VALIDATION_ERROR", "since and sinceCursor are mutually exclusive");
+    }
+    let parsedSince: Exclude<Since, { kind: "invalid" }> | undefined;
+    if (since !== undefined) {
+      const p = parseSince(since);
+      if (p.kind === "invalid") {
+        throw new CapabilityFault("VALIDATION_ERROR", `invalid since: ${p.reason}`);
+      }
+      parsedSince = p;
+    }
     const decoded = await decode(sinceCursor);
     const { page, meta } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       // Same NOT_FOUND-vs-empty distinction as events.list. tailEvents computes the gapless watermark
@@ -132,8 +154,12 @@ export function createReadHandlers(deps: ReadHandlerDeps): ReadHandlers {
       // head + the (capped) backlog count, in the same RLS-scoped tx.
       const endpoint = await getEndpoint(tx, endpointId);
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
-      const tailed = await tailEvents(tx, { endpointId, sinceCursor: decoded });
-      return { page: tailed, meta: await tailMeta(tx, { endpointId, sinceCursor: decoded }) };
+      // Resolve `--since` to a cursor ONCE (after the guard, under RLS), then iterate by it.
+      const from = parsedSince
+        ? await resolveSince(tx, { endpointId, since: parsedSince })
+        : decoded;
+      const tailed = await tailEvents(tx, { endpointId, sinceCursor: from });
+      return { page: tailed, meta: await tailMeta(tx, { endpointId, sinceCursor: from }) };
     });
     // headLagMs is advisory (Worker clock vs the DB-stamped head; floored by the 5s watermark anyway).
     const headLagMs =

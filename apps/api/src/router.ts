@@ -81,6 +81,10 @@ function matchRoute(
     const input: Record<string, unknown> = { endpointId: rest[1] };
     const sinceCursor = query.get("sinceCursor");
     if (sinceCursor !== null) input.sinceCursor = sinceCursor;
+    // `?since=` is the server-resolved grammar (now|beginning|<duration>|<RFC3339>); the shared
+    // handler validates it and rejects it presented alongside ?sinceCursor=.
+    const since = query.get("since");
+    if (since !== null) input.since = since;
     return { capability: "events.tail", input };
   }
   if (method === "GET" && rest.length === 2 && rest[0] === "events") {
