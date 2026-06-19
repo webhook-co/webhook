@@ -14,7 +14,15 @@ const bindings = env as unknown as Env;
 const ORG = "11111111-1111-1111-1111-111111111111";
 const READ_CTX: AuthContext = { orgId: ORG, scopes: ["events:read"] };
 
-type PollFn = (b: unknown, r: Cursor | undefined) => Promise<EventSummary[]>;
+type PollFn = (
+  b: unknown,
+  r: Cursor | undefined,
+) => Promise<{ events: EventSummary[]; caughtUp: boolean }>;
+type MetaFn = (
+  o: string,
+  e: string,
+  r: Cursor | undefined,
+) => Promise<{ headCursor: Cursor | null; backlogCount: number }>;
 
 /** A fake auth handle: configurable principal / verify-throw / endpoint existence. No DB. */
 function fakeAuth(opts: {
@@ -124,10 +132,14 @@ describe("listen upgrade — routing", () => {
   it("upgrades to 101 and binds the DO to the bearer org, ignoring a forged header", async () => {
     const sessionId = crypto.randomUUID();
     const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
-    // Pre-inject an empty poll so the DO's inline backlog flush doesn't dial the absent Postgres.
-    const emptyPoll: PollFn = async () => [];
+    // Pre-inject empty poll + backlog seams so neither the DO's inline flush nor the connect-time
+    // status probe (ADR-0017) dials the absent Postgres.
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
     await runInDurableObject(stub, (inst) => {
-      (inst as ListenSession & { pollEvents: PollFn }).pollEvents = emptyPoll;
+      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
     });
 
     const res = await handleListenUpgrade(
