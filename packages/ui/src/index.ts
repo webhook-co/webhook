@@ -35,6 +35,28 @@ export { IconButton, type IconButtonProps } from "./components/icon-button";
 export { Input, Label, type InputProps, type LabelProps } from "./components/input";
 export { Field, type FieldProps } from "./components/field";
 export { Spinner, type SpinnerProps } from "./components/spinner";
+export { Checkbox } from "./components/checkbox";
+export {
+  Dialog,
+  DialogTrigger,
+  DialogClose,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+  type DialogContentProps,
+} from "./components/dialog";
+export {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuGroup,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  type DropdownMenuItemProps,
+} from "./components/dropdown-menu";
 export {
   Card,
   CardHeader,
