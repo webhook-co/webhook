@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The dashboard Worker (app.webhook.co), built by `@opennextjs/cloudflare` → `.open-next/worker.js`.
+  // Unlike apps/www (a static assets-only Worker), this is a dynamic SSR Worker: it serves the OpenNext
+  // server function + the build's static assets. `nodejs_compat` matches engine/api/mcp (the session
+  // JWT + the Postgres driver that E6/E7 add need Node built-ins in workerd).
+  "name": "webhook-web",
+  "main": ".open-next/worker.js",
+  // Recent date (matches apps/www); avoids the "update your compatibility_date" warning and enables the
+  // current workerd features OpenNext relies on.
+  "compatibility_date": "2026-06-15",
+  // global_fetch_strictly_public: the canonical @opennextjs/cloudflare template ships this alongside
+  // nodejs_compat — it makes a Worker fetch() to its OWN public hostname egress publicly instead of
+  // looping back to the origin. Set now (a no-op for the bare runtime) so E6/E7's subrequests to
+  // api./auth.webhook.co route correctly rather than short-circuiting.
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": {
+    "enabled": true,
+  },
+  // OpenNext emits the client/static assets under `.open-next/assets`; the worker serves them via this
+  // binding (run-time-handled by the OpenNext server). No `account_id`/`routes` here — app.webhook.co is
+  // bound at the zone per environment (mirrors apps/api + apps/www; no ids in the repo).
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  // NOTE — the session-authed credential-management bindings land in E6 (not needed by the bare runtime):
+  //   HYPERDRIVE_TENANT  (cache-disabled, webhook_app — the RLS-scoped pool the management server actions
+  //                       run under via withTenant; mirrors apps/api's TENANT pool)
+  //   KV_AUTHZ           (the SHARED credential cache namespace; revoke evicts via resolver.invalidateHash)
+  //   secrets_store      CREDENTIAL_PEPPER + AUDIT_CHAIN_HMAC_KEY (overlay-injected at deploy, never committed)
+  // The production deploy (the OpenNext build→deploy job + the id/secret overlay) is coordinated with Lane C
+  // and the infra owner; this committed config supports `opennextjs-cloudflare build` + `wrangler dev`/preview.
+}
