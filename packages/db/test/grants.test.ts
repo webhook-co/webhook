@@ -3,13 +3,21 @@ import { randomUUID } from "node:crypto";
 import { importAuditKey } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { makeApiKeyColdLookup } from "../src/api-keys";
+import { listApiKeysForGrant, makeApiKeyColdLookup } from "../src/api-keys";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
 import { InMemoryCredentialCache } from "../src/credential-cache";
 import { createCredentialResolver } from "../src/credential-resolver";
-import { approveGrant, createPendingGrant, mintKeyForGrant, mintScopedKey } from "../src/grants";
+import {
+  approveGrant,
+  createPendingGrant,
+  listGrants,
+  mintKeyForGrant,
+  mintScopedKey,
+  revokeApiKey,
+  revokeGrant,
+} from "../src/grants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
@@ -500,5 +508,201 @@ describe("issuance hardening", () => {
     expect(grant?.sso_identity_id).toBe("sso_abc");
     expect(grant?.expires_at).not.toBeNull();
     expect(grant!.expires_at!.getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("revokeApiKey — single key", () => {
+  it("revokes a key, returns its hash, stops resolution, audits, and is idempotent", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const res = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: [],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    if (res.status !== "minted") throw new Error("unreachable");
+    expect((await makeResolver().resolve(res.plaintext))?.orgId).toBe(orgId); // resolves before
+
+    const revoked = await revokeApiKey(
+      app,
+      { orgId, keyId: res.keyId, revokedBy: userOf(orgId) },
+      auditKey,
+    );
+    expect(revoked.revoked).toBe(true);
+    expect(revoked.keyHash).not.toBeNull();
+    expect(Buffer.compare(revoked.keyHash!, hasher.hash(res.plaintext))).toBe(0); // caller can evict KV
+
+    expect(await makeResolver().resolve(res.plaintext)).toBeNull(); // cold lookup honors revoked_at
+    expect(await auditTypes(orgId)).toEqual(["grant_created", "key_minted", "key_revoked"]);
+
+    // Idempotent: a second revoke flips nothing and writes no extra audit.
+    const again = await revokeApiKey(app, { orgId, keyId: res.keyId }, auditKey);
+    expect(again).toEqual({ revoked: false, keyHash: null });
+    expect(await auditTypes(orgId)).toEqual(["grant_created", "key_minted", "key_revoked"]);
+  });
+});
+
+describe("revokeGrant — cascade", () => {
+  it("revokes the grant + all child keys, returns their hashes, and is idempotent", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const first = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: [],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    if (first.status !== "minted") throw new Error("unreachable");
+    const second = await mintKeyForGrant(
+      app,
+      { orgId, grantId: first.grantId, scopes: [], audience: API, ttlSeconds: 3600 },
+      hasher,
+      auditKey,
+    );
+
+    const result = await revokeGrant(
+      app,
+      { orgId, grantId: first.grantId, revokedBy: userOf(orgId), reason: "compromised" },
+      auditKey,
+    );
+    expect(result.revoked).toBe(true);
+    expect(result.revokedKeyHashes).toHaveLength(2); // cascaded to both keys
+    expect(await grantStatus(orgId, first.grantId)).toBe("revoked");
+    // Both keys stop resolving.
+    expect(await makeResolver().resolve(first.plaintext)).toBeNull();
+    expect(await makeResolver().resolve(second.plaintext)).toBeNull();
+    expect(await auditTypes(orgId)).toContain("grant_revoked");
+
+    // Idempotent: re-revoking flips nothing and cascades to no keys.
+    const again = await revokeGrant(app, { orgId, grantId: first.grantId }, auditKey);
+    expect(again).toEqual({ revoked: false, revokedKeyHashes: [] });
+  });
+
+  it("returns { revoked: false } for a cross-org / unknown grant (RLS-invisible)", async () => {
+    const orgA = randomUUID();
+    const orgB = randomUUID();
+    await seedOrg(orgA);
+    await seedOrg(orgB);
+    const a = await mintScopedKey(
+      app,
+      {
+        orgId: orgA,
+        userId: userOf(orgA),
+        scopes: [],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    if (a.status !== "minted") throw new Error("unreachable");
+    const result = await revokeGrant(app, { orgId: orgB, grantId: a.grantId }, auditKey);
+    expect(result).toEqual({ revoked: false, revokedKeyHashes: [] });
+    // Org A's key still resolves — org B's revoke could not touch it.
+    expect((await makeResolver().resolve(a.plaintext))?.orgId).toBe(orgA);
+  });
+});
+
+describe("read helpers", () => {
+  it("listGrants returns the org's grants (newest first), RLS-scoped, no secrets", async () => {
+    const orgA = randomUUID();
+    const orgB = randomUUID();
+    await seedOrg(orgA);
+    await seedOrg(orgB);
+    await mintScopedKey(
+      app,
+      {
+        orgId: orgA,
+        userId: userOf(orgA),
+        scopes: [],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    await mintScopedKey(
+      app,
+      {
+        orgId: orgB,
+        userId: userOf(orgB),
+        scopes: [],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "device_code",
+      },
+      hasher,
+      auditKey,
+    );
+    const aGrants = await listGrants(app, orgA);
+    expect(aGrants).toHaveLength(1); // only org A's grant (RLS)
+    expect(aGrants[0].status).toBe("active");
+    expect(aGrants[0].authMethod).toBe("pkce_loopback");
+    expect(JSON.stringify(aGrants)).not.toContain("key_hash");
+  });
+
+  it("listApiKeysForGrant returns only that grant's keys (display metadata only)", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const g = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    if (g.status !== "minted") throw new Error("unreachable");
+    await mintKeyForGrant(
+      app,
+      { orgId, grantId: g.grantId, scopes: ["events:read"], audience: API, ttlSeconds: 3600 },
+      hasher,
+      auditKey,
+    );
+    // A SECOND grant in the SAME org with its own key — its key must NOT appear in g's listing.
+    const other = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: [],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "device_code",
+      },
+      hasher,
+      auditKey,
+    );
+    if (other.status !== "minted") throw new Error("unreachable");
+
+    const keys = await listApiKeysForGrant(app, orgId, g.grantId);
+    expect(keys).toHaveLength(2); // exactly g's two keys — the grant_id filter excludes `other`'s key
+    expect(keys.map((k) => k.id)).not.toContain(other.keyId); // proves the exclusion
+    expect(keys.map((k) => k.scopes)).toEqual([["events:read"], ["events:read"]]);
+    // The list item carries no hash/plaintext field.
+    expect(JSON.stringify(keys)).not.toContain("key_hash");
+    expect(JSON.stringify(keys)).not.toContain(g.plaintext);
   });
 });
