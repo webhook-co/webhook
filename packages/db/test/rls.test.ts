@@ -29,6 +29,9 @@ const TENANT_TABLES = [
   { table: "ingest_paused", col: "org_id" },
   { table: "audit_log", col: "org_id" },
   { table: "api_keys", col: "org_id" },
+  { table: "auth_grant", col: "org_id" },
+  { table: "org_policy", col: "org_id" },
+  { table: "auth_audit_event", col: "org_id" },
 ] as const;
 
 // Better Auth identity tables are GLOBAL (text ids, per-user / api-key), intentionally
@@ -113,6 +116,12 @@ async function seedOrg(slug: string): Promise<Seeded> {
              values (${orgId}, ${1}, ${userId}, ${"org.created"}, ${deterministicBuffer(32)})`;
     await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes)
              values (${randomUUID()}, ${orgId}, ${randomBytes(32)}, ${"whk"}, ${"whk_" + slug}, ${"key-" + slug}, ${tx.json(["events:read"])})`;
+    await tx`insert into auth_grant (id, org_id, user_id, status, auth_method)
+             values (${randomUUID()}, ${orgId}, ${userId}, ${"active"}, ${"pkce_loopback"})`;
+    await tx`insert into org_policy (org_id) values (${orgId})`;
+    // Genesis row of the control-plane auth chain (prev_hash omitted = NULL genesis).
+    await tx`insert into auth_audit_event (org_id, seq, actor, event_type, row_hash)
+             values (${orgId}, ${1}, ${userId}, ${"grant_created"}, ${deterministicBuffer(32)})`;
   });
 
   return { orgId, userId, endpointId, eventId };
@@ -156,10 +165,12 @@ describe("cross-org isolation (every tenant table)", () => {
     });
   }
 
-  // audit_log is append-only (no UPDATE/DELETE grant or policy) — its write denial is
-  // covered by the dedicated append-only describe, so exclude it from the generic
-  // mutate-other-org checks (which assert 0-rows-affected, not a privilege error).
-  for (const { table, col } of TENANT_TABLES.filter((t) => t.table !== "audit_log")) {
+  // audit_log + auth_audit_event are append-only (no UPDATE/DELETE grant or policy) — their
+  // write denial is covered by the dedicated append-only describes, so exclude them from the
+  // generic mutate-other-org checks (which assert 0-rows-affected, not a privilege error).
+  for (const { table, col } of TENANT_TABLES.filter(
+    (t) => t.table !== "audit_log" && t.table !== "auth_audit_event",
+  )) {
     it(`org A context cannot update org B rows in ${table}`, async () => {
       const affected = await withTenant(app, orgA.orgId, async (tx) => {
         const res =
@@ -379,6 +390,142 @@ describe("audit_log append-only hash chain", () => {
   });
 });
 
+describe("auth_audit_event append-only hash chain (control-plane)", () => {
+  it("enforces contiguous per-org seq starting at 1", async () => {
+    await withTenant(app, orgA.orgId, async (tx) => {
+      // org A already has seq 1 (seeded, row_hash = deterministicBuffer(32)); seq 2 linking to it is accepted.
+      await tx`insert into auth_audit_event (org_id, seq, actor, event_type, prev_hash, row_hash)
+               values (${orgA.orgId}, ${2}, ${orgA.userId}, ${"key_minted"}, ${deterministicBuffer(32)}, ${deterministicBuffer(33)})`;
+    });
+    await expect(
+      withTenant(app, orgA.orgId, async (tx) => {
+        await tx`insert into auth_audit_event (org_id, seq, actor, event_type, prev_hash, row_hash)
+                 values (${orgA.orgId}, ${5}, ${orgA.userId}, ${"key_minted"}, ${deterministicBuffer(33)}, ${deterministicBuffer(34)})`;
+      }),
+    ).rejects.toThrow(/contiguous/i);
+  });
+
+  it("rejects a contiguous row whose prev_hash does not match the prior row_hash", async () => {
+    const chainOrg = randomUUID();
+    await withTenant(app, chainOrg, async (tx) => {
+      await tx`insert into orgs (id, slug, name) values (${chainOrg}, ${"aae-chainx"}, ${"AAE Chain"})`;
+      // Genesis row: prev_hash omitted (defaults to NULL).
+      await tx`insert into auth_audit_event (org_id, seq, event_type, row_hash)
+               values (${chainOrg}, ${1}, ${"login"}, ${deterministicBuffer(40)})`;
+    });
+    await expect(
+      withTenant(app, chainOrg, async (tx) => {
+        await tx`insert into auth_audit_event (org_id, seq, event_type, prev_hash, row_hash)
+                 values (${chainOrg}, ${2}, ${"key_minted"}, ${deterministicBuffer(41)}, ${deterministicBuffer(42)})`;
+      }),
+    ).rejects.toThrow(/prev_hash must equal/i);
+  });
+
+  it("rejects a genesis row with a non-null prev_hash", async () => {
+    const freshOrg = randomUUID();
+    await expect(
+      withTenant(app, freshOrg, async (tx) => {
+        await tx`insert into orgs (id, slug, name) values (${freshOrg}, ${"aae-genx"}, ${"AAE Gen"})`;
+        await tx`insert into auth_audit_event (org_id, seq, event_type, prev_hash, row_hash)
+                 values (${freshOrg}, ${1}, ${"login"}, ${deterministicBuffer(32)}, ${deterministicBuffer(33)})`;
+      }),
+    ).rejects.toThrow(/genesis/i);
+  });
+
+  it("rejects an unknown event_type (the check constraint)", async () => {
+    const o = randomUUID();
+    await expect(
+      withTenant(app, o, async (tx) => {
+        await tx`insert into orgs (id, slug, name) values (${o}, ${"aae-evt"}, ${"AAE Evt"})`;
+        await tx`insert into auth_audit_event (org_id, seq, event_type, row_hash)
+                 values (${o}, ${1}, ${"not_a_real_event"}, ${deterministicBuffer(32)})`;
+      }),
+    ).rejects.toThrow(/violates check constraint/i);
+  });
+
+  it("withholds UPDATE/DELETE privilege from the app role (privilege layer)", async () => {
+    await expect(
+      withTenant(app, orgA.orgId, async (tx) => {
+        await tx`update auth_audit_event set actor = ${"tampered"} where org_id = ${orgA.orgId} and seq = ${1}`;
+      }),
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      withTenant(app, orgA.orgId, async (tx) => {
+        await tx`delete from auth_audit_event where org_id = ${orgA.orgId} and seq = ${1}`;
+      }),
+    ).rejects.toThrow(/permission denied/i);
+  });
+
+  it("the immutability trigger blocks UPDATE/DELETE/TRUNCATE even for the most privileged role", async () => {
+    await expect(
+      root`update auth_audit_event set actor = ${"tampered"} where org_id = ${orgA.orgId} and seq = ${1}`,
+    ).rejects.toThrow(/append-only/i);
+    await expect(
+      root`delete from auth_audit_event where org_id = ${orgA.orgId} and seq = ${1}`,
+    ).rejects.toThrow(/append-only/i);
+    await expect(owner`truncate auth_audit_event`).rejects.toThrow(/append-only/i);
+  });
+});
+
+describe("api_keys credential extension (0014)", () => {
+  it("owner_type defaults to 'user' and grant_id/audience default null for a directly-created key", async () => {
+    const id = randomUUID();
+    const [row] = await withTenant(app, orgA.orgId, async (tx) => {
+      await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes)
+               values (${id}, ${orgA.orgId}, ${randomBytes(32)}, ${"whk"}, ${"whk_d"}, ${"direct-key"}, ${tx.json([])})`;
+      return tx<{ owner_type: string; grant_id: string | null; audience: string | null }[]>`
+        select owner_type, grant_id, audience from api_keys where id = ${id}`;
+    });
+    expect(row.owner_type).toBe("user");
+    expect(row.grant_id).toBeNull();
+    expect(row.audience).toBeNull();
+  });
+
+  it("a key can be minted under an existing grant (grant_id FK + per-key audience)", async () => {
+    const n = await withTenant(app, orgA.orgId, async (tx) => {
+      const [grant] = await tx<{ id: string }[]>`
+        select id from auth_grant where org_id = ${orgA.orgId} limit 1`;
+      await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes, grant_id, audience)
+               values (${randomUUID()}, ${orgA.orgId}, ${randomBytes(32)}, ${"whk"}, ${"whk_g"}, ${"grant-key"}, ${tx.json(["events:read"])}, ${grant.id}, ${"https://api.webhook.co"})`;
+      const [{ c }] = await tx<{ c: number }[]>`
+        select count(*)::int as c from api_keys where grant_id = ${grant.id}`;
+      return c;
+    });
+    expect(n).toBe(1);
+  });
+
+  it("rejects a key whose grant_id references a non-existent grant (FK)", async () => {
+    await expect(
+      withTenant(app, orgA.orgId, async (tx) => {
+        await tx`insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes, grant_id)
+                 values (${randomUUID()}, ${orgA.orgId}, ${randomBytes(32)}, ${"whk"}, ${"whk_x"}, ${"bad-grant"}, ${tx.json([])}, ${randomUUID()})`;
+      }),
+    ).rejects.toThrow(/foreign key|violates/i);
+  });
+
+  it("the authn cold-path column grant adds `audience` only (not grant_id/owner_type/sso_authorized)", async () => {
+    const [g] = await owner<
+      {
+        key_hash: boolean;
+        audience: boolean;
+        grant_id: boolean;
+        owner_type: boolean;
+        sso_authorized: boolean;
+      }[]
+    >`
+      select has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'key_hash', 'SELECT') as key_hash,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'audience', 'SELECT') as audience,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'grant_id', 'SELECT') as grant_id,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'owner_type', 'SELECT') as owner_type,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'sso_authorized', 'SELECT') as sso_authorized`;
+    expect(g.key_hash).toBe(true); // from 0009
+    expect(g.audience).toBe(true); // added by 0014
+    expect(g.grant_id).toBe(false);
+    expect(g.owner_type).toBe(false);
+    expect(g.sso_authorized).toBe(false);
+  });
+});
+
 describe("catalog-driven RLS coverage", () => {
   it("every non-exempt base table has RLS enabled and forced", async () => {
     const tables = await owner<{ relname: string; rls: boolean; force: boolean }[]>`
@@ -407,9 +554,11 @@ describe("catalog-driven RLS coverage", () => {
       select tablename, cmd from pg_policies where schemaname = 'public'`;
     for (const { table } of TENANT_TABLES) {
       const cmds = new Set(rows.filter((r) => r.tablename === table).map((r) => r.cmd));
-      // audit_log is deliberately INSERT+SELECT only (no UPDATE/DELETE policy).
+      // audit_log + auth_audit_event are deliberately INSERT+SELECT only (no UPDATE/DELETE policy).
       const expected =
-        table === "audit_log" ? ["INSERT", "SELECT"] : ["DELETE", "INSERT", "SELECT", "UPDATE"];
+        table === "audit_log" || table === "auth_audit_event"
+          ? ["INSERT", "SELECT"]
+          : ["DELETE", "INSERT", "SELECT", "UPDATE"];
       expect([...cmds].sort()).toEqual(expected);
     }
   });
