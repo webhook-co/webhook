@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { EventSummarySchema } from "./entities";
+import { LagSchema } from "./lag";
 
 // The `wbhk listen` tunnel wire protocol (ADR-0014): JSON text frames over the WebSocket. Summaries-
 // only (the events.tail element, never a payload body), single-lane (everything delivered at/below
@@ -28,6 +29,18 @@ export const ErrorFrameSchema = z.object({
   message: z.string(),
 });
 
+/**
+ * server→client: the cursor-contract status (ADR-0017). Emitted at connect (the initial caughtUp + the
+ * capped backlog `lag`) and on the behind→caught-up transition. `lag` is optional (the caught-up
+ * transition carries none). `headCursor` stays HTTP-only — a streaming client tracks position from the
+ * event-frame cursors, and the backlog guard reads the server-computed `lag.backlogCount`.
+ */
+export const StatusFrameSchema = z.object({
+  type: z.literal("status"),
+  caughtUp: z.boolean(),
+  lag: LagSchema.optional(),
+});
+
 /** client→server: acknowledges processing up to `cursor` (advisory in the inspection tail). */
 export const AckFrameSchema = z.object({
   type: z.literal("ack"),
@@ -38,6 +51,7 @@ export const ServerFrameSchema = z.discriminatedUnion("type", [
   ReadyFrameSchema,
   EventFrameSchema,
   ErrorFrameSchema,
+  StatusFrameSchema,
 ]);
 /** The only frame type the server accepts from a client today. */
 export const ClientFrameSchema = z.discriminatedUnion("type", [AckFrameSchema]);
@@ -45,6 +59,7 @@ export const ClientFrameSchema = z.discriminatedUnion("type", [AckFrameSchema]);
 export type ReadyFrame = z.infer<typeof ReadyFrameSchema>;
 export type EventFrame = z.infer<typeof EventFrameSchema>;
 export type ErrorFrame = z.infer<typeof ErrorFrameSchema>;
+export type StatusFrame = z.infer<typeof StatusFrameSchema>;
 export type AckFrame = z.infer<typeof AckFrameSchema>;
 export type ServerFrame = z.infer<typeof ServerFrameSchema>;
 export type ClientFrame = z.infer<typeof ClientFrameSchema>;

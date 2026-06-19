@@ -74,6 +74,15 @@ describe("listen-protocol — server frames", () => {
     const frame: ServerFrame = { type: "error", code: "POLL_DEGRADED", message: "transient" };
     expect(ServerFrameSchema.parse(JSON.parse(encodeServerFrame(frame)))).toEqual(frame);
   });
+
+  it("round-trips a status frame (caughtUp + optional capped lag)", () => {
+    const behind: ServerFrame = { type: "status", caughtUp: false, lag: { backlogCount: 12 } };
+    expect(ServerFrameSchema.parse(JSON.parse(encodeServerFrame(behind)))).toEqual(behind);
+
+    // lag is optional — a bare caught-up transition needs no backlog.
+    const caught: ServerFrame = { type: "status", caughtUp: true };
+    expect(ServerFrameSchema.parse(JSON.parse(encodeServerFrame(caught)))).toEqual(caught);
+  });
 });
 
 describe("listen-protocol — client-side (the CLI consuming the tunnel)", () => {
@@ -98,6 +107,16 @@ describe("listen-protocol — client-side (the CLI consuming the tunnel)", () =>
     expect(parseServerFrame("{not json")).toBeNull();
     // an `ack` is a CLIENT frame — the client must not accept it as a server frame.
     expect(parseServerFrame(JSON.stringify({ type: "ack", cursor: "c" }))).toBeNull();
+  });
+
+  it("parseServerFrame accepts a status frame and additive-skips an unknown frame type", () => {
+    expect(
+      parseServerFrame(
+        JSON.stringify({ type: "status", caughtUp: true, lag: { backlogCount: 3 } }),
+      ),
+    ).toEqual({ type: "status", caughtUp: true, lag: { backlogCount: 3 } });
+    // additive-safe: a future/unknown server frame type → null (an old client skips it, never throws).
+    expect(parseServerFrame(JSON.stringify({ type: "future", x: 1 }))).toBeNull();
   });
 
   it("encodeClientFrame round-trips an ack through the server's parseClientFrame", () => {

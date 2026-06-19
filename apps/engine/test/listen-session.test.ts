@@ -34,10 +34,20 @@ interface Binding {
   endpointId: string;
   sessionId: string;
 }
-type PollFn = (binding: Binding, resume: Cursor | undefined) => Promise<EventSummary[]>;
-/** The DO with its protected poll seam exposed for injection (tests aren't typechecked by tsc). */
-type Pollable = ListenSession & { pollEvents: PollFn };
-const EMPTY_POLL: PollFn = async () => [];
+type PollFn = (
+  binding: Binding,
+  resume: Cursor | undefined,
+) => Promise<{ events: EventSummary[]; caughtUp: boolean }>;
+type MetaFn = (
+  orgId: string,
+  endpointId: string,
+  resume: Cursor | undefined,
+) => Promise<{ headCursor: Cursor | null; backlogCount: number }>;
+/** The DO with its protected seams exposed for injection (tests aren't typechecked by tsc). */
+type Pollable = ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+const EMPTY_POLL: PollFn = async () => ({ events: [], caughtUp: true });
+/** A benign backlog probe (caught up, nothing behind) so connect emits a harmless status frame. */
+const EMPTY_META: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
 
 let cursorKey: CryptoKey;
 beforeAll(async () => {
@@ -94,14 +104,17 @@ function connect(
 /** The DO with the latest-cursor seam exposed for injection (no live Postgres in the pool). */
 type WithLatest = ListenSession & { latestCursor: () => Promise<Cursor | null> };
 
-/** Inject the poll seam (defaults to empty) THEN connect — so the auto-firing alarm never hits PG. */
+/** Inject the poll + backlog seams (default empty) THEN connect — so neither connect nor the
+ * auto-firing alarm ever hits the absent local PG. */
 async function openSession(
   b: Binding,
   poll: PollFn = EMPTY_POLL,
+  meta: MetaFn = EMPTY_META,
 ): Promise<{ stub: DurableObjectStub; res: Response }> {
   const stub = stubFor(b.sessionId);
   await runInDurableObject(stub, (inst) => {
     (inst as Pollable).pollEvents = poll;
+    (inst as Pollable).backlogMeta = meta;
   });
   const res = await connect(stub, b);
   return { stub, res };
@@ -112,7 +125,7 @@ describe("ListenSession — connect + stream", () => {
     const b = newBinding();
     const s1 = summaryAt(new Date("2026-06-10T12:00:00.000Z"));
     const s2 = summaryAt(new Date("2026-06-10T12:00:01.000Z"));
-    const { stub, res } = await openSession(b, async () => [s1, s2]);
+    const { stub, res } = await openSession(b, async () => ({ events: [s1, s2], caughtUp: true }));
 
     expect(res.status).toBe(101);
     const ws = res.webSocket as WebSocket;
@@ -124,16 +137,18 @@ describe("ListenSession — connect + stream", () => {
     ws.accept();
 
     await runDurableObjectAlarm(stub);
-    await vi.waitFor(() => expect(msgs.length).toBeGreaterThanOrEqual(3));
+    await vi.waitFor(() => expect(msgs.length).toBeGreaterThanOrEqual(4));
 
     expect(msgs[0]).toMatchObject({
       type: "ready",
       sessionId: b.sessionId,
       watermarkDeltaMs: 5000,
     });
-    expect(msgs[1]).toMatchObject({ type: "event", summary: { id: s1.id } });
-    expect(msgs[2]).toMatchObject({ type: "event", summary: { id: s2.id } });
-    expect(typeof msgs[1].cursor).toBe("string");
+    // The connect-time cursor-contract status precedes the event frames (ADR-0017).
+    expect(msgs[1]).toMatchObject({ type: "status" });
+    expect(msgs[2]).toMatchObject({ type: "event", summary: { id: s1.id } });
+    expect(msgs[3]).toMatchObject({ type: "event", summary: { id: s2.id } });
+    expect(typeof msgs[2].cursor).toBe("string");
 
     const count = await runInDurableObject(stub, (_i, state) => state.getWebSockets().length);
     expect(count).toBe(1);
@@ -150,6 +165,7 @@ describe("ListenSession — ?since=now", () => {
     const stub = stubFor(b.sessionId);
     await runInDurableObject(stub, (inst) => {
       (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as Pollable).backlogMeta = EMPTY_META;
       (inst as WithLatest).latestCursor = async () => latest;
     });
     const res = await connect(stub, b, { sinceNow: true });
@@ -167,6 +183,7 @@ describe("ListenSession — ?since=now", () => {
     const stub = stubFor(b.sessionId);
     await runInDurableObject(stub, (inst) => {
       (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as Pollable).backlogMeta = EMPTY_META;
       (inst as WithLatest).latestCursor = async () => null;
     });
     await connect(stub, b, { sinceNow: true });
@@ -198,7 +215,7 @@ describe("ListenSession — cursor + at-least-once", () => {
     const calls: { orgId: string; endpointId: string; resume: Cursor | undefined }[] = [];
     const { stub } = await openSession(b, async (binding, resume) => {
       calls.push({ orgId: binding.orgId, endpointId: binding.endpointId, resume });
-      return [];
+      return { events: [], caughtUp: true };
     });
 
     const c: Cursor = { receivedAt: new Date("2026-06-10T12:00:05.000Z"), id: crypto.randomUUID() };
@@ -280,7 +297,8 @@ describe("drainPages — bounded multi-page catch-up", () => {
       return Promise.resolve(pages[i++]);
     }, undefined);
 
-    expect(out).toHaveLength(3); // every page's items
+    expect(out.events).toHaveLength(3); // every page's items
+    expect(out.caughtUp).toBe(true); // a page returned a null nextCursor → reached the head
     expect(i).toBe(3); // stopped after the page whose nextCursor was null
     expect(seen).toEqual([undefined, cur("a"), cur("b")]); // resume threaded forward
   });
@@ -296,6 +314,104 @@ describe("drainPages — bounded multi-page catch-up", () => {
       3,
     );
     expect(calls).toBe(3); // capped — did not loop forever on a never-null nextCursor
-    expect(out).toHaveLength(3);
+    expect(out.events).toHaveLength(3);
+    expect(out.caughtUp).toBe(false); // hit maxPages with a backlog still pending — NOT caught up
+  });
+});
+
+describe("ListenSession — cursor-contract status frame (B1b, ADR-0017)", () => {
+  // Collect only status frames off a freshly-accepted socket.
+  async function statusesOf(
+    res: Response,
+  ): Promise<{ ws: WebSocket; statuses: { caughtUp: boolean; lag?: { backlogCount: number } }[] }> {
+    const ws = res.webSocket as WebSocket;
+    const statuses: { caughtUp: boolean; lag?: { backlogCount: number } }[] = [];
+    ws.addEventListener("message", (e) => {
+      const m = JSON.parse(typeof e.data === "string" ? e.data : "");
+      if (m.type === "status") statuses.push(m);
+    });
+    ws.accept();
+    return { ws, statuses };
+  }
+
+  it("emits a connect status with the initial caughtUp:false + the capped backlog lag (first bind)", async () => {
+    const b = newBinding();
+    const head: Cursor = {
+      receivedAt: new Date("2026-06-10T12:00:00.000Z"),
+      id: crypto.randomUUID(),
+    };
+    const { res } = await openSession(b, EMPTY_POLL, async () => ({
+      headCursor: head,
+      backlogCount: 7,
+    }));
+    const msgs: {
+      type: string;
+      caughtUp?: boolean;
+      lag?: { backlogCount: number; headLagMs?: number };
+    }[] = [];
+    const ws = res.webSocket as WebSocket;
+    ws.addEventListener("message", (e) =>
+      msgs.push(JSON.parse(typeof e.data === "string" ? e.data : "")),
+    );
+    ws.accept();
+    await vi.waitFor(() => expect(msgs.length).toBeGreaterThanOrEqual(2));
+    expect(msgs[0]).toMatchObject({ type: "ready" });
+    expect(msgs[1]).toMatchObject({ type: "status", caughtUp: false, lag: { backlogCount: 7 } });
+    expect(typeof msgs[1].lag?.headLagMs).toBe("number"); // head present → advisory delta included
+    expect(msgs[1].lag?.headLagMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("reports caughtUp at connect when the backlog is empty (lag 0, no headLagMs)", async () => {
+    const b = newBinding();
+    const { res } = await openSession(b, EMPTY_POLL, async () => ({
+      headCursor: null,
+      backlogCount: 0,
+    }));
+    const { statuses } = await statusesOf(res);
+    await vi.waitFor(() => expect(statuses.length).toBeGreaterThanOrEqual(1));
+    expect(statuses[0]).toMatchObject({ caughtUp: true, lag: { backlogCount: 0 } });
+  });
+
+  it("stays fail-safe when the connect backlog probe errors (still 101, no connect status)", async () => {
+    const b = newBinding();
+    // backlogMeta throws (a DB hiccup) → the connect status is skipped (wasCaughtUp left unlatched) but
+    // the upgrade still 101s; the inline poll's caught-up state then drives the transition status.
+    const { res } = await openSession(b, EMPTY_POLL, async () => {
+      throw new Error("neon unavailable");
+    });
+    expect(res.status).toBe(101);
+    const { statuses } = await statusesOf(res);
+    // No connect frame (probe failed); the inline EMPTY_POLL (caughtUp:true) fires the transition once.
+    await vi.waitFor(() => expect(statuses.length).toBe(1));
+    expect(statuses[0]).toMatchObject({ caughtUp: true });
+  });
+
+  it("emits a single caught-up status on the behind→caught-up transition, not every poll", async () => {
+    const b = newBinding();
+    // Connect behind (backlog 1); inline connect-poll is still behind; the next alarm catches up;
+    // a further alarm must NOT re-emit (the latch holds until a not-caught-up poll un-latches it).
+    let pollNo = 0;
+    const poll: PollFn = async () => {
+      pollNo += 1;
+      return pollNo === 1
+        ? { events: [summaryAt(new Date("2026-06-10T12:00:00.000Z"))], caughtUp: false }
+        : { events: [], caughtUp: true };
+    };
+    const { stub, res } = await openSession(b, poll, async () => ({
+      headCursor: null,
+      backlogCount: 1,
+    }));
+    const { statuses } = await statusesOf(res);
+    // connect status (caughtUp:false). The inline connect-poll (#1) is still behind → no transition.
+    await vi.waitFor(() => expect(statuses.length).toBeGreaterThanOrEqual(1));
+    expect(statuses[0]).toMatchObject({ caughtUp: false, lag: { backlogCount: 1 } });
+
+    await runDurableObjectAlarm(stub); // poll #2 → caught up → ONE transition status
+    await vi.waitFor(() => expect(statuses.length).toBe(2));
+    expect(statuses[1]).toMatchObject({ caughtUp: true });
+
+    await runDurableObjectAlarm(stub); // poll #3 → still caught up → NO new status (no spam)
+    await runDurableObjectAlarm(stub);
+    expect(statuses).toHaveLength(2);
   });
 });

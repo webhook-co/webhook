@@ -254,6 +254,12 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
               deps.note(`tunnel notice [${frame.code}]: ${frame.message}\n`);
               return;
             }
+            // status frame (ADR-0017): the cursor-contract caughtUp/lag. Skipped for now — Lane D's D6
+            // replaces this with the resume banner + backlog guard. Skipping keeps the tunnel
+            // additive-safe (an unhandled server frame is a no-op, never a crash).
+            if (frame.type === "status") {
+              return;
+            }
             // event frame.
             if (deps.forward) {
               // forward mode: serialize forward+ack (cursor-gated). Capture THIS socket for the ack.
