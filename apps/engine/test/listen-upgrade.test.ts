@@ -50,6 +50,7 @@ function listenReq(opts: {
   endpointId?: string;
   sessionId?: string;
   sinceCursor?: string;
+  since?: string;
   upgrade?: boolean;
   forgeOrgHeader?: string;
 }): Request {
@@ -57,6 +58,7 @@ function listenReq(opts: {
   if (opts.endpointId !== undefined) url.searchParams.set("endpointId", opts.endpointId);
   if (opts.sessionId) url.searchParams.set("sessionId", opts.sessionId);
   if (opts.sinceCursor !== undefined) url.searchParams.set("sinceCursor", opts.sinceCursor);
+  if (opts.since !== undefined) url.searchParams.set("since", opts.since);
   const headers: Record<string, string> = {};
   if (opts.auth) headers.authorization = opts.auth;
   if (opts.upgrade) headers.Upgrade = "websocket";
@@ -162,5 +164,64 @@ describe("listen upgrade — routing", () => {
       state.storage.get<{ orgId: string }>("binding"),
     );
     expect(binding?.orgId).toBe(ORG); // the verified principal's org, never the forged header
+  });
+
+  it("400s an invalid --since value before spinning a DO", async () => {
+    const res = await handleListenUpgrade(
+      listenReq({ auth: "Bearer whsk_ok", endpointId: crypto.randomUUID(), since: "garbage" }),
+      bindings,
+      fakeAuth({ ctx: READ_CTX, exists: true }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("400s when --since and --sinceCursor are both present (mutually exclusive)", async () => {
+    const res = await handleListenUpgrade(
+      listenReq({
+        auth: "Bearer whsk_ok",
+        endpointId: crypto.randomUUID(),
+        since: "2h",
+        sinceCursor: "c",
+      }),
+      bindings,
+      fakeAuth({ ctx: READ_CTX, exists: true }),
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("forwards a valid --since grammar to the DO (resolved server-side), upgrading 101", async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
+    const seen: { kind: string }[] = [];
+    await runInDurableObject(stub, (inst) => {
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        resolveSinceCursor: (o: string, e: string, s: { kind: string }) => Promise<undefined>;
+      };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
+      di.resolveSinceCursor = async (_o, _e, s) => {
+        seen.push(s);
+        return undefined;
+      };
+    });
+
+    const res = await handleListenUpgrade(
+      listenReq({
+        auth: "Bearer whsk_ok",
+        endpointId: crypto.randomUUID(),
+        sessionId,
+        since: "2h",
+        upgrade: true,
+      }),
+      bindings,
+      fakeAuth({ ctx: READ_CTX, exists: true }),
+    );
+    expect(res.status).toBe(101);
+    // The handler forwarded `x-listen-since-spec: 2h`; the DO re-parsed + resolved it server-side.
+    expect(seen).toEqual([{ kind: "relative", ms: 7_200_000 }]);
   });
 });

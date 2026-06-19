@@ -26,7 +26,7 @@ const HDR = {
   ENDPOINT: "x-listen-endpoint-id",
   SESSION: "x-listen-session-id",
   SINCE: "x-listen-since-cursor",
-  SINCE_NOW: "x-listen-since-now",
+  SINCE_SPEC: "x-listen-since-spec",
 } as const;
 
 interface Binding {
@@ -88,7 +88,7 @@ async function ackCursor(cur: Cursor): Promise<string> {
 function connect(
   stub: DurableObjectStub,
   b: Binding,
-  opts: { since?: string; sinceNow?: boolean } = {},
+  opts: { since?: string; sinceSpec?: string } = {},
 ): Promise<Response> {
   const headers: Record<string, string> = {
     Upgrade: "websocket",
@@ -97,12 +97,18 @@ function connect(
     [HDR.SESSION]: b.sessionId,
   };
   if (opts.since) headers[HDR.SINCE] = opts.since;
-  if (opts.sinceNow) headers[HDR.SINCE_NOW] = "1";
+  if (opts.sinceSpec) headers[HDR.SINCE_SPEC] = opts.sinceSpec;
   return stub.fetch("https://engine.example/listen", { headers });
 }
 
-/** The DO with the latest-cursor seam exposed for injection (no live Postgres in the pool). */
-type WithLatest = ListenSession & { latestCursor: () => Promise<Cursor | null> };
+/** The DO with the --since resolver seam exposed for injection (no live Postgres in the pool). */
+type WithResolve = ListenSession & {
+  resolveSinceCursor: (
+    orgId: string,
+    endpointId: string,
+    since: { kind: string },
+  ) => Promise<Cursor | undefined>;
+};
 
 /** Inject the poll + backlog seams (default empty) THEN connect — so neither connect nor the
  * auto-firing alarm ever hits the absent local PG. */
@@ -155,40 +161,96 @@ describe("ListenSession — connect + stream", () => {
   });
 });
 
-describe("ListenSession — ?since=now", () => {
-  it("seeds the durable cursor from the current position on a new session", async () => {
+describe("ListenSession — ?since=<grammar> seed (first bind, server-resolved)", () => {
+  it("seeds the durable cursor from the resolved boundary, re-parsing the trusted spec", async () => {
     const b = newBinding();
-    const latest: Cursor = {
+    const resolved: Cursor = {
       receivedAt: new Date("2026-06-10T12:00:09.000Z"),
       id: crypto.randomUUID(),
     };
+    const seen: { kind: string }[] = [];
     const stub = stubFor(b.sessionId);
     await runInDurableObject(stub, (inst) => {
       (inst as Pollable).pollEvents = EMPTY_POLL;
       (inst as Pollable).backlogMeta = EMPTY_META;
-      (inst as WithLatest).latestCursor = async () => latest;
+      (inst as WithResolve).resolveSinceCursor = async (_o, _e, since) => {
+        seen.push(since);
+        return resolved;
+      };
     });
-    const res = await connect(stub, b, { sinceNow: true });
+    const res = await connect(stub, b, { sinceSpec: "2h" });
 
     expect(res.status).toBe(101);
-    // The cursor is seeded to the current position, so the first poll tails only NEW events.
+    // The DO re-parses the trusted spec itself (it is authoritative), then resolves it to the boundary
+    // cursor, so the first poll tails only from there.
+    expect(seen).toEqual([{ kind: "relative", ms: 7_200_000 }]);
     expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toEqual({
-      receivedAtMs: latest.receivedAt.getTime(),
-      id: latest.id,
+      receivedAtMs: resolved.receivedAt.getTime(),
+      id: resolved.id,
     });
   });
 
-  it("leaves the cursor unset when the endpoint has no events (empty → oldest == now)", async () => {
+  it("leaves the cursor unset when resolution yields undefined (beginning / clamp → oldest)", async () => {
+    const b = newBinding();
+    const seen: { kind: string }[] = [];
+    const stub = stubFor(b.sessionId);
+    await runInDurableObject(stub, (inst) => {
+      (inst as Pollable).pollEvents = EMPTY_POLL;
+      (inst as Pollable).backlogMeta = EMPTY_META;
+      (inst as WithResolve).resolveSinceCursor = async (_o, _e, since) => {
+        seen.push(since);
+        return undefined;
+      };
+    });
+    const res = await connect(stub, b, { sinceSpec: "beginning" });
+
+    expect(res.status).toBe(101);
+    expect(seen).toEqual([{ kind: "beginning" }]); // the resolver WAS consulted
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toBeUndefined();
+  });
+
+  it("FAILS the upgrade (503) and binds NOTHING when --since resolution throws (no oldest-flood)", async () => {
+    // The seed is LOAD-BEARING (unlike the advisory connect-status probe): a resolution error must fail
+    // closed so the CLI retries — NEVER fall through to an unset cursor, which would flood a `--since
+    // now` session with the entire backlog. The binding is persisted only AFTER a successful resolve,
+    // so nothing is left behind and the retry re-enters a fresh first bind.
     const b = newBinding();
     const stub = stubFor(b.sessionId);
     await runInDurableObject(stub, (inst) => {
       (inst as Pollable).pollEvents = EMPTY_POLL;
       (inst as Pollable).backlogMeta = EMPTY_META;
-      (inst as WithLatest).latestCursor = async () => null;
+      (inst as WithResolve).resolveSinceCursor = async () => {
+        throw new Error("neon unavailable");
+      };
     });
-    await connect(stub, b, { sinceNow: true });
+    const res = await connect(stub, b, { sinceSpec: "now" });
 
+    expect(res.status).toBe(503);
+    expect(res.webSocket).toBeFalsy();
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.get("binding"))).toBeUndefined();
     expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toBeUndefined();
+  });
+
+  it("ignores --since on RECONNECT — resumes from the acked cursor (first-bind only, R12)", async () => {
+    const b = newBinding();
+    const { stub } = await openSession(b); // first bind, no --since
+    const c: Cursor = { receivedAt: new Date("2026-06-10T12:00:05.000Z"), id: crypto.randomUUID() };
+    await runInDurableObject(stub, async (inst, state) => {
+      await (inst as ListenSession).webSocketMessage(state.getWebSockets()[0], await ackCursor(c));
+    });
+    // Reconnect WITH a --since spec whose resolver would throw — it must NEVER be consulted on reconnect.
+    await runInDurableObject(stub, (inst) => {
+      (inst as WithResolve).resolveSinceCursor = async () => {
+        throw new Error("resolver must not run on reconnect");
+      };
+    });
+    const res = await connect(stub, b, { sinceSpec: "now" });
+
+    expect(res.status).toBe(101); // reconnect succeeds; the spec is ignored
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toEqual({
+      receivedAtMs: c.receivedAt.getTime(),
+      id: c.id,
+    });
   });
 });
 
