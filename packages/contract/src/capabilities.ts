@@ -3,6 +3,7 @@ import {
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
+  LagSchema,
   ProviderSchema,
   WATERMARK_DELTA_MS,
 } from "@webhook-co/shared";
@@ -69,7 +70,9 @@ export const eventsList = defineCapability({
     limit: z.number().int().positive().max(200).optional(),
     filter: z.object({ provider: ProviderSchema }).optional(),
   }),
-  output: paged(EventSummarySchema),
+  // events.list is a newest-first browse; it carries headCursor only (the watermark-bounded resumable
+  // position) — caughtUp/lag are forward-tail concepts that don't map onto a DESC browse.
+  output: paged(EventSummarySchema).extend({ headCursor: cursor.nullable().optional() }),
   errors: ["NOT_FOUND", "UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "events:read" },
   semantics: { paginated: true },
@@ -110,7 +113,14 @@ export const eventsGetPayload = defineCapability({
 export const eventsTail = defineCapability({
   name: "events.tail",
   input: z.object({ endpointId: uuid, sinceCursor: cursor.optional() }),
-  output: paged(EventSummarySchema),
+  // Additive cursor-contract fields (the ADR amends 0014): headCursor = the watermark-bounded latest
+  // (NEVER raw MAX), caughtUp = the page reached that head, lag = the capped backlog metric. Optional,
+  // so existing consumers + the parity gate are unaffected; surfaced identically on api + mcp.
+  output: paged(EventSummarySchema).extend({
+    headCursor: cursor.nullable().optional(),
+    caughtUp: z.boolean().optional(),
+    lag: LagSchema.optional(),
+  }),
   errors: ["NOT_FOUND", "UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "events:read" },
   // Canonical = cursor pull (so MCP can consume it), with the gapless watermark. The live WS tunnel

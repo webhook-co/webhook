@@ -28,6 +28,25 @@ describe("runCapabilityTool", () => {
     expect(log).not.toHaveBeenCalled();
   });
 
+  it("emits the events.tail cursor-contract fields verbatim (headCursor + caughtUp + lag)", async () => {
+    const output = {
+      items: [],
+      nextCursor: null,
+      headCursor: "sig.head",
+      caughtUp: true,
+      lag: { backlogCount: 7, headLagMs: 1200 },
+    };
+    const result = await runCapabilityTool(
+      handlersOf("events.tail", async () => output),
+      "events.tail",
+      CTX,
+      { endpointId: "ep_1" },
+      vi.fn(),
+    );
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text)).toEqual(output);
+  });
+
   it("passes the AuthContext and input straight through to the shared handler", async () => {
     let seen: { ctx: AuthContext; input: unknown } | undefined;
     await runCapabilityTool(
