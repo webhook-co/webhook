@@ -112,7 +112,13 @@ export const eventsGetPayload = defineCapability({
 
 export const eventsTail = defineCapability({
   name: "events.tail",
-  input: z.object({ endpointId: uuid, sinceCursor: cursor.optional() }),
+  // `since` is the server-resolved `--since` grammar (now|beginning|<duration>|<RFC3339>); mutually
+  // exclusive with the opaque `sinceCursor` (enforced in the handler). MCP advertises it via inputShape.
+  input: z.object({
+    endpointId: uuid,
+    sinceCursor: cursor.optional(),
+    since: z.string().optional(),
+  }),
   // Additive cursor-contract fields (the ADR amends 0014): headCursor = the watermark-bounded latest
   // (NEVER raw MAX), caughtUp = the page reached that head, lag = the capped backlog metric. Optional,
   // so existing consumers + the parity gate are unaffected; surfaced identically on api + mcp.

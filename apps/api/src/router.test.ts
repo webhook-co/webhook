@@ -110,6 +110,21 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     expect(seen).toEqual({ endpointId: EP });
   });
 
+  it("builds events.tail input from the ?since grammar (server-resolved)", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "events.tail": async (_ctx, input) => {
+          seen = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    await handleRequest(get(`/v1/endpoints/${EP}/events/tail?since=2h`), deps);
+    expect(seen).toEqual({ endpointId: EP, since: "2h" });
+  });
+
   it("emits the events.tail cursor-contract fields verbatim (headCursor + caughtUp + lag)", async () => {
     const output = {
       items: [],

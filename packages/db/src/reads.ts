@@ -14,6 +14,7 @@ import {
   type Endpoint,
   type Event,
   type EventSummary,
+  type Since,
 } from "@webhook-co/shared";
 
 import type { TenantTx } from "./client";
@@ -241,6 +242,36 @@ export async function tailMeta(
       limit ${cap + 1}
     ) s`;
   return { headCursor, backlogCount: row?.n ?? 0 };
+}
+
+// The all-zero UUID sorts below every UUIDv7, so a synthetic boundary `(ms, ZERO_UUID)` with exclusive
+// `>` keyset semantics includes EVERY real event at that millisecond (never skips a same-ms sibling).
+const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * Resolve a parsed `--since` value to a resume cursor server-side, Kinesis-style total function (clamp,
+ * never null/throw). For `<duration>`/`<RFC3339>` there is NO time→cursor table lookup: the synthetic
+ * boundary `(date_trunc('ms', T), ZERO_UUID)` rides the existing `tailEvents` keyset, so "T before the
+ * earliest" naturally yields everything (= beginning) and "T in the future / past the watermark" yields
+ * nothing (= resume live) — the clamp emerges from the keyset + watermark, needing no extra query or
+ * index. `<RFC3339>` uses the parsed (ms-precision) instant directly; `<duration>` resolves now() minus
+ * the duration against the DB clock (skew-safe, ms-truncated). `beginning` → no cursor (oldest-inclusive).
+ * `now` is the ONE mode that must skip the ENTIRE backlog (only NEW events), so it resolves to the actual
+ * watermark head (`latestTailCursor`): exclusive of the head excludes every backlog row including a
+ * same-millisecond one a synthetic watermark-ms boundary would re-surface, and it's gapless for live
+ * tailing (future events get monotonic UUIDv7 ids > head). Resolve once at start, iterate by cursor.
+ */
+export async function resolveSince(
+  tx: TenantTx,
+  opts: { readonly endpointId: string; readonly since: Exclude<Since, { kind: "invalid" }> },
+): Promise<Cursor | undefined> {
+  const { endpointId, since } = opts;
+  if (since.kind === "beginning") return undefined;
+  if (since.kind === "now") return (await latestTailCursor(tx, { endpointId })) ?? undefined;
+  if (since.kind === "timestamp") return { receivedAt: since.date, id: ZERO_UUID };
+  const [row] = await tx<{ t: Date }[]>`
+    select date_trunc('milliseconds', now() - (${since.ms} * interval '1 millisecond')) as t`;
+  return { receivedAt: row!.t, id: ZERO_UUID };
 }
 
 export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> {
