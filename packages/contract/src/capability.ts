@@ -66,6 +66,18 @@ export const CAPABILITY_SCOPES = [
 ] as const;
 export type CapabilityScope = (typeof CAPABILITY_SCOPES)[number];
 
+/**
+ * Scope NAMES reserved for future surfaces but deliberately NOT part of the closed
+ * CAPABILITY_SCOPES set — nothing mints or checks them in v1, so they never widen what verifyBearer
+ * can grant. `keys:manage` is the credential-management scope for future api./CLI/MCP parity on
+ * key/grant administration; v1 management is session-authed on auth./app. (not token-scoped), so the
+ * name is reserved only. Kept a SEPARATE export (not a 5th CAPABILITY_SCOPES member) so the closed
+ * tuple — and the capability parity test that iterates it — stays closed. Lane B owns this scope SoT;
+ * Lane C/D/E import the name.
+ */
+export const RESERVED_SCOPES = ["keys:manage"] as const;
+export type ReservedScope = (typeof RESERVED_SCOPES)[number];
+
 export interface CapabilityAuth {
   /** The OAuth/API-key scope verifyBearer must grant. */
   readonly scope: CapabilityScope;
