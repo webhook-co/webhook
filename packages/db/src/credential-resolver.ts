@@ -56,11 +56,10 @@ export interface CredentialResolverOptions {
    * cache audience-agnostic — one entry per key, so revoke/invalidate stays complete — while each
    * surface still sees its own audience. Omit for the ingest path (endpoint tokens carry no audience).
    *
-   * SAFE only because api keys have NO per-key audience today (they're org-wide, valid across the
-   * org's surfaces) and OAuth/provider-minted tokens are validated elsewhere, never through this
-   * resolver. If a per-key audience is ever read on THIS path (the future OAuth seam in
-   * makeApiKeyColdLookup), this unconditional overwrite must become conditional so a credential's
-   * intrinsic audience isn't silently widened to the presenting surface.
+   * The stamp is CONDITIONAL (A0b): it applies only to a principal with no intrinsic audience (a
+   * legacy/org-wide key). A per-key audience read from `api_keys.audience` by makeApiKeyColdLookup is
+   * honored as-is — never widened to the presenting surface — so per-key (OAuth-minted) keys stay
+   * confined to their bound surface while legacy keys remain valid across the org's surfaces.
    */
   readonly resource?: string;
 }
@@ -114,13 +113,15 @@ function isCachedSealedSecret(value: unknown): boolean {
 export function createCredentialResolver(opts: CredentialResolverOptions): CredentialResolver {
   const ttl = opts.ttlSeconds ?? CREDENTIAL_CACHE_TTL_SECONDS;
 
-  // Authoritatively stamp the presenting surface's audience on a resolved principal. The cache is
-  // shared across surfaces (bare-hash key), so a hit populated elsewhere may carry another surface's
-  // audience; overwriting here (and on the cold path, for symmetry) is what keeps the shared cache
-  // from leaking one surface's audience to another. No-op when this resolver isn't audience-bound
-  // (ingest), preserving the endpoint-token principal's audience-less shape.
+  // Stamp the presenting surface's audience on a resolved principal ONLY when it carries none — a
+  // legacy/org-wide api key (the cold lookup returns no audience) or an ingest token. A credential
+  // that resolved WITH its own intrinsic audience (a per-key OAuth-minted key, read from
+  // api_keys.audience by makeApiKeyColdLookup) is left intact — never widened to the presenting
+  // surface. This keeps the shared bare-hash cache audience-AGNOSTIC for legacy keys (stored
+  // audience-less, so each surface stamps its own — the cross-surface 401 guard) while CONFINING
+  // per-key-audience keys to their bound surface. No-op when not audience-bound (ingest, no resource).
   const stampAudience = (p: ResolvedPrincipal): ResolvedPrincipal =>
-    opts.resource === undefined ? p : { ...p, audience: opts.resource };
+    p.audience !== undefined || opts.resource === undefined ? p : { ...p, audience: opts.resource };
 
   async function resolve(plaintext: string): Promise<ResolvedPrincipal | null> {
     // Candidate hashes: current pepper first, then any previous peppers (rotation window).
