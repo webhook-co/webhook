@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { createRef } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { AppNavItem, AppNavSection, AppShell } from "./app-shell";
 
@@ -60,6 +61,31 @@ describe("AppShell", () => {
   it("omits the banner when no topBar is given", () => {
     render(<AppShell sidebar={<AppNavItem href="/x">X</AppNavItem>}>content</AppShell>);
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
+  });
+
+  it("does not render the mobile drawer by default", () => {
+    render(<Example />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("opens a focus-trapped drawer with the nav when sidebarOpen is true", () => {
+    render(<Example sidebarOpen onSidebarOpenChange={() => {}} />);
+    const drawer = screen.getByRole("dialog", { name: "Navigation" });
+    expect(within(drawer).getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
+  });
+
+  it("requests close on Escape", async () => {
+    const onSidebarOpenChange = vi.fn();
+    render(<Example sidebarOpen onSidebarOpenChange={onSidebarOpenChange} />);
+    await userEvent.keyboard("{Escape}");
+    expect(onSidebarOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("requests close when the drawer close button is clicked", async () => {
+    const onSidebarOpenChange = vi.fn();
+    render(<Example sidebarOpen onSidebarOpenChange={onSidebarOpenChange} />);
+    await userEvent.click(screen.getByRole("button", { name: "Close navigation" }));
+    expect(onSidebarOpenChange).toHaveBeenCalledWith(false);
   });
 });
 

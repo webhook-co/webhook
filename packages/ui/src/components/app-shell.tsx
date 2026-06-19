@@ -1,6 +1,8 @@
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import * as React from "react";
 
 import { cn } from "../lib/cn";
+import { IconButton } from "./icon-button";
 import { Wordmark } from "./mark";
 
 export interface AppShellProps {
@@ -16,6 +18,15 @@ export interface AppShellProps {
   sidebarFooter?: React.ReactNode;
   /** When set, the lockup links to this href. */
   homeHref?: string;
+  /**
+   * Controlled open state for the mobile nav drawer (below `md`). Drive it from a hamburger
+   * in `topBar` that is itself `md:hidden` — Radix focus-traps and scroll-locks whenever this
+   * is `true`, so opening it at `md`+ would trap focus in the off-screen drawer. The drawer
+   * closes on Escape, outside-click, or its close button.
+   */
+  sidebarOpen?: boolean;
+  /** Called when the mobile drawer requests open/close (Escape, outside-click, hamburger). */
+  onSidebarOpenChange?: (open: boolean) => void;
   className?: string;
 }
 
@@ -25,9 +36,8 @@ export interface AppShellProps {
  * scrollable canvas). Landmarks are wired — `nav`, `banner`, and `main` — so the page is
  * navigable by assistive tech.
  *
- * Desktop-first: the sidebar shows at `md`+ and is hidden below it. A mobile nav affordance
- * (a drawer toggled from the top bar) is intentionally out of v1 — wire it in the consuming
- * dashboard, where the toggle state and focus management live.
+ * The sidebar is fixed at `md`+. Below `md` it collapses into a controlled, focus-trapped
+ * drawer (`sidebarOpen` / `onSidebarOpenChange`) — drive it from a hamburger in `topBar`.
  */
 export function AppShell({
   children,
@@ -36,6 +46,8 @@ export function AppShell({
   sidebarTop,
   sidebarFooter,
   homeHref,
+  sidebarOpen,
+  onSidebarOpenChange,
   className,
 }: AppShellProps) {
   const lockup = homeHref ? (
@@ -46,6 +58,22 @@ export function AppShell({
     <Wordmark markSize={26} />
   );
 
+  // The sidebar contents are shared by the fixed desktop rail and the mobile drawer; only
+  // one of the two is ever visible (the desktop rail is `display:none` below `md`), so the
+  // single "Primary" nav landmark is never duplicated in the accessibility tree.
+  const sidebarBody = (
+    <>
+      <div className="flex h-[60px] flex-shrink-0 items-center px-4">{lockup}</div>
+      {sidebarTop ? <div className="px-3 pb-2">{sidebarTop}</div> : null}
+      <nav aria-label="Primary" className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-1">
+        {sidebar}
+      </nav>
+      {sidebarFooter ? (
+        <div className="mt-auto border-t border-hairline p-3">{sidebarFooter}</div>
+      ) : null}
+    </>
+  );
+
   return (
     <div
       className={cn(
@@ -54,18 +82,35 @@ export function AppShell({
       )}
     >
       <aside className="hidden min-h-0 flex-col overflow-hidden border-r border-hairline bg-surface md:flex">
-        <div className="flex h-[60px] flex-shrink-0 items-center px-4">{lockup}</div>
-        {sidebarTop ? <div className="px-3 pb-2">{sidebarTop}</div> : null}
-        <nav
-          aria-label="Primary"
-          className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-1"
-        >
-          {sidebar}
-        </nav>
-        {sidebarFooter ? (
-          <div className="mt-auto border-t border-hairline p-3">{sidebarFooter}</div>
-        ) : null}
+        {sidebarBody}
       </aside>
+
+      <DialogPrimitive.Root open={sidebarOpen} onOpenChange={onSidebarOpenChange}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-[rgb(9_11_16/0.55)] md:hidden" />
+          <DialogPrimitive.Content className="fixed inset-y-0 left-0 z-50 flex w-[272px] flex-col border-r border-hairline bg-surface outline-none md:hidden">
+            <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
+            <DialogPrimitive.Close asChild>
+              <IconButton
+                aria-label="Close navigation"
+                variant="ghost"
+                size="sm"
+                className="absolute right-3 top-3"
+              >
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true" className="size-4">
+                  <path
+                    d="m6 6 12 12M18 6 6 18"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </IconButton>
+            </DialogPrimitive.Close>
+            {sidebarBody}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
 
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         {topBar ? (
