@@ -1,0 +1,29 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // The auth.webhook.co Worker, built by @opennextjs/cloudflare → .open-next/worker.js. Co-owned: Lane E
+  // owns this scaffold + the page tree (app/(auth)/login|consent|device); Lane C contributes the Better
+  // Auth runtime, the OAuth issuer, and the route handlers (app/api/**) — and the bindings below.
+  "name": "webhook-auth",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-06-15",
+  // global_fetch_strictly_public: a Worker fetch() to its own public hostname egresses publicly (the
+  // canonical @opennextjs/cloudflare template ships this with nodejs_compat).
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "observability": {
+    "enabled": true,
+  },
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  // === Lane C contributes the auth-backend bindings here (coordinate scaffold edits with Lane E) ===
+  // The Better Auth runtime + the OAuth issuer (Lane C A1/A2) need: a Hyperdrive client for identity-table
+  // writes + the personal-org bootstrap as webhook_app (HYPERDRIVE_TENANT / HYPERDRIVE_AUTHN), OAUTH_KV
+  // (the provider's opaque-grant + device-code store), KV_AUTHZ (the A2 revoke-glue), and Secrets-Store
+  // secrets (Google/GitHub client id+secret, the Resend API key, CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY).
+  // Add them as Lane C's slices land; the deploy overlay injects the real ids/secrets (none committed).
+  //
+  // The OAuth-provider mount: Lane C wraps this OpenNext worker's fetch handler with
+  // @cloudflare/workers-oauth-provider as the Worker's default export (A2, gated on the E0-confirmed
+  // OpenNext composition — see ADR-0021 + the Lane C plan §9.2).
+}
