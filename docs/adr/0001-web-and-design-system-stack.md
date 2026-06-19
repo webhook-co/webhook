@@ -1,8 +1,13 @@
 # ADR 0001 — web app framework and design-system home
 
-- status: accepted
+- status: accepted (hosting **superseded in part** by [ADR-0021](0021-opennext-cloudflare-workers-app-and-auth.md))
 - date: 2026-06-12
 - scope: `apps/web`, `packages/ui`
+
+> **Note (2026-06-19):** the **Vercel** hosting decision below is superseded by ADR-0021 — `apps/web` (and
+> `apps/auth`) now render on **Cloudflare Workers via OpenNext**. The framework (Next.js App Router),
+> styling, component layer (Radix + `cva`), animation, test runner, and the `@webhook-co/ui` design-system
+> home are all unchanged.
 
 ## context
 
