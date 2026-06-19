@@ -85,3 +85,30 @@ A0a (ADR-0020) added the nullable `api_keys.audience` column. A0b makes the reso
   stays confined through a cross-surface cache hit; a single `invalidate` clears the one entry
   everywhere; an empty-string stored audience coalesces to the legacy path (no brick); the ingest path
   (no `resource`) leaves the audience untouched.
+
+## A0c update — the mint primitives (the issuance half)
+
+A0c builds the issuance functions over this seam (`packages/db/src/grants.ts` + the `aae1`
+`auth-audit.ts` and the `auto-approve.ts` evaluator):
+
+- **`mintScopedKey`** (login) — atomic grant + key + audit in ONE tx. Approval model on
+  `org_policy.require_device_approval` (default **OFF** → mint active immediately). When **ON**:
+  `evaluateAutoApprove(auto_approve_rules, ctx)` — a match mints an auto-approved active grant + key;
+  no match creates a **pending_approval** grant with **NO key** (a later `approveGrant` mints). An
+  auto-approval is recorded as a **system** decision (`approved_by` null, `grant_approved` audit
+  `actor` null + `metadata.auto=true`); a human `approveGrant` records the approver + `auto=false`.
+- **`mintKeyForGrant`** (refresh, `grant_type=refresh_token`) — re-mints a fresh key on the EXISTING
+  active grant (throws if not active); the prior key is **not** revoked (expire-naturally, ADR-0020
+  Q3); stamps the grant's `last_used_at`. **Contract:** the caller (Lane C) must pass `scopes`/
+  `audience` that are a subset of the grant's original consent — v1 does not persist a grant's scope
+  set, so this layer cannot verify the subset (documented; a widening refresh would escalate).
+- **`createPendingGrant`** / **`approveGrant`** — the device-code start / completion.
+- **Defensive guards:** `ttlSeconds > 0` (never mint a pre-expired key); `evaluateAutoApprove` is
+  fail-closed (malformed/absent rules → pending).
+- **Composite FK (migration 0015):** `api_keys (grant_id, org_id) → auth_grant (id, org_id)` replaces
+  0014's single-column FK, so the DB enforces a key's grant is in the SAME org — the cross-tenant
+  binding the exported `insertApiKey` primitive could otherwise allow is now structurally impossible
+  (defense in depth; `auth_grant.unique(id, org_id)` exists for this). NULL `grant_id` (standalone
+  keys) is unaffected.
+- **Deferred to A0c-4:** `revokeGrant` (cascade + KV-invalidation hashes), `revokeApiKey`, and the
+  read helpers (`listGrants` / `listApiKeysForGrant`).
