@@ -1,0 +1,15 @@
+{
+  // The Better Auth schema-generator config (`src/auth.ts`) is NODE-context (pg Pool + process.env),
+  // separate from the Workers/DOM Next app (tsconfig.json). The CI drift guard runs the better-auth
+  // CLI against it (ci.yml); this tsconfig only type-checks it under node libs. No internal
+  // @webhook-co/* edges here, so the node<->workers tsconfig-boundary guard is satisfied.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"],
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["src/auth.ts"],
+  "exclude": ["node_modules", "dist", ".turbo"]
+}

@@ -1,14 +1,29 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist",
-    "rootDir": "src",
-    "types": ["node"],
-    // App, not a published library: no .d.ts emit. Avoids declaration-portability
-    // errors from third-party (zod/better-auth) inferred types on the exported config.
-    "declaration": false,
-    "sourceMap": false
+    "noEmit": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "preserve",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowJs": true,
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", ".turbo"]
+  // The Next-on-OpenNext app (DOM/Workers world). `src/auth.ts` is the NODE-context schema generator
+  // (uses pg + process.env); it is typechecked separately under tsconfig.gen.json — excluded here so
+  // the DOM lib set doesn't fail on node built-ins.
+  "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": [
+    "node_modules",
+    ".next",
+    "dist",
+    ".turbo",
+    "src/auth.ts",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx"
+  ]
 }
