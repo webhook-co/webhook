@@ -36,6 +36,8 @@ export { Input, Label, type InputProps, type LabelProps } from "./components/inp
 export { Field, type FieldProps } from "./components/field";
 export { Spinner, type SpinnerProps } from "./components/spinner";
 export { Checkbox } from "./components/checkbox";
+export { CopyButton, type CopyButtonProps } from "./components/copy-button";
+export { Banner, bannerVariants, type BannerProps } from "./components/banner";
 export {
   Dialog,
   DialogTrigger,
