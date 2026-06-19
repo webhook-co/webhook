@@ -20,6 +20,7 @@ import {
   type KmsProvider,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
+  parseSince,
   readSecretBinding,
   SecretStore,
   SERVICE_NAME,
@@ -340,18 +341,34 @@ export async function handleListenUpgrade(
     headers.set("x-listen-org-id", authz.ctx.orgId);
     headers.set("x-listen-endpoint-id", endpointId);
     headers.set("x-listen-session-id", sessionId);
-    // Forward the resume cursor only if it's shaped like one (opaque base64url `<payload>.<mac>`).
+    // Two mutually exclusive seed modes (the CLI sets one or neither): `?sinceCursor=` is an opaque
+    // resume cursor; `?since=` is a grammar (now|beginning|<duration>|<RFC3339>) the server resolves to
+    // a boundary cursor. Both at once is an ambiguous request → a clean 400 (mirrors apps/api).
+    const sinceCursor = url.searchParams.get("sinceCursor");
+    const sinceSpec = url.searchParams.get("since");
+    if (sinceCursor !== null && sinceSpec !== null) {
+      return new Response("since and sinceCursor are mutually exclusive", { status: 400 });
+    }
+    // ?sinceCursor=: forward only if it's shaped like a cursor (opaque base64url `<payload>.<mac>`).
     // A control char (CR/LF) would otherwise make headers.set throw → an ungraceful 500; a malformed
     // value is simply dropped (the DO then resumes from its durable cursor / the oldest). The DO
     // still HMAC-verifies it, so this charset check is purely about not crashing on junk input.
-    const since = url.searchParams.get("sinceCursor");
-    if (since && /^[A-Za-z0-9._-]+$/.test(since)) headers.set("x-listen-since-cursor", since);
-    else headers.delete("x-listen-since-cursor");
-    // `?since=now` (the CLI from-now default): a NEW session starts from the CURRENT position (skip the
-    // backlog, tail only new events). Mutually exclusive with sinceCursor (the CLI sets one or neither);
-    // the DO computes the boundary cursor server-side. Trusted header, overwriting any client-supplied.
-    if (url.searchParams.get("since") === "now") headers.set("x-listen-since-now", "1");
-    else headers.delete("x-listen-since-now");
+    if (sinceCursor && /^[A-Za-z0-9._-]+$/.test(sinceCursor)) {
+      headers.set("x-listen-since-cursor", sinceCursor);
+    } else {
+      headers.delete("x-listen-since-cursor");
+    }
+    // ?since=<grammar>: validate the grammar HERE so a bad value is a clean 400 before a DO is spun,
+    // then forward the raw (validated) spec on a trusted header — the DO resolves it to a boundary
+    // cursor server-side under the bound org's RLS, first bind only. A valid grammar contains no CR/LF,
+    // so it's header-safe by construction. Always delete first: never trust a client-supplied spec.
+    headers.delete("x-listen-since-spec");
+    if (sinceSpec !== null) {
+      if (parseSince(sinceSpec).kind === "invalid") {
+        return new Response("invalid --since value", { status: 400 });
+      }
+      headers.set("x-listen-since-spec", sinceSpec);
+    }
 
     return stub.fetch(new Request(request, { headers }));
   } finally {

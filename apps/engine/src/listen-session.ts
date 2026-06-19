@@ -2,7 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import {
   createClient,
-  latestTailCursor,
+  resolveSince,
   tailEvents,
   tailMeta,
   withTenant,
@@ -15,10 +15,12 @@ import {
   encodeServerFrame,
   importCursorKey,
   parseClientFrame,
+  parseSince,
   readSecretBinding,
   WATERMARK_DELTA_MS,
   type Cursor,
   type EventSummary,
+  type Since,
 } from "@webhook-co/shared";
 
 /**
@@ -76,8 +78,8 @@ const HDR_ORG = "x-listen-org-id";
 const HDR_ENDPOINT = "x-listen-endpoint-id";
 const HDR_SESSION = "x-listen-session-id";
 const HDR_SINCE = "x-listen-since-cursor";
-/** `?since=now`: a new session starts from the current tail position (skip the backlog). */
-const HDR_SINCE_NOW = "x-listen-since-now";
+/** `?since=<grammar>` (now|beginning|<duration>|<RFC3339>): resolved server-side to a boundary cursor. */
+const HDR_SINCE_SPEC = "x-listen-since-spec";
 
 /** The org/endpoint/session this DO is pinned to, persisted once on first connect. */
 interface Binding {
@@ -147,23 +149,43 @@ export class ListenSession extends DurableObject<ListenEnv> {
         return new Response("session binding mismatch", { status: 403 });
       }
     } else {
-      await this.ctx.storage.put<Binding>("binding", { orgId, endpointId, sessionId });
-      // Seed the resume cursor from an initial ?sinceCursor= (a fresh `--since <cursor>` session).
-      // It's HMAC-signed; a tampered/garbled one fails to decode → start from the oldest instead.
-      const since = request.headers.get(HDR_SINCE);
-      if (since) {
+      // Resolve the seed cursor BEFORE persisting the binding, so a load-bearing `--since` resolution
+      // failure leaves NO binding behind — the CLI's retry re-enters first-bind and re-seeds, rather
+      // than finding a half-bound session that silently starts from the oldest.
+      let seed: Cursor | undefined;
+      const sinceCursor = request.headers.get(HDR_SINCE);
+      const sinceSpec = request.headers.get(HDR_SINCE_SPEC);
+      if (sinceCursor) {
+        // ?sinceCursor=: an opaque HMAC-signed resume cursor. A tampered/garbled one fails to decode →
+        // start from the oldest (a conservative replay) — bad client input is NOT a load-bearing error.
         try {
-          await this.persistCursor(await decodeCursor(since, this.cursorKey));
+          seed = await decodeCursor(sinceCursor, this.cursorKey);
         } catch {
           /* ignore an invalid initial cursor */
         }
-      } else if (request.headers.get(HDR_SINCE_NOW) === "1") {
-        // ?since=now: start this NEW session from the current position — persist the latest cursor at
-        // the watermark so the first poll tails only NEW events (skip the backlog). null (empty
-        // endpoint) → leave the cursor unset (oldest == now when there's no history yet).
-        const latest = await this.latestCursor(orgId, endpointId);
-        if (latest) await this.persistCursor(latest);
+      } else if (sinceSpec !== null) {
+        // ?since=<grammar>: the upgrade handler already validated it; the DO re-parses authoritatively
+        // and resolves it to a boundary cursor server-side (undefined = beginning / clamp-to-beginning
+        // → leave the cursor unset = oldest-inclusive). Unlike the ADVISORY connect-status probe below,
+        // this seed is LOAD-BEARING: a resolution error (a tenant-DB hiccup) FAILS the upgrade with 503
+        // so the CLI retries — NEVER swallowed into an unset cursor, which would flood a `--since now`
+        // session with the entire backlog (the opposite of what was asked).
+        const parsed = parseSince(sinceSpec);
+        if (parsed.kind === "invalid") {
+          // The handler gates invalid specs; reaching here is a wiring bug. Fail closed, not oldest.
+          return new Response("invalid --since spec", { status: 400 });
+        }
+        try {
+          seed = await this.resolveSinceCursor(orgId, endpointId, parsed);
+        } catch (err) {
+          console.log(
+            JSON.stringify({ message: "listen.since_resolve_failed", error: String(err) }),
+          );
+          return new Response("could not resolve --since position", { status: 503 });
+        }
       }
+      await this.ctx.storage.put<Binding>("binding", { orgId, endpointId, sessionId });
+      if (seed) await this.persistCursor(seed);
     }
 
     // Reset the in-session stream position so the first alarm after THIS connect resumes from the
@@ -339,14 +361,20 @@ export class ListenSession extends DurableObject<ListenEnv> {
   }
 
   /**
-   * The current tail position (the latest event ≤ watermark) for a `?since=now` new session, or null
-   * when the endpoint has no visible events. One short-lived RLS-scoped client. Overridable in tests
-   * (inject a canned cursor; no live Postgres).
+   * Resolve a validated `--since` spec to a boundary cursor for a fresh session's seed — the server-side
+   * generalization of the old `?since=now` (now just `parseSince("now")` → the watermark head). One
+   * short-lived RLS-scoped client under the bound org's RLS; `resolveSince` returns undefined for
+   * `beginning`/clamp-to-beginning (seed unset = oldest-inclusive). Overridable in tests (inject a
+   * canned cursor; no live Postgres).
    */
-  protected async latestCursor(orgId: string, endpointId: string): Promise<Cursor | null> {
+  protected async resolveSinceCursor(
+    orgId: string,
+    endpointId: string,
+    since: Exclude<Since, { kind: "invalid" }>,
+  ): Promise<Cursor | undefined> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
-      return await withTenant(tenant, orgId, (tx) => latestTailCursor(tx, { endpointId }));
+      return await withTenant(tenant, orgId, (tx) => resolveSince(tx, { endpointId, since }));
     } finally {
       await tenant.end();
     }
