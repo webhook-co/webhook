@@ -90,6 +90,13 @@ export {
 export { Mark, Wordmark, type MarkProps, type WordmarkProps } from "./components/mark";
 export { ThemeToggle, themeInitScript } from "./components/theme-toggle";
 export { AuthShell, type AuthShellProps } from "./components/auth-shell";
+export {
+  AppShell,
+  AppNavItem,
+  AppNavSection,
+  type AppShellProps,
+  type AppNavItemProps,
+} from "./components/app-shell";
 
 // ── utilities ───────────────────────────────────────────────────────────────
 export { cn } from "./lib/cn";
