@@ -1,6 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
 
-import { createClient, latestTailCursor, tailEvents, withTenant, type Page } from "@webhook-co/db";
+import {
+  createClient,
+  latestTailCursor,
+  tailEvents,
+  tailMeta,
+  withTenant,
+  type Page,
+} from "@webhook-co/db";
 import {
   b64ToBytes,
   decodeCursor,
@@ -39,16 +46,23 @@ export async function drainPages(
   readPage: (resume: Cursor | undefined) => Promise<Page<EventSummary>>,
   resume: Cursor | undefined,
   maxPages: number = MAX_PAGES_PER_POLL,
-): Promise<EventSummary[]> {
-  const drained: EventSummary[] = [];
+): Promise<{ events: EventSummary[]; caughtUp: boolean }> {
+  const events: EventSummary[] = [];
   let cursor = resume;
+  // caughtUp = the drain reached the END of the watermark-bounded tail (a page returned a null
+  // nextCursor) rather than stopping at maxPages with a backlog still pending. Derived from the
+  // exit reason — NEVER from the item count (a full last page can still be exactly at the head).
+  let caughtUp = false;
   for (let page = 0; page < maxPages; page++) {
     const result = await readPage(cursor);
-    drained.push(...result.items);
-    if (result.nextCursor === null) break;
+    events.push(...result.items);
+    if (result.nextCursor === null) {
+      caughtUp = true;
+      break;
+    }
     cursor = result.nextCursor;
   }
-  return drained;
+  return { events, caughtUp };
 }
 
 /** The slice of the engine `Env` the listen-session DO needs (tenant reads + the cursor HMAC key). */
@@ -96,6 +110,12 @@ export class ListenSession extends DurableObject<ListenEnv> {
   private cursorKey!: CryptoKey;
   /** In-memory only: how far this *connection* has streamed. Reset on connect; lost on eviction. */
   private lastSent?: Cursor;
+  /**
+   * In-memory only: whether the last poll reached the watermark head. Gates the caught-up STATUS frame
+   * so it fires once on the behind→caught-up transition, not every poll. Reset on connect; un-latches
+   * on any not-caught-up poll so a later backlog re-arms the next transition.
+   */
+  private wasCaughtUp?: boolean;
 
   constructor(ctx: DurableObjectState, env: ListenEnv) {
     super(ctx, env);
@@ -150,6 +170,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
     // durable acked cursor — re-delivering anything un-acked (at-least-once across reconnects, even
     // when the DO is still resident).
     this.lastSent = undefined;
+    this.wasCaughtUp = undefined;
 
     const { 0: client, 1: server } = new WebSocketPair();
     // Hibernation API (NOT server.accept()): the socket survives DO eviction. Tagged with the
@@ -158,6 +179,40 @@ export class ListenSession extends DurableObject<ListenEnv> {
     server.send(
       encodeServerFrame({ type: "ready", sessionId, watermarkDeltaMs: WATERMARK_DELTA_MS }),
     );
+
+    // Connect-time cursor-contract status (ADR-0017), first bind only: the initial caughtUp + the
+    // capped backlog lag, from the seeded resume position — the resume-banner + backlog-guard signal a
+    // client reads at session start. headCursor stays HTTP-only (the client tracks position from the
+    // event-frame cursors). Reuses the same cache-disabled tenant binding under the bound org's RLS.
+    if (!existing) {
+      // The backlog probe is ADVISORY — a DB hiccup must never fail the WebSocket upgrade (mirrors the
+      // poll's fail-safe posture). On error we skip the status frame and let the steady-state poll catch
+      // the consumer up; the caught-up transition still fires later.
+      try {
+        const resume = this.toCursor(await this.ctx.storage.get<StoredCursor>("cursor"));
+        const meta = await this.backlogMeta(orgId, endpointId, resume);
+        const caughtUp = meta.backlogCount === 0;
+        const headLagMs =
+          meta.headCursor === null
+            ? undefined
+            : Math.max(0, Date.now() - meta.headCursor.receivedAt.getTime());
+        server.send(
+          encodeServerFrame({
+            type: "status",
+            caughtUp,
+            lag: {
+              backlogCount: meta.backlogCount,
+              ...(headLagMs !== undefined ? { headLagMs } : {}),
+            },
+          }),
+        );
+        this.wasCaughtUp = caughtUp;
+      } catch (err) {
+        console.log(
+          JSON.stringify({ message: "listen.connect_status_degraded", error: String(err) }),
+        );
+      }
+    }
 
     // Flush any backlog immediately on connect (inline, bounded by MAX_PAGES_PER_POLL), then schedule
     // the recurring poll. The alarm is scheduled one interval out — NOT immediately due: a now()-alarm
@@ -196,7 +251,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
     try {
       const resume =
         this.lastSent ?? this.toCursor(await this.ctx.storage.get<StoredCursor>("cursor"));
-      const events = await this.pollEvents(binding, resume);
+      const { events, caughtUp } = await this.pollEvents(binding, resume);
       for (const summary of events) {
         const cur: Cursor = { receivedAt: summary.receivedAt, id: summary.id };
         const frame = encodeServerFrame({
@@ -207,6 +262,13 @@ export class ListenSession extends DurableObject<ListenEnv> {
         for (const ws of sockets) this.safeSend(ws, frame);
         this.lastSent = cur;
       }
+      // A STATUS frame ONLY on the behind→caught-up transition (not every poll): the connect frame
+      // already carried the initial state, so we re-announce only when the tail newly reaches the head.
+      if (caughtUp && this.wasCaughtUp !== true) {
+        const status = encodeServerFrame({ type: "status", caughtUp: true });
+        for (const ws of sockets) this.safeSend(ws, status);
+      }
+      this.wasCaughtUp = caughtUp;
     } catch (err) {
       console.log(JSON.stringify({ message: "listen.poll_degraded", error: String(err) }));
       const notice = encodeServerFrame({
@@ -255,12 +317,13 @@ export class ListenSession extends DurableObject<ListenEnv> {
   /**
    * Drain events past `resume`, oldest-first, up to MAX_PAGES_PER_POLL pages, on ONE short-lived
    * RLS-scoped tenant client (a multi-page backlog reuses the same connection). Overridable in tests
-   * (inject a canned reader; no live Postgres). Returns the drained batch the poll will broadcast.
+   * (inject a canned reader; no live Postgres). Returns the drained batch + whether the drain reached
+   * the watermark head (`caughtUp`) for the poll to broadcast + gate the status transition.
    */
   protected async pollEvents(
     binding: Binding,
     resume: Cursor | undefined,
-  ): Promise<EventSummary[]> {
+  ): Promise<{ events: EventSummary[]; caughtUp: boolean }> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
       return await drainPages(
@@ -284,6 +347,27 @@ export class ListenSession extends DurableObject<ListenEnv> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
       return await withTenant(tenant, orgId, (tx) => latestTailCursor(tx, { endpointId }));
+    } finally {
+      await tenant.end();
+    }
+  }
+
+  /**
+   * The watermark-bounded head + the capped backlog count for a seed/resume position — the cursor
+   * contract's `lag` (ADR-0017) the connect-time STATUS frame carries. One short-lived RLS-scoped
+   * client on the cache-disabled tenant binding (never a count cached across orgs). Overridable in
+   * tests (inject a canned result; no live Postgres).
+   */
+  protected async backlogMeta(
+    orgId: string,
+    endpointId: string,
+    resume: Cursor | undefined,
+  ): Promise<{ headCursor: Cursor | null; backlogCount: number }> {
+    const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+    try {
+      return await withTenant(tenant, orgId, (tx) =>
+        tailMeta(tx, { endpointId, sinceCursor: resume }),
+      );
     } finally {
       await tenant.end();
     }

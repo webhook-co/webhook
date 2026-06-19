@@ -71,7 +71,16 @@ verbatim. `LagSchema` + `LISTEN_LAG_CAP` live in `packages/shared` so the read c
 - The watermark + keyset predicate is now hand-copied across `listEvents`/`tailEvents`/
   `latestTailCursor`/`tailMeta`; a follow-up should extract a shared SQL fragment so the byte-for-byte
   invariant is enforced once rather than by review.
-- **Follow-on (slice B1b):** the same `{ caughtUp, lag }` signal is surfaced over the `/listen` tunnel
-  as an additive `StatusFrame`; `headCursor` stays HTTP-only (a streaming client tracks position from
-  the event-frame cursors). **Follow-on (slice B2):** server-side `--since` resolution reuses the same
-  watermark + ms-keyset and the same "synthetic `(ms, all-zero-uuid)` boundary" discipline.
+- **Tunnel (slice B1b, implemented):** the same `{ caughtUp, lag }` is surfaced over the `/listen`
+  tunnel as an additive `StatusFrame` in `ServerFrameSchema` — emitted at connect (the initial caughtUp
+  + capped lag, from the seeded resume position) and once on the behind→caught-up transition (a
+  `wasCaughtUp` latch, reset on connect and un-latched by any not-caught-up poll, prevents per-poll
+  spam). `caughtUp` is the `drainPages` exit reason (a page returned a null nextCursor — NOT the item
+  count). `headCursor` stays HTTP-only (a streaming client tracks position from the event-frame
+  cursors). The connect-time backlog probe is ADVISORY — wrapped in try/catch so a DB hiccup never
+  fails the WebSocket upgrade (mirrors the poll's fail-safe posture) — and runs on the cache-disabled
+  `HYPERDRIVE_TENANT` binding under the bound org's RLS (no cross-org cached count). An unknown server
+  frame is additive-safe: `parseServerFrame` returns null and a consumer skips it (the CLI skips the
+  `status` frame until the resume banner renders it).
+- **Follow-on (slice B2):** server-side `--since` resolution reuses the same watermark + ms-keyset and
+  the same "synthetic `(ms, all-zero-uuid)` boundary" discipline.
