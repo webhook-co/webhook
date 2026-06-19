@@ -7,7 +7,12 @@ import {
   eventsReplay,
   eventsTail,
 } from "./capabilities";
-import { CAPABILITY_ERRORS, requiredSurfaces } from "./capability";
+import {
+  CAPABILITY_ERRORS,
+  CAPABILITY_SCOPES,
+  requiredSurfaces,
+  RESERVED_SCOPES,
+} from "./capability";
 
 const EXPECTED_NAMES = [
   "endpoints.list",
@@ -131,5 +136,18 @@ describe("capability registry", () => {
       headCursor: "sig.cursor",
     });
     expect(list.success).toBe(true);
+  });
+});
+
+describe("RESERVED_SCOPES", () => {
+  it("reserves the keys:manage scope name", () => {
+    expect(RESERVED_SCOPES).toContain("keys:manage");
+  });
+
+  it("stays DISJOINT from the closed CAPABILITY_SCOPES (a reserved name never widens what verifyBearer grants)", () => {
+    const grantable = new Set<string>(CAPABILITY_SCOPES);
+    for (const reserved of RESERVED_SCOPES) {
+      expect(grantable.has(reserved)).toBe(false);
+    }
   });
 });
