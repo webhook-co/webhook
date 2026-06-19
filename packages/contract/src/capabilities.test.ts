@@ -100,4 +100,36 @@ describe("capability registry", () => {
     });
     expect(parsed.success).toBe(true);
   });
+
+  it("events.tail output carries the additive cursor-contract fields and still validates without them", () => {
+    const withMeta = eventsTail.output.safeParse({
+      items: [],
+      nextCursor: null,
+      headCursor: "sig.cursor",
+      caughtUp: true,
+      lag: { backlogCount: 42, headLagMs: 1500 },
+    });
+    expect(withMeta.success).toBe(true);
+
+    // Additive: a producer that omits the new fields still validates (no break for existing consumers).
+    const without = eventsTail.output.safeParse({ items: [], nextCursor: null });
+    expect(without.success).toBe(true);
+
+    // lag.backlogCount is required when lag is present — a malformed lag is rejected.
+    const badLag = eventsTail.output.safeParse({
+      items: [],
+      nextCursor: null,
+      lag: { headLagMs: 5 },
+    });
+    expect(badLag.success).toBe(false);
+  });
+
+  it("events.list output carries headCursor only (no caughtUp/lag on a newest-first browse)", () => {
+    const list = CAPABILITY_REGISTRY.get("events.list")!.output.safeParse({
+      items: [],
+      nextCursor: null,
+      headCursor: "sig.cursor",
+    });
+    expect(list.success).toBe(true);
+  });
 });

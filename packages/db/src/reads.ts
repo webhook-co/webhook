@@ -8,6 +8,7 @@ import {
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
+  LISTEN_LAG_CAP,
   WATERMARK_DELTA_MS,
   type Cursor,
   type Endpoint,
@@ -211,6 +212,35 @@ export async function latestTailCursor(
     order by date_trunc('milliseconds', received_at) desc, id desc
     limit 1`;
   return r ? { receivedAt: r.received_at, id: r.id } : null;
+}
+
+/**
+ * Head + backlog metadata for an endpoint's forward tail, computed in ONE tenant tx (under RLS).
+ * `headCursor` is the watermark-bounded latest (= latestTailCursor — NEVER raw MAX, which sits above
+ * the gapless watermark; an exclusive resume from a raw MAX would skip late-but-valid events).
+ * `backlogCount` is the count of unseen events at/below the watermark strictly after `sinceCursor`
+ * (the full visible backlog when omitted), CAPPED at `cap` via `limit cap + 1` in SQL — a returned
+ * value of `cap + 1` means "more than cap". The COUNT bounds on the RAW watermark + the lower ms-keyset
+ * ONLY, never on the ms-truncated `headCursor` (an upper bound there would drop a same-millisecond µs
+ * sibling). Same window + ms-resolution keyset as tailEvents; backed by events_tunnel_idx.
+ */
+export async function tailMeta(
+  tx: TenantTx,
+  opts: { readonly endpointId: string; readonly sinceCursor?: Cursor; readonly cap?: number },
+): Promise<{ headCursor: Cursor | null; backlogCount: number }> {
+  const { endpointId, sinceCursor } = opts;
+  const cap = opts.cap ?? LISTEN_LAG_CAP;
+  const headCursor = await latestTailCursor(tx, { endpointId });
+  const [row] = await tx<{ n: number }[]>`
+    select count(*)::int as n from (
+      select 1
+      from events
+      where endpoint_id = ${endpointId}
+        and received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')
+        ${sinceCursor ? tx`and (date_trunc('milliseconds', received_at), id) > (${sinceCursor.receivedAt}::timestamptz, ${sinceCursor.id}::uuid)` : tx``}
+      limit ${cap + 1}
+    ) s`;
+  return { headCursor, backlogCount: row?.n ?? 0 };
 }
 
 export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> {

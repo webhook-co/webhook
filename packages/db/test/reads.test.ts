@@ -18,6 +18,7 @@ import {
   listEndpoints,
   listEvents,
   tailEvents,
+  tailMeta,
 } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -280,6 +281,51 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
     );
   });
 
+  it("events.tail surfaces the cursor contract: headCursor + caughtUp + lag", async () => {
+    const page = (await handlers.get("events.tail")!(ctxA, { endpointId: epTail })) as {
+      items: { id: string }[];
+      nextCursor: string | null;
+      headCursor: string | null;
+      caughtUp: boolean;
+      lag: { backlogCount: number; headLagMs?: number };
+    };
+    expect(page.items.map((e) => e.id)).toEqual([eTail1, eTail2, eTail3]);
+    expect(page.nextCursor).toBeNull();
+    expect(page.caughtUp).toBe(true); // no more pages under the watermark
+    expect(page.headCursor).not.toBeNull(); // a real (watermark-bounded) head exists
+    expect(page.lag.backlogCount).toBe(3); // 3 events from the (oldest) request position to head
+    // head is the 2026-06-01 fixture, so the lag is a real, large positive delta (not a floored 0).
+    expect(page.lag.headLagMs).toBeGreaterThan(1_000_000);
+  });
+
+  it("events.tail on an empty endpoint reports caughtUp, a null head, zero backlog", async () => {
+    const epEmpty = (await createEndpoint(app, { orgId: orgA, name: "ep-empty-tail-h" }, hasher))
+      .id;
+    const page = (await handlers.get("events.tail")!(ctxA, { endpointId: epEmpty })) as {
+      items: unknown[];
+      caughtUp: boolean;
+      headCursor: string | null;
+      lag: { backlogCount: number };
+    };
+    expect(page.items).toEqual([]);
+    expect(page.caughtUp).toBe(true);
+    expect(page.headCursor).toBeNull();
+    expect(page.lag.backlogCount).toBe(0);
+  });
+
+  it("events.list surfaces headCursor only (no caughtUp/lag — it is a newest-first browse)", async () => {
+    const page = (await handlers.get("events.list")!(ctxA, { endpointId: epTail })) as {
+      items: { id: string }[];
+      nextCursor: string | null;
+      headCursor: string | null;
+      caughtUp?: unknown;
+      lag?: unknown;
+    };
+    expect(typeof page.headCursor).toBe("string"); // an encoded, watermark-bounded newest position
+    expect(page.caughtUp).toBeUndefined();
+    expect(page.lag).toBeUndefined();
+  });
+
   it("rejects an under-scoped caller with FORBIDDEN", async () => {
     const noScope: AuthContext = { orgId: orgA, scopes: [] };
     await expectFault(handlers.get("endpoints.list")!(noScope, {}), "FORBIDDEN");
@@ -473,5 +519,69 @@ describe("latestTailCursor (the ?since=now boundary)", () => {
   it("is org-scoped under RLS (a cross-org endpoint yields null)", async () => {
     const c = await withTenant(app, orgA, (tx) => latestTailCursor(tx, { endpointId: epB }));
     expect(c).toBeNull();
+  });
+});
+
+describe("tailMeta (watermark head + capped backlog count)", () => {
+  it("returns headCursor = latestTailCursor and the full visible backlog when no cursor", async () => {
+    const meta = await withTenant(app, orgA, (tx) => tailMeta(tx, { endpointId: epTail }));
+    const head = await withTenant(app, orgA, (tx) => latestTailCursor(tx, { endpointId: epTail }));
+    expect(meta.headCursor).toEqual(head); // head == the watermark-bounded latest, never raw MAX
+    expect(meta.backlogCount).toBe(3); // eTail1..3, all <= watermark, none seen yet
+  });
+
+  it("counts only events strictly after sinceCursor (exclusive resume)", async () => {
+    const first = await withTenant(app, orgA, (tx) =>
+      tailEvents(tx, { endpointId: epTail, limit: 1 }),
+    );
+    const meta = await withTenant(app, orgA, (tx) =>
+      tailMeta(tx, { endpointId: epTail, sinceCursor: first.nextCursor! }),
+    );
+    expect(meta.backlogCount).toBe(2); // eTail2, eTail3 remain unseen
+    expect(meta.headCursor?.id).toBe(eTail3); // head unaffected by the resume position
+  });
+
+  it("returns null head + zero backlog for an empty endpoint", async () => {
+    const epEmpty = (await createEndpoint(app, { orgId: orgA, name: "ep-empty-meta" }, hasher)).id;
+    const meta = await withTenant(app, orgA, (tx) => tailMeta(tx, { endpointId: epEmpty }));
+    expect(meta.headCursor).toBeNull();
+    expect(meta.backlogCount).toBe(0);
+  });
+
+  it("is org-scoped under RLS (cross-org endpoint → null head, zero backlog)", async () => {
+    const meta = await withTenant(app, orgA, (tx) => tailMeta(tx, { endpointId: epB }));
+    expect(meta.headCursor).toBeNull();
+    expect(meta.backlogCount).toBe(0);
+  });
+
+  it("counts BOTH same-millisecond events — the count must not drop a µs sibling (R1)", async () => {
+    // The COUNT bounds on the RAW watermark + the lower ms-keyset, NEVER on the ms-truncated headCursor:
+    // an upper bound on headCursor would exclude a same-ms row whose true µs exceeds head's truncation.
+    const epPrec = (await createEndpoint(app, { orgId: orgA, name: "ep-meta-precision" }, hasher))
+      .id;
+    const p1 = await seedEvent(orgA, epPrec, { provider: "stripe" });
+    const p2 = await seedEvent(orgA, epPrec, { provider: "stripe" });
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-09T12:00:00.004200+00' where id = ${p1}`,
+    );
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-09T12:00:00.004800+00' where id = ${p2}`,
+    );
+    const meta = await withTenant(app, orgA, (tx) => tailMeta(tx, { endpointId: epPrec }));
+    expect(meta.backlogCount).toBe(2); // both counted — no same-ms drop
+    expect(meta.headCursor?.id).toBe([p1, p2].sort()[1]); // newest (max (ms,id)) is the head
+  });
+
+  it("caps the backlog count in SQL via a limit cap+1 sentinel (R7)", async () => {
+    // Seed MORE than cap+1 events, then cap=2: a true SQL `limit cap+1` returns cap+1 (3); an
+    // unbounded count would return the full 5. This discriminates the in-SQL stop from a JS clamp.
+    const epCap = (await createEndpoint(app, { orgId: orgA, name: "ep-meta-cap" }, hasher)).id;
+    for (let i = 0; i < 5; i++) await seedEventAt(orgA, epCap, tailAt(20_000 + i * 1000), "stripe");
+    const meta = await withTenant(app, orgA, (tx) => tailMeta(tx, { endpointId: epCap, cap: 2 }));
+    expect(meta.backlogCount).toBe(3); // cap+1 = "more than 2" — NOT 5, so the scan stopped in SQL
   });
 });
