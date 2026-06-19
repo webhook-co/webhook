@@ -110,6 +110,23 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     expect(seen).toEqual({ endpointId: EP });
   });
 
+  it("emits the events.tail cursor-contract fields verbatim (headCursor + caughtUp + lag)", async () => {
+    const output = {
+      items: [],
+      nextCursor: null,
+      headCursor: "sig.head",
+      caughtUp: true,
+      lag: { backlogCount: 7, headLagMs: 1200 },
+    };
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({ "events.tail": async () => output }),
+    };
+    const res = await handleRequest(get(`/v1/endpoints/${EP}/events/tail`), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(output); // pass-through — Response.json(handler output)
+  });
+
   it("dispatches POST /v1/audit/verify", async () => {
     const deps: ApiDeps = {
       authDeps: authDeps(verify(scoped)),

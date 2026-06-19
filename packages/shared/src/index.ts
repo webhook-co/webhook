@@ -18,6 +18,7 @@ export * from "./entities";
 export * from "./listen-protocol";
 export * from "./watermark";
 export * from "./cursor";
+export * from "./lag";
 export * from "./audit";
 export * from "./audit-chain";
 export * from "./audit-anchor";

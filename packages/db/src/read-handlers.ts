@@ -20,7 +20,15 @@ import { decodeCursor, encodeCursor, verifyAuditChain, type Cursor } from "@webh
 
 import { readAuditChain } from "./audit-append";
 import { withTenant, type Sql } from "./client";
-import { getEndpoint, getEvent, listEndpoints, listEvents, tailEvents } from "./reads";
+import {
+  getEndpoint,
+  getEvent,
+  latestTailCursor,
+  listEndpoints,
+  listEvents,
+  tailEvents,
+  tailMeta,
+} from "./reads";
 
 export interface ReadHandlerDeps {
   /** webhook_app over the cache-disabled tenant binding — tenant reads run here. */
@@ -89,13 +97,25 @@ export function createReadHandlers(deps: ReadHandlerDeps): ReadHandlers {
       filter?: { provider: string };
     };
     const decoded = await decode(cursor);
-    const page = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
+    const { page, headCursor } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       // Distinguish "no such endpoint for this org" (NOT_FOUND) from "endpoint with no events".
       const endpoint = await getEndpoint(tx, endpointId);
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
-      return listEvents(tx, { endpointId, cursor: decoded, limit, provider: filter?.provider });
+      const browsed = await listEvents(tx, {
+        endpointId,
+        cursor: decoded,
+        limit,
+        provider: filter?.provider,
+      });
+      // events.list is a newest-first browse; surface the watermark-bounded head as a resumable
+      // checkpoint (caughtUp/lag are forward-tail concepts and don't apply to a DESC browse).
+      return { page: browsed, headCursor: await latestTailCursor(tx, { endpointId }) };
     });
-    return { items: page.items, nextCursor: await encode(page.nextCursor) };
+    return {
+      items: page.items,
+      nextCursor: await encode(page.nextCursor),
+      headCursor: await encode(headCursor),
+    };
   });
 
   handlers.set(eventsTail.name, async (ctx, input) => {
@@ -105,15 +125,32 @@ export function createReadHandlers(deps: ReadHandlerDeps): ReadHandlers {
       sinceCursor?: string;
     };
     const decoded = await decode(sinceCursor);
-    const page = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
+    const { page, meta } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       // Same NOT_FOUND-vs-empty distinction as events.list. tailEvents computes the gapless watermark
       // cutoff (now() - δ) Postgres-side, so a slow caller can't pin an old cutoff and there's no
-      // Worker↔Postgres clock skew in the gapless invariant.
+      // Worker↔Postgres clock skew in the gapless invariant. tailMeta reuses that exact window for the
+      // head + the (capped) backlog count, in the same RLS-scoped tx.
       const endpoint = await getEndpoint(tx, endpointId);
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
-      return tailEvents(tx, { endpointId, sinceCursor: decoded });
+      const tailed = await tailEvents(tx, { endpointId, sinceCursor: decoded });
+      return { page: tailed, meta: await tailMeta(tx, { endpointId, sinceCursor: decoded }) };
     });
-    return { items: page.items, nextCursor: await encode(page.nextCursor) };
+    // headLagMs is advisory (Worker clock vs the DB-stamped head; floored by the 5s watermark anyway).
+    const headLagMs =
+      meta.headCursor === null
+        ? undefined
+        : Math.max(0, Date.now() - meta.headCursor.receivedAt.getTime());
+    return {
+      items: page.items,
+      nextCursor: await encode(page.nextCursor),
+      headCursor: await encode(meta.headCursor),
+      // caughtUp = this page reached the end of the watermark-bounded tail (no more pages).
+      caughtUp: page.nextCursor === null,
+      lag: {
+        backlogCount: meta.backlogCount,
+        ...(headLagMs !== undefined ? { headLagMs } : {}),
+      },
+    };
   });
 
   handlers.set(eventsGet.name, async (ctx, input) => {
