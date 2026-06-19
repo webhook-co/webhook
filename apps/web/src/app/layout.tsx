@@ -7,6 +7,8 @@ import { themeInitScript } from "@webhook-co/ui";
 
 import "./globals.css";
 
+// dal-gate-allow: the html-shell root layout — renders no tenant data; the (app) layout gates.
+
 export const metadata: Metadata = {
   title: "webhook.co",
   description: "The webhook.co dashboard.",

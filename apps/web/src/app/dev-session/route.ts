@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 
 import { SESSION_COOKIE } from "@/server/session";
 
+// dal-gate-allow: dev-only pre-auth bootstrap — 404 in prod, mints no real identity.
+//
 // Dev-only: mint a mock session cookie so the gated dashboard is reachable before the real
 // auth.→app. handoff (E7) exists. Visit /dev-session to "sign in" as the mock principal.
 // Returns 404 in production — this is never a real auth path (it bootstraps no identity).

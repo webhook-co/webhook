@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run tsconfig-boundary",
+    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run tsconfig-boundary && pnpm run dal-gate-guard",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -21,6 +21,7 @@
     "test:db": "turbo run test --filter=@webhook-co/db",
     "no-skipped-tests": "node scripts/no-skipped-tests.mjs",
     "tsconfig-boundary": "node scripts/tsconfig-boundary.mjs",
+    "dal-gate-guard": "node scripts/dal-gate-guard.mjs",
     "prepare": "husky"
   },
   "devDependencies": {
