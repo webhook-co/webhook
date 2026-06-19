@@ -19,7 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { withTenant, type Sql } from "./client";
+import { withTenant, type Sql, type TenantTx } from "./client";
 import { credentialHashEquals, mintCredential, type CredentialHasher } from "./credential";
 import type { ResolvedPrincipal } from "./credential-cache";
 
@@ -31,6 +31,12 @@ export interface CreateApiKeyInput {
   readonly name: string;
   readonly scopes: readonly string[];
   readonly expiresAt?: Date | null;
+  /** Grant this key hangs off (A0c). null/omitted = a standalone, directly-created key. */
+  readonly grantId?: string | null;
+  /** Per-key RFC 8707 audience (A0b). null/omitted = legacy/org-wide (surface-stamped at resolve). */
+  readonly audience?: string | null;
+  /** Owner type (api_keys.owner_type). Defaults to 'user'. */
+  readonly ownerType?: "user" | "org";
 }
 
 export interface CreatedApiKey {
@@ -69,19 +75,39 @@ export async function createApiKey(
   input: CreateApiKeyInput,
   hasher: CredentialHasher,
 ): Promise<CreatedApiKey> {
+  const created = await withTenant(app, input.orgId, (tx) => insertApiKey(tx, input, hasher));
+  const { keyHash: _keyHash, ...rest } = created;
+  return rest;
+}
+
+/**
+ * Mint + insert an api_keys row INSIDE the caller's tenant transaction `tx`, returning the created
+ * key plus its `keyHash`. This is the tx-level core so a grant-backed mint (grants.ts) can write the
+ * key AND its audit row atomically in one transaction; createApiKey wraps it in its own withTenant
+ * for the standalone path. Defaults the A0c columns: grant_id null, audience null, owner_type 'user'.
+ * The org RLS context must already be pinned on `tx` (withTenant).
+ */
+export async function insertApiKey(
+  tx: TenantTx,
+  input: CreateApiKeyInput,
+  hasher: CredentialHasher,
+): Promise<CreatedApiKey & { readonly keyHash: Buffer }> {
   const { plaintext, keyHash, start } = mintCredential(API_KEY_PREFIX, hasher);
   const id = randomUUID();
   const scopes = [...input.scopes];
   const expiresAt = input.expiresAt ?? null;
+  const grantId = input.grantId ?? null;
+  const audience = input.audience ?? null;
+  const ownerType = input.ownerType ?? "user";
 
-  await withTenant(app, input.orgId, async (tx) => {
-    await tx`
-      insert into api_keys (id, org_id, key_hash, prefix, start, name, scopes, expires_at)
-      values (${id}, ${input.orgId}, ${keyHash}, ${API_KEY_PREFIX}, ${start},
-              ${input.name}, ${tx.json(scopes)}, ${expiresAt})`;
-  });
+  await tx`
+    insert into api_keys
+      (id, org_id, key_hash, prefix, start, name, scopes, expires_at, grant_id, audience, owner_type)
+    values
+      (${id}, ${input.orgId}, ${keyHash}, ${API_KEY_PREFIX}, ${start}, ${input.name},
+       ${tx.json(scopes)}, ${expiresAt}, ${grantId}, ${audience}, ${ownerType})`;
 
-  return { id, orgId: input.orgId, name: input.name, scopes, start, expiresAt, plaintext };
+  return { id, orgId: input.orgId, name: input.name, scopes, start, expiresAt, plaintext, keyHash };
 }
 
 /** List an org's api keys (newest first). Display metadata only — no hash, no plaintext. */
