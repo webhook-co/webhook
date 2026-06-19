@@ -48,7 +48,10 @@ function makeResolver(cache = new InMemoryCredentialCache()) {
     resolver: createCredentialResolver({
       hasher,
       cache,
-      coldLookup: makeApiKeyColdLookup(authn, API_RESOURCE),
+      // The cold lookup returns the key's intrinsic audience (undefined for a legacy key); `resource`
+      // is the surface audience the resolver conditionally stamps (A0b) — mirrors the real wiring.
+      coldLookup: makeApiKeyColdLookup(authn),
+      resource: API_RESOURCE,
     }),
   };
 }
@@ -152,13 +155,13 @@ describe("expiry honored on verify", () => {
 });
 
 describe("two-pool design: webhook_authn cold lookup is least-privilege", () => {
-  it("the authn pool resolves org via the 5 granted columns", async () => {
+  it("the authn pool resolves org via the granted columns (incl. audience)", async () => {
     const created = await createApiKey(
       app,
       { orgId: orgA, name: "authn", scopes: ["events:read"] },
       hasher,
     );
-    const cold = makeApiKeyColdLookup(authn, API_RESOURCE);
+    const cold = makeApiKeyColdLookup(authn);
     const principal = await cold(hasher.hash(created.plaintext));
     expect(principal?.orgId).toBe(orgA);
   });
@@ -196,7 +199,7 @@ describe("KV hot path vs cold path vs revocation", () => {
     const cache = new InMemoryCredentialCache();
     // Count cold lookups by wrapping the real authn lookup.
     let coldCalls = 0;
-    const baseCold = makeApiKeyColdLookup(authn, API_RESOURCE);
+    const baseCold = makeApiKeyColdLookup(authn);
     const resolver = createCredentialResolver({
       hasher,
       cache,
@@ -214,5 +217,41 @@ describe("KV hot path vs cold path vs revocation", () => {
     await resolver.invalidate(created.plaintext); // revocation invalidates KV
     expect(await resolver.resolve(created.plaintext)).toBeNull(); // cold again -> revoked
     expect(coldCalls).toBe(2);
+  });
+});
+
+describe("per-key audience (A0b conditional stamp, real DB)", () => {
+  it("a key with a stored audience resolves to THAT audience — not widened to the presenting surface", async () => {
+    const created = await createApiKey(app, { orgId: orgA, name: "perkey", scopes: [] }, hasher);
+    // Bind a per-key audience to mcp (A0c's mintScopedKey will set this at mint; here via SQL).
+    await withTenant(app, orgA, async (tx) => {
+      await tx`update api_keys set audience = ${"https://mcp.webhook.co"} where id = ${created.id}`;
+    });
+    // Resolve through an API-surface resolver (resource = api). The intrinsic mcp audience must win.
+    const { resolver } = makeResolver();
+    const principal = await resolver.resolve(created.plaintext);
+    expect(principal?.audience).toBe("https://mcp.webhook.co"); // confined to mcp, not widened to api
+  });
+
+  it("a legacy key (no stored audience) is stamped with the presenting surface's audience", async () => {
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "legacy-aud", scopes: [] },
+      hasher,
+    );
+    const { resolver } = makeResolver(); // resource = API_RESOURCE
+    expect((await resolver.resolve(created.plaintext))?.audience).toBe(API_RESOURCE);
+  });
+
+  it("an empty-string stored audience is treated as no binding (stamped per surface, not bricked)", async () => {
+    // Defense-in-depth: a "" audience must coalesce to undefined in the cold lookup (`|| undefined`),
+    // NOT survive as "" — else the resolver's `audience !== undefined` guard would skip the stamp and
+    // assertAudience's strict `!==` would reject the key on EVERY surface (a silent fail-closed brick).
+    const created = await createApiKey(app, { orgId: orgA, name: "empty-aud", scopes: [] }, hasher);
+    await withTenant(app, orgA, async (tx) => {
+      await tx`update api_keys set audience = ${""} where id = ${created.id}`;
+    });
+    const { resolver } = makeResolver(); // resource = API_RESOURCE
+    expect((await resolver.resolve(created.plaintext))?.audience).toBe(API_RESOURCE);
   });
 });

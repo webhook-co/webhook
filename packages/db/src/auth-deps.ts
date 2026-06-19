@@ -36,17 +36,21 @@ export interface ApiKeyAuthDeps {
 
 /**
  * Build one surface's api-key auth deps: a KV-cached credential resolver over the webhook_authn cold
- * lookup, with `resource` driving BOTH the cold lookup's audience binding and the resolver's audience
- * stamp — so the shared KV_AUTHZ cache stays audience-agnostic (one entry per key, revoke-complete)
- * while each surface still sees its own audience. Returns verifyBearer + resource; callers add any
- * surface-only extras (e.g. the PRM url). Replaces the identical inline wiring in apps/api, apps/engine,
- * apps/mcp.
+ * lookup. The cold lookup returns a key's INTRINSIC per-key audience (from `api_keys.audience`) or
+ * undefined for a legacy/org-wide key; `resource` drives ONLY the resolver's conditional audience
+ * stamp (A0b) — applied to the undefined case, left off any per-key audience. So the shared KV_AUTHZ
+ * cache stays audience-agnostic for legacy keys (one entry per key, revoke-complete; each surface
+ * stamps its own) while per-key (OAuth-minted) keys stay confined to their bound surface. Returns
+ * verifyBearer + resource; callers add any surface-only extras (e.g. the PRM url). Replaces the
+ * identical inline wiring in apps/api, apps/engine, apps/mcp.
  */
 export function makeApiKeyAuthDeps(opts: ApiKeyAuthDepsOptions): ApiKeyAuthDeps {
   const resolver = createCredentialResolver({
     hasher: opts.hasher,
     cache: opts.cache,
-    coldLookup: makeApiKeyColdLookup(opts.authn, opts.resource),
+    // The cold lookup returns a key's intrinsic per-key audience (or undefined for legacy keys);
+    // `resource` is the surface audience the resolver conditionally stamps on the undefined case (A0b).
+    coldLookup: makeApiKeyColdLookup(opts.authn),
     resource: opts.resource,
   });
   return { verifyBearer: makeVerifyBearer(resolver), resource: opts.resource };

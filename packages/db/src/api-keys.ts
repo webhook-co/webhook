@@ -140,6 +140,7 @@ interface AuthnVerifyRow {
   expires_at: Date | null;
   revoked_at: Date | null;
   key_hash: Buffer;
+  audience: string | null;
 }
 
 /**
@@ -149,16 +150,16 @@ interface AuthnVerifyRow {
  * + a column-scoped grant). Honors revocation and expiry. Runs as webhook_authn through
  * the CACHE-DISABLED binding. Use this as the `coldLookup` of a credential resolver.
  *
- * `audience` is the resource these api keys are bound to (RFC 8707). The schema has no
- * audience column (api keys today are org credentials valid across the org's API/MCP
- * surfaces), so the binding is applied at resolution time: every resolved key carries
- * this single configured audience, and verifyBearer rejects it at any OTHER resource.
- * When real per-key audiences arrive (OAuth tokens), this is the seam that reads them.
+ * Returns the key's stored per-key `api_keys.audience` (RFC 8707) when set — a per-key
+ * OAuth-minted binding (A0a added the column) — else `undefined` for a legacy/org-wide key.
+ * The resolver then conditionally stamps the presenting surface's audience for the undefined
+ * case (A0b), keeping the shared cache audience-agnostic while confining per-key-audience keys
+ * to their bound surface. verifyBearer rejects any audience mismatch.
  */
-export function makeApiKeyColdLookup(authn: Sql, audience: string) {
+export function makeApiKeyColdLookup(authn: Sql) {
   return async function coldLookup(keyHash: Buffer): Promise<ResolvedPrincipal | null> {
     const rows = await authn<AuthnVerifyRow[]>`
-      select org_id, scopes, expires_at, revoked_at, key_hash
+      select org_id, scopes, expires_at, revoked_at, key_hash, audience
       from api_keys
       where key_hash = ${keyHash}`;
     const row = rows[0];
@@ -170,7 +171,12 @@ export function makeApiKeyColdLookup(authn: Sql, audience: string) {
     if (!credentialHashEquals(Buffer.from(row.key_hash), keyHash)) return null;
     if (row.revoked_at !== null) return null;
     if (row.expires_at !== null && row.expires_at.getTime() <= Date.now()) return null;
-    return { orgId: row.org_id, scopes: toScopes(row.scopes), audience };
+    // Honor the key's intrinsic per-key audience if stored; undefined for a legacy/org-wide
+    // key (the resolver stamps the presenting surface — conditional stamp, A0b). `|| undefined`
+    // (not `?? undefined`) so an empty-string audience coalesces to "no binding" too — otherwise
+    // a stored "" would survive the resolver's `audience !== undefined` guard and fail closed on
+    // EVERY surface (assertAudience's strict `!==` rejects ""), silently bricking the key.
+    return { orgId: row.org_id, scopes: toScopes(row.scopes), audience: row.audience || undefined };
   };
 }
 
