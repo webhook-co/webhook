@@ -110,28 +110,19 @@ export async function insertApiKey(
   return { id, orgId: input.orgId, name: input.name, scopes, start, expiresAt, plaintext, keyHash };
 }
 
-/** List an org's api keys (newest first). Display metadata only — no hash, no plaintext. */
-export async function listApiKeys(app: Sql, orgId: string): Promise<ApiKeyListItem[]> {
-  const rows = await withTenant(app, orgId, async (tx) => {
-    return tx<
-      {
-        id: string;
-        name: string;
-        start: string;
-        scopes: unknown;
-        created_at: Date;
-        last_used_at: Date | null;
-        expires_at: Date | null;
-        revoked_at: Date | null;
-      }[]
-    >`
-      select id, name, start, scopes, created_at, last_used_at, expires_at, revoked_at
-      from api_keys
-      where org_id = ${orgId}
-      order by created_at desc`;
-  });
+interface ApiKeyListRow {
+  id: string;
+  name: string;
+  start: string;
+  scopes: unknown;
+  created_at: Date;
+  last_used_at: Date | null;
+  expires_at: Date | null;
+  revoked_at: Date | null;
+}
 
-  return rows.map((r) => ({
+function toApiKeyListItem(r: ApiKeyListRow): ApiKeyListItem {
+  return {
     id: r.id,
     name: r.name,
     start: r.start,
@@ -140,24 +131,61 @@ export async function listApiKeys(app: Sql, orgId: string): Promise<ApiKeyListIt
     lastUsedAt: r.last_used_at,
     expiresAt: r.expires_at,
     revokedAt: r.revoked_at,
-  }));
+  };
+}
+
+/** List an org's api keys (newest first). Display metadata only — no hash, no plaintext. */
+export async function listApiKeys(app: Sql, orgId: string): Promise<ApiKeyListItem[]> {
+  const rows = await withTenant(app, orgId, async (tx) => {
+    return tx<ApiKeyListRow[]>`
+      select id, name, start, scopes, created_at, last_used_at, expires_at, revoked_at
+      from api_keys
+      where org_id = ${orgId}
+      order by created_at desc`;
+  });
+  return rows.map(toApiKeyListItem);
+}
+
+/** List the keys minted under one grant (newest first). Display metadata only — no hash, no plaintext. */
+export async function listApiKeysForGrant(
+  app: Sql,
+  orgId: string,
+  grantId: string,
+): Promise<ApiKeyListItem[]> {
+  const rows = await withTenant(app, orgId, async (tx) => {
+    return tx<ApiKeyListRow[]>`
+      select id, name, start, scopes, created_at, last_used_at, expires_at, revoked_at
+      from api_keys
+      where org_id = ${orgId} and grant_id = ${grantId}
+      order by created_at desc`;
+  });
+  return rows.map(toApiKeyListItem);
+}
+
+/** The outcome of a row-level revoke: whether a row flipped, and its hash for cache invalidation. */
+export interface RevokedKeyRow {
+  /** True if a not-already-revoked row was stamped (RLS makes another org's key invisible -> false). */
+  readonly revoked: boolean;
+  /** The revoked key's hash, for the caller to evict from the credential cache. null if none revoked. */
+  readonly keyHash: Buffer | null;
 }
 
 /**
- * Revoke an api key by id under the org's RLS context (stamps revoked_at). Returns true
- * if a row was revoked (RLS makes another org's key invisible -> false). The caller is
- * responsible for invalidating the credential cache (it holds the plaintext/hash); this
- * function only touches the row of record.
+ * Revoke an api key by id INSIDE the caller's tenant tx (stamps revoked_at), returning whether a row
+ * flipped and its key_hash so the caller can invalidate the credential cache (this only touches the
+ * row of record). RLS-scoped: another org's key is invisible -> { revoked: false, keyHash: null }.
+ * Already-revoked is idempotent (revoked: false). The org RLS context must be pinned on `tx`. The
+ * higher-level grants.revokeApiKey wraps this with the key_revoked audit; createApiKey/grants own
+ * the tx so revoke + audit are atomic.
  */
-export async function revokeApiKey(app: Sql, orgId: string, id: string): Promise<boolean> {
-  const count = await withTenant(app, orgId, async (tx) => {
-    const res = await tx`
-      update api_keys
-      set revoked_at = now(), updated_at = now()
-      where id = ${id} and revoked_at is null`;
-    return res.count;
-  });
-  return count > 0;
+export async function revokeApiKeyInTx(tx: TenantTx, id: string): Promise<RevokedKeyRow> {
+  const rows = await tx<{ key_hash: Buffer }[]>`
+    update api_keys
+    set revoked_at = now(), updated_at = now()
+    where id = ${id} and revoked_at is null
+    returning key_hash`;
+  const row = rows[0];
+  return { revoked: row !== undefined, keyHash: row ? Buffer.from(row.key_hash) : null };
 }
 
 interface AuthnVerifyRow {
