@@ -31,7 +31,10 @@ export {
 
 // ── components ──────────────────────────────────────────────────────────────
 export { Button, buttonVariants, type ButtonProps } from "./components/button";
+export { IconButton, type IconButtonProps } from "./components/icon-button";
 export { Input, Label, type InputProps, type LabelProps } from "./components/input";
+export { Field, type FieldProps } from "./components/field";
+export { Spinner, type SpinnerProps } from "./components/spinner";
 export {
   Card,
   CardHeader,
