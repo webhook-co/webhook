@@ -127,6 +127,45 @@ export function readTokenEnv(env: Record<string, unknown>): TokenEnv {
   return env as unknown as TokenEnv;
 }
 
+// --- A2b-4b: the frozen /revoke route's env slice --------------------------------------------------
+// /revoke resolves a presented token to its grant cross-org then revokes it: a whk_ access key needs the
+// bearer-verify Hyperdrive (webhook_authn, cross-org by-hash); an rtk_ refresh handle + the grant cascade
+// run as webhook_app (HYPERDRIVE_TENANT); the pepper hashes the presented token; the audit key signs the
+// grant_revoked entry; KV_AUTHZ is the cross-surface principal cache evicted on revoke.
+export interface RevokeEnv {
+  HYPERDRIVE_AUTHN: HyperdriveBinding;
+  HYPERDRIVE_TENANT: HyperdriveBinding;
+  CREDENTIAL_PEPPER: Secret;
+  AUDIT_CHAIN_HMAC_KEY: Secret;
+  /** The cross-surface principal cache (KVNamespace) api./mcp./engine share — evicted by key hash. */
+  KV_AUTHZ: unknown;
+}
+
+/**
+ * Validate + narrow the env for the /revoke route, fail-closed (naming the missing key, never its value).
+ */
+export function readRevokeEnv(env: Record<string, unknown>): RevokeEnv {
+  for (const key of ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY"] as const) {
+    if (!secretPresent(env[key])) {
+      throw new Error(`revoke env: missing or empty required secret ${key}`);
+    }
+  }
+  for (const key of ["HYPERDRIVE_AUTHN", "HYPERDRIVE_TENANT"] as const) {
+    const binding = env[key] as HyperdriveBinding | undefined;
+    if (
+      !binding ||
+      typeof binding.connectionString !== "string" ||
+      binding.connectionString.length === 0
+    ) {
+      throw new Error(`revoke env: missing or malformed Hyperdrive binding ${key}`);
+    }
+  }
+  if (env.KV_AUTHZ == null || typeof env.KV_AUTHZ !== "object") {
+    throw new Error("revoke env: missing KV_AUTHZ binding");
+  }
+  return env as unknown as RevokeEnv;
+}
+
 /** Resolve every secret to a plain string (Better Auth + the hasher take strings). */
 export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecrets> {
   const [

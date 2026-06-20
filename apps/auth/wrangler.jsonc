@@ -25,23 +25,30 @@
   // issuer 500s at request time (a bundle/dry-run passes without it — access is lazy/per-request). This is
   // auth.'s OWN namespace, distinct from mcp.'s (each issuer has its own grant store); the deploy overlay
   // injects the real id (none committed). Provisioned + wired to the apps/auth CD in the deploy slice.
+  // KV_AUTHZ — the SAME cross-surface resolved-principal cache (keyed by credential hash) that api./mcp./
+  // engine share; the /revoke endpoint (A2b-4b) evicts it by key hash on grant revoke so a logged-out
+  // credential stops resolving immediately. The deploy overlay injects the real (shared) id.
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
       "id": "<AUTH_OAUTH_KV_ID>",
     },
+    {
+      "binding": "KV_AUTHZ",
+      "id": "<KV_AUTHZ_ID>",
+    },
   ],
   // === Lane C contributes the rest of the auth-backend bindings here (coordinate scaffold edits w/ E) ===
-  // Still to add as the slices that use them land: a Hyperdrive client for identity-table writes + the
-  // personal-org bootstrap as webhook_app (HYPERDRIVE_TENANT / HYPERDRIVE_AUTHN), KV_AUTHZ (the A2b-4
-  // revoke-glue — the SAME cross-surface principal-cache namespace api./mcp. use), and Secrets-Store
-  // secrets (Google/GitHub client id+secret, the Resend API key, CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY).
-  // The deploy overlay injects the real ids/secrets (none committed).
+  // Still to add as the slices that use them land: the Hyperdrive clients HYPERDRIVE_TENANT (webhook_app —
+  // identity writes + bootstrap + the /token mint + the /revoke cascade) and HYPERDRIVE_AUTHN (webhook_authn
+  // — the /revoke whk_→grant cross-org-by-hash lookup), and Secrets-Store secrets (Google/GitHub client
+  // id+secret, the Resend API key, CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY). The deploy overlay injects the
+  // real ids/secrets (none committed).
   //
-  // The frozen /token route (A2b-2b, readTokenEnv) requires — and fails closed without — these four:
-  //   HYPERDRIVE_TENANT (mint as webhook_app), CREDENTIAL_PEPPER (key/refresh hash),
-  //   AUDIT_CHAIN_HMAC_KEY (the aae1 mint audit), and OAUTH_KV (above; provider unwrap/revoke).
-  // The deploy slice MUST bind all four before /token is routed.
+  // The frozen issuer routes fail closed without their bindings — the deploy slice MUST bind them before
+  // routing: /token (A2b-2b, readTokenEnv): HYPERDRIVE_TENANT + CREDENTIAL_PEPPER + AUDIT_CHAIN_HMAC_KEY +
+  // OAUTH_KV. /revoke (A2b-4b, readRevokeEnv): HYPERDRIVE_AUTHN + HYPERDRIVE_TENANT + CREDENTIAL_PEPPER +
+  // AUDIT_CHAIN_HMAC_KEY + KV_AUTHZ.
   //
   // The OAuth-provider mount: Lane C wraps this OpenNext worker's fetch handler with
   // @cloudflare/workers-oauth-provider as the Worker's default export (A2, gated on the E0-confirmed
