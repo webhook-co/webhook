@@ -123,10 +123,12 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm build
 
-  # Bundle apps/auth for Cloudflare Workers (OpenNext → workerd esbuild). The `build` job's `next build`
-  # does NOT cover the worker bundle, where workerd-only resolution issues surface (e.g. pg-cloudflare,
-  # @better-auth/core's workerd `instrumentation` entry). The turbo step builds the workspace deps' dist
-  # (the tsconfig-paths redirect targets) first; then build:cf runs the OpenNext workerd build.
+  # Bundle apps/auth for Cloudflare Workers and validate the full deploy shape. The `build` job's
+  # `next build` does NOT cover the worker bundle, where workerd-only resolution issues surface (e.g.
+  # pg-cloudflare, @better-auth/core's workerd `instrumentation` entry). `deploy:dry` runs the OpenNext
+  # workerd build AND `wrangler deploy --dry-run`, which bundles Lane C's src/worker.ts entry (the
+  # OAuthProvider wrapping the OpenNext handler — A2b-1) — so the OAuth-issuer mount is gated here too.
+  # The turbo step builds the workspace deps' dist (the tsconfig-paths redirect targets) first.
   build-cf:
     name: build-cf
     runs-on: ubuntu-latest
@@ -135,7 +137,7 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
       - run: pnpm exec turbo run build --filter=@webhook-co/auth
-      - run: pnpm -C apps/auth build:cf
+      - run: pnpm -C apps/auth deploy:dry
 
   # Builds the static marketing export and asserts the emitted out/index.html <head> against the
   # SEO rule set (canonical/OG/twitter/robots/JSON-LD/lang present and consistent; anchor targets

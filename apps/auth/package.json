@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@better-auth/api-key": "^1.6.19",
+    "@cloudflare/workers-oauth-provider": "^0.8.0",
+    "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",
     "@webhook-co/shared": "workspace:*",
     "@webhook-co/ui": "workspace:*",

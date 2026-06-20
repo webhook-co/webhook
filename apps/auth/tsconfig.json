@@ -31,6 +31,9 @@
     "dist",
     ".turbo",
     "src/auth.ts",
+    // The Worker entry imports the generated `.open-next/worker.js` (absent at typecheck); it's
+    // verified by build:cf/deploy:dry, and its config lives in the (type-checked) ./issuer/oauth-config.
+    "src/worker.ts",
     "src/**/*.test.ts",
     "src/**/*.test.tsx"
   ]
