@@ -147,6 +147,30 @@ export async function consumeRefreshToken(
 }
 
 /**
+ * Resolve a presented `rtk_` refresh handle to its PARENT GRANT — for the issuer's RFC 7009 /revoke
+ * (Lane C A2b-4). The handle embeds its org, so this stays on the normal webhook_app RLS scope (no
+ * cross-org role, unlike the whk_ path). Does NOT filter used/revoked/expired: /revoke must find the grant
+ * even for a spent handle so it can still kill the (possibly-live) grant; revokeGrant is idempotent. Loops
+ * pepper candidates. Returns null for a malformed handle or an unknown hash.
+ */
+export async function findRefreshTokenGrant(
+  app: Sql,
+  plaintext: string,
+  hasher: CredentialHasher,
+): Promise<{ orgId: string; grantId: string } | null> {
+  const orgId = parseRefreshTokenOrg(plaintext);
+  if (!orgId) return null;
+  return withTenant(app, orgId, async (tx) => {
+    for (const candidate of hasher.candidates(plaintext)) {
+      const [row] = await tx<{ grant_id: string }[]>`
+        select grant_id from auth_refresh_token where token_hash = ${candidate}`;
+      if (row) return { orgId, grantId: row.grant_id };
+    }
+    return null;
+  });
+}
+
+/**
  * Revoke every still-live (unused, unrevoked) refresh handle of a grant so none can be consumed —
  * called when a grant is revoked (A2b-4). Returns the count revoked. Used handles are already spent.
  */
