@@ -98,7 +98,7 @@ export async function bootstrapOwner(pg: EphemeralPostgres): Promise<void> {
 
 /**
  * In password mode, set the per-run login passwords on the non-owner roles the migrations
- * created (app/ingest/authn/anchor — all created password-less so source carries no credentials).
+ * created (app/ingest/authn/anchor/auth — all created password-less so source carries no credentials).
  * Must stay in lockstep with pg.ts MANAGED_ROLES: any role the harness mints a password for AND
  * connects as in a test must also be ALTERed here, or its login fails under SCRAM (Neon nightly).
  * No-op under trust auth. Run as the provider/superuser after the migrations apply.
@@ -107,7 +107,13 @@ export async function applyRolePasswords(pg: EphemeralPostgres): Promise<void> {
   if (pg.auth !== "password") return;
   const sql = postgres(pg.ownerUrl, { max: 1, prepare: false, fetch_types: false });
   try {
-    for (const role of [DB_ROLES.app, DB_ROLES.ingest, DB_ROLES.authn, DB_ROLES.anchor]) {
+    for (const role of [
+      DB_ROLES.app,
+      DB_ROLES.ingest,
+      DB_ROLES.authn,
+      DB_ROLES.anchor,
+      DB_ROLES.auth,
+    ]) {
       await sql.unsafe(`alter role ${quoteIdent(role)}${passwordClause(pg, role)}`);
     }
   } finally {

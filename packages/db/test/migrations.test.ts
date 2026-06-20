@@ -6,8 +6,8 @@ import { bootstrapOwner, migrateDownAll, migrateUp } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
 // Migration reversibility (plan "Testing": apply up -> down -> up cleanly in CI).
-// A clean down leaves only dbmate's schema_migrations and removes the app/ingest
-// roles; a second up re-applies without error (idempotent role creation).
+// A clean down leaves only dbmate's schema_migrations and removes the created non-owner
+// roles (app/ingest/authn/auth); a second up re-applies without error (idempotent role creation).
 
 let pg: EphemeralPostgres;
 let owner: Sql;
@@ -23,7 +23,7 @@ async function publicTables(): Promise<string[]> {
 async function appRoles(): Promise<string[]> {
   const rows = await owner<{ rolname: string }[]>`
     select rolname from pg_roles
-    where rolname in (${DB_ROLES.app}, ${DB_ROLES.ingest}, ${DB_ROLES.authn})
+    where rolname in (${DB_ROLES.app}, ${DB_ROLES.ingest}, ${DB_ROLES.authn}, ${DB_ROLES.auth})
     order by rolname`;
   return rows.map((r) => r.rolname);
 }
@@ -46,7 +46,12 @@ describe("migration reversibility (up -> down -> up)", () => {
     expect(tables).toContain("events");
     expect(tables).toContain("audit_log");
     expect(tables).toContain("schema_migrations");
-    expect(await appRoles()).toEqual([DB_ROLES.app, DB_ROLES.authn, DB_ROLES.ingest]);
+    expect(await appRoles()).toEqual([
+      DB_ROLES.app,
+      DB_ROLES.auth,
+      DB_ROLES.authn,
+      DB_ROLES.ingest,
+    ]);
   });
 
   it("rolls every migration back to a clean schema with no leftover roles", async () => {
@@ -59,6 +64,11 @@ describe("migration reversibility (up -> down -> up)", () => {
     migrateUp(pg);
     const tables = await publicTables();
     expect(tables).toContain("events");
-    expect(await appRoles()).toEqual([DB_ROLES.app, DB_ROLES.authn, DB_ROLES.ingest]);
+    expect(await appRoles()).toEqual([
+      DB_ROLES.app,
+      DB_ROLES.auth,
+      DB_ROLES.authn,
+      DB_ROLES.ingest,
+    ]);
   });
 });
