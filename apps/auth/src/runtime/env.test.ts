@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { readAuthEnv, resolveAuthSecrets, type AuthEnv } from "./env";
+import { readAuthEnv, readIntrospectEnv, resolveAuthSecrets, type AuthEnv } from "./env";
 
 // A1b — fail-closed env validation + secret resolution. The Worker's bindings/secrets are untyped at the
 // boundary (getCloudflareContext returns a loose record), so we validate rather than blind-cast: a missing
@@ -57,6 +57,17 @@ describe("readAuthEnv", () => {
       expect(String(e)).toContain("RESEND_API_KEY");
       expect(String(e)).not.toContain("re_key");
     }
+  });
+});
+
+describe("readIntrospectEnv", () => {
+  it("returns the env when OAUTH_KV is bound", () => {
+    expect(readIntrospectEnv({ OAUTH_KV: {} })).toMatchObject({ OAUTH_KV: {} });
+  });
+
+  it("throws (fail-closed) when OAUTH_KV is absent or not an object", () => {
+    expect(() => readIntrospectEnv({})).toThrow(/OAUTH_KV/);
+    expect(() => readIntrospectEnv({ OAUTH_KV: "nope" })).toThrow(/OAUTH_KV/);
   });
 });
 

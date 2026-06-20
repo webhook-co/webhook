@@ -166,6 +166,22 @@ export function readRevokeEnv(env: Record<string, unknown>): RevokeEnv {
   return env as unknown as RevokeEnv;
 }
 
+// --- A2b-5: the introspection WorkerEntrypoint's env slice -----------------------------------------
+// mcp (A8) RPCs auth.introspect(token) over a service binding to validate an opaque provider token. The
+// only binding the provider's unwrapToken touches is OAUTH_KV (the grant/token store on THIS Worker).
+export interface IntrospectEnv {
+  /** The OAuth provider's KV store (KVNamespace) — getOAuthApi(config, env).unwrapToken reads it. */
+  OAUTH_KV: unknown;
+}
+
+/** Validate the env for the introspect entrypoint, fail-closed. */
+export function readIntrospectEnv(env: Record<string, unknown>): IntrospectEnv {
+  if (env.OAUTH_KV == null || typeof env.OAUTH_KV !== "object") {
+    throw new Error("introspect env: missing OAUTH_KV binding");
+  }
+  return env as unknown as IntrospectEnv;
+}
+
 /** Resolve every secret to a plain string (Better Auth + the hasher take strings). */
 export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecrets> {
   const [
