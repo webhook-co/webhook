@@ -8,6 +8,13 @@
 
 export const CONTRACT_PACKAGE = "@webhook-co/contract" as const;
 
+// NOTE on `export *` and Turbopack (Next/OpenNext) consumers: star re-exports through this barrel
+// don't reliably resolve to live bindings under Turbopack (a transpiled-workspace-package + `export *`
+// combination yields `undefined` for the named import at runtime — see `@webhook-co/ui/src/index.ts`,
+// which uses explicit re-exports "so bundlers resolve every name reliably"). esbuild/wrangler/tsup
+// consumers (api/mcp/cli/db/engine) are unaffected. A Next app that needs just one symbol should import
+// the leaf subpath (e.g. `@webhook-co/contract/capability`, as `apps/web` does). If a Turbopack app ever
+// needs the whole barrel, convert these `export *` lines to explicit `export { … } from` first.
 export * from "./capability";
 export * from "./target";
 export * from "./auth";
