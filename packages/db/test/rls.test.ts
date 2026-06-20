@@ -504,7 +504,7 @@ describe("api_keys credential extension (0014)", () => {
     ).rejects.toThrow(/foreign key|violates/i);
   });
 
-  it("the authn cold-path column grant adds `audience` only (not grant_id/owner_type/sso_authorized)", async () => {
+  it("the authn cold-path column grant adds `audience` (0014) + `grant_id` (0018), not owner_type/sso_authorized", async () => {
     const [g] = await owner<
       {
         key_hash: boolean;
@@ -521,7 +521,7 @@ describe("api_keys credential extension (0014)", () => {
              has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'sso_authorized', 'SELECT') as sso_authorized`;
     expect(g.key_hash).toBe(true); // from 0009
     expect(g.audience).toBe(true); // added by 0014
-    expect(g.grant_id).toBe(false);
+    expect(g.grant_id).toBe(true); // added by 0018 (the /revoke whk_→grant cross-org lookup)
     expect(g.owner_type).toBe(false);
     expect(g.sso_authorized).toBe(false);
   });

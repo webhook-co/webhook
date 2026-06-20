@@ -9,6 +9,7 @@ import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/cred
 import { mintScopedKey, revokeGrant } from "../src/grants";
 import {
   consumeRefreshToken,
+  findRefreshTokenGrant,
   mintRefreshToken,
   revokeRefreshTokensForGrant,
 } from "../src/refresh-token";
@@ -306,5 +307,39 @@ describe("revokeRefreshTokensForGrant", () => {
     expect(count).toBe(2);
     expect(await consumeRefreshToken(app, a.plaintext, hasher, REFRESH_TTL)).toBeNull();
     expect(await consumeRefreshToken(app, b.plaintext, hasher, REFRESH_TTL)).toBeNull();
+  });
+});
+
+describe("findRefreshTokenGrant (the /revoke rtk_ -> grant resolver)", () => {
+  it("resolves a handle to its grant — even after it's consumed (no status filter, idempotent revoke)", async () => {
+    const orgId = randomUUID();
+    const grantId = await seedGrant(orgId);
+    const minted = await mintRefreshToken(
+      app,
+      { orgId, grantId, audience: API, ttlSeconds: REFRESH_TTL },
+      hasher,
+    );
+    expect(await findRefreshTokenGrant(app, minted.plaintext, hasher)).toEqual({ orgId, grantId });
+    // After consume (used_at set) the handle still resolves to its grant — /revoke must find it.
+    await consumeRefreshToken(app, minted.plaintext, hasher, REFRESH_TTL);
+    expect(await findRefreshTokenGrant(app, minted.plaintext, hasher)).toEqual({ orgId, grantId });
+  });
+
+  it("returns null for a malformed / unknown / tampered-org handle", async () => {
+    const orgId = randomUUID();
+    const grantId = await seedGrant(orgId);
+    const minted = await mintRefreshToken(
+      app,
+      { orgId, grantId, audience: API, ttlSeconds: REFRESH_TTL },
+      hasher,
+    );
+    expect(await findRefreshTokenGrant(app, "not-a-handle", hasher)).toBeNull();
+    expect(await findRefreshTokenGrant(app, `rtk_${randomUUID()}_x`, hasher)).toBeNull();
+    // Swapping the embedded org breaks the hash (it covers the whole plaintext) → no match.
+    const otherOrg = randomUUID();
+    await seedGrant(otherOrg);
+    expect(
+      await findRefreshTokenGrant(app, minted.plaintext.replace(orgId, otherOrg), hasher),
+    ).toBeNull();
   });
 });
