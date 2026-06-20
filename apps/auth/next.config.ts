@@ -7,10 +7,11 @@ const nextConfig: NextConfig = {
   // The design system ships as TypeScript source; let Next transpile it.
   transpilePackages: ["@webhook-co/ui", "@webhook-co/shared"],
   reactStrictMode: true,
+  // The Better Auth runtime + the node-postgres driver use Node built-ins; keep them external so Next
+  // resolves their server/workerd export path at runtime instead of trying to bundle them (A1b-1).
+  serverExternalPackages: ["better-auth", "pg"],
 };
 
-// Lane C adds `serverExternalPackages` (e.g. the better-auth runtime / PG driver / jose) here when the
-// runtime auth Worker imports them, so Next bundles their workerd export path rather than the Node one.
 initOpenNextCloudflareForDev();
 
 export default nextConfig;
