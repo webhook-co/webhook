@@ -9,10 +9,12 @@
 // It IS type-checked (unlike worker.ts, which is excluded for the generated .open-next import). The runtime
 // types (env/ctx/handler) are kept structural so no Workers-global lib is needed under the DOM tsconfig.
 
+import { makeRevokeDeps } from "./revoke-deps";
+import { handleRevokeRequest } from "./revoke-route";
 import { redeemAuthCode, redeemRefresh } from "./token-core";
 import { makeTokenDeps } from "./token-deps";
 import { handleTokenRequest } from "./token-route";
-import { readTokenEnv } from "../runtime/env";
+import { readRevokeEnv, readTokenEnv } from "../runtime/env";
 
 /** The minimal shape of a Worker fetch handler (the generated OpenNext handler + what we export). */
 export interface FetchHandler {
@@ -24,20 +26,28 @@ export interface ExecutionLike {
   waitUntil: (promise: Promise<unknown>) => void;
 }
 
+/** Drain a per-request pool after the response — never blocking it; a drain failure goes to observability. */
+function drain(ctx: ExecutionLike, close: () => Promise<void>, event: string): void {
+  ctx.waitUntil(
+    close().catch((error: unknown) =>
+      console.log(JSON.stringify({ message: event, error: String(error) })),
+    ),
+  );
+}
+
 /**
- * Wrap the OpenNext handler: intercept Lane C's frozen /token (POST), delegate everything else. The
- * per-request webhook_app pool is drained after the response via waitUntil — never blocking it, a drain
- * failure going to observability rather than vanishing.
+ * Wrap the OpenNext handler: intercept Lane C's frozen issuer endpoints (POST /token, POST /revoke) —
+ * which use the provider helpers / cross-org credential resolution and so must run in the wrangler layer —
+ * and delegate everything else to OpenNext (the pages, /api/auth/*, the /authorize consent UI).
  */
 export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHandler {
   return {
     async fetch(request, env, ctx) {
       const url = new URL(request.url);
+      const rawEnv = env as Record<string, unknown>;
+
       if (request.method === "POST" && url.pathname === "/token") {
-        const { authCode, refresh, close } = await makeTokenDeps(
-          readTokenEnv(env as Record<string, unknown>),
-          request.url,
-        );
+        const { authCode, refresh, close } = await makeTokenDeps(readTokenEnv(rawEnv), request.url);
         try {
           return await handleTokenRequest(
             {
@@ -47,15 +57,19 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
             request,
           );
         } finally {
-          ctx.waitUntil(
-            close().catch((error: unknown) =>
-              console.log(
-                JSON.stringify({ message: "token.pool_close_failed", error: String(error) }),
-              ),
-            ),
-          );
+          drain(ctx, close, "token.pool_close_failed");
         }
       }
+
+      if (request.method === "POST" && url.pathname === "/revoke") {
+        const { deps, close } = await makeRevokeDeps(readRevokeEnv(rawEnv));
+        try {
+          return await handleRevokeRequest(deps, request);
+        } finally {
+          drain(ctx, close, "revoke.pool_close_failed");
+        }
+      }
+
       return openNextHandler.fetch(request, env, ctx);
     },
   };

@@ -1,6 +1,6 @@
 # ADR 0029 — the OAuth-issuer route layer: `/token` at the wrangler `defaultHandler`, not a Next route
 
-- status: accepted (A2b-2b — the auth-code `/token` route; **A2b-3** — the refresh-token grant, see below, so `/token` now serves both grants). `/revoke` (A2b-4) and the `/authorize` consent→mint (A3) inherit this layer.
+- status: accepted (A2b-2b — the auth-code `/token` route; **A2b-3** — the refresh-token grant; **A2b-4** — the RFC 7009 `/revoke` endpoint, see below). The `/authorize` consent→mint (A3) inherits this layer.
 - date: 2026-06-20
 - scope: `apps/auth/src/issuer/{token-route,token-deps,token-error,issuer-handler}.ts` + `apps/auth/src/worker.ts` (the mount) + `apps/auth/src/runtime/env.ts` (`readTokenEnv`) + `packages/db/src/orgs.ts` (`isOrgMember`); 3 seam-signature refinements to `token-core.ts`.
 - relates: ADR-0024 (Option-B token issuance — this realizes its `/token`), ADR-0028 (the refresh-token store this wires), ADR-0021 (OpenNext-on-Workers — the bundling constraint that forces this layer), ADR-0010 (auth foundation r5/r7), `internal/build-plans/lane-c-auth-identity-backend.md` §2.
@@ -90,8 +90,21 @@ Pinned in a comment on the `revokeProviderGrant` seam.
   keys are excluded (future per-key revocation withdraws that scope); EXPIRED keys are kept (the
   full-consent first key expires at the 24h key TTL — dropping it would lose the ceiling). The refresh mint
   is audited via `mintKeyForGrant`'s `key_minted`; grant status+expiry is gated in `consumeRefreshToken`.
+- **A2b-4 — the RFC 7009 `/revoke` endpoint (DONE, extends the ADR).** Another wrangler-layer intercept
+  (POST `/revoke`; the provider's revocation is at `/oauth/token`, so `/revoke` is free). A2b-4a shipped the
+  DB primitives (`findApiKeyGrant`/`findRefreshTokenGrant`, migration 0018); A2b-4b is the endpoint: a pure
+  `handleRevokeRequest` (discriminate the token by PREFIX — `whk_`→access resolver, `rtk_`→refresh resolver;
+  resolve the grant; `revokeGrantAndEvict`; **always 200** per RFC 7009 except a missing `token`→400, never
+  leaking token state) + `makeRevokeDeps` (revokeGrant cascade + `revokeRefreshTokensForGrant` + best-effort
+  `KV_AUTHZ.delete(credentialCacheKey(hash))` — DB-commit-authoritative, a missed evict self-heals at the
+  cache TTL). An attacker can only revoke a grant they hold a token for (hash-keyed resolution; no forgeable
+  grant/org input). New env: `readRevokeEnv` (HYPERDRIVE_AUTHN + HYPERDRIVE_TENANT + CREDENTIAL_PEPPER +
+  AUDIT_CHAIN_HMAC_KEY + KV_AUTHZ); `KV_AUTHZ` bound in `wrangler.jsonc`. **Deferred (must-before-live, with
+  the magic-link rate-limit):** `/token` + `/revoke` are unauthenticated DB-touching endpoints → need durable
+  edge rate-limiting + a request-size cap before public routing (the deploy/rate-limit slice).
 - **The deploy slice MUST bind** `HYPERDRIVE_TENANT`, `CREDENTIAL_PEPPER`, `AUDIT_CHAIN_HMAC_KEY`, `OAUTH_KV`
-  before `/token` is routed (`readTokenEnv` fails closed without them; named in `wrangler.jsonc`).
+  before `/token` is routed (`readTokenEnv` fails closed without them; named in `wrangler.jsonc`) — and
+  `HYPERDRIVE_AUTHN` + `KV_AUTHZ` additionally before `/revoke` is routed (`readRevokeEnv`).
 - **Test posture:** the route-core + `mapProviderTokenError` + `isOrgMember` + the seam-arg assertions are
   unit/db-tested; the deps builder + `issuer-handler` dispatch are I/O glue, verified by `build:cf` /
   `deploy:dry` (the bundle composes — 7.9 MB) — an accepted gap (no testable logic skipped).
