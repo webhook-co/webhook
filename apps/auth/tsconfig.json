@@ -10,7 +10,15 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      // db + shared are Node/Workers-typed (node:crypto / WebCrypto over Uint8Array). This is a DOM-lib
+      // Next app, so consume their BUILT output, not source: tsc resolves the extensionless target to
+      // index.d.ts (clean types — no re-checking their crypto under DOM lib) and turbopack resolves it to
+      // index.js (real runtime). turbo builds them first (^build). See ADR-0027 / the tsconfig boundary.
+      "@webhook-co/db": ["../../packages/db/dist/index"],
+      "@webhook-co/shared": ["../../packages/shared/dist/index"],
+      "@webhook-co/contract": ["../../packages/contract/dist/index"],
+      "@webhook-co/webhooks-spec": ["../../packages/webhooks-spec/dist/index"]
     }
   },
   // The Next-on-OpenNext app (DOM/Workers world). `src/auth.ts` is the NODE-context schema generator

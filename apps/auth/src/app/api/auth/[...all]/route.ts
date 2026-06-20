@@ -11,7 +11,10 @@ import { readAuthEnv } from "@/runtime/env";
 
 async function handle(request: Request): Promise<Response> {
   const { env, ctx } = await getCloudflareContext({ async: true });
-  const { handler, close } = makeAuth(readAuthEnv(env as unknown as Record<string, unknown>));
+  const { handler, close } = await makeAuth(
+    readAuthEnv(env as unknown as Record<string, unknown>),
+    ctx,
+  );
   try {
     return await handler(request);
   } finally {
