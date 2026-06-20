@@ -19,6 +19,14 @@ describe("oauthIssuerConfig", () => {
     expect(oauthIssuerConfig.allowPlainPKCE).toBe(false);
   });
 
+  it("carries an empty apiHandlers (pure issuer) — the provider ctor throws without a handler config", () => {
+    // The OAuthProvider/getOAuthApi constructor REQUIRES apiRoute+apiHandler OR apiHandlers, else it throws
+    // at construction (not catchable by deploy:dry/build:cf — both bundle-only). {} = zero protected routes
+    // (everything falls through to defaultHandler) while satisfying the ctor. Locking it here so a removal
+    // can't silently reintroduce the module-construction throw.
+    expect(oauthIssuerConfig.apiHandlers).toEqual({});
+  });
+
   it("advertises exactly the CAPABILITY_REGISTRY scopes (the SoT) — sorted, deduped, no keys:manage", () => {
     // Pinned to the exact derived set so a drift between discovery and the mint path fails CI. These are
     // the distinct CAPABILITY_REGISTRY scopes; `keys:manage` (reserved, never granted) is absent.

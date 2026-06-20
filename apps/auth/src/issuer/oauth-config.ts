@@ -20,6 +20,14 @@ const CAPABILITY_SCOPES = [
 ].sort();
 
 export const oauthIssuerConfig = {
+  // Pure issuer = NO protected API routes (auth. is the authorization server, not a resource server). But
+  // the provider's constructor (used by `new OAuthProvider` AND `getOAuthApi`) REQUIRES a handler config —
+  // it throws "Must provide either apiRoute + apiHandler OR apiHandlers" when neither is set (oauth-provider
+  // .js ctor). An empty `apiHandlers: {}` satisfies it (truthy) while registering zero API routes, so
+  // everything still falls through to defaultHandler. WITHOUT this the Worker throws at module construction
+  // (deploy:dry is bundle-only + getOAuthApi can't load under vitest, so the gate can't catch a regression
+  // — the lock test in oauth-config.test.ts guards it). Do not remove.
+  apiHandlers: {},
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/oauth/token",
   // SECURITY (A3): DCR is open by default (disallowPublicClientRegistration unset → public clients may
