@@ -1,6 +1,6 @@
 # ADR 0029 — the OAuth-issuer route layer: `/token` at the wrangler `defaultHandler`, not a Next route
 
-- status: accepted (A2b-2b — the frozen `/token` auth-code route + the real provider/Lane B/refresh-store seams). The refresh-token grant (A2b-3), `/revoke` (A2b-4), and the `/authorize` consent→mint (A3) inherit this layer.
+- status: accepted (A2b-2b — the auth-code `/token` route; **A2b-3** — the refresh-token grant, see below, so `/token` now serves both grants). `/revoke` (A2b-4) and the `/authorize` consent→mint (A3) inherit this layer.
 - date: 2026-06-20
 - scope: `apps/auth/src/issuer/{token-route,token-deps,token-error,issuer-handler}.ts` + `apps/auth/src/worker.ts` (the mount) + `apps/auth/src/runtime/env.ts` (`readTokenEnv`) + `packages/db/src/orgs.ts` (`isOrgMember`); 3 seam-signature refinements to `token-core.ts`.
 - relates: ADR-0024 (Option-B token issuance — this realizes its `/token`), ADR-0028 (the refresh-token store this wires), ADR-0021 (OpenNext-on-Workers — the bundling constraint that forces this layer), ADR-0010 (auth foundation r5/r7), `internal/build-plans/lane-c-auth-identity-backend.md` §2.
@@ -78,9 +78,18 @@ Pinned in a comment on the `revokeProviderGrant` seam.
 
 ## consequences
 
-- **A2b-3 (refresh) is a pure wiring slice:** add `RefreshDeps` (the store's `consumeRefreshToken` +
-  `listApiKeysForGrant` scopes + `mintKeyForGrant`) + the `listGrantScopes(grantId)` → `(grantId, orgId)`
-  seam refinement; the route-core already dispatches `refresh_token`.
+- **A2b-3 — the refresh grant (DONE, this extends the ADR).** A pure wiring slice: `RefreshDeps` in
+  token-deps (`consumeRefresh`→`consumeRefreshToken`; `listGrantScopes`→`listApiKeysForGrant` scope union;
+  `mintKeyForGrant`→Lane B) + `redeemRefresh` injected into the issuer dispatch; the route-core already
+  dispatched `refresh_token`. **Two** token-core seam refinements (not one — FrozenTokenBody untouched):
+  `listGrantScopes(grantId)` → `(grantId, orgId)` AND `mintKeyForGrant({grantId,scopes,ttlSeconds})` →
+  `({grantId,orgId,audience,scopes,ttlSeconds})` — both thread the grant's org+audience from the consumed
+  refresh handle, never the request, so a refresh can't retarget org or audience. **Consent-scope source:**
+  the union of the grant's **non-revoked** api_keys' scopes (the first auth-code key anchors the full
+  consent; refreshes only narrow → re-widening tops out at the original consent, never beyond). Revoked
+  keys are excluded (future per-key revocation withdraws that scope); EXPIRED keys are kept (the
+  full-consent first key expires at the 24h key TTL — dropping it would lose the ceiling). The refresh mint
+  is audited via `mintKeyForGrant`'s `key_minted`; grant status+expiry is gated in `consumeRefreshToken`.
 - **The deploy slice MUST bind** `HYPERDRIVE_TENANT`, `CREDENTIAL_PEPPER`, `AUDIT_CHAIN_HMAC_KEY`, `OAUTH_KV`
   before `/token` is routed (`readTokenEnv` fails closed without them; named in `wrangler.jsonc`).
 - **Test posture:** the route-core + `mapProviderTokenError` + `isOrgMember` + the seam-arg assertions are

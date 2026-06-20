@@ -143,13 +143,22 @@ export interface RefreshDeps {
   consumeRefresh: (
     refreshToken: string,
   ) => Promise<{ grantId: string; orgId: string; audience: string; newRefresh: string } | null>;
-  /** The scopes the grant was originally consented for (its child api_keys rows). */
-  listGrantScopes: (grantId: string) => Promise<string[]>;
-  mintKeyForGrant: (input: { grantId: string; scopes: string[]; ttlSeconds: number }) => Promise<{
-    plaintext: string;
-    keyId: string;
-    expiresAt: Date;
-  }>;
+  /**
+   * The scopes the grant was originally consented for (the union of its child api_keys rows). Takes the
+   * grant's org because the lookup is org-scoped (RLS); the org comes from the consumed refresh handle.
+   */
+  listGrantScopes: (grantId: string, orgId: string) => Promise<string[]>;
+  /**
+   * Re-mint a key on the grant. Takes the grant's org + audience (org-scoped mint; the per-key audience is
+   * the grant's stored audience) — both from the consumed refresh handle, never the request.
+   */
+  mintKeyForGrant: (input: {
+    grantId: string;
+    orgId: string;
+    audience: string;
+    scopes: string[];
+    ttlSeconds: number;
+  }) => Promise<{ plaintext: string; keyId: string; expiresAt: Date }>;
   log?: LogFn;
 }
 
@@ -299,7 +308,7 @@ export async function redeemRefresh(deps: RefreshDeps, req: RefreshRequest): Pro
     return { kind: "error", error: "invalid_target", description: "audience not permitted" };
   }
 
-  const consented = await deps.listGrantScopes(grant.grantId);
+  const consented = await deps.listGrantScopes(grant.grantId, grant.orgId);
   const requested = parseScopeList(req.scope);
   // Absent `scope` ⇒ keep the full consented set; otherwise narrow to the requested subset. Never widen.
   const base = requested.length > 0 ? requested : consented;
@@ -310,6 +319,8 @@ export async function redeemRefresh(deps: RefreshDeps, req: RefreshRequest): Pro
 
   const minted = await deps.mintKeyForGrant({
     grantId: grant.grantId,
+    orgId: grant.orgId,
+    audience: grant.audience,
     scopes,
     ttlSeconds: deps.keyTtlSeconds,
   });
