@@ -4,8 +4,10 @@ import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 const nextConfig: NextConfig = {
-  // The design system ships as TypeScript source; let Next transpile it.
-  transpilePackages: ["@webhook-co/ui", "@webhook-co/shared"],
+  // These workspace packages ship as TypeScript source; let Next transpile them. `@webhook-co/contract`
+  // is consumed only by server modules (the create-key action + the gated page read `CAPABILITY_SCOPES`);
+  // the client manager takes its scope list as a prop, so the registry never enters a browser bundle.
+  transpilePackages: ["@webhook-co/ui", "@webhook-co/shared", "@webhook-co/contract"],
   // Linting is owned by the repo-wide ESLint gate (`pnpm lint`); Next 16 no longer
   // runs lint at build time, so there is exactly one lint authority.
   reactStrictMode: true,
