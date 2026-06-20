@@ -90,7 +90,8 @@ allowedScopes` intersection is that duty discharged, at the Lane C layer.
   token → re-login. This is inherent to single-use rotation; the no-double-mint security win dominates.
 - **A2b carries the real-seam follow-ups (flagged):** (a) `consumeRefresh` must be a genuinely atomic
   SQL `UPDATE … RETURNING` (the pure-core test proves single-use *semantics* sequentially; true
-  concurrency is an A2b integration test); (b) decide whether the provider grant is revoked or retained
+  concurrency is an A2b integration test) — **realized in ADR-0028 (the `auth_refresh_token` store,
+  A2b-2a), which also threads `orgId`/`audience` into the `issueRefreshToken` seam**; (b) decide whether the provider grant is revoked or retained
   on the `pending_approval` path (dormant in v1 — approval defaults off, ADR-0019 A0c); (c) `rollbackMint`
   maps to `revokeGrant`; (d) the provider × OpenNext mount itself.
 - **Tested** (pure-logic, no DB, `apps/auth/src/issuer/token-core.test.ts`, 25 cases): the happy auth-code

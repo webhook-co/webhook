@@ -17,6 +17,7 @@ export * from "./audit-append";
 export * from "./auth-audit";
 export * from "./auto-approve";
 export * from "./grants";
+export * from "./refresh-token";
 export * from "./credential";
 export * from "./credential-cache";
 export * from "./credential-resolver";
