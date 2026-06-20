@@ -1,10 +1,10 @@
 import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { CreateKeyResult } from "@/server/credential-actions";
-import type { CredentialsResult } from "@/server/credentials";
+import type { ApiKeyItem, CredentialsResult, DeviceGrant } from "@/server/credentials";
 
 import { CredentialsManager } from "./credentials-manager";
 
@@ -153,5 +153,167 @@ describe("CredentialsManager", () => {
     );
     expect(screen.queryByRole("button", { name: /create key/i })).not.toBeInTheDocument();
     expect(screen.getByText(/don't have permission/i)).toBeInTheDocument();
+  });
+});
+
+const activeKey: ApiKeyItem = {
+  id: "key_live",
+  name: "Production signer",
+  start: "whsec_9b3a…e21f",
+  scopes: ["events:read"],
+  createdAt: new Date("2026-04-12T00:00:00Z"),
+  lastUsedAt: null,
+  expiresAt: null,
+  revokedAt: null,
+};
+
+const revokedKey: ApiKeyItem = {
+  ...activeKey,
+  id: "key_dead",
+  name: "Old key",
+  revokedAt: new Date("2026-01-01T00:00:00Z"),
+};
+
+const childKey: ApiKeyItem = {
+  ...activeKey,
+  id: "key_child",
+  name: "wbhk cli",
+  start: "whk_2aF9…7c1d",
+};
+
+const activeGrant: DeviceGrant = {
+  id: "grant_live",
+  status: "active",
+  authMethod: "device_code",
+  deviceName: "Dana's MacBook",
+  createdAt: new Date("2026-05-01T00:00:00Z"),
+  lastUsedAt: null,
+  approvedAt: new Date("2026-05-01T00:00:00Z"),
+  revokedAt: null,
+  expiresAt: null,
+  keys: [childKey],
+};
+
+const expiredGrant: DeviceGrant = {
+  ...activeGrant,
+  id: "grant_old",
+  status: "expired",
+  deviceName: "ci-runner",
+  keys: [],
+};
+
+type RevokeFn = (id: string) => Promise<{ ok: true } | { ok: false; error: string }>;
+
+function renderRevocable(
+  result: CredentialsResult,
+  actions: { revokeKey?: RevokeFn; revokeGrant?: RevokeFn } = {},
+) {
+  const revokeKey = actions.revokeKey ?? vi.fn(async () => ({ ok: true as const }));
+  const revokeGrant = actions.revokeGrant ?? vi.fn(async () => ({ ok: true as const }));
+  render(
+    <CredentialsManager
+      initialResult={result}
+      createKey={vi.fn()}
+      revokeKey={revokeKey}
+      revokeGrant={revokeGrant}
+      scopes={CAPABILITY_SCOPES}
+    />,
+  );
+  return { revokeKey, revokeGrant };
+}
+
+describe("CredentialsManager — revoke", () => {
+  it("revokes a standalone key after confirmation", async () => {
+    const user = userEvent.setup();
+    const { revokeKey } = renderRevocable({ status: "ok", devices: [], keys: [activeKey] });
+
+    await user.click(screen.getByRole("button", { name: `Revoke ${activeKey.name}` }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Revoke key" }));
+
+    expect(revokeKey).toHaveBeenCalledWith(activeKey.id);
+    // the row now reads as dead and the revoke affordance is gone
+    expect(await screen.findByText("revoked")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: `Revoke ${activeKey.name}` }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("cascades a device-grant revoke to its child keys", async () => {
+    const user = userEvent.setup();
+    const { revokeGrant } = renderRevocable({ status: "ok", devices: [activeGrant], keys: [] });
+
+    await user.click(screen.getByRole("button", { name: `Revoke ${activeGrant.deviceName}` }));
+    const dialog = screen.getByRole("dialog");
+    // the confirm spells out the cascade
+    expect(within(dialog).getByText(/1 key/i)).toBeInTheDocument();
+    await user.click(within(dialog).getByRole("button", { name: "Revoke device" }));
+
+    expect(revokeGrant).toHaveBeenCalledWith(activeGrant.id);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // both the grant badge and its one child key now read revoked
+    expect(screen.getAllByText("revoked")).toHaveLength(2);
+  });
+
+  it("offers no revoke affordance for already-dead credentials", () => {
+    renderRevocable({ status: "ok", devices: [expiredGrant], keys: [revokedKey] });
+    expect(
+      screen.queryByRole("button", { name: `Revoke ${revokedKey.name}` }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: `Revoke ${expiredGrant.deviceName}` }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves the credential intact when the confirm is cancelled", async () => {
+    const user = userEvent.setup();
+    const { revokeKey } = renderRevocable({ status: "ok", devices: [], keys: [activeKey] });
+
+    await user.click(screen.getByRole("button", { name: `Revoke ${activeKey.name}` }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: /cancel/i }));
+
+    expect(revokeKey).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: `Revoke ${activeKey.name}` })).toBeInTheDocument();
+    expect(screen.getByText("active")).toBeInTheDocument();
+  });
+
+  it("surfaces an error and keeps the key active when the revoke fails", async () => {
+    const user = userEvent.setup();
+    const revokeKey = vi.fn(async () => ({
+      ok: false as const,
+      error: "Could not revoke the key.",
+    }));
+    renderRevocable({ status: "ok", devices: [], keys: [activeKey] }, { revokeKey });
+
+    await user.click(screen.getByRole("button", { name: `Revoke ${activeKey.name}` }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Revoke key" }));
+
+    expect(await within(dialog).findByText("Could not revoke the key.")).toBeInTheDocument();
+    // still revocable — the confirm stays open
+    expect(within(dialog).getByRole("button", { name: "Revoke key" })).toBeInTheDocument();
+  });
+
+  it("cannot be dismissed while a revoke is in flight (no swallowed failure)", async () => {
+    const user = userEvent.setup();
+    let settle: (v: { ok: true }) => void = () => {};
+    const revokeKey = vi.fn(
+      () =>
+        new Promise<{ ok: true }>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    renderRevocable({ status: "ok", devices: [], keys: [activeKey] }, { revokeKey });
+
+    await user.click(screen.getByRole("button", { name: `Revoke ${activeKey.name}` }));
+    await user.click(
+      within(screen.getByRole("dialog")).getByRole("button", { name: "Revoke key" }),
+    );
+
+    // mid-flight Escape must NOT close the confirm — otherwise a later failure's error is swallowed
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    await act(async () => settle({ ok: true })); // let the in-flight action settle cleanly
   });
 });
