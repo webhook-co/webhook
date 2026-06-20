@@ -1,4 +1,8 @@
-# ADR 0024 — the credential-management dashboard (read · create · revoke)
+# ADR 0025 — the credential-management dashboard (read · create · revoke)
+
+> Renumbered 0024 → 0025 to resolve a duplicate: Lane C's
+> [0024](0024-option-b-token-issuance-core.md) (merged first, PR #119) also claimed 0024. This ADR
+> (E6c, PR #121) was branched before that landed and nothing references it by number, so it yields.
 
 - status: accepted
 - date: 2026-06-20

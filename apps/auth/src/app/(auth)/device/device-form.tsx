@@ -1,0 +1,109 @@
+"use client";
+
+import { Banner, Button, Field } from "@webhook-co/ui";
+import * as React from "react";
+
+/**
+ * The seam between the device-verification UI and Lane C's device endpoint. The live impl POSTs the
+ * user-code and, on success, redirects to `/consent` (where the user approves the grant); the mock
+ * resolves. E4 ships {@link mockDeviceActions} so the screen is buildable before Lane C exists; E8
+ * swaps in the live client without touching this component.
+ */
+export interface DeviceActions {
+  /** Verify a device user-code. Resolves once accepted; rejects on an unknown/expired code. */
+  verifyCode(userCode: string): Promise<void>;
+}
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Mock seam for E4 — replaced by the live client in E8. Verifies nothing. */
+export const mockDeviceActions: DeviceActions = {
+  async verifyCode() {
+    await wait(500);
+  },
+};
+
+/** The canonical user-code shape: two groups of four, e.g. `WXYZ-1234`. */
+const CODE_RE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+
+/** Forgive case, spaces, and a missing dash; canonicalize to `XXXX-XXXX`. */
+function normalizeCode(raw: string): string {
+  const cleaned = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  return cleaned.length === 8 ? `${cleaned.slice(0, 4)}-${cleaned.slice(4)}` : cleaned;
+}
+
+export function DeviceForm({ actions = mockDeviceActions }: { actions?: DeviceActions }) {
+  const [code, setCode] = React.useState("");
+  const [pending, setPending] = React.useState(false);
+  const [verified, setVerified] = React.useState(false);
+  const [codeError, setCodeError] = React.useState<string | null>(null);
+  const [formError, setFormError] = React.useState<string | null>(null);
+
+  async function handleSubmit(event: React.FormEvent) {
+    event.preventDefault();
+    setCodeError(null);
+    setFormError(null);
+    const normalized = normalizeCode(code);
+    if (!CODE_RE.test(normalized)) {
+      setCodeError("Enter the 8-character code shown on your device.");
+      return;
+    }
+    setPending(true);
+    try {
+      await actions.verifyCode(normalized);
+      setVerified(true);
+    } catch {
+      setFormError("That code isn't valid or has expired. Check your device and try again.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (verified) {
+    return (
+      <div className="flex flex-col gap-4" role="status">
+        <div className="flex flex-col gap-1.5">
+          <h1 className="text-2xl font-semibold tracking-heading text-fg">Device verified</h1>
+          <p className="leading-snug text-fg-secondary">
+            Review what the device is asking for, then approve or deny the request.
+          </p>
+        </div>
+        <Button asChild>
+          <a href="/consent">Continue to review</a>
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-1.5">
+        <h1 className="text-2xl font-semibold tracking-heading text-fg">Connect a device</h1>
+        <p className="leading-snug text-fg-secondary">
+          Enter the code shown on your device to continue.
+        </p>
+      </div>
+
+      {formError ? <Banner tone="danger">{formError}</Banner> : null}
+
+      <form className="flex flex-col gap-3" onSubmit={handleSubmit} noValidate>
+        <Field
+          label="Device code"
+          placeholder="WXYZ-1234"
+          autoComplete="one-time-code"
+          autoCapitalize="characters"
+          autoCorrect="off"
+          spellCheck={false}
+          className="font-mono tracking-[0.2em]"
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
+          error={codeError ?? undefined}
+          disabled={pending}
+        />
+        <Button type="submit" disabled={pending}>
+          {pending ? "Verifying…" : "Continue"}
+        </Button>
+      </form>
+    </div>
+  );
+}
