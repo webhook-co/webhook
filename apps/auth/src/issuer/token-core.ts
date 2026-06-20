@@ -48,13 +48,19 @@ export type RedeemResult =
   | { kind: "pending"; grantId: string; interval: number }
   | { kind: "error"; error: OAuthErrorCode; description?: string };
 
-/** Consent-recorded mint inputs, stashed in the provider grant's encrypted `props` at `/authorize`. */
+/**
+ * Consent-recorded mint inputs, stashed in the provider grant's encrypted `props` at `/authorize`. This is
+ * the canonical shape for BOTH halves of the G1 cross-slice contract: A3's consent-core WRITES it into the
+ * grant (completeAuthorization props); this module READS it back via unwrapToken. One definition so the
+ * writer and reader can't drift. `device.name` is required when `device` is present (the consent contract
+ * guarantees it).
+ */
 export interface ConsentProps {
   orgId: string;
   userId: string;
   scopes: string[];
   audience: string;
-  device?: { name?: string };
+  device?: { name: string };
 }
 
 type LogFn = (event: string, fields?: Record<string, unknown>) => void;
