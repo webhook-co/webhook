@@ -29,8 +29,15 @@ export default async function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>API keys &amp; devices</CardTitle>
-          <CardDescription>Credential management lands in a later slice.</CardDescription>
+          <CardDescription>
+            Manage the keys and devices authorized for your organization.
+          </CardDescription>
         </CardHeader>
+        <CardContent>
+          <Button asChild variant="secondary">
+            <a href="/settings/credentials">Manage credentials</a>
+          </Button>
+        </CardContent>
       </Card>
 
       <form action={logout}>
