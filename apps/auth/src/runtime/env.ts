@@ -124,7 +124,6 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
   return resolved;
 }
 
-export const PROD_AUTH_BASE_URL = "https://auth.webhook.co";
-export const APP_BASE_URL = "https://app.webhook.co";
-/** The verified Resend sender (mail.webhook.co; tracking off — see magic-link.ts). */
-export const MAGIC_LINK_FROM = "login@mail.webhook.co";
+// URL/string constants live in ./urls (dependency-free) so client components can import them without
+// pulling this module's server-only deps into the browser bundle. Re-exported for the runtime's imports.
+export { APP_BASE_URL, MAGIC_LINK_FROM, PROD_AUTH_BASE_URL } from "./urls";
