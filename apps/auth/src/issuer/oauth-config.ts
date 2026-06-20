@@ -8,6 +8,7 @@
 import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
 import { API_RESOURCE } from "@webhook-co/db";
 
+import { validateClientRegistration } from "./dcr";
 import { PROD_AUTH_BASE_URL } from "../runtime/urls";
 
 // The capability scopes the issuer advertises (RFC 8414 scopes_supported + the RFC 9728 PRM below).
@@ -30,11 +31,13 @@ export const oauthIssuerConfig = {
   apiHandlers: {},
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/oauth/token",
-  // SECURITY (A3): DCR is open by default (disallowPublicClientRegistration unset → public clients may
-  // self-register an arbitrary redirect_uri). Acceptable while this issuer is NOT routed; before go-live
-  // A3 MUST add a clientRegistrationCallback that enforces loopback-only redirect_uris for the CLI client
-  // class + rate-limits DCR (consider createClient() for a pre-provisioned CLI client instead of open DCR).
   clientRegistrationEndpoint: "/register",
+  // A3 open-DCR hardening: public registration stays enabled (the CLI is a public client —
+  // disallowPublicClientRegistration unset), but every redirect_uri is validated to be https or an http
+  // loopback literal (127.0.0.1/::1) — rejecting the open-redirect/phishing vector (arbitrary http hosts)
+  // and `localhost` (ADR-0026). See ./dcr. Durable DCR rate-limiting is deferred to the deploy slice.
+  clientRegistrationCallback: (options: { clientMetadata: Record<string, unknown> }) =>
+    validateClientRegistration(options.clientMetadata),
   scopesSupported: [...CAPABILITY_SCOPES],
   allowImplicitFlow: false,
   allowPlainPKCE: false,

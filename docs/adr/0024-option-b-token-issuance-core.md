@@ -147,11 +147,15 @@ issuer **shell** the A2b-2+ `/token`/`/revoke` handlers will mount alongside.
    deploy --dry-run`, both offline/no-auth) instead of just `build:cf`, so the composition — `src/worker.ts`
    wrapping the OpenNext handler — is gated on every PR, not just the OpenNext bundle.
 
-**Deferred to A3 (must-before-live, not must-fix-now — the issuer is not yet routed):** DCR is open by
-default (`disallowPublicClientRegistration` unset). Before this issuer gets a DNS route, A3 adds a
-`clientRegistrationCallback` enforcing loopback-only `redirect_uri`s for the CLI client class + DCR
-rate-limiting (or a pre-provisioned client via `createClient()`). A lock-in test asserts these knobs are
-unset so A3's addition is a deliberate edit, and a call-site `SECURITY (A3)` TODO marks the gap.
+~~**Deferred to A3:** DCR is open by default.~~ **CLOSED by A3a** (`apps/auth/src/issuer/dcr.ts`): a
+`clientRegistrationCallback` now validates every registered `redirect_uri` — **v1 = http loopback literal
+only** (127.0.0.1/::1; rejects remote http [the open-redirect/phishing vector], `localhost` [hijackable,
+ADR-0026], AND remote https — because the consent screen that would gate a remote client is A3-main, not
+yet built, and the CLI only ever needs loopback). Validation reads `url.hostname`, defeating
+userinfo-confusion (`http://127.0.0.1@evil.com` → host `evil.com` → rejected). Public registration stays
+enabled (`disallowPublicClientRegistration` unset); the callback is the gate. **A8 relaxes the policy to
+allow https for confidential clients once the consent screen + DCR rate-limit exist.** Still deferred to
+the deploy slice: durable DCR rate-limiting + consent-screen client-name sanitization (A3-main).
 
 - **Tested** (`apps/auth/src/issuer/oauth-config.test.ts`): the `/oauth/token`-vs-`/token` split; S256-only
   + no-implicit; `scopesSupported` `toEqual` the exact derived set and `=== resourceMetadata.scopes_supported`;
