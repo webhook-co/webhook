@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@better-auth/api-key": "^1.6.19",
+    "@webhook-co/db": "workspace:*",
     "@webhook-co/shared": "workspace:*",
     "@webhook-co/ui": "workspace:*",
     "better-auth": "^1.6.19",
