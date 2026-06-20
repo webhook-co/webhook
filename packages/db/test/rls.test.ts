@@ -615,6 +615,48 @@ describe("catalog-driven RLS coverage", () => {
         and pg_get_userbyid(relowner) = ${DB_ROLES.anchor}`;
     expect(ownedByAnchor[0]?.n).toBe(0);
   });
+
+  it("the auth role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
+    // webhook_auth is the Better Auth runtime role: it manages the global identity tables and,
+    // like every other request-path role, must never be a superuser, never BYPASSRLS, never a
+    // table owner (the identity tables are owned by webhook_owner, created in 0001).
+    const [role] = await owner<{ rolname: string; super: boolean; bypass: boolean }[]>`
+      select rolname, rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.auth}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+
+    const ownedByAuth = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.auth}`;
+    expect(ownedByAuth[0]?.n).toBe(0);
+  });
+
+  it("the auth role holds DML on the identity tables and nothing on tenant or plugin-apikey tables", async () => {
+    // Better Auth (as webhook_auth) does full CRUD on the four global identity tables. It holds
+    // NO privilege on the org-scoped tenant tables (webhook_app's, RLS-enforced) nor on the
+    // plugin `apikey` table (generator-config-only, ADR-0019 — runtime keys are first-party api_keys).
+    const identity = ["user", "session", "account", "verification"] as const;
+    for (const t of identity) {
+      const [p] = await owner<{ s: boolean; i: boolean; u: boolean; d: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.auth}, ${t}, 'SELECT') as s,
+               has_table_privilege(${DB_ROLES.auth}, ${t}, 'INSERT') as i,
+               has_table_privilege(${DB_ROLES.auth}, ${t}, 'UPDATE') as u,
+               has_table_privilege(${DB_ROLES.auth}, ${t}, 'DELETE') as d`;
+      expect([p.s, p.i, p.u, p.d]).toEqual([true, true, true, true]);
+    }
+    const forbidden = ["orgs", "api_keys", "events", "apikey"] as const;
+    for (const t of forbidden) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.auth}, ${t}, 'SELECT')
+             or has_table_privilege(${DB_ROLES.auth}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.auth}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.auth}, ${t}, 'DELETE')) as any`;
+      expect(p.any).toBe(false);
+    }
+  });
 });
 
 describe("webhook_anchor cross-org chain-head read", () => {
