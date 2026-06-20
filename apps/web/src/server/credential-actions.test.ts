@@ -9,7 +9,7 @@ vi.mock("./session", () => ({
   })),
 }));
 
-import { createApiKey } from "./credential-actions";
+import { createApiKey, revokeApiKey, revokeGrant } from "./credential-actions";
 
 describe("createApiKey (mock)", () => {
   it("rejects an empty name", async () => {
@@ -41,5 +41,23 @@ describe("createApiKey (mock)", () => {
       expect(result.key.start).not.toBe(result.plaintext);
       expect(result.key.name).toBe("CI deploy");
     }
+  });
+});
+
+describe("revokeApiKey / revokeGrant (mock)", () => {
+  it("rejects a missing key id", async () => {
+    expect((await revokeApiKey("   ")).ok).toBe(false);
+  });
+
+  it("revokes a key by id", async () => {
+    expect((await revokeApiKey("key_live")).ok).toBe(true);
+  });
+
+  it("rejects a missing grant id", async () => {
+    expect((await revokeGrant("")).ok).toBe(false);
+  });
+
+  it("revokes a grant by id", async () => {
+    expect((await revokeGrant("grant_live")).ok).toBe(true);
   });
 });

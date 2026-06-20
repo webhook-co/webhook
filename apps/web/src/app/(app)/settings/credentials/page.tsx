@@ -2,7 +2,7 @@ import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
 import type { Metadata } from "next";
 
 import { CredentialsManager } from "@/components/credentials-manager";
-import { createApiKey } from "@/server/credential-actions";
+import { createApiKey, revokeApiKey, revokeGrant } from "@/server/credential-actions";
 import { loadCredentials } from "@/server/credentials";
 import { verifySession } from "@/server/session";
 
@@ -26,6 +26,8 @@ export default async function CredentialsPage() {
       <CredentialsManager
         initialResult={result}
         createKey={createApiKey}
+        revokeKey={revokeApiKey}
+        revokeGrant={revokeGrant}
         scopes={CAPABILITY_SCOPES}
       />
     </div>

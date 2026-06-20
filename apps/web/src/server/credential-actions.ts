@@ -48,3 +48,29 @@ export async function createApiKey(input: CreateKeyInput): Promise<CreateKeyResu
 
   return { ok: true, key, plaintext };
 }
+
+export type RevokeResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
+
+/**
+ * Revoke a standalone API key. Mock seam: E8 calls Lane B's revokeApiKey under
+ * withTenant(session.orgId) as webhook_app (it returns the key hash) and then evicts KV_AUTHZ via
+ * resolver.invalidateHash(hash) so the key stops authenticating immediately. Idempotent —
+ * re-revoking an already-revoked key is a no-op.
+ */
+export async function revokeApiKey(keyId: string): Promise<RevokeResult> {
+  await verifySession(); // gate; E8 uses session.orgId for the tenant-scoped revoke
+  if (!keyId.trim()) return { ok: false, error: "Missing key id." };
+  return { ok: true };
+}
+
+/**
+ * Revoke a device grant. The revoke **cascades** to every key minted under it. Mock seam: E8 calls
+ * Lane B's revokeGrant under withTenant (it returns the cascaded `revokedKeyHashes`) and evicts
+ * KV_AUTHZ for each one. The caller reflects the cascade in the UI (the grant + its child keys all
+ * read revoked).
+ */
+export async function revokeGrant(grantId: string): Promise<RevokeResult> {
+  await verifySession();
+  if (!grantId.trim()) return { ok: false, error: "Missing grant id." };
+  return { ok: true };
+}

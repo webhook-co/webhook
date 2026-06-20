@@ -17,15 +17,22 @@ import {
 } from "@webhook-co/ui";
 import * as React from "react";
 
-import type { CreateKeyInput, CreateKeyResult } from "@/server/credential-actions";
-import type { ApiKeyItem, CredentialsResult } from "@/server/credentials";
+import type { CreateKeyInput, CreateKeyResult, RevokeResult } from "@/server/credential-actions";
+import type { ApiKeyItem, CredentialsResult, DeviceGrant } from "@/server/credentials";
 
 import { CredentialsView } from "./credentials-view";
+
+/** What the confirm dialog is currently asking to revoke. */
+type RevokeTarget = { kind: "key"; item: ApiKeyItem } | { kind: "grant"; item: DeviceGrant };
 
 export interface CredentialsManagerProps {
   initialResult: CredentialsResult;
   /** The create-key server action, injected by the gated page. */
   createKey: (input: CreateKeyInput) => Promise<CreateKeyResult>;
+  /** Revoke a standalone API key, injected by the gated page. */
+  revokeKey: (keyId: string) => Promise<RevokeResult>;
+  /** Revoke a device grant (cascades to its keys), injected by the gated page. */
+  revokeGrant: (grantId: string) => Promise<RevokeResult>;
   /**
    * The grantable scopes for the create-key picker, handed down by the gated server page
    * (`CAPABILITY_SCOPES`). Passed as data so the client bundle never imports the
@@ -34,10 +41,38 @@ export interface CredentialsManagerProps {
   scopes: readonly string[];
 }
 
-export function CredentialsManager({ initialResult, createKey, scopes }: CredentialsManagerProps) {
+/** The confirm copy for a revoke, derived from the target (null while the dialog closes). */
+function revokeCopy(target: RevokeTarget | null): { title: string; body: string; confirm: string } {
+  if (target?.kind === "grant") {
+    const n = target.item.keys.length;
+    const keys = n === 0 ? "" : ` and the ${n} key${n === 1 ? "" : "s"} minted under it`;
+    const device = target.item.deviceName ?? "This device";
+    return {
+      title: "Revoke device?",
+      body: `"${device}"${keys} will stop working immediately. This can't be undone.`,
+      confirm: "Revoke device",
+    };
+  }
+  return {
+    title: "Revoke API key?",
+    body: `"${target?.item.name ?? "This key"}" will stop working immediately. This can't be undone.`,
+    confirm: "Revoke key",
+  };
+}
+
+export function CredentialsManager({
+  initialResult,
+  createKey,
+  revokeKey,
+  revokeGrant,
+  scopes,
+}: CredentialsManagerProps) {
   // Mutations only apply to a successful load; error/denied just render the read-only view.
   const [keys, setKeys] = React.useState<readonly ApiKeyItem[]>(
     initialResult.status === "ok" ? initialResult.keys : [],
+  );
+  const [devices, setDevices] = React.useState<readonly DeviceGrant[]>(
+    initialResult.status === "ok" ? initialResult.devices : [],
   );
   const [createOpen, setCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
@@ -46,6 +81,10 @@ export function CredentialsManager({ initialResult, createKey, scopes }: Credent
   const [formError, setFormError] = React.useState<string | null>(null);
   // The just-minted secret, held transiently for the one-time reveal — never persisted to `keys`.
   const [revealed, setRevealed] = React.useState<{ name: string; plaintext: string } | null>(null);
+  // The credential the confirm dialog is asking to revoke, plus its in-flight/error state.
+  const [revoking, setRevoking] = React.useState<RevokeTarget | null>(null);
+  const [revokePending, setRevokePending] = React.useState(false);
+  const [revokeError, setRevokeError] = React.useState<string | null>(null);
 
   if (initialResult.status !== "ok") {
     return <CredentialsView result={initialResult} />;
@@ -89,6 +128,56 @@ export function CredentialsManager({ initialResult, createKey, scopes }: Credent
       setPending(false);
     }
   }
+
+  function requestRevoke(target: RevokeTarget) {
+    setRevokeError(null);
+    setRevoking(target);
+  }
+
+  async function confirmRevoke() {
+    if (!revoking) return;
+    const target = revoking; // stable snapshot across the await
+    setRevokePending(true);
+    setRevokeError(null);
+    try {
+      if (target.kind === "key") {
+        const result = await revokeKey(target.item.id);
+        if (!result.ok) {
+          setRevokeError(result.error);
+          return;
+        }
+        const at = new Date();
+        setKeys((prev) => prev.map((k) => (k.id === target.item.id ? { ...k, revokedAt: at } : k)));
+      } else {
+        const result = await revokeGrant(target.item.id);
+        if (!result.ok) {
+          setRevokeError(result.error);
+          return;
+        }
+        // Reflect Lane B's cascade: the grant and every key minted under it go dead together.
+        const at = new Date();
+        setDevices((prev) =>
+          prev.map((g) =>
+            g.id === target.item.id
+              ? {
+                  ...g,
+                  status: "revoked" as const,
+                  revokedAt: at,
+                  keys: g.keys.map((k) => (k.revokedAt ? k : { ...k, revokedAt: at })),
+                }
+              : g,
+          ),
+        );
+      }
+      setRevoking(null);
+    } catch {
+      setRevokeError("We couldn't revoke it. Please try again.");
+    } finally {
+      setRevokePending(false);
+    }
+  }
+
+  const revokeMsg = revokeCopy(revoking);
 
   return (
     <div className="flex flex-col gap-6">
@@ -155,7 +244,40 @@ export function CredentialsManager({ initialResult, createKey, scopes }: Credent
         </Dialog>
       </div>
 
-      <CredentialsView result={{ status: "ok", devices: initialResult.devices, keys }} />
+      <CredentialsView
+        result={{ status: "ok", devices, keys }}
+        onRevokeKey={(item) => requestRevoke({ kind: "key", item })}
+        onRevokeGrant={(item) => requestRevoke({ kind: "grant", item })}
+      />
+
+      <Dialog
+        open={revoking !== null}
+        onOpenChange={(open) => {
+          // Don't let Escape / outside-click dismiss mid-flight — otherwise a failure that lands
+          // after the close would set an error on an already-closed dialog and be swallowed.
+          if (open || revokePending) return;
+          setRevoking(null);
+          setRevokeError(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{revokeMsg.title}</DialogTitle>
+            <DialogDescription>{revokeMsg.body}</DialogDescription>
+          </DialogHeader>
+          {revokeError ? <Banner tone="danger">{revokeError}</Banner> : null}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary" disabled={revokePending}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button variant="danger" onClick={confirmRevoke} disabled={revokePending}>
+              {revokeMsg.confirm}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={revealed !== null} onOpenChange={(open) => !open && setRevealed(null)}>
         <DialogContent hideCloseButton>
