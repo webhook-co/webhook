@@ -210,6 +210,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@webhook-co/contract':
+        specifier: workspace:*
+        version: link:../../packages/contract
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared
