@@ -84,6 +84,9 @@ describe("redeemAuthCode — happy path", () => {
         resource: API_RESOURCE,
       },
     });
+    // The refresh handle is issued for the minted grant with the consent org + audience (so the store
+    // embeds the org + denormalizes the audience — never from the request body).
+    expect(deps.issueRefreshToken).toHaveBeenCalledWith("g_1", "org_1", API_RESOURCE);
   });
 
   it("passes the configured ttl + the consent device to the mint", async () => {
@@ -183,7 +186,8 @@ describe("redeemAuthCode — revoke the provider grant after mint (G1 / R4)", ()
   it("revokes the provider's grant once the whk_ is minted (kills the opaque access+refresh)", async () => {
     const deps = authCodeDeps();
     await redeemAuthCode(deps, authCodeReq);
-    expect(deps.revokeProviderGrant).toHaveBeenCalledWith("pg_1");
+    // Provider grant is keyed by user → revoked with (providerGrantId, consent userId).
+    expect(deps.revokeProviderGrant).toHaveBeenCalledWith("pg_1", "user_1");
   });
 
   it("does NOT revoke the provider grant if the mint did not succeed", async () => {
@@ -202,7 +206,7 @@ describe("redeemAuthCode — partial failure compensation (MAJOR-B)", () => {
     });
     const result = await redeemAuthCode(deps, authCodeReq);
     expect(result).toMatchObject({ kind: "error", error: "server_error" });
-    expect(deps.rollbackMint).toHaveBeenCalledWith("g_1");
+    expect(deps.rollbackMint).toHaveBeenCalledWith("g_1", "org_1");
     // The provider grant is revoked AFTER the refresh is issued, so a refresh failure must not have
     // killed it (it will TTL out; the opaque token was never delivered to the caller).
     expect(deps.revokeProviderGrant).not.toHaveBeenCalled();

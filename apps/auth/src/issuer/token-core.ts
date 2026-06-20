@@ -95,16 +95,29 @@ export interface AuthCodeDeps {
   >;
   /** Decrypt the provider's opaque token → its grant id + consent props (null = invalid/expired). */
   unwrapToken: (opaque: string) => Promise<{ providerGrantId: string; props: ConsentProps } | null>;
-  /** Revoke the provider's grant (G1) — kills the now-vestigial opaque access + refresh tokens. */
-  revokeProviderGrant: (providerGrantId: string) => Promise<void>;
-  /** Compensation: revoke a just-minted Lane C grant/key if the issuance can't be completed. */
-  rollbackMint: (grantId: string) => Promise<void>;
+  /**
+   * Revoke the provider's grant (G1) — kills the now-vestigial opaque access + refresh tokens. Takes the
+   * consent userId because the provider keys grants by user (its API is `revokeGrant(grantId, userId)`).
+   * CROSS-SLICE INVARIANT (A3 must honor): `props.userId` MUST equal the userId A3's `/authorize` set on
+   * the provider grant — else this best-effort revoke silently no-ops and leaks the vestigial opaque grant
+   * until its KV TTL. The mint still succeeds (the opaque was never delivered), so this can't be caught here.
+   */
+  revokeProviderGrant: (providerGrantId: string, userId: string) => Promise<void>;
+  /**
+   * Compensation: revoke a just-minted Lane C grant/key if the issuance can't be completed. Takes the
+   * grant's org because the revoke is org-scoped (RLS); the org comes from the consent props.
+   */
+  rollbackMint: (grantId: string, orgId: string) => Promise<void>;
   /** Tenancy bind: is the consenting user a member of the grant's org? */
   isOrgMember: (userId: string, orgId: string) => Promise<boolean>;
   /** Mint the first-party `whk_` against the grant lifecycle (may return pending_approval). */
   mintScopedKey: (input: MintInput) => Promise<MintResult>;
-  /** Issue Lane C's own opaque ~90d refresh handle, stored hashed + bound to the Lane C grant. */
-  issueRefreshToken: (grantId: string) => Promise<string>;
+  /**
+   * Issue Lane C's own opaque ~90d refresh handle, stored hashed + bound to the Lane C grant. Takes the
+   * grant's org + audience (the store embeds the org in the handle and denormalizes the audience so
+   * refresh needs no cross-org lookup — ADR-0028); both come from the consent props, never the request.
+   */
+  issueRefreshToken: (grantId: string, orgId: string, audience: string) => Promise<string>;
   defaultPendingInterval: number;
   log?: LogFn;
 }
@@ -219,10 +232,10 @@ export async function redeemAuthCode(
   // left orphaned, and report failure.
   let refreshToken: string;
   try {
-    refreshToken = await deps.issueRefreshToken(minted.grantId);
+    refreshToken = await deps.issueRefreshToken(minted.grantId, props.orgId, props.audience);
   } catch {
     try {
-      await deps.rollbackMint(minted.grantId);
+      await deps.rollbackMint(minted.grantId, props.orgId);
     } catch {
       deps.log?.("issuer.mint_rollback_failed", { grantId: minted.grantId, reapRequired: true });
     }
@@ -237,7 +250,7 @@ export async function redeemAuthCode(
   // token was never delivered to the caller, so a revoke failure only leaves a server-side grant to be
   // reaped; failing the whole request here would orphan the client's just-issued credentials.
   try {
-    await deps.revokeProviderGrant(providerGrantId);
+    await deps.revokeProviderGrant(providerGrantId, props.userId);
   } catch {
     deps.log?.("issuer.provider_grant_revoke_failed", {
       providerGrantId,

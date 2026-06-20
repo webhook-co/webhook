@@ -61,6 +61,23 @@ export async function createMembership(
   });
 }
 
+/**
+ * The tenancy bind for the OAuth issuer: is `userId` a member of `orgId`? The `/token` mint asserts this
+ * before minting a key for a consent-recorded org (token-core's `isOrgMember` seam), so a tampered or
+ * stale `props.orgId` can never mint into an org the user doesn't belong to. RLS pins the lookup to the
+ * context org, so this only ever sees the one org's memberships.
+ */
+export async function isOrgMember(app: Sql, userId: string, orgId: string): Promise<boolean> {
+  const rows = await withTenant(
+    app,
+    orgId,
+    (tx) =>
+      tx<{ one: number }[]>`
+        select 1 as one from memberships where org_id = ${orgId} and user_id = ${userId} limit 1`,
+  );
+  return rows.length > 0;
+}
+
 /** Distinguishes the bootstrap advisory-lock space from any other advisory-lock user. */
 const BOOTSTRAP_LOCK_NAMESPACE = 0x42535450; // "BSTP"
 

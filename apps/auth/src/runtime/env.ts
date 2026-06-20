@@ -89,6 +89,45 @@ export function readAuthEnv(env: Record<string, unknown>): AuthEnv {
 }
 
 /** Resolve every secret to a plain string (Secrets Store `.get()` or pass-through), in parallel. */
+// --- A2b-2b: the frozen /token route's env slice ---------------------------------------------------
+// Distinct from AuthEnv so the issuer endpoint doesn't drag the better-auth runtime's secrets
+// (Google/GitHub/Resend) into its failure surface and vice-versa. /token mints scoped keys + refresh
+// handles as webhook_app, so it needs the tenant Hyperdrive, the credential pepper (key/refresh hash),
+// the audit-chain HMAC key (the aae1 mint audit), and OAUTH_KV (the provider store getOAuthApi reads to
+// unwrap/revoke the opaque grant).
+export interface TokenEnv {
+  HYPERDRIVE_TENANT: HyperdriveBinding;
+  CREDENTIAL_PEPPER: Secret;
+  AUDIT_CHAIN_HMAC_KEY: Secret;
+  /** The OAuth provider's KV store (KVNamespace) — getOAuthApi(config, env) reads it per request. */
+  OAUTH_KV: unknown;
+}
+
+/**
+ * Validate + narrow the env for the /token route, fail-closed (naming the missing key, never its value):
+ * a misconfig surfaces as an obvious 500 on the first /token request rather than a downstream crash.
+ */
+export function readTokenEnv(env: Record<string, unknown>): TokenEnv {
+  for (const key of ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY"] as const) {
+    if (!secretPresent(env[key])) {
+      throw new Error(`token env: missing or empty required secret ${key}`);
+    }
+  }
+  const tenant = env.HYPERDRIVE_TENANT as HyperdriveBinding | undefined;
+  if (
+    !tenant ||
+    typeof tenant.connectionString !== "string" ||
+    tenant.connectionString.length === 0
+  ) {
+    throw new Error("token env: missing or malformed Hyperdrive binding HYPERDRIVE_TENANT");
+  }
+  if (env.OAUTH_KV == null || typeof env.OAUTH_KV !== "object") {
+    throw new Error("token env: missing OAUTH_KV binding");
+  }
+  return env as unknown as TokenEnv;
+}
+
+/** Resolve every secret to a plain string (Better Auth + the hasher take strings). */
 export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecrets> {
   const [
     betterAuthSecret,
