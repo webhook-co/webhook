@@ -4,12 +4,14 @@ import type { NextConfig } from "next";
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
 const nextConfig: NextConfig = {
-  // The design system ships as TypeScript source; let Next transpile it.
-  transpilePackages: ["@webhook-co/ui", "@webhook-co/shared"],
+  // @webhook-co/ui ships TS source → transpile it. @webhook-co/db + @webhook-co/shared are consumed as
+  // built dist (via tsconfig paths) instead, so their Node/Workers crypto source isn't re-typechecked
+  // under this app's DOM lib (the tsconfig-boundary friction); they must NOT be transpiled here.
+  transpilePackages: ["@webhook-co/ui"],
   reactStrictMode: true,
-  // The Better Auth runtime + the node-postgres driver use Node built-ins; keep them external so Next
-  // resolves their server/workerd export path at runtime instead of trying to bundle them (A1b-1).
-  serverExternalPackages: ["better-auth", "pg"],
+  // The Better Auth runtime + the node-postgres / postgres.js drivers use Node built-ins; keep them
+  // external so Next resolves their server/workerd export path at runtime instead of bundling them.
+  serverExternalPackages: ["better-auth", "pg", "postgres"],
 };
 
 initOpenNextCloudflareForDev();

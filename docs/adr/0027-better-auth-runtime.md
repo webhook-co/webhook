@@ -87,6 +87,38 @@ external for the workerd bundle.
   plugin present, no email/password, base-URL https-guard); fail-closed `readAuthEnv`; a `makeAuth`
   construct+close smoke test. The full Better Auth instance on workerd + the per-request Pool lifecycle is
   integration-validated by `build:cf`/preview, not unit tests.
-- **A1b-2/A1b-3 extend this:** the signup→`bootstrapPersonalOrg` hook (the `webhook_app` driver, per-tx RLS
-  context, idempotent self-heal) and the `AuthActions` client wired into Lane E's LoginForm + the consent
-  decision client (A3).
+- **A1b-3 extends this:** the `AuthActions` client wired into Lane E's LoginForm + the consent decision
+  client (A3).
+
+## A1b-2 addendum — signup→bootstrap + secret resolution + the tsconfig boundary
+
+- **Signup→bootstrap.** Better Auth `databaseHooks` provision the user's personal org via Lane B's
+  idempotent `bootstrapPersonalOrg` (org + owner membership + default endpoint, deterministic per-user org
+  id). It runs on a **separate `webhook_app` postgres.js client** over `HYPERDRIVE_TENANT` (NOT Better
+  Auth's `webhook_auth` pool — the two roles have disjoint grants; `bootstrapPersonalOrg` sets the RLS
+  tenant context itself). `userId` is Better Auth's server-authenticated id (the committed user/session
+  row), never request-derived. The per-user slug carries the full slugified userId as a suffix, so a
+  cross-user collision is cryptographically improbable. `user.create.after` is **awaited** (the org must
+  exist before signup completes); `session.create.after` is a **self-heal** for the rare user-create
+  failure, run **off the login hot path via `ctx.waitUntil`** (a no-op for the already-bootstrapped user,
+  so it must not add a tenant-DB round-trip to every login's latency). A failure is logged
+  (`String(error)` — never the connection string/pepper/PII) and swallowed, never breaking signup/login.
+- **Secrets are Secrets Store bindings (reconciles A1b-1).** The OAuth client id/secret +
+  `BETTER_AUTH_SECRET` + `RESEND_API_KEY` + `CREDENTIAL_PEPPER` are resolved per-request via
+  `@webhook-co/shared`'s `readSecretBinding` (handles both a `SecretsStoreSecret.get()` and a plain dev
+  string), so `makeAuth` is async. `readAuthEnv` presence-checks at the boundary; `resolveAuthSecrets`
+  additionally fails closed on an **empty resolved** value (a mis-provisioned store secret) so an empty
+  key never signs a session or mints a token.
+- **tsconfig node↔workers↔DOM boundary (resolves the deferred phase0-tsconfig friction for apps/auth).**
+  apps/auth is the first DOM-lib Next app to import the crypto-bearing workspace packages, whose source
+  uses `Uint8Array` where the DOM lib wants `BufferSource`. Per the repo's boundary convention, apps/auth
+  consumes `@webhook-co/{db,shared,contract,webhooks-spec}` as **built dist** — tsconfig `paths` map them
+  to the extensionless `dist/index` (tsc resolves `index.d.ts` for clean types; turbopack resolves
+  `index.js` for the runtime) and they are **dropped from `transpilePackages`** so their source isn't
+  re-typechecked under the DOM lib. turbo's `^build` ordering guarantees the dist exists first. (The
+  extensionless target — vs the guard's `.d.ts` form — is needed because Next honors `paths` for bundling
+  too; apps/auth's mixed DOM/Workers world is unclassified by the boundary guard, so this stays consistent.)
+- **Tested** (vitest, 81 in the apps/auth suite): the bootstrap core (slug uniqueness/stability/fallbacks,
+  hasher-from-pepper, error-swallow + client close, the awaited primary + the `waitUntil` self-heal);
+  secret resolution (string + store `.get()` + empty-resolved fail-closed); the env presence checks. The
+  real DB bootstrap is covered by Lane B's `packages/db` tests; the full workerd wiring by `build:cf`.
