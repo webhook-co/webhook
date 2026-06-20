@@ -20,3 +20,11 @@ export * from "./target";
 export * from "./auth";
 export * from "./capabilities";
 export * from "./parity";
+// Explicit re-exports (not `export *`): apps/auth (a Turbopack/Next consumer) imports the consent contract,
+// and the barrel note above warns `export *` can resolve to `undefined` there. Named re-exports are safe.
+export {
+  ConsentRequestSchema,
+  ConsentDecisionSchema,
+  type ConsentRequest,
+  type ConsentDecision,
+} from "./consent";
