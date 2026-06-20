@@ -56,6 +56,7 @@ const MANAGED_ROLES = [
   DB_ROLES.ingest,
   DB_ROLES.authn,
   DB_ROLES.anchor,
+  DB_ROLES.auth,
 ] as const;
 
 function freePort(): Promise<number> {
@@ -212,7 +213,15 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     } catch {
       // best-effort shutdown; still remove the data dir
     } finally {
-      rmSync(dataDir, { recursive: true, force: true });
+      // Best-effort cleanup: `-W` returns before the exiting postmaster releases the data
+      // dir, so on some platforms (macOS, under cumulative load) rmSync races it and throws
+      // EBUSY/ENOTEMPTY. A throwaway temp dir the OS will reap is not worth failing the suite
+      // teardown over (which would mark a file failed despite all tests passing) — swallow it.
+      try {
+        rmSync(dataDir, { recursive: true, force: true });
+      } catch {
+        // leaked temp dir is reaped by the OS; never fail teardown on cleanup
+      }
     }
   };
 

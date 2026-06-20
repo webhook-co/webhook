@@ -36,4 +36,12 @@ export const DB_ROLES = {
    * SECURITY-DEFINER/owner bypass, and BYPASSRLS is forbidden here.
    */
   anchor: "webhook_anchor",
+  /**
+   * Better Auth runtime role (Lane C / auth.webhook.co). Non-owner, no BYPASSRLS; manages the
+   * GLOBAL identity tables (user/session/account/verification — RLS-exempt per 0001) with
+   * table-level DML + schema USAGE, and nothing else: no org-scoped tenant tables (those stay
+   * webhook_app's, RLS-enforced) and not the plugin `apikey` table (generator-config-only,
+   * ADR-0019 — all runtime keys are first-party api_keys). Password injected out of band.
+   */
+  auth: "webhook_auth",
 } as const;
