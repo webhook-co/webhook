@@ -1,6 +1,6 @@
 # ADR 0029 — the OAuth-issuer route layer: `/token` at the wrangler `defaultHandler`, not a Next route
 
-- status: accepted (A2b-2b — the auth-code `/token` route; **A2b-3** — the refresh-token grant; **A2b-4** — the RFC 7009 `/revoke` endpoint, see below). The `/authorize` consent→mint (A3) inherits this layer.
+- status: accepted (A2b-2b — the auth-code `/token` route; **A2b-3** — the refresh-token grant; **A2b-4** — the RFC 7009 `/revoke` endpoint; **A2b-5** — the `introspect` WorkerEntrypoint + the provider-ctor `apiHandlers` fix, see below). The `/authorize` consent→mint (A3) inherits this layer.
 - date: 2026-06-20
 - scope: `apps/auth/src/issuer/{token-route,token-deps,token-error,issuer-handler}.ts` + `apps/auth/src/worker.ts` (the mount) + `apps/auth/src/runtime/env.ts` (`readTokenEnv`) + `packages/db/src/orgs.ts` (`isOrgMember`); 3 seam-signature refinements to `token-core.ts`.
 - relates: ADR-0024 (Option-B token issuance — this realizes its `/token`), ADR-0028 (the refresh-token store this wires), ADR-0021 (OpenNext-on-Workers — the bundling constraint that forces this layer), ADR-0010 (auth foundation r5/r7), `internal/build-plans/lane-c-auth-identity-backend.md` §2.
@@ -102,9 +102,31 @@ Pinned in a comment on the `revokeProviderGrant` seam.
   AUDIT_CHAIN_HMAC_KEY + KV_AUTHZ); `KV_AUTHZ` bound in `wrangler.jsonc`. **Deferred (must-before-live, with
   the magic-link rate-limit):** `/token` + `/revoke` are unauthenticated DB-touching endpoints → need durable
   edge rate-limiting + a request-size cap before public routing (the deploy/rate-limit slice).
+- **A2b-5 — the `introspect` WorkerEntrypoint (DONE, extends the ADR).** mcp (A8) can't validate an opaque
+  provider token locally (it's KV-bound to auth.), so it RPCs `auth.IssuerIntrospect.introspect(token)` over
+  a service binding. The pure `introspectToken` core maps a successful `getOAuthApi().unwrapToken` →
+  `{active, orgId, userId, scopes, audience, expiresAt}`, and a bare `{active:false}` for unknown/invalid/
+  EXPIRED (the provider's unwrapToken returns null on expiry). The `WorkerEntrypoint` class +
+  the `cloudflare:workers` import live in the tsc-excluded `worker.ts` (apps/auth is DOM-typed; engine's
+  pattern needs `@cloudflare/workers-types` which auth. doesn't carry); the logic is the type-checked
+  `introspect-core`/`introspect-handler`. Access control = the service binding (only mcp is wired, A8); the
+  RPC returns the principal for the caller to audience-bind to `MCP_RESOURCE`. `IntrospectionResult` is the
+  frozen auth↔mcp contract (pinned by the core test). Shipped ahead of its A8 consumer.
+- **PROVIDER-CTOR FIX (A2b-5, retroactively unblocks A2b-1/2b/4b).** `@cloudflare/workers-oauth-provider`'s
+  constructor THROWS without `apiRoute`+`apiHandler` OR `apiHandlers` (oauth-provider.js: "Must provide
+  either…"). `oauthIssuerConfig` set neither → `new OAuthProvider(...)` (worker.ts default export) +
+  every `getOAuthApi(...)` would throw **at module construction** — a latent prod blocker the gate never
+  caught (deploy:dry/build:cf are bundle-only; getOAuthApi can't load under vitest — it eagerly imports
+  `cloudflare:workers`). Fix: `oauthIssuerConfig.apiHandlers = {}` — a pure issuer has no resource routes,
+  and `{}` satisfies the ctor (truthy) while registering zero protected routes (everything still falls
+  through to defaultHandler). A lock test pins it. **MUST-BEFORE-GO-LIVE (deploy slice): a workerd ctor
+  smoke test** (`@cloudflare/vitest-pool-workers` or a `wrangler dev` boot-check) — it's the only thing
+  that exercises real construction + would catch the whole class of ctor-breaking config errors, not just
+  this instance.
 - **The deploy slice MUST bind** `HYPERDRIVE_TENANT`, `CREDENTIAL_PEPPER`, `AUDIT_CHAIN_HMAC_KEY`, `OAUTH_KV`
   before `/token` is routed (`readTokenEnv` fails closed without them; named in `wrangler.jsonc`) — and
-  `HYPERDRIVE_AUTHN` + `KV_AUTHZ` additionally before `/revoke` is routed (`readRevokeEnv`).
+  `HYPERDRIVE_AUTHN` + `KV_AUTHZ` additionally before `/revoke` is routed (`readRevokeEnv`). The introspect
+  entrypoint needs only `OAUTH_KV` (`readIntrospectEnv`); the mcp-side service binding is A8.
 - **Test posture:** the route-core + `mapProviderTokenError` + `isOrgMember` + the seam-arg assertions are
   unit/db-tested; the deps builder + `issuer-handler` dispatch are I/O glue, verified by `build:cf` /
   `deploy:dry` (the bundle composes — 7.9 MB) — an accepted gap (no testable logic skipped).
