@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
-import { CredentialsView } from "@/components/credentials-view";
+import { CredentialsManager } from "@/components/credentials-manager";
+import { createApiKey } from "@/server/credential-actions";
 import { loadCredentials } from "@/server/credentials";
 import { verifySession } from "@/server/session";
 
@@ -21,7 +22,7 @@ export default async function CredentialsPage() {
           keys minted under it.
         </p>
       </div>
-      <CredentialsView result={result} />
+      <CredentialsManager initialResult={result} createKey={createApiKey} />
     </div>
   );
 }

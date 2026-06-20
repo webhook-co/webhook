@@ -10,7 +10,12 @@
     "incremental": true,
     "plugins": [{ "name": "next" }],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      // Resolve workspace packages to their built .d.ts (tsconfig-boundary convention): type-check
+      // against the pre-validated dist, not the source — keeps shared's Workers/WebCrypto types from
+      // being recompiled under this app's DOM lib. Runtime resolution (Next/vitest) still uses src.
+      "@webhook-co/contract": ["../../packages/contract/dist/index.d.ts"],
+      "@webhook-co/shared": ["../../packages/shared/dist/index.d.ts"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],
