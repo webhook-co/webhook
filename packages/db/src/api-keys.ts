@@ -234,6 +234,32 @@ export function makeApiKeyColdLookup(authn: Sql) {
   };
 }
 
+/**
+ * Resolve a presented `whk_` access key to its PARENT GRANT, cross-org by hash — for the issuer's RFC 7009
+ * /revoke (Lane C A2b-4). Unlike the cold lookup this does NOT filter revoked/expired keys: /revoke must
+ * find the grant even for a spent access token so it can still kill the (possibly-live) grant; revokeGrant
+ * is idempotent. Runs as webhook_authn (the only role that reads api_keys cross-org by hash; `grant_id` was
+ * granted to it in 0018). Loops pepper candidates so a key minted under a previous pepper still resolves.
+ * Returns null for an unknown key OR a standalone key with no grant (grant_id null) — neither is
+ * grant-revocable here.
+ */
+export async function findApiKeyGrant(
+  authn: Sql,
+  plaintext: string,
+  hasher: CredentialHasher,
+): Promise<{ orgId: string; grantId: string } | null> {
+  // Unlike makeApiKeyColdLookup, no constant-time hash re-check: this is a revocation-resolution path,
+  // not authentication — the caller already holds the token, the output is only the holder's own grantId
+  // (no secret disclosed, no auth decision branched on a timing-leaky compare). The unique-index bytea
+  // equality is exact.
+  for (const candidate of hasher.candidates(plaintext)) {
+    const [row] = await authn<{ org_id: string; grant_id: string | null }[]>`
+      select org_id, grant_id from api_keys where key_hash = ${candidate}`;
+    if (row && row.grant_id !== null) return { orgId: row.org_id, grantId: row.grant_id };
+  }
+  return null;
+}
+
 /** Coerce the jsonb `scopes` column (postgres.js returns it parsed) to a string[]. */
 function toScopes(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];

@@ -225,8 +225,9 @@ describe("cross-org isolation (webhook_app is RLS-bound to its own org's keys)",
 
 describe("webhook_authn column-level grant and write denial", () => {
   it("can SELECT exactly the granted columns of api_keys", async () => {
-    // Granted: key_hash, org_id, scopes, expires_at, revoked_at.
-    await authn`select key_hash, org_id, scopes, expires_at, revoked_at from api_keys limit 1`;
+    // Granted: key_hash, org_id, scopes, expires_at, revoked_at (0009), audience (0014), grant_id (0018 —
+    // the /revoke whk_→grant cross-org lookup).
+    await authn`select key_hash, org_id, scopes, expires_at, revoked_at, audience, grant_id from api_keys limit 1`;
   });
 
   it("cannot read the ungranted metadata columns (name, prefix, start, timestamps)", async () => {

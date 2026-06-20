@@ -3,7 +3,12 @@ import { randomUUID } from "node:crypto";
 import { importAuditKey } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { listApiKeysForGrant, makeApiKeyColdLookup } from "../src/api-keys";
+import {
+  createApiKey,
+  findApiKeyGrant,
+  listApiKeysForGrant,
+  makeApiKeyColdLookup,
+} from "../src/api-keys";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
@@ -704,5 +709,66 @@ describe("read helpers", () => {
     // The list item carries no hash/plaintext field.
     expect(JSON.stringify(keys)).not.toContain("key_hash");
     expect(JSON.stringify(keys)).not.toContain(g.plaintext);
+  });
+});
+
+describe("findApiKeyGrant (the /revoke whk_ -> grant resolver)", () => {
+  async function mintFor(orgId: string) {
+    await seedOrg(orgId);
+    const res = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    if (res.status !== "minted") throw new Error("unreachable");
+    return res;
+  }
+
+  it("resolves a minted whk_ to its grant cross-org, even after the grant is revoked (idempotent)", async () => {
+    const orgId = randomUUID();
+    const res = await mintFor(orgId);
+    expect(await findApiKeyGrant(authn, res.plaintext, hasher)).toEqual({
+      orgId,
+      grantId: res.grantId,
+    });
+    // No status filter: /revoke must still resolve a revoked key's grant so the cascade is idempotent.
+    await revokeGrant(app, { orgId, grantId: res.grantId, reason: "test" }, auditKey);
+    expect(await findApiKeyGrant(authn, res.plaintext, hasher)).toEqual({
+      orgId,
+      grantId: res.grantId,
+    });
+  });
+
+  it("returns null for an unknown key and for a standalone (grantless) key", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    expect(await findApiKeyGrant(authn, `whk_${"z".repeat(43)}`, hasher)).toBeNull();
+    const standalone = await createApiKey(
+      app,
+      { orgId, name: "standalone", scopes: ["events:read"] },
+      hasher,
+    );
+    expect(await findApiKeyGrant(authn, standalone.plaintext, hasher)).toBeNull();
+  });
+
+  it("resolves a key minted under a PREVIOUS pepper (candidates loop)", async () => {
+    const orgId = randomUUID();
+    const res = await mintFor(orgId);
+    const rotated = createCredentialHasher({
+      current: Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0xcc),
+      previous: [Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0x9a)],
+    });
+    expect(await findApiKeyGrant(authn, res.plaintext, rotated)).toEqual({
+      orgId,
+      grantId: res.grantId,
+    });
   });
 });
