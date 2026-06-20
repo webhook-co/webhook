@@ -9,8 +9,20 @@ export * from "@webhook-co/webhooks-spec";
 
 // Cross-runtime byte primitives (Workers + Node). Surfaced on the package entry so Worker-context
 // callers reuse the canonical encoders instead of re-deriving hex/base64 (which would risk the
-// dedup_key / pepper encodings drifting from the rest of the system).
-export { bytesToHex, bytesToB64, b64ToBytes } from "./bytes";
+// dedup_key / pepper encodings drifting from the rest of the system). The base64url + HMAC + constant-
+// time primitives back the cursor codec internally and the issuer's signed consent-ticket (Lane C A3c)
+// — one set of encoders so a signed envelope can't drift between writer and verifier.
+export {
+  bytesToHex,
+  bytesToB64,
+  b64ToBytes,
+  bytesToB64url,
+  b64urlToBytes,
+  timingSafeEqual,
+  importHmacKey,
+  utf8Encoder,
+  utf8Decoder,
+} from "./bytes";
 
 export * from "./enums";
 export * from "./ids";
