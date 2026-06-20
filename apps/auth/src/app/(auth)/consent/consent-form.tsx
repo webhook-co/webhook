@@ -1,36 +1,14 @@
 "use client";
 
+import type { ConsentRequest } from "@webhook-co/contract";
 import { Badge, Banner, Button } from "@webhook-co/ui";
 import * as React from "react";
 
-/**
- * The consent grant-summary payload Lane C's `/authorize` handler SSRs into this page — the C→E
- * consent contract (mirrors the recorded {@link https://… ConsentProps} the issuer stashes on
- * approve). E4 renders a {@link mockConsentRequest} fixture so the screen is buildable + reviewable
- * before Lane C's `/authorize` exists; E8 reads the real SSR'd payload, unchanged here.
- */
-export interface ConsentRequest {
-  /** Opaque id of this pending authorization; echoed back with the decision. */
-  readonly requestId: string;
-  /** Single-use anti-CSRF token bound to this request + the auth session; echoed with the decision. */
-  readonly csrfToken: string;
-  /** Which flow asked for consent. Loopback PKCE still shows this screen (deliberate-grant model). */
-  readonly flow: "pkce_loopback" | "device_code";
-  /** The requesting client, by display name (never just the opaque client_id). */
-  readonly client: { readonly id: string; readonly name: string };
-  /** Present for the device-code flow: the device the user-code was entered on. */
-  readonly device?: { readonly name: string };
-  /** The org the grant is for (the consenting user's active org). */
-  readonly org: { readonly id: string; readonly name: string };
-  /** Where the request originates — a trust signal. `location` is best-effort and may be null. */
-  readonly origin: { readonly ip: string; readonly location: string | null };
-  /** The requested capability scopes — rendered as a read-only summary (NO per-scope checklist). */
-  readonly scopes: readonly string[];
-  /** The resource the resulting token is audience-bound to (e.g. "https://api.webhook.co"). */
-  readonly audience: string;
-  /** ISO 8601 — when the resulting grant/key expires if approved. */
-  readonly expiresAt: string;
-}
+// The consent grant-summary payload Lane C's `/authorize` SSRs into this page — the C↔E consent contract,
+// now the shared @webhook-co/contract definition (A3 promoted it from this mock). It carries BOTH durations
+// (grantExpiresAt = the ~90d grant ceiling; keyTtlSeconds = the ~24h access-key TTL), rendered below.
+// Re-exported for the existing page imports.
+export type { ConsentRequest };
 
 /**
  * The seam between the consent UI and Lane C's `/authorize` decision endpoint. The live impl POSTs
@@ -61,7 +39,8 @@ export const mockConsentRequest: ConsentRequest = {
   origin: { ip: "203.0.113.7", location: "San Francisco, US" },
   scopes: ["events:read", "events:replay"],
   audience: "https://api.webhook.co",
-  expiresAt: "2026-09-18T00:00:00Z",
+  grantExpiresAt: "2026-09-18T00:00:00Z",
+  keyTtlSeconds: 86_400,
 };
 
 function fmtExpiry(iso: string): string {
@@ -158,8 +137,10 @@ export function ConsentForm({
             ))}
           </span>
         </SummaryRow>
-        <SummaryRow label="Expires">
-          <span className="font-mono text-[13px]">{fmtExpiry(request.expiresAt)}</span>
+        {/* Renders the grant ceiling. Lane E (E8) adds a row for `request.keyTtlSeconds` (the ~24h key
+            TTL) so the screen shows BOTH durations — the contract now provides it. */}
+        <SummaryRow label="Authorized until">
+          <span className="font-mono text-[13px]">{fmtExpiry(request.grantExpiresAt)}</span>
         </SummaryRow>
       </dl>
 

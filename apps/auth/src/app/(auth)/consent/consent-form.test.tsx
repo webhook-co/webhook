@@ -18,7 +18,8 @@ const baseRequest: ConsentRequest = {
   origin: { ip: "203.0.113.7", location: "San Francisco, US" },
   scopes: ["events:read", "events:replay"],
   audience: "https://api.webhook.co",
-  expiresAt: "2026-09-18T00:00:00Z",
+  grantExpiresAt: "2026-09-18T00:00:00Z",
+  keyTtlSeconds: 86_400,
 };
 
 describe("ConsentForm", () => {
@@ -35,7 +36,7 @@ describe("ConsentForm", () => {
     expect(screen.getByText("events:read")).toBeInTheDocument();
     expect(screen.getByText("events:replay")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    // expiry
+    // the grant ceiling (Lane E renders the key TTL too at E8 — the contract now carries both)
     expect(screen.getByText(/2026-09-18/)).toBeInTheDocument();
     // both decisions are offered
     expect(screen.getByRole("button", { name: /authorize/i })).toBeInTheDocument();
