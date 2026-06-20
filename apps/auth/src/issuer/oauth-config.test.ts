@@ -50,10 +50,22 @@ describe("oauthIssuerConfig", () => {
     expect(oauthIssuerConfig.resourceMetadata.bearer_methods_supported).toEqual(["header"]);
   });
 
-  it("leaves DCR hardening unset — deferred to A3 (clientRegistrationCallback + DCR rate-limit)", () => {
-    // Documents the deliberate gap: open DCR is acceptable while the issuer is NOT routed; A3 adds the
-    // loopback-redirect callback + rate-limit before go-live. Making A3's addition a deliberate edit here.
-    expect(oauthIssuerConfig).not.toHaveProperty("clientRegistrationCallback");
+  it("hardens DCR (A3): a clientRegistrationCallback gates redirect_uris; public registration stays enabled", () => {
+    // A3 closed the A2b-1 deferral: the callback validates redirect_uris (https or http loopback only — see
+    // dcr.test.ts). Public registration is intentionally NOT disabled (the CLI is a public client; the
+    // callback is the gate), so disallowPublicClientRegistration stays unset. DCR rate-limit → deploy slice.
+    expect(typeof oauthIssuerConfig.clientRegistrationCallback).toBe("function");
     expect(oauthIssuerConfig).not.toHaveProperty("disallowPublicClientRegistration");
+    // The callback rejects an arbitrary-http redirect, allows loopback.
+    expect(
+      oauthIssuerConfig.clientRegistrationCallback({
+        clientMetadata: { redirect_uris: ["http://evil.example.com/cb"] },
+      }),
+    ).toMatchObject({ code: "invalid_redirect_uri" });
+    expect(
+      oauthIssuerConfig.clientRegistrationCallback({
+        clientMetadata: { redirect_uris: ["http://127.0.0.1:9000/cb"] },
+      }),
+    ).toBeUndefined();
   });
 });
