@@ -38,6 +38,11 @@
   // secrets (Google/GitHub client id+secret, the Resend API key, CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY).
   // The deploy overlay injects the real ids/secrets (none committed).
   //
+  // The frozen /token route (A2b-2b, readTokenEnv) requires — and fails closed without — these four:
+  //   HYPERDRIVE_TENANT (mint as webhook_app), CREDENTIAL_PEPPER (key/refresh hash),
+  //   AUDIT_CHAIN_HMAC_KEY (the aae1 mint audit), and OAUTH_KV (above; provider unwrap/revoke).
+  // The deploy slice MUST bind all four before /token is routed.
+  //
   // The OAuth-provider mount: Lane C wraps this OpenNext worker's fetch handler with
   // @cloudflare/workers-oauth-provider as the Worker's default export (A2, gated on the E0-confirmed
   // OpenNext composition — see ADR-0021 + the Lane C plan §9.2).

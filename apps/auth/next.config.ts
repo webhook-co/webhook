@@ -13,6 +13,8 @@ const nextConfig: NextConfig = {
   // resolves their exports under the "workerd" condition (rather than Next bundling them, which strands the
   // workerd-only files). @better-auth/core ships a workerd no-op `instrumentation` entry; pg-cloudflare is
   // pg's `cloudflare:sockets` adapter — both only resolve for the worker build when externalized here.
+  // (@cloudflare/workers-oauth-provider is NOT here: it's imported only by src/worker.ts + ./issuer, the
+  // wrangler-bundled layer, never by `next build` — wrangler externalizes its `cloudflare:workers` import.)
   serverExternalPackages: [
     "better-auth",
     "@better-auth/core",
