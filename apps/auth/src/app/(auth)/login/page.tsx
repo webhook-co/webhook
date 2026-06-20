@@ -1,7 +1,7 @@
 import { AuthShell, ThemeToggle } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
-import { LoginForm } from "./login-form";
+import { LoginActions } from "./login-actions";
 
 export const metadata: Metadata = {
   title: "Sign in · webhook.co",
@@ -60,7 +60,7 @@ export default function LoginPage() {
         </p>
       }
     >
-      <LoginForm />
+      <LoginActions />
     </AuthShell>
   );
 }
