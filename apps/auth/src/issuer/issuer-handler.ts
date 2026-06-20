@@ -9,7 +9,7 @@
 // It IS type-checked (unlike worker.ts, which is excluded for the generated .open-next import). The runtime
 // types (env/ctx/handler) are kept structural so no Workers-global lib is needed under the DOM tsconfig.
 
-import { redeemAuthCode } from "./token-core";
+import { redeemAuthCode, redeemRefresh } from "./token-core";
 import { makeTokenDeps } from "./token-deps";
 import { handleTokenRequest } from "./token-route";
 import { readTokenEnv } from "../runtime/env";
@@ -34,13 +34,16 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
     async fetch(request, env, ctx) {
       const url = new URL(request.url);
       if (request.method === "POST" && url.pathname === "/token") {
-        const { authCode, close } = await makeTokenDeps(
+        const { authCode, refresh, close } = await makeTokenDeps(
           readTokenEnv(env as Record<string, unknown>),
           request.url,
         );
         try {
           return await handleTokenRequest(
-            { redeemAuthCode: (req) => redeemAuthCode(authCode, req) },
+            {
+              redeemAuthCode: (req) => redeemAuthCode(authCode, req),
+              redeemRefresh: (req) => redeemRefresh(refresh, req),
+            },
             request,
           );
         } finally {
