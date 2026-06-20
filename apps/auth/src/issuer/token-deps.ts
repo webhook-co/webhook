@@ -13,9 +13,12 @@ import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
 import {
   API_RESOURCE,
   MCP_RESOURCE,
+  consumeRefreshToken,
   createClient,
   createCredentialHasherFromBase64,
   isOrgMember,
+  listApiKeysForGrant,
+  mintKeyForGrant,
   mintRefreshToken,
   mintScopedKey,
   revokeGrant,
@@ -24,7 +27,7 @@ import { b64ToBytes, importAuditKey, readSecretBinding } from "@webhook-co/share
 
 import { oauthIssuerConfig } from "./oauth-config";
 import { mapProviderTokenError } from "./token-error";
-import type { AuthCodeDeps, ConsentProps } from "./token-core";
+import type { AuthCodeDeps, ConsentProps, RefreshDeps } from "./token-core";
 import type { TokenEnv } from "../runtime/env";
 
 /** 24h whk_ key (the C↔D contract's expires_in); ~90d opaque refresh handle. */
@@ -48,6 +51,7 @@ const HELPERS_DEFAULT_HANDLER = { fetch: async () => new Response(null, { status
 
 export interface TokenDeps {
   authCode: AuthCodeDeps;
+  refresh: RefreshDeps;
   /** Drain the per-request webhook_app pool (call via ctx.waitUntil after the response). */
   close: () => Promise<void>;
 }
@@ -138,5 +142,33 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
 
-  return { authCode, close: () => app.end() };
+  const refresh: RefreshDeps = {
+    allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
+    allowedScopes: CAPABILITY_SCOPES,
+    keyTtlSeconds: KEY_TTL_SECONDS,
+
+    // Atomic single-use consume + ~90d rotation (the new handle replaces the presented one). Returns the
+    // grant's org + audience so the seams below need no cross-org lookup (ADR-0028).
+    consumeRefresh: (refreshToken) =>
+      consumeRefreshToken(app, refreshToken, hasher, REFRESH_TTL_SECONDS),
+
+    // The grant's consented scope set = the union of its NON-REVOKED child api_keys' scopes (stable: the
+    // first key, from the auth-code mint, carries the full consent; refreshes only narrow). token-core
+    // intersects requested ∩ this ∩ capability, so a refresh re-widens up to — never beyond — the original
+    // consent. Revoked keys are excluded so a future per-key revocation withdraws that scope from refreshes;
+    // EXPIRED keys are kept (the full-consent first key expires at the 24h key TTL — dropping it would lose
+    // the consent ceiling). Grant-level revoke is gated upstream (consumeRefresh requires an active grant).
+    listGrantScopes: async (grantId, orgId) => {
+      const keys = await listApiKeysForGrant(app, orgId, grantId);
+      return [...new Set(keys.filter((k) => k.revokedAt === null).flatMap((k) => k.scopes))];
+    },
+
+    // Re-mint on the grant (writes its own key_minted audit). The grant's status+expiry gate lives in
+    // consumeRefresh; mintKeyForGrant additionally serializes against concurrent revokes (SELECT…FOR UPDATE).
+    mintKeyForGrant: (input) => mintKeyForGrant(app, input, hasher, auditKey),
+
+    log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+  };
+
+  return { authCode, refresh, close: () => app.end() };
 }

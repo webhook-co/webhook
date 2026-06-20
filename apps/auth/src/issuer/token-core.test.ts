@@ -331,7 +331,14 @@ describe("redeemRefresh — silent re-mint", () => {
         resource: API_RESOURCE,
       },
     });
-    expect(mintForGrantMock(deps).mock.calls[0][0]).toMatchObject({ ttlSeconds: KEY_TTL });
+    // The grant's org + audience (from the consumed handle) are threaded into both seams — never the request.
+    expect(mintForGrantMock(deps).mock.calls[0][0]).toMatchObject({
+      grantId: "g_1",
+      orgId: "org_1",
+      audience: API_RESOURCE,
+      ttlSeconds: KEY_TTL,
+    });
+    expect(deps.listGrantScopes).toHaveBeenCalledWith("g_1", "org_1");
   });
 
   it("keeps the full consented set when the request omits scope", async () => {
