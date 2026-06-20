@@ -14,6 +14,7 @@ export default tseslint.config(
       "**/.turbo/**",
       "**/.wrangler/**",
       "**/.next/**",
+      "**/.open-next/**",
       "**/out/**",
       "**/coverage/**",
       "**/node_modules/**",

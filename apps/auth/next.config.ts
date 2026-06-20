@@ -9,9 +9,18 @@ const nextConfig: NextConfig = {
   // under this app's DOM lib (the tsconfig-boundary friction); they must NOT be transpiled here.
   transpilePackages: ["@webhook-co/ui"],
   reactStrictMode: true,
-  // The Better Auth runtime + the node-postgres / postgres.js drivers use Node built-ins; keep them
-  // external so Next resolves their server/workerd export path at runtime instead of bundling them.
-  serverExternalPackages: ["better-auth", "pg", "postgres"],
+  // Externalize the auth-runtime + DB driver packages so OpenNext copies each FULL package and esbuild
+  // resolves their exports under the "workerd" condition (rather than Next bundling them, which strands the
+  // workerd-only files). @better-auth/core ships a workerd no-op `instrumentation` entry; pg-cloudflare is
+  // pg's `cloudflare:sockets` adapter — both only resolve for the worker build when externalized here.
+  serverExternalPackages: [
+    "better-auth",
+    "@better-auth/core",
+    "@better-auth/api-key",
+    "pg",
+    "pg-cloudflare",
+    "postgres",
+  ],
 };
 
 initOpenNextCloudflareForDev();

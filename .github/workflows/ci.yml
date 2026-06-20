@@ -123,6 +123,20 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm build
 
+  # Bundle apps/auth for Cloudflare Workers (OpenNext → workerd esbuild). The `build` job's `next build`
+  # does NOT cover the worker bundle, where workerd-only resolution issues surface (e.g. pg-cloudflare,
+  # @better-auth/core's workerd `instrumentation` entry). The turbo step builds the workspace deps' dist
+  # (the tsconfig-paths redirect targets) first; then build:cf runs the OpenNext workerd build.
+  build-cf:
+    name: build-cf
+    runs-on: ubuntu-latest
+    needs: install
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      - run: pnpm exec turbo run build --filter=@webhook-co/auth
+      - run: pnpm -C apps/auth build:cf
+
   # Builds the static marketing export and asserts the emitted out/index.html <head> against the
   # SEO rule set (canonical/OG/twitter/robots/JSON-LD/lang present and consistent; anchor targets
   # resolve). Structural problems fail the build; authoring guidelines (title/description length)
