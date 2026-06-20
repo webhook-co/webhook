@@ -1,6 +1,5 @@
 "use client";
 
-import { CAPABILITY_SCOPES } from "@webhook-co/contract";
 import {
   Banner,
   Button,
@@ -27,9 +26,15 @@ export interface CredentialsManagerProps {
   initialResult: CredentialsResult;
   /** The create-key server action, injected by the gated page. */
   createKey: (input: CreateKeyInput) => Promise<CreateKeyResult>;
+  /**
+   * The grantable scopes for the create-key picker, handed down by the gated server page
+   * (`CAPABILITY_SCOPES`). Passed as data so the client bundle never imports the
+   * `@webhook-co/contract` registry — the server action remains the scope-narrowing authority.
+   */
+  scopes: readonly string[];
 }
 
-export function CredentialsManager({ initialResult, createKey }: CredentialsManagerProps) {
+export function CredentialsManager({ initialResult, createKey, scopes }: CredentialsManagerProps) {
   // Mutations only apply to a successful load; error/denied just render the read-only view.
   const [keys, setKeys] = React.useState<readonly ApiKeyItem[]>(
     initialResult.status === "ok" ? initialResult.keys : [],
@@ -68,8 +73,8 @@ export function CredentialsManager({ initialResult, createKey }: CredentialsMana
     setFormError(null);
     setPending(true);
     try {
-      const scopes = CAPABILITY_SCOPES.filter((s) => selected.has(s));
-      const result = await createKey({ name: name.trim(), scopes });
+      const chosen = scopes.filter((s) => selected.has(s));
+      const result = await createKey({ name: name.trim(), scopes: chosen });
       if (!result.ok) {
         setFormError(result.error);
         return;
@@ -117,7 +122,7 @@ export function CredentialsManager({ initialResult, createKey }: CredentialsMana
 
               <fieldset className="flex flex-col gap-2.5">
                 <legend className="mb-1.5 text-sm font-medium text-fg">Scopes</legend>
-                {CAPABILITY_SCOPES.map((scope) => {
+                {scopes.map((scope) => {
                   const id = `scope-${scope}`;
                   return (
                     <label key={scope} htmlFor={id} className="flex items-center gap-2.5">

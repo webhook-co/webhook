@@ -1,6 +1,6 @@
 "use server";
 
-import { CAPABILITY_SCOPES } from "@webhook-co/contract";
+import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
 
 import type { ApiKeyItem } from "./credentials";
 import { verifySession } from "./session";

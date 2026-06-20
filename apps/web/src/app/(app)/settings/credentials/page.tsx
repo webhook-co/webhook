@@ -1,3 +1,4 @@
+import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
 import type { Metadata } from "next";
 
 import { CredentialsManager } from "@/components/credentials-manager";
@@ -22,7 +23,11 @@ export default async function CredentialsPage() {
           keys minted under it.
         </p>
       </div>
-      <CredentialsManager initialResult={result} createKey={createApiKey} />
+      <CredentialsManager
+        initialResult={result}
+        createKey={createApiKey}
+        scopes={CAPABILITY_SCOPES}
+      />
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -33,13 +34,25 @@ async function openCreateDialog(user: ReturnType<typeof userEvent.setup>) {
 
 describe("CredentialsManager", () => {
   it("renders a create-key affordance", () => {
-    render(<CredentialsManager initialResult={okResult} createKey={vi.fn()} />);
+    render(
+      <CredentialsManager
+        initialResult={okResult}
+        createKey={vi.fn()}
+        scopes={CAPABILITY_SCOPES}
+      />,
+    );
     expect(screen.getByRole("button", { name: /create key/i })).toBeInTheDocument();
   });
 
   it("offers exactly the four grantable scopes — never the reserved keys:manage", async () => {
     const user = userEvent.setup();
-    render(<CredentialsManager initialResult={okResult} createKey={vi.fn()} />);
+    render(
+      <CredentialsManager
+        initialResult={okResult}
+        createKey={vi.fn()}
+        scopes={CAPABILITY_SCOPES}
+      />,
+    );
     const dialog = await openCreateDialog(user);
     const checkboxes = within(dialog).getAllByRole("checkbox");
     expect(checkboxes).toHaveLength(4);
@@ -49,10 +62,32 @@ describe("CredentialsManager", () => {
     expect(within(dialog).queryByText("keys:manage")).not.toBeInTheDocument();
   });
 
+  it("renders exactly the scopes it is handed by the gated page", async () => {
+    const user = userEvent.setup();
+    render(
+      <CredentialsManager
+        initialResult={okResult}
+        createKey={vi.fn()}
+        scopes={["events:read", "audit:read"]}
+      />,
+    );
+    const dialog = await openCreateDialog(user);
+    expect(within(dialog).getAllByRole("checkbox")).toHaveLength(2);
+    expect(within(dialog).getByText("events:read")).toBeInTheDocument();
+    expect(within(dialog).getByText("audit:read")).toBeInTheDocument();
+    expect(within(dialog).queryByText("endpoints:read")).not.toBeInTheDocument();
+  });
+
   it("calls createKey with the name and selected scopes", async () => {
     const user = userEvent.setup();
     const createKey = vi.fn(async () => createdKey("whsec_secretvalue1234"));
-    render(<CredentialsManager initialResult={okResult} createKey={createKey} />);
+    render(
+      <CredentialsManager
+        initialResult={okResult}
+        createKey={createKey}
+        scopes={CAPABILITY_SCOPES}
+      />,
+    );
     const dialog = await openCreateDialog(user);
     await user.type(within(dialog).getByLabelText(/name/i), "CI deploy");
     await user.click(within(dialog).getByText("events:read"));
@@ -64,7 +99,13 @@ describe("CredentialsManager", () => {
     const user = userEvent.setup();
     const secret = "whsec_onlyshownonce999";
     const createKey = vi.fn(async () => createdKey(secret));
-    render(<CredentialsManager initialResult={okResult} createKey={createKey} />);
+    render(
+      <CredentialsManager
+        initialResult={okResult}
+        createKey={createKey}
+        scopes={CAPABILITY_SCOPES}
+      />,
+    );
 
     // the secret is never in the initial render
     expect(screen.queryByText(secret)).not.toBeInTheDocument();
@@ -86,7 +127,13 @@ describe("CredentialsManager", () => {
 
   it("disables create until a name and at least one scope are chosen", async () => {
     const user = userEvent.setup();
-    render(<CredentialsManager initialResult={okResult} createKey={vi.fn()} />);
+    render(
+      <CredentialsManager
+        initialResult={okResult}
+        createKey={vi.fn()}
+        scopes={CAPABILITY_SCOPES}
+      />,
+    );
     const dialog = await openCreateDialog(user);
     const submit = within(dialog).getByRole("button", { name: /^create$/i });
     expect(submit).toBeDisabled();
@@ -97,7 +144,13 @@ describe("CredentialsManager", () => {
   });
 
   it("falls back to the read-only view when access is denied", () => {
-    render(<CredentialsManager initialResult={{ status: "denied" }} createKey={vi.fn()} />);
+    render(
+      <CredentialsManager
+        initialResult={{ status: "denied" }}
+        createKey={vi.fn()}
+        scopes={CAPABILITY_SCOPES}
+      />,
+    );
     expect(screen.queryByRole("button", { name: /create key/i })).not.toBeInTheDocument();
     expect(screen.getByText(/don't have permission/i)).toBeInTheDocument();
   });
