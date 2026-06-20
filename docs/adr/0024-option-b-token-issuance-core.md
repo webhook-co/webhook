@@ -1,8 +1,8 @@
 # ADR 0024 — Option-B token issuance: the `/token` redemption + mint core (A2a)
 
-- status: accepted (A2a — the pure, I/O-free `redeemAuthCode`/`redeemRefresh` cores). **A2b extends this ADR** with the live `@cloudflare/workers-oauth-provider` × OpenNext mount and the real dependency wiring.
+- status: accepted (A2a — the pure cores; **A2b-1** — the live `@cloudflare/workers-oauth-provider` × OpenNext **mount**, see the A2b-1 section below). The frozen `/token`/`/revoke` route handlers + the real dependency wiring are A2b-2+.
 - date: 2026-06-20
-- scope: `apps/auth/src/issuer/token-core.ts` (+ `token-core.test.ts`) — the dependency-injected token-redemption logic only. No route handler, no provider, no DB in this slice; the mount + real seams are A2b.
+- scope: `apps/auth/src/issuer/token-core.ts` (+ `token-core.test.ts`) — the dependency-injected token-redemption logic; **+ A2b-1**: `apps/auth/src/issuer/oauth-config.ts` (+ test), `apps/auth/src/worker.ts` (the provider mount), `apps/auth/wrangler.jsonc` (the `OAUTH_KV` binding), `.github/workflows/ci.yml` (the `build-cf` deploy gate). The frozen `/token`/`/revoke` route handlers + real seams remain A2b-2+.
 - relates: ADR-0010 (auth foundation, **r5/r7** — login mints a scoped `whk_`), ADR-0019 (credential mint model — `mintScopedKey`/`mintKeyForGrant` + the **A0c caller-side refresh-subset contract**), ADR-0020 (governance schema — the per-key `audience`), ADR-0021 (OpenNext app & auth), `internal/build-plans/lane-c-auth-identity-backend.md` §2/§10.
 - review severity: high (token issuance; the audience / scope / tenancy seam on the credential surface)
 
@@ -101,3 +101,58 @@ allowedScopes` intersection is that duty discharged, at the Lane C layer.
   → rollback + `server_error`; revoke failure → token still returned + reap-log); provider error code
   propagated but its description not forwarded; no token material (access/refresh/code/verifier/opaque) in
   any log on any path.
+
+## A2b-1 — the live provider mount (extends this ADR)
+
+A2b-1 mounts `@cloudflare/workers-oauth-provider@0.8.0` onto the co-owned `webhook-auth` Worker, closing
+the lane's second risk (**R-OPENNEXT** — the provider × OpenNext composition was unproven; ADR-0021's E0
+covered only the DAL gate). No token logic moves here — A2a's cores are untouched; this slice is the
+issuer **shell** the A2b-2+ `/token`/`/revoke` handlers will mount alongside.
+
+**Decisions (as built):**
+
+1. **Composition = a custom Worker entry, proven by `deploy:dry`.** `opennextjs-cloudflare build` always
+   emits `.open-next/worker.js` (an `ExportedHandler`) regardless of wrangler `main`. `src/worker.ts`
+   imports that handler and exports `new OAuthProvider({ ...oauthIssuerConfig, defaultHandler:
+   openNextHandler })`; wrangler `main` points at `src/worker.ts`. The provider claims only its configured
+   endpoints + `.well-known/*`; **everything else falls through to OpenNext** (the pages, Better Auth
+   `/api/auth/*`, and Lane C's later `/token`/`/authorize`/`/device/*`/`/revoke`). This composes and
+   bundles end-to-end: `wrangler deploy --dry-run` produces a ~7.9 MB Worker with `OAUTH_KV` bound. The
+   ADR-0024 fallback (a thin non-Next issuer Worker) is **not needed**.
+
+2. **Pure authorization server — no `apiHandler`.** `auth.` is the AS, not a resource server (the minted
+   `whk_` validates with zero issuer involvement through the existing resolver seam; opaque 3rd-party
+   tokens are an mcp.-only concern via introspection, A8). `OAuthProviderOptions` makes `apiRoute`/
+   `apiHandler` optional, so omitting them is supported — the provider still serves its OAuth + discovery
+   endpoints and delegates the rest.
+
+3. **`tokenEndpoint: "/oauth/token"` (not `/token`).** This is what makes Option B mountable: the provider
+   takes `/oauth/token` for its server-side opaque exchange, leaving the frozen `/token` (decision §2) free
+   for Lane C's A2b-2 route. S256-only PKCE + no implicit flow (OAuth 2.1).
+
+4. **`scopesSupported` derives from the SoT.** Both the RFC 8414 metadata and the RFC 9728 PRM
+   (`resourceMetadata`, which the provider serves at `/.well-known/oauth-protected-resource`) take their
+   scopes from `@webhook-co/contract`'s `CAPABILITY_REGISTRY` — the same derivation `apps/mcp` uses — so
+   discovery can never advertise a scope the A2b-2 mint path rejects. The PRM describes **only** the api.
+   resource; mcp. publishes its own PRM/AS (its tokens are opaque + KV-bound to that Worker).
+
+5. **`OAUTH_KV` is bound now.** The provider reads/writes its grant/code/client/device store on every OAuth
+   request, so the mount needs it bound or the issuer 500s at request time — a gap a bundle/dry-run hides
+   (KV access is lazy/per-request). `wrangler.jsonc` declares `OAUTH_KV` (auth.'s own namespace, distinct
+   from mcp.'s; placeholder id, overlay-injected). The remaining bindings (Hyperdrive, `KV_AUTHZ`,
+   Secrets-Store) land with the slices that use them.
+
+6. **CI gate upgraded.** The `build-cf` job (now a required check) runs `deploy:dry` (build:cf + `wrangler
+   deploy --dry-run`, both offline/no-auth) instead of just `build:cf`, so the composition — `src/worker.ts`
+   wrapping the OpenNext handler — is gated on every PR, not just the OpenNext bundle.
+
+**Deferred to A3 (must-before-live, not must-fix-now — the issuer is not yet routed):** DCR is open by
+default (`disallowPublicClientRegistration` unset). Before this issuer gets a DNS route, A3 adds a
+`clientRegistrationCallback` enforcing loopback-only `redirect_uri`s for the CLI client class + DCR
+rate-limiting (or a pre-provisioned client via `createClient()`). A lock-in test asserts these knobs are
+unset so A3's addition is a deliberate edit, and a call-site `SECURITY (A3)` TODO marks the gap.
+
+- **Tested** (`apps/auth/src/issuer/oauth-config.test.ts`): the `/oauth/token`-vs-`/token` split; S256-only
+  + no-implicit; `scopesSupported` `toEqual` the exact derived set and `=== resourceMetadata.scopes_supported`;
+  the api.-resource PRM (resource/AS/header-bearer); the deferred-DCR lock-in. The mount wiring itself
+  (`worker.ts`, excluded from tsc as it imports the generated handler) is gated by `deploy:dry`/`build-cf`.

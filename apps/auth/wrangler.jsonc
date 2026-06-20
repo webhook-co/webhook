@@ -1,10 +1,14 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // The auth.webhook.co Worker, built by @opennextjs/cloudflare → .open-next/worker.js. Co-owned: Lane E
-  // owns this scaffold + the page tree (app/(auth)/login|consent|device); Lane C contributes the Better
-  // Auth runtime, the OAuth issuer, and the route handlers (app/api/**) — and the bindings below.
+  // The auth.webhook.co Worker. Co-owned: Lane E owns this scaffold + the page tree
+  // (app/(auth)/login|consent|device); Lane C contributes the Better Auth runtime, the OAuth issuer, and
+  // the route handlers (app/api/**) — and the bindings below.
+  //
+  // The entry is Lane C's src/worker.ts (A2b-1): @cloudflare/workers-oauth-provider wrapping the OpenNext
+  // handler. `opennextjs-cloudflare build` still generates .open-next/worker.js regardless of `main`;
+  // wrangler bundles src/worker.ts (which imports it). Verified by `deploy:dry` + the `build-cf` CI job.
   "name": "webhook-auth",
-  "main": ".open-next/worker.js",
+  "main": "src/worker.ts",
   "compatibility_date": "2026-06-15",
   // global_fetch_strictly_public: a Worker fetch() to its own public hostname egresses publicly (the
   // canonical @opennextjs/cloudflare template ships this with nodejs_compat).
@@ -16,12 +20,23 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS",
   },
-  // === Lane C contributes the auth-backend bindings here (coordinate scaffold edits with Lane E) ===
-  // The Better Auth runtime + the OAuth issuer (Lane C A1/A2) need: a Hyperdrive client for identity-table
-  // writes + the personal-org bootstrap as webhook_app (HYPERDRIVE_TENANT / HYPERDRIVE_AUTHN), OAUTH_KV
-  // (the provider's opaque-grant + device-code store), KV_AUTHZ (the A2 revoke-glue), and Secrets-Store
+  // OAUTH_KV — the OAuth provider's MANDATORY store (opaque grants + auth codes + DCR clients + device
+  // codes). The provider reads/writes it on every OAuth endpoint, so the A2b-1 mount needs it bound or the
+  // issuer 500s at request time (a bundle/dry-run passes without it — access is lazy/per-request). This is
+  // auth.'s OWN namespace, distinct from mcp.'s (each issuer has its own grant store); the deploy overlay
+  // injects the real id (none committed). Provisioned + wired to the apps/auth CD in the deploy slice.
+  "kv_namespaces": [
+    {
+      "binding": "OAUTH_KV",
+      "id": "<AUTH_OAUTH_KV_ID>",
+    },
+  ],
+  // === Lane C contributes the rest of the auth-backend bindings here (coordinate scaffold edits w/ E) ===
+  // Still to add as the slices that use them land: a Hyperdrive client for identity-table writes + the
+  // personal-org bootstrap as webhook_app (HYPERDRIVE_TENANT / HYPERDRIVE_AUTHN), KV_AUTHZ (the A2b-4
+  // revoke-glue — the SAME cross-surface principal-cache namespace api./mcp. use), and Secrets-Store
   // secrets (Google/GitHub client id+secret, the Resend API key, CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY).
-  // Add them as Lane C's slices land; the deploy overlay injects the real ids/secrets (none committed).
+  // The deploy overlay injects the real ids/secrets (none committed).
   //
   // The OAuth-provider mount: Lane C wraps this OpenNext worker's fetch handler with
   // @cloudflare/workers-oauth-provider as the Worker's default export (A2, gated on the E0-confirmed
