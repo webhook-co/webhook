@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
-import { bootstrapPersonalOrg, createMembership } from "../src/orgs";
+import { bootstrapPersonalOrg, createMembership, isOrgMember } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
@@ -170,6 +170,47 @@ describe("createMembership", () => {
           tx`insert into memberships (org_id, user_id, role) values (${b.orgId}, ${uA}, 'member')`,
       ),
     ).rejects.toThrow(/row-level security|policy/i);
+  });
+});
+
+describe("isOrgMember (the /token tenancy bind)", () => {
+  it("is true for a member, false for a non-member of the same org", async () => {
+    const owner = `user_${randomUUID()}`;
+    const member = `user_${randomUUID()}`;
+    const stranger = `user_${randomUUID()}`;
+    await seedUser(owner);
+    await seedUser(member);
+    await seedUser(stranger);
+    const { orgId } = await bootstrapPersonalOrg(
+      app,
+      { userId: owner, slug: `s-${owner.slice(5, 13)}`, name: "Org" },
+      hasher,
+    );
+    await createMembership(app, { orgId, userId: member, role: "member" });
+
+    expect(await isOrgMember(app, owner, orgId)).toBe(true);
+    expect(await isOrgMember(app, member, orgId)).toBe(true);
+    expect(await isOrgMember(app, stranger, orgId)).toBe(false);
+  });
+
+  it("is false when the user is a member of a DIFFERENT org (no cross-org bleed)", async () => {
+    const uA = `user_${randomUUID()}`;
+    const uB = `user_${randomUUID()}`;
+    await seedUser(uA);
+    await seedUser(uB);
+    const a = await bootstrapPersonalOrg(
+      app,
+      { userId: uA, slug: `s-${uA.slice(5, 13)}`, name: "A" },
+      hasher,
+    );
+    const b = await bootstrapPersonalOrg(
+      app,
+      { userId: uB, slug: `s-${uB.slice(5, 13)}`, name: "B" },
+      hasher,
+    );
+    // uA owns org A but is NOT a member of org B — asking about (uA, B) must be false.
+    expect(await isOrgMember(app, uA, a.orgId)).toBe(true);
+    expect(await isOrgMember(app, uA, b.orgId)).toBe(false);
   });
 });
 
