@@ -29,4 +29,9 @@ export interface McpEnv {
   CURSOR_KEY: SecretsStoreSecret;
   /** Base64 audit-chain HMAC key — the same key the chain rows are signed with. */
   AUDIT_CHAIN_HMAC_KEY: SecretsStoreSecret;
+  /**
+   * Base64 32-byte HMAC key for the per-request session-binding envelope (A8c) — mcp-specific (NOT shared),
+   * dedicated to signing the principal-bound `Mcp-Session-Id`. Deploy-provisioned in the Secrets Store.
+   */
+  MCP_SESSION_KEY: SecretsStoreSecret;
 }

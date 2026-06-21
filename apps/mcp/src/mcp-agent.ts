@@ -25,14 +25,14 @@ import type { McpEnv } from "./env";
 //
 // SESSION BINDING (security): the McpAgent Durable Object is keyed by the `Mcp-Session-Id`, and
 // `this.props` is set ONCE — from the principal of the request that INITIALIZES the session (McpAgent
-// `onStart`; warm requests don't refresh it). So a session is bound to its initializing principal,
-// and the session id is a bearer-equivalent secret: the platform mints it unguessably and returns
-// it only to that caller. Reusing another principal's session id (to read THEIR org) therefore
-// requires stealing that secret. We do NOT yet additionally re-bind the principal per request here,
-// because the streamable-HTTP handler routes purely by session id and does not surface the
-// per-request principal to the tool handler. Now that the auth. OAuth login mints multi-user tokens
-// (validated here via introspection), cross-principal session reuse is in scope to HARDEN — A8c adds
-// principal-namespaced session routing + an in-DO bound-principal check (was the ADR-0011 follow-up).
+// `onStart`; warm requests don't refresh it). So a warm DO is pinned to its initializing principal. A8c
+// closes cross-principal reuse at the resource-server EDGE (not in the DO): the session id handed to the
+// client is an HMAC-signed envelope BOUND to that principal (resource-handler.ts + session-binding.ts), and
+// every request must present a session id that unbinds to the SAME principal or it's rejected (404) before
+// the transport routes the DO. So a reused/stolen session id can't reach another principal's DO — by the
+// time a request reaches this tool handler, its principal already matches `this.props`. (Edge wrapping, not
+// in-DO routing, because the streamable-HTTP handler routes purely by session id and surfaces no per-request
+// principal to the DO. Was the ADR-0011 follow-up; see ADR-0034.)
 
 const SERVER_NAME = "webhook.co";
 const SERVER_VERSION = "0.0.0";
