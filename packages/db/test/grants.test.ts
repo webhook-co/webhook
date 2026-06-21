@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   createApiKey,
+  createApiKeyWithAudit,
   findApiKeyGrant,
   listApiKeys,
   listApiKeysForGrant,
@@ -163,6 +164,26 @@ describe("mintScopedKey — approval OFF (founder default)", () => {
     if (res.status !== "minted") throw new Error("unreachable");
     // Resolve through an API-surface resolver — the intrinsic mcp audience must NOT widen to api.
     expect((await makeResolver(API).resolve(res.plaintext))?.audience).toBe(MCP);
+  });
+});
+
+describe("createApiKeyWithAudit", () => {
+  it("mints a standalone key AND writes its key_minted audit row in one tx", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const created = await createApiKeyWithAudit(
+      app,
+      { orgId, name: "dashboard key", scopes: ["events:read"] },
+      hasher,
+      auditKey,
+      userOf(orgId),
+    );
+
+    expect(created.plaintext).toMatch(/^whk_/);
+    // it's standalone (no grant) → shows in the standalone list
+    expect((await listStandaloneApiKeys(app, orgId)).map((k) => k.id)).toEqual([created.id]);
+    // and the mint is audited
+    expect(await auditTypes(orgId)).toEqual(["key_minted"]);
   });
 });
 
