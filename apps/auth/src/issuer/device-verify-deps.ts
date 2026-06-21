@@ -12,29 +12,24 @@ import { importConsentTicketKey, signConsentTicket } from "./consent-ticket";
 import { makeDeviceStoreDeps } from "./device-deps";
 import { findByUserCode } from "./device-store";
 import type { DeviceVerifyRouteDeps } from "./device-verify-route";
+import {
+  CONSENT_PATH,
+  GRANT_TTL_SECONDS,
+  HELPERS_DEFAULT_HANDLER,
+  KEY_TTL_SECONDS,
+  TICKET_TTL_SECONDS,
+  nowSeconds,
+  resolveOrigin,
+} from "./issuer-constants";
 import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import { consumeRateLimit } from "./rate-limit";
 import { makeAuth, type AuthExecutionContext, type RuntimeAuth } from "../runtime/auth";
 import type { DeviceVerifyEnv } from "../runtime/env";
 import { LOGIN_PATH } from "../runtime/urls";
 
-const KEY_TTL_SECONDS = 86_400;
-const GRANT_TTL_SECONDS = 7_776_000;
-const TICKET_TTL_SECONDS = 300;
-const CONSENT_PATH = "/consent";
 // The guess-rate budget for the ~40-bit user-code, keyed per session principal: low count + short window
 // (ADR-0032 — fixed-window admits ≤2× across a seam, so the effective ceiling is well inside the budget).
 const VERIFY_RATE_RULE = { limit: 10, windowSeconds: 300 };
-
-const HELPERS_DEFAULT_HANDLER = { fetch: async () => new Response(null, { status: 404 }) };
-const nowSeconds = () => Math.floor(Date.now() / 1000);
-
-function resolveOrigin(request: Request): { ip: string; location: string | null } {
-  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-  const country = request.headers.get("cf-ipcountry");
-  const location = country && !["XX", "T1"].includes(country) ? country : null;
-  return { ip, location };
-}
 
 export interface DeviceVerifyDeps {
   deps: DeviceVerifyRouteDeps;
