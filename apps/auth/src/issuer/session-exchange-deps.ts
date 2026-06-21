@@ -34,10 +34,15 @@ export async function makeSessionExchangeDeps(
   const getAuthClient = () =>
     (authClient ??= createClient(env.HYPERDRIVE_AUTH.connectionString, { max: 2 }));
 
+  // The app. origin the ticket is audience-bound to — the TRUSTED server-side value (never a request
+  // header), env-driven so it stays SYMMETRIC with the handoff's mint audience (session-handoff-deps).
+  // Defaults to the prod host; set APP_BASE_URL in dev so a localhost-minted ticket redeems.
+  const expectedAudience = env.APP_BASE_URL ?? APP_BASE_URL;
+
   const deps: SessionExchangeRouteDeps = {
-    // expectedAudience is the TRUSTED server-side constant APP_BASE_URL — never a request header — so a
-    // ticket can only be redeemed by the app. it was minted for (the audience match is in consume's WHERE).
-    consume: (ticket) => consumeSessionExchange(app, ticket, hasher, APP_BASE_URL),
+    // The audience match is in consume's WHERE, so a ticket can only be redeemed by the app. it was minted
+    // for (the value above must equal what session-handoff-deps minted with).
+    consume: (ticket) => consumeSessionExchange(app, ticket, hasher, expectedAudience),
     getProfile: (userId) => getAuthUserProfile(getAuthClient(), userId),
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };

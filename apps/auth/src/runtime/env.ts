@@ -27,6 +27,9 @@ export interface AuthEnv {
   CREDENTIAL_PEPPER: Secret;
   /** Public origin of this auth surface; defaults to the prod host. */
   AUTH_BASE_URL?: string;
+  /** Public origin of the app. dashboard the handoff ticket targets + is audience-bound to; defaults to
+   *  the prod host (urls.ts). Set in dev (.dev.vars) so the handoff redirects to localhost, not prod. */
+  APP_BASE_URL?: string;
   GOOGLE_CLIENT_ID: Secret;
   GOOGLE_CLIENT_SECRET: Secret;
   GITHUB_CLIENT_ID: Secret;
@@ -268,6 +271,10 @@ export interface SessionExchangeEnv {
   HYPERDRIVE_TENANT: HyperdriveBinding;
   HYPERDRIVE_AUTH: HyperdriveBinding;
   CREDENTIAL_PEPPER: Secret;
+  /** The app. origin the ticket's audience must match — MUST be the same value the handoff minted with
+   *  (session-handoff-deps). Defaults to the prod host (urls.ts); set in dev (.dev.vars) so a localhost-
+   *  minted ticket redeems. Asymmetry here = every exchange 401s. */
+  APP_BASE_URL?: string;
 }
 
 /** Validate + narrow the env for /session/exchange, fail-closed (naming the missing key, never its value). */
