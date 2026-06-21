@@ -1,8 +1,10 @@
 # ADR 0033 — the `auth.`→`app.` session exchange: a single-use, audience-bound, DB-backed ticket
 
-- status: accepted (**A-SX-1** — the session-exchange store + migration; **A-SX-2a** — the `/session/exchange`
-  redeem endpoint + the profile read + the frozen principal payload, see the A-SX-2a note at the end;
-  **A-SX-2b** (next) adds the login-handoff mint endpoint that redirects to app. with a ticket).
+- status: accepted (**A-SX-1** — the store + migration; **A-SX-2a** — the `/session/exchange` redeem +
+  profile read + frozen principal payload; **A-SX-2b** — the `/session/handoff` login mint, see the notes at
+  the end). **A-SX is complete** — the auth.→app. handoff serves end-to-end (login → `/session/handoff` mint
+  → app. callback → backchannel `/session/exchange` redeem → principal). Lane E builds the app. callback +
+  the front-running hardening below.
 - date: 2026-06-21
 - scope: `packages/db/db/migrations/0019_auth_session_exchange.sql`, `packages/db/src/session-exchange.ts`
   (+ test:db); RLS registration in `packages/db/test/rls.test.ts`.
@@ -114,3 +116,37 @@ auth.** (a shared deploy secret header validated against a binding, or a Cloudfl
 so a leaked ticket alone is insufficient — strongly recommended defense-in-depth. Plus: the deploy expiry-
 sweep job; the `HYPERDRIVE_AUTH` binding (already required by the session runtime, now also the profile read)
 must be provisioned against `webhook_auth`; and a consent-screen-free already-signed-in fast path.
+
+## A-SX-2b — the login-handoff mint (DONE, A-SX e2e)
+
+A-SX-2b is the producer: `GET /session/handoff` is where app. sends an unauthenticated visitor.
+
+- **`session-handoff-route.ts`** (pure HTTP core, 4 tests): `handleSessionHandoff` — read the session (no
+  session → 302 to `/login?redirect=<relative /session/handoff>`, returning here after); resolve the org
+  (`getConsentOrg` → 500 on the bootstrap-anomaly no-org case); `mintSessionExchange` (TTL 60s); **302 to
+  `${APP_BASE_URL}/auth/callback?ticket=…` with `Referrer-Policy: no-referrer`** + `cache-control: no-store`.
+- **`session-handoff-deps.ts`** (glue): lazy `makeAuth` (session) + lazy webhook_app pool (`getConsentOrg`
+  + `mintSessionExchange`, audience = `APP_BASE_URL`); the no-session login bounce pays for neither pool.
+  The handoff env is just `AuthEnv` (session + tenant + pepper), so the mount reads it with `readAuthEnv` —
+  no new env reader or binding. The `/session/handoff` intercept in issuer-handler.
+
+**Front-running mitigations (from A-SX-2a's review), as built:** the short 60s TTL + `Referrer-Policy:
+no-referrer` on the redirect are in place. The ticket still transits app.'s callback URL, so **Lane E must**
+strip it from the URL on landing and redeem it server-side immediately; and the **deploy slice should add an
+app.↔auth. shared secret / service binding** on `/session/exchange` so a leaked ticket alone is insufficient
+(defense in depth — the ticket is already single-use + audience-bound + unguessable + 60s).
+
+**CSRF note (GET that mints):** `/session/handoff` is a GET that mints a ticket, so a cross-site **top-level
+navigation** (`window.open` / a clicked link / a 302 — these carry the **SameSite=lax** session cookie; a
+subresource `<img>`/`fetch` GET does **not**, so those can't trigger it) can cause a mint against the
+victim's session — but the response is a 302 whose `Location` (the only place the ticket appears) is
+unreadable cross-origin, so the attacker can't obtain the ticket; the unused ticket simply expires. Harmless
+(a minor mint; the deploy rate-limit covers volume).
+
+**Deploy rate-limit MUST cover `/session/handoff`.** Today it's the only session-cookie-gated mint route
+with **no `RATELIMIT_KV` binding** (`/device/verify` has one; the magic-link send is throttled). It shares
+A3d `/authorize`'s posture (lazy pools, edge rate-limit deferred), so the deploy slice's edge/WAF rate-limit
+must list `/session/handoff` explicitly — a driven victim's browser can otherwise mint unbounded
+(self-expiring) exchange rows.
+
+**A-SX is done.** Remaining is Lane-E (the app. `/auth/callback` consumer) + the deploy items above.

@@ -20,10 +20,13 @@ import { makeRevokeDeps } from "./revoke-deps";
 import { handleRevokeRequest } from "./revoke-route";
 import { makeSessionExchangeDeps } from "./session-exchange-deps";
 import { handleSessionExchange } from "./session-exchange-route";
+import { makeSessionHandoffDeps } from "./session-handoff-deps";
+import { handleSessionHandoff } from "./session-handoff-route";
 import { redeemAuthCode, redeemRefresh } from "./token-core";
 import { makeTokenDeps } from "./token-deps";
 import { handleTokenRequest } from "./token-route";
 import {
+  readAuthEnv,
   readAuthorizeEnv,
   readDeviceAuthorizeEnv,
   readDeviceVerifyEnv,
@@ -99,6 +102,17 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
           return await handleDeviceVerify(deps, request);
         } finally {
           drain(ctx, close, "device_verify.pool_close_failed");
+        }
+      }
+
+      // GET /session/handoff — the producer of the auth.→app. handoff (A-SX-2b): read the session, mint a
+      // single-use exchange ticket, and 302 the browser to app.'s callback with it (→ login if no session).
+      if (request.method === "GET" && url.pathname === "/session/handoff") {
+        const { deps, close } = await makeSessionHandoffDeps(readAuthEnv(rawEnv), ctx);
+        try {
+          return await handleSessionHandoff(deps, request);
+        } finally {
+          drain(ctx, close, "session_handoff.pool_close_failed");
         }
       }
 
