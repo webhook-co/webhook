@@ -24,7 +24,13 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS",
   },
-  // NOTE — the session-authed credential-management bindings land in E6 (not needed by the bare runtime):
+  // The runtime config the overlay injects at deploy (never committed here; resolved per-request via
+  // getCloudflareContext() — see src/server/env.ts). E7 (the auth.→app. handoff) needs:
+  //   SESSION_TOKEN_SECRET  Secrets Store — the HMAC key that signs the app. session cookie. Fails CLOSED
+  //                         in prod if absent (env.ts never signs with a default); a 256-bit random secret.
+  //   AUTH_BASE_URL         var — the auth. origin the /auth/callback backchannels /session/exchange against
+  //                         (defaults to https://auth.webhook.co; set per env for preview/dev).
+  // E8 (credential management) additionally adds:
   //   HYPERDRIVE_TENANT  (cache-disabled, webhook_app — the RLS-scoped pool the management server actions
   //                       run under via withTenant; mirrors apps/api's TENANT pool)
   //   KV_AUTHZ           (the SHARED credential cache namespace; revoke evicts via resolver.invalidateHash)
