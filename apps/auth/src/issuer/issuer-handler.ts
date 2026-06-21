@@ -9,12 +9,14 @@
 // It IS type-checked (unlike worker.ts, which is excluded for the generated .open-next import). The runtime
 // types (env/ctx/handler) are kept structural so no Workers-global lib is needed under the DOM tsconfig.
 
+import { makeAuthorizeDeps } from "./authorize-deps";
+import { handleAuthorize, handleConsentDecision } from "./authorize-route";
 import { makeRevokeDeps } from "./revoke-deps";
 import { handleRevokeRequest } from "./revoke-route";
 import { redeemAuthCode, redeemRefresh } from "./token-core";
 import { makeTokenDeps } from "./token-deps";
 import { handleTokenRequest } from "./token-route";
-import { readRevokeEnv, readTokenEnv } from "../runtime/env";
+import { readAuthorizeEnv, readRevokeEnv, readTokenEnv } from "../runtime/env";
 
 /** The minimal shape of a Worker fetch handler (the generated OpenNext handler + what we export). */
 export interface FetchHandler {
@@ -36,15 +38,37 @@ function drain(ctx: ExecutionLike, close: () => Promise<void>, event: string): v
 }
 
 /**
- * Wrap the OpenNext handler: intercept Lane C's frozen issuer endpoints (POST /token, POST /revoke) —
- * which use the provider helpers / cross-org credential resolution and so must run in the wrangler layer —
- * and delegate everything else to OpenNext (the pages, /api/auth/*, the /authorize consent UI).
+ * Wrap the OpenNext handler: intercept Lane C's issuer endpoints — POST /token, POST /revoke, GET
+ * /authorize, POST /consent/decision — which use the provider helpers / cross-org credential resolution /
+ * the session runtime and so must run in the wrangler layer — and delegate everything else to OpenNext
+ * (the pages, /api/auth/*, and Lane E's consent SCREEN at /consent, which is served by Next).
  */
 export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHandler {
   return {
     async fetch(request, env, ctx) {
       const url = new URL(request.url);
       const rawEnv = env as Record<string, unknown>;
+
+      // GET /authorize — the interactive consent entry point (A3). Resolves the session, builds a signed
+      // consent ticket, and redirects to Lane E's /consent screen (served by OpenNext, below).
+      if (request.method === "GET" && url.pathname === "/authorize") {
+        const { deps, close } = await makeAuthorizeDeps(readAuthorizeEnv(rawEnv), ctx);
+        try {
+          return await handleAuthorize(deps, request);
+        } finally {
+          drain(ctx, close, "authorize.pool_close_failed");
+        }
+      }
+
+      // POST /consent/decision — record the user's approve/deny (A3).
+      if (request.method === "POST" && url.pathname === "/consent/decision") {
+        const { deps, close } = await makeAuthorizeDeps(readAuthorizeEnv(rawEnv), ctx);
+        try {
+          return await handleConsentDecision(deps, request);
+        } finally {
+          drain(ctx, close, "consent_decision.pool_close_failed");
+        }
+      }
 
       if (request.method === "POST" && url.pathname === "/token") {
         const { authCode, refresh, close } = await makeTokenDeps(readTokenEnv(rawEnv), request.url);

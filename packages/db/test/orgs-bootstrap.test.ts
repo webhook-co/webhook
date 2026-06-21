@@ -5,7 +5,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
-import { bootstrapPersonalOrg, createMembership, isOrgMember } from "../src/orgs";
+import {
+  bootstrapPersonalOrg,
+  createMembership,
+  getConsentOrg,
+  isOrgMember,
+  personalOrgId,
+} from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
@@ -211,6 +217,46 @@ describe("isOrgMember (the /token tenancy bind)", () => {
     // uA owns org A but is NOT a member of org B — asking about (uA, B) must be false.
     expect(await isOrgMember(app, uA, a.orgId)).toBe(true);
     expect(await isOrgMember(app, uA, b.orgId)).toBe(false);
+  });
+});
+
+describe("getConsentOrg + personalOrgId (the /authorize consent-org resolution)", () => {
+  it("resolves the bootstrapped personal org id + display name", async () => {
+    const userId = `user_${randomUUID()}`;
+    await seedUser(userId);
+    const { orgId } = await bootstrapPersonalOrg(
+      app,
+      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Dana's projects" },
+      hasher,
+    );
+    // personalOrgId derives the SAME id bootstrap used — no DB read, no cross-org query.
+    expect(personalOrgId(userId)).toBe(orgId);
+
+    const resolved = await getConsentOrg(app, userId);
+    expect(resolved).toEqual({ orgId, name: "Dana's projects" });
+  });
+
+  it("returns null for a user with no personal org", async () => {
+    const userId = `user_${randomUUID()}`;
+    await seedUser(userId);
+    expect(await getConsentOrg(app, userId)).toBeNull();
+  });
+
+  it("is membership-gated: returns null when the org exists but the user is not a member", async () => {
+    const userId = `user_${randomUUID()}`;
+    await seedUser(userId);
+    const { orgId } = await bootstrapPersonalOrg(
+      app,
+      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Org" },
+      hasher,
+    );
+    // Drop the owner membership while the org row survives — the resolution must fail closed.
+    await withTenant(
+      app,
+      orgId,
+      (tx) => tx`delete from memberships where org_id = ${orgId} and user_id = ${userId}`,
+    );
+    expect(await getConsentOrg(app, userId)).toBeNull();
   });
 });
 
