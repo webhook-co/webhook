@@ -253,6 +253,35 @@ export function readDeviceVerifyEnv(env: Record<string, unknown>): DeviceVerifyE
   return env as unknown as DeviceVerifyEnv;
 }
 
+// --- A-SX-2a: the /session/exchange env slice ------------------------------------------------------
+// The backchannel redeem consumes the ticket as webhook_app (HYPERDRIVE_TENANT, the org-embedded handle
+// routes the tenant) + reads the user profile as webhook_auth (HYPERDRIVE_AUTH, the global `user` table);
+// the pepper hashes the presented ticket. No session/cookie (it's a server-to-server call authenticated by
+// the single-use ticket), no provider/KV.
+export interface SessionExchangeEnv {
+  HYPERDRIVE_TENANT: HyperdriveBinding;
+  HYPERDRIVE_AUTH: HyperdriveBinding;
+  CREDENTIAL_PEPPER: Secret;
+}
+
+/** Validate + narrow the env for /session/exchange, fail-closed (naming the missing key, never its value). */
+export function readSessionExchangeEnv(env: Record<string, unknown>): SessionExchangeEnv {
+  if (!secretPresent(env.CREDENTIAL_PEPPER)) {
+    throw new Error("session_exchange env: missing or empty required secret CREDENTIAL_PEPPER");
+  }
+  for (const key of ["HYPERDRIVE_TENANT", "HYPERDRIVE_AUTH"] as const) {
+    const binding = env[key] as HyperdriveBinding | undefined;
+    if (
+      !binding ||
+      typeof binding.connectionString !== "string" ||
+      binding.connectionString.length === 0
+    ) {
+      throw new Error(`session_exchange env: missing or malformed Hyperdrive binding ${key}`);
+    }
+  }
+  return env as unknown as SessionExchangeEnv;
+}
+
 /** Resolve every secret to a plain string (Better Auth + the hasher take strings). */
 export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecrets> {
   const [
