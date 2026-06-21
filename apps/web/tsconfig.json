@@ -17,7 +17,9 @@
       // resolves the src via the package exports map; turbo builds shared first, so the .d.ts is current.
       // (db's modules already cast around this, so they need no redirect.)
       "@webhook-co/shared/audit": ["../../packages/shared/dist/audit.d.ts"],
-      "@webhook-co/shared/bytes": ["../../packages/shared/dist/bytes.d.ts"]
+      "@webhook-co/shared/bytes": ["../../packages/shared/dist/bytes.d.ts"],
+      // kv-cache.ts references the Workers-only `KVNamespace` global (absent under this app's DOM lib).
+      "@webhook-co/shared/kv-cache": ["../../packages/shared/dist/kv-cache.d.ts"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],

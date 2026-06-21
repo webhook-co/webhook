@@ -14,6 +14,14 @@ vi.mock("./session", () => ({
 const { mintApiKey } = vi.hoisted(() => ({ mintApiKey: vi.fn() }));
 vi.mock("./credential-mint", () => ({ mintApiKey }));
 
+// The DB+KV revoke (Lane B revoke + KV_AUTHZ eviction) — mocked here; the eviction logic is unit-tested
+// in credential-revoke.test.ts and the db revoke fns in the db package's integration suite.
+const { revokeKeyById, revokeGrantById } = vi.hoisted(() => ({
+  revokeKeyById: vi.fn(),
+  revokeGrantById: vi.fn(),
+}));
+vi.mock("./credential-revoke", () => ({ revokeKeyById, revokeGrantById }));
+
 import { createApiKey, revokeApiKey, revokeGrant } from "./credential-actions";
 
 describe("createApiKey", () => {
@@ -75,20 +83,42 @@ describe("createApiKey", () => {
   });
 });
 
-describe("revokeApiKey / revokeGrant (mock)", () => {
-  it("rejects a missing key id", async () => {
+describe("revokeApiKey / revokeGrant", () => {
+  beforeEach(() => {
+    revokeKeyById.mockReset();
+    revokeKeyById.mockResolvedValue(undefined);
+    revokeGrantById.mockReset();
+    revokeGrantById.mockResolvedValue(undefined);
+  });
+
+  it("rejects a missing key id without revoking", async () => {
     expect((await revokeApiKey("   ")).ok).toBe(false);
+    expect(revokeKeyById).not.toHaveBeenCalled();
   });
 
-  it("revokes a key by id", async () => {
+  it("revokes a key by id — org-scoped, by the session user", async () => {
     expect((await revokeApiKey("key_live")).ok).toBe(true);
+    expect(revokeKeyById).toHaveBeenCalledWith({ orgId: "o", userId: "u", keyId: "key_live" });
   });
 
-  it("rejects a missing grant id", async () => {
+  it("surfaces an error (no throw) when the key revoke fails", async () => {
+    revokeKeyById.mockImplementation(async () => {
+      throw new Error("db down");
+    });
+    expect((await revokeApiKey("key_live")).ok).toBe(false);
+  });
+
+  it("rejects a missing grant id without revoking", async () => {
     expect((await revokeGrant("")).ok).toBe(false);
+    expect(revokeGrantById).not.toHaveBeenCalled();
   });
 
-  it("revokes a grant by id", async () => {
+  it("revokes a grant by id — cascading + KV eviction handled downstream", async () => {
     expect((await revokeGrant("grant_live")).ok).toBe(true);
+    expect(revokeGrantById).toHaveBeenCalledWith({
+      orgId: "o",
+      userId: "u",
+      grantId: "grant_live",
+    });
   });
 });
