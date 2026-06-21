@@ -3,7 +3,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { getSessionSecret } from "./env";
+import { getAuthBaseUrl, getSessionSecret } from "./env";
 import { verifySessionToken } from "./session-token";
 
 /**
@@ -14,8 +14,14 @@ import { verifySessionToken } from "./session-token";
 export const SESSION_COOKIE =
   process.env.NODE_ENV === "production" ? "__Host-wh_session" : "wh_session";
 
-/** Where the gate sends an unauthenticated request — the sign-in surface on auth. */
-export const LOGIN_URL = process.env.AUTH_LOGIN_URL ?? "/login";
+/**
+ * Where the gate sends an unauthenticated request — the sign-in surface on **auth.**, never a relative
+ * `/login` on app. (which has no login route → 404). Defaults to `${authBase}/login`
+ * (`https://auth.webhook.co/login` in prod, the dev auth origin otherwise — see {@link getAuthBaseUrl});
+ * an explicit `AUTH_LOGIN_URL` wins (preview/staging). `getAuthBaseUrl()` resolves the prod default even
+ * without a request context, so this is correct at module load too.
+ */
+export const LOGIN_URL = process.env.AUTH_LOGIN_URL || `${getAuthBaseUrl()}/login`;
 
 /** The app. session lifetime — the signed cookie's TTL. The user re-authenticates after this. */
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
