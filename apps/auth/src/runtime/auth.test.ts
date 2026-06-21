@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { buildAuthConfig, magicLinkOptions, makeAuth, resolveBaseUrl } from "./auth";
+import { makeMagicLinkRateLimit } from "./magic-link";
 import type { AuthConfigDeps, AuthConfigInput } from "./auth";
 import type { AuthEnv, ResolvedAuthSecrets } from "./env";
 
@@ -72,6 +73,78 @@ describe("magicLinkOptions", () => {
     expect(JSON.stringify((sendEmail as ReturnType<typeof vi.fn>).mock.calls)).not.toContain(
       "SECRET_TOKEN",
     );
+  });
+
+  it("sends when the durable rate limit allows", async () => {
+    const sendEmail = vi.fn(async () => {});
+    await magicLinkOptions({ sendEmail, rateLimit: async () => true }).sendMagicLink({
+      email: "u@e.com",
+      url: "https://link",
+      token: "t",
+    });
+    expect(sendEmail).toHaveBeenCalledWith({ to: "u@e.com", url: "https://link" });
+  });
+
+  it("SILENTLY skips the send when the rate limit denies (no throw, no oracle)", async () => {
+    const sendEmail = vi.fn(async () => {});
+    const log = vi.fn();
+    await expect(
+      magicLinkOptions({ sendEmail, rateLimit: async () => false, log }).sendMagicLink({
+        email: "u@e.com",
+        url: "https://link",
+        token: "t",
+      }),
+    ).resolves.toBeUndefined();
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("magic_link.rate_limited");
+  });
+
+  it("checks the rate limiter with the recipient email before sending", async () => {
+    const rateLimit = vi.fn(async () => true);
+    await magicLinkOptions({ sendEmail: vi.fn(async () => {}), rateLimit }).sendMagicLink({
+      email: "u@e.com",
+      url: "https://link",
+      token: "t",
+    });
+    expect(rateLimit).toHaveBeenCalledWith("u@e.com");
+  });
+});
+
+describe("makeMagicLinkRateLimit", () => {
+  function fakeKv() {
+    const store = new Map<string, string>();
+    return {
+      get: async (k: string) => store.get(k) ?? null,
+      put: async (k: string, v: string) => {
+        store.set(k, v);
+      },
+    };
+  }
+  const now = () => 1000;
+
+  it("allows the first send, then denies once the per-email window is exhausted", async () => {
+    const rl = makeMagicLinkRateLimit(fakeKv(), now);
+    expect(await rl("u@e.com")).toBe(true);
+    let denied = false;
+    for (let i = 0; i < 12 && !denied; i++) denied = !(await rl("u@e.com"));
+    expect(denied).toBe(true);
+  });
+
+  it("tracks distinct emails independently", async () => {
+    const kv = fakeKv();
+    const rl = makeMagicLinkRateLimit(kv, now);
+    for (let i = 0; i < 12; i++) await rl("spammed@e.com"); // exhaust one address
+    expect(await rl("fresh@e.com")).toBe(true); // a different address is unaffected
+  });
+
+  it("fails OPEN when the KV faults (never blocks login)", async () => {
+    const kv = {
+      get: async () => {
+        throw new Error("kv down");
+      },
+      put: async () => {},
+    };
+    expect(await makeMagicLinkRateLimit(kv, now)("u@e.com")).toBe(true);
   });
 });
 
