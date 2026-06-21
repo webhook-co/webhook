@@ -31,6 +31,9 @@
   // DEVICE_KV — Lane C's OWN device-code store (A4b). The provider has no device grant, so device codes
   // (the dc:/uc: records) live here, NOT in OAUTH_KV; /device_authorization writes it + the /token device
   // grant polls it. Its own namespace; the deploy overlay injects the real id.
+  // RATELIMIT_KV — the durable fixed-window rate-limit counters (A4c-1/A4c-3): the /device/verify guess
+  // throttle keys here, and the deploy slice points magic-link / /token / /authorize at it too. Its own
+  // namespace (counters auto-expire via TTL); the deploy overlay injects the real id.
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
@@ -43,6 +46,10 @@
     {
       "binding": "DEVICE_KV",
       "id": "<AUTH_DEVICE_KV_ID>",
+    },
+    {
+      "binding": "RATELIMIT_KV",
+      "id": "<AUTH_RATELIMIT_KV_ID>",
     },
   ],
   // === Lane C contributes the rest of the auth-backend bindings here (coordinate scaffold edits w/ E) ===
