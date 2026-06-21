@@ -31,6 +31,7 @@ const TENANT_TABLES = [
   { table: "api_keys", col: "org_id" },
   { table: "auth_grant", col: "org_id" },
   { table: "auth_refresh_token", col: "org_id" },
+  { table: "auth_session_exchange", col: "org_id" },
   { table: "org_policy", col: "org_id" },
   { table: "auth_audit_event", col: "org_id" },
 ] as const;
