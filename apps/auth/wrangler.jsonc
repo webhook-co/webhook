@@ -54,15 +54,20 @@
   ],
   // === Lane C contributes the rest of the auth-backend bindings here (coordinate scaffold edits w/ E) ===
   // Still to add as the slices that use them land: the Hyperdrive clients HYPERDRIVE_TENANT (webhook_app —
-  // identity writes + bootstrap + the /token mint + the /revoke cascade) and HYPERDRIVE_AUTHN (webhook_authn
-  // — the /revoke whk_→grant cross-org-by-hash lookup), and Secrets-Store secrets (Google/GitHub client
-  // id+secret, the Resend API key, CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY). The deploy overlay injects the
-  // real ids/secrets (none committed).
+  // identity writes + bootstrap + the /token mint + the /revoke cascade + getConsentOrg + session-exchange
+  // consume), HYPERDRIVE_AUTH (webhook_auth — the Better Auth session runtime + the session-exchange profile
+  // read), and HYPERDRIVE_AUTHN (webhook_authn — the /revoke whk_→grant cross-org-by-hash lookup), plus the
+  // Secrets-Store secrets (Google/GitHub client id+secret, the Resend API key, BETTER_AUTH_SECRET,
+  // CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY, CONSENT_TICKET_KEY). The deploy overlay injects the real
+  // ids/secrets (none committed).
   //
   // The frozen issuer routes fail closed without their bindings — the deploy slice MUST bind them before
   // routing: /token (A2b-2b, readTokenEnv): HYPERDRIVE_TENANT + CREDENTIAL_PEPPER + AUDIT_CHAIN_HMAC_KEY +
-  // OAUTH_KV. /revoke (A2b-4b, readRevokeEnv): HYPERDRIVE_AUTHN + HYPERDRIVE_TENANT + CREDENTIAL_PEPPER +
-  // AUDIT_CHAIN_HMAC_KEY + KV_AUTHZ.
+  // OAUTH_KV + DEVICE_KV. /revoke (A2b-4b, readRevokeEnv): HYPERDRIVE_AUTHN + HYPERDRIVE_TENANT +
+  // CREDENTIAL_PEPPER + AUDIT_CHAIN_HMAC_KEY + KV_AUTHZ. /authorize + /consent/decision + /device/verify
+  // (readAuthorizeEnv/readDeviceVerifyEnv): AuthEnv + CONSENT_TICKET_KEY + OAUTH_KV + DEVICE_KV (+ RATELIMIT_KV
+  // for /device/verify). /session/exchange (A-SX-2a, readSessionExchangeEnv): HYPERDRIVE_TENANT +
+  // HYPERDRIVE_AUTH + CREDENTIAL_PEPPER.
   //
   // The OAuth-provider mount: Lane C wraps this OpenNext worker's fetch handler with
   // @cloudflare/workers-oauth-provider as the Worker's default export (A2, gated on the E0-confirmed
