@@ -22,6 +22,7 @@ export default defineConfig({
           CREDENTIAL_PEPPER: TEST_KEY_32,
           CURSOR_KEY: TEST_KEY_32,
           AUDIT_CHAIN_HMAC_KEY: TEST_KEY_32,
+          MCP_SESSION_KEY: TEST_KEY_32, // A8c — the session-binding HMAC key (32 bytes, like the others)
         },
       },
     }),

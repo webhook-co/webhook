@@ -16,7 +16,15 @@ import {
 // for many tools, and the per-capability scope check runs downstream in the shared read handler
 // (packages/db read-handlers.ts) against ctx.scopes. The audience binding (RFC 8707) is enforced inside
 // verifyBearer (both the api-key chain and introspection bind to MCP_RESOURCE). Pure + injected (the
-// bearer seam, the PRM doc, and the McpAgent hand-off are all deps) so every branch is node-tested.
+// bearer seam, the PRM doc, the McpAgent hand-off, and the session-binding codec are all deps) so every
+// branch is node-tested.
+//
+// PER-REQUEST PRINCIPAL ISOLATION (A8c): the McpAgent transport routes the Durable Object purely by the
+// `Mcp-Session-Id`, and the DO's principal (`this.props`) is set once at session init. So a session id
+// reused by a DIFFERENT principal would reach the first principal's DO. We close that here: the session id
+// handed to the client is an HMAC-signed envelope BOUND to the initializing principal (bindSession); every
+// request must present a session id that unbinds to the SAME principal (unbindSession) or it's rejected
+// (404) BEFORE the transport sees it. The client only ever holds the bound id.
 
 /** The slice of ExecutionContext this router uses — kept structural; index.ts passes the real ctx. */
 export interface McpExecutionContext {
@@ -41,14 +49,41 @@ export interface ResourceHandlerDeps {
   ) => Promise<Response>;
   /** Inject the resolved principal into the execution context for the McpAgent (a testable seam). */
   readonly setProps: (ctx: McpExecutionContext, props: AuthContext) => void;
+  /** Wrap a transport-assigned session id into an envelope bound to this principal (A8c). */
+  readonly bindSession: (assignedId: string, principal: AuthContext) => Promise<string>;
+  /** Open a presented session id → its base id ONLY if bound to this principal, else null (A8c). */
+  readonly unbindSession: (presentedId: string, principal: AuthContext) => Promise<string | null>;
   readonly log?: (event: string, fields: Record<string, unknown>) => void;
 }
 
 const MCP_PATH = "/mcp";
 const HEALTH_PATH = "/healthz";
+const SESSION_HEADER = "mcp-session-id";
 
 function notFound(): Response {
   return new Response("not found", { status: 404 });
+}
+
+/**
+ * The transport's "unknown session" outcome. An invalid-signature id and a valid id presented by the WRONG
+ * principal are indistinguishable here (no oracle) — a stolen session id is useless to anyone but its owner.
+ */
+function sessionNotFound(): Response {
+  return new Response("session not found", { status: 404 });
+}
+
+/** Clone a request with the `Mcp-Session-Id` header replaced (the body stream is carried over). */
+function withRequestSession(request: Request, sessionId: string): Request {
+  const headers = new Headers(request.headers);
+  headers.set(SESSION_HEADER, sessionId);
+  return new Request(request, { headers });
+}
+
+/** Clone a response with the `Mcp-Session-Id` header replaced (the body stream is carried over). */
+function withResponseSession(res: Response, sessionId: string): Response {
+  const headers = new Headers(res.headers);
+  headers.set(SESSION_HEADER, sessionId);
+  return new Response(res.body, { status: res.status, statusText: res.statusText, headers });
 }
 
 /**
@@ -88,8 +123,32 @@ export async function handleResourceRequest(
         headers: { "www-authenticate": authz.challenge },
       });
     }
+
+    // Per-request principal isolation (A8c): an inbound session id MUST unbind to the current principal.
+    // A different principal presenting it (a stolen/reused id) → null → rejected here, before the transport
+    // can route to another principal's DO. On unbind, the id is unwrapped to the base id the transport routes
+    // by. A request with no inbound id (the `initialize`) passes straight through; its assigned id is wrapped
+    // on the way out.
+    let downstream = request;
+    const inbound = request.headers.get(SESSION_HEADER);
+    if (inbound !== null) {
+      const baseId = await deps.unbindSession(inbound, authz.ctx);
+      if (baseId === null) {
+        deps.log?.("mcp.session_rejected", { orgId: authz.ctx.orgId });
+        return sessionNotFound();
+      }
+      downstream = withRequestSession(request, baseId);
+    }
+
     deps.setProps(ctx, authz.ctx);
-    return deps.serveMcp(request, env, ctx);
+    const res = await deps.serveMcp(downstream, env, ctx);
+
+    // Re-wrap any transport-assigned session id (the `initialize` response, or an echo) back into the
+    // principal-bound envelope, so the client only ever holds the bound id (bindSession is deterministic,
+    // so a re-echo yields the same id the client already has).
+    const assigned = res.headers.get(SESSION_HEADER);
+    if (assigned === null) return res;
+    return withResponseSession(res, await deps.bindSession(assigned, authz.ctx));
   }
 
   return notFound();

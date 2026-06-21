@@ -43,6 +43,13 @@ function deps(over: Partial<ResourceHandlerDeps> = {}): ResourceHandlerDeps {
     prmPath: PRM_PATH,
     serveMcp: vi.fn(async () => SERVED.clone()),
     setProps: vi.fn(),
+    // Fakes for the A8c session-binding seams (the real crypto is unit-tested in session-binding.test.ts):
+    // bind wraps `id` → `bound:id`; unbind unwraps that, returning null for anything else (a cross-principal
+    // or invalid id).
+    bindSession: vi.fn(async (id: string) => `bound:${id}`),
+    unbindSession: vi.fn(async (id: string) =>
+      id.startsWith("bound:") ? id.slice("bound:".length) : null,
+    ),
     ...over,
   };
 }
@@ -155,5 +162,59 @@ describe("handleResourceRequest", () => {
   it("404s an unknown path", async () => {
     const res = await handleResourceRequest(deps(), req("/nope"), {}, fakeCtx());
     expect(res.status).toBe(404);
+  });
+
+  // A8c — per-request principal isolation.
+  it("wraps the transport-assigned session id (initialize) into a principal-bound id on the way out", async () => {
+    const bindSession = vi.fn(async (id: string) => `bound:${id}`);
+    const serveMcp = vi.fn(
+      async () => new Response("ok", { status: 200, headers: { "mcp-session-id": "G" } }),
+    );
+    const res = await handleResourceRequest(
+      deps({ bindSession, serveMcp }),
+      // no inbound session id = the initialize request
+      req("/mcp", { method: "POST", headers: { authorization: "Bearer whk_a" } }),
+      {},
+      fakeCtx(),
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("mcp-session-id")).toBe("bound:G");
+    expect(bindSession).toHaveBeenCalledWith("G", CTX);
+  });
+
+  it("unwraps a presented (bound) session id to the base id before the transport routes the DO", async () => {
+    let seen: string | null = null;
+    const serveMcp = vi.fn(async (r: Request) => {
+      seen = r.headers.get("mcp-session-id");
+      return SERVED.clone();
+    });
+    await handleResourceRequest(
+      deps({ serveMcp }),
+      req("/mcp", {
+        method: "POST",
+        headers: { authorization: "Bearer whk_a", "mcp-session-id": "bound:G" },
+      }),
+      {},
+      fakeCtx(),
+    );
+    expect(seen).toBe("G"); // the transport sees the base id, not the wrapped one
+  });
+
+  it("REJECTS a session id that doesn't unbind to this principal (404), without reaching the transport", async () => {
+    const serveMcp = vi.fn(async () => SERVED.clone());
+    const setProps = vi.fn();
+    const res = await handleResourceRequest(
+      deps({ serveMcp, setProps }),
+      req("/mcp", {
+        method: "POST",
+        // a stolen/forged id another principal presents → unbindSession returns null
+        headers: { authorization: "Bearer whk_b", "mcp-session-id": "someone-elses-session" },
+      }),
+      {},
+      fakeCtx(),
+    );
+    expect(res.status).toBe(404);
+    expect(serveMcp).not.toHaveBeenCalled();
+    expect(setProps).not.toHaveBeenCalled();
   });
 });
