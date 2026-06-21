@@ -37,6 +37,12 @@ const TOKEN = {
   "<KV_AUTHZ_ID>": reqEnv("KV_AUTHZ_ID"),
   // <OAUTH_KV_ID> removed (A8): mcp is no longer an OAuth issuer, so it has no OAUTH_KV binding. The
   // OAUTH_KV_ID GitHub repo variable is now unused (was mcp-only) and can be retired.
+  // auth.webhook.co (deploy slice): the issuer's OWN OAuth grant store + device-code + rate-limit KV, and
+  // the webhook_auth Hyperdrive. Every workflow that runs this generator must provide these env vars.
+  "<AUTH_OAUTH_KV_ID>": reqEnv("AUTH_OAUTH_KV_ID"),
+  "<AUTH_DEVICE_KV_ID>": reqEnv("AUTH_DEVICE_KV_ID"),
+  "<AUTH_RATELIMIT_KV_ID>": reqEnv("AUTH_RATELIMIT_KV_ID"),
+  "<HYPERDRIVE_AUTH_ID>": reqEnv("HYPERDRIVE_AUTH_ID"),
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
 };
@@ -85,6 +91,35 @@ const APPS = {
     domain: "app.webhook.co",
     secrets: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "SESSION_TOKEN_SECRET"],
     placeholders: ["<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
+  },
+  // The OAuth issuer + Better Auth runtime (auth.webhook.co) — an OpenNext SSR Worker (main = src/worker.ts
+  // wrapping .open-next/worker.js with @cloudflare/workers-oauth-provider), deployed by deploy-auth.yml after
+  // `opennextjs-cloudflare build`. Binds its OWN OAUTH_KV/DEVICE_KV/RATELIMIT_KV + the shared KV_AUTHZ, and
+  // three Hyperdrive clients (webhook_app TENANT, webhook_auth AUTH, webhook_authn AUTHN). Secrets: the
+  // shared pepper + audit key, plus BETTER_AUTH_SECRET / CONSENT_TICKET_KEY / the Google+GitHub OAuth creds /
+  // RESEND_API_KEY (the social-login + magic-link creds). No CURSOR_KEY (it serves no paginated reads).
+  auth: {
+    domain: "auth.webhook.co",
+    secrets: [
+      "BETTER_AUTH_SECRET",
+      "CREDENTIAL_PEPPER",
+      "AUDIT_CHAIN_HMAC_KEY",
+      "CONSENT_TICKET_KEY",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GITHUB_CLIENT_ID",
+      "GITHUB_CLIENT_SECRET",
+      "RESEND_API_KEY",
+    ],
+    placeholders: [
+      "<AUTH_OAUTH_KV_ID>",
+      "<KV_AUTHZ_ID>",
+      "<AUTH_DEVICE_KV_ID>",
+      "<AUTH_RATELIMIT_KV_ID>",
+      "<HYPERDRIVE_TENANT_ID>",
+      "<HYPERDRIVE_AUTH_ID>",
+      "<HYPERDRIVE_AUTHN_ID>",
+    ],
   },
 };
 

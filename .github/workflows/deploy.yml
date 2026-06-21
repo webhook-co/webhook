@@ -64,6 +64,12 @@ jobs:
       KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}
       KV_AUTHZ_ID: ${{ vars.KV_AUTHZ_ID }}
       OAUTH_KV_ID: ${{ vars.OAUTH_KV_ID }}
+      # gen-wrangler-prod.mjs emits every app (incl. auth) each run + reqEnv()s its ids — provide auth's too,
+      # even though this workflow only deploys engine/api/mcp. (deploy-auth.yml deploys auth.)
+      HYPERDRIVE_AUTH_ID: ${{ vars.HYPERDRIVE_AUTH_ID }}
+      AUTH_OAUTH_KV_ID: ${{ vars.AUTH_OAUTH_KV_ID }}
+      AUTH_DEVICE_KV_ID: ${{ vars.AUTH_DEVICE_KV_ID }}
+      AUTH_RATELIMIT_KV_ID: ${{ vars.AUTH_RATELIMIT_KV_ID }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - uses: ./.github/actions/setup
