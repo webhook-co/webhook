@@ -23,6 +23,11 @@ next-env.d.ts
 # Environment
 .env
 .env.*
+# wrangler / OpenNext local dev secrets (next dev + `opennextjs-cloudflare preview`)
+.dev.vars
+.dev.vars.*
+**/.dev.vars
+**/.dev.vars.*
 
 # Logs
 *.log
