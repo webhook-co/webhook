@@ -14,6 +14,8 @@ import { handleAuthorize, handleConsentDecision } from "./authorize-route";
 import { makeDeviceAuthorizeDeps } from "./device-authorize-deps";
 import { handleDeviceAuthorization } from "./device-authorize-route";
 import { redeemDeviceCode } from "./device-token-core";
+import { makeDeviceVerifyDeps } from "./device-verify-deps";
+import { handleDeviceVerify } from "./device-verify-route";
 import { makeRevokeDeps } from "./revoke-deps";
 import { handleRevokeRequest } from "./revoke-route";
 import { redeemAuthCode, redeemRefresh } from "./token-core";
@@ -22,6 +24,7 @@ import { handleTokenRequest } from "./token-route";
 import {
   readAuthorizeEnv,
   readDeviceAuthorizeEnv,
+  readDeviceVerifyEnv,
   readRevokeEnv,
   readTokenEnv,
 } from "../runtime/env";
@@ -83,6 +86,17 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
       if (request.method === "POST" && url.pathname === "/device_authorization") {
         const deps = makeDeviceAuthorizeDeps(readDeviceAuthorizeEnv(rawEnv), request.url);
         return await handleDeviceAuthorization(deps, request);
+      }
+
+      // POST /device/verify — the device browser approval entry (A4c-3): rate-limited + session-gated, it
+      // resolves the user-code → builds the consent ticket → redirects to the shared /consent screen.
+      if (request.method === "POST" && url.pathname === "/device/verify") {
+        const { deps, close } = await makeDeviceVerifyDeps(readDeviceVerifyEnv(rawEnv), ctx);
+        try {
+          return await handleDeviceVerify(deps, request);
+        } finally {
+          drain(ctx, close, "device_verify.pool_close_failed");
+        }
       }
 
       if (request.method === "POST" && url.pathname === "/token") {

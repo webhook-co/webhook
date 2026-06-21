@@ -13,6 +13,8 @@ import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
 
 import { buildConsent, decideConsent } from "./consent-core";
 import { importConsentTicketKey, signConsentTicket, verifyConsentTicket } from "./consent-ticket";
+import { makeDeviceStoreDeps } from "./device-deps";
+import { setDeviceDecision } from "./device-store";
 import { oauthIssuerConfig } from "./oauth-config";
 import type { AuthorizeRouteDeps } from "./authorize-route";
 import { LOGIN_PATH } from "../runtime/urls";
@@ -115,6 +117,9 @@ export async function makeAuthorizeDeps(
         {
           verifyTicket: (ticket) => verifyConsentTicket(ticket, ticketKey, nowSeconds()),
           completeAuthorization: (opts) => helpers.completeAuthorization(opts),
+          // A4c — a device-code ticket records its decision against the device store (no provider grant).
+          setDeviceDecision: (userCode, decision) =>
+            setDeviceDecision(makeDeviceStoreDeps(env.DEVICE_KV), userCode, decision),
           log,
         },
         input,

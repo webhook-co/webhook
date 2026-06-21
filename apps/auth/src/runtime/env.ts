@@ -215,21 +215,42 @@ export interface AuthorizeEnv extends AuthEnv {
   CONSENT_TICKET_KEY: Secret;
   /** The OAuth provider's KV store (KVNamespace) — getOAuthApi(config, env) reads it per request. */
   OAUTH_KV: unknown;
+  /** The device-code store (KVNamespace) — /consent/decision records a device decision via setDeviceDecision. */
+  DEVICE_KV: unknown;
 }
 
 /**
  * Validate + narrow the env for the consent endpoints, fail-closed (naming the missing key, never its
- * value): reuses readAuthEnv (the session runtime) then asserts the ticket key + OAUTH_KV.
+ * value): reuses readAuthEnv (the session runtime) then asserts the ticket key + OAUTH_KV + DEVICE_KV.
  */
 export function readAuthorizeEnv(env: Record<string, unknown>): AuthorizeEnv {
   readAuthEnv(env);
   if (!secretPresent(env.CONSENT_TICKET_KEY)) {
     throw new Error("authorize env: missing or empty required secret CONSENT_TICKET_KEY");
   }
-  if (env.OAUTH_KV == null || typeof env.OAUTH_KV !== "object") {
-    throw new Error("authorize env: missing OAUTH_KV binding");
+  for (const key of ["OAUTH_KV", "DEVICE_KV"] as const) {
+    if (env[key] == null || typeof env[key] !== "object") {
+      throw new Error(`authorize env: missing ${key} binding`);
+    }
   }
   return env as unknown as AuthorizeEnv;
+}
+
+// --- A4c-3: the /device/verify env slice -----------------------------------------------------------
+// The browser device-verify path needs everything the consent endpoints do (AuthorizeEnv: session +
+// ticket key + OAUTH_KV + DEVICE_KV) PLUS the rate-limit store (the user-code guess surface).
+export interface DeviceVerifyEnv extends AuthorizeEnv {
+  /** The rate-limit counter store (KVNamespace) — consumeRateLimit keys the verify guess-throttle here. */
+  RATELIMIT_KV: unknown;
+}
+
+/** Validate + narrow the env for /device/verify, fail-closed. */
+export function readDeviceVerifyEnv(env: Record<string, unknown>): DeviceVerifyEnv {
+  readAuthorizeEnv(env);
+  if (env.RATELIMIT_KV == null || typeof env.RATELIMIT_KV !== "object") {
+    throw new Error("device_verify env: missing RATELIMIT_KV binding");
+  }
+  return env as unknown as DeviceVerifyEnv;
 }
 
 /** Resolve every secret to a plain string (Better Auth + the hasher take strings). */
