@@ -38,10 +38,8 @@ export interface ConsentAuthRequest {
   resource?: string | string[];
 }
 
-/** The sealed contents of a consent ticket. */
-export interface ConsentTicketPayload {
-  /** The parsed OAuth request — replayed into completeAuthorization (carries the PKCE challenge + state). */
-  request: ConsentAuthRequest;
+/** The sealed fields common to every consent ticket (both the PKCE and device-code flows). */
+interface ConsentTicketBase {
   /** The server-authenticated consenting user. Re-checked against the live session at the decision; the
    * page never supplies it. */
   userId: string;
@@ -52,14 +50,15 @@ export interface ConsentTicketPayload {
   scopes: string[];
   /** The validated audience/resource the resulting token is bound to. */
   audience: string;
+  /** The requesting client id (→ ConsentRequest.client.id). */
+  clientId: string;
   /** Display: the requesting client's human name. */
   clientName: string;
-  /** Display: device-code flows carry the device the user-code was entered on. */
+  /** Display: the device the user-code was entered on. Forward-looking — NOT populated in v1
+   * (/device_authorization captures no device name yet); decideConsent forwards it into props if present. */
   device?: { name: string };
   /** Display: where the request originates (a trust signal). */
   origin: { ip: string; location: string | null };
-  /** Which flow asked for consent. */
-  flow: "pkce_loopback" | "device_code";
   /** ISO 8601 — the ~90d grant/refresh lifetime ceiling shown on the screen. */
   grantExpiresAt: string;
   /** The minted access-key TTL in seconds (~24h) shown on the screen. */
@@ -69,6 +68,23 @@ export interface ConsentTicketPayload {
   /** Unix seconds — the deadline by which the user must decide (the ticket is dead strictly after this). */
   exp: number;
 }
+
+/** A PKCE-loopback consent (`/authorize`): carries the OAuth request replayed into completeAuthorization. */
+export interface PkceConsentTicket extends ConsentTicketBase {
+  flow: "pkce_loopback";
+  /** The parsed OAuth request — replayed into completeAuthorization (carries the PKCE challenge + state). */
+  request: ConsentAuthRequest;
+}
+
+/** A device-code consent (`/device`): carries the user-code that targets the device-store decision. */
+export interface DeviceConsentTicket extends ConsentTicketBase {
+  flow: "device_code";
+  /** The device user-code this approval decides (→ setDeviceDecision). */
+  userCode: string;
+}
+
+/** The sealed contents of a consent ticket — discriminated on `flow`. */
+export type ConsentTicketPayload = PkceConsentTicket | DeviceConsentTicket;
 
 /**
  * Import raw key bytes as a non-extractable HMAC key for ticket signing. CONSENT_TICKET_KEY is a dedicated
@@ -146,7 +162,7 @@ export function consentRequestFromTicket(
     requestId: ticket,
     csrfToken: payload.csrf,
     flow: payload.flow,
-    client: { id: payload.request.clientId, name: payload.clientName },
+    client: { id: payload.clientId, name: payload.clientName },
     ...(payload.device ? { device: payload.device } : {}),
     org: { id: payload.orgId, name: payload.orgName },
     origin: payload.origin,

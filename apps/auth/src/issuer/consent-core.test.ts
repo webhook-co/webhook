@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildConsent,
+  buildDeviceConsent,
   decideConsent,
   type BuildConsentDeps,
+  type BuildDeviceConsentDeps,
   type DecideConsentDeps,
 } from "./consent-core";
 import type { ConsentAuthRequest, ConsentTicketPayload } from "./consent-ticket";
@@ -201,9 +203,31 @@ function ticketPayload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketP
     orgName: "Dana's projects",
     scopes: ["events:read", "events:replay"],
     audience: API,
+    clientId: "cli_wbhk",
     clientName: "webhook CLI",
     origin: ORIGIN,
     flow: "pkce_loopback",
+    grantExpiresAt: "2026-09-18T00:00:00.000Z",
+    keyTtlSeconds: KEY_TTL,
+    csrf: "csrf_fixed",
+    exp: NOW + TICKET_TTL,
+    ...over,
+  };
+}
+
+/** A device-code consent ticket (flow="device_code"; carries userCode, not an OAuth request). */
+function deviceTicketPayload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketPayload {
+  return {
+    flow: "device_code",
+    userCode: "WXYZ-1234",
+    userId: "user_dana",
+    orgId: "org_dana",
+    orgName: "Dana's projects",
+    scopes: ["events:read", "events:replay"],
+    audience: API,
+    clientId: "cli_wbhk",
+    clientName: "webhook CLI",
+    origin: ORIGIN,
     grantExpiresAt: "2026-09-18T00:00:00.000Z",
     keyTtlSeconds: KEY_TTL,
     csrf: "csrf_fixed",
@@ -291,13 +315,14 @@ describe("decideConsent", () => {
     });
   });
 
-  it("carries the device name into props for a device-code grant", async () => {
+  it("device approve: records the decision (props incl. device) and returns the device result, not completeAuthorization", async () => {
     const complete = vi.fn(async () => ({ redirectTo: "x" }));
-    await decideConsent(
+    const setDeviceDecision = vi.fn(async () => "ok" as const);
+    const result = await decideConsent(
       decideDeps({
-        verifyTicket: async () =>
-          ticketPayload({ flow: "device_code", device: { name: "Dana's laptop" } }),
+        verifyTicket: async () => deviceTicketPayload({ device: { name: "Dana's laptop" } }),
         completeAuthorization: complete,
+        setDeviceDecision,
       }),
       {
         requestId: "TICKET",
@@ -306,11 +331,92 @@ describe("decideConsent", () => {
         sessionUserId: "user_dana",
       },
     );
-    expect(complete).toHaveBeenCalledWith(
-      expect.objectContaining({
-        props: expect.objectContaining({ device: { name: "Dana's laptop" } }),
-      }),
+    expect(result).toEqual({ kind: "ok", redirectTo: "/device?status=approved" });
+    expect(complete).not.toHaveBeenCalled();
+    expect(setDeviceDecision).toHaveBeenCalledWith("WXYZ-1234", {
+      decision: "approve",
+      props: {
+        orgId: "org_dana",
+        userId: "user_dana",
+        scopes: ["events:read", "events:replay"],
+        audience: API,
+        device: { name: "Dana's laptop" },
+      },
+    });
+  });
+
+  it("device deny: records a deny and returns the denied result", async () => {
+    const setDeviceDecision = vi.fn(async () => "ok" as const);
+    const result = await decideConsent(
+      decideDeps({ verifyTicket: async () => deviceTicketPayload(), setDeviceDecision }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "deny",
+        sessionUserId: "user_dana",
+      },
     );
+    expect(result).toEqual({ kind: "ok", redirectTo: "/device?status=denied" });
+    expect(setDeviceDecision).toHaveBeenCalledWith("WXYZ-1234", { decision: "deny" });
+  });
+
+  it("device: a not_found/already_decided outcome maps to an error (no success redirect)", async () => {
+    const notFound = await decideConsent(
+      decideDeps({
+        verifyTicket: async () => deviceTicketPayload(),
+        setDeviceDecision: async () => "not_found" as const,
+      }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(notFound).toEqual(expect.objectContaining({ kind: "error", status: 400 }));
+    const decided = await decideConsent(
+      decideDeps({
+        verifyTicket: async () => deviceTicketPayload(),
+        setDeviceDecision: async () => "already_decided" as const,
+      }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(decided).toEqual(expect.objectContaining({ kind: "error", status: 409 }));
+  });
+
+  it("device: errors when the device decision seam isn't wired (unsupported)", async () => {
+    const result = await decideConsent(
+      decideDeps({ verifyTicket: async () => deviceTicketPayload(), setDeviceDecision: undefined }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(result).toEqual(
+      expect.objectContaining({ kind: "error", status: 500, error: "server_error" }),
+    );
+  });
+
+  it("device still enforces the session + csrf checks before deciding", async () => {
+    const setDeviceDecision = vi.fn(async () => "ok" as const);
+    const mismatch = await decideConsent(
+      decideDeps({ verifyTicket: async () => deviceTicketPayload(), setDeviceDecision }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        sessionUserId: "someone_else",
+      },
+    );
+    expect(mismatch).toEqual(expect.objectContaining({ kind: "error", status: 403 }));
+    expect(setDeviceDecision).not.toHaveBeenCalled();
   });
 
   it("denies: redirects to the client redirect_uri with access_denied + state, never minting", async () => {
@@ -363,5 +469,100 @@ describe("decideConsent", () => {
     );
     expect(result).toEqual(expect.objectContaining({ kind: "error", status: 400 }));
     expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+function deviceConsentDeps(over: Partial<BuildDeviceConsentDeps> = {}): {
+  deps: BuildDeviceConsentDeps;
+  signed: { payload?: ConsentTicketPayload };
+} {
+  const signed: { payload?: ConsentTicketPayload } = {};
+  const deps: BuildDeviceConsentDeps = {
+    allowedAudiences: [API, MCP],
+    allowedScopes: CAPABILITY,
+    keyTtlSeconds: KEY_TTL,
+    grantTtlSeconds: GRANT_TTL,
+    ticketTtlSeconds: TICKET_TTL,
+    consentPath: "/consent",
+    lookupClientName: async () => "webhook CLI",
+    getConsentOrg: async () => ({ orgId: "org_dana", name: "Dana's projects" }),
+    signTicket: async (payload) => {
+      signed.payload = payload;
+      return "TICKET";
+    },
+    newCsrf: () => "csrf_fixed",
+    nowSeconds: () => NOW,
+    ...over,
+  };
+  return { deps, signed };
+}
+
+const DEVICE_RECORD = {
+  userCode: "WXYZ-1234",
+  clientId: "cli_wbhk",
+  scopes: ["events:read", "events:replay"],
+  audience: API,
+};
+
+describe("buildDeviceConsent", () => {
+  it("seals a device ticket (flow=device_code, userCode) and redirects to the shared consent screen", async () => {
+    const { deps, signed } = deviceConsentDeps();
+    const result = await buildDeviceConsent(deps, DEVICE_RECORD, "user_dana", ORIGIN);
+    expect(result).toEqual({ kind: "consent", location: "/consent?ticket=TICKET" });
+
+    const p = signed.payload!;
+    expect(p.flow).toBe("device_code");
+    if (p.flow !== "device_code") throw new Error("unreachable");
+    expect(p.userCode).toBe("WXYZ-1234");
+    expect(p.userId).toBe("user_dana");
+    expect(p.orgId).toBe("org_dana");
+    expect(p.clientId).toBe("cli_wbhk");
+    expect(p.clientName).toBe("webhook CLI");
+    expect(p.scopes).toEqual(["events:read", "events:replay"]);
+    expect(p.audience).toBe(API);
+    expect(p.exp).toBe(NOW + TICKET_TTL);
+  });
+
+  it("intersects the record's scopes with capability (defense in depth)", async () => {
+    const { deps, signed } = deviceConsentDeps();
+    await buildDeviceConsent(
+      deps,
+      { ...DEVICE_RECORD, scopes: ["events:read", "totally:made-up"] },
+      "user_dana",
+      ORIGIN,
+    );
+    expect(signed.payload!.scopes).toEqual(["events:read"]);
+  });
+
+  it("errors invalid_target / invalid_scope / server_error on the respective failures", async () => {
+    const badAud = await buildDeviceConsent(
+      deviceConsentDeps().deps,
+      { ...DEVICE_RECORD, audience: "https://evil" },
+      "user_dana",
+      ORIGIN,
+    );
+    expect(badAud).toEqual(expect.objectContaining({ kind: "error", error: "invalid_target" }));
+
+    const noScope = await buildDeviceConsent(
+      deviceConsentDeps().deps,
+      { ...DEVICE_RECORD, scopes: ["nope:nope"] },
+      "user_dana",
+      ORIGIN,
+    );
+    expect(noScope).toEqual(expect.objectContaining({ kind: "error", error: "invalid_scope" }));
+
+    const noOrg = await buildDeviceConsent(
+      deviceConsentDeps({ getConsentOrg: async () => null }).deps,
+      DEVICE_RECORD,
+      "user_dana",
+      ORIGIN,
+    );
+    expect(noOrg).toEqual(expect.objectContaining({ kind: "error", error: "server_error" }));
+  });
+
+  it("falls back to the client id for display when the client has no name", async () => {
+    const { deps, signed } = deviceConsentDeps({ lookupClientName: async () => null });
+    await buildDeviceConsent(deps, DEVICE_RECORD, "user_dana", ORIGIN);
+    expect(signed.payload!.clientName).toBe("cli_wbhk");
   });
 });
