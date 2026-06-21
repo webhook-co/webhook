@@ -145,6 +145,11 @@ describe("mint + consume", () => {
           select token_hash from auth_session_exchange where id = ${minted.exchangeId}`,
     );
     expect(Buffer.compare(row!.token_hash, hasher.hash(minted.plaintext))).toBe(0);
-    expect(row!.token_hash.toString("utf8")).not.toContain(minted.plaintext.split("_")[2]!);
+    // The plaintext secret must not be stored. Extract the FULL secret (everything after the
+    // `sxt_<orgId>_` prefix) — NOT `split("_")[2]`, since the base64url secret can itself contain `_`,
+    // which would leave only a short first chunk (e.g. a single char) and make this assertion flaky
+    // against the raw hash bytes.
+    const secret = minted.plaintext.slice(`sxt_${orgId}_`.length);
+    expect(row!.token_hash.toString("utf8")).not.toContain(secret);
   });
 });

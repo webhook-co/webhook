@@ -70,7 +70,8 @@ const APPS = {
   },
   mcp: {
     domain: "mcp.webhook.co",
-    secrets: SHARED,
+    // + MCP_SESSION_KEY (A8c): the mcp-specific session-binding HMAC key (not shared with engine/api).
+    secrets: [...SHARED, "MCP_SESSION_KEY"],
     placeholders: ["<HYPERDRIVE_AUTHN_ID>", "<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
   },
 };

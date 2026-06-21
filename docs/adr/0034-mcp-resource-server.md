@@ -2,8 +2,9 @@
 
 - status: accepted (**A8a** — the bearer-resolution layer: the promoted introspection contract, the
   opaque-token introspection validator, and the two-validator prefix discriminator. **A8b** — the
-  resource-server teardown + mount (this slice; see the A8b section). **A8c** (per-request principal
-  isolation) extends this ADR — see the "still to build" section).
+  resource-server teardown + mount. **A8c** — per-request principal isolation (the A8c section). **A8 is
+  complete** — mcp is a pure resource server with cross-principal session isolation; remaining work is the
+  deploy slice (the `AUTH_ISSUER` binding + the api PRM repoint).
 - date: 2026-06-21
 - scope (A8a): `packages/contract/src/introspection.ts` (+ barrel), `apps/mcp/src/introspect-client.ts`,
   `apps/mcp/src/resolve-bearer.ts` (+ tests); `apps/auth/src/issuer/introspect-core.ts` /
@@ -144,3 +145,48 @@ fails safe, the OAUTH_KV/generator teardown fully consistent (no orphan binding 
 safe. Folded 4 comment-staleness NITs. **Deferred follow-ups:** repoint `apps/api`'s PRM `TOKEN_ISSUER` from
 mcp → auth. (out of A8b's file scope — the deploy slice); the `AUTH_ISSUER` overlay binding + closing the
 deploy-window opaque-token 500 (deploy slice); per-request principal isolation (A8c).
+
+## decision (A8c — per-request principal isolation, DONE)
+
+The threat: the MCP streamable-HTTP transport (`McpAgent.serve`) routes the `WebhookMcp` Durable Object PURELY
+by the `Mcp-Session-Id`, and the DO's principal (`this.props`) is set ONCE at session init (not refreshed on
+warm requests — verified in `agents@0.16.1` / `partyserver`). The library exposes no DO-name hook and no
+per-request principal to the DO. So a session id reused by a DIFFERENT principal (with their own valid bearer)
+would route to the FIRST principal's warm DO and read THEIR org.
+
+The fix is at the resource-server EDGE (not in the DO — the library makes the in-DO approach the plan sketched
+infeasible): a signed session-binding envelope.
+
+- **`session-binding.ts`** (pure, 11 tests): `bindSessionId(key, baseId, digest)` wraps the transport's
+  assigned session id into `<base64url(json{b,p})>.<base64url(hmac-16)>` (the cursor/consent-ticket codec) —
+  `b` = the base id the transport routes by, `p` = the initializing `principalDigest`. `unbindSessionId(key,
+  wrapped, digest)` returns `b` ONLY if the MAC recomputes AND the bound `p` equals the presenting principal's
+  digest; otherwise null (malformed / tampered / forged / wrong-key / WRONG-PRINCIPAL all collapse to null —
+  no oracle). `principalDigest(ctx)` = `sha256(canonical-JSON{o:orgId, u:userId|null})` — canonical JSON so the
+  org/user boundary is unambiguous (no crafted value can collide a different (org,user) pair; **folded MAJOR-1**
+  — the earlier raw-separator encoding relied on ids never containing the delimiter). Bound to IDENTITY, not
+  the token/scopes, so a refreshed/re-scoped token for the same principal keeps its session. `MCP_SESSION_KEY`
+  = a dedicated 32-byte HMAC secret (loud length check; fails CLOSED → 500, never open).
+- **`resource-handler.ts`**: the `/mcp` branch now, after auth: an inbound session id MUST `unbindSession` to
+  the current principal (mismatch → 404 before the transport routes); on success the id is unwrapped to the
+  base id the transport expects. Any transport-assigned id on the response (the `initialize`) is re-wrapped to
+  the principal-bound id, so the client only ever holds the bound id (bind is deterministic → one stable id).
+- **`index.ts`** reads `MCP_SESSION_KEY` and injects the bind/unbind closures.
+
+**How the guarantee holds:** to reach principal A's DO (`streamable-http:G`), B must present a session id that
+unbinds to A's `G` under B's digest — which requires either A's envelope (fails the `p == digest(B)` check) or
+a forged envelope (fails the MAC; B lacks the key). Both → 404 before the transport. `G` itself is the library's
+unguessable `newUniqueId()`, never exposed to the client (only the wrapped id leaves the handler).
+
+## review (A8c)
+
+Two adversarial reviews (security red-team + fresh-eyes). Both MERGEABLE, no BLOCKER. Verified: MAC-before-trust
+ordering (no pre-MAC oracle), forgery infeasible, no distinguishing 404 oracle, fail-CLOSED key handling, the
+init/echo re-wrap deterministic + bound to the right principal, OPTIONS/GET/DELETE all flow through the gate,
+and the cross-principal isolation proven against a REAL warm DO (`session-isolation.test.ts`: B reusing A's
+session id → 404; A keeps its session → 200). Folded: **MAJOR-1** (canonical-JSON digest, above), MINOR (the
+stale `mcp-agent.ts` SESSION BINDING comment → corrected to the as-built edge mechanism; the `tag()` cast
+comment). **Deferred follow-ups:** an envelope version/domain tag + a session `exp` (rotation self-heal) —
+neither widens cross-tenant exposure (the `p`-binding still requires the owner's bearer); a GET-SSE/DELETE
+e2e (the code path is method-agnostic + already gated). **Deploy MUST:** provision `MCP_SESSION_KEY` as a
+FRESH, INDEPENDENT 32-byte secret (the code's length check guards a missing/short key, not a reused one).

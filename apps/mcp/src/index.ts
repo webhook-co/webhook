@@ -9,12 +9,18 @@ import {
   makeApiKeyAuthDeps,
   MCP_RESOURCE,
 } from "@webhook-co/db";
-import { readSecretBinding } from "@webhook-co/shared";
+import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { makeIntrospectVerifyBearer } from "./introspect-client";
 import { makeResourceVerifyBearer } from "./resolve-bearer";
 import { handleResourceRequest, type ResourceHandlerDeps } from "./resource-handler";
+import {
+  bindSessionId,
+  importSessionKey,
+  principalDigest,
+  unbindSessionId,
+} from "./session-binding";
 import { WebhookMcp } from "./mcp-agent";
 import type { McpEnv } from "./env";
 
@@ -67,7 +73,12 @@ interface DepsHandle {
  * the tools is opened INSIDE the Durable Object per call (mcp-agent.ts), not here. Mirrors apps/api/buildDeps.
  */
 async function buildResourceDeps(env: McpEnv): Promise<DepsHandle> {
-  const hasher = createCredentialHasherFromBase64(await readSecretBinding(env.CREDENTIAL_PEPPER));
+  const [pepper, sessionKeyRaw] = await Promise.all([
+    readSecretBinding(env.CREDENTIAL_PEPPER),
+    readSecretBinding(env.MCP_SESSION_KEY),
+  ]);
+  const hasher = createCredentialHasherFromBase64(pepper);
+  const sessionKey = await importSessionKey(b64ToBytes(sessionKeyRaw));
   const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
   const apiKey = makeApiKeyAuthDeps({
     hasher,
@@ -99,6 +110,11 @@ async function buildResourceDeps(env: McpEnv): Promise<DepsHandle> {
     setProps: (ctx, props) => {
       (ctx as { props?: unknown }).props = props;
     },
+    // A8c — bind/open the session id to the principal so a reused id can't reach another principal's DO.
+    bindSession: async (assignedId, principal) =>
+      bindSessionId(sessionKey, assignedId, await principalDigest(principal)),
+    unbindSession: async (presentedId, principal) =>
+      unbindSessionId(sessionKey, presentedId, await principalDigest(principal)),
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
   return { deps, close: () => authn.end() };
