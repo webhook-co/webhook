@@ -166,4 +166,53 @@ describe("handleTokenRequest — grant_type dispatch", () => {
     expect(await res.json()).toMatchObject({ error: "invalid_request" });
     expect(redeemRefresh).not.toHaveBeenCalled();
   });
+
+  const DEVICE_GT = "urn:ietf:params:oauth:grant-type:device_code";
+
+  it("device_code with no device core wired → unsupported_grant_type (A4b wires it)", async () => {
+    const res = await handleTokenRequest(
+      deps(),
+      form({ grant_type: DEVICE_GT, device_code: "dc_x" }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "unsupported_grant_type" });
+  });
+
+  it("device_code WITH a device core wired → dispatches to it and returns its result", async () => {
+    const redeemDevice = vi.fn(
+      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
+    );
+    const res = await handleTokenRequest(
+      deps({ redeemDevice }),
+      form({ grant_type: DEVICE_GT, device_code: "dc_x", client_id: "wbhk" }),
+    );
+    expect(res.status).toBe(200);
+    expect(redeemDevice).toHaveBeenCalledWith({
+      grant_type: DEVICE_GT,
+      device_code: "dc_x",
+      client_id: "wbhk",
+    });
+  });
+
+  it("device_code missing device_code → invalid_request (core not called)", async () => {
+    const redeemDevice = vi.fn(
+      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
+    );
+    const res = await handleTokenRequest(deps({ redeemDevice }), form({ grant_type: DEVICE_GT }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_request" });
+    expect(redeemDevice).not.toHaveBeenCalled();
+  });
+
+  it("a device authorization_pending result maps to a 400 polling response", async () => {
+    const redeemDevice = vi.fn(
+      async (): Promise<RedeemResult> => ({ kind: "error", error: "authorization_pending" }),
+    );
+    const res = await handleTokenRequest(
+      deps({ redeemDevice }),
+      form({ grant_type: DEVICE_GT, device_code: "dc_x" }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "authorization_pending" });
+  });
 });

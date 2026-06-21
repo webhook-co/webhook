@@ -9,7 +9,6 @@
 // token-core; this only supplies the seams.
 
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
-import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
 import {
   API_RESOURCE,
   MCP_RESOURCE,
@@ -25,7 +24,10 @@ import {
 } from "@webhook-co/db";
 import { b64ToBytes, importAuditKey, readSecretBinding } from "@webhook-co/shared";
 
-import { oauthIssuerConfig } from "./oauth-config";
+import { makeDeviceStoreDeps } from "./device-deps";
+import { pollDeviceCode } from "./device-store";
+import type { DeviceTokenDeps } from "./device-token-core";
+import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import { mapProviderTokenError } from "./token-error";
 import type { AuthCodeDeps, ConsentProps, RefreshDeps } from "./token-core";
 import type { TokenEnv } from "../runtime/env";
@@ -39,11 +41,6 @@ const REFRESH_TTL_SECONDS = 7_776_000;
 const GRANT_TTL_SECONDS = REFRESH_TTL_SECONDS;
 const DEFAULT_PENDING_INTERVAL = 5;
 
-/** The capability scopes a mint may ever contain — the SoT (matches oauth-config's discovery set). */
-const CAPABILITY_SCOPES = [
-  ...new Set([...CAPABILITY_REGISTRY.values()].map((c) => c.auth.scope)),
-].sort();
-
 // getOAuthApi needs a full OAuthProviderOptions, but the helpers we use (unwrapToken/revokeGrant) work off
 // OAUTH_KV + the token encryption only and never invoke defaultHandler — so a never-called 404 stub
 // completes the options without pulling the OpenNext handler into this module.
@@ -52,6 +49,8 @@ const HELPERS_DEFAULT_HANDLER = { fetch: async () => new Response(null, { status
 export interface TokenDeps {
   authCode: AuthCodeDeps;
   refresh: RefreshDeps;
+  /** A4b — the device-code grant (poll the DEVICE_KV store, then mint like the auth-code path). */
+  device: DeviceTokenDeps;
   /** Drain the per-request webhook_app pool (call via ctx.waitUntil after the response). */
   close: () => Promise<void>;
 }
@@ -170,5 +169,37 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
 
-  return { authCode, refresh, close: () => app.end() };
+  // A4b — the device-code grant. The provider has no device grant, so this mints directly (like refresh):
+  // poll the DEVICE_KV store (single-use delete-on-read), then mintScopedKey (authMethod "device_code") +
+  // a refresh handle on the same webhook_app pool. Tenancy is enforced at approval (A4c's getConsentOrg),
+  // so this path needs no membership re-check — only the audience/scope defense-in-depth in the core.
+  const deviceStore = makeDeviceStoreDeps(env.DEVICE_KV);
+  const device: DeviceTokenDeps = {
+    allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
+    allowedScopes: CAPABILITY_SCOPES,
+    keyTtlSeconds: KEY_TTL_SECONDS,
+    defaultPendingInterval: DEFAULT_PENDING_INTERVAL,
+    poll: (deviceCode) => pollDeviceCode(deviceStore, deviceCode),
+    mintScopedKey: (input) =>
+      mintScopedKey(
+        app,
+        { ...input, authMethod: "device_code", grantTtlSeconds: GRANT_TTL_SECONDS },
+        hasher,
+        auditKey,
+      ),
+    issueRefreshToken: async (grantId, orgId, audience) => {
+      const minted = await mintRefreshToken(
+        app,
+        { orgId, grantId, audience, ttlSeconds: REFRESH_TTL_SECONDS },
+        hasher,
+      );
+      return minted.plaintext;
+    },
+    rollbackMint: async (grantId, orgId) => {
+      await revokeGrant(app, { orgId, grantId, reason: "issuance_rollback" }, auditKey);
+    },
+    log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+  };
+
+  return { authCode, refresh, device, close: () => app.end() };
 }

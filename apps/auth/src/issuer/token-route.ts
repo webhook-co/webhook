@@ -5,12 +5,15 @@
 // (app/api/token/route.ts) stays thin glue. /token is OAuth 2.1 public-client (PKCE); the provider's
 // /oauth/token subrequest inside redeemAuthCode does the client/PKCE validation.
 
+import { DEVICE_GRANT_TYPE, type DeviceTokenRequest } from "./device-token-core";
 import type { AuthCodeRequest, OAuthErrorCode, RedeemResult, RefreshRequest } from "./token-core";
 
 export interface TokenRouteDeps {
   redeemAuthCode: (req: AuthCodeRequest) => Promise<RedeemResult>;
   /** Wired in A2b-3; until then a refresh_token grant is reported unsupported. */
   redeemRefresh?: (req: RefreshRequest) => Promise<RedeemResult>;
+  /** Wired in A4b; until then a device_code grant is reported unsupported. */
+  redeemDevice?: (req: DeviceTokenRequest) => Promise<RedeemResult>;
 }
 
 // RFC 6749 §5.2: the token error response is 400 for everything except invalid_client (401, which this
@@ -105,8 +108,25 @@ export async function handleTokenRequest(
     );
   }
 
+  if (grantType === DEVICE_GRANT_TYPE) {
+    if (!deps.redeemDevice) {
+      return oauthError("unsupported_grant_type", "device_code grant is not enabled");
+    }
+    const deviceCode = params.get("device_code") ?? "";
+    if (!deviceCode) {
+      return oauthError("invalid_request", "device_code is required");
+    }
+    return resultToResponse(
+      await deps.redeemDevice({
+        grant_type: DEVICE_GRANT_TYPE,
+        device_code: deviceCode,
+        client_id: params.get("client_id") ?? "",
+      }),
+    );
+  }
+
   return oauthError(
     "unsupported_grant_type",
-    "grant_type must be authorization_code or refresh_token",
+    "grant_type must be authorization_code, refresh_token, or device_code",
   );
 }

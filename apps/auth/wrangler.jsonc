@@ -20,14 +20,17 @@
     "directory": ".open-next/assets",
     "binding": "ASSETS",
   },
-  // OAUTH_KV — the OAuth provider's MANDATORY store (opaque grants + auth codes + DCR clients + device
-  // codes). The provider reads/writes it on every OAuth endpoint, so the A2b-1 mount needs it bound or the
-  // issuer 500s at request time (a bundle/dry-run passes without it — access is lazy/per-request). This is
-  // auth.'s OWN namespace, distinct from mcp.'s (each issuer has its own grant store); the deploy overlay
-  // injects the real id (none committed). Provisioned + wired to the apps/auth CD in the deploy slice.
+  // OAUTH_KV — the OAuth provider's MANDATORY store (opaque grants + auth codes + DCR clients). The provider
+  // reads/writes it on every OAuth endpoint, so the A2b-1 mount needs it bound or the issuer 500s at request
+  // time (a bundle/dry-run passes without it — access is lazy/per-request). This is auth.'s OWN namespace,
+  // distinct from mcp.'s (each issuer has its own grant store); the deploy overlay injects the real id (none
+  // committed). Provisioned + wired to the apps/auth CD in the deploy slice.
   // KV_AUTHZ — the SAME cross-surface resolved-principal cache (keyed by credential hash) that api./mcp./
   // engine share; the /revoke endpoint (A2b-4b) evicts it by key hash on grant revoke so a logged-out
   // credential stops resolving immediately. The deploy overlay injects the real (shared) id.
+  // DEVICE_KV — Lane C's OWN device-code store (A4b). The provider has no device grant, so device codes
+  // (the dc:/uc: records) live here, NOT in OAUTH_KV; /device_authorization writes it + the /token device
+  // grant polls it. Its own namespace; the deploy overlay injects the real id.
   "kv_namespaces": [
     {
       "binding": "OAUTH_KV",
@@ -36,6 +39,10 @@
     {
       "binding": "KV_AUTHZ",
       "id": "<KV_AUTHZ_ID>",
+    },
+    {
+      "binding": "DEVICE_KV",
+      "id": "<AUTH_DEVICE_KV_ID>",
     },
   ],
   // === Lane C contributes the rest of the auth-backend bindings here (coordinate scaffold edits w/ E) ===
