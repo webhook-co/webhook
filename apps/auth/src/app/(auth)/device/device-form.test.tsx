@@ -30,12 +30,10 @@ describe("DeviceForm", () => {
     await userEvent.type(screen.getByLabelText(/device code/i), "wxyz1234");
     await userEvent.click(screen.getByRole("button", { name: /continue/i }));
     expect(actions.verifyCode).toHaveBeenCalledWith("WXYZ-1234");
-    // verified → a live region confirming, with a way on to the consent review
+    // verified → a live region confirming; the live action navigates to the server's redirect (which
+    // carries the consent ticket), so there is NO manual link to a bare /consent (it'd lack the ticket).
     expect(await screen.findByRole("status")).toHaveTextContent(/verified/i);
-    expect(screen.getByRole("link", { name: /continue|review/i })).toHaveAttribute(
-      "href",
-      "/consent",
-    );
+    expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
   it("surfaces an error when the code is rejected", async () => {
