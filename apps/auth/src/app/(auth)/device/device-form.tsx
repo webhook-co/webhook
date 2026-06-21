@@ -60,17 +60,15 @@ export function DeviceForm({ actions = mockDeviceActions }: { actions?: DeviceAc
   }
 
   if (verified) {
+    // The live action navigates to the server's redirect (which carries the consent ticket) right
+    // after verifyCode resolves; this is the brief confirmation shown until that navigation lands.
+    // No manual link to a bare `/consent` — without the ticket it would hit the invalid-request state.
     return (
-      <div className="flex flex-col gap-4" role="status">
-        <div className="flex flex-col gap-1.5">
-          <h1 className="text-2xl font-semibold tracking-heading text-fg">Device verified</h1>
-          <p className="leading-snug text-fg-secondary">
-            Review what the device is asking for, then approve or deny the request.
-          </p>
-        </div>
-        <Button asChild>
-          <a href="/consent">Continue to review</a>
-        </Button>
+      <div className="flex flex-col gap-1.5" role="status">
+        <h1 className="text-2xl font-semibold tracking-heading text-fg">Device verified</h1>
+        <p className="leading-snug text-fg-secondary">
+          Hang tight — we&apos;re taking you to review the request.
+        </p>
       </div>
     );
   }
