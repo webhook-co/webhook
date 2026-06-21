@@ -8,13 +8,13 @@ import { API_RESOURCE, MCP_RESOURCE } from "@webhook-co/db";
 
 import { makeDeviceStoreDeps } from "./device-deps";
 import { createDeviceCode } from "./device-store";
+import { HELPERS_DEFAULT_HANDLER } from "./issuer-constants";
 import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import type { DeviceAuthorizeDeps } from "./device-authorize-route";
 import type { DeviceAuthorizeEnv } from "../runtime/env";
 
 const DEVICE_CODE_TTL_SECONDS = 900; // 15 min — the user must enter + approve the code in this window.
 const DEVICE_POLL_INTERVAL = 5;
-const HELPERS_DEFAULT_HANDLER = { fetch: async () => new Response(null, { status: 404 }) };
 
 /**
  * Build the /device_authorization deps for one request. `requestUrl` is the incoming URL — the verification

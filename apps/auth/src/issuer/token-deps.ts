@@ -27,24 +27,17 @@ import { b64ToBytes, importAuditKey, readSecretBinding } from "@webhook-co/share
 import { makeDeviceStoreDeps } from "./device-deps";
 import { pollDeviceCode } from "./device-store";
 import type { DeviceTokenDeps } from "./device-token-core";
+import { GRANT_TTL_SECONDS, HELPERS_DEFAULT_HANDLER, KEY_TTL_SECONDS } from "./issuer-constants";
 import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import { mapProviderTokenError } from "./token-error";
 import type { AuthCodeDeps, ConsentProps, RefreshDeps } from "./token-core";
 import type { TokenEnv } from "../runtime/env";
 
-/** 24h whk_ key (the C↔D contract's expires_in); ~90d opaque refresh handle. */
-const KEY_TTL_SECONDS = 86_400;
-const REFRESH_TTL_SECONDS = 7_776_000;
-// ~90d absolute grant ceiling = the "grant lifetime" the consent screen advertises. The grant's expiry
-// caps the refresh chain (consumeRefreshToken rejects a grant past expiry), so a perpetually-rotated
-// handle still terminates at 90d → re-login. Without it the chain would renew forever.
-const GRANT_TTL_SECONDS = REFRESH_TTL_SECONDS;
+// The opaque refresh handle lives as long as the grant ceiling (~90d): the grant's expiry caps the refresh
+// chain (consumeRefreshToken rejects a grant past expiry), so a perpetually-rotated handle still terminates
+// at the ceiling → re-login. KEY_TTL_SECONDS (24h whk_ key) + GRANT_TTL_SECONDS are the shared issuer SoT.
+const REFRESH_TTL_SECONDS = GRANT_TTL_SECONDS;
 const DEFAULT_PENDING_INTERVAL = 5;
-
-// getOAuthApi needs a full OAuthProviderOptions, but the helpers we use (unwrapToken/revokeGrant) work off
-// OAUTH_KV + the token encryption only and never invoke defaultHandler — so a never-called 404 stub
-// completes the options without pulling the OpenNext handler into this module.
-const HELPERS_DEFAULT_HANDLER = { fetch: async () => new Response(null, { status: 404 }) };
 
 export interface TokenDeps {
   authCode: AuthCodeDeps;
