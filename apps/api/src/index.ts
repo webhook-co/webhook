@@ -31,8 +31,13 @@ import { handleRequest, type ApiDeps } from "./router.js";
 
 // API_RESOURCE (the RFC 8707 audience this surface binds api keys to) is single-sourced in @webhook-co/db.
 const PRM_PATH = "/.well-known/oauth-protected-resource";
-/** The OAuth token issuer for this resource (co-located on mcp.; ADR-0010). */
-const TOKEN_ISSUER = "https://mcp.webhook.co";
+/**
+ * The OAuth token issuer for this resource — auth.webhook.co (the Lane C issuer). Was mcp. while mcp
+ * co-located the issuer (ADR-0010); A8 tore that down (mcp is now a resource server), so api's RFC 9728
+ * discovery must point clients at the real issuer. api still validates `whk_` keys directly (zero issuer
+ * involvement) — this is discovery metadata only.
+ */
+const TOKEN_ISSUER = "https://auth.webhook.co";
 
 export interface Env {
   /** webhook_authn Hyperdrive (caching OFF): the api-key cold lookup (org-discovery-by-hash). */

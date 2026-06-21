@@ -19,7 +19,7 @@ describe("apps/api worker — public routes (no auth, no DB deps)", () => {
       bearer_methods_supported: string[];
     };
     expect(body.resource).toBe("https://api.webhook.co");
-    expect(body.authorization_servers).toContain("https://mcp.webhook.co"); // the token issuer
+    expect(body.authorization_servers).toContain("https://auth.webhook.co"); // the Lane C issuer (A8)
     expect(body.bearer_methods_supported).toEqual(["header"]);
   });
 
