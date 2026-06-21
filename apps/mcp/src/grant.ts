@@ -1,14 +1,13 @@
 import type { AuthContext } from "@webhook-co/contract";
 
-// The trust boundary where an OAuth grant becomes our AuthContext.
+// The trust boundary where the resolved principal becomes our AuthContext, inside the Durable Object.
 //
-// @cloudflare/workers-oauth-provider validates the access token (opaque, KV-backed) and hands
-// the grant's `props` to the API handler as `ctx.props: unknown`. Those props were set when the
-// grant was minted (completeAuthorization) and are stored encrypted under the token — but this
-// module still VALIDATES their shape before trusting them: props are attacker-adjacent (a
-// poisoned/garbled KV entry, a future code change that mints the wrong shape) and this is the
-// gate that turns them into a typed AuthContext. Fail closed — never coerce a malformed grant
-// into a half-populated principal.
+// The resource-server router (resource-handler.ts, A8) validates the bearer — a `whk_` api key via the
+// credential chain, or an opaque OAuth token via introspection to auth. — and sets the resolved principal
+// on the execution context, which the McpAgent surfaces as `this.props: unknown` at session init. This
+// module still VALIDATES their shape before trusting them: props are attacker-adjacent at the DO boundary
+// (a wrong-shape future change, a warm-DO carry-over) and this is the gate that turns them into a typed
+// AuthContext. Fail closed — never coerce a malformed principal into a half-populated one.
 
 /** The props minted into an OAuth grant (completeAuthorization) — exactly the AuthContext shape. */
 export interface McpGrantProps {

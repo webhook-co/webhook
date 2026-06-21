@@ -3,8 +3,9 @@ import { readSecretBinding } from "@webhook-co/shared";
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 
-// End-to-end through the real runtime: an API-key bearer -> resolveExternalToken (KV hot path) ->
-// the OAuth grant -> the WebhookMcp Durable Object -> the MCP transport. We drive the JSON-RPC
+// End-to-end through the real runtime: an API-key bearer -> the resource-server router's api-key
+// validator (KV credential-cache hot path) -> the resolved principal on ctx.props -> the WebhookMcp
+// Durable Object -> the MCP transport. We drive the JSON-RPC
 // handshake directly over SELF.fetch (each request reads its response to completion, so no SSE
 // stream lingers) and assert tools/list surfaces the 6 bound tools. This is the first time init()
 // runs in workerd, so it also proves the zod-input -> MCP-tool-schema conversion. The tenant DB
@@ -12,7 +13,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 // deliberately stops at tools/list (no Postgres): it proves the WIRING, not the reads.
 
 const ORIGIN = "https://mcp.webhook.co";
-const TOKEN = "whsk_test_integration_key";
+// A real first-party access key shape (`whk_`, the API_KEY_PREFIX): the two-validator front door routes
+// it to the api-key chain (a non-`whk_` token would route to introspection). The resolver hashes the
+// whole plaintext, so any `whk_…` value works once its hash is seeded into the KV cache below.
+const TOKEN = "whk_test_integration_key";
 const READ_TOOLS = [
   "audit.verify",
   "endpoints.get",
@@ -22,10 +26,10 @@ const READ_TOOLS = [
   "events.tail",
 ];
 
-/** Seed the KV credential-cache hot path so resolveExternalToken resolves TOKEN without Postgres. */
+/** Seed the KV credential-cache hot path so the api-key validator resolves TOKEN without Postgres. */
 async function seedApiKey(scopes: readonly string[]): Promise<void> {
   // The pepper is a SecretsStoreSecret binding in prod; the test env injects a plain string, so
-  // readSecretBinding bridges both — the same way resolveExternalToken reads it.
+  // readSecretBinding bridges both — the same way the resource server's deps read it.
   const pepper = await readSecretBinding(env.CREDENTIAL_PEPPER as SecretsStoreSecret | string);
   const hasher = createCredentialHasherFromBase64(pepper);
   const keyHash = hasher.candidates(TOKEN)[0];
