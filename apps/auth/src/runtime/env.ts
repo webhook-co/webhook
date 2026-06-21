@@ -32,6 +32,12 @@ export interface AuthEnv {
   GITHUB_CLIENT_ID: Secret;
   GITHUB_CLIENT_SECRET: Secret;
   RESEND_API_KEY: Secret;
+  /**
+   * The rate-limit counter store (KVNamespace) — the durable magic-link send throttle (makeAuth) keys here,
+   * replacing Better Auth's per-isolate in-memory limiter. Optional in the type (so AuthEnv readers needn't
+   * all require it); always bound in prod (wrangler.jsonc) — when absent the throttle is simply skipped.
+   */
+  RATELIMIT_KV?: unknown;
 }
 
 /** Secrets resolved to plain strings (Better Auth + the hasher take strings). */

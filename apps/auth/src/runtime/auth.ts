@@ -32,7 +32,8 @@ import {
   type AuthEnv,
   type ResolvedAuthSecrets,
 } from "./env";
-import { sendMagicLinkEmail } from "./magic-link";
+import { makeMagicLinkRateLimit, sendMagicLinkEmail, type MagicLinkRateLimit } from "./magic-link";
+import { type RateLimitKv } from "../issuer/rate-limit";
 
 type AuthConfig = Parameters<typeof betterAuth>[0];
 type MagicLinkConfig = Parameters<typeof magicLink>[0];
@@ -52,24 +53,36 @@ export interface AuthConfigDeps {
   sendEmail: EmailSender;
   /** signup→bootstrap + self-heal hooks (A1b-2). */
   databaseHooks: AuthConfig["databaseHooks"];
+  /** Durable magic-link send throttle (makeAuth builds it from RATELIMIT_KV); absent → no extra throttle. */
+  rateLimit?: MagicLinkRateLimit;
+  /** Structured observability sink (the rate-limit drop is logged; no PII). */
+  log?: (event: string, fields?: Record<string, unknown>) => void;
 }
 
 /**
  * Magic-link plugin options. Single-use links expire in 5 minutes and are stored HASHED (the DB never
  * holds a usable token). The raw token never leaves Better Auth — only the URL reaches the email sender.
  *
- * TODO(deploy / before the endpoint is live): the plugin's built-in rate limiter defaults to IN-MEMORY
- * storage, which is per-isolate on Workers and ineffective fleet-wide — a public, email-triggering endpoint
- * must use durable storage (a `rateLimit` DB table or a KV-backed secondaryStorage) + ideally a
- * Turnstile/WAF gate. Deferred to the deploy/bindings slice (needs a KV/DB binding + a session-storage
- * decision; the endpoint is not yet deployed). Tracked in ADR-0027 as must-fix-before-live.
+ * Durable send throttle (ADR-0027 must-before-live): Better Auth's built-in limiter is per-isolate
+ * in-memory, ineffective fleet-wide for this public, email-triggering endpoint. So the send goes through a
+ * durable RATELIMIT_KV throttle (deps.rateLimit, built by makeAuth) keyed by email + caller IP; when a
+ * window is exhausted we SILENTLY skip the send (Better Auth still reports success — no "does this email
+ * exist" oracle, and the abuse is bounded). A future edge/WAF gate (Turnstile) is defense-in-depth.
  */
-export function magicLinkOptions(deps: { sendEmail: EmailSender }): MagicLinkConfig {
+export function magicLinkOptions(deps: {
+  sendEmail: EmailSender;
+  rateLimit?: MagicLinkRateLimit;
+  log?: (event: string, fields?: Record<string, unknown>) => void;
+}): MagicLinkConfig {
   return {
     expiresIn: 300,
     disableSignUp: false,
     storeToken: "hashed",
     sendMagicLink: async ({ email, url }) => {
+      if (deps.rateLimit && !(await deps.rateLimit(email))) {
+        deps.log?.("magic_link.rate_limited"); // no PII (the email is the throttled subject)
+        return;
+      }
       await deps.sendEmail({ to: email, url });
     },
   };
@@ -148,8 +161,18 @@ export async function makeAuth(env: AuthEnv, ctx?: AuthExecutionContext): Promis
     waitUntil: ctx ? (promise) => ctx.waitUntil(promise) : undefined,
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   });
+  const log = (event: string, fields?: Record<string, unknown>) =>
+    console.log(JSON.stringify({ message: event, ...fields }));
+  // Durable magic-link send throttle — wired when RATELIMIT_KV is bound (always in prod). Absent (e.g. a
+  // context without the binding) → no extra throttle, never a crash.
+  const rateLimit = env.RATELIMIT_KV
+    ? makeMagicLinkRateLimit(env.RATELIMIT_KV as RateLimitKv)
+    : undefined;
   const auth = betterAuth(
-    buildAuthConfig({ baseURL, secrets }, { database: pool, sendEmail, databaseHooks }),
+    buildAuthConfig(
+      { baseURL, secrets },
+      { database: pool, sendEmail, databaseHooks, rateLimit, log },
+    ),
   );
   return {
     handler: (request) => auth.handler(request),
