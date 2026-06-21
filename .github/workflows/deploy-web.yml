@@ -1,0 +1,84 @@
+name: deploy-web
+
+# CD for the dashboard Worker (apps/web -> app.webhook.co). Unlike deploy-www.yml (a static export),
+# apps/web is a dynamic OpenNext SSR Worker, so this BUILDS the worker (`opennextjs-cloudflare build`)
+# before deploying. Like deploy.yml / deploy-www.yml it calls wrangler directly via pnpm (third-party
+# Marketplace actions are blocked by org policy); only actions/* are used, SHA-pinned.
+#
+# The committed apps/web/wrangler.jsonc carries PLACEHOLDER ids (no real ids — no-secrets). The generator
+# (scripts/gen-wrangler-prod.mjs) reads the resource ids from repo VARIABLES + injects account_id /
+# workers_dev:false / routes (app.webhook.co custom domain) / secrets_store_secrets (CREDENTIAL_PEPPER,
+# AUDIT_CHAIN_HMAC_KEY, SESSION_TOKEN_SECRET), emitting the gitignored apps/web/wrangler.prod.jsonc the
+# deploy reads. Secret VALUES never enter CI — only the CF token (secret) + the non-secret ids/store id.
+#
+#   push to main / dispatch from main -> build, generate, then `wrangler deploy` (production)
+#   pull_request                      -> build, generate, then `wrangler deploy --dry-run` (validates the
+#                                        config + the worker bundle + binding resolution without deploying)
+#
+# NOT a required status check (lives outside ci.yml); a deploy failure never blocks a merge. The custom
+# domain is bound once at the zone — a normal deploy only refreshes the Worker + its assets.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "packages/**"
+      - "scripts/gen-wrangler-prod.mjs"
+      - ".github/workflows/deploy-web.yml"
+      - "pnpm-lock.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/web/**"
+      - "packages/**"
+      - "scripts/gen-wrangler-prod.mjs"
+      - ".github/workflows/deploy-web.yml"
+      - "pnpm-lock.yaml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: deploy-web
+    runs-on: ubuntu-latest
+    # Same-repo only: fork PRs don't receive secrets/vars, so a deploy/dry-run can't authenticate.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      SECRETS_STORE_ID: ${{ vars.SECRETS_STORE_ID }}
+      # The generator reqEnv()s every wedge id (engine needs them) even though web binds only
+      # HYPERDRIVE_TENANT + KV_AUTHZ — provide the full set so it doesn't fail loudly.
+      HYPERDRIVE_TENANT_ID: ${{ vars.HYPERDRIVE_TENANT_ID }}
+      HYPERDRIVE_CACHED_ID: ${{ vars.HYPERDRIVE_CACHED_ID }}
+      HYPERDRIVE_ANCHOR_ID: ${{ vars.HYPERDRIVE_ANCHOR_ID }}
+      HYPERDRIVE_AUTHN_ID: ${{ vars.HYPERDRIVE_AUTHN_ID }}
+      HYPERDRIVE_INGEST_ID: ${{ vars.HYPERDRIVE_INGEST_ID }}
+      KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}
+      KV_AUTHZ_ID: ${{ vars.KV_AUTHZ_ID }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      # apps/web's OpenNext build type-checks against the workspace deps' built .d.ts (the tsconfig
+      # dist-redirects for the WebCrypto/KVNamespace helpers), so build their dist first.
+      - name: Build workspace deps
+        run: pnpm exec turbo run build --filter=@webhook-co/web^...
+      - name: Build the OpenNext worker
+        run: pnpm --filter @webhook-co/web build:cf
+      - name: Generate prod wrangler config (overlay)
+        run: node scripts/gen-wrangler-prod.mjs
+      - name: Deploy production (app.webhook.co)
+        # main-only: a push to main, or a workflow_dispatch with main selected. Without the ref guard a
+        # dispatch from a feature branch would ship unreviewed code straight to prod — keep the gate real.
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: pnpm --filter @webhook-co/web exec wrangler deploy -c wrangler.prod.jsonc
+      - name: Validate deploy (dry-run)
+        if: github.event_name == 'pull_request'
+        run: pnpm --filter @webhook-co/web exec wrangler deploy --dry-run -c wrangler.prod.jsonc

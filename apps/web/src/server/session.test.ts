@@ -39,6 +39,13 @@ describe("verifySession", () => {
     expect(cookieStore.get).toHaveBeenCalledWith(SESSION_COOKIE);
   });
 
+  it("sends the unauthenticated request to the login surface on the AUTH origin (never a relative /login on app.)", async () => {
+    cookieStore.get.mockReturnValue(undefined);
+    await expect(verifySession()).rejects.toThrow(/NEXT_REDIRECT:/);
+    // getAuthBaseUrl() is mocked to the auth origin; the gate must target it, not app.'s own /login (404).
+    expect(redirect).toHaveBeenCalledWith("http://auth.test/login");
+  });
+
   it("redirects to login when the session cookie is empty", async () => {
     cookieStore.get.mockReturnValue({ name: SESSION_COOKIE, value: "" });
     await expect(verifySession()).rejects.toThrow(/NEXT_REDIRECT:/);
