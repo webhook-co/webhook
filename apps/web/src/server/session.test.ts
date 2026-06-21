@@ -9,9 +9,22 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
+const TEST_SECRET = "verify-session-test-secret-aaaaaaaaaaaaaaaa";
+vi.mock("./env", () => ({
+  getSessionSecret: vi.fn(async () => TEST_SECRET),
+  getAuthBaseUrl: vi.fn(() => "http://auth.test"),
+}));
+
 import { redirect } from "next/navigation";
 
-import { SESSION_COOKIE, verifySession } from "./session";
+import { SESSION_COOKIE, type Session, verifySession } from "./session";
+import { signSessionToken } from "./session-token";
+
+const principal: Session = {
+  userId: "usr_dana",
+  orgId: "org_acme",
+  user: { name: "Dana Kessler", email: "dana@acme.co", image: null },
+};
 
 describe("verifySession", () => {
   beforeEach(() => {
@@ -31,12 +44,28 @@ describe("verifySession", () => {
     await expect(verifySession()).rejects.toThrow(/NEXT_REDIRECT:/);
   });
 
-  it("returns the session principal when the cookie is present", async () => {
-    cookieStore.get.mockReturnValue({ name: SESSION_COOKIE, value: "mock-token" });
+  it("redirects when the cookie value is not a valid signed token", async () => {
+    cookieStore.get.mockReturnValue({ name: SESSION_COOKIE, value: "not-a-real-token" });
+    await expect(verifySession()).rejects.toThrow(/NEXT_REDIRECT:/);
+  });
+
+  it("redirects when the token is forged (signed with another secret)", async () => {
+    const forged = await signSessionToken(principal, "not-the-server-secret", 3600);
+    cookieStore.get.mockReturnValue({ name: SESSION_COOKIE, value: forged });
+    await expect(verifySession()).rejects.toThrow(/NEXT_REDIRECT:/);
+  });
+
+  it("redirects when the token is expired", async () => {
+    const expired = await signSessionToken(principal, TEST_SECRET, -10);
+    cookieStore.get.mockReturnValue({ name: SESSION_COOKIE, value: expired });
+    await expect(verifySession()).rejects.toThrow(/NEXT_REDIRECT:/);
+  });
+
+  it("returns the decoded principal for a valid token", async () => {
+    const token = await signSessionToken(principal, TEST_SECRET, 3600);
+    cookieStore.get.mockReturnValue({ name: SESSION_COOKIE, value: token });
     const session = await verifySession();
-    expect(session.orgId).toBeTruthy();
-    expect(session.userId).toBeTruthy();
-    expect(session.user.email).toContain("@");
+    expect(session).toEqual(principal);
     expect(redirect).not.toHaveBeenCalled();
   });
 });
