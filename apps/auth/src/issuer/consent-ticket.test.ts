@@ -31,6 +31,7 @@ function basePayload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketPay
     orgName: "Dana's projects",
     scopes: ["events:read", "events:replay"],
     audience: "https://api.webhook.co",
+    clientId: "cli_wbhk",
     clientName: "webhook CLI",
     origin: { ip: "203.0.113.7", location: "San Francisco, US" },
     flow: "pkce_loopback",
@@ -120,11 +121,17 @@ describe("consentRequestFromTicket", () => {
     expect(req.device).toBeUndefined();
   });
 
-  it("carries the device for a device-code flow", () => {
-    const req = consentRequestFromTicket(
-      "t.t",
-      basePayload({ flow: "device_code", device: { name: "Dana's laptop" } }),
-    );
+  it("maps a device-code ticket (userCode variant, no OAuth request) + carries the device name", () => {
+    const { request: _r, ...base } = basePayload();
+    const deviceTicket: ConsentTicketPayload = {
+      ...base,
+      flow: "device_code",
+      userCode: "WXYZ-1234",
+      device: { name: "Dana's laptop" },
+    };
+    const req = consentRequestFromTicket("t.t", deviceTicket);
+    expect(req.flow).toBe("device_code");
+    expect(req.client).toEqual({ id: "cli_wbhk", name: "webhook CLI" });
     expect(req.device).toEqual({ name: "Dana's laptop" });
   });
 });

@@ -144,15 +144,109 @@ export async function buildConsent(
   const now = deps.nowSeconds();
 
   const ticket = await deps.signTicket({
+    flow: "pkce_loopback",
     request,
     userId,
     orgId: org.orgId,
     orgName: org.name,
     scopes,
     audience: resource,
+    clientId: request.clientId,
     clientName,
     origin,
-    flow: "pkce_loopback",
+    grantExpiresAt: new Date((now + deps.grantTtlSeconds) * 1000).toISOString(),
+    keyTtlSeconds: deps.keyTtlSeconds,
+    csrf: deps.newCsrf(),
+    exp: now + deps.ticketTtlSeconds,
+  });
+
+  const url = new URL(deps.consentPath, "https://placeholder.invalid");
+  url.searchParams.set("ticket", ticket);
+  return { kind: "consent", location: `${deps.consentPath}${url.search}` };
+}
+
+/**
+ * Injected seams for building the consent screen from a resolved device-code record (the verify path).
+ * Structurally identical to BuildConsentDeps today (kept separate so a flow-specific field can diverge).
+ */
+export interface BuildDeviceConsentDeps {
+  allowedAudiences: readonly string[];
+  allowedScopes: readonly string[];
+  keyTtlSeconds: number;
+  grantTtlSeconds: number;
+  ticketTtlSeconds: number;
+  consentPath: string;
+  lookupClientName: (clientId: string) => Promise<string | null>;
+  getConsentOrg: (userId: string) => Promise<{ orgId: string; name: string } | null>;
+  signTicket: (payload: ConsentTicketPayload) => Promise<string>;
+  newCsrf: () => string;
+  nowSeconds: () => number;
+  log?: LogFn;
+}
+
+/** The pending device-code record the verify endpoint resolved by user-code (A4a findByUserCode subset). */
+export interface DeviceConsentRecord {
+  userCode: string;
+  clientId: string;
+  /** The scopes requested at /device_authorization. */
+  scopes: string[];
+  audience: string;
+}
+
+export type BuildDeviceConsentResult =
+  | { kind: "consent"; location: string }
+  | { kind: "error"; status: number; error: string; description: string };
+
+/**
+ * The device verify path (`/device`): turn a resolved pending device-code record + the authenticated user
+ * into a consent ticket (flow="device_code") and a redirect to the SAME consent screen the PKCE flow uses.
+ * No redirect_uri / OAuth-request — the device polls for its token; this only seals the approval state.
+ * Defense in depth re-validates the record's audience + scopes (both set at /device_authorization).
+ */
+export async function buildDeviceConsent(
+  deps: BuildDeviceConsentDeps,
+  record: DeviceConsentRecord,
+  userId: string,
+  origin: AuthorizeOrigin,
+): Promise<BuildDeviceConsentResult> {
+  if (!record.audience || !deps.allowedAudiences.includes(record.audience)) {
+    return {
+      kind: "error",
+      status: 400,
+      error: "invalid_target",
+      description: "audience not permitted",
+    };
+  }
+  const scopes = intersect(record.scopes, deps.allowedScopes);
+  if (scopes.length === 0) {
+    return {
+      kind: "error",
+      status: 400,
+      error: "invalid_scope",
+      description: "no permitted scope",
+    };
+  }
+
+  const org = await deps.getConsentOrg(userId);
+  if (!org) {
+    deps.log?.("consent.device.no_org", { userId });
+    return { kind: "error", status: 500, error: "server_error", description: "no consent org" };
+  }
+
+  const clientName = (await deps.lookupClientName(record.clientId)) ?? record.clientId;
+  const now = deps.nowSeconds();
+
+  const ticket = await deps.signTicket({
+    flow: "device_code",
+    userCode: record.userCode,
+    userId,
+    orgId: org.orgId,
+    orgName: org.name,
+    scopes,
+    audience: record.audience,
+    clientId: record.clientId,
+    clientName,
+    origin,
     grantExpiresAt: new Date((now + deps.grantTtlSeconds) * 1000).toISOString(),
     keyTtlSeconds: deps.keyTtlSeconds,
     csrf: deps.newCsrf(),
@@ -168,7 +262,7 @@ export async function buildConsent(
 export interface DecideConsentDeps {
   /** Verify + open the round-tripped ticket (null = invalid/expired/forged). */
   verifyTicket: (ticket: string) => Promise<ConsentTicketPayload | null>;
-  /** Complete the authorization on the provider → the loopback redirect carrying the code. */
+  /** PKCE flow: complete the authorization on the provider → the loopback redirect carrying the code. */
   completeAuthorization: (opts: {
     request: ConsentAuthRequest;
     userId: string;
@@ -176,6 +270,15 @@ export interface DecideConsentDeps {
     metadata: Record<string, unknown>;
     props: ConsentProps;
   }) => Promise<{ redirectTo: string }>;
+  /**
+   * Device flow: record the user's decision against the device-code (A4a setDeviceDecision). Optional —
+   * a deploy without the device flow omits it, and a device ticket then fails closed (server_error). Wired
+   * in A4c-3.
+   */
+  setDeviceDecision?: (
+    userCode: string,
+    decision: { decision: "approve"; props: ConsentProps } | { decision: "deny" },
+  ) => Promise<"ok" | "not_found" | "already_decided">;
   log?: LogFn;
 }
 
@@ -232,10 +335,62 @@ export async function decideConsent(
     return { kind: "error", status: 403, error: "access_denied", description: "csrf mismatch" };
   }
 
-  // Defence in depth: the redirect_uri was loopback-validated in buildConsent and the ticket is HMAC-sealed,
-  // so this re-check should never fire — but re-asserting it here means we never bounce to (or hand the
-  // provider) a non-loopback uri even if a future ticket-minting path skipped the check, and it fails closed
-  // if the sealed payload is malformed (a non-string redirectUri makes isAllowedRedirectUri return false).
+  const props: ConsentProps = {
+    orgId: payload.orgId,
+    userId: payload.userId,
+    scopes: payload.scopes,
+    audience: payload.audience,
+    ...(payload.device ? { device: payload.device } : {}),
+  };
+
+  if (payload.flow === "device_code") {
+    if (!deps.setDeviceDecision) {
+      // A device ticket reached the decision but the device seam isn't wired — a server misconfiguration
+      // (A4c-3 wires it), never a client error. Fail closed: no decision recorded, no mint.
+      deps.log?.("consent.device.unwired", {});
+      return {
+        kind: "error",
+        status: 500,
+        error: "server_error",
+        description: "device consent not enabled",
+      };
+    }
+    const outcome =
+      input.decision === "deny"
+        ? await deps.setDeviceDecision(payload.userCode, { decision: "deny" })
+        : await deps.setDeviceDecision(payload.userCode, { decision: "approve", props });
+    if (outcome === "not_found") {
+      return {
+        kind: "error",
+        status: 400,
+        error: "invalid_request",
+        description: "device code expired",
+      };
+    }
+    if (outcome === "already_decided") {
+      return {
+        kind: "error",
+        status: 409,
+        error: "invalid_request",
+        description: "already decided",
+      };
+    }
+    deps.log?.("consent.device.decided", {
+      userId: payload.userId,
+      orgId: payload.orgId,
+      decision: input.decision,
+    });
+    // The device polls for its token — the browser just returns to the device page with the outcome.
+    return {
+      kind: "ok",
+      redirectTo: `/device?status=${input.decision === "deny" ? "denied" : "approved"}`,
+    };
+  }
+
+  // PKCE-loopback flow. Defence in depth: the redirect_uri was loopback-validated in buildConsent and the
+  // ticket is HMAC-sealed, so this re-check should never fire — but re-asserting it means we never bounce to
+  // (or hand the provider) a non-loopback uri even if a future ticket path skipped the check, and it fails
+  // closed if the sealed payload is malformed (a non-string redirectUri makes isAllowedRedirectUri false).
   if (!isAllowedRedirectUri(payload.request.redirectUri)) {
     deps.log?.("consent.bad_redirect_uri", {});
     return {
@@ -256,14 +411,6 @@ export async function decideConsent(
       ),
     };
   }
-
-  const props: ConsentProps = {
-    orgId: payload.orgId,
-    userId: payload.userId,
-    scopes: payload.scopes,
-    audience: payload.audience,
-    ...(payload.device ? { device: payload.device } : {}),
-  };
 
   const { redirectTo } = await deps.completeAuthorization({
     request: payload.request,

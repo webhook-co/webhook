@@ -1,8 +1,10 @@
 # ADR 0031 — the RFC 8628 device authorization flow: a KV-backed device-code store
 
 - status: accepted (**A4a** — the device-code store over KV; **A4b** — the `/device_authorization` endpoint +
-  the `/token` device grant, see the A4b note at the end; **A4c** (next) adds the `/device` verify→consent
-  integration). The CLI-facing device protocol serves over HTTP; approval lands in A4c.
+  the `/token` device grant; **A4c-1** — the KV rate limiter (ADR-0032); **A4c-2** — the device consent CORE
+  (ticket union + `buildDeviceConsent` + the `decideConsent` device branch), see the A4c-2 note at the end;
+  **A4c-3** (next) is the `/device/verify` mount + the rate-limit/auth-gate wiring). CLI protocol + the
+  approval logic are in; the browser endpoint lands in A4c-3.
 - date: 2026-06-21
 - scope: `apps/auth/src/issuer/device-store.ts` (+ tests).
 - relates: ADR-0024 (Option-B issuance — the device grant mints directly, like refresh, no provider code),
@@ -118,3 +120,33 @@ screen → `setDeviceDecision`) **with the verify-path rate-limit + authed-sessi
 code is online-guessable — still the must-before-live item). Until A4c, a polled device code stays
 `authorization_pending` (nothing approves it). **Deploy slice:** provision `DEVICE_KV`; edge rate-limit
 `/device_authorization` (unauthenticated, code-minting); real-KV integration (the 60s-min-TTL).
+
+## A4c-2 — the device consent core (DONE, this slice)
+
+A4c-2 makes the device flow reuse the SAME consent screen + decision endpoint as PKCE, so Lane E's one
+consent UI serves both. The consent ticket (A3c) becomes a discriminated union on `flow`:
+
+- `consent-ticket.ts`: `ConsentTicketPayload = PkceConsentTicket | DeviceConsentTicket`. The shared base
+  (userId/org/scopes/audience/clientId/clientName/device?/origin/durations/csrf/exp) is common; the PKCE
+  variant adds `request` (the OAuth AuthRequest replayed into completeAuthorization), the device variant
+  adds `userCode` (which targets setDeviceDecision). `clientId` was hoisted to the base (was read from
+  `request.clientId`) so `consentRequestFromTicket` maps either variant. sign/verify are unchanged (generic).
+- `consent-core.ts`: new `buildDeviceConsent` (the verify-side: a resolved pending device-code record + the
+  authed user → a signed `device_code` ticket → a redirect to the shared `/consent` screen; defense-in-depth
+  re-validates the record's audience + scopes). `decideConsent` now branches on `payload.flow`: `device_code`
+  → `setDeviceDecision(userCode, approve{props}|deny)` and returns a relative `/device?status=...` (the
+  device polls for its token — the browser just returns to the device page); `pkce_loopback` keeps the
+  existing completeAuthorization / loopback-redirect path. The session + double-submit-CSRF checks run for
+  both before the branch. `setDeviceDecision` is an OPTIONAL dep (A4c-3 wires it; a PKCE-only deploy omits
+  it and a device ticket then errors `unsupported`) — so this slice doesn't touch A3d's authorize-deps.
+
+The PKCE path + its tests are unchanged (the union is transparent at runtime — `clientId` is now read from
+the base instead of `request.clientId`). Two adversarial reviews; 37 consent tests (PKCE preserved + the
+device branch + buildDeviceConsent). The tenancy invariant holds: `buildDeviceConsent`'s org is
+`getConsentOrg(sessionUserId)` (membership-gated), so an approved device record can only carry the
+approver's own org — exactly what the A4b token path assumes.
+
+**A4c-3 (next) MUST add:** the `POST /device/verify` endpoint (parse the user-code → rate-limit [A4c-1] →
+authed session → `findByUserCode` → `buildDeviceConsent` → `{redirectTo: /consent?ticket}`) + wire
+`setDeviceDecision` into the `/consent/decision` deps (the device store + tenant pool) + the verify-path
+rate-limit (deny-on-throw; bucket on session principal + IP, per ADR-0032). Then the device flow is e2e.
