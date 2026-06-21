@@ -19,6 +19,7 @@
 
 import { randomUUID } from "node:crypto";
 
+import { appendAuthAuditEntry } from "./auth-audit";
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { credentialHashEquals, mintCredential, type CredentialHasher } from "./credential";
 import type { ResolvedPrincipal } from "./credential-cache";
@@ -76,6 +77,36 @@ export async function createApiKey(
   hasher: CredentialHasher,
 ): Promise<CreatedApiKey> {
   const created = await withTenant(app, input.orgId, (tx) => insertApiKey(tx, input, hasher));
+  const { keyHash: _keyHash, ...rest } = created;
+  return rest;
+}
+
+/**
+ * Create a standalone api key AND write its `key_minted` audit row **atomically** in one tenant
+ * transaction — the dashboard's create path (a mint must never be silent; the constitution). Unlike
+ * {@link createApiKey} (which writes no audit — the grant path owns the audit there), this is the
+ * audited standalone mint: insert + append-audit in the same `withTenant` tx, so a crash can't leave a
+ * key without its audit entry. `actorUserId` is the consenting user (the session principal). Returns the
+ * created key + the one-time plaintext; the keyHash never leaves the package.
+ */
+export async function createApiKeyWithAudit(
+  app: Sql,
+  input: CreateApiKeyInput,
+  hasher: CredentialHasher,
+  auditKey: CryptoKey,
+  actorUserId: string | null,
+): Promise<CreatedApiKey> {
+  const created = await withTenant(app, input.orgId, async (tx) => {
+    const key = await insertApiKey(tx, input, hasher);
+    await appendAuthAuditEntry(tx, auditKey, {
+      orgId: input.orgId,
+      actor: actorUserId,
+      eventType: "key_minted",
+      targetId: key.id,
+      metadata: { grantId: input.grantId ?? null, audience: input.audience ?? null },
+    });
+    return key;
+  });
   const { keyHash: _keyHash, ...rest } = created;
   return rest;
 }
@@ -141,6 +172,22 @@ export async function listApiKeys(app: Sql, orgId: string): Promise<ApiKeyListIt
       select id, name, start, scopes, created_at, last_used_at, expires_at, revoked_at
       from api_keys
       where org_id = ${orgId}
+      order by created_at desc`;
+  });
+  return rows.map(toApiKeyListItem);
+}
+
+/**
+ * List an org's STANDALONE api keys (grant_id IS NULL), newest first — the keys NOT minted under a device
+ * grant. The dashboard's "API keys" section shows these; grant-backed keys appear under their device (via
+ * listApiKeysForGrant), so listing them here too would double-show them. Display metadata only.
+ */
+export async function listStandaloneApiKeys(app: Sql, orgId: string): Promise<ApiKeyListItem[]> {
+  const rows = await withTenant(app, orgId, async (tx) => {
+    return tx<ApiKeyListRow[]>`
+      select id, name, start, scopes, created_at, last_used_at, expires_at, revoked_at
+      from api_keys
+      where org_id = ${orgId} and grant_id is null
       order by created_at desc`;
   });
   return rows.map(toApiKeyListItem);
