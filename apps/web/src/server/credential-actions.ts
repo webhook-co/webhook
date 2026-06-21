@@ -3,6 +3,7 @@
 import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
 
 import { mintApiKey } from "./credential-mint";
+import { revokeGrantById, revokeKeyById } from "./credential-revoke";
 import type { ApiKeyItem } from "./credentials";
 import { verifySession } from "./session";
 
@@ -60,25 +61,36 @@ export async function createApiKey(input: CreateKeyInput): Promise<CreateKeyResu
 export type RevokeResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 /**
- * Revoke a standalone API key. Mock seam: E8 calls Lane B's revokeApiKey under
- * withTenant(session.orgId) as webhook_app (it returns the key hash) and then evicts KV_AUTHZ via
- * resolver.invalidateHash(hash) so the key stops authenticating immediately. Idempotent —
- * re-revoking an already-revoked key is a no-op.
+ * Revoke a standalone API key under withTenant(session.orgId) as webhook_app (Lane B stamps revoked_at +
+ * writes the audit, returns the key hash) and evicts KV_AUTHZ so the key stops authenticating — immediately
+ * on a successful evict, otherwise within the credential-cache TTL (eviction is best-effort over the
+ * source-of-truth DB stamp; see {@link revokeKeyById}). `{ok:false}` means the DB revoke itself failed —
+ * not a stale cache. Idempotent — re-revoking an already-revoked key revokes nothing and evicts nothing.
  */
 export async function revokeApiKey(keyId: string): Promise<RevokeResult> {
-  await verifySession(); // gate; E8 uses session.orgId for the tenant-scoped revoke
+  const session = await verifySession();
   if (!keyId.trim()) return { ok: false, error: "Missing key id." };
-  return { ok: true };
+  try {
+    await revokeKeyById({ orgId: session.orgId, userId: session.userId, keyId });
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "We couldn't revoke the key. Please try again." };
+  }
 }
 
 /**
- * Revoke a device grant. The revoke **cascades** to every key minted under it. Mock seam: E8 calls
- * Lane B's revokeGrant under withTenant (it returns the cascaded `revokedKeyHashes`) and evicts
- * KV_AUTHZ for each one. The caller reflects the cascade in the UI (the grant + its child keys all
- * read revoked).
+ * Revoke a device grant. The revoke **cascades** to every key minted under it (Lane B returns the
+ * cascaded `revokedKeyHashes`), and each is evicted from KV_AUTHZ (best-effort over the durable DB stamp —
+ * any entry that fails to evict lapses within the credential-cache TTL; see {@link revokeGrantById}). The
+ * caller reflects the cascade in the UI (the grant + its child keys all read revoked).
  */
 export async function revokeGrant(grantId: string): Promise<RevokeResult> {
-  await verifySession();
+  const session = await verifySession();
   if (!grantId.trim()) return { ok: false, error: "Missing grant id." };
-  return { ok: true };
+  try {
+    await revokeGrantById({ orgId: session.orgId, userId: session.userId, grantId });
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "We couldn't revoke. Please try again." };
+  }
 }

@@ -36,15 +36,23 @@
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
   ],
+  // The SHARED credential cache (the same KV_AUTHZ namespace api/mcp/engine read through). On revoke the
+  // dashboard evicts the revoked key hash(es) via `cache.delete(credentialCacheKey(hash))` so a revoked key
+  // stops authenticating immediately. Placeholder id (overlay token-replaces `<KV_AUTHZ_ID>` at deploy).
+  "kv_namespaces": [
+    {
+      "binding": "KV_AUTHZ",
+      "id": "<KV_AUTHZ_ID>",
+    },
+  ],
   // The runtime config the overlay injects at deploy (never committed here; resolved per-request via
   // getCloudflareContext() — see src/server/env.ts). E7 (the auth.→app. handoff) needs:
   //   SESSION_TOKEN_SECRET  Secrets Store — the HMAC key that signs the app. session cookie. Fails CLOSED
   //                         in prod if absent (env.ts never signs with a default); a 256-bit random secret.
   //   AUTH_BASE_URL         var — the auth. origin the /auth/callback backchannels /session/exchange against
   //                         (defaults to https://auth.webhook.co; set per env for preview/dev).
-  // E8b (credential management) adds, as it wires each mutation:
-  //   KV_AUTHZ           (the SHARED credential cache namespace; revoke evicts via resolver.invalidateHash)
-  //   secrets_store      CREDENTIAL_PEPPER + AUDIT_CHAIN_HMAC_KEY (overlay-injected at deploy, never committed)
+  //   secrets_store      CREDENTIAL_PEPPER + AUDIT_CHAIN_HMAC_KEY — the api-key HMAC pepper + the audit-chain
+  //                      key (byte-identical to every surface), overlay-injected at deploy, never committed.
   // The production deploy (the OpenNext build→deploy job + the id/secret overlay) is coordinated with the
   // infra owner; this committed config supports `opennextjs-cloudflare build` + `wrangler dev`/preview.
 }

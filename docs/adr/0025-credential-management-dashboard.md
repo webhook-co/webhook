@@ -64,6 +64,22 @@ Workers (it holds the pepper + audit key + DB + `KV_AUTHZ` once E8 adds the bind
   and the live db/KV/audit wiring is E8.
 - **E8 obligation (§6 BLOCKER):** `createApiKey` writes **no audit row** today — the live create path must
   compose Lane B's `appendAuthAuditEntry` (`key_minted`) so a mint is never silent (constitution).
-- **E8 obligation:** revoke must evict `KV_AUTHZ` (`resolver.invalidateHash`) for the key — and for every
-  cascaded key hash on a grant revoke — so a revoked credential stops authenticating immediately.
+- **E8 (shipped, E8b-3):** revoke evicts `KV_AUTHZ` for the key — and for every cascaded key hash on a grant
+  revoke — via `kvCredentialCache(KV_AUTHZ).delete(credentialCacheKey(hash))` (the as-built seam; the resolver
+  reads through the same namespace + cache key), so a revoked credential stops authenticating immediately.
 - The page is dynamic (`ƒ`) — it gates on `cookies()` — and renders no `key_hash`/plaintext by construction.
+
+## eviction is best-effort over the durable DB stamp (E8b-3)
+
+A revoke touches two stores with no shared transaction: Lane B stamps `revoked_at` in Postgres (the source of
+truth + the audit row), then the dashboard evicts the cached principal from the shared `KV_AUTHZ` read-through
+cache. **The DB stamp is authoritative; eviction merely accelerates it.** So `revokeKeyById`/`revokeGrantById`
+treat eviction as best-effort: a committed DB revoke followed by a failed KV delete is **still a successful
+revoke** — the stale entry lapses within the credential-cache TTL, and the failure is logged (a scrubbed
+structured `console.warn` carrying the opaque key/grant id + failure counts, **never** a key hash or
+plaintext). It is **not** surfaced to the operator as a failure: doing so would (a) mislead them into thinking
+the credential is still live when it is revoked of record, and (b) strand the cache permanently — a retry's DB
+revoke is a no-op that returns no hash, so the stale entry could never be re-evicted. Only a failure of the DB
+stamp itself returns `{ok:false}`. Cascaded evictions use `Promise.allSettled` so one flaky delete never
+abandons the rest of a grant's child keys. (Reviewed: this closes the "revoked key keeps authenticating with
+no self-healing retry" window down to the ≤ TTL bound.)
