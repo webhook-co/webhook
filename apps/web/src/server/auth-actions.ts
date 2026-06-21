@@ -12,6 +12,7 @@ import { LOGIN_URL, SESSION_COOKIE } from "./session";
  * the cookie), so it does not pass through the session gate — there is no tenant data to scope.
  */
 export async function logout() {
-  (await cookies()).delete(SESSION_COOKIE);
+  // Delete with the path it was set on so the host-only `__Host-` cookie reliably clears.
+  (await cookies()).delete({ name: SESSION_COOKIE, path: "/" });
   redirect(LOGIN_URL);
 }
