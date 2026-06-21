@@ -29,8 +29,10 @@ export async function introspect(env: IntrospectEnv, token: string): Promise<Int
           orgId: summary.grant.props.orgId,
           userId: summary.userId,
           scopes: summary.scope,
-          // RFC 8707 audience may be a single value or an array; surface the single bound resource.
-          audience: typeof summary.audience === "string" ? summary.audience : summary.audience?.[0],
+          // RFC 8707 audience may be a single value or an array — surface it FAITHFULLY (don't collapse a
+          // multi-resource token to one element, which would let it pass a single-resource check at a
+          // resource it shouldn't, an order-dependent cross-resource replay). The caller (mcp) binds it.
+          audience: summary.audience,
           expiresAt: summary.expiresAt,
         };
       },

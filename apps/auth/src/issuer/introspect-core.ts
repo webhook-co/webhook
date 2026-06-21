@@ -4,23 +4,21 @@
 // to MCP_RESOURCE. The provider's unwrapToken already returns null for unknown / invalid / EXPIRED tokens
 // (oauth-provider.js: `expiresAt < now → null`), so this core just maps a successful unwrap to the result.
 // I/O-free (the unwrap is an injected seam), so it's unit-testable; the getOAuthApi wiring is the handler.
+//
+// A8a promoted IntrospectionResult to @webhook-co/contract (the frozen auth.↔mcp RPC contract both sides
+// share); this module imports it rather than re-declaring it.
 
-export interface IntrospectionResult {
-  active: boolean;
-  orgId?: string;
-  userId?: string;
-  scopes?: string[];
-  audience?: string;
-  /** Unix seconds (the provider's unit), informational for the caller's cache TTL. */
-  expiresAt?: number;
-}
+import type { IntrospectionResult } from "@webhook-co/contract";
+
+export type { IntrospectionResult };
 
 /** The fields the core needs from a successfully-unwrapped opaque token. */
 export interface UnwrappedToken {
   orgId: string;
   userId: string;
   scopes: string[];
-  audience?: string;
+  /** The RFC 8707 audience(s) — may be multi-valued; surfaced faithfully so the caller binds correctly. */
+  audience?: string | string[];
   expiresAt?: number;
 }
 
