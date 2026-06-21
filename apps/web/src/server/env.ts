@@ -38,19 +38,40 @@ async function readSecret(value: unknown): Promise<string | null> {
   return null;
 }
 
+// Dev-only base64 secrets (32 bytes each) — usable only in dev/test against a local DB; prod fails closed.
+const DEV_CREDENTIAL_PEPPER = btoa("dev-only-credential-pepper-32by!");
+const DEV_AUDIT_CHAIN_KEY = btoa("dev-only-audit-chain-key-32bytes");
+
 /**
- * The HMAC secret that signs the app. session cookie. Prod reads the Secrets Store binding and throws
- * if it's absent (never sign with a default); dev/test fall back to a fixed dev secret.
+ * Read a secret by binding name: the Secrets Store binding (prod, via `.get()`) or `process.env`
+ * (dev/test), falling back to a fixed dev value outside production. **Production fails closed** — a
+ * missing secret throws rather than using a dev default (the session signer / pepper / audit key must
+ * be real in prod).
  */
-export async function getSessionSecret(): Promise<string> {
-  const fromBinding = await readSecret(workerEnv().SESSION_TOKEN_SECRET);
-  const fromProcess = process.env.SESSION_TOKEN_SECRET;
+async function readConfiguredSecret(name: string, devFallback: string): Promise<string> {
+  const fromBinding = await readSecret((workerEnv() as Record<string, unknown>)[name]);
+  const fromProcess = process.env[name];
   const secret = fromBinding ?? (fromProcess && fromProcess.length > 0 ? fromProcess : null);
   if (secret) return secret;
   if (isProduction()) {
-    throw new Error("SESSION_TOKEN_SECRET is not configured");
+    throw new Error(`${name} is not configured`);
   }
-  return DEV_SESSION_SECRET;
+  return devFallback;
+}
+
+/** The HMAC secret that signs the app. session cookie. */
+export function getSessionSecret(): Promise<string> {
+  return readConfiguredSecret("SESSION_TOKEN_SECRET", DEV_SESSION_SECRET);
+}
+
+/** The base64 credential pepper (>=32 bytes) — keys the api-key HMAC; byte-identical across api/engine/mcp/web. */
+export function getCredentialPepper(): Promise<string> {
+  return readConfiguredSecret("CREDENTIAL_PEPPER", DEV_CREDENTIAL_PEPPER);
+}
+
+/** The base64 audit-chain HMAC key — signs the `key_minted` audit row (the same key every surface signs with). */
+export function getAuditChainKey(): Promise<string> {
+  return readConfiguredSecret("AUDIT_CHAIN_HMAC_KEY", DEV_AUDIT_CHAIN_KEY);
 }
 
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */
