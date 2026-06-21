@@ -1,13 +1,20 @@
-// Bindings for the mcp. OAuth issuer+resource Worker. The OAuth layer needs the provider's KV
-// store (token/grant/client) and — now that the MCP tool dispatch is live — the same DB/KV/secret
-// set apps/api uses: the api-key cold lookup (webhook_authn), the RLS-scoped tenant reads, the KV
-// credential cache, and the pepper/cursor/audit secrets. The McpAgent tools run inside the
-// MCP_OBJECT Durable Object; resolveExternalToken (the api-key bridge) runs out here on the Worker.
+// Bindings for the mcp. RESOURCE-SERVER Worker (A8 — the co-located OAuth issuer is gone, so its OAUTH_KV
+// token/grant/client store is gone too). It needs the same DB/KV/secret set apps/api uses: the api-key
+// cold lookup (webhook_authn), the RLS-scoped tenant reads, the KV credential cache, and the pepper/cursor/
+// audit secrets — plus the AUTH_ISSUER service binding to validate opaque OAuth tokens via introspection.
+// The McpAgent tools run inside the MCP_OBJECT Durable Object; bearer resolution runs out here on the Worker.
+
+import type { TokenIntrospector } from "@webhook-co/contract";
+
 export interface McpEnv {
-  /** The OAuthProvider's token / grant / client store (required by the library). */
-  OAUTH_KV: KVNamespace;
   /** The McpAgent Durable Object namespace. `WebhookMcp.serve("/mcp")` looks it up by this name. */
   MCP_OBJECT: DurableObjectNamespace;
+  /**
+   * Service binding to auth.'s IssuerIntrospect WorkerEntrypoint — validates an opaque OAuth provider
+   * token (mcp can't validate it locally; it's KV-bound to auth.). Deploy-injected (see wrangler.jsonc);
+   * only dereferenced for a non-`whk_` token, so the api-key path never touches it.
+   */
+  AUTH_ISSUER: TokenIntrospector;
   /** webhook_authn Hyperdrive (caching OFF): the api-key cold lookup (org-discovery-by-hash). */
   HYPERDRIVE_AUTHN: Hyperdrive;
   /** Cache-disabled Hyperdrive for authenticated tenant-scoped reads (RLS-gated) inside the DO. */

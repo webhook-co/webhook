@@ -1,5 +1,8 @@
-import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
-import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
+import {
+  buildProtectedResourceMetadata,
+  CAPABILITY_REGISTRY,
+  type ProtectedResourceMetadata,
+} from "@webhook-co/contract";
 import {
   createClient,
   createCredentialHasherFromBase64,
@@ -9,26 +12,29 @@ import {
 import { readSecretBinding } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
-import { mcpDefaultHandler } from "./default-handler";
-import { resolveApiKeyToProps } from "./external-token";
+import { makeIntrospectVerifyBearer } from "./introspect-client";
+import { makeResourceVerifyBearer } from "./resolve-bearer";
+import { handleResourceRequest, type ResourceHandlerDeps } from "./resource-handler";
 import { WebhookMcp } from "./mcp-agent";
 import type { McpEnv } from "./env";
 
-// The mcp. OAuth issuer + resource server, co-located on mcp.:
-// @cloudflare/workers-oauth-provider runs here as our own OAuth 2.1 issuer for mcp.-scoped access
-// tokens AND validates them as the resource server. Splitting the issuer onto auth. with a separate
-// resource server on mcp. is infeasible — the library's tokens are opaque + KV-bound to the issuing
-// Worker (no JWT/introspection/cross-Worker validation) — so mcp. issues+validates its own tokens
-// and federates user LOGIN to Better Auth on auth. (the identity origin). The provider serves the
-// RFC 9728 PRM, RFC 8414 metadata, RFC 7591 DCR, and the /token endpoint; it enforces RFC 8707
-// resource binding and S256-only PKCE. We never hand-roll OAuth.
+// The mcp.webhook.co MCP server — now a pure RESOURCE SERVER of the auth. issuer (A8). The co-located
+// @cloudflare/workers-oauth-provider issuer is GONE: Lane C stood up the real OAuth issuer on
+// auth.webhook.co (login → consent → mint, refresh, revoke, device flow, introspection), so one issuer
+// serves many resources (api., mcp.). This Worker validates two bearer kinds and dispatches to the
+// WebhookMcp Durable Object (McpAgent), which registers the read capabilities as MCP tools:
+//   1. a first-party `whk_` access key (the CLI / api-key callers) → the api-key credential chain;
+//   2. an opaque OAuth provider token (generic 3rd-party MCP clients) → introspected over the AUTH_ISSUER
+//      service binding (auth.'s IssuerIntrospect — mcp can't validate it locally, it's KV-bound to auth.).
+// Both bind to MCP_RESOURCE (RFC 8707). The two-validator dispatch + the introspection adapter are A8a;
+// this file wires the real per-request deps + the resource-server router (resource-handler, A8b).
 //
-// The protected /mcp route is served by the WebhookMcp Durable Object (McpAgent), which registers
-// the read capabilities as MCP tools. API-key callers (the CLI today; OAuth-token login is deferred)
-// authenticate through resolveExternalToken — the provider calls it for any bearer it didn't mint,
-// and we resolve it as an api key bound to MCP_RESOURCE, handing back the principal as grant props.
-
 // MCP_RESOURCE (RFC 9728 `resource` / RFC 8707 audience) is single-sourced in @webhook-co/db.
+
+const PRM_PATH = "/.well-known/oauth-protected-resource";
+const HEALTH_PATH = "/healthz";
+/** The OAuth issuer for this resource — now auth.webhook.co (the Lane C issuer), NOT the old co-located one. */
+const AUTH_ISSUER = "https://auth.webhook.co";
 
 /** The distinct capability scopes the MCP surface understands (RFC 8414 `scopes_supported`). */
 export const SCOPES_SUPPORTED: string[] = [
@@ -39,61 +45,95 @@ export const SCOPES_SUPPORTED: string[] = [
 // (durable_objects.bindings[].class_name = "WebhookMcp").
 export { WebhookMcp } from "./mcp-agent";
 
-export default new OAuthProvider({
-  // The single MCP endpoint. Requests here are validated (token + RFC 8707 resource) before the
-  // apiHandler runs; everything else (PRM, metadata, /token, /register, /authorize) is the provider
-  // or the defaultHandler. The McpAgent serves the JSON-RPC tool transport at this path.
-  apiRoute: ["/mcp"],
-  apiHandler: WebhookMcp.serve("/mcp"),
-  defaultHandler: mcpDefaultHandler,
-
-  authorizeEndpoint: "/authorize",
-  tokenEndpoint: "/token",
-  clientRegistrationEndpoint: "/register",
-
+// Built once at module load (pure): the RFC 9728 PRM advertising our resource + the auth. issuer as the
+// authorization server, and the McpAgent streamable-HTTP handler.
+const RESOURCE_METADATA: ProtectedResourceMetadata = buildProtectedResourceMetadata({
+  resource: MCP_RESOURCE,
+  authorizationServers: [AUTH_ISSUER],
   scopesSupported: SCOPES_SUPPORTED,
-  // OAuth 2.1 hardening: no implicit flow, S256-only PKCE (reject `plain`).
-  allowImplicitFlow: false,
-  allowPlainPKCE: false,
+});
+const serveMcpAgent = WebhookMcp.serve("/mcp");
 
-  // The api-key bridge (ADR-0010/0011): called for any bearer NOT minted by this provider — today
-  // every caller, since the /authorize login that mints provider tokens is deferred. We resolve the
-  // key through the SAME verifyBearer seam apps/api uses (audience = MCP_RESOURCE) and return the
-  // principal as grant props + the bound audience (the provider re-checks it against the resource).
-  // A short-lived authn client per call (the pepper is decoded BEFORE it opens, so a bad secret
-  // fails fast without leaking a connection); torn down in finally. null = not authenticated (401);
-  // an operational fault propagates (the provider answers 5xx, never a masked 401).
-  resolveExternalToken: async ({ token, env }) => {
-    const e = env as McpEnv;
-    const hasher = createCredentialHasherFromBase64(await readSecretBinding(e.CREDENTIAL_PEPPER));
-    const authn = createClient(e.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
+interface DepsHandle {
+  readonly deps: ResourceHandlerDeps;
+  close(): Promise<void>;
+}
+
+/**
+ * Build the per-request resource-server deps: the two-validator verifyBearer (the `whk_` api-key chain
+ * over the webhook_authn cold path + KV cache, plus opaque-token introspection over AUTH_ISSUER), the PRM
+ * doc, and the McpAgent hand-off. One short-lived authn client (the api-key cold lookup), torn down by
+ * close(); the pepper is decoded in-worker (Workers secret, never process env). The tenant client used by
+ * the tools is opened INSIDE the Durable Object per call (mcp-agent.ts), not here. Mirrors apps/api/buildDeps.
+ */
+async function buildResourceDeps(env: McpEnv): Promise<DepsHandle> {
+  const hasher = createCredentialHasherFromBase64(await readSecretBinding(env.CREDENTIAL_PEPPER));
+  const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
+  const apiKey = makeApiKeyAuthDeps({
+    hasher,
+    authn,
+    cache: kvCredentialCache(env.KV_AUTHZ),
+    resource: MCP_RESOURCE,
+  });
+  // The opaque-token validator introspects over the AUTH_ISSUER service binding; it's only invoked for a
+  // non-`whk_` token, so a `whk_` request never touches the binding.
+  const introspectVerify = makeIntrospectVerifyBearer({
+    introspect: (token) => env.AUTH_ISSUER.introspect(token),
+  });
+  const verifyBearer = makeResourceVerifyBearer({
+    apiKeyVerify: apiKey.verifyBearer,
+    introspectVerify,
+  });
+  const deps: ResourceHandlerDeps = {
+    authDeps: {
+      verifyBearer,
+      resource: MCP_RESOURCE,
+      resourceMetadataUrl: `${MCP_RESOURCE}${PRM_PATH}`,
+    },
+    resourceMetadata: RESOURCE_METADATA,
+    prmPath: PRM_PATH,
+    serveMcp: (request, serveEnv, ctx) =>
+      serveMcpAgent.fetch(request, serveEnv as McpEnv, ctx as ExecutionContext),
+    // The McpAgent reads the principal off the execution context at session init (the same contract the
+    // OAuthProvider used: it set `ctx.props` before invoking the apiHandler).
+    setProps: (ctx, props) => {
+      (ctx as { props?: unknown }).props = props;
+    },
+    log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+  };
+  return { deps, close: () => authn.end() };
+}
+
+export default {
+  async fetch(request: Request, env: McpEnv, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    // Public, DB-free routes — served before any deps are built (hot, unauthenticated). The resource
+    // handler also serves these so it stays self-contained + unit-tested; this short-circuit just spares
+    // them the per-request credential deps. Everything else routes through the resource handler.
+    if (request.method === "GET" && url.pathname === PRM_PATH) {
+      return Response.json(RESOURCE_METADATA);
+    }
+    if (request.method === "GET" && url.pathname === HEALTH_PATH) {
+      return new Response("mcp ok", {
+        status: 200,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    // buildResourceDeps is inside the try so a config/connection fault returns a graceful 500 (not an
+    // escaping throw — incl. an operational verifyBearer fault, which propagates here, never a masked 401).
+    let handle: DepsHandle | undefined;
     try {
-      // The api-key bearer chain, single-sourced; resource drives the cold-lookup binding + the audience
-      // stamp (KV_AUTHZ is shared with api, so a key api cached must resolve here as mcp's audience, not
-      // api's — the cross-surface 401 bug, ADR-0010/0011). The resolveExternalToken/resolveApiKeyToProps
-      // wrapping stays local (the provider's external-token contract).
-      return await resolveApiKeyToProps(
-        makeApiKeyAuthDeps({
-          hasher,
-          authn,
-          cache: kvCredentialCache(e.KV_AUTHZ),
-          resource: MCP_RESOURCE,
-        }),
-        token,
-      );
+      handle = await buildResourceDeps(env);
+      return await handleResourceRequest(handle.deps, request, env, ctx);
+    } catch (err) {
+      console.log(JSON.stringify({ message: "mcp.unhandled", error: String(err) }));
+      return new Response("internal error", {
+        status: 500,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
     } finally {
-      await authn.end();
+      await handle?.close();
     }
   },
-
-  // RFC 9728 PRM: advertise our canonical resource + this co-located issuer as the auth server.
-  // The resource identifier is the origin (the stable RFC 8707 audience), while the protected API
-  // is at /mcp.
-  resourceMetadata: {
-    resource: MCP_RESOURCE,
-    authorization_servers: [MCP_RESOURCE],
-    scopes_supported: SCOPES_SUPPORTED,
-    bearer_methods_supported: ["header"],
-    resource_name: "webhook.co MCP",
-  },
-});
+} satisfies ExportedHandler<McpEnv>;

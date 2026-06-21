@@ -33,7 +33,8 @@ const TOKEN = {
   "<HYPERDRIVE_INGEST_ID>": reqEnv("HYPERDRIVE_INGEST_ID"),
   "<KV_CONFIG_ID>": reqEnv("KV_CONFIG_ID"),
   "<KV_AUTHZ_ID>": reqEnv("KV_AUTHZ_ID"),
-  "<OAUTH_KV_ID>": reqEnv("OAUTH_KV_ID"),
+  // <OAUTH_KV_ID> removed (A8): mcp is no longer an OAuth issuer, so it has no OAUTH_KV binding. The
+  // OAUTH_KV_ID GitHub repo variable is now unused (was mcp-only) and can be retired.
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
 };
@@ -70,12 +71,7 @@ const APPS = {
   mcp: {
     domain: "mcp.webhook.co",
     secrets: SHARED,
-    placeholders: [
-      "<HYPERDRIVE_AUTHN_ID>",
-      "<HYPERDRIVE_TENANT_ID>",
-      "<OAUTH_KV_ID>",
-      "<KV_AUTHZ_ID>",
-    ],
+    placeholders: ["<HYPERDRIVE_AUTHN_ID>", "<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
   },
 };
 

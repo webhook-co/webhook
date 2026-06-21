@@ -1,12 +1,12 @@
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 import { defineConfig } from "vitest/config";
 
-// The mcp. surface is a real OAuth issuer+resource Worker whose protected /mcp route is served by
-// the WebhookMcp Durable Object (McpAgent), so its tests run inside the real Workers runtime
-// (workerd) via Miniflare — the only way to exercise the OAuthProvider, the McpAgent DO + MCP
-// transport, the KV token/credential stores, and the RFC 9728 / 8414 discovery endpoints against
-// the actual runtime. The pure handler/dispatch tests (grant, tools, external-token,
-// bound-capabilities) run here too; they only use Web APIs.
+// The mcp. surface is a resource-server Worker (A8 — no longer an OAuth issuer) whose protected /mcp
+// route is served by the WebhookMcp Durable Object (McpAgent), so its tests run inside the real Workers
+// runtime (workerd) via Miniflare — the only way to exercise the resource-server router, the McpAgent DO
+// + MCP transport, the KV credential cache, and the RFC 9728 PRM / RFC 6750 challenge against the actual
+// runtime. The pure handler/dispatch tests (resource-handler, resolve-bearer, introspect-client, grant,
+// tools, bound-capabilities) run here too; they only use Web APIs.
 //
 // Test-only secret values (never real keys): 32 zero-bytes base64 satisfies the length checks the
 // pepper / cursor / audit-key importers enforce. The integration test reads CREDENTIAL_PEPPER back

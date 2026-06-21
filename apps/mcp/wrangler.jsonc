@@ -25,25 +25,29 @@
       "new_sqlite_classes": ["WebhookMcp"],
     },
   ],
-  // The OAuthProvider's required token / grant / client store (opaque tokens stored hashed; grant
-  // props encrypted under the token). Miniflare provides a local KV in tests; the real namespace id
-  // is set per environment at deploy. KV_AUTHZ caches resolved api-key principals (keyed by hash),
-  // invalidated on revoke (KV can be invalidated, Hyperdrive's query cache can't).
+  // KV_AUTHZ caches resolved api-key principals (keyed by hash), invalidated on revoke (KV can be
+  // invalidated, Hyperdrive's query cache can't). The OAuthProvider's OAUTH_KV token/grant/client store
+  // is GONE (A8): mcp is no longer an issuer — opaque OAuth tokens are validated by introspection to auth.
   "kv_namespaces": [
-    {
-      "binding": "OAUTH_KV",
-      "id": "<OAUTH_KV_ID>",
-    },
     {
       "binding": "KV_AUTHZ",
       "id": "<KV_AUTHZ_ID>",
     },
   ],
-  // Two cache-DISABLED Hyperdrive bindings: AUTHN for the api-key cold lookup (org-discovery-by-hash
-  // as webhook_authn, on resolveExternalToken) and TENANT for the RLS-scoped reads as webhook_app
-  // inside the DO. Query caching must stay off — the cold lookup must reflect live revoke/rotate
-  // state, and tenant reads are RLS-gated (the cache can't see the RLS GUC). localConnectionString
-  // is the dev/test PG; real Hyperdrive ids are set per environment at deploy.
+  // AUTH_ISSUER — the service binding to auth.'s IssuerIntrospect WorkerEntrypoint (A8): validates opaque
+  // OAuth provider tokens (mcp can't validate them locally; they're KV-bound to auth.). Deploy-injected
+  // per environment (NOT committed) — like the secrets below — because of the deploy ORDERING: an overlay
+  // `services` entry referencing auth. before it's live would make the Worker fail to start (CF late-binds
+  // a referenced service). The committed config has NO `services` block, so the Worker starts fine with
+  // `env.AUTH_ISSUER` simply undefined — and until the overlay lands, a non-`whk_` (opaque) token 500s
+  // (the api-key path never touches the binding). The deploy overlay adds:
+  //   "services": [{ "binding": "AUTH_ISSUER", "service": "webhook-auth", "entrypoint": "IssuerIntrospect" }]
+  // Tests don't exercise the introspection path (the api-key path covers the e2e), so no mock is needed.
+  // Two cache-DISABLED Hyperdrive bindings: AUTHN for the api-key cold lookup (org-discovery-by-hash as
+  // webhook_authn, in buildResourceDeps) and TENANT for the RLS-scoped reads as webhook_app inside the DO.
+  // Query caching must stay off — the cold lookup must reflect live revoke/rotate state, and tenant reads
+  // are RLS-gated (the cache can't see the RLS GUC). localConnectionString is the dev/test PG; real
+  // Hyperdrive ids are set per environment at deploy.
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE_AUTHN",
