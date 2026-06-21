@@ -146,6 +146,22 @@ export async function listApiKeys(app: Sql, orgId: string): Promise<ApiKeyListIt
   return rows.map(toApiKeyListItem);
 }
 
+/**
+ * List an org's STANDALONE api keys (grant_id IS NULL), newest first — the keys NOT minted under a device
+ * grant. The dashboard's "API keys" section shows these; grant-backed keys appear under their device (via
+ * listApiKeysForGrant), so listing them here too would double-show them. Display metadata only.
+ */
+export async function listStandaloneApiKeys(app: Sql, orgId: string): Promise<ApiKeyListItem[]> {
+  const rows = await withTenant(app, orgId, async (tx) => {
+    return tx<ApiKeyListRow[]>`
+      select id, name, start, scopes, created_at, last_used_at, expires_at, revoked_at
+      from api_keys
+      where org_id = ${orgId} and grant_id is null
+      order by created_at desc`;
+  });
+  return rows.map(toApiKeyListItem);
+}
+
 /** List the keys minted under one grant (newest first). Display metadata only — no hash, no plaintext. */
 export async function listApiKeysForGrant(
   app: Sql,

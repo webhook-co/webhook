@@ -6,7 +6,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createApiKey,
   findApiKeyGrant,
+  listApiKeys,
   listApiKeysForGrant,
+  listStandaloneApiKeys,
   makeApiKeyColdLookup,
 } from "../src/api-keys";
 import { createClient, withTenant, type Sql } from "../src/client";
@@ -161,6 +163,38 @@ describe("mintScopedKey — approval OFF (founder default)", () => {
     if (res.status !== "minted") throw new Error("unreachable");
     // Resolve through an API-surface resolver — the intrinsic mcp audience must NOT widen to api.
     expect((await makeResolver(API).resolve(res.plaintext))?.audience).toBe(MCP);
+  });
+});
+
+describe("listStandaloneApiKeys", () => {
+  it("returns only keys with no grant — excludes grant-backed keys (which show under their device)", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    if (minted.status !== "minted") throw new Error("unreachable");
+    const standalone = await createApiKey(
+      app,
+      { orgId, name: "standalone", scopes: ["events:read"] },
+      hasher,
+    );
+
+    const items = await listStandaloneApiKeys(app, orgId);
+    expect(items.map((k) => k.id)).toEqual([standalone.id]); // grant-backed key excluded
+
+    // listApiKeys still returns BOTH (so the standalone filter is the meaningful difference)
+    expect((await listApiKeys(app, orgId)).length).toBe(2);
   });
 });
 
