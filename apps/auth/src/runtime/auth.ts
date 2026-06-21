@@ -117,6 +117,12 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
 /** A per-request Better Auth runtime + a hook to release its pooled connection after the response. */
 export interface RuntimeAuth {
   handler: (request: Request) => Promise<Response>;
+  /**
+   * Resolve the live session from the request cookies (DB-validated — cookieCache is off), returning the
+   * authenticated `userId` or null. The issuer's `/authorize` + `/consent/decision` (A3) use this to bind
+   * consent to the signed-in user; the userId comes from the cookie here, never from the request body.
+   */
+  getSession: (request: Request) => Promise<{ userId: string } | null>;
   /** End the per-request pg pool (call via ctx.waitUntil) — never leak a pooled connection. */
   close: () => Promise<void>;
 }
@@ -147,6 +153,10 @@ export async function makeAuth(env: AuthEnv, ctx?: AuthExecutionContext): Promis
   );
   return {
     handler: (request) => auth.handler(request),
+    getSession: async (request) => {
+      const result = await auth.api.getSession({ headers: request.headers });
+      return result?.user?.id ? { userId: result.user.id } : null;
+    },
     close: () => pool.end(),
   };
 }

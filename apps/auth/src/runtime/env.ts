@@ -182,6 +182,32 @@ export function readIntrospectEnv(env: Record<string, unknown>): IntrospectEnv {
   return env as unknown as IntrospectEnv;
 }
 
+// --- A3d: the /authorize + /consent/decision env slice ---------------------------------------------
+// The consent flow needs: the full Better Auth runtime to resolve the session (so it carries AuthEnv);
+// CONSENT_TICKET_KEY (the 32-byte HMAC secret signing the stateless consent ticket); OAUTH_KV (getOAuthApi
+// parseAuthRequest/lookupClient/completeAuthorization). HYPERDRIVE_TENANT (in AuthEnv) backs getConsentOrg.
+export interface AuthorizeEnv extends AuthEnv {
+  /** Base64 of a 32-byte HMAC key — signs/verifies the consent ticket (importConsentTicketKey). */
+  CONSENT_TICKET_KEY: Secret;
+  /** The OAuth provider's KV store (KVNamespace) — getOAuthApi(config, env) reads it per request. */
+  OAUTH_KV: unknown;
+}
+
+/**
+ * Validate + narrow the env for the consent endpoints, fail-closed (naming the missing key, never its
+ * value): reuses readAuthEnv (the session runtime) then asserts the ticket key + OAUTH_KV.
+ */
+export function readAuthorizeEnv(env: Record<string, unknown>): AuthorizeEnv {
+  readAuthEnv(env);
+  if (!secretPresent(env.CONSENT_TICKET_KEY)) {
+    throw new Error("authorize env: missing or empty required secret CONSENT_TICKET_KEY");
+  }
+  if (env.OAUTH_KV == null || typeof env.OAUTH_KV !== "object") {
+    throw new Error("authorize env: missing OAUTH_KV binding");
+  }
+  return env as unknown as AuthorizeEnv;
+}
+
 /** Resolve every secret to a plain string (Better Auth + the hasher take strings). */
 export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecrets> {
   const [
