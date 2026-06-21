@@ -1,4 +1,6 @@
-// Generate the per-environment prod wrangler config for each wedge Worker (engine/api/mcp).
+// Generate the per-environment prod wrangler config for each Worker (engine/api/mcp + the OpenNext web
+// dashboard). deploy.yml deploys engine/api/mcp; deploy-web.yml builds OpenNext + deploys web. The
+// generator emits every app's wrangler.prod.jsonc each run — each workflow deploys only its own apps.
 //
 // The committed apps/<app>/wrangler.jsonc carry PLACEHOLDER ids (`<HYPERDRIVE_*_ID>` / `<KV_*_ID>`),
 // literal `*-dev` bucket names, and NO secrets_store_secrets/routes — real ids must never be
@@ -73,6 +75,16 @@ const APPS = {
     // + MCP_SESSION_KEY (A8c): the mcp-specific session-binding HMAC key (not shared with engine/api).
     secrets: [...SHARED, "MCP_SESSION_KEY"],
     placeholders: ["<HYPERDRIVE_AUTHN_ID>", "<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
+  },
+  // The dashboard (app.webhook.co) — an OpenNext SSR Worker (main = .open-next/worker.js), deployed by
+  // deploy-web.yml after `opennextjs-cloudflare build`. It reads the credential pepper + audit-chain key
+  // (byte-identical to api/engine/mcp) and SESSION_TOKEN_SECRET (its own session-cookie HMAC key, web-only —
+  // not in SHARED). Binds the SAME webhook_app Hyperdrive (HYPERDRIVE_TENANT) + shared KV_AUTHZ the wedge
+  // uses. AUTH_BASE_URL isn't injected — env.ts defaults it to https://auth.webhook.co in prod.
+  web: {
+    domain: "app.webhook.co",
+    secrets: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "SESSION_TOKEN_SECRET"],
+    placeholders: ["<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
   },
 };
 
