@@ -30,7 +30,15 @@ export async function GET(request: Request): Promise<Response> {
   try {
     const session = await exchangeTicket(ticket);
     token = await signSessionToken(session, await getSessionSecret(), SESSION_TTL_SECONDS);
-  } catch {
+    // Scrubbed (no ticket/token/PII) — confirms the handoff completed; pairs with auth.'s
+    // session_handoff.minted + the /session/exchange request log for an end-to-end trace.
+    console.log(JSON.stringify({ message: "auth.callback.session_established" }));
+  } catch (error) {
+    // A failed redeem (expired/replayed/invalid ticket, or a transient exchange error) sends the user back
+    // to sign in. Log the reason (no ticket value) so a broken handoff is diagnosable, not silent.
+    console.warn(
+      JSON.stringify({ message: "auth.callback.exchange_failed", error: String(error) }),
+    );
     return NextResponse.redirect(login);
   }
 

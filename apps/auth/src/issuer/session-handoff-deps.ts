@@ -32,6 +32,10 @@ export async function makeSessionHandoffDeps(
 ): Promise<SessionHandoffDeps> {
   const hasher = createCredentialHasherFromBase64(await readSecretBinding(env.CREDENTIAL_PEPPER));
 
+  // The app. origin the ticket targets + is audience-bound to. Defaults to the prod host; set
+  // APP_BASE_URL in dev (.dev.vars) so the handoff redirects to localhost:3000 instead of app.webhook.co.
+  const appBaseUrl = env.APP_BASE_URL ?? APP_BASE_URL;
+
   // The session runtime + tenant pool are the expensive parts; build lazily so a no-session visit (the
   // login bounce) pays for neither beyond the session check.
   let auth: RuntimeAuth | undefined;
@@ -46,14 +50,13 @@ export async function makeSessionHandoffDeps(
     mint: async (orgId, userId) => {
       const minted = await mintSessionExchange(
         getApp(),
-        { orgId, userId, audience: APP_BASE_URL, ttlSeconds: EXCHANGE_TTL_SECONDS },
+        { orgId, userId, audience: appBaseUrl, ttlSeconds: EXCHANGE_TTL_SECONDS },
         hasher,
       );
       return minted.plaintext;
     },
     loginUrl: (returnTo) => `${LOGIN_PATH}?redirect=${encodeURIComponent(returnTo)}`,
-    appCallbackUrl: (ticket) =>
-      `${APP_BASE_URL}/auth/callback?ticket=${encodeURIComponent(ticket)}`,
+    appCallbackUrl: (ticket) => `${appBaseUrl}/auth/callback?ticket=${encodeURIComponent(ticket)}`,
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
 
