@@ -81,6 +81,11 @@ const APPS = {
     // + MCP_SESSION_KEY (A8c): the mcp-specific session-binding HMAC key (not shared with engine/api).
     secrets: [...SHARED, "MCP_SESSION_KEY"],
     placeholders: ["<HYPERDRIVE_AUTHN_ID>", "<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
+    // AUTH_ISSUER (A8) — the service binding to auth.'s IssuerIntrospect WorkerEntrypoint, so mcp validates
+    // opaque OAuth provider tokens by introspection. Deploy-injected here (NOT committed) because of the
+    // ordering: auth. must be LIVE first (it is now — apps/auth deployed), or CF late-binds and mcp fails to
+    // start. Until this, a non-`whk_` token at mcp 500s (fail-closed); with it, introspection works.
+    services: [{ binding: "AUTH_ISSUER", service: "webhook-auth", entrypoint: "IssuerIntrospect" }],
   },
   // The dashboard (app.webhook.co) — an OpenNext SSR Worker (main = .open-next/worker.js), deployed by
   // deploy-web.yml after `opennextjs-cloudflare build`. It reads the credential pepper + audit-chain key
@@ -150,6 +155,9 @@ for (const [app, cfg] of Object.entries(APPS)) {
     workers_dev: false,
     routes: [{ pattern: cfg.domain, custom_domain: true }],
     secrets_store_secrets: secretsBlock(cfg.secrets),
+    // Service bindings (only mcp's AUTH_ISSUER today) — deploy-injected so the binding target Worker can be
+    // brought live first (CF late-binds a referenced service; committing it would block a cold deploy).
+    ...(cfg.services ? { services: cfg.services } : {}),
   };
   const block = Object.entries(inject)
     .map(([k, v]) => `  ${JSON.stringify(k)}: ${JSON.stringify(v)}`)
