@@ -6,7 +6,13 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts",
+    "./api-keys": "./src/api-keys.ts",
+    "./grants": "./src/grants.ts",
+    "./credential": "./src/credential.ts",
+    "./credential-resolver": "./src/credential-resolver.ts",
+    "./auth-audit": "./src/auth-audit.ts"
   },
   "scripts": {
     "build": "tsc",

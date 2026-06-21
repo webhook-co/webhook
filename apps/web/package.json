@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@webhook-co/contract": "workspace:*",
+    "@webhook-co/db": "workspace:*",
     "@webhook-co/shared": "workspace:*",
     "@webhook-co/ui": "workspace:*",
     "geist": "^1.7.2",

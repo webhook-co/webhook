@@ -1,9 +1,14 @@
 import "server-only";
 
-// The credential read shapes mirror Lane B's display-only DTOs (packages/db: ApiKeyListItem,
-// GrantListItem). NEITHER carries key_hash or plaintext — Lane B strips them; `start` is the
-// safe redacted prefix. E8 swaps the mock loader below for Lane B's listGrants +
-// listApiKeysForGrant + listApiKeys under withTenant(orgId) as webhook_app.
+import { listApiKeysForGrant, listStandaloneApiKeys } from "@webhook-co/db/api-keys";
+import type { Sql } from "@webhook-co/db/client";
+import { listGrants } from "@webhook-co/db/grants";
+
+import { getTenantDb } from "./db";
+
+// The credential display shapes. They mirror Lane B's list DTOs (ApiKeyListItem / GrantListItem) — NEITHER
+// carries key_hash or plaintext; `start` is the safe redacted prefix. E8b reads them live via Lane B's db
+// functions under withTenant(orgId) as webhook_app; RLS (the session orgId) is the tenant backstop.
 
 export type GrantStatus = "pending_approval" | "active" | "revoked" | "expired";
 export type AuthMethod = "pkce_loopback" | "device_code";
@@ -43,67 +48,55 @@ export type CredentialsResult =
   | { readonly status: "error" }
   | { readonly status: "denied" };
 
-const d = (iso: string) => new Date(iso);
+/**
+ * The org's grants + keys, read live. Injected for tests; the default binds Lane B's list functions to the
+ * per-request tenant client. Lane B's `GrantListItem`/`ApiKeyListItem` are structurally these display types.
+ */
+export interface CredentialReaders {
+  listGrants(orgId: string): Promise<readonly Omit<DeviceGrant, "keys">[]>;
+  listApiKeysForGrant(orgId: string, grantId: string): Promise<readonly ApiKeyItem[]>;
+  /** STANDALONE keys only (grant_id IS NULL) — grant-backed keys show under their device, not here. */
+  listStandaloneApiKeys(orgId: string): Promise<readonly ApiKeyItem[]>;
+}
 
-// E6 mock data. Display-safe by construction — no hash/plaintext exists here to leak.
-const MOCK: Extract<CredentialsResult, { status: "ok" }> = {
-  status: "ok",
-  devices: [
-    {
-      id: "grant_2aF9",
-      status: "active",
-      authMethod: "device_code",
-      deviceName: "Dana's MacBook Pro",
-      createdAt: d("2026-05-21T14:02:00Z"),
-      lastUsedAt: d("2026-06-19T09:41:00Z"),
-      approvedAt: d("2026-05-21T14:03:00Z"),
-      revokedAt: null,
-      expiresAt: d("2026-08-19T14:02:00Z"),
-      keys: [
-        {
-          id: "key_8cQ1",
-          name: "wbhk cli",
-          start: "whk_2aF9…7c1d",
-          scopes: ["events:read", "events:replay"],
-          createdAt: d("2026-05-21T14:03:00Z"),
-          lastUsedAt: d("2026-06-19T09:41:00Z"),
-          expiresAt: d("2026-08-19T14:02:00Z"),
-          revokedAt: null,
-        },
-      ],
-    },
-    {
-      id: "grant_7bX2",
-      status: "expired",
-      authMethod: "pkce_loopback",
-      deviceName: "ci-runner",
-      createdAt: d("2026-03-02T08:10:00Z"),
-      lastUsedAt: d("2026-04-30T22:15:00Z"),
-      approvedAt: d("2026-03-02T08:11:00Z"),
-      revokedAt: null,
-      expiresAt: d("2026-06-01T08:10:00Z"),
-      keys: [],
-    },
-  ],
-  keys: [
-    {
-      id: "key_4dM7",
-      name: "Production webhook signer",
-      start: "whsec_9b3a…e21f",
-      scopes: ["endpoints:read", "events:read"],
-      createdAt: d("2026-04-12T11:20:00Z"),
-      lastUsedAt: d("2026-06-18T17:05:00Z"),
-      expiresAt: null,
-      revokedAt: null,
-    },
-  ],
-};
+function boundReaders(app: Sql): CredentialReaders {
+  return {
+    listGrants: (orgId) => listGrants(app, orgId),
+    listApiKeysForGrant: (orgId, grantId) => listApiKeysForGrant(app, orgId, grantId),
+    listStandaloneApiKeys: (orgId) => listStandaloneApiKeys(app, orgId),
+  };
+}
+
+async function readCredentials(orgId: string, r: CredentialReaders): Promise<CredentialsResult> {
+  try {
+    const [grants, keys] = await Promise.all([r.listGrants(orgId), r.listStandaloneApiKeys(orgId)]);
+    const devices = await Promise.all(
+      grants.map(async (grant) => ({
+        ...grant,
+        keys: await r.listApiKeysForGrant(orgId, grant.id),
+      })),
+    );
+    return { status: "ok", devices, keys };
+  } catch {
+    return { status: "error" };
+  }
+}
 
 /**
- * Load the org's credentials for the dashboard. E6 returns mock data; E8 reads Lane B's db
- * functions under the live session `orgId`. The caller ({@link verifySession}-gated page)
- * supplies the org. Never returns hash/plaintext.
+ * Load the org's credentials for the dashboard. Reads grants + their child keys + STANDALONE keys via
+ * Lane B; a db/Hyperdrive fault surfaces as `{ status: "error" }` (the view shows the error state) rather
+ * than throwing. Never returns hash/plaintext. Owns the per-request DB pool and releases it (mirrors
+ * apps/api's teardown) so connections don't leak. Tests inject `readers` and skip the pool entirely.
  */
-export async function loadCredentials(_orgId: string): Promise<CredentialsResult> {
-  return MOCK;
+export async function loadCredentials(
+  orgId: string,
+  readers?: CredentialReaders,
+): Promise<CredentialsResult> {
+  if (readers) return readCredentials(orgId, readers);
+  const app = await getTenantDb();
+  try {
+    return await readCredentials(orgId, boundReaders(app));
+  } finally {
+    await app.end({ timeout: 5 }).catch(() => {});
+  }
 }
