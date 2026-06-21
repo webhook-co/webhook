@@ -3,8 +3,8 @@
 - status: accepted (**A4a** — the device-code store over KV; **A4b** — the `/device_authorization` endpoint +
   the `/token` device grant; **A4c-1** — the KV rate limiter (ADR-0032); **A4c-2** — the device consent CORE
   (ticket union + `buildDeviceConsent` + the `decideConsent` device branch), see the A4c-2 note at the end;
-  **A4c-3** (next) is the `/device/verify` mount + the rate-limit/auth-gate wiring). CLI protocol + the
-  approval logic are in; the browser endpoint lands in A4c-3.
+  **A4c-3** — the `/device/verify` mount + the rate-limit/auth-gate wiring, see the A4c-3 note at the end).
+  **The device flow is now e2e** (device_authorization → browser verify+consent → CLI poll → token).
 - date: 2026-06-21
 - scope: `apps/auth/src/issuer/device-store.ts` (+ tests).
 - relates: ADR-0024 (Option-B issuance — the device grant mints directly, like refresh, no provider code),
@@ -150,3 +150,28 @@ approver's own org — exactly what the A4b token path assumes.
 authed session → `findByUserCode` → `buildDeviceConsent` → `{redirectTo: /consent?ticket}`) + wire
 `setDeviceDecision` into the `/consent/decision` deps (the device store + tenant pool) + the verify-path
 rate-limit (deny-on-throw; bucket on session principal + IP, per ADR-0032). Then the device flow is e2e.
+
+## A4c-3 — the /device/verify mount (DONE, device flow e2e)
+
+A4c-3 mounts the browser approval entry + wires the device decision, closing the flow.
+
+- **`POST /device/verify`** (`device-verify-route.ts`, pure HTTP core, 9 tests): require `application/json`
+  (CSRF) → **authed session** (401 + login_url if absent — the unauthenticated guesser stops here) →
+  parse the user-code → **rate-limit** (A4c-1) keyed on the SESSION principal (the attacker dimension, never
+  the victim's code), **fail-closed on a limiter error** (503) → `findByUserCode` (pending only;
+  unknown/expired both → generic 400, anti-enumeration) → `buildDeviceConsent` → `{redirectTo:
+  /consent?ticket}`. Three guards in order: session, rate-limit, generic-not-found.
+- **`device-verify-deps.ts`** (glue): binds the session (`makeAuth`, lazy), the rate limiter
+  (`consumeRateLimit` on `RATELIMIT_KV`, rule `limit:10 / window:300s`), the device store
+  (`findByUserCode`), and `buildDeviceConsent` (lazy tenant pool for `getConsentOrg`).
+- **`authorize-deps.ts`**: `setDeviceDecision` is now wired into the `/consent/decision` deps
+  (`setDeviceDecision(makeDeviceStoreDeps(env.DEVICE_KV), …)`) — so the shared decision endpoint records a
+  device approval/deny (A4c-2's optional seam is no longer dormant). `AuthorizeEnv` gains `DEVICE_KV`.
+- **env / mount / binding:** `readDeviceVerifyEnv` (AuthorizeEnv + `RATELIMIT_KV`); the `/device/verify`
+  intercept in `issuer-handler`; a new **`RATELIMIT_KV`** binding in `wrangler.jsonc` (the deploy slice
+  provisions it + may point magic-link / `/token` / `/authorize` at it too).
+
+Two adversarial reviews. The verify-path rate-limit + authed gate (the must-before-live A4a/A4b deferred)
+are now in. **Remaining device follow-ups (deploy slice):** provision `RATELIMIT_KV` + `DEVICE_KV` +
+`CONSENT_TICKET_KEY`; edge rate-limit `/device_authorization`; the RFC 8628 polling-client-binding (low
+impact, public client); a global (cross-account) guess cap to complement the per-principal one.
