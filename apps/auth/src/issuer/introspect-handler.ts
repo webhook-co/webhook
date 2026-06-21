@@ -5,14 +5,11 @@
 
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 
+import { HELPERS_DEFAULT_HANDLER } from "./issuer-constants";
 import { introspectToken, type IntrospectionResult } from "./introspect-core";
 import { oauthIssuerConfig } from "./oauth-config";
 import type { ConsentProps } from "./token-core";
 import type { IntrospectEnv } from "../runtime/env";
-
-// getOAuthApi needs a full OAuthProviderOptions; the unwrapToken helper works off OAUTH_KV + the token
-// encryption only and never invokes defaultHandler — a never-called 404 stub completes the options.
-const HELPERS_DEFAULT_HANDLER = { fetch: async () => new Response(null, { status: 404 }) };
 
 /** Introspect an opaque provider token using this Worker's OAUTH_KV-bound grant store. */
 export async function introspect(env: IntrospectEnv, token: string): Promise<IntrospectionResult> {

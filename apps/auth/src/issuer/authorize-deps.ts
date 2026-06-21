@@ -7,7 +7,6 @@
 // `cloudflare:workers`), so it's imported only by issuer-handler/worker.ts, never by `next build`.
 
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
-import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
 import { API_RESOURCE, MCP_RESOURCE, createClient, getConsentOrg } from "@webhook-co/db";
 import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
 
@@ -15,39 +14,20 @@ import { buildConsent, decideConsent } from "./consent-core";
 import { importConsentTicketKey, signConsentTicket, verifyConsentTicket } from "./consent-ticket";
 import { makeDeviceStoreDeps } from "./device-deps";
 import { setDeviceDecision } from "./device-store";
-import { oauthIssuerConfig } from "./oauth-config";
+import {
+  CONSENT_PATH,
+  GRANT_TTL_SECONDS,
+  HELPERS_DEFAULT_HANDLER,
+  KEY_TTL_SECONDS,
+  TICKET_TTL_SECONDS,
+  nowSeconds,
+  resolveOrigin,
+} from "./issuer-constants";
+import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import type { AuthorizeRouteDeps } from "./authorize-route";
 import { LOGIN_PATH } from "../runtime/urls";
 import { makeAuth, type AuthExecutionContext, type RuntimeAuth } from "../runtime/auth";
 import type { AuthorizeEnv } from "../runtime/env";
-
-const KEY_TTL_SECONDS = 86_400; // the 24h whk_ key the screen advertises (matches token-deps).
-const GRANT_TTL_SECONDS = 7_776_000; // ~90d grant/refresh ceiling (matches token-deps GRANT_TTL_SECONDS).
-// The consent ticket is short-lived: the user has 5 min to decide (mirrors the magic-link window). The
-// resulting auth code is single-use (the provider), so this only bounds the decision round-trip.
-const TICKET_TTL_SECONDS = 300;
-const CONSENT_PATH = "/consent";
-
-/** The capability scope set a consent may ever grant — the SoT (matches oauth-config + token-deps). */
-const CAPABILITY_SCOPES = [
-  ...new Set([...CAPABILITY_REGISTRY.values()].map((c) => c.auth.scope)),
-].sort();
-
-// getOAuthApi needs a full OAuthProviderOptions; the helpers we use (parseAuthRequest/lookupClient/
-// completeAuthorization) work off OAUTH_KV + the request and never invoke defaultHandler, so a never-called
-// 404 stub completes the options without pulling the OpenNext handler into this module.
-const HELPERS_DEFAULT_HANDLER = { fetch: async () => new Response(null, { status: 404 }) };
-
-const nowSeconds = () => Math.floor(Date.now() / 1000);
-
-/** A best-effort request-origin trust signal from the edge headers (no @cloudflare/workers-types needed). */
-function resolveOrigin(request: Request): { ip: string; location: string | null } {
-  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
-  const country = request.headers.get("cf-ipcountry");
-  // CF uses "XX"/"T1" for unknown/Tor — treat those as no location rather than a misleading code.
-  const location = country && !["XX", "T1"].includes(country) ? country : null;
-  return { ip, location };
-}
 
 export interface AuthorizeDeps {
   deps: AuthorizeRouteDeps;
