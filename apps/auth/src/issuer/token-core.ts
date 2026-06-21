@@ -33,14 +33,19 @@ export interface FrozenTokenBody {
   resource: string;
 }
 
-/** OAuth 2.0 error codes this core emits (RFC 6749 §5.2 / RFC 8707 §2). */
+/** OAuth 2.0 error codes this core emits (RFC 6749 §5.2 / RFC 8707 §2 / RFC 8628 §3.5). */
 export type OAuthErrorCode =
   | "invalid_grant"
   | "invalid_target"
   | "invalid_scope"
   | "invalid_request"
   | "access_denied"
-  | "server_error";
+  | "server_error"
+  // RFC 8628 §3.5 device-flow polling signals — protocol responses (HTTP 400), not faults. The device-code
+  // grant returns these via the `error` kind; `statusFor` already maps everything but `server_error` to 400.
+  | "authorization_pending"
+  | "slow_down"
+  | "expired_token";
 
 export type RedeemResult =
   | { kind: "token"; body: FrozenTokenBody }
@@ -65,7 +70,8 @@ export interface ConsentProps {
 
 type LogFn = (event: string, fields?: Record<string, unknown>) => void;
 
-interface MintInput {
+/** The mint seam's input — shared with the device-code grant (device-token-core) so both mint identically. */
+export interface MintInput {
   orgId: string;
   userId: string;
   scopes: string[];
@@ -74,7 +80,8 @@ interface MintInput {
   device?: { name?: string };
 }
 
-type MintResult =
+/** The mint seam's result — `pending_approval` is the org-level device-approval policy (dormant in v1). */
+export type MintResult =
   | { status: "minted"; grantId: string; plaintext: string; keyId: string; expiresAt: Date }
   | { status: "pending_approval"; grantId: string };
 

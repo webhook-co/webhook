@@ -11,12 +11,20 @@
 
 import { makeAuthorizeDeps } from "./authorize-deps";
 import { handleAuthorize, handleConsentDecision } from "./authorize-route";
+import { makeDeviceAuthorizeDeps } from "./device-authorize-deps";
+import { handleDeviceAuthorization } from "./device-authorize-route";
+import { redeemDeviceCode } from "./device-token-core";
 import { makeRevokeDeps } from "./revoke-deps";
 import { handleRevokeRequest } from "./revoke-route";
 import { redeemAuthCode, redeemRefresh } from "./token-core";
 import { makeTokenDeps } from "./token-deps";
 import { handleTokenRequest } from "./token-route";
-import { readAuthorizeEnv, readRevokeEnv, readTokenEnv } from "../runtime/env";
+import {
+  readAuthorizeEnv,
+  readDeviceAuthorizeEnv,
+  readRevokeEnv,
+  readTokenEnv,
+} from "../runtime/env";
 
 /** The minimal shape of a Worker fetch handler (the generated OpenNext handler + what we export). */
 export interface FetchHandler {
@@ -70,13 +78,24 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
         }
       }
 
+      // POST /device_authorization — the RFC 8628 device-code request (A4b). No pool: it only validates the
+      // client (KV) + mints a device code (KV); a key is minted later at the /token poll.
+      if (request.method === "POST" && url.pathname === "/device_authorization") {
+        const deps = makeDeviceAuthorizeDeps(readDeviceAuthorizeEnv(rawEnv), request.url);
+        return await handleDeviceAuthorization(deps, request);
+      }
+
       if (request.method === "POST" && url.pathname === "/token") {
-        const { authCode, refresh, close } = await makeTokenDeps(readTokenEnv(rawEnv), request.url);
+        const { authCode, refresh, device, close } = await makeTokenDeps(
+          readTokenEnv(rawEnv),
+          request.url,
+        );
         try {
           return await handleTokenRequest(
             {
               redeemAuthCode: (req) => redeemAuthCode(authCode, req),
               redeemRefresh: (req) => redeemRefresh(refresh, req),
+              redeemDevice: (req) => redeemDeviceCode(device, req),
             },
             request,
           );

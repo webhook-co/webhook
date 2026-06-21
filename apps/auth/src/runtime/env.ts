@@ -101,6 +101,8 @@ export interface TokenEnv {
   AUDIT_CHAIN_HMAC_KEY: Secret;
   /** The OAuth provider's KV store (KVNamespace) — getOAuthApi(config, env) reads it per request. */
   OAUTH_KV: unknown;
+  /** The device-code store (KVNamespace) — the A4b device_code grant polls it. */
+  DEVICE_KV: unknown;
 }
 
 /**
@@ -121,10 +123,32 @@ export function readTokenEnv(env: Record<string, unknown>): TokenEnv {
   ) {
     throw new Error("token env: missing or malformed Hyperdrive binding HYPERDRIVE_TENANT");
   }
-  if (env.OAUTH_KV == null || typeof env.OAUTH_KV !== "object") {
-    throw new Error("token env: missing OAUTH_KV binding");
+  for (const key of ["OAUTH_KV", "DEVICE_KV"] as const) {
+    if (env[key] == null || typeof env[key] !== "object") {
+      throw new Error(`token env: missing ${key} binding`);
+    }
   }
   return env as unknown as TokenEnv;
+}
+
+// --- A4b: the /device_authorization env slice ------------------------------------------------------
+// /device_authorization validates the client (getOAuthApi → OAUTH_KV) and mints a device code (DEVICE_KV).
+// No DB/secret — no key is minted until the /token poll, so it carries neither the tenant pool nor pepper.
+export interface DeviceAuthorizeEnv {
+  /** The OAuth provider's KV store (KVNamespace) — getOAuthApi(config, env).lookupClient reads it. */
+  OAUTH_KV: unknown;
+  /** The device-code store (KVNamespace). */
+  DEVICE_KV: unknown;
+}
+
+/** Validate the env for /device_authorization, fail-closed. */
+export function readDeviceAuthorizeEnv(env: Record<string, unknown>): DeviceAuthorizeEnv {
+  for (const key of ["OAUTH_KV", "DEVICE_KV"] as const) {
+    if (env[key] == null || typeof env[key] !== "object") {
+      throw new Error(`device_authorization env: missing ${key} binding`);
+    }
+  }
+  return env as unknown as DeviceAuthorizeEnv;
 }
 
 // --- A2b-4b: the frozen /revoke route's env slice --------------------------------------------------
