@@ -1,7 +1,8 @@
 # ADR 0030 — `/authorize` consent→mint: the stateless signed consent ticket
 
-- status: accepted (**A3c** — the pure consent core + the signed-ticket codec; **A3d** (next) wires the
-  wrangler-layer mount + the real provider/session/DB seams — it will extend this ADR).
+- status: accepted (**A3c** — the pure consent core + the signed-ticket codec; **A3d** — the wrangler-layer
+  mount + the real provider/session/DB seams, see the A3d note at the end). The consent→mint flow now serves
+  end-to-end over HTTP.
 - date: 2026-06-21
 - scope: `apps/auth/src/issuer/{consent-ticket,consent-core}.ts` (+ tests); `packages/shared/src/index.ts`
   (re-export base64url/HMAC/timing-safe primitives); `apps/auth/src/issuer/token-core.ts` (the `ConsentProps`
@@ -109,3 +110,34 @@ same `userId` as both the grant userId and `props.userId`, satisfying G1 by cons
   consent cores (every result branch, the G1 call shape, the redirect/error paths, empty-state) are
   unit-tested with fakes (29 tests). The A3d deps builder + mount are I/O glue → verified by `build:cf`/
   `deploy:dry`; `getConsentOrg` is test:db'd.
+
+## A3d — the wrangler-layer mount (DONE, this slice)
+
+A3d wires the cores and serves the flow end-to-end. Built as a pure HTTP core + thin glue (mirrors
+token-route/token-deps, ADR-0029):
+
+- **`authorize-route.ts` (pure, 14 tests):** `handleAuthorize` (GET /authorize → parse → session → buildConsent
+  → 302/400) + `handleConsentDecision` (POST → require `application/json` → zod-validate `ConsentDecision` →
+  session → decideConsent → 200 `{redirectTo}` / mapped-status error). Injected seams (parseAuthRequest,
+  getSessionUserId, resolveOrigin, loginUrl, buildConsent, decideConsent) keep it I/O-free.
+- **`authorize-deps.ts` (glue):** binds the seams to `getOAuthApi` (parseAuthRequest/lookupClient/
+  completeAuthorization), `makeAuth().getSession`, `getConsentOrg`, and the ticket key from
+  `CONSENT_TICKET_KEY`. The Better Auth runtime + the tenant pool are built **lazily** (a parse-failure or
+  an unauthenticated login-bounce pays for neither/only the session runtime — not the tenant pool).
+- **`issuer-handler.ts`:** GET /authorize + POST /consent/decision intercepts (the provider routes neither —
+  `authorizeEndpoint` is discovery-metadata only, verified in oauth-provider.js's router), draining the
+  lazily-opened pools via `ctx.waitUntil`.
+- **`getSession` on `RuntimeAuth`** (`auth.api.getSession({headers})` → `{userId}|null`, cookie-derived,
+  DB-validated) + **`getConsentOrg`/`personalOrgId`** (orgs.ts; bootstrap refactored to reuse personalOrgId
+  — byte-identical id, no orphaning) + **`readAuthorizeEnv`** + **`LOGIN_PATH`**.
+
+Two adversarial reviews (security + fresh-eyes): MERGEABLE, no blockers, no correctness bugs. Folded: the
+login `?redirect=` is a **relative path** (not the absolute URL) so Lane E can't be handed an off-origin
+open redirect; the JSON content-type gate parses the **MIME type** (not a substring — defeats a
+`multipart/form-data; boundary=----application/json` bypass); lazy pool/runtime init (the eager-construction
+DoS-amplification finding). **Deferred to the deploy/rate-limit slice** (both reviewers concur — endpoint
+not routed until then): rate-limiting is the primary DoS mitigation for the unauthenticated GET; the
+`cf-connecting-ip`/`cf-ipcountry` origin signal is edge-authoritative in prod (workers_dev off, route-only)
+but Lane E must still treat it as untrusted display data (React auto-escapes). **Follow-up (non-blocking):
+a shared issuer-constants module** for `KEY_TTL_SECONDS`/`GRANT_TTL_SECONDS` (duplicated with token-deps;
+cross-referenced in comments — a drift would make the consent screen advertise a TTL the mint doesn't honor).

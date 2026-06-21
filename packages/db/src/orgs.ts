@@ -96,6 +96,42 @@ function deterministicUuid(seed: string): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
 
+/**
+ * The STABLE id of a user's personal org — the same deterministic id `bootstrapPersonalOrg` mints. Pure
+ * (no DB read): RLS forbids webhook_app from looking a user's org up cross-org, so the issuer resolves it
+ * by re-deriving the id rather than querying. Not secret (org access is gated by RLS + membership, never id
+ * unguessability). Lane C's `/authorize` uses it to find the org a consent grant is for.
+ */
+export function personalOrgId(userId: string): string {
+  return deterministicUuid(`webhook:personal-org:${userId}`);
+}
+
+/**
+ * Resolve the org an interactive consent grant is for (Lane C A3 `/authorize`): the user's personal org
+ * (v1 — single membership), as `{ orgId, name }`, or null if they have none yet / aren't a member. One
+ * org-scoped read (RLS pinned to the derived org) that JOINs memberships, so it fails closed when the user
+ * isn't a member (e.g. a deleted membership) rather than leaking an org name. No cross-org query.
+ */
+export async function getConsentOrg(
+  app: Sql,
+  userId: string,
+): Promise<{ orgId: string; name: string } | null> {
+  const orgId = personalOrgId(userId);
+  const rows = await withTenant(
+    app,
+    orgId,
+    (tx) =>
+      tx<{ name: string }[]>`
+        select o.name
+        from orgs o
+        join memberships m on m.org_id = o.id and m.user_id = ${userId}
+        where o.id = ${orgId}
+        limit 1`,
+  );
+  const row = rows[0];
+  return row ? { orgId, name: row.name } : null;
+}
+
 export interface BootstrapPersonalOrgInput {
   readonly userId: string;
   /** URL-safe unique org handle (citext unique). Must be unique across orgs on first create. */
@@ -139,7 +175,7 @@ export async function bootstrapPersonalOrg(
   input: BootstrapPersonalOrgInput,
   hasher: CredentialHasher,
 ): Promise<BootstrapPersonalOrgResult> {
-  const orgId = deterministicUuid(`webhook:personal-org:${input.userId}`);
+  const orgId = personalOrgId(input.userId);
   const endpointId = deterministicUuid(`webhook:personal-endpoint:${input.userId}`);
   const region = input.region ?? "us";
 
