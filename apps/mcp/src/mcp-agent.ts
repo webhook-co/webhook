@@ -14,25 +14,25 @@ import type { McpEnv } from "./env";
 // capabilities (MCP_BOUND_CAPABILITIES) as MCP tools, each binding the SHARED createReadHandlers
 // map — the very same handlers apps/api dispatches over HTTP, so the two surfaces can't drift.
 //
-// Auth: the OAuthProvider validates the bearer (a provider-minted token, or — today — an api key
-// resolved via resolveExternalToken) and exposes the grant as `this.props`; grantPropsToAuthContext
+// Auth: the resource-server router (resource-handler.ts, A8) validates the bearer (a `whk_` api key via
+// the credential chain, or an opaque OAuth token via introspection to auth.) and sets the resolved
+// principal on the execution context, which the McpAgent surfaces as `this.props`; grantPropsToAuthContext
 // re-validates that shape into an AuthContext at the trust boundary (grant.ts). Each tool then runs
 // the shared handler under RLS with a per-call tenant client. NO fault is ever thrown out of a tool
-// handler — the MCP SDK would echo the message to the client — so a malformed grant or an
+// handler — the MCP SDK would echo the message to the client — so a malformed principal or an
 // operational fault is logged and returned as a generic, leak-free error (see tools.ts). The
 // cursor/audit HMAC keys are imported once per DO start (init).
 //
 // SESSION BINDING (security): the McpAgent Durable Object is keyed by the `Mcp-Session-Id`, and
-// `this.props` is set ONCE — from the grant of the request that INITIALIZES the session (McpAgent
+// `this.props` is set ONCE — from the principal of the request that INITIALIZES the session (McpAgent
 // `onStart`; warm requests don't refresh it). So a session is bound to its initializing principal,
 // and the session id is a bearer-equivalent secret: the platform mints it unguessably and returns
 // it only to that caller. Reusing another principal's session id (to read THEIR org) therefore
-// requires stealing that secret. We do NOT additionally re-bind the principal per request here,
+// requires stealing that secret. We do NOT yet additionally re-bind the principal per request here,
 // because the streamable-HTTP handler routes purely by session id and does not surface the
-// per-request grant to the tool handler. This is acceptable while callers are org-scoped api keys
-// that each open their own session; cross-principal session reuse becomes reachable only once the
-// deferred OAuth user-login mints multi-user tokens — harden then (principal-namespaced session
-// routing, or a per-request principal re-check). Tracked as a follow-up; see ADR-0011.
+// per-request principal to the tool handler. Now that the auth. OAuth login mints multi-user tokens
+// (validated here via introspection), cross-principal session reuse is in scope to HARDEN — A8c adds
+// principal-namespaced session routing + an in-DO bound-principal check (was the ADR-0011 follow-up).
 
 const SERVER_NAME = "webhook.co";
 const SERVER_VERSION = "0.0.0";

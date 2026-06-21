@@ -10,7 +10,6 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@cloudflare/workers-oauth-provider": "^0.8.0",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",

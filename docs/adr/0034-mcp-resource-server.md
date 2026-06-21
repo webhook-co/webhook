@@ -1,9 +1,9 @@
 # ADR 0034 — `apps/mcp` as a resource server: two-validator bearer auth + introspection + principal isolation
 
 - status: accepted (**A8a** — the bearer-resolution layer: the promoted introspection contract, the
-  opaque-token introspection validator, and the two-validator prefix discriminator. **A8b** (the
-  resource-server teardown + mount) and **A8c** (per-request principal isolation) extend this ADR — see the
-  "still to build" section).
+  opaque-token introspection validator, and the two-validator prefix discriminator. **A8b** — the
+  resource-server teardown + mount (this slice; see the A8b section). **A8c** (per-request principal
+  isolation) extends this ADR — see the "still to build" section).
 - date: 2026-06-21
 - scope (A8a): `packages/contract/src/introspection.ts` (+ barrel), `apps/mcp/src/introspect-client.ts`,
   `apps/mcp/src/resolve-bearer.ts` (+ tests); `apps/auth/src/issuer/introspect-core.ts` /
@@ -106,3 +106,41 @@ hazard).
 - **Deploy slice:** the `AUTH_ISSUER` service binding (entrypoint `IssuerIntrospect`) on mcp; an audience-less
   opaque token is rejected (fail closed), so the PRM must advertise the resource so compliant clients always
   send `resource`.
+
+## decision (A8b — the resource-server teardown + mount, DONE)
+
+`apps/mcp` is no longer an OAuth issuer: `new OAuthProvider({...})` is gone. The default export is now a plain
+resource-server handler.
+
+- **`resource-handler.ts`** (pure, injected, 8 tests): serves the RFC 9728 PRM (`authorization_servers =
+  [https://auth.webhook.co]` — NOT mcp), a health check, and gates `/mcp` with `authenticateBearer`
+  (scope-FREE: the per-capability scope check runs downstream in the shared handler, `read-handlers.ts`,
+  against `ctx.scopes` — it was never at the boundary). On a valid bearer it sets the resolved principal on the
+  execution context (`setProps` → `ctx.props`, the same contract the OAuthProvider used) BEFORE handing off to
+  the McpAgent DO; on 401 it returns the PRM-pointing `WWW-Authenticate`. An OPTIONS preflight bypasses auth
+  (the transport answers CORS; no data, no DO state). An operational fault PROPAGATES → a 500 at the wrapper
+  (never a masked 401).
+- **`index.ts`** wires the real per-request deps: the two-validator `verifyBearer` (the `whk_` api-key chain
+  over webhook_authn + KV cache, plus opaque-token introspection over the `AUTH_ISSUER` service binding), the
+  PRM doc, and `WebhookMcp.serve("/mcp")`. PRM + health are served DB-free up front; one short-lived authn
+  client, closed in `finally`. Mirrors `apps/api`'s resource-server shape.
+- **Teardown:** removed `OAUTH_KV` (binding + the generator's `<OAUTH_KV_ID>` placeholder/TOKEN/GH-var),
+  `default-handler.ts`, `external-token.ts`, the `@cloudflare/workers-oauth-provider` dep. The former issuer
+  endpoints (`/.well-known/oauth-authorization-server`, `/register`, `/token`) now 404 — proven by the
+  rewritten `resource-server.test.ts`. The api-key→`/mcp`→DO e2e (`mcp-tools.test.ts`, fixed to a real `whk_`
+  token so it routes to the api-key validator) is preserved.
+
+**Deploy-window behavior (intentional):** `AUTH_ISSUER` is deploy-injected later (the ordering above), so right
+after this merges `env.AUTH_ISSUER` is undefined in prod. A `whk_` token never touches it (the only prod path
+today); a non-`whk_` (opaque) token hits `undefined.introspect` → a clean **500** denial (not a bypass). The
+deploy slice adds the binding before any real OAuth-token traffic.
+
+## review (A8b)
+
+Two adversarial reviews (security red-team + fresh-eyes). Both MERGEABLE, no BLOCKER/MAJOR. Confirmed: scope
+enforcement preserved downstream, audience binding intact on both validators, the `ctx.props` hand-off correct
+(verified against `agents@0.16.1`: `serve().fetch` reads `ctx.props` → `onStart(props)`), `AUTH_ISSUER`-undefined
+fails safe, the OAUTH_KV/generator teardown fully consistent (no orphan binding / missing placeholder), OPTIONS
+safe. Folded 4 comment-staleness NITs. **Deferred follow-ups:** repoint `apps/api`'s PRM `TOKEN_ISSUER` from
+mcp → auth. (out of A8b's file scope — the deploy slice); the `AUTH_ISSUER` overlay binding + closing the
+deploy-window opaque-token 500 (deploy slice); per-request principal isolation (A8c).
