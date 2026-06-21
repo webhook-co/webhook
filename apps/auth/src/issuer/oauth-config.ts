@@ -15,8 +15,9 @@ import { PROD_AUTH_BASE_URL } from "../runtime/urls";
 // Derived from the single SoT — @webhook-co/contract's CAPABILITY_REGISTRY (the same set apps/mcp's
 // SCOPES_SUPPORTED derives from) — so discovery can never advertise a scope the mint path rejects (or
 // omit one it grants). The RESERVED `keys:manage` is not a capability scope, so it's absent by
-// construction (reserve-name-only, never granted). A2b-2's token-core intersects requested ∩ this set.
-const CAPABILITY_SCOPES = [
+// construction (reserve-name-only, never granted). The token + device-code mint paths (token-deps,
+// device-authorize-deps) import THIS export so the advertised set and the mintable set can't drift.
+export const CAPABILITY_SCOPES = [
   ...new Set([...CAPABILITY_REGISTRY.values()].map((c) => c.auth.scope)),
 ].sort();
 

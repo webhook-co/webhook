@@ -1,7 +1,8 @@
 # ADR 0031 — the RFC 8628 device authorization flow: a KV-backed device-code store
 
-- status: accepted (**A4a** — the device-code store over KV; **A4b** (next) adds the `/device_authorization`
-  endpoint, the `/token` device grant, and the `/device` verify→consent integration — it will extend this ADR).
+- status: accepted (**A4a** — the device-code store over KV; **A4b** — the `/device_authorization` endpoint +
+  the `/token` device grant, see the A4b note at the end; **A4c** (next) adds the `/device` verify→consent
+  integration). The CLI-facing device protocol serves over HTTP; approval lands in A4c.
 - date: 2026-06-21
 - scope: `apps/auth/src/issuer/device-store.ts` (+ tests).
 - relates: ADR-0024 (Option-B issuance — the device grant mints directly, like refresh, no provider code),
@@ -82,3 +83,38 @@ The store is fully unit-tested (13 tests) against an in-memory fake KV: create (
 code, no ambiguous chars), find (unknown/expired/normalized-input), decision (approve props / deny /
 not-found / already-decided), and the full poll FSM (pending / slow_down / approved+single-use / denied /
 invalid). The endpoints + the real KV/RNG wiring are A4b (glue → build:cf/deploy:dry + integration).
+
+## A4b — the CLI-facing device endpoints (DONE, this slice)
+
+A4b makes the CLI side of the device flow serve over HTTP (the browser approval is A4c). The device flow is
+fully Lane C — the provider has no device grant — so the device-code grant mints directly (like refresh),
+never through a provider code.
+
+- **`POST /device_authorization`** (`device-authorize-route.ts`, pure HTTP core, 6 tests): validate the
+  client (provider `lookupClient`), resolve the audience from `resource` (one allowed), intersect scopes ∩
+  capability, `createDeviceCode`, and return the RFC 8628 response (`device_code`/`user_code`/
+  `verification_uri`/`verification_uri_complete`/`expires_in`/`interval`). Unauthenticated by design (the
+  device has no user yet); the verification URI is derived from the request origin.
+- **The `/token` device grant** (`device-token-core.ts`, pure, 10 tests): `grant_type=urn:ietf:params:oauth:
+  grant-type:device_code` → `pollDeviceCode` → mint. The non-approved poll states map to the RFC 8628 §3.5
+  responses via the `error` kind (`OAuthErrorCode` extended with `authorization_pending`/`slow_down`/
+  `expired_token` — all 400 via the existing `statusFor`); an approved code mints (`mintScopedKey`,
+  authMethod `device_code`) + a refresh handle with the same audience/scope defense-in-depth + rollback as
+  the auth-code path. Wired into `token-route`'s dispatch + `token-deps` (reusing its `webhook_app` pool /
+  hasher / audit key); `redeemDevice` is optional in `TokenRouteDeps` (a non-device deploy reports
+  `unsupported_grant_type`).
+- **Wiring:** `device-deps.ts` (`makeDeviceStoreDeps` — the **real `crypto.getRandomValues`** the store
+  assumed, closing A4a's MINOR-3) + `device-authorize-deps.ts` (client lookup + store) + the
+  `/device_authorization` intercept in `issuer-handler` + `readTokenEnv`/`readDeviceAuthorizeEnv` gain
+  `DEVICE_KV` + the `DEVICE_KV` binding in `wrangler.jsonc` (overlay `<AUTH_DEVICE_KV_ID>`).
+
+**Tenancy invariant (no DB membership re-check on the device token path):** an approved record's props are
+stamped by A4c's `setDeviceDecision`, whose org is resolved membership-gated via `getConsentOrg(sessionUserId)`
+— so `props.orgId` is always the approver's own org and membership holds by construction. The token core
+still applies audience/scope defense-in-depth.
+
+**A4c (next) MUST add:** the `/device` verify → consent integration (resolve the user code → reuse the consent
+screen → `setDeviceDecision`) **with the verify-path rate-limit + authed-session gate** (the ~40-bit user
+code is online-guessable — still the must-before-live item). Until A4c, a polled device code stays
+`authorization_pending` (nothing approves it). **Deploy slice:** provision `DEVICE_KV`; edge rate-limit
+`/device_authorization` (unauthenticated, code-minting); real-KV integration (the 60s-min-TTL).
