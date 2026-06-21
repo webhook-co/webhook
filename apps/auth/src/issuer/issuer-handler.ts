@@ -18,6 +18,8 @@ import { makeDeviceVerifyDeps } from "./device-verify-deps";
 import { handleDeviceVerify } from "./device-verify-route";
 import { makeRevokeDeps } from "./revoke-deps";
 import { handleRevokeRequest } from "./revoke-route";
+import { makeSessionExchangeDeps } from "./session-exchange-deps";
+import { handleSessionExchange } from "./session-exchange-route";
 import { redeemAuthCode, redeemRefresh } from "./token-core";
 import { makeTokenDeps } from "./token-deps";
 import { handleTokenRequest } from "./token-route";
@@ -26,6 +28,7 @@ import {
   readDeviceAuthorizeEnv,
   readDeviceVerifyEnv,
   readRevokeEnv,
+  readSessionExchangeEnv,
   readTokenEnv,
 } from "../runtime/env";
 
@@ -96,6 +99,17 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
           return await handleDeviceVerify(deps, request);
         } finally {
           drain(ctx, close, "device_verify.pool_close_failed");
+        }
+      }
+
+      // POST /session/exchange — app.'s server backchannel-redeems a session ticket (A-SX-2a): consume +
+      // read the profile → the principal payload. Authenticated by the single-use ticket, not a cookie.
+      if (request.method === "POST" && url.pathname === "/session/exchange") {
+        const { deps, close } = await makeSessionExchangeDeps(readSessionExchangeEnv(rawEnv));
+        try {
+          return await handleSessionExchange(deps, request);
+        } finally {
+          drain(ctx, close, "session_exchange.pool_close_failed");
         }
       }
 
