@@ -1,4 +1,4 @@
-# ADR 0034 — `apps/mcp` as a resource server: two-validator bearer auth + introspection + principal isolation
+# ADR 0035 — `apps/mcp` as a resource server: two-validator bearer auth + introspection + principal isolation
 
 - status: accepted (**A8a** — the bearer-resolution layer: the promoted introspection contract, the
   opaque-token introspection validator, and the two-validator prefix discriminator. **A8b** — the

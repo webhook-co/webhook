@@ -32,7 +32,7 @@ import type { McpEnv } from "./env";
 // the transport routes the DO. So a reused/stolen session id can't reach another principal's DO — by the
 // time a request reaches this tool handler, its principal already matches `this.props`. (Edge wrapping, not
 // in-DO routing, because the streamable-HTTP handler routes purely by session id and surfaces no per-request
-// principal to the DO. Was the ADR-0011 follow-up; see ADR-0034.)
+// principal to the DO. Was the ADR-0011 follow-up; see ADR-0035.)
 
 const SERVER_NAME = "webhook.co";
 const SERVER_VERSION = "0.0.0";
