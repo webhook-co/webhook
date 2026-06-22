@@ -16,6 +16,8 @@ export interface AuthClient {
     magicLink: (opts: {
       email: string;
       callbackURL?: string;
+      /** Per-request fetch overrides — used to attach the Turnstile token header (see sendMagicLink). */
+      fetchOptions?: { headers?: Record<string, string> };
     }) => Promise<{ error?: { message?: string } | null }>;
     social: (opts: {
       provider: "google" | "github";
@@ -26,7 +28,9 @@ export interface AuthClient {
 
 /** Matches Lane E's `AuthActions` (login-form.tsx) structurally; the wiring asserts the assignment. */
 export interface LiveAuthActions {
-  sendMagicLink(email: string): Promise<void>;
+  /** `captchaToken` is the solved Cloudflare Turnstile token — sent as the `x-captcha-response` header
+   *  the server's captcha gate reads (the magic-link endpoint rejects a send without it in prod). */
+  sendMagicLink(email: string, captchaToken: string): Promise<void>;
   continueWith(provider: "google" | "github"): Promise<void>;
 }
 
@@ -37,8 +41,12 @@ export interface AuthActionsOptions {
 
 export function makeAuthActions(client: AuthClient, opts: AuthActionsOptions): LiveAuthActions {
   return {
-    async sendMagicLink(email) {
-      const { error } = await client.signIn.magicLink({ email, callbackURL: opts.callbackURL });
+    async sendMagicLink(email, captchaToken) {
+      const { error } = await client.signIn.magicLink({
+        email,
+        callbackURL: opts.callbackURL,
+        fetchOptions: { headers: { "x-captcha-response": captchaToken } },
+      });
       if (error) throw new Error(error.message ?? "could not send the sign-in link");
     },
     async continueWith(provider) {

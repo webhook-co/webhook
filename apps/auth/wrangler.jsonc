@@ -78,8 +78,8 @@
     },
   ],
   // The Secrets-Store secrets (BETTER_AUTH_SECRET, CREDENTIAL_PEPPER, AUDIT_CHAIN_HMAC_KEY,
-  // CONSENT_TICKET_KEY, GOOGLE_/GITHUB_CLIENT_ID+SECRET, RESEND_API_KEY), account_id, workers_dev:false, and
-  // the auth.webhook.co route are injected by scripts/gen-wrangler-prod.mjs at deploy (none committed; see
-  // deploy-auth.yml). The OAuth-provider mount is Lane C's src/worker.ts (the default export wrapping the
-  // OpenNext handler, A2b-1).
+  // CONSENT_TICKET_KEY, GOOGLE_/GITHUB_CLIENT_ID+SECRET, RESEND_API_KEY, TURNSTILE_SECRET_KEY), account_id,
+  // workers_dev:false, and the auth.webhook.co route are injected by scripts/gen-wrangler-prod.mjs at deploy
+  // (none committed; see deploy-auth.yml). The OAuth-provider mount is Lane C's src/worker.ts (the default
+  // export wrapping the OpenNext handler, A2b-1).
 }

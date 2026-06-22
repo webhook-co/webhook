@@ -3,16 +3,25 @@
 import { Banner, Button, Field } from "@webhook-co/ui";
 import * as React from "react";
 
+import { Turnstile } from "./turnstile";
+
 /**
  * The seam between the login UI and the auth backend. E3 ships a {@link mockAuthActions}
  * implementation so the page is fully buildable + reviewable before Lane C's `/api/auth/*`
  * exists; E8 swaps in the live `@webhook-co/contract` client without touching this component.
  */
 export interface AuthActions {
-  /** Request a magic-link email for `email`. Resolves once sent; rejects on failure. */
-  sendMagicLink(email: string): Promise<void>;
+  /** Request a magic-link email for `email`, passing the solved Turnstile token (the server gate requires
+   *  it). Resolves once sent; rejects on failure. */
+  sendMagicLink(email: string, captchaToken: string): Promise<void>;
   /** Begin an OAuth flow. The live impl redirects; the mock resolves. */
   continueWith(provider: "google" | "github"): Promise<void>;
+}
+
+/** A captcha widget seam: reports the solved token (or null when it expires/errors/resets). Defaults to the
+ *  real {@link Turnstile}; the form tests inject a fake through this prop (same pattern as `actions`). */
+export interface CaptchaWidgetProps {
+  onToken: (token: string | null) => void;
 }
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -51,12 +60,21 @@ const GithubGlyph = () => (
   </svg>
 );
 
-export function LoginForm({ actions = mockAuthActions }: { actions?: AuthActions }) {
+export function LoginForm({
+  actions = mockAuthActions,
+  Captcha = Turnstile,
+}: {
+  actions?: AuthActions;
+  Captcha?: React.ComponentType<CaptchaWidgetProps>;
+}) {
   const [email, setEmail] = React.useState("");
   const [pending, setPending] = React.useState<Pending>(null);
   const [sentTo, setSentTo] = React.useState<string | null>(null);
   const [emailError, setEmailError] = React.useState<string | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);
+  const [captchaToken, setCaptchaToken] = React.useState<string | null>(null);
+  // Bumping this remounts the captcha to get a fresh single-use token after a failed send.
+  const [captchaNonce, setCaptchaNonce] = React.useState(0);
 
   const busy = pending !== null;
 
@@ -68,12 +86,20 @@ export function LoginForm({ actions = mockAuthActions }: { actions?: AuthActions
       setEmailError("Enter a valid email address.");
       return;
     }
+    if (!captchaToken) {
+      // The submit button is disabled until the captcha resolves, so this is just a belt-and-braces guard.
+      setFormError("Please wait for the verification to finish, then try again.");
+      return;
+    }
     setPending("magic");
     try {
-      await actions.sendMagicLink(email);
+      await actions.sendMagicLink(email, captchaToken);
       setSentTo(email);
     } catch {
       setFormError("We couldn't send the link. Please try again.");
+      // The token was consumed (single-use) by the attempt — drop it + remount for a fresh one.
+      setCaptchaToken(null);
+      setCaptchaNonce((n) => n + 1);
     } finally {
       setPending(null);
     }
@@ -152,7 +178,8 @@ export function LoginForm({ actions = mockAuthActions }: { actions?: AuthActions
           error={emailError ?? undefined}
           disabled={busy}
         />
-        <Button type="submit" disabled={busy}>
+        <Captcha key={captchaNonce} onToken={setCaptchaToken} />
+        <Button type="submit" disabled={busy || !captchaToken}>
           {pending === "magic" ? "Sending…" : "Send magic link"}
         </Button>
       </form>

@@ -97,4 +97,28 @@ describe("resolveAuthSecrets", () => {
     const env = readAuthEnv({ ...RAW, BETTER_AUTH_SECRET: { get: async () => "" } }) as AuthEnv;
     await expect(resolveAuthSecrets(env)).rejects.toThrow(/betterAuthSecret/);
   });
+
+  // TURNSTILE_SECRET_KEY is OPTIONAL (the captcha is defense-in-depth; absent → the plugin is simply not
+  // wired, so local/test boot without it). When present it must resolve to a non-empty string.
+  it("leaves turnstileSecretKey undefined when the secret is not configured", async () => {
+    const resolved = await resolveAuthSecrets(readAuthEnv({ ...RAW }));
+    expect(resolved.turnstileSecretKey).toBeUndefined();
+  });
+
+  it("resolves turnstileSecretKey when configured (plain string)", async () => {
+    const env = readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: "0xTURNSTILE" }) as AuthEnv;
+    expect((await resolveAuthSecrets(env)).turnstileSecretKey).toBe("0xTURNSTILE");
+  });
+
+  it("resolves turnstileSecretKey from a Secrets Store binding via .get()", async () => {
+    const get = vi.fn(async () => "0xFROM_STORE");
+    const env = readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: { get } }) as AuthEnv;
+    expect((await resolveAuthSecrets(env)).turnstileSecretKey).toBe("0xFROM_STORE");
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when TURNSTILE_SECRET_KEY is present but resolves EMPTY (never run the gate keyless)", async () => {
+    const env = readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: { get: async () => "" } }) as AuthEnv;
+    await expect(resolveAuthSecrets(env)).rejects.toThrow(/turnstileSecretKey/);
+  });
 });

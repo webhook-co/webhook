@@ -115,6 +115,8 @@ const APPS = {
       "GITHUB_CLIENT_ID",
       "GITHUB_CLIENT_SECRET",
       "RESEND_API_KEY",
+      // Cloudflare Turnstile siteverify secret — keys the captcha gate on the magic-link send.
+      "TURNSTILE_SECRET_KEY",
     ],
     placeholders: [
       "<AUTH_OAUTH_KV_ID>",

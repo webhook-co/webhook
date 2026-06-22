@@ -20,6 +20,7 @@ import {
   createCredentialHasherFromBase64,
 } from "@webhook-co/db";
 import { betterAuth } from "better-auth";
+import { captcha } from "better-auth/plugins";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
 
@@ -28,6 +29,7 @@ import {
   APP_BASE_URL,
   MAGIC_LINK_FROM,
   PROD_AUTH_BASE_URL,
+  TURNSTILE_ACTION,
   resolveAuthSecrets,
   type AuthEnv,
   type ResolvedAuthSecrets,
@@ -104,6 +106,30 @@ export function resolveBaseUrl(authBaseUrl: string | undefined): string {
   return baseURL;
 }
 
+/**
+ * Build the captcha plugins list. Cloudflare Turnstile is defense-in-depth on the public, email-sending
+ * magic-link endpoint (it complements, doesn't replace, the durable per-email rate limit). Wired ONLY when
+ * the Turnstile secret is configured (prod) so local/test boot without it; it gates EXACTLY the magic-link
+ * send (`endpoints` REPLACES the plugin defaults — substring-matched, so social/session stay ungated, and
+ * the GET magic-link verify-click is untouched). `allowedHostnames` (the single configured-origin host —
+ * prod `auth.webhook.co`, dev `localhost`; so a dev's AUTH_BASE_URL host must match the browser address) is
+ * the anti-replay pin; `expectedAction` rejects a token minted for another action on this sitekey. The
+ * plugin reads the `x-captcha-response` header the login form sends and siteverifies server-side before
+ * Better Auth's handler runs.
+ */
+function captchaPlugins(baseURL: string, secrets: ResolvedAuthSecrets) {
+  if (!secrets.turnstileSecretKey) return [];
+  return [
+    captcha({
+      provider: "cloudflare-turnstile",
+      secretKey: secrets.turnstileSecretKey,
+      endpoints: ["/sign-in/magic-link"],
+      expectedAction: TURNSTILE_ACTION,
+      allowedHostnames: [new URL(baseURL).hostname],
+    }),
+  ];
+}
+
 /** Build the runtime Better Auth options (pure; no instantiation) — the unit under test. */
 export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): AuthConfig {
   const { baseURL, secrets } = input;
@@ -118,7 +144,8 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
       google: { clientId: secrets.googleClientId, clientSecret: secrets.googleClientSecret },
       github: { clientId: secrets.githubClientId, clientSecret: secrets.githubClientSecret },
     },
-    plugins: [magicLink(magicLinkOptions(deps))],
+    // Captcha first (its onRequest gate runs before the magic-link send handler), then magic-link.
+    plugins: [...captchaPlugins(baseURL, secrets), magicLink(magicLinkOptions(deps))],
     databaseHooks: deps.databaseHooks,
     advanced: {
       // On Workers the TCP peer is Cloudflare's edge, not the client, so Better Auth's rate limiter must

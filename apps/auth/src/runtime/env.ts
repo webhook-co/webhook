@@ -36,6 +36,12 @@ export interface AuthEnv {
   GITHUB_CLIENT_SECRET: Secret;
   RESEND_API_KEY: Secret;
   /**
+   * Cloudflare Turnstile siteverify secret — keys the Better Auth captcha plugin gating the magic-link send
+   * (defense-in-depth on the public, email-triggering endpoint). OPTIONAL in the type so local/test runs
+   * boot without it (the plugin is simply not wired); always provisioned in prod (gen-wrangler-prod.mjs).
+   */
+  TURNSTILE_SECRET_KEY?: Secret;
+  /**
    * The rate-limit counter store (KVNamespace) — the durable magic-link send throttle (makeAuth) keys here,
    * replacing Better Auth's per-isolate in-memory limiter. Optional in the type (so AuthEnv readers needn't
    * all require it); always bound in prod (wrangler.jsonc) — when absent the throttle is simply skipped.
@@ -52,6 +58,9 @@ export interface ResolvedAuthSecrets {
   githubClientId: string;
   githubClientSecret: string;
   resendApiKey: string;
+  /** Cloudflare Turnstile siteverify secret — present only when TURNSTILE_SECRET_KEY is bound (prod);
+   *  absent → the captcha plugin is not wired (see buildAuthConfig). */
+  turnstileSecretKey?: string;
 }
 
 const REQUIRED_SECRETS = [
@@ -328,9 +337,18 @@ export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecr
   for (const [name, value] of Object.entries(resolved)) {
     if (value.length === 0) throw new Error(`auth env: resolved secret ${name} is empty`);
   }
+  // Turnstile is OPTIONAL: resolve it only when bound (prod). Present-but-empty is still a misconfig — fail
+  // closed rather than wire a keyless gate that would reject every magic-link send (or, worse, pass none).
+  if (env.TURNSTILE_SECRET_KEY !== undefined) {
+    const turnstileSecretKey = await readSecretBinding(env.TURNSTILE_SECRET_KEY);
+    if (turnstileSecretKey.length === 0) {
+      throw new Error("auth env: resolved secret turnstileSecretKey is empty");
+    }
+    return { ...resolved, turnstileSecretKey };
+  }
   return resolved;
 }
 
 // URL/string constants live in ./urls (dependency-free) so client components can import them without
 // pulling this module's server-only deps into the browser bundle. Re-exported for the runtime's imports.
-export { APP_BASE_URL, MAGIC_LINK_FROM, PROD_AUTH_BASE_URL } from "./urls";
+export { APP_BASE_URL, MAGIC_LINK_FROM, PROD_AUTH_BASE_URL, TURNSTILE_ACTION } from "./urls";
