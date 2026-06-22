@@ -10,8 +10,17 @@ import type { CaptchaWidgetProps } from "./login-form";
 // so the solved-token callback is a closure, not a global — the React-friendly path. The script is loaded
 // once per document, lazily inside the effect (never at module load), so importing this file is side-effect
 // free and the login-form tests can inject a fake captcha without Cloudflare's script touching jsdom.
+//
+// Presentation (to sit alongside the email field): `size: "flexible"` makes the widget fill its container
+// width — matching the field's `w-full` responsiveness — down to Turnstile's 300px PLATFORM floor (it won't
+// render narrower). The form column (max-w-[366px], fluid below that) stays ≥300px down to a ~344px-wide
+// viewport; only on a legacy ~320px phone does the column dip under the floor (founder eyeball). The wrapper
+// clips the widget to the field's `rounded-control` (6px) radius; and the theme tracks the app's light/dark
+// mode (a `data-theme` attribute on <html>, not the OS), re-rendering when the in-app toggle flips it.
 
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+
+type TurnstileTheme = "light" | "dark";
 
 interface TurnstileApi {
   render: (
@@ -19,6 +28,8 @@ interface TurnstileApi {
     opts: {
       sitekey: string;
       action?: string;
+      size?: "normal" | "flexible" | "compact";
+      theme?: TurnstileTheme | "auto";
       callback: (token: string) => void;
       "error-callback"?: () => void;
       "expired-callback"?: () => void;
@@ -31,6 +42,23 @@ declare global {
   interface Window {
     turnstile?: TurnstileApi;
   }
+}
+
+/**
+ * The widget theme to match the app's current mode. The app toggles dark mode with a `data-theme` attribute
+ * on <html> (an in-app toggle persisted to localStorage), so Turnstile's `theme:"auto"` — which only follows
+ * the OS — would drift from a user who toggled. Read the attribute; fall back to the OS preference when it's
+ * absent (mirroring the ThemeToggle's own fallback).
+ */
+export function resolveTheme(): TurnstileTheme {
+  if (typeof document !== "undefined") {
+    const attr = document.documentElement.getAttribute("data-theme");
+    if (attr === "dark" || attr === "light") return attr;
+  }
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  return "light";
 }
 
 let scriptPromise: Promise<void> | null = null;
@@ -65,19 +93,26 @@ export function Turnstile({ onToken }: CaptchaWidgetProps) {
 
   React.useEffect(() => {
     let widgetId: string | undefined;
+    let renderedTheme: TurnstileTheme | undefined;
     let cancelled = false;
 
+    const renderWidget = () => {
+      if (cancelled || !containerRef.current || !window.turnstile) return;
+      renderedTheme = resolveTheme();
+      widgetId = window.turnstile.render(containerRef.current, {
+        sitekey: TURNSTILE_SITEKEY,
+        action: TURNSTILE_ACTION,
+        // Flexible → fills the container width (down to Turnstile's 300px floor), matching the field.
+        size: "flexible",
+        theme: renderedTheme,
+        callback: (token) => onToken(token),
+        "expired-callback": () => onToken(null),
+        "error-callback": () => onToken(null),
+      });
+    };
+
     loadTurnstileScript()
-      .then(() => {
-        if (cancelled || !containerRef.current || !window.turnstile) return;
-        widgetId = window.turnstile.render(containerRef.current, {
-          sitekey: TURNSTILE_SITEKEY,
-          action: TURNSTILE_ACTION,
-          callback: (token) => onToken(token),
-          "expired-callback": () => onToken(null),
-          "error-callback": () => onToken(null),
-        });
-      })
+      .then(renderWidget)
       .catch((error) => {
         // Fails the gate closed (submit stays disabled), but a script/CDN outage blocks ALL logins, so
         // surface it — otherwise it presents as "the send button never enables" with no signal.
@@ -88,13 +123,35 @@ export function Turnstile({ onToken }: CaptchaWidgetProps) {
         onToken(null);
       });
 
+    // Track the in-app light/dark toggle: Turnstile has no live theme-update API, so re-render when the
+    // <html> data-theme flips (this resets the single-use token → onToken(null), then the fresh widget
+    // re-solves — an acceptable cost for the rare mid-login toggle).
+    const observer = new MutationObserver(() => {
+      if (cancelled || widgetId === undefined || !window.turnstile) return;
+      if (resolveTheme() === renderedTheme) return;
+      window.turnstile.remove(widgetId);
+      widgetId = undefined;
+      onToken(null);
+      renderWidget();
+    });
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+
     return () => {
       cancelled = true;
+      observer.disconnect();
       if (widgetId && window.turnstile) window.turnstile.remove(widgetId);
     };
   }, [onToken]);
 
-  // The action is passed to render() above (explicit render); data-action is an informational marker
-  // (the turnstile-spin-v1 activation tag) — the auto-render path would read it, explicit render ignores it.
-  return <div ref={containerRef} className="cf-turnstile" data-action={TURNSTILE_ACTION} />;
+  // Full-width to match the email field; overflow-hidden + rounded-control (6px) clips the widget's iframe
+  // to the same corner radius. data-action is an informational marker (the turnstile-spin-v1 activation tag)
+  // — the auto-render path would read it; explicit render takes the action from render() above.
+  return (
+    <div className="w-full overflow-hidden rounded-control">
+      <div ref={containerRef} className="cf-turnstile" data-action={TURNSTILE_ACTION} />
+    </div>
+  );
 }
