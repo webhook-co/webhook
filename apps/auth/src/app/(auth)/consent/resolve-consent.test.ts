@@ -29,7 +29,13 @@ function payload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketPayload
     audience: "https://api.webhook.co",
     clientId: "cli_wbhk",
     clientName: "webhook CLI",
-    origin: { ip: "203.0.113.7", location: "San Francisco, US" },
+    origin: {
+      ip: "203.0.113.7",
+      location: "US",
+      city: "San Francisco",
+      region: "California",
+      regionCode: "CA",
+    },
     grantExpiresAt: "2026-09-18T00:00:00Z",
     keyTtlSeconds: 86_400,
     csrf: "csrf_nonce",
@@ -66,6 +72,14 @@ describe("resolveConsentRequest", () => {
     expect(request?.org.name).toBe("Acme Inc");
     expect(request?.scopes).toEqual(["events:read"]);
     expect(request?.keyTtlSeconds).toBe(86_400);
+    // the best-effort geo (2-letter country + city/region) survives the seal→verify→project round-trip
+    expect(request?.origin).toEqual({
+      ip: "203.0.113.7",
+      location: "US",
+      city: "San Francisco",
+      region: "California",
+      regionCode: "CA",
+    });
   });
 
   it("returns null for a missing ticket", async () => {
