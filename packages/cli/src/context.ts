@@ -71,6 +71,10 @@ export interface AppContext extends ApplicationContext {
   readonly store: CredentialStore;
   readonly colorEnabled: boolean;
   readonly io: IoSeams;
+  /** The resolved home directory — the base for XDG config/state/cache paths (used by `doctor`). */
+  readonly homedir: string;
+  /** The host platform — gates the POSIX config-permission check (used by `doctor`). */
+  readonly platform: NodeJS.Platform;
 }
 
 function isTruthyEnv(value: string | undefined): boolean {
@@ -117,6 +121,8 @@ export function buildContext(
     },
     store,
     colorEnabled: resolveColor(proc),
+    homedir: home,
+    platform: proc.platform,
     // Real host I/O by default; tests inject fakes (makeTestContext) so commands never touch globals.
     io: opts?.io ?? makeRealIo(),
   };
