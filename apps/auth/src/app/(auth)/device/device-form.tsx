@@ -32,8 +32,16 @@ function normalizeCode(raw: string): string {
   return cleaned.length === 8 ? `${cleaned.slice(0, 4)}-${cleaned.slice(4)}` : cleaned;
 }
 
-export function DeviceForm({ actions = mockDeviceActions }: { actions?: DeviceActions }) {
-  const [code, setCode] = React.useState("");
+export function DeviceForm({
+  actions = mockDeviceActions,
+  initialCode,
+}: {
+  actions?: DeviceActions;
+  /** Pre-fill from `verification_uri_complete`'s `?user_code` — normalized, NOT auto-submitted (RFC 8628
+   *  §3.3.1: the user must confirm the code matches their device + click Continue). */
+  initialCode?: string;
+}) {
+  const [code, setCode] = React.useState(() => normalizeCode(initialCode ?? ""));
   const [pending, setPending] = React.useState(false);
   const [verified, setVerified] = React.useState(false);
   const [codeError, setCodeError] = React.useState<string | null>(null);

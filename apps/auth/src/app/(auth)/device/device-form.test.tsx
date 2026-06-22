@@ -36,6 +36,20 @@ describe("DeviceForm", () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
   });
 
+  it("pre-fills the code from initialCode (normalized) and does NOT auto-submit", () => {
+    // verification_uri_complete carries ?user_code; pre-fill saves typing, but RFC 8628 §3.3.1
+    // anti-phishing requires the user to confirm the code matches their device + click Continue.
+    const actions = makeActions();
+    render(<DeviceForm actions={actions} initialCode="yym9-6sn5" />);
+    expect(screen.getByLabelText(/device code/i)).toHaveValue("YYM9-6SN5");
+    expect(actions.verifyCode).not.toHaveBeenCalled();
+  });
+
+  it("normalizes a messy initialCode (lowercase, no dash) for the pre-fill", () => {
+    render(<DeviceForm actions={makeActions()} initialCode="yym96sn5" />);
+    expect(screen.getByLabelText(/device code/i)).toHaveValue("YYM9-6SN5");
+  });
+
   it("surfaces an error when the code is rejected", async () => {
     const actions = makeActions({ verifyCode: vi.fn().mockRejectedValue(new Error("nope")) });
     render(<DeviceForm actions={actions} />);
