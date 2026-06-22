@@ -24,7 +24,8 @@ import {
 } from "../forward.js";
 import { abortableSleep, backoffMs } from "../retry.js";
 import { colorize } from "../output/color.js";
-import { resolveFormat, type OutputFormat } from "../output/format.js";
+import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { type OutputFormat } from "../output/format.js";
 
 // `wbhk listen <endpointId>` — the live tail. Opens the bearer-authed `/listen` WebSocket tunnel
 // (ADR-0014), prints each captured event as it arrives, and acks it so the durable cursor advances
@@ -277,12 +278,10 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
   await forwardChain;
 }
 
-interface ListenFlags {
-  output: OutputFormat;
+interface ListenFlags extends GlobalFlags {
   tunnelUrl?: string;
   since: string;
   forward?: string;
-  apiUrl?: string;
 }
 
 export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
@@ -345,6 +344,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       };
     }
 
+    const { format, color } = resolveGlobals(this, flags);
     const onSignal = (): void => controller.abort();
     // A closed stdout (e.g. `wbhk listen | head`) raises EPIPE; abort + exit cleanly rather than crash.
     const onStdoutError = (): void => controller.abort();
@@ -361,8 +361,8 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         forward,
         emit: (line) => this.process.stdout.write(line),
         note: (line) => this.process.stderr.write(line),
-        format: resolveFormat(flags.output),
-        color: this.colorEnabled,
+        format,
+        color,
         signal: controller.signal,
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       });
@@ -380,7 +380,11 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       ],
     },
     flags: {
-      output: { kind: "enum", values: ["text", "json"], brief: "output format", default: "text" },
+      ...globalFlags,
+      apiUrl: {
+        ...globalFlags.apiUrl,
+        brief: "override the API base URL (used by --forward to fetch the body + record)",
+      },
       since: {
         kind: "parsed",
         parse: (value: string) => value,
@@ -397,12 +401,6 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         kind: "parsed",
         parse: (value: string) => value,
         brief: "forward each event to a local URL, e.g. http://localhost:3000/webhooks",
-        optional: true,
-      },
-      apiUrl: {
-        kind: "parsed",
-        parse: (value: string) => value,
-        brief: "override the API base URL (used by --forward to fetch the body + record)",
         optional: true,
       },
     },

@@ -4,9 +4,10 @@ import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-clie
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { forwardToLocalhost, isDelivered, parseForwardTarget } from "../forward.js";
+import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
 import { colorize } from "../output/color.js";
 import { CAPABILITY_EXIT, EXIT } from "../output/exit-codes.js";
-import { renderJson, resolveFormat, type OutputFormat } from "../output/format.js";
+import { renderJson } from "../output/format.js";
 
 // `wbhk replay <eventId> --forward <localhost-url>` — re-deliver a captured event to a local dev
 // server. The CLI fetches the event's captured headers + exact body, POSTs them to localhost
@@ -14,10 +15,8 @@ import { renderJson, resolveFormat, type OutputFormat } from "../output/format.j
 // the delivery_attempt server-side (events.replay, idempotent). A non-2xx or an unreachable target
 // exits non-zero and records nothing.
 
-interface ReplayFlags {
-  output: OutputFormat;
+interface ReplayFlags extends GlobalFlags {
   forward?: string;
-  apiUrl?: string;
 }
 
 export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
@@ -53,7 +52,7 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
       { fetch: this.io.fetch, now: () => Date.now() },
       { targetUrl: flags.forward, headers: event.headers, body },
     );
-    const format = resolveFormat(flags.output);
+    const { format, color } = resolveGlobals(this, flags);
 
     if (!outcome.ok) {
       this.process.stderr.write(`could not reach ${flags.forward}: ${outcome.reason}\n`);
@@ -81,7 +80,7 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
         `${renderJson({ delivered: true, status: outcome.status, latencyMs: outcome.latencyMs, attempt })}\n`,
       );
     } else {
-      const ok = colorize("delivered", "green", this.colorEnabled);
+      const ok = colorize("delivered", "green", color);
       this.process.stdout.write(
         `${ok} event ${eventId} → ${flags.forward} · ${outcome.status} · ${outcome.latencyMs}ms · recorded ${attempt.id}\n`,
       );
@@ -93,17 +92,11 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
       parameters: [{ parse: (v: string) => v, brief: "the event id", placeholder: "eventId" }],
     },
     flags: {
-      output: { kind: "enum", values: ["text", "json"], brief: "output format", default: "text" },
+      ...globalFlags,
       forward: {
         kind: "parsed",
         parse: (v: string) => v,
         brief: "local URL to deliver to, e.g. http://localhost:3000/webhooks",
-        optional: true,
-      },
-      apiUrl: {
-        kind: "parsed",
-        parse: (v: string) => v,
-        brief: "override the API base URL",
         optional: true,
       },
     },

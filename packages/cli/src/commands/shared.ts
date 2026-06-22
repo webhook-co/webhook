@@ -74,6 +74,7 @@ export function emitList<T>(
   result: { items: T[]; nextCursor: string | null },
   opts: {
     format: OutputFormat;
+    color: boolean;
     renderTable: (items: readonly T[], color: boolean) => string;
     empty: string;
   },
@@ -87,7 +88,7 @@ export function emitList<T>(
   ctx.process.stdout.write(
     result.items.length === 0
       ? `${opts.empty}\n`
-      : `${opts.renderTable(result.items, ctx.colorEnabled)}\n`,
+      : `${opts.renderTable(result.items, opts.color)}\n`,
   );
   if (result.nextCursor !== null) {
     ctx.process.stderr.write("more results — rerun with --all, or --cursor <token>\n");

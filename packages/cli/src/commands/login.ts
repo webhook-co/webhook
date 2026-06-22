@@ -5,7 +5,8 @@ import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-clie
 import { ENV_API_KEY_VAR } from "../config/env-store.js";
 import type { AppContext } from "../context.js";
 import { MissingApiKeyError } from "../errors.js";
-import { renderJson, resolveFormat, type OutputFormat } from "../output/format.js";
+import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { renderJson } from "../output/format.js";
 
 // `wbhk login` — capture an API key, validate it against the API, and persist it for future commands.
 // The key is taken (in precedence order) from `--stdin` (piped), the WBHK_API_KEY env var, or an
@@ -13,10 +14,8 @@ import { renderJson, resolveFormat, type OutputFormat } from "../output/format.j
 // The key is validated via the identity endpoint BEFORE anything is written, so a bad key stores
 // nothing. A key from WBHK_API_KEY is the headless, never-persisted path (env already provides it).
 
-interface LoginFlags {
+interface LoginFlags extends GlobalFlags {
   stdin: boolean;
-  output: OutputFormat;
-  apiUrl?: string;
 }
 
 type KeySource = "stdin" | "env" | "prompt";
@@ -72,8 +71,9 @@ export const loginCommand = buildCommand<LoginFlags, [], AppContext>({
       if (flags.apiUrl !== undefined) await this.store.setApiBaseUrl(baseUrl);
     }
 
+    const { format } = resolveGlobals(this, flags);
     const handle = redactSecret(key);
-    if (resolveFormat(flags.output) === "json") {
+    if (format === "json") {
       // The same {orgId, scopes, key} identity shape whoami emits, plus login's persisted flag.
       this.process.stdout.write(
         renderJson({
@@ -91,14 +91,8 @@ export const loginCommand = buildCommand<LoginFlags, [], AppContext>({
   },
   parameters: {
     flags: {
+      ...globalFlags,
       stdin: { kind: "boolean", brief: "read the api key from stdin (for piping)", default: false },
-      output: { kind: "enum", values: ["text", "json"], brief: "output format", default: "text" },
-      apiUrl: {
-        kind: "parsed",
-        parse: (value: string) => value,
-        brief: "override the API base URL",
-        optional: true,
-      },
     },
   },
   docs: { brief: "validate an api key and store it for future commands" },
