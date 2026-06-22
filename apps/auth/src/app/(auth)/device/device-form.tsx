@@ -32,12 +32,32 @@ function normalizeCode(raw: string): string {
   return cleaned.length === 8 ? `${cleaned.slice(0, 4)}-${cleaned.slice(4)}` : cleaned;
 }
 
-export function DeviceForm({ actions = mockDeviceActions }: { actions?: DeviceActions }) {
-  const [code, setCode] = React.useState("");
+export function DeviceForm({
+  actions = mockDeviceActions,
+  initialCode,
+}: {
+  actions?: DeviceActions;
+  /** Pre-fill from `verification_uri_complete`'s `?user_code` — normalized, NOT auto-submitted (RFC 8628
+   *  §3.3.1: the user must confirm the code matches their device + click Continue). */
+  initialCode?: string;
+}) {
+  const [code, setCode] = React.useState(() => normalizeCode(initialCode ?? ""));
   const [pending, setPending] = React.useState(false);
   const [verified, setVerified] = React.useState(false);
   const [codeError, setCodeError] = React.useState<string | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // When the field is pre-filled (from ?user_code), focus it with the caret at the END — so the user
+  // can confirm/edit from where the code stops rather than landing on a selected or start-anchored value.
+  // Empty form: leave focus alone. Mount-only (reads the initial DOM value, so no state dep).
+  React.useEffect(() => {
+    const el = inputRef.current;
+    if (el?.value) {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }, []);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -86,6 +106,7 @@ export function DeviceForm({ actions = mockDeviceActions }: { actions?: DeviceAc
 
       <form className="flex flex-col gap-3" onSubmit={handleSubmit} noValidate>
         <Field
+          ref={inputRef}
           label="Device code"
           placeholder="WXYZ-1234"
           autoComplete="one-time-code"
