@@ -50,6 +50,23 @@ describe("wbhk whoami", () => {
     expect(out).not.toContain("whk_stored_key");
   });
 
+  it("sanitizes control bytes in the server-supplied org/userId/scopes (text view)", async () => {
+    // orgId/userId/scopes are server-controlled (z.string()); a hostile value must not inject a
+    // terminal escape into the text view. (JSON mode is already safe — JSON.stringify escapes them.)
+    const ESC = String.fromCharCode(27);
+    const t = makeTestContext({
+      store: memStore({ apiKey: "whk_stored_key" }),
+      fetch: okFetch({
+        orgId: `org_9${ESC}[31m`,
+        userId: `usr_7${ESC}[2K`,
+        scopes: [`events:read${ESC}[0m`],
+      }),
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(t.stdout()).not.toContain(ESC);
+    expect(t.stdout()).toContain("org_9"); // the visible text survives, only the control bytes go
+  });
+
   it("surfaces a server 401 (revoked/expired key) as an auth error", async () => {
     const t = makeTestContext({
       store: memStore({ apiKey: "whk_revoked" }),

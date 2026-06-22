@@ -16,9 +16,10 @@ describe("output/format", () => {
     expect(resolveFormat("json")).toBe("json");
   });
 
-  it("renderJson is deterministic, pretty-printed JSON", () => {
+  it("renderJson is deterministic, compact (single-line) JSON — the scriptable machine view", () => {
     const out = renderJson({ b: 1, a: 2 });
-    expect(out).toBe('{\n  "b": 1,\n  "a": 2\n}');
+    expect(out).toBe('{"b":1,"a":2}');
+    expect(out).not.toContain("\n"); // one JSON value per line; pipe `| jq` to pretty-print
     expect(JSON.parse(out)).toEqual({ b: 1, a: 2 });
   });
 

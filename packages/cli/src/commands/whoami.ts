@@ -6,6 +6,7 @@ import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
+import { sanitizeControl } from "../output/safe-text.js";
 
 // `wbhk whoami` — show the authenticated principal. Reads the stored credential (env › file), calls
 // the identity endpoint to resolve + validate it, and prints the org, scopes, and a redacted key
@@ -41,10 +42,16 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
       );
       return;
     }
-    const scopes = identity.scopes.length > 0 ? identity.scopes.join(", ") : "(none)";
-    const userLine = identity.userId !== undefined ? `user: ${identity.userId}\n` : "";
+    // orgId/userId/scopes are server-controlled (z.string()) — sanitize before the text view so a
+    // hostile value can't inject a terminal escape. (`handle` is our own local redaction — trusted.)
+    const scopes =
+      identity.scopes.length > 0
+        ? identity.scopes.map((s) => sanitizeControl(s)).join(", ")
+        : "(none)";
+    const userLine =
+      identity.userId !== undefined ? `user: ${sanitizeControl(identity.userId)}\n` : "";
     this.process.stdout.write(
-      `org: ${identity.orgId}\n${userLine}key: ${handle}\nscopes: ${scopes}\n`,
+      `org: ${sanitizeControl(identity.orgId)}\n${userLine}key: ${handle}\nscopes: ${scopes}\n`,
     );
   },
   parameters: {

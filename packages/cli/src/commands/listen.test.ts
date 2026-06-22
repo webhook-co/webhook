@@ -266,6 +266,28 @@ describe("runListen", () => {
     await p;
   });
 
+  it("sanitizes control bytes in a tunnel error-frame notice (server data → stderr)", async () => {
+    // The error frame's code/message are server-controlled (z.string()); a hostile value must not inject
+    // a terminal escape into the stderr notice. The frame is non-fatal — it stays connected.
+    const ESC = String.fromCharCode(27);
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const p = runListen(depsFor(t, out, ac.signal));
+    await tick();
+    t.h().onMessage(
+      encodeServerFrame({ type: "error", code: `POLL${ESC}[31m`, message: `degraded${ESC}[2J` }),
+    );
+    await tick();
+
+    const notes = out.note.join("");
+    expect(notes).toContain("tunnel notice");
+    expect(notes).not.toContain(ESC);
+
+    ac.abort();
+    await p;
+  });
+
   it("does nothing when the signal is already aborted (the loop guard short-circuits)", async () => {
     const t = fakeTunnel();
     const out = { emit: [] as string[], note: [] as string[] };

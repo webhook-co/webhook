@@ -2,15 +2,24 @@ import type { Endpoint, Event, EventSummary } from "@webhook-co/shared";
 
 import type { AuditVerifyResult } from "../api-client.js";
 import { colorize } from "./color.js";
+import { sanitizeControl } from "./safe-text.js";
 import { renderTable } from "./table.js";
 
 // Text renderers for the read commands: aligned tables for the list views, key:value blocks for a
 // single record, and a one-line result for `audit verify`. Color is applied only to status tokens and
 // is gated on the caller's `colorEnabled`. The machine view (`--output json`) is handled separately by
 // renderJson — these are the human views, so exact spacing here is reviewed by eye (human-UI gate).
+//
+// Every SERVER-controlled string (names, ids, providers, dedup keys, content types, audit-break details)
+// passes through `field()` first so a hostile value can't inject a terminal-control sequence or break
+// alignment; the locally-generated tokens (colorize output, formatted dates, byte counts) are trusted
+// and bypass it — so our own color ANSI survives.
 
 /** Placeholder for an absent value (a null provider), so a blank cell is never ambiguous. */
 const NONE = "—";
+
+/** Sanitize a server-controlled string before it lands in a human text view. */
+const field = (value: string): string => sanitizeControl(value);
 
 function statusWord(paused: boolean, color: boolean): string {
   return paused ? colorize("paused", "yellow", color) : colorize("active", "green", color);
@@ -33,7 +42,12 @@ function fmtDateTime(d: Date): string {
 export function renderEndpointsTable(items: readonly Endpoint[], color: boolean): string {
   return renderTable(
     ["NAME", "STATUS", "CREATED", "ID"],
-    items.map((e) => [e.name, statusWord(e.paused, color), fmtDate(e.createdAt), e.id]),
+    items.map((e) => [
+      field(e.name),
+      statusWord(e.paused, color),
+      fmtDate(e.createdAt),
+      field(e.id),
+    ]),
   );
 }
 
@@ -42,9 +56,9 @@ export function renderEventsTable(items: readonly EventSummary[], color: boolean
     ["RECEIVED", "PROVIDER", "VERIFIED", "ID"],
     items.map((e) => [
       fmtDateTime(e.receivedAt),
-      e.provider ?? NONE,
+      e.provider === null ? NONE : field(e.provider),
       verifiedWord(e.verified, color),
-      e.id,
+      field(e.id),
     ]),
   );
 }
@@ -58,8 +72,8 @@ function block(rows: readonly (readonly [string, string])[]): string {
 
 export function renderEndpoint(e: Endpoint, color: boolean): string {
   return block([
-    ["id", e.id],
-    ["name", e.name],
+    ["id", field(e.id)],
+    ["name", field(e.name)],
     ["status", statusWord(e.paused, color)],
     ["created", fmtDateTime(e.createdAt)],
   ]);
@@ -69,21 +83,21 @@ export function renderEndpoint(e: Endpoint, color: boolean): string {
 function verifiedDetail(e: Event, color: boolean): string {
   const word = verifiedWord(e.verified, color);
   if (e.verification === null) return word;
-  if (e.verification.ok) return `${word} (${e.verification.scheme})`;
-  return `${word} (${e.verification.reason.code})`;
+  if (e.verification.ok) return `${word} (${field(e.verification.scheme)})`;
+  return `${word} (${field(e.verification.reason.code)})`;
 }
 
 export function renderEvent(e: Event, color: boolean): string {
   return block([
-    ["id", e.id],
-    ["endpoint", e.endpointId],
+    ["id", field(e.id)],
+    ["endpoint", field(e.endpointId)],
     ["received", fmtDateTime(e.receivedAt)],
-    ["provider", e.provider ?? NONE],
+    ["provider", e.provider === null ? NONE : field(e.provider)],
     ["verified", verifiedDetail(e, color)],
-    ["content-type", e.contentType ?? NONE],
+    ["content-type", e.contentType === null ? NONE : field(e.contentType)],
     ["size", `${e.payloadBytes} bytes`],
     ["headers", `${e.headers.length}`],
-    ["dedup", `${e.dedupStrategy} (${e.dedupKey})`],
+    ["dedup", `${field(e.dedupStrategy)} (${field(e.dedupKey)})`],
   ]);
 }
 
@@ -92,5 +106,5 @@ export function renderAuditResult(result: AuditVerifyResult, color: boolean): st
     return `${colorize("verified", "green", color)} — audit chain intact (${result.rowsVerified} rows)`;
   }
   const b = result.break;
-  return `${colorize("BROKEN", "red", color)} — audit chain break at seq ${b.seq}: ${b.kind} — ${b.detail} (${result.rowsVerified} rows verified before the break)`;
+  return `${colorize("BROKEN", "red", color)} — audit chain break at seq ${b.seq}: ${field(b.kind)} — ${field(b.detail)} (${result.rowsVerified} rows verified before the break)`;
 }

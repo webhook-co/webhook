@@ -26,6 +26,7 @@ import { abortableSleep, backoffMs } from "../retry.js";
 import { colorize } from "../output/color.js";
 import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
 import { type OutputFormat } from "../output/format.js";
+import { sanitizeControl } from "../output/safe-text.js";
 
 // `wbhk listen <endpointId>` — the live tail. Opens the bearer-authed `/listen` WebSocket tunnel
 // (ADR-0014), prints each captured event as it arrives, and acks it so the durable cursor advances
@@ -50,11 +51,12 @@ const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(
 /** One compact tail line per event (text mode). Human-facing format — eyeball before release. */
 export function formatListenEvent(summary: EventSummary, color: boolean): string {
   const when = summary.receivedAt.toISOString();
-  const provider = summary.provider ?? "—";
+  // provider + id are server-controlled — sanitize so a hostile value can't inject a terminal escape.
+  const provider = summary.provider === null ? "—" : sanitizeControl(summary.provider);
   const verified = summary.verified
     ? colorize("verified", "green", color)
     : colorize("unverified", "yellow", color);
-  return `${when}  ${provider}  ${verified}  ${summary.id}`;
+  return `${when}  ${provider}  ${verified}  ${sanitizeControl(summary.id)}`;
 }
 
 /**
@@ -222,7 +224,10 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
               return;
             }
             if (frame.type === "error") {
-              deps.note(`tunnel notice [${frame.code}]: ${frame.message}\n`);
+              // code/message are server-controlled (z.string()) — sanitize before the stderr notice.
+              deps.note(
+                `tunnel notice [${sanitizeControl(frame.code)}]: ${sanitizeControl(frame.message)}\n`,
+              );
               return;
             }
             // status frame (ADR-0017): the cursor-contract caughtUp/lag. Skipped for now — Lane D's D6
