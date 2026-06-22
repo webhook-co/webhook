@@ -7,7 +7,12 @@ import { type CredentialBackend, resolveStore } from "./store.js";
 /** Minimal in-memory backend for exercising the resolver in isolation (no fs). */
 function memoryBackend(
   id: string,
-  opts: { secure: boolean; canWrite: boolean; seed?: Record<string, StoredCredential> },
+  opts: {
+    secure: boolean;
+    canWrite: boolean;
+    seed?: Record<string, StoredCredential>;
+    activeProfile?: string;
+  },
 ): CredentialBackend {
   const store = new Map<string, StoredCredential>(Object.entries(opts.seed ?? {}));
   const baseUrls = new Map<string, string>();
@@ -15,6 +20,9 @@ function memoryBackend(
     id,
     secure: opts.secure,
     canWrite: opts.canWrite,
+    async getActiveProfile() {
+      return opts.activeProfile;
+    },
     async get(profile) {
       return store.get(profile) ?? null;
     },
@@ -109,6 +117,23 @@ describe("resolveStore", () => {
     const store = resolveStore([file], { requireSecureStorage: false });
     await store.erase();
     await expect(file.get(DEFAULT_PROFILE)).resolves.toBeNull();
+  });
+
+  it("getActiveProfile returns the first backend's persisted active profile (file over env)", async () => {
+    const env = memoryBackend("env", { secure: false, canWrite: false }); // env has none
+    const file = memoryBackend("file", {
+      secure: false,
+      canWrite: true,
+      activeProfile: "staging",
+    });
+    const store = resolveStore([env, file], { requireSecureStorage: false });
+    await expect(store.getActiveProfile?.()).resolves.toBe("staging");
+  });
+
+  it("getActiveProfile is undefined when no backend has one set", async () => {
+    const file = memoryBackend("file", { secure: false, canWrite: true });
+    const store = resolveStore([file], { requireSecureStorage: false });
+    await expect(store.getActiveProfile?.()).resolves.toBeUndefined();
   });
 
   it("lists the union of profiles across backends", async () => {

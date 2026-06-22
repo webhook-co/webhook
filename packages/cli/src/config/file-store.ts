@@ -7,7 +7,7 @@ import {
   CorruptConfigError,
   InsecureConfigPermissionsError,
 } from "./errors.js";
-import { ConfigFileSchema, emptyConfig, type ConfigFile } from "./schema.js";
+import { ConfigFileSchema, emptyConfig, migrateConfigShape, type ConfigFile } from "./schema.js";
 import type { CredentialBackend } from "./store.js";
 
 const FILE_NAME = "config.json";
@@ -54,7 +54,8 @@ export async function loadConfigFile(path: string, opts: FsOptions): Promise<Con
   } catch (err) {
     throw new CorruptConfigError((err as Error).message);
   }
-  const result = ConfigFileSchema.safeParse(parsed);
+  // Upgrade an older on-disk shape to the current version BEFORE validating against the version literal.
+  const result = ConfigFileSchema.safeParse(migrateConfigShape(parsed));
   if (!result.success) throw new CorruptConfigError(result.error.message);
   return result.data;
 }
@@ -93,6 +94,10 @@ export function createFileBackend(opts: { dir: string } & FsOptions): Credential
     id: "file",
     secure: false,
     canWrite: true,
+    async getActiveProfile() {
+      const config = await readOrEmpty();
+      return config.activeProfile;
+    },
     async get(profile) {
       const config = await readOrEmpty();
       return config.profiles[profile]?.credential ?? null;

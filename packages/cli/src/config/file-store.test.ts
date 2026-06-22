@@ -66,6 +66,33 @@ describe("loadConfigFile", () => {
       version: CONFIG_VERSION,
     });
   });
+
+  it("migrates a v1 config to the current version, preserving the profile data", async () => {
+    const dir = await freshDir();
+    const path = configFilePath(dir);
+    // A pre-profiles-feature config: version 1, no activeProfile field.
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, profiles: { default: { credential: { apiKey: "whk_v1" } } } }),
+      { mode: 0o600 },
+    );
+    const config = await loadConfigFile(path, { platform: "linux" });
+    expect(config.version).toBe(CONFIG_VERSION); // normalized to the current literal
+    expect(config.profiles.default?.credential?.apiKey).toBe("whk_v1"); // data carried over losslessly
+    expect(config.activeProfile).toBeUndefined();
+  });
+
+  it("loads a current-version config and exposes the persisted activeProfile", async () => {
+    const dir = await freshDir();
+    const path = configFilePath(dir);
+    await writeFile(
+      path,
+      JSON.stringify({ version: CONFIG_VERSION, activeProfile: "staging", profiles: {} }),
+      { mode: 0o600 },
+    );
+    const config = await loadConfigFile(path, { platform: "linux" });
+    expect(config.activeProfile).toBe("staging");
+  });
 });
 
 describe("file-store backend", () => {
@@ -125,6 +152,19 @@ describe("file-store backend", () => {
     // The base URL persists, and setting it does NOT clobber the stored credential.
     await expect(backend.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBe("https://api.self.example");
     await expect(backend.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_with_url" });
+  });
+
+  it("getActiveProfile reads the persisted active profile (undefined when unset)", async () => {
+    const dir = await freshDir();
+    const backend = createFileBackend({ dir, platform: "linux" });
+    await expect(backend.getActiveProfile()).resolves.toBeUndefined();
+    // hand-write a config with an activeProfile (0600 so the perm check passes), then read it back
+    await writeFile(
+      configFilePath(dir),
+      JSON.stringify({ version: CONFIG_VERSION, activeProfile: "prod", profiles: {} }),
+      { mode: 0o600 },
+    );
+    await expect(backend.getActiveProfile()).resolves.toBe("prod");
   });
 
   it("setting a credential preserves an already-stored apiBaseUrl", async () => {
