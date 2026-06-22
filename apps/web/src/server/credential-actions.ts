@@ -7,6 +7,25 @@ import { revokeGrantById, revokeKeyById } from "./credential-revoke";
 import type { ApiKeyItem } from "./credentials";
 import { verifySession } from "./session";
 
+/**
+ * Surface the real cause of an otherwise-swallowed action failure to Workers observability — scrubbed:
+ * the error name/message/code + the top stack frames (which function threw), never a key/plaintext/pepper
+ * or a row value. The user still gets a generic message; this only makes a failure diagnosable instead of
+ * silent. (Not exported — "use server" files may only export async actions.)
+ */
+function logActionError(event: string, error: unknown): void {
+  const e = error as { name?: string; message?: string; code?: string; stack?: string };
+  console.error(
+    JSON.stringify({
+      message: event,
+      name: e?.name,
+      error: e?.message ?? String(error),
+      code: e?.code,
+      stack: e?.stack?.split("\n").slice(0, 5).join(" | "),
+    }),
+  );
+}
+
 export interface CreateKeyInput {
   readonly name: string;
   readonly scopes: readonly string[];
@@ -53,7 +72,8 @@ export async function createApiKey(input: CreateKeyInput): Promise<CreateKeyResu
       revokedAt: null,
     };
     return { ok: true, key, plaintext: created.plaintext };
-  } catch {
+  } catch (error) {
+    logActionError("credential.create_failed", error);
     return { ok: false, error: "We couldn't create the key. Please try again." };
   }
 }
@@ -73,7 +93,8 @@ export async function revokeApiKey(keyId: string): Promise<RevokeResult> {
   try {
     await revokeKeyById({ orgId: session.orgId, userId: session.userId, keyId });
     return { ok: true };
-  } catch {
+  } catch (error) {
+    logActionError("credential.revoke_key_failed", error);
     return { ok: false, error: "We couldn't revoke the key. Please try again." };
   }
 }
@@ -90,7 +111,8 @@ export async function revokeGrant(grantId: string): Promise<RevokeResult> {
   try {
     await revokeGrantById({ orgId: session.orgId, userId: session.userId, grantId });
     return { ok: true };
-  } catch {
+  } catch (error) {
+    logActionError("credential.revoke_grant_failed", error);
     return { ok: false, error: "We couldn't revoke. Please try again." };
   }
 }
