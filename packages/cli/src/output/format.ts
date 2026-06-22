@@ -30,3 +30,20 @@ export function formatCliError(error: unknown, _opts: { color: boolean }): strin
   if (error instanceof Error) return error.message;
   return String(error);
 }
+
+/**
+ * The "unknown command" message — on-voice, with a did-you-mean when stricli offers a close match,
+ * else a pointer at `--help`. `corrections` is stricli's own edit-distance shortlist for the input,
+ * already backtick-quoted for display (so we join them, never re-wrap).
+ */
+export function formatUnknownCommand(args: {
+  input: string;
+  corrections: readonly string[];
+}): string {
+  const base = `unknown command \`${args.input}\``;
+  if (args.corrections.length > 0) {
+    const suggestion = args.corrections.join(" or ");
+    return `${base} — did you mean ${suggestion}? run \`wbhk --help\` for the full list.`;
+  }
+  return `${base} — run \`wbhk --help\` to see the available commands.`;
+}
