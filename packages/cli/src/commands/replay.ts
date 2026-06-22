@@ -1,6 +1,7 @@
 import { buildCommand } from "@stricli/core";
 
 import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-client.js";
+import { credentialAccessToken } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { forwardToLocalhost, isDelivered, parseForwardTarget } from "../forward.js";
@@ -47,7 +48,7 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
     });
     const client = createApiClient({
       baseUrl: apiBaseUrl,
-      apiKey: cred.apiKey,
+      apiKey: credentialAccessToken(cred),
       fetch: this.io.fetch,
     });
 

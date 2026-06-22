@@ -5,6 +5,7 @@ import {
   type ApiClient,
   type Page,
 } from "../api-client.js";
+import { credentialAccessToken } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { announceActiveProfile, resolveProfile, type GlobalFlags } from "../global-flags.js";
@@ -33,7 +34,7 @@ export async function authedClient(
     env: ctx.process.env?.[ENV_API_URL_VAR],
     stored: await ctx.store.getApiBaseUrl(profile),
   });
-  return createApiClient({ baseUrl, apiKey: cred.apiKey, fetch: ctx.io.fetch });
+  return createApiClient({ baseUrl, apiKey: credentialAccessToken(cred), fetch: ctx.io.fetch });
 }
 
 /** Validate `--limit`: an integer in the server's accepted 1–200 range (a throw → a usage error). */

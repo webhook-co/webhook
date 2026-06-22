@@ -1,5 +1,5 @@
 import { BackendNotWritableError } from "./errors.js";
-import type { StoredCredential } from "./schema.js";
+import { StoredCredentialSchema, type StoredCredential } from "./schema.js";
 import type { CredentialBackend } from "./store.js";
 
 // The OS-keychain credential backend: a `secure` (encrypted-at-rest) store for the `whk_` key, composed
@@ -36,11 +36,23 @@ export function createKeychainBackend(opts: { keychainIo: KeychainIo }): Credent
       throw new BackendNotWritableError(id);
     },
     async get(profile): Promise<StoredCredential | null> {
-      const secret = await opts.keychainIo.get(profile);
-      return secret !== null && secret.length > 0 ? { apiKey: secret } : null;
+      const raw = await opts.keychainIo.get(profile);
+      if (raw === null || raw.length === 0) return null;
+      // The stored secret is the JSON-serialized credential (supports the OAuth variant). A bare string
+      // is a legacy (pre-OAuth) entry that held just the api key → treat it as `{ apiKey }`. A parseable
+      // but schema-invalid blob is corrupt → null (cold-start; the user re-logs in).
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return { apiKey: raw };
+      }
+      const result = StoredCredentialSchema.safeParse(parsed);
+      return result.success ? result.data : null;
     },
     async set(profile, cred) {
-      await opts.keychainIo.set(profile, cred.apiKey);
+      // Store the whole credential (the OAuth variant carries the refresh token + metadata, not just a key).
+      await opts.keychainIo.set(profile, JSON.stringify(cred));
     },
     async erase(profile) {
       await opts.keychainIo.erase(profile);

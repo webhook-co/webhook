@@ -50,6 +50,33 @@ describe("wbhk whoami", () => {
     expect(out).not.toContain("whk_stored_key");
   });
 
+  it("works with an OAuth credential: Bearer uses the access key; refresh token NEVER printed", async () => {
+    let auth: string | null = null;
+    const capturingFetch = (async (_url: string, init?: { headers?: HeadersInit }) => {
+      auth = new Headers(init?.headers).get("authorization");
+      return jsonResponse({ orgId: "org_o", userId: "usr_o", scopes: ["events:read"] });
+    }) as unknown as typeof fetch;
+    const t = makeTestContext({
+      store: memStore({
+        oauth: {
+          accessKey: "whk_oauth_access",
+          refreshToken: "rtk_secret_refresh",
+          authMethod: "loopback",
+          expiresAt: 1_700_000_000_000,
+          audience: "https://api.webhook.co",
+          clientId: "client_abc",
+        },
+      }),
+      fetch: capturingFetch,
+    });
+    await run(app, ["whoami", "--output", "json"], t.ctx);
+    expect(auth).toContain("whk_oauth_access"); // the access key is the bearer
+    const out = t.stdout();
+    expect(out).toContain("org_o");
+    expect(out).not.toContain("rtk_"); // the refresh token never reaches output
+    expect(out).not.toContain("whk_oauth_access"); // the full access key isn't printed either (redacted)
+  });
+
   it("sanitizes control bytes in the server-supplied org/userId/scopes (text view)", async () => {
     // orgId/userId/scopes are server-controlled (z.string()); a hostile value must not inject a
     // terminal escape into the text view. (JSON mode is already safe — JSON.stringify escapes them.)

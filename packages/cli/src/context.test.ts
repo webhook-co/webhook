@@ -108,7 +108,8 @@ describe("buildContext", () => {
     const { proc } = fakeHostProcess({});
     const ctx = buildContext(proc, { homedir: "/nonexistent-home", io: fakeIo(keychain) });
     await ctx.store.set({ apiKey: "whk_kc" });
-    expect(m.get("default")).toBe("whk_kc"); // stored in the keychain, not the 0600 file
+    // The credential is stored in the keychain (serialized as JSON, per D8a), not the 0600 file.
+    expect(JSON.parse(m.get("default")!)).toEqual({ apiKey: "whk_kc" });
     await expect(ctx.store.get()).resolves.toEqual({ apiKey: "whk_kc" });
   });
 });
