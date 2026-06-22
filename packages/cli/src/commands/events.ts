@@ -3,7 +3,8 @@ import { bytesToB64, PROVIDERS } from "@webhook-co/shared";
 
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
-import { renderJson, resolveFormat, type OutputFormat } from "../output/format.js";
+import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { renderJson } from "../output/format.js";
 import { renderEvent, renderEventsTable } from "../output/render.js";
 import { authedClient, collectPages, emitList, parseLimit } from "./shared.js";
 
@@ -11,34 +12,26 @@ import { authedClient, collectPages, emitList, parseLimit } from "./shared.js";
 // paginates and filters by `--provider`; get prints a single event in full fidelity. Same auth +
 // shared-schema parsing as endpoints; `--output json` is the machine view.
 
-interface ListFlags {
-  output: OutputFormat;
-  apiUrl?: string;
+interface ListFlags extends GlobalFlags {
   limit?: number;
   cursor?: string;
   all: boolean;
   provider?: (typeof PROVIDERS)[number];
 }
 
-interface GetFlags {
-  output: OutputFormat;
-  apiUrl?: string;
-}
+type GetFlags = GlobalFlags;
 
 export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
   async func(this: AppContext, flags, endpointId) {
     const client = await authedClient(this, flags);
     if (client instanceof NotLoggedInError) return client;
+    const { format, color } = resolveGlobals(this, flags);
     const result = await collectPages(
       (cursor) =>
         client.eventsList(endpointId, { cursor, limit: flags.limit, provider: flags.provider }),
       { cursor: flags.cursor, all: flags.all },
     );
-    emitList(this, result, {
-      format: resolveFormat(flags.output),
-      renderTable: renderEventsTable,
-      empty: "no events.",
-    });
+    emitList(this, result, { format, color, renderTable: renderEventsTable, empty: "no events." });
   },
   parameters: {
     positional: {
@@ -48,13 +41,7 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
       ],
     },
     flags: {
-      output: { kind: "enum", values: ["text", "json"], brief: "output format", default: "text" },
-      apiUrl: {
-        kind: "parsed",
-        parse: (value: string) => value,
-        brief: "override the API base URL",
-        optional: true,
-      },
+      ...globalFlags,
       limit: {
         kind: "parsed",
         parse: parseLimit,
@@ -87,11 +74,10 @@ export const eventsGetCommand = buildCommand<GetFlags, [string], AppContext>({
   async func(this: AppContext, flags, eventId) {
     const client = await authedClient(this, flags);
     if (client instanceof NotLoggedInError) return client;
+    const { format, color } = resolveGlobals(this, flags);
     const event = await client.eventsGet(eventId);
     this.process.stdout.write(
-      resolveFormat(flags.output) === "json"
-        ? `${renderJson(event)}\n`
-        : `${renderEvent(event, this.colorEnabled)}\n`,
+      format === "json" ? `${renderJson(event)}\n` : `${renderEvent(event, color)}\n`,
     );
   },
   parameters: {
@@ -101,15 +87,7 @@ export const eventsGetCommand = buildCommand<GetFlags, [string], AppContext>({
         { parse: (value: string) => value, brief: "the event id", placeholder: "eventId" },
       ],
     },
-    flags: {
-      output: { kind: "enum", values: ["text", "json"], brief: "output format", default: "text" },
-      apiUrl: {
-        kind: "parsed",
-        parse: (value: string) => value,
-        brief: "override the API base URL",
-        optional: true,
-      },
-    },
+    flags: { ...globalFlags },
   },
   docs: { brief: "show a single event by id" },
 });
@@ -122,8 +100,9 @@ export const eventsPayloadCommand = buildCommand<GetFlags, [string], AppContext>
   async func(this: AppContext, flags, eventId) {
     const client = await authedClient(this, flags);
     if (client instanceof NotLoggedInError) return client;
+    const { format } = resolveGlobals(this, flags);
     const { contentType, body } = await client.eventsGetPayload(eventId);
-    if (resolveFormat(flags.output) === "json") {
+    if (format === "json") {
       this.process.stdout.write(
         `${renderJson({ contentType, bytes: body.byteLength, bodyBase64: bytesToB64(body) })}\n`,
       );
@@ -140,18 +119,8 @@ export const eventsPayloadCommand = buildCommand<GetFlags, [string], AppContext>
       ],
     },
     flags: {
-      output: {
-        kind: "enum",
-        values: ["text", "json"],
-        brief: "output format (json = lossless base64 envelope)",
-        default: "text",
-      },
-      apiUrl: {
-        kind: "parsed",
-        parse: (value: string) => value,
-        brief: "override the API base URL",
-        optional: true,
-      },
+      ...globalFlags,
+      output: { ...globalFlags.output, brief: "output format (json = lossless base64 envelope)" },
     },
   },
   docs: { brief: "print a captured event's raw body" },

@@ -4,17 +4,15 @@ import { redactSecret } from "@webhook-co/shared";
 import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-client.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
-import { renderJson, resolveFormat, type OutputFormat } from "../output/format.js";
+import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { renderJson } from "../output/format.js";
 
 // `wbhk whoami` — show the authenticated principal. Reads the stored credential (env › file), calls
 // the identity endpoint to resolve + validate it, and prints the org, scopes, and a redacted key
 // handle. A missing credential is NotLoggedInError; a server 401 (revoked/expired) surfaces as the
 // ApiError from the client. The full key is never printed (only `redactSecret`).
 
-interface WhoamiFlags {
-  output: OutputFormat;
-  apiUrl?: string;
-}
+type WhoamiFlags = GlobalFlags;
 
 export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
   async func(this: AppContext, flags) {
@@ -29,8 +27,9 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
     const client = createApiClient({ baseUrl, apiKey: cred.apiKey, fetch: this.io.fetch });
     const identity = await client.whoami(); // throws ApiError (a CliError) on 401/etc — handled by the app
 
+    const { format } = resolveGlobals(this, flags);
     const handle = redactSecret(cred.apiKey);
-    if (resolveFormat(flags.output) === "json") {
+    if (format === "json") {
       // userId is present only for a user principal (OAuth tokens later); omit it for org-scoped keys.
       this.process.stdout.write(
         renderJson({
@@ -49,15 +48,7 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
     );
   },
   parameters: {
-    flags: {
-      output: { kind: "enum", values: ["text", "json"], brief: "output format", default: "text" },
-      apiUrl: {
-        kind: "parsed",
-        parse: (value: string) => value,
-        brief: "override the API base URL",
-        optional: true,
-      },
-    },
+    flags: { ...globalFlags },
   },
   docs: { brief: "show the authenticated org, scopes, and key handle" },
 });

@@ -157,3 +157,25 @@ describe("wbhk endpoints get", () => {
     expect(t.stderr().toLowerCase()).toContain("not found");
   });
 });
+
+describe("global --color / --no-color (end to end)", () => {
+  const ANSI = "["; // any ANSI escape
+
+  it("--color forces ANSI in the table even when the context resolved color off (not a TTY)", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [endpoint(EP1, "orders-prod")], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list", "--color"], t.ctx);
+    expect(t.stdout()).toContain(ANSI);
+  });
+
+  it("--no-color suppresses ANSI", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [endpoint(EP1, "orders-prod")], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list", "--no-color"], t.ctx);
+    expect(t.stdout()).not.toContain(ANSI);
+  });
+});
