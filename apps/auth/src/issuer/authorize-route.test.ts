@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { handleAuthorize, handleConsentDecision, type AuthorizeRouteDeps } from "./authorize-route";
+import {
+  handleAuthorize,
+  handleConsentComplete,
+  handleConsentDecision,
+  type AuthorizeRouteDeps,
+} from "./authorize-route";
 import type { ConsentAuthRequest } from "./consent-ticket";
 
 // A3d — the pure HTTP contract of GET /authorize + POST /consent/decision. Parses the request, resolves the
@@ -29,6 +34,9 @@ function routeDeps(over: Partial<AuthorizeRouteDeps> = {}): AuthorizeRouteDeps {
       kind: "ok",
       redirectTo: "http://127.0.0.1:51763/callback?code=AC",
     }),
+    // Fakes: seal embeds the URL verbatim (real impl signs it); open vouches a loopback ticket only.
+    sealLoopbackRedirect: async (redirectTo) => `/consent/complete?c=${redirectTo}`,
+    openLoopbackRedirect: async (ticket) => (ticket.startsWith("http://127.0.0.1") ? ticket : null),
     ...over,
   };
 }
@@ -114,16 +122,33 @@ function decisionRequest(body: unknown, contentType = "application/json"): Reque
 }
 
 describe("handleConsentDecision (POST /consent/decision)", () => {
-  it("returns 200 with the redirect target on a recorded decision", async () => {
+  it("wraps the absolute loopback redirect into a SAME-ORIGIN /consent/complete bounce", async () => {
+    // The browser can't client-side navigate https://auth → http://127.0.0.1 (Private Network Access), so
+    // the decision returns a same-origin bounce; GET /consent/complete then 302s to the loopback server-side.
+    const seal = vi.fn(async (r: string) => `/consent/complete?c=${r}`);
     const res = await handleConsentDecision(
-      routeDeps(),
+      routeDeps({ sealLoopbackRedirect: seal }),
       decisionRequest({ requestId: "TICKET", csrfToken: "csrf", decision: "approve" }),
     );
     expect(res.status).toBe(200);
     expect(res.headers.get("cache-control")).toContain("no-store");
-    await expect(res.json()).resolves.toEqual({
-      redirectTo: "http://127.0.0.1:51763/callback?code=AC",
-    });
+    const body = (await res.json()) as { redirectTo: string };
+    expect(body.redirectTo.startsWith("/consent/complete?c=")).toBe(true);
+    expect(seal).toHaveBeenCalledWith("http://127.0.0.1:51763/callback?code=AC");
+  });
+
+  it("returns a relative (device) redirect unchanged — no bounce for a same-origin target", async () => {
+    const seal = vi.fn();
+    const res = await handleConsentDecision(
+      routeDeps({
+        decideConsent: async () => ({ kind: "ok", redirectTo: "/device?status=approved" }),
+        sealLoopbackRedirect: seal,
+      }),
+      decisionRequest({ requestId: "TICKET", csrfToken: "csrf", decision: "approve" }),
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ redirectTo: "/device?status=approved" });
+    expect(seal).not.toHaveBeenCalled();
   });
 
   it("resolves the session user from the request, not the body", async () => {
@@ -147,21 +172,26 @@ describe("handleConsentDecision (POST /consent/decision)", () => {
     });
   });
 
-  it("returns 200 for a deny (the core produces the access_denied redirect; deny is not an error status)", async () => {
+  it("bounces a deny's access_denied loopback redirect through the same-origin complete path too", async () => {
+    const seal = vi.fn(async (r: string) => `/consent/complete?c=${r}`);
     const deps = routeDeps({
       decideConsent: async () => ({
         kind: "ok",
         redirectTo: "http://127.0.0.1:51763/callback?error=access_denied&state=st_123",
       }),
+      sealLoopbackRedirect: seal,
     });
     const res = await handleConsentDecision(
       deps,
       decisionRequest({ requestId: "TICKET", csrfToken: "csrf", decision: "deny" }),
     );
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({
-      redirectTo: "http://127.0.0.1:51763/callback?error=access_denied&state=st_123",
-    });
+    expect(seal).toHaveBeenCalledWith(
+      "http://127.0.0.1:51763/callback?error=access_denied&state=st_123",
+    );
+    expect(((await res.json()) as { redirectTo: string }).redirectTo).toMatch(
+      /^\/consent\/complete\?c=/,
+    );
   });
 
   it("maps a decision error to its status + OAuth error body", async () => {
@@ -223,5 +253,35 @@ describe("handleConsentDecision (POST /consent/decision)", () => {
     const decide = vi.fn(async () => ({ kind: "ok" as const, redirectTo: "x" }));
     await handleConsentDecision(routeDeps({ decideConsent: decide }), decisionRequest("not json"));
     expect(decide).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleConsentComplete (GET /consent/complete)", () => {
+  const completeRequest = (c?: string) =>
+    new Request(
+      `https://auth.webhook.co/consent/complete${
+        c === undefined ? "" : `?c=${encodeURIComponent(c)}`
+      }`,
+    );
+
+  it("302s the browser to the loopback callback for a valid completion ticket", async () => {
+    const res = await handleConsentComplete(
+      routeDeps(),
+      completeRequest("http://127.0.0.1:51763/callback?code=AC"),
+    );
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("http://127.0.0.1:51763/callback?code=AC");
+  });
+
+  it("400s when the completion ticket is missing", async () => {
+    const res = await handleConsentComplete(routeDeps(), completeRequest());
+    expect(res.status).toBe(400);
+  });
+
+  it("400s (never redirects) when the completion ticket is invalid/expired/non-loopback", async () => {
+    // open returns null → no redirect, so a forged/expired ticket can't drive an open redirect.
+    const res = await handleConsentComplete(routeDeps(), completeRequest("https://evil.example/x"));
+    expect(res.status).toBe(400);
+    expect(res.headers.get("location")).toBeNull();
   });
 });
