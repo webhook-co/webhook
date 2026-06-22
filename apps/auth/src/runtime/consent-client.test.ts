@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { ConsentDecisionError } from "@/app/(auth)/consent/consent-form";
+
 import { makeConsentActions, makeDeviceActions } from "./consent-client";
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -45,14 +47,42 @@ describe("makeConsentActions", () => {
     expect(navigate).toHaveBeenCalledOnce();
   });
 
-  it("throws and does not navigate on a non-2xx", async () => {
+  it("throws a generic error and does not navigate on a 5xx", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: "server_error" }, 500));
+    const navigate = vi.fn();
+    const actions = makeConsentActions(
+      { requestId: "t", csrfToken: "c" },
+      { fetch: fetchImpl, navigate },
+    );
+    const err = await actions.decide("approve").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err).not.toBeInstanceOf(ConsentDecisionError);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("maps a 409 to ConsentDecisionError('already_decided') and does not navigate", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: "already_decided" }, 409));
+    const navigate = vi.fn();
+    const actions = makeConsentActions(
+      { requestId: "t", csrfToken: "c" },
+      { fetch: fetchImpl, navigate },
+    );
+    const err = await actions.decide("approve").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConsentDecisionError);
+    expect((err as ConsentDecisionError).reason).toBe("already_decided");
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
+  it("maps a 400 to ConsentDecisionError('expired') and does not navigate", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ error: "invalid_request" }, 400));
     const navigate = vi.fn();
     const actions = makeConsentActions(
       { requestId: "t", csrfToken: "c" },
       { fetch: fetchImpl, navigate },
     );
-    await expect(actions.decide("approve")).rejects.toThrow();
+    const err = await actions.decide("deny").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConsentDecisionError);
+    expect((err as ConsentDecisionError).reason).toBe("expired");
     expect(navigate).not.toHaveBeenCalled();
   });
 });

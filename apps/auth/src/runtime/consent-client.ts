@@ -1,6 +1,6 @@
 import type { ConsentRequest } from "@webhook-co/contract";
 
-import type { ConsentActions } from "@/app/(auth)/consent/consent-form";
+import { ConsentDecisionError, type ConsentActions } from "@/app/(auth)/consent/consent-form";
 import type { DeviceActions } from "@/app/(auth)/device/device-form";
 
 /**
@@ -51,6 +51,15 @@ export function makeConsentActions(
           decision,
         }),
       });
+      // Expected dead-ends get a friendly terminal instead of the retryable error banner: 409 = already
+      // approved/denied (back-button re-POST), 400 = the underlying request lapsed. Other non-2xx (5xx,
+      // 429) stay retryable.
+      if (response.status === 409) {
+        throw new ConsentDecisionError("already_decided");
+      }
+      if (response.status === 400) {
+        throw new ConsentDecisionError("expired");
+      }
       if (!response.ok) {
         throw new Error(`consent decision failed: ${response.status}`);
       }
