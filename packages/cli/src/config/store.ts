@@ -1,4 +1,4 @@
-import { SecureStorageRequiredError } from "./errors.js";
+import { KeychainUnavailableError, SecureStorageRequiredError } from "./errors.js";
 import { DEFAULT_PROFILE, type StoredCredential } from "./schema.js";
 
 // A single credential backend (one place a credential can live). Backends compose into a
@@ -9,6 +9,12 @@ export interface CredentialBackend {
   readonly id: string;
   readonly secure: boolean;
   readonly canWrite: boolean;
+  /**
+   * Whether this backend persists NON-secret config (the active profile + the per-profile base URL).
+   * The keychain holds secrets only (`false`) — config writes route past it to the file (`true`), so a
+   * keychain composed AHEAD of the file doesn't swallow non-secret config.
+   */
+  readonly persistsConfig: boolean;
   /** The persisted active-profile name (config, not per-profile), or undefined when unset. */
   getActiveProfile(): Promise<string | undefined>;
   /** Persist (or, with undefined, clear) the active-profile name (a writable backend only). */
@@ -28,9 +34,15 @@ export interface StoragePolicy {
   readonly requireSecureStorage: boolean;
 }
 
+/** Per-call credential-write options. */
+export interface SetCredentialOptions {
+  /** Force acceptance of an insecure (file) backend even under `requireSecureStorage` (the `--insecure-storage` opt-in). */
+  readonly allowInsecure?: boolean;
+}
+
 export interface CredentialStore {
   get(profile?: string): Promise<StoredCredential | null>;
-  set(cred: StoredCredential, profile?: string): Promise<void>;
+  set(cred: StoredCredential, profile?: string, opts?: SetCredentialOptions): Promise<void>;
   erase(profile?: string): Promise<void>;
   list(): Promise<string[]>;
   /**
@@ -61,9 +73,9 @@ export function resolveStore(
       return undefined;
     },
     async setActiveProfile(name) {
-      // The active profile is config (not a secret), so it persists to the first writable backend,
-      // regardless of the secure-storage policy — mirroring setApiBaseUrl.
-      const target = backends.find((b) => b.canWrite);
+      // The active profile is config (not a secret), so it persists to the first writable backend that
+      // PERSISTS CONFIG — skipping a secrets-only backend (the keychain) composed ahead of the file.
+      const target = backends.find((b) => b.canWrite && b.persistsConfig);
       if (!target) throw new SecureStorageRequiredError();
       await target.setActiveProfile(name);
     },
@@ -74,17 +86,43 @@ export function resolveStore(
       }
       return null;
     },
-    async set(cred, profile = DEFAULT_PROFILE) {
+    async set(cred, profile = DEFAULT_PROFILE, opts) {
       const writable = backends.filter((b) => b.canWrite);
-      const candidates = policy.requireSecureStorage ? writable.filter((b) => b.secure) : writable;
-      const target = candidates[0];
+      // Under require-secure (unless --insecure-storage opts out), only secure backends are eligible.
+      const secureOnly = policy.requireSecureStorage && opts?.allowInsecure !== true;
+      const candidates = secureOnly ? writable.filter((b) => b.secure) : writable;
       // No eligible writable backend → refuse rather than silently drop or downgrade.
-      if (!target) throw new SecureStorageRequiredError();
-      await target.set(profile, cred);
+      if (candidates.length === 0) throw new SecureStorageRequiredError();
+      // Try candidates in precedence order. ONLY a missing OS keychain (KeychainUnavailableError) falls
+      // through to the next candidate — so the default policy degrades from keychain to the file, while
+      // require-secure (candidates = secure only) has nothing to fall through to and fails loud. Any other
+      // failure (denied, locked, write error) is real and propagates — never a silent insecure downgrade.
+      let lastUnavailable: KeychainUnavailableError | undefined;
+      for (const target of candidates) {
+        try {
+          await target.set(profile, cred);
+          return;
+        } catch (err) {
+          if (err instanceof KeychainUnavailableError) {
+            lastUnavailable = err;
+            continue;
+          }
+          throw err;
+        }
+      }
+      throw lastUnavailable ?? new SecureStorageRequiredError();
     },
     async erase(profile = DEFAULT_PROFILE) {
+      // Best-effort across every writable backend so logout clears the credential EVERYWHERE. A missing
+      // OS keychain (KeychainUnavailableError) must not abort the wipe — the file still gets cleared, so
+      // no stale secret is left behind. Any other error is real and propagates.
       for (const backend of backends) {
-        if (backend.canWrite) await backend.erase(profile);
+        if (!backend.canWrite) continue;
+        try {
+          await backend.erase(profile);
+        } catch (err) {
+          if (!(err instanceof KeychainUnavailableError)) throw err;
+        }
       }
     },
     async list() {
@@ -102,9 +140,10 @@ export function resolveStore(
       return undefined;
     },
     async setApiBaseUrl(apiBaseUrl, profile = DEFAULT_PROFILE) {
-      // The base URL is configuration, not a secret, so it persists to the first writable backend
-      // regardless of the secure-storage policy (that policy only governs where the CREDENTIAL lives).
-      const target = backends.find((b) => b.canWrite);
+      // The base URL is configuration, not a secret, so it persists to the first writable CONFIG backend
+      // (skipping a secrets-only keychain ahead of the file); the secure-storage policy governs only the
+      // CREDENTIAL location.
+      const target = backends.find((b) => b.canWrite && b.persistsConfig);
       if (!target) throw new SecureStorageRequiredError();
       await target.setApiBaseUrl(profile, apiBaseUrl);
     },

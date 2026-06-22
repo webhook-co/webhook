@@ -58,6 +58,17 @@ export class SecureStorageRequiredError extends ConfigError {
   }
 }
 
+export class KeychainUnavailableError extends ConfigError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage =
+    "no OS keychain is available for secure credential storage — install the keychain helper for your " +
+    "platform, or pass --insecure-storage to fall back to the 0600 config file.";
+  constructor() {
+    super("no OS keychain available for secure credential storage");
+    this.name = "KeychainUnavailableError";
+  }
+}
+
 export class BackendNotWritableError extends ConfigError {
   readonly exitCode = EXIT.USAGE;
   readonly userMessage: string;
