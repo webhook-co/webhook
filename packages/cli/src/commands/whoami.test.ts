@@ -48,6 +48,27 @@ describe("wbhk whoami", () => {
     expect(out).toContain("events:read, audit:read");
     expect(out).toContain("whk_****");
     expect(out).not.toContain("whk_stored_key");
+    expect(out).toContain("method: api-key");
+    expect(out).toContain("source: stored credential");
+  });
+
+  it("reports the auth method as oauth (<flow>) for an OAuth credential (text)", async () => {
+    const t = makeTestContext({
+      store: memStore({
+        oauth: {
+          accessKey: "whk_oauth_access",
+          refreshToken: "rtk_secret_refresh",
+          authMethod: "device",
+          expiresAt: 1_700_000_000_000,
+          audience: "https://api.webhook.co",
+          clientId: "client_abc",
+        },
+      }),
+      fetch: okFetch({ orgId: "org_o", scopes: ["events:read"] }),
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(t.stdout()).toContain("method: oauth (device)");
+    expect(t.stdout()).toContain("source: stored credential");
   });
 
   it("works with an OAuth credential: Bearer uses the access key; refresh token NEVER printed", async () => {
@@ -114,6 +135,9 @@ describe("wbhk whoami", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
     expect(t.stdout()).toContain("org: org_e");
     expect(t.stdout()).toContain("scopes: (none)");
+    // The env backend has highest read precedence, so the source is reported as the env var.
+    expect(t.stdout()).toContain("method: api-key");
+    expect(t.stdout()).toContain("source: env (WBHK_API_KEY)");
   });
 
   it("surfaces a userId when the principal has one (user-scoped token)", async () => {
@@ -141,6 +165,28 @@ describe("wbhk whoami", () => {
       orgId: "org_9",
       scopes: ["events:read"],
       key: "whk_****",
+      method: "api-key",
+      source: "stored credential",
     });
+  });
+
+  it("emits the OAuth method in JSON without leaking the refresh token", async () => {
+    const t = makeTestContext({
+      store: memStore({
+        oauth: {
+          accessKey: "whk_oauth_access",
+          refreshToken: "rtk_secret_refresh",
+          authMethod: "loopback",
+          expiresAt: 1_700_000_000_000,
+          audience: "https://api.webhook.co",
+          clientId: "client_abc",
+        },
+      }),
+      fetch: okFetch({ orgId: "org_o", scopes: ["events:read"] }),
+    });
+    await run(app, ["whoami", "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout());
+    expect(parsed).toMatchObject({ method: "oauth (loopback)", source: "stored credential" });
+    expect(t.stdout()).not.toContain("rtk_");
   });
 });
