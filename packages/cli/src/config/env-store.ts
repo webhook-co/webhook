@@ -20,6 +20,9 @@ export function createEnvBackend(
     async getActiveProfile() {
       return undefined;
     },
+    async setActiveProfile() {
+      throw new BackendNotWritableError(id);
+    },
     async get() {
       const value = env[varName];
       return value !== undefined && value.length > 0 ? { apiKey: value } : null;

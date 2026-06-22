@@ -11,6 +11,7 @@ import { endpointsGetCommand, endpointsListCommand } from "./commands/endpoints.
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
 import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
+import { profileRoute } from "./commands/profile.js";
 import { replayCommand } from "./commands/replay.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
@@ -63,6 +64,7 @@ const root = buildRouteMap({
   routes: {
     login: loginCommand,
     whoami: whoamiCommand,
+    profile: profileRoute,
     endpoints: endpointsRoute,
     events: eventsRoute,
     audit: auditRoute,
