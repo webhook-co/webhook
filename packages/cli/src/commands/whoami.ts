@@ -1,7 +1,8 @@
 import { buildCommand } from "@stricli/core";
 
 import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-client.js";
-import { credentialAccessToken } from "../config/schema.js";
+import { ENV_API_KEY_VAR } from "../config/env-store.js";
+import { credentialAccessToken, isOAuthCredential } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import {
@@ -43,6 +44,14 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
     const { format } = resolveGlobals(this, flags);
     // Total over the credential union; the OAuth refresh token is never displayed.
     const handle = redactCredential(cred);
+    // The auth method (api-key vs which OAuth flow) and where the credential came from. The env
+    // backend has highest read precedence (env-store.ts), so a non-empty WBHK_API_KEY IS the active
+    // credential — report it as the source. All values here are CLI-derived (trusted, no sanitize).
+    const method = isOAuthCredential(cred) ? `oauth (${cred.oauth.authMethod})` : "api-key";
+    const source =
+      (this.process.env?.[ENV_API_KEY_VAR] ?? "").length > 0
+        ? `env (${ENV_API_KEY_VAR})`
+        : "stored credential";
     if (format === "json") {
       // userId is present only for a user principal (OAuth tokens later); omit it for org-scoped keys.
       this.process.stdout.write(
@@ -51,12 +60,14 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
           ...(identity.userId !== undefined ? { userId: identity.userId } : {}),
           scopes: identity.scopes,
           key: handle,
+          method,
+          source,
         }) + "\n",
       );
       return;
     }
     // orgId/userId/scopes are server-controlled (z.string()) — sanitize before the text view so a
-    // hostile value can't inject a terminal escape. (`handle` is our own local redaction — trusted.)
+    // hostile value can't inject a terminal escape. (`handle`/`method`/`source` are CLI-derived — trusted.)
     const scopes =
       identity.scopes.length > 0
         ? identity.scopes.map((s) => sanitizeControl(s)).join(", ")
@@ -64,7 +75,8 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
     const userLine =
       identity.userId !== undefined ? `user: ${sanitizeControl(identity.userId)}\n` : "";
     this.process.stdout.write(
-      `org: ${sanitizeControl(identity.orgId)}\n${userLine}key: ${handle}\nscopes: ${scopes}\n`,
+      `org: ${sanitizeControl(identity.orgId)}\n${userLine}key: ${handle}\n` +
+        `method: ${method}\nsource: ${source}\nscopes: ${scopes}\n`,
     );
   },
   parameters: {
