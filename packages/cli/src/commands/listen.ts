@@ -1,6 +1,7 @@
 import { buildCommand } from "@stricli/core";
 import {
   encodeClientFrame,
+  LISTEN_LAG_CAP,
   parseServerFrame,
   type EventSummary,
   type ServerFrame,
@@ -13,6 +14,7 @@ import {
   resolveApiBaseUrl,
   resolveTunnelUrl,
 } from "../api-client.js";
+import { resolveStateDir } from "../config/paths.js";
 import type { AppContext, ConnectWebSocket, WsSocket } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import {
@@ -23,6 +25,7 @@ import {
   type ForwardOutcome,
 } from "../forward.js";
 import { abortableSleep, backoffMs } from "../retry.js";
+import { clearCursor, loadCursor, saveCursor, type CursorLoad } from "../state/cursor-store.js";
 import { colorize } from "../output/color.js";
 import {
   announceActiveProfile,
@@ -52,6 +55,10 @@ import { sanitizeControl } from "../output/safe-text.js";
 /** Bounds the dedup memory of a long session; far above the at-least-once redelivery window. */
 const SEEN_CURSOR_CAP = 50_000;
 
+/** A status-frame backlog at/above this warns the user a replay is coming (the "side-effect cannon"
+ *  heads-up, esp. with --forward). Tunable, and intentionally well below the server LISTEN_LAG_CAP. */
+const BACKLOG_GUARD = 1_000;
+
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** One compact tail line per event (text mode). Human-facing format — eyeball before release. */
@@ -76,6 +83,35 @@ export type ListenSince =
   | { readonly kind: "beginning" }
   | { readonly kind: "cursor"; readonly cursor: string };
 
+/**
+ * Resolve where a `listen` run starts, folding in cross-run resume. `--reset` first forgets any saved
+ * cursor. With resume on (`--resume` or `--since from-last-ack`), load the persisted OPAQUE cursor and
+ * resume from it (`?sinceCursor=`); a miss or a corrupt file cold-starts from "now" (warning on corrupt)
+ * so a damaged state file never wedges the tail. Otherwise the existing now|beginning|<cursor> mapping.
+ * fs is injected (loadCursor/clearCursor bound to the state dir) so this is unit-tested without disk.
+ */
+export async function resolveResumeStart(opts: {
+  readonly resume: boolean;
+  readonly reset: boolean;
+  readonly since: string;
+  readonly loadCursor: () => Promise<CursorLoad>;
+  readonly clearCursor: () => Promise<void>;
+  readonly note: (line: string) => void;
+}): Promise<ListenSince> {
+  if (opts.reset) await opts.clearCursor();
+  if (opts.resume || opts.since === "from-last-ack") {
+    const loaded = await opts.loadCursor();
+    if (loaded.kind === "hit") return { kind: "cursor", cursor: loaded.cursor };
+    if (loaded.kind === "corrupt") {
+      opts.note(`saved resume cursor unusable (${loaded.detail}) — starting from now\n`);
+    }
+    return { kind: "now" }; // miss or corrupt → cold-start
+  }
+  if (opts.since === "beginning") return { kind: "beginning" };
+  if (opts.since === "now") return { kind: "now" };
+  return { kind: "cursor", cursor: opts.since };
+}
+
 /** Forward mode (`--forward`): re-deliver each tailed event to a local server, cursor-gated. */
 export interface ListenForwardDeps {
   readonly targetUrl: string;
@@ -98,6 +134,8 @@ export interface RunListenDeps {
   readonly since: ListenSince;
   /** When set, forward each event to a local server (cursor-gated) instead of just printing it. */
   readonly forward?: ListenForwardDeps;
+  /** When set, persist each acked cursor for cross-run resume (the command serializes the writes). */
+  readonly persist?: (cursor: string) => void;
   readonly emit: (line: string) => void;
   readonly note: (line: string) => void;
   readonly format: OutputFormat;
@@ -120,6 +158,7 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
   let sessionId: string | undefined;
   let firstConnect = true;
   let attempt = 0;
+  let caughtUpNoted = false; // print the "caught up" note once per behind→caught-up transition
 
   const remember = (cursor: string): void => {
     if (seen.size >= SEEN_CURSOR_CAP) seen.delete(seen.values().next().value as string);
@@ -186,6 +225,10 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
           return;
         }
         remember(cursor);
+        // Persist ONLY a newly-forwarded event (inside the !seen guard) — new events arrive in order, so
+        // the saved cursor advances monotonically; a redelivery re-acks (below) but must NOT re-persist
+        // an older cursor (that would move the resume point backwards → cross-run duplicates).
+        deps.persist?.(cursor);
       }
       // Best-effort ack (advance the durable cursor); a closed socket no-ops and redelivery re-acks.
       sock.send(encodeClientFrame({ type: "ack", cursor }));
@@ -236,10 +279,24 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
               );
               return;
             }
-            // status frame (ADR-0017): the cursor-contract caughtUp/lag. Skipped for now — Lane D's D6
-            // replaces this with the resume banner + backlog guard. Skipping keeps the tunnel
-            // additive-safe (an unhandled server frame is a no-op, never a crash).
+            // status frame (ADR-0017): the cursor-contract caughtUp/lag. Caught-up → a one-time note;
+            // a backlog at/above the guard → a heads-up that a replay is coming (the "side-effect
+            // cannon", esp. with --forward). The count is server-capped at LISTEN_LAG_CAP, so an
+            // over-cap value renders as `<cap>+`. All to stderr; stdout stays the event stream.
             if (frame.type === "status") {
+              if (frame.caughtUp) {
+                if (!caughtUpNoted) {
+                  deps.note("caught up — now tailing live events\n");
+                  caughtUpNoted = true;
+                }
+              } else if (frame.lag !== undefined && frame.lag.backlogCount >= BACKLOG_GUARD) {
+                caughtUpNoted = false; // fell behind again — re-arm the caught-up note
+                const n =
+                  frame.lag.backlogCount > LISTEN_LAG_CAP
+                    ? `${LISTEN_LAG_CAP}+`
+                    : `${frame.lag.backlogCount}`;
+                deps.note(`${n} events behind — replaying the backlog…\n`);
+              }
               return;
             }
             // event frame.
@@ -258,6 +315,9 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
                   ? `${JSON.stringify(frame.summary)}\n` // compact: one event per line (NDJSON)
                   : `${formatListenEvent(frame.summary, deps.color)}\n`,
               );
+              // Persist ONLY a newly-seen event (inside the guard) so the resume cursor advances
+              // monotonically; a redelivery re-acks (below) but must NOT re-persist an older cursor.
+              deps.persist?.(frame.cursor);
             }
             socket.send(encodeClientFrame({ type: "ack", cursor: frame.cursor }));
           },
@@ -293,6 +353,8 @@ interface ListenFlags extends GlobalFlags {
   tunnelUrl?: string;
   since: string;
   forward?: string;
+  resume: boolean;
+  reset: boolean;
 }
 
 export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
@@ -307,13 +369,31 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       env: this.process.env?.[ENV_TUNNEL_URL_VAR],
     });
 
-    // Map --since to where the FIRST connect starts (the engine computes "now" server-side).
-    const since: ListenSince =
-      flags.since === "beginning"
-        ? { kind: "beginning" }
-        : flags.since === "now"
-          ? { kind: "now" }
-          : { kind: "cursor", cursor: flags.since };
+    // Where the FIRST connect starts, folding in cross-run resume. The persisted cursor is keyed by
+    // (profile, endpoint) in the XDG state dir; resume loads it, --reset forgets it.
+    const stateDir = resolveStateDir(this.process.env ?? {}, this.homedir);
+    const resume = flags.resume || flags.since === "from-last-ack";
+    const since = await resolveResumeStart({
+      resume: flags.resume,
+      reset: flags.reset,
+      since: flags.since,
+      loadCursor: () => loadCursor(stateDir, profile, endpointId),
+      clearCursor: () => clearCursor(stateDir, profile, endpointId),
+      note: (line) => this.process.stderr.write(line),
+    });
+
+    // With resume on, persist each acked cursor for the next run — serialized so the LAST write wins
+    // (out-of-order fire-and-forget writes could otherwise persist an older cursor). A write failure is
+    // a noted stderr warning, never fatal: the next ack re-persists, and a missed write just resumes a
+    // little earlier. Drained after the loop so the final position is durable on a clean Ctrl-C.
+    let persistChain: Promise<void> = Promise.resolve();
+    const persist = (cursor: string): void => {
+      persistChain = persistChain
+        .then(() => saveCursor(stateDir, profile, endpointId, cursor))
+        .catch((err) =>
+          this.process.stderr.write(`could not save resume cursor: ${errMsg(err)}\n`),
+        );
+    };
 
     const controller = new AbortController();
 
@@ -372,6 +452,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         endpointId,
         since,
         forward,
+        persist: resume ? persist : undefined,
         emit: (line) => this.process.stdout.write(line),
         note: (line) => this.process.stderr.write(line),
         format,
@@ -380,6 +461,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       });
     } finally {
+      await persistChain; // flush the final acked cursor to disk before exiting
       process.stdout.removeListener("error", onStdoutError);
       process.removeListener("SIGINT", onSignal);
       process.removeListener("SIGTERM", onSignal);
@@ -401,8 +483,18 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       since: {
         kind: "parsed",
         parse: (value: string) => value,
-        brief: "now (default) | beginning | <cursor>",
+        brief: "now (default) | beginning | from-last-ack | <cursor>",
         default: "now",
+      },
+      resume: {
+        kind: "boolean",
+        brief: "resume from the last cursor this (profile, endpoint) acked, and keep saving it",
+        default: false,
+      },
+      reset: {
+        kind: "boolean",
+        brief: "forget the saved resume cursor for this (profile, endpoint) before starting",
+        default: false,
       },
       tunnelUrl: {
         kind: "parsed",
