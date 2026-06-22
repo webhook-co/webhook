@@ -5,7 +5,7 @@ import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-clie
 import { ENV_API_KEY_VAR } from "../config/env-store.js";
 import type { AppContext } from "../context.js";
 import { MissingApiKeyError } from "../errors.js";
-import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { globalFlags, resolveGlobals, resolveProfile, type GlobalFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
 
 // `wbhk login` — capture an API key, validate it against the API, and persist it for future commands.
@@ -53,10 +53,11 @@ export const loginCommand = buildCommand<LoginFlags, [], AppContext>({
     if (resolved instanceof MissingApiKeyError) return resolved;
     const { key, source } = resolved;
 
+    const profile = await resolveProfile(this, flags);
     const baseUrl = resolveApiBaseUrl({
       flag: flags.apiUrl,
       env: this.process.env?.[ENV_API_URL_VAR],
-      stored: await this.store.getApiBaseUrl(),
+      stored: await this.store.getApiBaseUrl(profile),
     });
     const client = createApiClient({ baseUrl, apiKey: key, fetch: this.io.fetch });
     // Validate BEFORE persisting — a rejected key (ApiError) propagates and nothing is stored.
@@ -64,11 +65,11 @@ export const loginCommand = buildCommand<LoginFlags, [], AppContext>({
 
     // WBHK_API_KEY is the never-persisted headless path; only an interactively/piped key is saved.
     if (source !== "env") {
-      await this.store.set({ apiKey: key });
+      await this.store.set({ apiKey: key }, profile);
       // Make the base URL sticky too — but ONLY when explicitly overridden, so a plain `login` never
       // overwrites a stored value. Persist the validated, normalized URL (so a later read re-validates
       // the same clean origin). The env-only path above persists nothing, base URL included.
-      if (flags.apiUrl !== undefined) await this.store.setApiBaseUrl(baseUrl);
+      if (flags.apiUrl !== undefined) await this.store.setApiBaseUrl(baseUrl, profile);
     }
 
     const { format } = resolveGlobals(this, flags);

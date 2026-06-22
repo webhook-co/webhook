@@ -52,6 +52,20 @@ export class InvalidApiUrlError extends CliError {
   }
 }
 
+/** A profile name (`--profile` / WBHK_PROFILE / the persisted active profile) that collides with a JS
+ *  object's reserved keys. Profiles key an in-memory map, so `__proto__` would make a write silently
+ *  no-op (the bracket-write hits the prototype, not an own key) and `constructor`/`prototype` would
+ *  shadow — reject loudly rather than report a phantom "logged in". */
+export class InvalidProfileNameError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage: string;
+  constructor(value: string) {
+    super(`invalid profile name: ${value}`);
+    this.name = "InvalidProfileNameError";
+    this.userMessage = `invalid profile name \`${value}\` — \`__proto__\`, \`constructor\`, and \`prototype\` are reserved. choose another name.`;
+  }
+}
+
 /** A `--tunnel-url` / WBHK_TUNNEL_URL override that isn't a wss:// URL (ws:// only for loopback dev).
  *  Same reasoning as InvalidApiUrlError — the bearer key rides the tunnel upgrade handshake. */
 export class InvalidTunnelUrlError extends CliError {

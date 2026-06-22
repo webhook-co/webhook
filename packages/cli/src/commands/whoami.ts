@@ -4,7 +4,7 @@ import { redactSecret } from "@webhook-co/shared";
 import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-client.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
-import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { globalFlags, resolveGlobals, resolveProfile, type GlobalFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
 import { sanitizeControl } from "../output/safe-text.js";
 
@@ -17,13 +17,14 @@ type WhoamiFlags = GlobalFlags;
 
 export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
   async func(this: AppContext, flags) {
-    const cred = await this.store.get();
+    const profile = await resolveProfile(this, flags);
+    const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
 
     const baseUrl = resolveApiBaseUrl({
       flag: flags.apiUrl,
       env: this.process.env?.[ENV_API_URL_VAR],
-      stored: await this.store.getApiBaseUrl(),
+      stored: await this.store.getApiBaseUrl(profile),
     });
     const client = createApiClient({ baseUrl, apiKey: cred.apiKey, fetch: this.io.fetch });
     const identity = await client.whoami(); // throws ApiError (a CliError) on 401/etc — handled by the app

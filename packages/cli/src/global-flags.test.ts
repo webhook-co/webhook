@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveColorFlag, resolveGlobals } from "./global-flags.js";
+import { DEFAULT_PROFILE } from "./config/schema.js";
+import { InvalidProfileNameError } from "./errors.js";
+import { resolveColorFlag, resolveGlobals, resolveProfile } from "./global-flags.js";
 
 describe("resolveColorFlag", () => {
   it("--no-color (color=false) forces color off, even when the env says on", () => {
@@ -29,5 +31,45 @@ describe("resolveGlobals", () => {
       format: "text",
       color: true,
     });
+  });
+});
+
+describe("resolveProfile", () => {
+  const ctxWith = (env: Record<string, string | undefined>, active?: string) => ({
+    process: { env },
+    store: { getActiveProfile: async () => active },
+  });
+
+  it("prefers --profile, then WBHK_PROFILE, then the persisted active profile, then the default", async () => {
+    expect(
+      await resolveProfile(ctxWith({ WBHK_PROFILE: "envp" }, "activep"), { profile: "flagp" }),
+    ).toBe("flagp");
+    expect(await resolveProfile(ctxWith({ WBHK_PROFILE: "envp" }, "activep"), {})).toBe("envp");
+    expect(await resolveProfile(ctxWith({}, "activep"), {})).toBe("activep");
+    expect(await resolveProfile(ctxWith({}, undefined), {})).toBe(DEFAULT_PROFILE);
+  });
+
+  it("ignores an empty --profile or WBHK_PROFILE (treats it as unset)", async () => {
+    expect(await resolveProfile(ctxWith({ WBHK_PROFILE: "" }, undefined), { profile: "" })).toBe(
+      DEFAULT_PROFILE,
+    );
+  });
+
+  it("works when the store has no getActiveProfile (optional method)", async () => {
+    expect(await resolveProfile({ process: { env: {} }, store: {} }, {})).toBe(DEFAULT_PROFILE);
+  });
+
+  it("rejects a reserved/unsafe profile name (prototype-pollution-prone object keys)", async () => {
+    // `--profile __proto__` would otherwise make a `login` write silently no-op (a bracket-write hits
+    // the prototype, not an own key) while still reporting success — fail loud instead, from any source.
+    await expect(
+      resolveProfile(ctxWith({}, undefined), { profile: "__proto__" }),
+    ).rejects.toBeInstanceOf(InvalidProfileNameError);
+    await expect(
+      resolveProfile(ctxWith({ WBHK_PROFILE: "constructor" }, undefined), {}),
+    ).rejects.toBeInstanceOf(InvalidProfileNameError);
+    await expect(resolveProfile(ctxWith({}, "prototype"), {})).rejects.toBeInstanceOf(
+      InvalidProfileNameError,
+    );
   });
 });

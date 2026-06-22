@@ -7,6 +7,7 @@ import {
 } from "../api-client.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
+import { resolveProfile, type GlobalFlags } from "../global-flags.js";
 import { renderJson, type OutputFormat } from "../output/format.js";
 
 // Shared plumbing for the read commands: build an authenticated client from the stored credential +
@@ -14,17 +15,22 @@ import { renderJson, type OutputFormat } from "../output/format.js";
 // hint to stderr, or the {items, nextCursor} envelope as JSON). Keeping this here means every read
 // command resolves auth + the base URL identically (and picks up a sticky stored base URL for free).
 
-/** Resolve the stored credential into a ready API client, or NotLoggedInError when none is stored. */
+/**
+ * Resolve the stored credential into a ready API client, or NotLoggedInError when none is stored. The
+ * active profile (`--profile`/`WBHK_PROFILE`/persisted/default) is resolved here, so every read command
+ * picks up the selected profile's credential + sticky base URL without threading it itself.
+ */
 export async function authedClient(
   ctx: AppContext,
-  flags: { apiUrl?: string },
+  flags: GlobalFlags,
 ): Promise<ApiClient | NotLoggedInError> {
-  const cred = await ctx.store.get();
+  const profile = await resolveProfile(ctx, flags);
+  const cred = await ctx.store.get(profile);
   if (cred === null) return new NotLoggedInError();
   const baseUrl = resolveApiBaseUrl({
     flag: flags.apiUrl,
     env: ctx.process.env?.[ENV_API_URL_VAR],
-    stored: await ctx.store.getApiBaseUrl(),
+    stored: await ctx.store.getApiBaseUrl(profile),
   });
   return createApiClient({ baseUrl, apiKey: cred.apiKey, fetch: ctx.io.fetch });
 }
