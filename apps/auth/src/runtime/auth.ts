@@ -120,9 +120,16 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     },
     plugins: [magicLink(magicLinkOptions(deps))],
     databaseHooks: deps.databaseHooks,
+    advanced: {
+      // On Workers the TCP peer is Cloudflare's edge, not the client, so Better Auth's rate limiter must
+      // read the trusted client-IP header or it falls back to ONE shared per-path bucket (every caller
+      // throttled together — the prod warning). cf-connecting-ip is set by CF and not client-spoofable.
+      // No `crossSubDomainCookies` — the cookie stays host-only; the auth.→app. handoff is the backchannel
+      // session-exchange.
+      ipAddress: { ipAddressHeaders: ["cf-connecting-ip"] },
+    },
     // Explicitly DB-validated sessions: cookieCache off so a revoked session dies immediately (pinned
-    // against Better Auth's default of caching for non-stateful instances). Host-only cookie: no
-    // `advanced.crossSubDomainCookies` — the auth.→app. handoff is the backchannel session-exchange.
+    // against Better Auth's default of caching for non-stateful instances).
     session: { cookieCache: { enabled: false } },
   };
 }
