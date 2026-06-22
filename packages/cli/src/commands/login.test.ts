@@ -177,3 +177,109 @@ describe("wbhk login --insecure-storage", () => {
     expect(m.lastSetOpts()?.allowInsecure).toBeFalsy();
   });
 });
+
+const DEVICE_AUTH = {
+  device_code: "dev_code_1",
+  user_code: "WXYZ-1234",
+  verification_uri: "https://auth.webhook.co/device",
+  verification_uri_complete: "https://auth.webhook.co/device?user_code=WXYZ-1234",
+  expires_in: 900,
+  interval: 5,
+};
+const TOKEN_BODY = {
+  access_token: `whk_${"d".repeat(40)}`,
+  token_type: "Bearer",
+  expires_in: 86400,
+  refresh_token: `rtk_${"e".repeat(40)}`,
+  scope: "events:read",
+  resource: "https://api.webhook.co",
+};
+
+/** Routes a fetch by URL through the full device-login round-trip: register → device-authorize → poll
+ *  (the `pollSteps` sequence) → whoami. */
+function deviceRoutingFetch(pollSteps: ReadonlyArray<Response>): typeof fetch {
+  let pollIdx = 0;
+  return (async (url: string) => {
+    const u = String(url);
+    if (u.endsWith("/register")) return jsonResponse({ client_id: "client_dcr_1" });
+    if (u.endsWith("/device_authorization")) return jsonResponse(DEVICE_AUTH);
+    if (u.endsWith("/token")) {
+      const step = pollSteps[Math.min(pollIdx, pollSteps.length - 1)];
+      pollIdx += 1;
+      return step;
+    }
+    if (u.endsWith("/v1/whoami")) return jsonResponse(IDENTITY);
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+describe("wbhk login --device", () => {
+  it("runs the device flow, persists the OAuth credential, and opens the browser", async () => {
+    const m = memStore();
+    let opened: string | null = null;
+    const t = makeTestContext({
+      store: m.store,
+      fetch: deviceRoutingFetch([jsonResponse(TOKEN_BODY)]),
+      openBrowser: async (u) => void (opened = u),
+    });
+    await run(app, ["login", "--device"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    // An OAuth credential was stored (not an api-key shape).
+    expect(m.current()).toMatchObject({
+      oauth: { authMethod: "device", clientId: "client_dcr_1" },
+    });
+    // The user-facing code + URL went to stderr; the browser was opened to the complete URL.
+    expect(t.stderr()).toContain("WXYZ-1234");
+    expect(opened).toBe("https://auth.webhook.co/device?user_code=WXYZ-1234");
+    expect(t.stdout()).toContain("logged in to org_1 via device");
+    // Neither the access nor the refresh token is printed in full.
+    expect(t.stdout()).not.toContain(TOKEN_BODY.refresh_token);
+    expect(t.stdout()).not.toContain(TOKEN_BODY.access_token);
+  });
+
+  it("emits JSON with method oauth (device) and never leaks the refresh token", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      fetch: deviceRoutingFetch([jsonResponse(TOKEN_BODY)]),
+    });
+    await run(app, ["login", "--device", "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout());
+    expect(parsed).toMatchObject({ orgId: "org_1", persisted: true, method: "oauth (device)" });
+    expect(t.stdout()).not.toContain("rtk_");
+  });
+
+  it("polls through authorization_pending until approval", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      fetch: deviceRoutingFetch([
+        jsonResponse({ error: "authorization_pending" }, 400),
+        jsonResponse(TOKEN_BODY),
+      ]),
+    });
+    await run(app, ["login", "--device"], t.ctx);
+    expect(m.current()).toMatchObject({ oauth: { authMethod: "device" } });
+  });
+
+  it("stores NOTHING when the user denies the device authorization", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      fetch: deviceRoutingFetch([jsonResponse({ error: "access_denied" }, 400)]),
+    });
+    await run(app, ["login", "--device"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.UNAUTHORIZED);
+    expect(m.current()).toBeNull();
+  });
+
+  it("passes --insecure-storage through on the device path", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      fetch: deviceRoutingFetch([jsonResponse(TOKEN_BODY)]),
+    });
+    await run(app, ["login", "--device", "--insecure-storage"], t.ctx);
+    expect(m.lastSetOpts()?.allowInsecure).toBe(true);
+  });
+});
