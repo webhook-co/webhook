@@ -7,6 +7,7 @@ import {
 } from "@stricli/core";
 
 import { auditVerifyCommand } from "./commands/audit.js";
+import { completionRoute } from "./commands/completion.js";
 import { doctorCommand } from "./commands/doctor.js";
 import { endpointsGetCommand, endpointsListCommand } from "./commands/endpoints.js";
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
@@ -75,6 +76,7 @@ const root = buildRouteMap({
     audit: auditRoute,
     listen: listenCommand,
     replay: replayCommand,
+    completion: completionRoute,
   },
   docs: { brief: "webhook.co — capture, inspect, and replay webhooks" },
 });

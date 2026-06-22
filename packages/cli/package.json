@@ -15,7 +15,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --coverage",
-    "bundle": "bun build --compile --minify --sourcemap src/bin.ts --outfile dist/wbhk"
+    "bundle": "node scripts/bundle.mjs"
   },
   "dependencies": {
     "@stricli/core": "^1.2.7",
