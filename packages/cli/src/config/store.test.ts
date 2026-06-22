@@ -290,6 +290,19 @@ describe("resolveStore — keychain composition (D7)", () => {
     await expect(file.get(DEFAULT_PROFILE)).resolves.toBeNull();
   });
 
+  it("read tolerates a missing keychain — skips it and reads the file (no-keychain box)", async () => {
+    const keychain = secureKeychain({ unavailable: true });
+    const file = memoryBackend("file", {
+      secure: false,
+      canWrite: true,
+      persistsConfig: true,
+      seed: { [DEFAULT_PROFILE]: { apiKey: "whk_from_file" } },
+    });
+    const store = resolveStore([keychain, file], { requireSecureStorage: false });
+    // get() iterates [keychain(throws unavailable), file] → must skip the keychain, not throw.
+    await expect(store.get()).resolves.toEqual({ apiKey: "whk_from_file" });
+  });
+
   it("propagates a non-availability failure (e.g. denied) without silently falling back", async () => {
     // A backend that throws a NON-KeychainUnavailable error must NOT fall back to the insecure file.
     const denied: CredentialBackend = {

@@ -22,6 +22,7 @@ import { renderJson } from "../output/format.js";
 
 interface LoginFlags extends GlobalFlags {
   stdin: boolean;
+  insecureStorage: boolean;
 }
 
 type KeySource = "stdin" | "env" | "prompt";
@@ -72,7 +73,9 @@ export const loginCommand = buildCommand<LoginFlags, [], AppContext>({
 
     // WBHK_API_KEY is the never-persisted headless path; only an interactively/piped key is saved.
     if (source !== "env") {
-      await this.store.set({ apiKey: key }, profile);
+      // Persist to the OS keychain (secure) by default; --insecure-storage forces the 0600 file even
+      // under WBHK_REQUIRE_SECURE_STORAGE (the escape hatch for a box without a keychain helper).
+      await this.store.set({ apiKey: key }, profile, { allowInsecure: flags.insecureStorage });
       // Make the base URL sticky too — but ONLY when explicitly overridden, so a plain `login` never
       // overwrites a stored value. Persist the validated, normalized URL (so a later read re-validates
       // the same clean origin). The env-only path above persists nothing, base URL included.
@@ -101,6 +104,11 @@ export const loginCommand = buildCommand<LoginFlags, [], AppContext>({
     flags: {
       ...globalFlags,
       stdin: { kind: "boolean", brief: "read the api key from stdin (for piping)", default: false },
+      insecureStorage: {
+        kind: "boolean",
+        brief: "store the key in the 0600 config file instead of the OS keychain",
+        default: false,
+      },
     },
   },
   docs: { brief: "validate an api key and store it for future commands" },
