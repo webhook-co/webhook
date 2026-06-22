@@ -60,21 +60,22 @@ describe("createApiClient.whoami", () => {
     expect((err as ApiError).code).toBe("FORBIDDEN");
   });
 
-  it("treats an unmapped 5xx as an UNEXPECTED ApiError (no capability code)", async () => {
-    const { fetch } = fakeFetch(new Response(null, { status: 503 }));
+  it("treats an unmapped, non-retryable 5xx as UNEXPECTED in a single attempt", async () => {
+    const { fetch, calls } = fakeFetch(new Response(null, { status: 500 }));
     const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch })
       .whoami()
       .catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBeUndefined();
     expect((err as ApiError).exitCode).toBe(EXIT.UNEXPECTED);
+    expect(calls).toHaveLength(1); // 500 is not transient → no retry
   });
 
   it("wraps a transport failure as an UNEXPECTED ApiError without leaking the cause", async () => {
     const fetch = (async () => {
       throw new Error("ECONNREFUSED 127.0.0.1:443");
     }) as unknown as typeof fetch;
-    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch })
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: async () => {} })
       .whoami()
       .catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
@@ -295,5 +296,115 @@ describe("createApiClient read methods", () => {
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBeUndefined();
+  });
+});
+
+// — bounded retries + per-request timeout (D1a) —
+
+/** Returns each step in order (repeating the last); records whether the timeout signal had already fired. */
+function sequenceFetch(steps: ReadonlyArray<Response | Error>): {
+  fetch: typeof fetch;
+  calls: { signalAborted: boolean }[];
+} {
+  const calls: { signalAborted: boolean }[] = [];
+  let i = 0;
+  const fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ signalAborted: init?.signal?.aborted ?? false });
+    const step = steps[Math.min(i, steps.length - 1)];
+    i += 1;
+    if (step instanceof Error) throw step;
+    return step;
+  }) as unknown as typeof fetch;
+  return { fetch, calls };
+}
+
+const instantSleep = async (_ms: number): Promise<void> => {};
+const okIdentity = { orgId: "org_1", scopes: ["events:read"] };
+
+describe("createApiClient retries + timeout", () => {
+  it("retries a transient 503 then returns the success body", async () => {
+    const { fetch, calls } = sequenceFetch([new Response(null, { status: 503 }), json(okIdentity)]);
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: instantSleep });
+    expect(await client.whoami()).toEqual(okIdentity);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("waits the Retry-After (not a backoff) before retrying a 429", async () => {
+    const slept: number[] = [];
+    const { fetch } = sequenceFetch([
+      new Response(null, { status: 429, headers: { "retry-after": "0" } }),
+      json(okIdentity),
+    ]);
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    await client.whoami();
+    expect(slept).toEqual([0]);
+  });
+
+  it("retries a transport failure then succeeds", async () => {
+    const { fetch, calls } = sequenceFetch([new Error("ECONNRESET"), json(okIdentity)]);
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: instantSleep });
+    expect(await client.whoami()).toEqual(okIdentity);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("exhausts attempts on a persistent 503 and surfaces UNEXPECTED", async () => {
+    const { fetch, calls } = sequenceFetch([new Response(null, { status: 503 })]);
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: instantSleep });
+    const err = await client.whoami().catch((e: unknown) => e);
+    expect((err as ApiError).exitCode).toBe(EXIT.UNEXPECTED);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("exhausts attempts on a persistent 429 and surfaces RATE_LIMITED", async () => {
+    const { fetch, calls } = sequenceFetch([new Response(null, { status: 429 })]);
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: instantSleep });
+    const err = await client.whoami().catch((e: unknown) => e);
+    expect((err as ApiError).exitCode).toBe(CAPABILITY_EXIT.RATE_LIMITED);
+    expect(calls).toHaveLength(3);
+  });
+
+  it("does not retry a terminal 404 (a single attempt)", async () => {
+    const { fetch, calls } = sequenceFetch([new Response(null, { status: 404 })]);
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: instantSleep });
+    const err = await client.endpointsGet("ep_x").catch((e: unknown) => e);
+    expect((err as ApiError).code).toBe("NOT_FOUND");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("retries an idempotent POST (auditVerify) on a transient 503", async () => {
+    const { fetch, calls } = sequenceFetch([
+      new Response(null, { status: 503 }),
+      json({ ok: true, rowsVerified: 3 }),
+    ]);
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: instantSleep });
+    expect(await client.auditVerify()).toMatchObject({ ok: true, rowsVerified: 3 });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("treats a timed-out (aborted) request as a retryable transport failure and recovers", async () => {
+    let n = 0;
+    const fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+      n += 1;
+      if (init?.signal?.aborted) throw new DOMException("the operation timed out", "TimeoutError");
+      return json(okIdentity);
+    }) as unknown as typeof fetch;
+    const signals = [AbortSignal.abort(), new AbortController().signal];
+    let s = 0;
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      sleep: instantSleep,
+      timeoutSignal: () => signals[s++],
+    });
+    expect(await client.whoami()).toEqual(okIdentity);
+    expect(n).toBe(2);
   });
 });

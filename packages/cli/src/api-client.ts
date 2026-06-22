@@ -22,6 +22,13 @@ import type { z } from "zod";
 
 import { CliError, InvalidApiUrlError, InvalidTunnelUrlError } from "./errors.js";
 import { EXIT, exitCodeForCapabilityError } from "./output/exit-codes.js";
+import {
+  apiBackoffMs,
+  API_MAX_ATTEMPTS,
+  API_TIMEOUT_MS,
+  isRetryableStatus,
+  parseRetryAfter,
+} from "./retry.js";
 
 // The CLI's Bearer HTTP client for the webhook.co REST API (api.webhook.co). It attaches the API key
 // as `Authorization: Bearer …`, maps an HTTP status back to the closed CapabilityError taxonomy (the
@@ -137,6 +144,14 @@ export interface ApiClientDeps {
   readonly apiKey: string;
   /** Injected fetch (the Workers/undici global in production; a fake in tests). */
   readonly fetch: typeof fetch;
+  /** Backoff sleep between retries (real `setTimeout` in prod; instant under test). */
+  readonly sleep?: (ms: number) => Promise<void>;
+  /** Jitter source for the retry backoff (`Math.random` in prod; deterministic under test). */
+  readonly rand?: () => number;
+  /** Total attempts per request before surfacing the failure (default `API_MAX_ATTEMPTS`). */
+  readonly maxAttempts?: number;
+  /** The per-request timeout signal (default `AbortSignal.timeout(API_TIMEOUT_MS)`; injectable for tests). */
+  readonly timeoutSignal?: () => AbortSignal;
 }
 
 /** Append a query string from the defined params only (absent keys are omitted, never sent as empty). */
@@ -150,29 +165,57 @@ function withQuery(path: string, params: Record<string, string | number | undefi
 }
 
 export function createApiClient(deps: ApiClientDeps): ApiClient {
-  async function request(path: string, method: "GET" | "POST", body?: unknown): Promise<unknown> {
-    let res: Response;
-    try {
-      res = await deps.fetch(`${deps.baseUrl}${path}`, {
-        method,
-        headers: {
-          authorization: `Bearer ${deps.apiKey}`,
-          accept: "application/json",
-          ...(body !== undefined ? { "content-type": "application/json" } : {}),
-        },
-        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      });
-    } catch {
-      // A transport failure (DNS/TLS/connection) — not a CapabilityError. The cause is omitted so a
-      // raw error string can't carry anything sensitive into output; the base URL is safe to show.
-      throw new ApiError(undefined, `could not reach the api at ${deps.baseUrl}`);
+  const maxAttempts = deps.maxAttempts ?? API_MAX_ATTEMPTS;
+  const sleep =
+    deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const rand = deps.rand ?? Math.random;
+  const makeTimeoutSignal = deps.timeoutSignal ?? (() => AbortSignal.timeout(API_TIMEOUT_MS));
+
+  // Each request gets a wall-clock timeout and a bounded, jittered retry — but retries are gated to
+  // IDEMPOTENT requests (a GET, or a POST that is a read / carries an idempotency key) AND to transient
+  // failures (a throttle/gateway/unavailable/timeout or a transport error). A 4xx other than 429, or a
+  // non-idempotent request, is never retried — so a replay can't be double-delivered by a blind retry.
+  async function request(
+    path: string,
+    method: "GET" | "POST",
+    opts: { body?: unknown; idempotent: boolean },
+  ): Promise<unknown> {
+    for (let attempt = 1; ; attempt += 1) {
+      const last = attempt >= maxAttempts;
+      let res: Response;
+      try {
+        res = await deps.fetch(`${deps.baseUrl}${path}`, {
+          method,
+          headers: {
+            authorization: `Bearer ${deps.apiKey}`,
+            accept: "application/json",
+            ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
+          },
+          ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+          signal: makeTimeoutSignal(),
+        });
+      } catch {
+        // A transport failure (DNS/TLS/connection) or a per-request timeout (the signal aborted). The
+        // cause is omitted so a raw error string can't carry anything sensitive into output.
+        if (opts.idempotent && !last) {
+          await sleep(apiBackoffMs(attempt, rand));
+          continue;
+        }
+        throw new ApiError(undefined, `could not reach the api at ${deps.baseUrl}`);
+      }
+      if (res.ok) return res.json();
+      if (opts.idempotent && !last && isRetryableStatus(res.status)) {
+        // Honour a delta-seconds `Retry-After` (clamped); otherwise fall back to jittered backoff.
+        await sleep(parseRetryAfter(res.headers.get("retry-after")) ?? apiBackoffMs(attempt, rand));
+        continue;
+      }
+      throw errorForStatus(res.status);
     }
-    if (!res.ok) throw errorForStatus(res.status);
-    return res.json();
   }
 
-  const getJson = (path: string): Promise<unknown> => request(path, "GET");
-  const postJson = (path: string, body?: unknown): Promise<unknown> => request(path, "POST", body);
+  const getJson = (path: string): Promise<unknown> => request(path, "GET", { idempotent: true });
+  const postJson = (path: string, body: unknown, idempotent: boolean): Promise<unknown> =>
+    request(path, "POST", { body, idempotent });
 
   // Parse a response against its shared contract schema; an unexpected shape is UNEXPECTED (never a
   // capability code), so a server/version skew surfaces as "unexpected response", not a misleading 4xx.
@@ -214,10 +257,11 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     },
     async eventsReplay(input): Promise<DeliveryAttempt> {
       const path = `/v1/events/${encodeURIComponent(input.eventId)}/replay`;
-      const json = await postJson(path, {
-        target: input.target,
-        idempotencyKey: input.idempotencyKey,
-      });
+      const json = await postJson(
+        path,
+        { target: input.target, idempotencyKey: input.idempotencyKey },
+        true, // idempotency-keyed → safe to retry a transient failure
+      );
       return parseOrThrow(eventsReplayCap.output, json, "replay");
     },
     async eventsGetPayload(eventId): Promise<{ contentType: string | null; body: Uint8Array }> {
@@ -233,7 +277,9 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       return { contentType: env.contentType, body };
     },
     async auditVerify(): Promise<AuditVerifyResult> {
-      return parseOrThrow(auditVerifyCap.output, await postJson("/v1/audit/verify"), "audit");
+      // A read (verifies the chain, no mutation) → safe to retry a transient failure.
+      const json = await postJson("/v1/audit/verify", undefined, true);
+      return parseOrThrow(auditVerifyCap.output, json, "audit");
     },
   };
 }
