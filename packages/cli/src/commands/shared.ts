@@ -5,10 +5,10 @@ import {
   type ApiClient,
   type Page,
 } from "../api-client.js";
-import { credentialAccessToken } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { announceActiveProfile, resolveProfile, type GlobalFlags } from "../global-flags.js";
+import { bindAuth } from "../oauth/auth-binding.js";
 import { renderJson, type OutputFormat } from "../output/format.js";
 
 // Shared plumbing for the read commands: build an authenticated client from the stored credential +
@@ -34,7 +34,15 @@ export async function authedClient(
     env: ctx.process.env?.[ENV_API_URL_VAR],
     stored: await ctx.store.getApiBaseUrl(profile),
   });
-  return createApiClient({ baseUrl, apiKey: credentialAccessToken(cred), fetch: ctx.io.fetch });
+  // Resolve the bearer (proactively refreshing an OAuth credential) + the reactive 401 refresh hook.
+  const { bearer, refreshAuth } = await bindAuth({
+    cred,
+    profile,
+    store: ctx.store,
+    fetch: ctx.io.fetch,
+    env: ctx.process.env,
+  });
+  return createApiClient({ baseUrl, apiKey: bearer, fetch: ctx.io.fetch, refreshAuth });
 }
 
 /** Validate `--limit`: an integer in the server's accepted 1–200 range (a throw → a usage error). */

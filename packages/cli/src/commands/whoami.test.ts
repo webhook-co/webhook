@@ -59,7 +59,7 @@ describe("wbhk whoami", () => {
           accessKey: "whk_oauth_access",
           refreshToken: "rtk_secret_refresh",
           authMethod: "device",
-          expiresAt: 1_700_000_000_000,
+          expiresAt: 4_102_444_800_000, // year 2100 — past expiry would now trigger a proactive refresh
           audience: "https://api.webhook.co",
           clientId: "client_abc",
         },
@@ -83,7 +83,7 @@ describe("wbhk whoami", () => {
           accessKey: "whk_oauth_access",
           refreshToken: "rtk_secret_refresh",
           authMethod: "loopback",
-          expiresAt: 1_700_000_000_000,
+          expiresAt: 4_102_444_800_000, // year 2100 — past expiry would now trigger a proactive refresh
           audience: "https://api.webhook.co",
           clientId: "client_abc",
         },
@@ -96,6 +96,42 @@ describe("wbhk whoami", () => {
     expect(out).toContain("org_o");
     expect(out).not.toContain("rtk_"); // the refresh token never reaches output
     expect(out).not.toContain("whk_oauth_access"); // the full access key isn't printed either (redacted)
+  });
+
+  it("proactively refreshes an expired OAuth token, uses the new bearer, and persists the rotation", async () => {
+    const store = memStore({
+      oauth: {
+        accessKey: "whk_old_access",
+        refreshToken: "rtk_old_refresh",
+        authMethod: "loopback",
+        expiresAt: 0, // already expired → proactive refresh before the identity call
+        audience: "https://api.webhook.co",
+        clientId: "client_abc",
+      },
+    });
+    let identityBearer: string | null = null;
+    const routingFetch = (async (url: string, init?: { headers?: HeadersInit }) => {
+      if (String(url).endsWith("/token")) {
+        return jsonResponse({
+          access_token: "whk_new_access",
+          token_type: "Bearer",
+          expires_in: 86400,
+          refresh_token: "rtk_new_refresh",
+          scope: "events:read",
+          resource: "https://api.webhook.co",
+        });
+      }
+      identityBearer = new Headers(init?.headers).get("authorization");
+      return jsonResponse({ orgId: "org_o", scopes: ["events:read"] });
+    }) as unknown as typeof fetch;
+    const t = makeTestContext({ store, fetch: routingFetch });
+    await run(app, ["whoami"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain("org: org_o");
+    expect(identityBearer).toContain("whk_new_access"); // the refreshed token is the bearer
+    // The rotated credential was persisted back to the store.
+    const persisted = await store.get();
+    expect(persisted).toMatchObject({ oauth: { accessKey: "whk_new_access" } });
   });
 
   it("sanitizes control bytes in the server-supplied org/userId/scopes (text view)", async () => {
@@ -177,7 +213,7 @@ describe("wbhk whoami", () => {
           accessKey: "whk_oauth_access",
           refreshToken: "rtk_secret_refresh",
           authMethod: "loopback",
-          expiresAt: 1_700_000_000_000,
+          expiresAt: 4_102_444_800_000, // year 2100 — past expiry would now trigger a proactive refresh
           audience: "https://api.webhook.co",
           clientId: "client_abc",
         },
