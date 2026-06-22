@@ -22,17 +22,45 @@ export const HELPERS_DEFAULT_HANDLER = { fetch: async () => new Response(null, {
 /** Unix seconds — the issuer's clock (cursor/consent-ticket/rate-limit timestamps). */
 export const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
-/** Request-origin trust signal (ip + coarse location) for the consent screen, from the edge headers. */
+/** Request-origin trust signal for the consent screen (ip + coarse geo), from the edge. */
 export interface RequestOrigin {
   ip: string;
+  /** ISO 3166-1 alpha-2 country (cf-ipcountry), or null for unknown/Tor. */
   location: string | null;
+  /** City name (request.cf.city), when the edge resolved one. Optional/null elsewhere (dev, non-Workers). */
+  city?: string | null;
+  /** Region/subdivision NAME, e.g. "Lisboa" (request.cf.region). */
+  region?: string | null;
+  /** Region/subdivision CODE, e.g. "11" (request.cf.regionCode). */
+  regionCode?: string | null;
 }
 
-/** A best-effort request-origin trust signal from the edge headers (no @cloudflare/workers-types needed). */
+/** Cloudflare attaches geo metadata to `request.cf` (NOT headers); typed structurally so this DOM-tsconfig
+ *  module needn't pull @cloudflare/workers-types. Only the fields we surface. */
+interface CfGeo {
+  city?: unknown;
+  region?: unknown;
+  regionCode?: unknown;
+}
+
+/**
+ * A best-effort request-origin trust signal. ip + country come from the edge HEADERS (cf-connecting-ip /
+ * cf-ipcountry); city/region/regionCode come from `request.cf` (the Cloudflare request metadata, absent in
+ * dev/test and on a non-Workers Request) — read null-safely so neither path throws.
+ */
 export function resolveOrigin(request: Request): RequestOrigin {
   const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
   const country = request.headers.get("cf-ipcountry");
   // CF uses "XX"/"T1" for unknown/Tor — treat those as no location rather than a misleading code.
   const location = country && !["XX", "T1"].includes(country) ? country : null;
-  return { ip, location };
+  const cf = (request as { cf?: CfGeo }).cf;
+  const str = (value: unknown): string | null =>
+    typeof value === "string" && value.length > 0 ? value : null;
+  return {
+    ip,
+    location,
+    city: str(cf?.city),
+    region: str(cf?.region),
+    regionCode: str(cf?.regionCode),
+  };
 }
