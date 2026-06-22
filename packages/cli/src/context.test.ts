@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { SecureStorageRequiredError } from "./config/errors.js";
-import { buildContext } from "./context.js";
+import { KeychainUnavailableError } from "./config/errors.js";
+import type { KeychainIo } from "./config/keychain-store.js";
+import { buildContext, type IoSeams } from "./context.js";
 
 function fakeHostProcess(env: Record<string, string | undefined>) {
   const out: string[] = [];
@@ -16,6 +17,36 @@ function fakeHostProcess(env: Record<string, string | undefined>) {
     },
     out,
     err,
+  };
+}
+
+/** An "unavailable" keychain — buildContext composes a keychain backend, so tests MUST inject one rather
+ *  than fall through to the real OS keychain (which would touch the developer's actual keychain). */
+const unavailableKeychain: KeychainIo = {
+  get: async () => {
+    throw new KeychainUnavailableError();
+  },
+  set: async () => {
+    throw new KeychainUnavailableError();
+  },
+  erase: async () => {
+    throw new KeychainUnavailableError();
+  },
+};
+
+/** A full fake IoSeams (everything throws if used) with an injectable keychain — keeps buildContext off
+ *  the real `fetch`/keychain in these context tests. */
+function fakeIo(keychain: KeychainIo = unavailableKeychain): IoSeams {
+  const nope = (): never => {
+    throw new Error("io seam not configured in this test");
+  };
+  return {
+    fetch: nope as unknown as typeof fetch,
+    isInteractive: false,
+    promptSecret: nope,
+    readStdin: nope,
+    connectWebSocket: nope as unknown as IoSeams["connectWebSocket"],
+    keychain,
   };
 }
 
@@ -58,12 +89,26 @@ describe("buildContext", () => {
     expect(buildContext(proc, { homedir: "/nonexistent-home" }).colorEnabled).toBe(false);
   });
 
-  it("wires the require-secure-storage policy from the environment", async () => {
+  it("wires the require-secure-storage policy: required but no keychain → fail loud (no insecure write)", async () => {
     const { proc } = fakeHostProcess({ WBHK_REQUIRE_SECURE_STORAGE: "1" });
-    const ctx = buildContext(proc, { homedir: "/nonexistent-home" });
-    // only the insecure 0600-file backend can write → policy forces a hard fail
+    const ctx = buildContext(proc, { homedir: "/nonexistent-home", io: fakeIo() }); // keychain unavailable
+    // The keychain (the only secure backend) is unavailable → fail loud rather than write the 0600 file.
     await expect(ctx.store.set({ apiKey: "whk_x" })).rejects.toBeInstanceOf(
-      SecureStorageRequiredError,
+      KeychainUnavailableError,
     );
+  });
+
+  it("composes the OS keychain ahead of the file: a credential lands in the keychain by default", async () => {
+    const m = new Map<string, string>();
+    const keychain: KeychainIo = {
+      get: async (a) => m.get(a) ?? null,
+      set: async (a, s) => void m.set(a, s),
+      erase: async (a) => void m.delete(a),
+    };
+    const { proc } = fakeHostProcess({});
+    const ctx = buildContext(proc, { homedir: "/nonexistent-home", io: fakeIo(keychain) });
+    await ctx.store.set({ apiKey: "whk_kc" });
+    expect(m.get("default")).toBe("whk_kc"); // stored in the keychain, not the 0600 file
+    await expect(ctx.store.get()).resolves.toEqual({ apiKey: "whk_kc" });
   });
 });

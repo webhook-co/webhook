@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { app } from "../app.js";
 import type { StoredCredential } from "../config/schema.js";
-import type { CredentialStore } from "../config/store.js";
+import type { CredentialStore, SetCredentialOptions } from "../config/store.js";
 import { makeTestContext } from "../context.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
 
@@ -12,13 +12,15 @@ function memStore(initial: StoredCredential | null = null): {
   store: CredentialStore;
   current: () => StoredCredential | null;
   baseUrl: () => string | undefined;
+  lastSetOpts: () => SetCredentialOptions | undefined;
 } {
   let cred = initial;
   let baseUrl: string | undefined;
+  let lastSetOpts: SetCredentialOptions | undefined;
   return {
     store: {
       get: async () => cred,
-      set: async (c) => void (cred = c),
+      set: async (c, _profile, opts) => void ((cred = c), (lastSetOpts = opts)),
       erase: async () => void (cred = null),
       list: async () => (cred ? ["default"] : []),
       getApiBaseUrl: async () => baseUrl,
@@ -26,6 +28,7 @@ function memStore(initial: StoredCredential | null = null): {
     },
     current: () => cred,
     baseUrl: () => baseUrl,
+    lastSetOpts: () => lastSetOpts,
   };
 }
 
@@ -155,5 +158,22 @@ describe("wbhk login", () => {
       key: "whk_****",
       persisted: true,
     });
+  });
+});
+
+describe("wbhk login --insecure-storage", () => {
+  it("passes --insecure-storage through to the store as allowInsecure", async () => {
+    const m = memStore();
+    const t = makeTestContext({ store: m.store, stdin: "whk_via_stdin", fetch: okFetch(IDENTITY) });
+    await run(app, ["login", "--stdin", "--insecure-storage"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(m.lastSetOpts()?.allowInsecure).toBe(true);
+  });
+
+  it("defaults to secure storage (allowInsecure falsy) without the flag", async () => {
+    const m = memStore();
+    const t = makeTestContext({ store: m.store, stdin: "whk_via_stdin", fetch: okFetch(IDENTITY) });
+    await run(app, ["login", "--stdin"], t.ctx);
+    expect(m.lastSetOpts()?.allowInsecure).toBeFalsy();
   });
 });

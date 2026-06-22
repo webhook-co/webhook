@@ -3,7 +3,9 @@ import { homedir as osHomedir } from "node:os";
 import type { ApplicationContext } from "@stricli/core";
 
 import { createEnvBackend } from "./config/env-store.js";
+import { KeychainUnavailableError } from "./config/errors.js";
 import { createFileBackend } from "./config/file-store.js";
+import { createKeychainBackend, type KeychainIo } from "./config/keychain-store.js";
 import { resolveConfigDir } from "./config/paths.js";
 import { resolveStore, type CredentialStore } from "./config/store.js";
 import { makeRealIo } from "./io.js";
@@ -49,6 +51,8 @@ export interface IoSeams {
   readStdin(): Promise<string>;
   /** Open the bearer-authed listen tunnel WebSocket (the `ws` client in prod; a fake in tests). */
   connectWebSocket: ConnectWebSocket;
+  /** OS-keychain secret storage (the macOS/Linux CLI in prod; a fake in tests). */
+  readonly keychain: KeychainIo;
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -101,10 +105,18 @@ export function buildContext(
 ): AppContext {
   const home = opts?.homedir ?? osHomedir();
   const configDir = resolveConfigDir(proc.env, home);
+  // io is resolved before the store so the credential store can compose the OS-keychain backend (which
+  // shells out via io.keychain) AHEAD of the 0600 file. Read precedence: env (CI override) › keychain
+  // (secure) › file (insecure fallback). An unavailable keychain is skipped on read + falls back on write.
+  const io = opts?.io ?? makeRealIo();
   const store =
     opts?.store ??
     resolveStore(
-      [createEnvBackend(proc.env), createFileBackend({ dir: configDir, platform: proc.platform })],
+      [
+        createEnvBackend(proc.env),
+        createKeychainBackend({ keychainIo: io.keychain }),
+        createFileBackend({ dir: configDir, platform: proc.platform }),
+      ],
       { requireSecureStorage: isTruthyEnv(proc.env[REQUIRE_SECURE_STORAGE_VAR]) },
     );
   return {
@@ -123,8 +135,7 @@ export function buildContext(
     colorEnabled: resolveColor(proc),
     homedir: home,
     platform: proc.platform,
-    // Real host I/O by default; tests inject fakes (makeTestContext) so commands never touch globals.
-    io: opts?.io ?? makeRealIo(),
+    io,
   };
 }
 
@@ -146,6 +157,8 @@ export function makeTestContext(opts?: {
   store?: CredentialStore;
   /** Fake tunnel-socket factory for `wbhk listen` (drives ready/event/close in tests). */
   connectWebSocket?: ConnectWebSocket;
+  /** Fake OS keychain (defaults to "unavailable" so the default store falls back to the file, as before). */
+  keychain?: KeychainIo;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -170,6 +183,19 @@ export function makeTestContext(opts?: {
       opts?.stdin !== undefined ? async () => opts.stdin as string : unconfigured("readStdin"),
     connectWebSocket:
       opts?.connectWebSocket ?? (unconfigured("connectWebSocket") as unknown as ConnectWebSocket),
+    // Default to an "unavailable" keychain so the default store transparently falls back to the file
+    // (preserving pre-keychain test behavior); a test that exercises the keychain passes its own fake.
+    keychain: opts?.keychain ?? {
+      get: async () => {
+        throw new KeychainUnavailableError();
+      },
+      set: async () => {
+        throw new KeychainUnavailableError();
+      },
+      erase: async () => {
+        throw new KeychainUnavailableError();
+      },
+    },
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",
