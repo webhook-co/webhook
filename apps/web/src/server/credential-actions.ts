@@ -9,19 +9,19 @@ import { verifySession } from "./session";
 
 /**
  * Surface the real cause of an otherwise-swallowed action failure to Workers observability — scrubbed:
- * the error name/message/code + the top stack frames (which function threw), never a key/plaintext/pepper
- * or a row value. The user still gets a generic message; this only makes a failure diagnosable instead of
- * silent. (Not exported — "use server" files may only export async actions.)
+ * the error name/message + (for a PG error) its SQLSTATE code, never a key/plaintext/pepper or a row
+ * value. The user still gets a generic message; this keeps a credential-mutation failure diagnosable
+ * instead of silent (a silent `catch {}` is what hid the `(void 0) is not a function` bundling bug).
+ * (Not exported — "use server" files may only export async actions.)
  */
 function logActionError(event: string, error: unknown): void {
-  const e = error as { name?: string; message?: string; code?: string; stack?: string };
+  const e = error as { name?: string; message?: string; code?: string };
   console.error(
     JSON.stringify({
       message: event,
       name: e?.name,
       error: e?.message ?? String(error),
       code: e?.code,
-      stack: e?.stack?.split("\n").slice(0, 5).join(" | "),
     }),
   );
 }
