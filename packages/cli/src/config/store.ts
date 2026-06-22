@@ -81,7 +81,15 @@ export function resolveStore(
     },
     async get(profile = DEFAULT_PROFILE) {
       for (const backend of backends) {
-        const hit = await backend.get(profile);
+        let hit: StoredCredential | null;
+        try {
+          hit = await backend.get(profile);
+        } catch (err) {
+          // A missing OS keychain has no credential to offer — skip it and read the next backend
+          // (so a no-keychain box still reads the env/file). Any other read error is real.
+          if (err instanceof KeychainUnavailableError) continue;
+          throw err;
+        }
         if (hit) return hit;
       }
       return null;
