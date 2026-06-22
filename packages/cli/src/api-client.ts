@@ -296,6 +296,39 @@ export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]
  * concatenating the raw string would let a query/whitespace value produce a malformed request target).
  * Anything else throws InvalidApiUrlError — so a persisted base URL is re-validated on every read.
  */
+/** A short, bounded budget for the `doctor` reachability probe — never the full 30s request timeout. */
+export const DOCTOR_PROBE_TIMEOUT_MS = 5_000;
+
+/** What a `doctor` reachability probe learns about the API origin (no auth, no body parsing). */
+export interface ReachabilityProbe {
+  readonly reachable: boolean;
+  readonly status?: number;
+  /** The server's `Date` header (for clock-skew detection), when present + parseable. */
+  readonly serverDate?: Date;
+}
+
+/**
+ * Probe whether the API origin answers at all (the `doctor` health check) — a single bounded GET to the
+ * base URL. ANY HTTP response counts as reachable (even a 404 root); only a transport/timeout error is
+ * "unreachable". No credential is sent and no body is read; the `Date` header is captured for clock-skew.
+ */
+export async function probeReachability(opts: {
+  fetch: typeof fetch;
+  baseUrl: string;
+  timeoutSignal?: () => AbortSignal;
+}): Promise<ReachabilityProbe> {
+  const signal = (opts.timeoutSignal ?? (() => AbortSignal.timeout(DOCTOR_PROBE_TIMEOUT_MS)))();
+  try {
+    const res = await opts.fetch(opts.baseUrl, { method: "GET", signal });
+    const dateHeader = res.headers.get("date");
+    const parsed = dateHeader !== null ? new Date(dateHeader) : undefined;
+    const serverDate = parsed !== undefined && !Number.isNaN(parsed.getTime()) ? parsed : undefined;
+    return { reachable: true, status: res.status, serverDate };
+  } catch {
+    return { reachable: false };
+  }
+}
+
 export function resolveApiBaseUrl(opts: { flag?: string; env?: string; stored?: string }): string {
   const raw = opts.flag ?? opts.env ?? opts.stored ?? DEFAULT_API_BASE_URL;
   let url: URL;
