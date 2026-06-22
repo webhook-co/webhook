@@ -9,6 +9,18 @@ import { normalizeStricliExitCode } from "./output/exit-codes.js";
 // stricli's result to a stable POSIX exit code. Kept thin (coverage-excluded) — all logic
 // lives in the testable modules above. We set process.exitCode (not process.exit) so any
 // buffered output flushes before the process ends.
+
+// Exit quietly on a broken pipe (e.g. `wbhk events list | head`) instead of crashing with an EPIPE
+// stack — the downstream reader closed early, which is success from the caller's point of view. (The
+// pipe is gone, so there is nothing left to flush; an immediate exit is correct here.)
+const exitQuietlyOnEpipe = (stream: NodeJS.WriteStream): void => {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code === "EPIPE") process.exit(0);
+  });
+};
+exitQuietlyOnEpipe(process.stdout);
+exitQuietlyOnEpipe(process.stderr);
+
 const ctx = buildContext(process);
 await run(app, process.argv.slice(2), ctx);
 process.exitCode = normalizeStricliExitCode(ctx.process.exitCode);

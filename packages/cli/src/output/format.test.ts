@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import { NotImplementedError } from "../errors.js";
-import { formatCliError, redactCredential, renderJson, resolveFormat } from "./format.js";
+import {
+  formatCliError,
+  formatUnknownCommand,
+  redactCredential,
+  renderJson,
+  resolveFormat,
+} from "./format.js";
 
 describe("output/format", () => {
   it("resolveFormat prefers the explicit flag, else text", () => {
@@ -35,5 +41,29 @@ describe("output/format", () => {
   it("formatCliError falls back to a plain message for ordinary errors and non-errors", () => {
     expect(formatCliError(new Error("boom"), { color: false })).toBe("boom");
     expect(formatCliError("just a string", { color: false })).toBe("just a string");
+  });
+});
+
+describe("formatUnknownCommand (did-you-mean)", () => {
+  it("suggests the closest command when stricli offers a correction (already backtick-quoted)", () => {
+    const line = formatUnknownCommand({ input: "evnts", corrections: ["`events`"] });
+    expect(line).toContain("unknown command");
+    expect(line).toContain("`evnts`");
+    expect(line).toContain("did you mean `events`?"); // joined as-is, not double-wrapped
+    expect(line).toContain("wbhk --help");
+  });
+
+  it("lists every offered correction", () => {
+    const line = formatUnknownCommand({ input: "l", corrections: ["`list`", "`listen`"] });
+    expect(line).toContain("`list`");
+    expect(line).toContain("`listen`");
+    expect(line).toContain("`list` or `listen`");
+  });
+
+  it("points at --help when there is no close match", () => {
+    const line = formatUnknownCommand({ input: "wat", corrections: [] });
+    expect(line).toContain("unknown command `wat`");
+    expect(line).toContain("wbhk --help");
+    expect(line).not.toContain("did you mean");
   });
 });

@@ -16,7 +16,7 @@ import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
 import { CliError } from "./errors.js";
 import { EXIT } from "./output/exit-codes.js";
-import { formatCliError } from "./output/format.js";
+import { formatCliError, formatUnknownCommand } from "./output/format.js";
 
 // Kept in sync with package.json; the bundle/build step injects the real value.
 export const VERSION = "0.0.0";
@@ -81,6 +81,9 @@ const appText: ApplicationText = {
     formatCliError(err, { color: ansiColor }),
   exceptionWhileRunningCommand: (exc: unknown, ansiColor: boolean): string =>
     formatCliError(exc, { color: ansiColor }),
+  // An unknown command suggests the closest match (stricli supplies `corrections`) or points at --help.
+  noCommandRegisteredForInput: ({ input, corrections }): string =>
+    formatUnknownCommand({ input, corrections }),
 };
 
 export const app: Application<AppContext> = buildApplication(root, {
