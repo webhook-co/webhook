@@ -123,6 +123,43 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm build
 
+  # Builds the standalone `wbhk` CLI binary with `bun build --compile` and proves shell completion
+  # works from THAT binary — the one integration the static gate (vitest/tsc) can't cover, since the
+  # completion hook + the bundle's source-resolution only exist in the compiled artifact. bun is
+  # installed via the official script (a run step, not a 3rd-party marketplace action) and pinned.
+  # `node scripts/bundle.mjs` moves the typecheck-only tsconfig aside so bun resolves the workspace
+  # deps to source (see that script). Not yet a required check — add it to the `main` ruleset to gate.
+  completion-smoke:
+    name: completion-smoke
+    runs-on: ubuntu-latest
+    needs: install
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: ./.github/actions/setup
+      # Version-pinned, NOT SHA-pinned (unlike the dbmate install above): bun's official installer
+      # fetches the version-tagged release, and we don't carry a per-platform archive hash. Deliberate
+      # delta — this job is CI-only, references no secrets (contents: read), and the binary it builds is
+      # a smoke artifact that is never shipped to users, so the blast radius is build-time only.
+      - name: Install bun (version-pinned)
+        run: |
+          curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14"
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+      - name: Build the standalone wbhk binary
+        run: |
+          rm -f packages/cli/dist/wbhk   # never assert against a stale artifact from a reused workspace
+          pnpm --filter @webhook-co/cli run bundle
+      - name: Completion hook fires from the compiled binary
+        run: |
+          BIN=packages/cli/dist/wbhk
+          test -x "$BIN"
+          # The emitted bash script registers the completion function…
+          "$BIN" completion bash | grep -q "complete -F _wbhk_complete wbhk"
+          # …and the hidden engine returns live proposals (filtered to the partial).
+          "$BIN" __complete -- ev | grep -qx "events"
+          "$BIN" __complete -- events "" | grep -qx "list"
+          "$BIN" __complete -- whoami -- | grep -q -- "--output"
+          echo "completion hook OK (compiled binary)"
+
   # Bundle apps/auth for Cloudflare Workers and validate the full deploy shape. The `build` job's
   # `next build` does NOT cover the worker bundle, where workerd-only resolution issues surface (e.g.
   # pg-cloudflare, @better-auth/core's workerd `instrumentation` entry). `deploy:dry` runs the OpenNext

@@ -2,6 +2,7 @@
 import { run } from "@stricli/core";
 
 import { app } from "./app.js";
+import { runCompletionProposals } from "./commands/completion.js";
 import { buildContext } from "./context.js";
 import { normalizeStricliExitCode } from "./output/exit-codes.js";
 
@@ -22,5 +23,14 @@ exitQuietlyOnEpipe(process.stdout);
 exitQuietlyOnEpipe(process.stderr);
 
 const ctx = buildContext(process);
-await run(app, process.argv.slice(2), ctx);
+const argv = process.argv.slice(2);
+if (argv[0] === "__complete") {
+  // The hidden completion engine the `wbhk completion bash` script calls on TAB. Dispatched here rather
+  // than as a route so it never shows in help / its own completions, and to avoid an app↔command cycle.
+  // The bash function passes `-- <words…>`; drop the leading `--` separator if present.
+  const rest = argv.slice(1);
+  await runCompletionProposals(app, rest[0] === "--" ? rest.slice(1) : rest, ctx);
+} else {
+  await run(app, argv, ctx);
+}
 process.exitCode = normalizeStricliExitCode(ctx.process.exitCode);
