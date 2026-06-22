@@ -21,12 +21,18 @@ function fakeClient(over: Partial<AuthClient["signIn"]> = {}): AuthClient {
 }
 
 describe("makeAuthActions.sendMagicLink", () => {
-  it("calls signIn.magicLink with the email + the post-login callbackURL", async () => {
+  it("calls signIn.magicLink with the email, the post-login callbackURL, + the captcha token header", async () => {
     const client = fakeClient();
-    await makeAuthActions(client, { callbackURL: CALLBACK }).sendMagicLink("user@example.com");
+    await makeAuthActions(client, { callbackURL: CALLBACK }).sendMagicLink(
+      "user@example.com",
+      "captcha-tok",
+    );
+    // The Turnstile token rides the x-captcha-response header (what Better Auth's captcha plugin reads)
+    // — never a body field — so the server gate sees it without changing the magic-link request body.
     expect(client.signIn.magicLink).toHaveBeenCalledWith({
       email: "user@example.com",
       callbackURL: CALLBACK,
+      fetchOptions: { headers: { "x-captcha-response": "captcha-tok" } },
     });
   });
 
@@ -35,7 +41,7 @@ describe("makeAuthActions.sendMagicLink", () => {
       magicLink: vi.fn(async () => ({ error: { message: "rate limited" } })),
     });
     await expect(
-      makeAuthActions(client, { callbackURL: CALLBACK }).sendMagicLink("u@e.com"),
+      makeAuthActions(client, { callbackURL: CALLBACK }).sendMagicLink("u@e.com", "tok"),
     ).rejects.toThrow();
   });
 });

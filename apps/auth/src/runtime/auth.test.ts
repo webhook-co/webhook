@@ -217,6 +217,60 @@ describe("buildAuthConfig", () => {
   });
 });
 
+// The Cloudflare Turnstile captcha gate (defense-in-depth on the public, email-sending magic-link endpoint).
+// It's wired ONLY when a Turnstile secret is configured (prod), so local/test runs without the secret boot
+// unchanged. When wired it gates EXACTLY /sign-in/magic-link (social + session stay ungated) and pins the
+// action + the origin host so a token minted elsewhere can't be replayed against it.
+describe("buildAuthConfig — Turnstile captcha", () => {
+  const withTurnstile: ResolvedAuthSecrets = { ...SECRETS, turnstileSecretKey: "0xSECRET" };
+  const captchaOptions = (baseURL: string) => {
+    const plugin = buildAuthConfig({ baseURL, secrets: withTurnstile }, cfgDeps()).plugins?.find(
+      (p) => p.id === "captcha",
+    );
+    return (plugin as { options: Record<string, unknown> } | undefined)?.options;
+  };
+
+  it("wires the Cloudflare Turnstile plugin when the secret is present", () => {
+    const o = captchaOptions("https://auth.webhook.co");
+    expect(o).toBeDefined();
+    expect(o?.provider).toBe("cloudflare-turnstile");
+    expect(o?.secretKey).toBe("0xSECRET");
+  });
+
+  it("gates ONLY the magic-link send (social + session stay ungated)", () => {
+    expect(captchaOptions("https://auth.webhook.co")?.endpoints).toEqual(["/sign-in/magic-link"]);
+  });
+
+  it("pins the expected action (rejects a token minted for another action/site)", () => {
+    expect(captchaOptions("https://auth.webhook.co")?.expectedAction).toBe("turnstile-spin-v1");
+  });
+
+  it("derives the allowed hostname from the configured origin (prod host)", () => {
+    expect(captchaOptions("https://auth.webhook.co")?.allowedHostnames).toEqual([
+      "auth.webhook.co",
+    ]);
+  });
+
+  it("derives the allowed hostname for local dev (localhost, not the prod host)", () => {
+    expect(captchaOptions("http://localhost:8788")?.allowedHostnames).toEqual(["localhost"]);
+  });
+
+  it("does NOT wire the captcha when no Turnstile secret is configured", () => {
+    expect(buildAuthConfig(input(), cfgDeps()).plugins?.some((p) => p.id === "captcha")).toBe(
+      false,
+    );
+  });
+
+  it("keeps the magic-link plugin alongside the captcha", () => {
+    const plugins = buildAuthConfig(
+      { baseURL: "https://auth.webhook.co", secrets: withTurnstile },
+      cfgDeps(),
+    ).plugins;
+    expect(plugins?.some((p) => p.id === "magic-link")).toBe(true);
+    expect(plugins?.some((p) => p.id === "captcha")).toBe(true);
+  });
+});
+
 describe("makeAuth", () => {
   it("resolves secret bindings + constructs an instance exposing a handler + a pool-close hook", async () => {
     const made = await makeAuth(ENV);
