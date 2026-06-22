@@ -8,7 +8,7 @@ import type { ConnectWebSocket, WsHandlers } from "../context.js";
 import { makeTestContext } from "../context.js";
 import type { ForwardInput, ForwardOutcome } from "../forward.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
-import { backoffMs, formatListenEvent, runListen, type ListenSince } from "./listen.js";
+import { formatListenEvent, runListen, type ListenSince } from "./listen.js";
 
 function loggedInStore(): CredentialStore {
   return {
@@ -87,15 +87,6 @@ function depsFor(
     sleep: async () => {}, // instant backoff under test
   };
 }
-
-describe("backoffMs", () => {
-  it("caps the exponential growth and applies full jitter", () => {
-    expect(backoffMs(1, () => 0)).toBe(250); // base 500 → half 250 + 0 jitter
-    expect(backoffMs(1, () => 1)).toBe(500); // 250 + 250
-    expect(backoffMs(50, () => 0)).toBe(15000); // capped at 30000 → half
-    expect(backoffMs(50, () => 1)).toBe(30000);
-  });
-});
 
 describe("formatListenEvent", () => {
   it("renders a compact line: timestamp, provider (— when null), verified word, id", () => {

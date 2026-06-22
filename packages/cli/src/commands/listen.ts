@@ -22,6 +22,7 @@ import {
   type ForwardInput,
   type ForwardOutcome,
 } from "../forward.js";
+import { abortableSleep, backoffMs } from "../retry.js";
 import { colorize } from "../output/color.js";
 import { resolveFormat, type OutputFormat } from "../output/format.js";
 
@@ -40,18 +41,10 @@ import { resolveFormat, type OutputFormat } from "../output/format.js";
 //   beginning     — replay the full retained backlog, then tail (connect with no cursor).
 //   <cursor>      — resume from an explicit opaque cursor (e.g. a prior nextCursor).
 
-const BACKOFF_BASE_MS = 500;
-const BACKOFF_CAP_MS = 30_000;
 /** Bounds the dedup memory of a long session; far above the at-least-once redelivery window. */
 const SEEN_CURSOR_CAP = 50_000;
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-/** Capped exponential backoff with full jitter (attempt is 1-based). */
-export function backoffMs(attempt: number, rand: () => number = Math.random): number {
-  const capped = Math.min(BACKOFF_CAP_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, attempt - 1));
-  return Math.round(capped / 2 + rand() * (capped / 2));
-}
 
 /** One compact tail line per event (text mode). Human-facing format — eyeball before release. */
 export function formatListenEvent(summary: EventSummary, color: boolean): string {
@@ -85,29 +78,6 @@ export interface ListenForwardDeps {
   readonly post: (input: ForwardInput) => Promise<ForwardOutcome>;
   /** Record the forward server-side (events.replay), keyed by the event cursor (idempotent). */
   readonly record: (eventId: string, cursor: string) => Promise<void>;
-}
-
-/** A backoff wait that resolves immediately on abort, so Ctrl+C isn't delayed by a pending sleep. */
-function abortableSleep(
-  signal: AbortSignal,
-  sleep: (ms: number) => Promise<void>,
-  ms: number,
-): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (signal.aborted) {
-      resolve();
-      return;
-    }
-    let done = false;
-    const finish = (): void => {
-      if (done) return;
-      done = true;
-      signal.removeEventListener("abort", finish);
-      resolve();
-    };
-    signal.addEventListener("abort", finish, { once: true });
-    void sleep(ms).then(finish);
-  });
 }
 
 export interface RunListenDeps {
