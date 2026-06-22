@@ -46,6 +46,18 @@ export function DeviceForm({
   const [verified, setVerified] = React.useState(false);
   const [codeError, setCodeError] = React.useState<string | null>(null);
   const [formError, setFormError] = React.useState<string | null>(null);
+  const inputRef = React.useRef<HTMLInputElement>(null);
+
+  // When the field is pre-filled (from ?user_code), focus it with the caret at the END — so the user
+  // can confirm/edit from where the code stops rather than landing on a selected or start-anchored value.
+  // Empty form: leave focus alone. Mount-only (reads the initial DOM value, so no state dep).
+  React.useEffect(() => {
+    const el = inputRef.current;
+    if (el?.value) {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }, []);
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -94,6 +106,7 @@ export function DeviceForm({
 
       <form className="flex flex-col gap-3" onSubmit={handleSubmit} noValidate>
         <Field
+          ref={inputRef}
           label="Device code"
           placeholder="WXYZ-1234"
           autoComplete="one-time-code"

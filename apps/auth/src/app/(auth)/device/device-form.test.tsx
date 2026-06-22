@@ -45,6 +45,19 @@ describe("DeviceForm", () => {
     expect(actions.verifyCode).not.toHaveBeenCalled();
   });
 
+  it("focuses the pre-filled field with the caret at the END (not selected, not at the start)", () => {
+    render(<DeviceForm actions={makeActions()} initialCode="YYM9-6SN5" />);
+    const input = screen.getByLabelText(/device code/i) as HTMLInputElement;
+    expect(input).toHaveFocus();
+    expect(input.selectionStart).toBe("YYM9-6SN5".length);
+    expect(input.selectionEnd).toBe("YYM9-6SN5".length);
+  });
+
+  it("does NOT autofocus when there is no pre-filled code", () => {
+    render(<DeviceForm actions={makeActions()} />);
+    expect(screen.getByLabelText(/device code/i)).not.toHaveFocus();
+  });
+
   it("normalizes a messy initialCode (lowercase, no dash) for the pre-fill", () => {
     render(<DeviceForm actions={makeActions()} initialCode="yym96sn5" />);
     expect(screen.getByLabelText(/device code/i)).toHaveValue("YYM9-6SN5");
