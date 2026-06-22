@@ -2,7 +2,7 @@ import { buildCommand } from "@stricli/core";
 
 import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-client.js";
 import { ENV_API_KEY_VAR } from "../config/env-store.js";
-import { credentialAccessToken, isOAuthCredential } from "../config/schema.js";
+import { isOAuthCredential } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import {
@@ -12,6 +12,7 @@ import {
   resolveProfile,
   type GlobalFlags,
 } from "../global-flags.js";
+import { bindAuth } from "../oauth/auth-binding.js";
 import { redactCredential, renderJson } from "../output/format.js";
 import { sanitizeControl } from "../output/safe-text.js";
 
@@ -34,11 +35,14 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
       env: this.process.env?.[ENV_API_URL_VAR],
       stored: await this.store.getApiBaseUrl(profile),
     });
-    const client = createApiClient({
-      baseUrl,
-      apiKey: credentialAccessToken(cred),
+    const { bearer, refreshAuth } = await bindAuth({
+      cred,
+      profile,
+      store: this.store,
       fetch: this.io.fetch,
+      env: this.process.env,
     });
+    const client = createApiClient({ baseUrl, apiKey: bearer, fetch: this.io.fetch, refreshAuth });
     const identity = await client.whoami(); // throws ApiError (a CliError) on 401/etc — handled by the app
 
     const { format } = resolveGlobals(this, flags);

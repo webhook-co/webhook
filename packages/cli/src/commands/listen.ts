@@ -15,7 +15,6 @@ import {
   resolveTunnelUrl,
 } from "../api-client.js";
 import { resolveStateDir } from "../config/paths.js";
-import { credentialAccessToken } from "../config/schema.js";
 import type { AppContext, ConnectWebSocket, WsSocket } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import {
@@ -25,6 +24,7 @@ import {
   type ForwardInput,
   type ForwardOutcome,
 } from "../forward.js";
+import { bindAuth } from "../oauth/auth-binding.js";
 import { abortableSleep, backoffMs } from "../retry.js";
 import { clearCursor, loadCursor, saveCursor, type CursorLoad } from "../state/cursor-store.js";
 import { colorize } from "../output/color.js";
@@ -364,6 +364,17 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
     announceActiveProfile(this, profile);
     const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
+    // Resolve the bearer once (proactively refreshing an OAuth credential at/near expiry) — used for both
+    // the tunnel UPGRADE and the --forward api client. The reactive 401 refresh hook is wired into the
+    // forward client (HTTP); mid-session refresh over the long-lived tunnel is out of scope here (a fresh
+    // connect re-runs this resolution, so an expired-since-last-run token is still refreshed up front).
+    const { bearer, refreshAuth } = await bindAuth({
+      cred,
+      profile,
+      store: this.store,
+      fetch: this.io.fetch,
+      env: this.process.env,
+    });
 
     const tunnelUrl = resolveTunnelUrl({
       flag: flags.tunnelUrl,
@@ -410,8 +421,9 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       });
       const client = createApiClient({
         baseUrl: apiBaseUrl,
-        apiKey: credentialAccessToken(cred),
+        apiKey: bearer,
         fetch: this.io.fetch,
+        refreshAuth,
       });
       const targetUrl = flags.forward;
       const forwardSessionId = crypto.randomUUID(); // a logical id for this forward run's records
@@ -449,7 +461,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       await runListen({
         connect: this.io.connectWebSocket,
         tunnelUrl,
-        apiKey: credentialAccessToken(cred),
+        apiKey: bearer,
         endpointId,
         since,
         forward,
