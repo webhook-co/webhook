@@ -53,6 +53,10 @@ export interface IoSeams {
   connectWebSocket: ConnectWebSocket;
   /** OS-keychain secret storage (the macOS/Linux CLI in prod; a fake in tests). */
   readonly keychain: KeychainIo;
+  /** Best-effort: open a URL in the user's default browser (the OAuth `login` convenience). */
+  openBrowser(url: string): Promise<void>;
+  /** Wall-clock sleep (real `setTimeout` in prod; instant under test) — the device-flow poll backoff. */
+  sleep(ms: number): Promise<void>;
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -159,6 +163,10 @@ export function makeTestContext(opts?: {
   connectWebSocket?: ConnectWebSocket;
   /** Fake OS keychain (defaults to "unavailable" so the default store falls back to the file, as before). */
   keychain?: KeychainIo;
+  /** Fake browser-opener for `login` (records the URL); defaults to a no-op (best-effort in prod too). */
+  openBrowser?: (url: string) => Promise<void>;
+  /** Fake sleep (defaults to instant) so device-flow command tests don't wait on real timers. */
+  sleep?: (ms: number) => Promise<void>;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -196,6 +204,8 @@ export function makeTestContext(opts?: {
         throw new KeychainUnavailableError();
       },
     },
+    openBrowser: opts?.openBrowser ?? (async () => {}),
+    sleep: opts?.sleep ?? (async () => {}),
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",
