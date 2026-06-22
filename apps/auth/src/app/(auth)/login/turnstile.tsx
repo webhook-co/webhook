@@ -14,9 +14,9 @@ import type { CaptchaWidgetProps } from "./login-form";
 // Presentation (to sit alongside the email field): `size: "flexible"` makes the widget fill its container
 // width — matching the field's `w-full` responsiveness — down to Turnstile's 300px PLATFORM floor (it won't
 // render narrower). The form column (max-w-[366px], fluid below that) stays ≥300px down to a ~344px-wide
-// viewport; only on a legacy ~320px phone does the column dip under the floor (founder eyeball). The wrapper
-// clips the widget to the field's `rounded-control` (6px) radius; and the theme tracks the app's light/dark
-// mode (a `data-theme` attribute on <html>, not the OS), re-rendering when the in-app toggle flips it.
+// viewport; only on a legacy ~320px phone does the column dip under the floor (founder eyeball). The widget
+// keeps its native corners (clipping to the field's radius looked off — founder call); and the theme tracks
+// the app's light/dark mode (a `data-theme` attribute on <html>, not the OS), re-rendering on an in-app flip.
 
 const SCRIPT_SRC = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
 
@@ -146,12 +146,8 @@ export function Turnstile({ onToken }: CaptchaWidgetProps) {
     };
   }, [onToken]);
 
-  // Full-width to match the email field; overflow-hidden + rounded-control (6px) clips the widget's iframe
-  // to the same corner radius. data-action is an informational marker (the turnstile-spin-v1 activation tag)
-  // — the auto-render path would read it; explicit render takes the action from render() above.
-  return (
-    <div className="w-full overflow-hidden rounded-control">
-      <div ref={containerRef} className="cf-turnstile" data-action={TURNSTILE_ACTION} />
-    </div>
-  );
+  // Full-width to match the email field; the widget keeps its own native corners (no radius clip).
+  // data-action is an informational marker (the turnstile-spin-v1 activation tag) — the auto-render path
+  // would read it; explicit render takes the action from render() above.
+  return <div ref={containerRef} className="w-full cf-turnstile" data-action={TURNSTILE_ACTION} />;
 }
