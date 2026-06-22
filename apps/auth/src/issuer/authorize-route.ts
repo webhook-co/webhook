@@ -38,6 +38,19 @@ export interface AuthorizeRouteDeps {
   ) => Promise<BuildConsentResult>;
   /** Bound consent core (decideConsent + its deps). */
   decideConsent: (input: DecideConsentInput) => Promise<DecideResult>;
+  /**
+   * Seal an absolute (cross-origin loopback) redirect URL into a SAME-ORIGIN `/consent/complete?c=…` bounce
+   * path. The consent form navigates to this same-origin path (always allowed), and GET /consent/complete
+   * 302s to the loopback server-side — the client can't navigate https→http://127.0.0.1 itself (PNA).
+   */
+  sealLoopbackRedirect: (redirectTo: string) => Promise<string>;
+  /** Open a `/consent/complete` ticket → the sealed loopback URL, or null if invalid/expired/non-loopback. */
+  openLoopbackRedirect: (ticket: string) => Promise<string | null>;
+}
+
+/** A loopback redirect is an absolute http(s) URL; the device flow returns a same-origin relative path. */
+function isAbsoluteUrl(target: string): boolean {
+  return /^https?:\/\//i.test(target);
 }
 
 function redirect(location: string): Response {
@@ -147,10 +160,37 @@ export async function handleConsentDecision(
   });
 
   if (result.kind === "ok") {
-    return jsonResponse(200, { redirectTo: result.redirectTo });
+    // An absolute redirect is the cross-origin loopback callback — the browser can't reach it via a
+    // client-side nav (PNA), so hand back a same-origin /consent/complete bounce that 302s to it. A relative
+    // target (the device flow's /device?status=…) is same-origin → navigate to it directly.
+    const redirectTo = isAbsoluteUrl(result.redirectTo)
+      ? await deps.sealLoopbackRedirect(result.redirectTo)
+      : result.redirectTo;
+    return jsonResponse(200, { redirectTo });
   }
   return jsonResponse(result.status, {
     error: result.error,
     error_description: result.description,
   });
+}
+
+/**
+ * GET /consent/complete — the loopback bounce. The consent form navigated here (same-origin) carrying the
+ * sealed completion ticket; verify it and issue a SERVER 302 to the loopback callback (browsers follow a
+ * top-level 302 to a 127.0.0.1/::1 literal). A missing/invalid/expired/forged ticket 400s — never redirects,
+ * so this can't be coerced into an open redirect.
+ */
+export async function handleConsentComplete(
+  deps: AuthorizeRouteDeps,
+  request: Request,
+): Promise<Response> {
+  const ticket = new URL(request.url).searchParams.get("c");
+  if (!ticket) {
+    return badRequest("invalid_request", "missing completion ticket");
+  }
+  const loopback = await deps.openLoopbackRedirect(ticket);
+  if (!loopback) {
+    return badRequest("invalid_request", "the completion link is invalid or has expired");
+  }
+  return redirect(loopback);
 }
