@@ -1,5 +1,5 @@
 import { run } from "@stricli/core";
-import { encodeServerFrame, type EventSummary } from "@webhook-co/shared";
+import { encodeServerFrame, LISTEN_LAG_CAP, type EventSummary } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { app } from "../app.js";
@@ -8,7 +8,7 @@ import type { ConnectWebSocket, WsHandlers } from "../context.js";
 import { makeTestContext } from "../context.js";
 import type { ForwardInput, ForwardOutcome } from "../forward.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
-import { formatListenEvent, runListen, type ListenSince } from "./listen.js";
+import { formatListenEvent, resolveResumeStart, runListen, type ListenSince } from "./listen.js";
 
 function loggedInStore(): CredentialStore {
   return {
@@ -474,5 +474,174 @@ describe("wbhk listen command (wiring)", () => {
     await run(app, ["listen", EP, "--forward", "http://evil.example"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
     expect(t.stderr().toLowerCase()).toContain("localhost");
+  });
+});
+
+describe("resolveResumeStart (D6b — where a run starts)", () => {
+  const base = {
+    reset: false,
+    loadCursor: async () => ({ kind: "miss" }) as const,
+    clearCursor: async () => {},
+    note: () => {},
+  };
+
+  it("resume + a saved cursor → resumes from it (?sinceCursor=)", async () => {
+    const since = await resolveResumeStart({
+      ...base,
+      resume: true,
+      since: "now",
+      loadCursor: async () => ({ kind: "hit", cursor: "cur_saved" }),
+    });
+    expect(since).toEqual({ kind: "cursor", cursor: "cur_saved" });
+  });
+
+  it("resume + no saved cursor → cold-starts from now", async () => {
+    expect(await resolveResumeStart({ ...base, resume: true, since: "now" })).toEqual({
+      kind: "now",
+    });
+  });
+
+  it("resume + a corrupt saved cursor → warns and cold-starts", async () => {
+    const lines: string[] = [];
+    const since = await resolveResumeStart({
+      ...base,
+      resume: true,
+      since: "now",
+      loadCursor: async () => ({ kind: "corrupt", detail: "bad json" }),
+      note: (l) => void lines.push(l),
+    });
+    expect(since).toEqual({ kind: "now" });
+    expect(lines.join("").toLowerCase()).toContain("cursor");
+  });
+
+  it("treats `--since from-last-ack` as resume", async () => {
+    let loaded = false;
+    const since = await resolveResumeStart({
+      ...base,
+      resume: false,
+      since: "from-last-ack",
+      loadCursor: async () => {
+        loaded = true;
+        return { kind: "hit", cursor: "c" };
+      },
+    });
+    expect(loaded).toBe(true);
+    expect(since).toEqual({ kind: "cursor", cursor: "c" });
+  });
+
+  it("--reset clears the saved cursor first", async () => {
+    let cleared = false;
+    await resolveResumeStart({
+      ...base,
+      resume: false,
+      reset: true,
+      since: "now",
+      clearCursor: async () => void (cleared = true),
+    });
+    expect(cleared).toBe(true);
+  });
+
+  it("non-resume maps now / beginning / <cursor> as before", async () => {
+    expect(await resolveResumeStart({ ...base, resume: false, since: "now" })).toEqual({
+      kind: "now",
+    });
+    expect(await resolveResumeStart({ ...base, resume: false, since: "beginning" })).toEqual({
+      kind: "beginning",
+    });
+    expect(await resolveResumeStart({ ...base, resume: false, since: "cur_explicit" })).toEqual({
+      kind: "cursor",
+      cursor: "cur_explicit",
+    });
+  });
+});
+
+describe("runListen — resume persistence + status banner (D6b)", () => {
+  it("persists each acked cursor via the persist dep (for cross-run resume)", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const persisted: string[] = [];
+    const p = runListen({ ...depsFor(t, out, ac.signal), persist: (c) => void persisted.push(c) });
+    await tick();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    await tick();
+    expect(persisted).toContain("c1");
+    ac.abort();
+    await p;
+  });
+
+  it("persists ONLY newly-seen cursors — a redelivery re-acks but never re-persists (monotonic)", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const persisted: string[] = [];
+    const p = runListen({ ...depsFor(t, out, ac.signal), persist: (c) => void persisted.push(c) });
+    await tick();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    const ev1 = encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" });
+    t.h().onMessage(ev1);
+    t.h().onMessage(ev1); // at-least-once redelivery of c1
+    await tick();
+    // c1 is acked twice (advances the server) but persisted exactly once — the saved cursor never moves
+    // backwards to an older value on a redelivery.
+    expect(persisted).toEqual(["c1"]);
+    expect(t.sent.filter((s) => s === JSON.stringify({ type: "ack", cursor: "c1" }))).toHaveLength(
+      2,
+    );
+    ac.abort();
+    await p;
+  });
+
+  it("notes the backlog count on a behind status frame, and 'caught up' on the transition", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const p = runListen(depsFor(t, out, ac.signal));
+    await tick();
+    t.h().onMessage(
+      encodeServerFrame({ type: "status", caughtUp: false, lag: { backlogCount: 4200 } }),
+    );
+    t.h().onMessage(encodeServerFrame({ type: "status", caughtUp: true }));
+    await tick();
+    const notes = out.note.join("");
+    expect(notes).toContain("4200");
+    expect(notes.toLowerCase()).toContain("caught up");
+    ac.abort();
+    await p;
+  });
+
+  it("renders an over-cap backlog as `<cap>+`", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const p = runListen(depsFor(t, out, ac.signal));
+    await tick();
+    t.h().onMessage(
+      encodeServerFrame({
+        type: "status",
+        caughtUp: false,
+        lag: { backlogCount: LISTEN_LAG_CAP + 1 },
+      }),
+    );
+    await tick();
+    expect(out.note.join("")).toContain(`${LISTEN_LAG_CAP}+`);
+    ac.abort();
+    await p;
+  });
+
+  it("stays quiet for a small backlog (below the guard)", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const p = runListen(depsFor(t, out, ac.signal));
+    await tick();
+    t.h().onMessage(
+      encodeServerFrame({ type: "status", caughtUp: false, lag: { backlogCount: 5 } }),
+    );
+    await tick();
+    expect(out.note.join("")).toBe("");
+    ac.abort();
+    await p;
   });
 });
