@@ -10,8 +10,10 @@ import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { API_RESOURCE, MCP_RESOURCE, createClient, getConsentOrg } from "@webhook-co/db";
 import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
 
+import { signLoopbackTicket, verifyLoopbackTicket } from "./completion-ticket";
 import { buildConsent, decideConsent } from "./consent-core";
 import { importConsentTicketKey, signConsentTicket, verifyConsentTicket } from "./consent-ticket";
+import { isAllowedRedirectUri } from "./dcr";
 import { makeDeviceStoreDeps } from "./device-deps";
 import { setDeviceDecision } from "./device-store";
 import {
@@ -28,6 +30,9 @@ import type { AuthorizeRouteDeps } from "./authorize-route";
 import { LOGIN_PATH } from "../runtime/urls";
 import { makeAuth, type AuthExecutionContext, type RuntimeAuth } from "../runtime/auth";
 import type { AuthorizeEnv } from "../runtime/env";
+
+/** The loopback-completion bounce ticket's TTL — the bounce navigation is immediate; 2 min is ample slack. */
+const COMPLETION_TICKET_TTL_SECONDS = 120;
 
 export interface AuthorizeDeps {
   deps: AuthorizeRouteDeps;
@@ -104,6 +109,22 @@ export async function makeAuthorizeDeps(
         },
         input,
       ),
+
+    // The loopback bounce: sign the server-computed loopback redirect into a same-origin /consent/complete
+    // ticket; on the way back, verify it and re-assert it's a loopback literal (defense in depth — we only
+    // ever sign such URLs) before GET /consent/complete 302s to it.
+    sealLoopbackRedirect: async (redirectTo) => {
+      const ticket = await signLoopbackTicket(
+        redirectTo,
+        ticketKey,
+        nowSeconds() + COMPLETION_TICKET_TTL_SECONDS,
+      );
+      return `/consent/complete?c=${encodeURIComponent(ticket)}`;
+    },
+    openLoopbackRedirect: async (ticket) => {
+      const url = await verifyLoopbackTicket(ticket, ticketKey, nowSeconds());
+      return url && isAllowedRedirectUri(url) ? url : null;
+    },
   };
 
   return {

@@ -10,7 +10,7 @@
 // types (env/ctx/handler) are kept structural so no Workers-global lib is needed under the DOM tsconfig.
 
 import { makeAuthorizeDeps } from "./authorize-deps";
-import { handleAuthorize, handleConsentDecision } from "./authorize-route";
+import { handleAuthorize, handleConsentComplete, handleConsentDecision } from "./authorize-route";
 import { makeDeviceAuthorizeDeps } from "./device-authorize-deps";
 import { handleDeviceAuthorization } from "./device-authorize-route";
 import { redeemDeviceCode } from "./device-token-core";
@@ -84,6 +84,18 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
           return await handleConsentDecision(deps, request);
         } finally {
           drain(ctx, close, "consent_decision.pool_close_failed");
+        }
+      }
+
+      // GET /consent/complete — the loopback bounce: verify the same-origin completion ticket the consent
+      // form navigated here with, then SERVER-302 the browser to the http://127.0.0.1 callback (a
+      // client-side public→loopback nav is PNA-blocked). Only the ticket key is touched (no pool/session).
+      if (request.method === "GET" && url.pathname === "/consent/complete") {
+        const { deps, close } = await makeAuthorizeDeps(readAuthorizeEnv(rawEnv), ctx);
+        try {
+          return await handleConsentComplete(deps, request);
+        } finally {
+          drain(ctx, close, "consent_complete.pool_close_failed");
         }
       }
 
