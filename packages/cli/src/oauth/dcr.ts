@@ -17,6 +17,10 @@ export interface RegisterResult {
   readonly clientId: string;
 }
 
+/** The human-readable name the CLI registers under (RFC 7591 `client_name`), so the consent screen reads
+ *  "Authorize webhook.co CLI" rather than the opaque generated `client_id`. */
+export const CLI_CLIENT_NAME = "webhook.co CLI";
+
 /**
  * Register a public client for the given loopback redirect URIs and return its `client_id`. The grant
  * types cover all three CLI flows (auth-code, refresh, device); S256 PKCE is enforced server-side.
@@ -30,6 +34,7 @@ export async function registerClient(
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json" },
     body: JSON.stringify({
+      client_name: CLI_CLIENT_NAME,
       redirect_uris: redirectUris,
       token_endpoint_auth_method: "none",
       grant_types: [

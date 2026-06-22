@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createServer } from "node:http";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { text } from "node:stream/consumers";
@@ -8,7 +9,62 @@ import { WebSocket as WsWebSocket } from "ws";
 
 import { KeychainUnavailableError } from "./config/errors.js";
 import type { KeychainIo } from "./config/keychain-store.js";
-import type { IoSeams } from "./context.js";
+import type { IoSeams, LoopbackServer } from "./context.js";
+
+// The page shown in the browser tab once the OAuth redirect lands on the loopback server — Lane D's own
+// (the issuer's job ends at the redirect). Static + self-contained (no remote assets); the CLI has already
+// captured the code by the time this renders, so it's purely "you can go back to your terminal".
+const CLOSE_TAB_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>signed in · webhook.co</title>
+<style>body{font:16px/1.5 system-ui,sans-serif;margin:0;display:grid;place-items:center;min-height:100vh}
+main{text-align:center;padding:2rem}h1{font-size:1.25rem;margin:0 0 .5rem}p{color:#555;margin:0}</style>
+</head><body><main><h1>you're signed in</h1><p>You can close this tab and return to your terminal.</p></main></body></html>`;
+
+// Start the loopback redirect server for the browser OAuth flow. Bound to the 127.0.0.1 IP LITERAL on an
+// ephemeral port (port 0 → OS-assigned) — never `localhost` (could resolve to another interface) and never
+// `0.0.0.0` (would expose the code-bearing redirect to the whole network). Resolves `waitForCallback` with
+// the `/callback` query the moment the browser hits it, after serving the close-tab page; other paths get a
+// 404. The caller always `close()`s. No timeout here — Ctrl-C aborts a never-completed login (the process
+// owns the lifetime); a bounded timeout is a possible later refinement.
+function startLoopbackServer(): Promise<LoopbackServer> {
+  let resolveCallback: (params: URLSearchParams) => void;
+  const callback = new Promise<URLSearchParams>((resolve) => {
+    resolveCallback = resolve;
+  });
+  const server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    if (url.pathname !== "/callback") {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    res.end(CLOSE_TAB_HTML);
+    resolveCallback(url.searchParams);
+  });
+  let closed = false;
+  return new Promise<LoopbackServer>((resolve, reject) => {
+    const onListenError = (err: Error): void => reject(err);
+    server.once("error", onListenError);
+    server.listen(0, "127.0.0.1", () => {
+      // Past the bind: swallow any later socket 'error' (e.g. a transient runtime error) so it can't
+      // crash the CLI as an unhandled event — the login simply won't get a callback (the user retries).
+      server.removeListener("error", onListenError);
+      server.on("error", () => {});
+      const address = server.address();
+      const port = typeof address === "object" && address !== null ? address.port : 0;
+      resolve({
+        port,
+        waitForCallback: () => callback,
+        close: () => {
+          if (closed) return; // idempotent — `close()` after a prior close would throw ERR_SERVER_NOT_RUNNING
+          closed = true;
+          server.close();
+        },
+      });
+    });
+  });
+}
 
 // The host I/O boundary: the real `fetch`, piped-stdin reader, and interactive hidden-secret prompt.
 // These touch process globals + the TTY, so they live behind the injected IoSeams (commands receive
@@ -184,6 +240,7 @@ export function makeRealIo(): IoSeams {
     readStdin: async () => (await text(process.stdin)).trim(),
     openBrowser,
     sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
+    startLoopbackServer,
     // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
     // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
     connectWebSocket: (url, { headers, handlers }) => {

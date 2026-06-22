@@ -80,10 +80,10 @@ describe("CLI app behavior", () => {
     expect(out).toContain("did you mean `events`?");
   });
 
-  it("wires the real `login` command (no key + non-interactive → a usage error, not a stub)", async () => {
-    const t = makeTestContext(); // no WBHK_API_KEY, not a TTY, no --stdin
+  it("wires the real `login` command (no source + non-interactive → a usage error, not a stub)", async () => {
+    const t = makeTestContext(); // no WBHK_API_KEY, not a TTY, no --stdin → can't open a browser either
     await run(app, ["login"], t.ctx);
-    expect(t.stderr().toLowerCase()).toContain("no api key provided");
+    expect(t.stderr().toLowerCase()).toContain("no credential source for a headless run");
     expect(t.stderr().toLowerCase()).not.toContain("isn't built yet");
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
   });
