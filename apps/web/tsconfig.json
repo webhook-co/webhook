@@ -11,15 +11,18 @@
     "plugins": [{ "name": "next" }],
     "paths": {
       "@/*": ["./src/*"],
-      // tsconfig-boundary: type-check @webhook-co/shared's WebCrypto helpers against their built .d.ts,
-      // not source — recompiling their `crypto.subtle.sign(...)` under this app's DOM lib fails (the node
-      // Uint8Array<ArrayBufferLike> vs DOM BufferSource clash). Runtime (Next/Turbopack + vitest) still
-      // resolves the src via the package exports map; turbo builds shared first, so the .d.ts is current.
+      // tsconfig-boundary: redirect @webhook-co/shared's WebCrypto/KV helpers to their BUILT dist module,
+      // because re-checking their src under this app's DOM lib fails (the node Uint8Array<ArrayBufferLike>
+      // vs DOM BufferSource clash; kv-cache.ts also uses the Workers-only `KVNamespace` global). Point at
+      // the `.js` (not `.d.ts`): the OpenNext/Next bundler honors these `paths` at RUNTIME too, so a
+      // `.d.ts` target made the imports resolve to a type-only module → the named fns were `undefined` at
+      // runtime (`(void 0) is not a function` when the credential mint called b64ToBytes). The `.js` is the
+      // real compiled module (workerd-safe — the same code api/engine run); tsc reads the sibling `.d.ts`
+      // for types. turbo builds shared first (typecheck dependsOn ^build), so dist is current.
       // (db's modules already cast around this, so they need no redirect.)
-      "@webhook-co/shared/audit": ["../../packages/shared/dist/audit.d.ts"],
-      "@webhook-co/shared/bytes": ["../../packages/shared/dist/bytes.d.ts"],
-      // kv-cache.ts references the Workers-only `KVNamespace` global (absent under this app's DOM lib).
-      "@webhook-co/shared/kv-cache": ["../../packages/shared/dist/kv-cache.d.ts"]
+      "@webhook-co/shared/audit": ["../../packages/shared/dist/audit.js"],
+      "@webhook-co/shared/bytes": ["../../packages/shared/dist/bytes.js"],
+      "@webhook-co/shared/kv-cache": ["../../packages/shared/dist/kv-cache.js"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],
