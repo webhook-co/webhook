@@ -194,3 +194,49 @@ describe("global --color / --no-color (end to end)", () => {
     expect(t.stdout()).not.toContain(ANSI);
   });
 });
+
+describe("global --profile (end to end)", () => {
+  // A profile-aware store: each profile holds a distinct credential, so the resolved profile is
+  // observable in the request's Authorization header.
+  function profileStore(creds: Record<string, string>): CredentialStore {
+    return {
+      get: async (profile = "default") =>
+        creds[profile] !== undefined ? { apiKey: creds[profile] } : null,
+      set: async () => undefined,
+      erase: async () => undefined,
+      list: async () => Object.keys(creds),
+      getApiBaseUrl: async () => undefined,
+      setApiBaseUrl: async () => undefined,
+    };
+  }
+
+  it("--profile selects that profile's stored credential for the request", async () => {
+    let auth: string | null = null;
+    const capturingFetch = (async (_url: string, init?: { headers?: HeadersInit }) => {
+      auth = new Headers(init?.headers).get("authorization");
+      return json({ items: [], nextCursor: null });
+    }) as unknown as typeof fetch;
+    const t = makeTestContext({
+      store: profileStore({ default: "whk_default", staging: "whk_staging" }),
+      fetch: capturingFetch,
+    });
+    await run(app, ["endpoints", "list", "--profile", "staging"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(auth).toContain("whk_staging");
+    expect(auth).not.toContain("whk_default");
+  });
+
+  it("falls back to the default profile when --profile is absent", async () => {
+    let auth: string | null = null;
+    const capturingFetch = (async (_url: string, init?: { headers?: HeadersInit }) => {
+      auth = new Headers(init?.headers).get("authorization");
+      return json({ items: [], nextCursor: null });
+    }) as unknown as typeof fetch;
+    const t = makeTestContext({
+      store: profileStore({ default: "whk_default", staging: "whk_staging" }),
+      fetch: capturingFetch,
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(auth).toContain("whk_default");
+  });
+});

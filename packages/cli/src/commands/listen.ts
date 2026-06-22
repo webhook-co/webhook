@@ -24,7 +24,7 @@ import {
 } from "../forward.js";
 import { abortableSleep, backoffMs } from "../retry.js";
 import { colorize } from "../output/color.js";
-import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { globalFlags, resolveGlobals, resolveProfile, type GlobalFlags } from "../global-flags.js";
 import { type OutputFormat } from "../output/format.js";
 import { sanitizeControl } from "../output/safe-text.js";
 
@@ -291,7 +291,8 @@ interface ListenFlags extends GlobalFlags {
 
 export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
   async func(this: AppContext, flags, endpointId) {
-    const cred = await this.store.get();
+    const profile = await resolveProfile(this, flags);
+    const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
 
     const tunnelUrl = resolveTunnelUrl({
@@ -317,7 +318,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       const apiBaseUrl = resolveApiBaseUrl({
         flag: flags.apiUrl,
         env: this.process.env?.[ENV_API_URL_VAR],
-        stored: await this.store.getApiBaseUrl(),
+        stored: await this.store.getApiBaseUrl(profile),
       });
       const client = createApiClient({
         baseUrl: apiBaseUrl,

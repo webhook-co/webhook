@@ -16,6 +16,10 @@ export function createEnvBackend(
     id,
     secure: false,
     canWrite: false,
+    // The env backend has no concept of a persisted active profile (it's a single global override).
+    async getActiveProfile() {
+      return undefined;
+    },
     async get() {
       const value = env[varName];
       return value !== undefined && value.length > 0 ? { apiKey: value } : null;

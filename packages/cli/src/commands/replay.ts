@@ -4,7 +4,7 @@ import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-clie
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { forwardToLocalhost, isDelivered, parseForwardTarget } from "../forward.js";
-import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { globalFlags, resolveGlobals, resolveProfile, type GlobalFlags } from "../global-flags.js";
 import { colorize } from "../output/color.js";
 import { CAPABILITY_EXIT, EXIT } from "../output/exit-codes.js";
 import { renderJson } from "../output/format.js";
@@ -21,7 +21,8 @@ interface ReplayFlags extends GlobalFlags {
 
 export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
   async func(this: AppContext, flags, eventId) {
-    const cred = await this.store.get();
+    const profile = await resolveProfile(this, flags);
+    const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
     if (flags.forward === undefined) {
       this.process.stderr.write(
@@ -35,7 +36,7 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
     const apiBaseUrl = resolveApiBaseUrl({
       flag: flags.apiUrl,
       env: this.process.env?.[ENV_API_URL_VAR],
-      stored: await this.store.getApiBaseUrl(),
+      stored: await this.store.getApiBaseUrl(profile),
     });
     const client = createApiClient({
       baseUrl: apiBaseUrl,

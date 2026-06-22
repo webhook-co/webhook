@@ -9,6 +9,8 @@ export interface CredentialBackend {
   readonly id: string;
   readonly secure: boolean;
   readonly canWrite: boolean;
+  /** The persisted active-profile name (config, not per-profile), or undefined when unset. */
+  getActiveProfile(): Promise<string | undefined>;
   get(profile: string): Promise<StoredCredential | null>;
   set(profile: string, cred: StoredCredential): Promise<void>;
   erase(profile: string): Promise<void>;
@@ -29,6 +31,12 @@ export interface CredentialStore {
   set(cred: StoredCredential, profile?: string): Promise<void>;
   erase(profile?: string): Promise<void>;
   list(): Promise<string[]>;
+  /**
+   * The persisted active profile (first backend that has one), or undefined when unset. Optional so the
+   * many inline in-memory `CredentialStore` test fakes need not implement it; absent → resolves to the
+   * default profile.
+   */
+  getActiveProfile?(): Promise<string | undefined>;
   /** The sticky per-profile API base URL (read precedence = backend order), or undefined when unset. */
   getApiBaseUrl(profile?: string): Promise<string | undefined>;
   /** Persist the sticky per-profile API base URL to the first writable backend. */
@@ -40,6 +48,13 @@ export function resolveStore(
   policy: StoragePolicy,
 ): CredentialStore {
   return {
+    async getActiveProfile() {
+      for (const backend of backends) {
+        const hit = await backend.getActiveProfile();
+        if (hit !== undefined) return hit;
+      }
+      return undefined;
+    },
     async get(profile = DEFAULT_PROFILE) {
       for (const backend of backends) {
         const hit = await backend.get(profile);
