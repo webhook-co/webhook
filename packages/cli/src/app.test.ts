@@ -63,10 +63,21 @@ describe("CLI app behavior", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
   });
 
-  it("treats an unknown command as a usage error", async () => {
+  it("treats an unknown command as a usage error, routed through the did-you-mean formatter", async () => {
     const t = makeTestContext();
     await run(app, ["definitely-not-a-command"], t.ctx);
+    const out = t.stderr() + t.stdout();
+    expect(out).toContain("unknown command `definitely-not-a-command`");
+    expect(out).toContain("wbhk --help");
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+
+  it("suggests the closest command for a near-miss typo (did you mean …?)", async () => {
+    const t = makeTestContext();
+    await run(app, ["evnts"], t.ctx);
+    const out = t.stderr() + t.stdout();
+    expect(out).toContain("unknown command `evnts`");
+    expect(out).toContain("did you mean `events`?");
   });
 
   it("wires the real `login` command (no key + non-interactive → a usage error, not a stub)", async () => {
