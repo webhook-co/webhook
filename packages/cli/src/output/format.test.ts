@@ -31,6 +31,22 @@ describe("output/format", () => {
     expect(handle.length).toBeLessThan(apiKey.length);
   });
 
+  it("redactCredential masks an OAuth credential's access key and NEVER reveals the refresh token", () => {
+    const handle = redactCredential({
+      oauth: {
+        accessKey: "whk_oauth_access_do_not_leak",
+        refreshToken: "rtk_super_secret_refresh_do_not_leak",
+        authMethod: "loopback",
+        expiresAt: 1_700_000_000_000,
+        audience: "https://api.webhook.co",
+        clientId: "client_abc",
+      },
+    });
+    expect(handle).toBe("whk_****");
+    expect(handle).not.toContain("rtk_"); // the refresh token is never displayable
+    expect(handle).not.toContain("refresh");
+  });
+
   it("formatCliError renders the voice-compliant user message, never a stack trace", () => {
     const line = formatCliError(new NotImplementedError(["login"], "slice 9"), { color: false });
     expect(line).toContain("isn't built yet");

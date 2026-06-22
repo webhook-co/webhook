@@ -43,6 +43,36 @@ describe("keychain backend", () => {
     await expect(b.get("staging")).resolves.toEqual({ apiKey: "whk_staging" });
   });
 
+  it("round-trips an OAuth credential (serialized as JSON)", async () => {
+    const b = createKeychainBackend({ keychainIo: mapKeychain() });
+    const cred = {
+      oauth: {
+        accessKey: "whk_access",
+        refreshToken: "rtk_refresh",
+        authMethod: "device" as const,
+        expiresAt: 1_700_000_000_000,
+        audience: "https://api.webhook.co",
+        clientId: "client_abc",
+      },
+    };
+    await b.set("default", cred);
+    await expect(b.get("default")).resolves.toEqual(cred);
+  });
+
+  it("reads a legacy bare-string entry (pre-OAuth) as an api-key credential", async () => {
+    const io = mapKeychain();
+    await io.set("default", "whk_legacy_bare"); // a pre-D8 entry: just the key, not JSON
+    const b = createKeychainBackend({ keychainIo: io });
+    await expect(b.get("default")).resolves.toEqual({ apiKey: "whk_legacy_bare" });
+  });
+
+  it("returns null for a parseable-but-invalid stored blob (corrupt → cold-start)", async () => {
+    const io = mapKeychain();
+    await io.set("default", JSON.stringify({ not: "a credential" }));
+    const b = createKeychainBackend({ keychainIo: io });
+    await expect(b.get("default")).resolves.toBeNull();
+  });
+
   it("returns null when no credential is stored", async () => {
     const b = createKeychainBackend({ keychainIo: mapKeychain() });
     await expect(b.get("default")).resolves.toBeNull();

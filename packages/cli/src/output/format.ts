@@ -1,6 +1,6 @@
 import { redactSecret } from "@webhook-co/shared";
 
-import type { StoredCredential } from "../config/schema.js";
+import { credentialAccessToken, type StoredCredential } from "../config/schema.js";
 import { CliError } from "../errors.js";
 
 // The output-formatting seam. Commands return structured data; this renders it as text or
@@ -20,9 +20,13 @@ export function renderJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-/** A non-reversible display handle — reuses the shared loggable-view redactor. */
+/**
+ * A non-reversible display handle for a stored credential. Total over the union: it masks the ACCESS
+ * token (the `whk_` key, from either variant) and NEVER touches the OAuth refresh token — the refresh
+ * handle is never displayable (not even a masked prefix), so `whoami`/`doctor`/`login --json` can't leak it.
+ */
 export function redactCredential(cred: StoredCredential): string {
-  return redactSecret(cred.apiKey);
+  return redactSecret(credentialAccessToken(cred));
 }
 
 /**
