@@ -94,6 +94,7 @@ export function createFileBackend(opts: { dir: string } & FsOptions): Credential
     id: "file",
     secure: false,
     canWrite: true,
+    persistsConfig: true, // the 0600 file is where the active profile + base URLs live
     async getActiveProfile() {
       const config = await readOrEmpty();
       return config.activeProfile;
