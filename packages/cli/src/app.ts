@@ -7,6 +7,7 @@ import {
 } from "@stricli/core";
 
 import { auditVerifyCommand } from "./commands/audit.js";
+import { doctorCommand } from "./commands/doctor.js";
 import { endpointsGetCommand, endpointsListCommand } from "./commands/endpoints.js";
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
 import { listenCommand } from "./commands/listen.js";
@@ -18,9 +19,10 @@ import type { AppContext } from "./context.js";
 import { CliError } from "./errors.js";
 import { EXIT } from "./output/exit-codes.js";
 import { formatCliError, formatUnknownCommand } from "./output/format.js";
+import { VERSION } from "./version.js";
 
-// Kept in sync with package.json; the bundle/build step injects the real value.
-export const VERSION = "0.0.0";
+// Re-exported so `--version`/tests read it from one place; single-sourced in version.ts.
+export { VERSION };
 
 // Where each contract capability surfaces in the CLI command tree. events.tail is the
 // `listen` tunnel; events.replay is `replay`; the rest map name→path directly. Asserted
@@ -65,6 +67,7 @@ const root = buildRouteMap({
     login: loginCommand,
     whoami: whoamiCommand,
     profile: profileRoute,
+    doctor: doctorCommand,
     endpoints: endpointsRoute,
     events: eventsRoute,
     audit: auditRoute,
