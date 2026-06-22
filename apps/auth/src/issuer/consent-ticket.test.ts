@@ -33,7 +33,13 @@ function basePayload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketPay
     audience: "https://api.webhook.co",
     clientId: "cli_wbhk",
     clientName: "webhook CLI",
-    origin: { ip: "203.0.113.7", location: "San Francisco, US" },
+    origin: {
+      ip: "203.0.113.7",
+      location: "US",
+      city: "San Francisco",
+      region: "California",
+      regionCode: "CA",
+    },
     flow: "pkce_loopback",
     grantExpiresAt: "2026-09-18T00:00:00.000Z",
     keyTtlSeconds: 86_400,
@@ -113,7 +119,13 @@ describe("consentRequestFromTicket", () => {
     expect(req.flow).toBe("pkce_loopback");
     expect(req.client).toEqual({ id: "cli_wbhk", name: "webhook CLI" });
     expect(req.org).toEqual({ id: "org_1", name: "Dana's projects" });
-    expect(req.origin).toEqual({ ip: "203.0.113.7", location: "San Francisco, US" });
+    expect(req.origin).toEqual({
+      ip: "203.0.113.7",
+      location: "US",
+      city: "San Francisco",
+      region: "California",
+      regionCode: "CA",
+    });
     expect(req.scopes).toEqual(["events:read", "events:replay"]);
     expect(req.audience).toBe("https://api.webhook.co");
     expect(req.grantExpiresAt).toBe("2026-09-18T00:00:00.000Z");

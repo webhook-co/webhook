@@ -19,6 +19,22 @@ export interface ConsentActions {
   decide(decision: "approve" | "deny"): Promise<void>;
 }
 
+/**
+ * Why a consent decision couldn't be recorded, beyond a generic transient failure — surfaced as a
+ * friendly terminal rather than a retry prompt. `already_decided` ← HTTP 409 (the request was already
+ * approved/denied, typically a back-button re-POST); `expired` ← HTTP 400 (the underlying device/auth
+ * request lapsed). The live client ({@link makeConsentActions}) raises this; everything else falls to
+ * the generic catch.
+ */
+export type ConsentDecisionFailure = "already_decided" | "expired";
+
+export class ConsentDecisionError extends Error {
+  constructor(readonly reason: ConsentDecisionFailure) {
+    super(reason);
+    this.name = "ConsentDecisionError";
+  }
+}
+
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /** Mock seam for E4 — replaced by the live client in E8. Records nothing. */
@@ -36,7 +52,13 @@ export const mockConsentRequest: ConsentRequest = {
   client: { id: "cli_wbhk", name: "webhook CLI" },
   device: { name: "Dana's MacBook Pro" },
   org: { id: "org_personal", name: "Dana's projects" },
-  origin: { ip: "203.0.113.7", location: "San Francisco, US" },
+  origin: {
+    ip: "203.0.113.7",
+    location: "US",
+    city: "San Francisco",
+    region: "California",
+    regionCode: "CA",
+  },
   scopes: ["events:read", "events:replay"],
   audience: "https://api.webhook.co",
   grantExpiresAt: "2026-09-18T00:00:00Z",
@@ -46,6 +68,31 @@ export const mockConsentRequest: ConsentRequest = {
 function fmtExpiry(iso: string): string {
   const at = new Date(iso);
   return Number.isNaN(at.getTime()) ? iso : at.toISOString().slice(0, 10);
+}
+
+/**
+ * A country's flag emoji from its ISO-3166 alpha-2 code, via Unicode regional-indicator symbols
+ * (A→🇦 … Z→🇿). Returns "" for anything that isn't exactly two ASCII letters, so a null/blank/malformed
+ * `location` renders no flag rather than stray glyphs. (Platforms without flag glyphs degrade to the two
+ * letters, still meaningful.)
+ */
+export function flagFromCountry(code: string | null | undefined): string {
+  if (!code || !/^[A-Za-z]{2}$/.test(code)) return "";
+  const A = 0x1f1e6; // REGIONAL INDICATOR SYMBOL LETTER A
+  const cc = code.toUpperCase();
+  return String.fromCodePoint(A + (cc.charCodeAt(0) - 65), A + (cc.charCodeAt(1) - 65));
+}
+
+/**
+ * A human place label for the request origin: the most specific available locality (city, else region)
+ * joined with the 2-letter country — e.g. "Lisbon, PT", "PT", or "Lisbon". Returns "" when no geo at all
+ * resolved (the row then shows just the IP). The country flag is rendered separately + `aria-hidden` (it's
+ * decorative — the 2-letter code already carries the country). All geo fields are best-effort/nullable.
+ */
+function originPlaceLabel(origin: ConsentRequest["origin"]): string {
+  const locality = origin.city ?? origin.region ?? null;
+  const country = origin.location ?? null;
+  return [locality, country].filter(Boolean).join(", ");
 }
 
 function SummaryRow({ label, children }: { label: string; children: React.ReactNode }) {
@@ -67,7 +114,9 @@ export function ConsentForm({
   actions?: ConsentActions;
 }) {
   const [pending, setPending] = React.useState<null | "approve" | "deny">(null);
-  const [outcome, setOutcome] = React.useState<null | "approve" | "deny">(null);
+  const [outcome, setOutcome] = React.useState<null | "approve" | "deny" | ConsentDecisionFailure>(
+    null,
+  );
   const [error, setError] = React.useState<string | null>(null);
 
   const busy = pending !== null;
@@ -78,32 +127,50 @@ export function ConsentForm({
     try {
       await actions.decide(decision);
       setOutcome(decision);
-    } catch {
-      setError("We couldn't record your decision. Please try again.");
+    } catch (err) {
+      // 409/400 → a definitive terminal (re-submitting won't help); anything else is retryable.
+      if (err instanceof ConsentDecisionError) {
+        setOutcome(err.reason);
+      } else {
+        setError("We couldn't record your decision. Please try again.");
+      }
     } finally {
       setPending(null);
     }
   }
 
   if (outcome) {
-    const approved = outcome === "approve";
+    const terminal = {
+      approve: {
+        title: "You're all set",
+        body: `${request.client.name} is now authorized. You can return to it and close this window.`,
+      },
+      deny: {
+        title: "Request denied",
+        body: `${request.client.name} was not granted access. You can close this window.`,
+      },
+      already_decided: {
+        title: "Already completed",
+        body: "This request has already been completed. You can close this window.",
+      },
+      expired: {
+        title: "Request expired",
+        body: "This request has expired. Start over from the app or device that sent you here.",
+      },
+    }[outcome];
     return (
       <div className="flex flex-col gap-4" role="status">
         <div className="flex flex-col gap-1.5">
-          <h1 className="text-2xl font-semibold tracking-heading text-fg">
-            {approved ? "You're all set" : "Request denied"}
-          </h1>
-          <p className="leading-snug text-fg-secondary">
-            {approved
-              ? `${request.client.name} is now authorized. You can return to it and close this window.`
-              : `${request.client.name} was not granted access. You can close this window.`}
-          </p>
+          <h1 className="text-2xl font-semibold tracking-heading text-fg">{terminal.title}</h1>
+          <p className="leading-snug text-fg-secondary">{terminal.body}</p>
         </div>
       </div>
     );
   }
 
   const subject = request.device ? request.device.name : request.client.name;
+  const placeLabel = originPlaceLabel(request.origin);
+  const placeFlag = flagFromCountry(request.origin.location);
 
   return (
     <div className="flex flex-col gap-5">
@@ -125,8 +192,15 @@ export function ConsentForm({
         </SummaryRow>
         <SummaryRow label="Organization">{request.org.name}</SummaryRow>
         <SummaryRow label="Requesting from">
-          {request.origin.location ? `${request.origin.location} · ` : ""}
-          <span className="font-mono text-[13px]">{request.origin.ip}</span>
+          <div className="flex flex-col gap-0.5">
+            {placeLabel ? (
+              <span>
+                {placeLabel}
+                {placeFlag ? <span aria-hidden="true"> {placeFlag}</span> : null}
+              </span>
+            ) : null}
+            <span className="break-all font-mono text-[13px]">{request.origin.ip}</span>
+          </div>
         </SummaryRow>
         <SummaryRow label="Access">
           <span className="flex flex-wrap gap-1.5">

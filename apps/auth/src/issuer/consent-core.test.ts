@@ -61,7 +61,13 @@ function buildDeps(over: Partial<BuildConsentDeps> = {}): {
   return { deps, signed };
 }
 
-const ORIGIN = { ip: "203.0.113.7", location: "San Francisco, US" };
+const ORIGIN = {
+  ip: "203.0.113.7",
+  location: "US",
+  city: "San Francisco",
+  region: "California",
+  regionCode: "CA",
+};
 
 describe("buildConsent", () => {
   it("builds a consent redirect carrying a signed ticket with the resolved state", async () => {
