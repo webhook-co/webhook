@@ -154,6 +154,19 @@ describe("file-store backend", () => {
     await expect(backend.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_with_url" });
   });
 
+  it("setActiveProfile persists then clears the active profile (preserving profiles)", async () => {
+    const dir = await freshDir();
+    const backend = createFileBackend({ dir, platform: "linux" });
+    await backend.set(DEFAULT_PROFILE, { apiKey: "whk_a" });
+    await backend.setActiveProfile("staging");
+    await expect(backend.getActiveProfile()).resolves.toBe("staging");
+    // the credential is untouched by the active-profile write
+    await expect(backend.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_a" });
+    // clearing removes the field
+    await backend.setActiveProfile(undefined);
+    await expect(backend.getActiveProfile()).resolves.toBeUndefined();
+  });
+
   it("getActiveProfile reads the persisted active profile (undefined when unset)", async () => {
     const dir = await freshDir();
     const backend = createFileBackend({ dir, platform: "linux" });

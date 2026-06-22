@@ -7,7 +7,7 @@ import {
 } from "../api-client.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
-import { resolveProfile, type GlobalFlags } from "../global-flags.js";
+import { announceActiveProfile, resolveProfile, type GlobalFlags } from "../global-flags.js";
 import { renderJson, type OutputFormat } from "../output/format.js";
 
 // Shared plumbing for the read commands: build an authenticated client from the stored credential +
@@ -25,6 +25,7 @@ export async function authedClient(
   flags: GlobalFlags,
 ): Promise<ApiClient | NotLoggedInError> {
   const profile = await resolveProfile(ctx, flags);
+  announceActiveProfile(ctx, profile);
   const cred = await ctx.store.get(profile);
   if (cred === null) return new NotLoggedInError();
   const baseUrl = resolveApiBaseUrl({

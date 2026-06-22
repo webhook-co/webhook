@@ -239,4 +239,25 @@ describe("global --profile (end to end)", () => {
     await run(app, ["endpoints", "list"], t.ctx);
     expect(auth).toContain("whk_default");
   });
+
+  it("notes the active profile on stderr when it is not the default", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      env: { WBHK_PROFILE: "staging" },
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(t.stderr().toLowerCase()).toContain("profile");
+    expect(t.stderr()).toContain("staging");
+    expect(t.stdout()).not.toContain("staging"); // the banner stays off stdout (pipe-safe)
+  });
+
+  it("stays silent about the profile for the default profile", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(t.stderr().toLowerCase()).not.toContain("profile");
+  });
 });

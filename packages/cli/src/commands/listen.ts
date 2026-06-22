@@ -24,7 +24,13 @@ import {
 } from "../forward.js";
 import { abortableSleep, backoffMs } from "../retry.js";
 import { colorize } from "../output/color.js";
-import { globalFlags, resolveGlobals, resolveProfile, type GlobalFlags } from "../global-flags.js";
+import {
+  announceActiveProfile,
+  globalFlags,
+  resolveGlobals,
+  resolveProfile,
+  type GlobalFlags,
+} from "../global-flags.js";
 import { type OutputFormat } from "../output/format.js";
 import { sanitizeControl } from "../output/safe-text.js";
 
@@ -292,6 +298,7 @@ interface ListenFlags extends GlobalFlags {
 export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
   async func(this: AppContext, flags, endpointId) {
     const profile = await resolveProfile(this, flags);
+    announceActiveProfile(this, profile);
     const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
 
