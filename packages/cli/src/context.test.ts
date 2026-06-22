@@ -47,6 +47,8 @@ function fakeIo(keychain: KeychainIo = unavailableKeychain): IoSeams {
     readStdin: nope,
     connectWebSocket: nope as unknown as IoSeams["connectWebSocket"],
     keychain,
+    openBrowser: nope as unknown as IoSeams["openBrowser"],
+    sleep: nope as unknown as IoSeams["sleep"],
   };
 }
 

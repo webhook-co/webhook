@@ -150,6 +150,31 @@ function makeRealKeychainIo(): KeychainIo {
   return { get: unavailable, set: unavailable, erase: unavailable };
 }
 
+// Open a URL in the user's default browser — best-effort, per-OS launcher, NEVER a shell (the URL is a
+// plain argv element, so it can't inject). Detached + unref'd so the launcher's lifetime doesn't tie to
+// the CLI. A missing launcher or any spawn error resolves quietly (the caller has already printed the URL
+// as the fallback, and only same-origin issuer http(s) URLs reach here — see device-login isIssuerOrigin).
+// Windows uses `rundll32 url.dll,FileProtocolHandler <url>` rather than `cmd /c start` to keep the URL a
+// clean argv element (cmd.exe's own parser treats `&` etc. specially even with an argv array).
+function openBrowser(url: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const [cmd, args] =
+      process.platform === "darwin"
+        ? ["open", [url]]
+        : process.platform === "win32"
+          ? ["rundll32", ["url.dll,FileProtocolHandler", url]]
+          : ["xdg-open", [url]];
+    try {
+      const child = spawn(cmd as string, args as string[], { stdio: "ignore", detached: true });
+      child.on("error", () => resolve()); // no launcher (ENOENT) etc. — the printed URL is the fallback
+      child.unref();
+      resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
 /** Build the production IoSeams from process globals. */
 export function makeRealIo(): IoSeams {
   return {
@@ -157,6 +182,8 @@ export function makeRealIo(): IoSeams {
     isInteractive: process.stdin.isTTY === true,
     promptSecret,
     readStdin: async () => (await text(process.stdin)).trim(),
+    openBrowser,
+    sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
     // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
     // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
     connectWebSocket: (url, { headers, handlers }) => {
