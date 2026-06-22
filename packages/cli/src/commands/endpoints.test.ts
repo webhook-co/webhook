@@ -87,6 +87,21 @@ describe("wbhk endpoints list", () => {
     expect(t.stdout()).not.toContain("tok_123");
   });
 
+  it("--output json keeps stdout a single pure JSON value with NO stderr noise (script-safe)", async () => {
+    // Even with a nextCursor, json mode puts it in the envelope (not a stderr hint), so stdout stays
+    // a single parseable value and stderr stays empty — the strict stdout=data/stderr=everything rule.
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [endpoint(EP1, "a")], nextCursor: "tok_123" }),
+    });
+    await run(app, ["endpoints", "list", "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout()) as { items: unknown[]; nextCursor: string };
+    expect(parsed.nextCursor).toBe("tok_123");
+    expect(t.stdout()).not.toContain("more results");
+    expect(t.stdout().trimEnd()).not.toContain("\n"); // compact: one JSON value on one line
+    expect(t.stderr()).toBe("");
+  });
+
   it("--all follows the cursor across pages and shows all rows without a hint", async () => {
     const t = makeTestContext({
       store: loggedInStore(),

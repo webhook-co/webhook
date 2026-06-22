@@ -1,8 +1,22 @@
 import { ExitCode } from "@stricli/core";
 import { CAPABILITY_ERRORS, type CapabilityError } from "@webhook-co/contract";
 
-// Stable, scriptable process exit codes. Reserved generic codes are low; per-capability
-// failures get distinct codes so CI/automation can branch on the specific failure.
+// Stable, scriptable process exit codes — the CLI's PUBLISHED contract (locked by a test + ADR). Reserved
+// generic codes are low; per-capability failures get distinct codes so CI/automation can branch on the
+// specific failure. Treat these numbers as an API: never renumber without a deliberate, reviewed change.
+//
+//   0   SUCCESS            the command succeeded
+//   1   UNEXPECTED         an unexpected/internal failure (uncaught error, library fault)
+//   2   USAGE              bad invocation — unknown command, bad flag/arg (stricli parse/routing)
+//   3   AUDIT_BREAK        `audit verify` ran OK but DETECTED a chain break (a meaningful non-zero)
+//   64  NOT_IMPLEMENTED    the requested capability isn't built yet
+//   10  UNAUTHORIZED       not logged in / credential rejected
+//   11  FORBIDDEN          authenticated but not allowed
+//   12  NOT_FOUND          the target resource doesn't exist
+//   13  VALIDATION_ERROR   the request was malformed / failed server validation
+//   14  RATE_LIMITED       throttled (after exhausting bounded retries)
+//   15  ENDPOINT_PAUSED    the endpoint is paused
+//   16  TARGET_UNREACHABLE a forward/replay target could not be reached
 export const EXIT = {
   SUCCESS: 0,
   UNEXPECTED: 1,

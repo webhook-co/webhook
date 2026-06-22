@@ -30,6 +30,27 @@ describe("exit-codes", () => {
     expect(EXIT.USAGE).toBe(2);
   });
 
+  it("locks the FULL numeric exit-code map (the documented contract — a change here is deliberate)", () => {
+    // This is the published, scriptable contract (see ADR + the exit-codes.ts header). A diff to either
+    // map must be an intentional, reviewed edit — never an accidental renumber that breaks a user's CI.
+    expect({ ...EXIT }).toEqual({
+      SUCCESS: 0,
+      UNEXPECTED: 1,
+      USAGE: 2,
+      AUDIT_BREAK: 3,
+      NOT_IMPLEMENTED: 64,
+    });
+    expect({ ...CAPABILITY_EXIT }).toEqual({
+      UNAUTHORIZED: 10,
+      FORBIDDEN: 11,
+      NOT_FOUND: 12,
+      VALIDATION_ERROR: 13,
+      RATE_LIMITED: 14,
+      ENDPOINT_PAUSED: 15,
+      TARGET_UNREACHABLE: 16,
+    });
+  });
+
   it("normalizes stricli's internal (negative) exit codes to POSIX-friendly codes", () => {
     // routing / parse failures → usage error (2)
     expect(normalizeStricliExitCode(ExitCode.UnknownCommand)).toBe(EXIT.USAGE);

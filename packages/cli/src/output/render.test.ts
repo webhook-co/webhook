@@ -121,6 +121,49 @@ describe("renderEvent (single record)", () => {
   });
 });
 
+describe("control-byte sanitization (server data can't hijack the terminal)", () => {
+  const ESC = String.fromCharCode(27);
+
+  it("strips an ANSI escape injected via an endpoint name in the table", () => {
+    // color OFF, so the ONLY escape that could appear is the injected one.
+    const out = renderEndpointsTable([{ ...endpoint, name: `${ESC}[31mowned${ESC}[2J` }], false);
+    expect(out).not.toContain(ESC);
+    expect(out).toContain("owned"); // the visible text is preserved
+  });
+
+  it("strips control bytes from a single-record block (id + name)", () => {
+    const out = renderEndpoint({ ...endpoint, id: `ep${ESC}[2K1`, name: `n${ESC}[0m` }, false);
+    expect(out).not.toContain(ESC);
+  });
+
+  it("strips control bytes from an event's provider/dedup/content-type fields", () => {
+    const out = renderEvent(
+      { ...event, dedupKey: `dk${ESC}[0m`, contentType: `text/${ESC}[1mplain` },
+      false,
+    );
+    expect(out).not.toContain(ESC);
+  });
+
+  it("strips control bytes from the event-table id + provider", () => {
+    const out = renderEventsTable([{ ...eventSummary, provider: `str${ESC}[31mipe` }], false);
+    expect(out).not.toContain(ESC);
+  });
+
+  it("strips control bytes from an audit-break detail", () => {
+    const broken: AuditVerifyResult = {
+      ok: false,
+      rowsVerified: 1,
+      break: { kind: "hash_mismatch", seq: 1, detail: `evil${ESC}[31m` },
+    };
+    expect(renderAuditResult(broken, false)).not.toContain(ESC);
+  });
+
+  it("keeps OUR own color escapes when color is enabled (only server data is sanitized)", () => {
+    // The status word is colorized by us; sanitization must not strip our legitimate ANSI.
+    expect(renderEndpointsTable([endpoint], true)).toContain(ESC);
+  });
+});
+
 describe("renderAuditResult", () => {
   it("reports an intact chain", () => {
     const ok: AuditVerifyResult = { ok: true, rowsVerified: 7 };

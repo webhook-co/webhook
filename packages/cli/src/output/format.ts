@@ -12,8 +12,12 @@ export function resolveFormat(flag: OutputFormat | undefined): OutputFormat {
   return flag ?? "text";
 }
 
+// `--output json` is the MACHINE view: one compact JSON value on a single line (no pretty-printing).
+// That keeps it line-oriented and consistent with `listen`'s NDJSON event stream, so a tool can read a
+// value per line; a human who wants it pretty pipes `| jq`. (JSON.stringify also escapes control bytes,
+// so this view is injection-safe without the text renderers' sanitizeControl.)
 export function renderJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
+  return JSON.stringify(value);
 }
 
 /** A non-reversible display handle — reuses the shared loggable-view redactor. */
