@@ -16,6 +16,7 @@ export function createEnvBackend(
     id,
     secure: false,
     canWrite: false,
+    persistsConfig: false, // a read-only override that holds no config
     // The env backend has no concept of a persisted active profile (it's a single global override).
     async getActiveProfile() {
       return undefined;

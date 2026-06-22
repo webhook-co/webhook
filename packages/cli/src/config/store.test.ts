@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { BackendNotWritableError, SecureStorageRequiredError } from "./errors.js";
+import {
+  BackendNotWritableError,
+  KeychainUnavailableError,
+  SecureStorageRequiredError,
+} from "./errors.js";
 import { DEFAULT_PROFILE, type StoredCredential } from "./schema.js";
 import { type CredentialBackend, resolveStore } from "./store.js";
 
@@ -12,6 +16,10 @@ function memoryBackend(
     canWrite: boolean;
     seed?: Record<string, StoredCredential>;
     activeProfile?: string;
+    /** Whether this backend persists non-secret config (base URL + active profile). Defaults true. */
+    persistsConfig?: boolean;
+    /** When true, every credential op throws KeychainUnavailableError (a missing OS keychain). */
+    unavailable?: boolean;
   },
 ): CredentialBackend {
   const store = new Map<string, StoredCredential>(Object.entries(opts.seed ?? {}));
@@ -21,6 +29,7 @@ function memoryBackend(
     id,
     secure: opts.secure,
     canWrite: opts.canWrite,
+    persistsConfig: opts.persistsConfig ?? true,
     async getActiveProfile() {
       return active;
     },
@@ -29,13 +38,16 @@ function memoryBackend(
       active = name;
     },
     async get(profile) {
+      if (opts.unavailable) throw new KeychainUnavailableError();
       return store.get(profile) ?? null;
     },
     async set(profile, cred) {
+      if (opts.unavailable) throw new KeychainUnavailableError();
       if (!opts.canWrite) throw new BackendNotWritableError(id);
       store.set(profile, cred);
     },
     async erase(profile) {
+      if (opts.unavailable) throw new KeychainUnavailableError();
       if (!opts.canWrite) throw new BackendNotWritableError(id);
       store.delete(profile);
     },
@@ -207,5 +219,91 @@ describe("resolveStore — sticky apiBaseUrl", () => {
     await expect(store.setApiBaseUrl("https://x.example")).rejects.toBeInstanceOf(
       SecureStorageRequiredError,
     );
+  });
+});
+
+describe("resolveStore — keychain composition (D7)", () => {
+  const secureKeychain = (over: { unavailable?: boolean } = {}) =>
+    memoryBackend("keychain", {
+      secure: true,
+      canWrite: true,
+      persistsConfig: false,
+      unavailable: over.unavailable,
+    });
+  const fileBackend = () =>
+    memoryBackend("file", { secure: false, canWrite: true, persistsConfig: true });
+
+  it("writes the credential to the secure backend ahead of the file (default policy)", async () => {
+    const keychain = secureKeychain();
+    const file = fileBackend();
+    const store = resolveStore([keychain, file], { requireSecureStorage: false });
+    await store.set({ apiKey: "whk_secure" });
+    await expect(keychain.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_secure" });
+    await expect(file.get(DEFAULT_PROFILE)).resolves.toBeNull();
+  });
+
+  it("routes config writes to a persistsConfig backend, skipping a secure non-config one ahead of it", async () => {
+    const keychain = secureKeychain();
+    const file = fileBackend();
+    const store = resolveStore([keychain, file], { requireSecureStorage: false });
+    await store.setApiBaseUrl("https://api.example");
+    await store.setActiveProfile?.("staging");
+    await expect(file.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBe("https://api.example");
+    await expect(file.getActiveProfile()).resolves.toBe("staging");
+    await expect(keychain.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBeUndefined();
+  });
+
+  it("falls back to the file when the secure backend is unavailable (default policy)", async () => {
+    const keychain = secureKeychain({ unavailable: true });
+    const file = fileBackend();
+    const store = resolveStore([keychain, file], { requireSecureStorage: false });
+    await store.set({ apiKey: "whk_fallback" });
+    await expect(file.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_fallback" });
+  });
+
+  it("fails loud (no insecure fallback) when secure is required but the keychain is unavailable", async () => {
+    const keychain = secureKeychain({ unavailable: true });
+    const file = fileBackend();
+    const store = resolveStore([keychain, file], { requireSecureStorage: true });
+    await expect(store.set({ apiKey: "x" })).rejects.toBeInstanceOf(KeychainUnavailableError);
+    await expect(file.get(DEFAULT_PROFILE)).resolves.toBeNull(); // nothing written insecurely
+  });
+
+  it("allowInsecure overrides require-secure → writes to the file when the keychain is unavailable", async () => {
+    const keychain = secureKeychain({ unavailable: true });
+    const file = fileBackend();
+    const store = resolveStore([keychain, file], { requireSecureStorage: true });
+    await store.set({ apiKey: "whk_forced" }, DEFAULT_PROFILE, { allowInsecure: true });
+    await expect(file.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_forced" });
+  });
+
+  it("erase tolerates a missing keychain — logout still clears the file (no stale secret left behind)", async () => {
+    const keychain = secureKeychain({ unavailable: true });
+    const file = memoryBackend("file", {
+      secure: false,
+      canWrite: true,
+      persistsConfig: true,
+      seed: { [DEFAULT_PROFILE]: { apiKey: "whk_stale" } },
+    });
+    const store = resolveStore([keychain, file], { requireSecureStorage: false });
+    await store.erase(); // must NOT throw despite the unavailable keychain
+    await expect(file.get(DEFAULT_PROFILE)).resolves.toBeNull();
+  });
+
+  it("propagates a non-availability failure (e.g. denied) without silently falling back", async () => {
+    // A backend that throws a NON-KeychainUnavailable error must NOT fall back to the insecure file.
+    const denied: CredentialBackend = {
+      ...fileBackend(),
+      id: "keychain",
+      secure: true,
+      persistsConfig: false,
+      set: async () => {
+        throw new Error("keychain access denied by the user");
+      },
+    };
+    const file = fileBackend();
+    const store = resolveStore([denied, file], { requireSecureStorage: false });
+    await expect(store.set({ apiKey: "x" })).rejects.toThrow("denied");
+    await expect(file.get(DEFAULT_PROFILE)).resolves.toBeNull();
   });
 });
