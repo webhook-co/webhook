@@ -12,6 +12,8 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "webhook.co",
   description: "The webhook.co dashboard.",
+  // Private-by-default surface — never indexed (paired with the disallow-all robots.txt).
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
