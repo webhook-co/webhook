@@ -7,7 +7,7 @@ import {
   DEFAULT_API_BASE_URL,
   resolveApiBaseUrl,
 } from "./api-client.js";
-import { InvalidApiUrlError } from "./errors.js";
+import { InvalidApiUrlError, OAuthError } from "./errors.js";
 import { CAPABILITY_EXIT, EXIT } from "./output/exit-codes.js";
 
 const BASE = "https://api.test.example";
@@ -406,5 +406,98 @@ describe("createApiClient retries + timeout", () => {
     });
     expect(await client.whoami()).toEqual(okIdentity);
     expect(n).toBe(2);
+  });
+});
+
+/** A fetch returning sequenced responses while recording the Authorization header per call. */
+function authSequenceFetch(steps: ReadonlyArray<Response>): {
+  fetch: typeof fetch;
+  bearers: string[];
+} {
+  const bearers: string[] = [];
+  let i = 0;
+  const fetch = (async (_url: string | URL | Request, init?: RequestInit) => {
+    bearers.push(new Headers(init?.headers).get("authorization") ?? "");
+    const step = steps[Math.min(i, steps.length - 1)];
+    i += 1;
+    return step;
+  }) as unknown as typeof fetch;
+  return { fetch, bearers };
+}
+
+describe("createApiClient reactive 401 refresh", () => {
+  it("refreshes once on a 401 then retries the SAME request with the new bearer", async () => {
+    const { fetch, bearers } = authSequenceFetch([
+      new Response(null, { status: 401 }),
+      json(okIdentity),
+    ]);
+    let refreshCalls = 0;
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      sleep: instantSleep,
+      refreshAuth: async () => {
+        refreshCalls += 1;
+        return "whk_refreshed";
+      },
+    });
+    expect(await client.whoami()).toEqual(okIdentity);
+    expect(refreshCalls).toBe(1);
+    expect(bearers).toEqual([`Bearer ${KEY}`, "Bearer whk_refreshed"]);
+  });
+
+  it("refreshes at most ONCE per request: a second 401 surfaces UNAUTHORIZED", async () => {
+    const { fetch, bearers } = authSequenceFetch([new Response(null, { status: 401 })]);
+    let refreshCalls = 0;
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      sleep: instantSleep,
+      refreshAuth: async () => {
+        refreshCalls += 1;
+        return "whk_refreshed";
+      },
+    });
+    const err = await client.whoami().catch((e: unknown) => e);
+    expect((err as ApiError).code).toBe("UNAUTHORIZED");
+    expect(refreshCalls).toBe(1);
+    expect(bearers).toEqual([`Bearer ${KEY}`, "Bearer whk_refreshed"]); // one retry, then it gives up
+  });
+
+  it("propagates an OAuthError when the refresh itself fails (→ re-login)", async () => {
+    const { fetch } = authSequenceFetch([new Response(null, { status: 401 })]);
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      sleep: instantSleep,
+      refreshAuth: async () => {
+        throw new OAuthError("invalid_grant");
+      },
+    });
+    await expect(client.whoami()).rejects.toMatchObject({ code: "invalid_grant" });
+  });
+
+  it("without a refreshAuth hook, a 401 surfaces UNAUTHORIZED with no retry (api-key path)", async () => {
+    const { fetch, bearers } = authSequenceFetch([new Response(null, { status: 401 })]);
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: instantSleep });
+    const err = await client.whoami().catch((e: unknown) => e);
+    expect((err as ApiError).code).toBe("UNAUTHORIZED");
+    expect(bearers).toEqual([`Bearer ${KEY}`]); // single attempt, no refresh
+  });
+
+  it("does not invoke refreshAuth when the refresh hook returns null", async () => {
+    const { fetch } = authSequenceFetch([new Response(null, { status: 401 })]);
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      sleep: instantSleep,
+      refreshAuth: async () => null,
+    });
+    const err = await client.whoami().catch((e: unknown) => e);
+    expect((err as ApiError).code).toBe("UNAUTHORIZED");
   });
 });

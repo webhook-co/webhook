@@ -152,6 +152,13 @@ export interface ApiClientDeps {
   readonly maxAttempts?: number;
   /** The per-request timeout signal (default `AbortSignal.timeout(API_TIMEOUT_MS)`; injectable for tests). */
   readonly timeoutSignal?: () => AbortSignal;
+  /**
+   * Reactive auth hook for an OAuth credential: invoked AT MOST ONCE per request on a `401`, it returns a
+   * fresh bearer (the rotated access token) to retry with, or `null` to give up (→ surface the 401). It may
+   * throw an `OAuthError` (a dead refresh) which propagates → re-login. Absent for an api-key credential
+   * (a 401 then surfaces immediately, no retry). The single-flight + persist live in the token manager.
+   */
+  readonly refreshAuth?: () => Promise<string | null>;
 }
 
 /** Append a query string from the defined params only (absent keys are omitted, never sent as empty). */
@@ -180,6 +187,11 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     method: "GET" | "POST",
     opts: { body?: unknown; idempotent: boolean },
   ): Promise<unknown> {
+    // The live bearer — mutated when the reactive refresh hook hands back a rotated access token. A 401
+    // refresh+retry is safe for ANY method (a 401 means the request was rejected, never processed), so it
+    // is NOT gated on idempotency; but it fires at most once per request (a second 401 surfaces the error).
+    let bearer = deps.apiKey;
+    let refreshedThisRequest = false;
     for (let attempt = 1; ; attempt += 1) {
       const last = attempt >= maxAttempts;
       let res: Response;
@@ -187,7 +199,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         res = await deps.fetch(`${deps.baseUrl}${path}`, {
           method,
           headers: {
-            authorization: `Bearer ${deps.apiKey}`,
+            authorization: `Bearer ${bearer}`,
             accept: "application/json",
             ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
           },
@@ -204,6 +216,17 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         throw new ApiError(undefined, `could not reach the api at ${deps.baseUrl}`);
       }
       if (res.ok) return res.json();
+      // An expired/just-rotated OAuth access token → one silent refresh + retry (an OAuthError from the
+      // hook, e.g. a dead refresh, propagates → re-login). No attempt/backoff is consumed by the refresh.
+      if (res.status === 401 && deps.refreshAuth !== undefined && !refreshedThisRequest) {
+        refreshedThisRequest = true;
+        const next = await deps.refreshAuth();
+        if (next !== null) {
+          bearer = next;
+          attempt -= 1; // the refreshed retry is a fresh request, not a spent attempt
+          continue;
+        }
+      }
       if (opts.idempotent && !last && isRetryableStatus(res.status)) {
         // Honour a delta-seconds `Retry-After` (clamped); otherwise fall back to jittered backoff.
         await sleep(parseRetryAfter(res.headers.get("retry-after")) ?? apiBackoffMs(attempt, rand));

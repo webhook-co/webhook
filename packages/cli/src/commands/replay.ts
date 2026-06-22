@@ -1,7 +1,6 @@
 import { buildCommand } from "@stricli/core";
 
 import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-client.js";
-import { credentialAccessToken } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { forwardToLocalhost, isDelivered, parseForwardTarget } from "../forward.js";
@@ -12,6 +11,7 @@ import {
   resolveProfile,
   type GlobalFlags,
 } from "../global-flags.js";
+import { bindAuth } from "../oauth/auth-binding.js";
 import { colorize } from "../output/color.js";
 import { CAPABILITY_EXIT, EXIT } from "../output/exit-codes.js";
 import { renderJson } from "../output/format.js";
@@ -46,10 +46,18 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
       env: this.process.env?.[ENV_API_URL_VAR],
       stored: await this.store.getApiBaseUrl(profile),
     });
+    const { bearer, refreshAuth } = await bindAuth({
+      cred,
+      profile,
+      store: this.store,
+      fetch: this.io.fetch,
+      env: this.process.env,
+    });
     const client = createApiClient({
       baseUrl: apiBaseUrl,
-      apiKey: credentialAccessToken(cred),
+      apiKey: bearer,
       fetch: this.io.fetch,
+      refreshAuth,
     });
 
     // Captured headers (signature fidelity) + exact body bytes. A bad/cross-org id surfaces as the
