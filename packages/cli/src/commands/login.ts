@@ -5,7 +5,13 @@ import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-clie
 import { ENV_API_KEY_VAR } from "../config/env-store.js";
 import type { AppContext } from "../context.js";
 import { MissingApiKeyError } from "../errors.js";
-import { globalFlags, resolveGlobals, resolveProfile, type GlobalFlags } from "../global-flags.js";
+import {
+  announceActiveProfile,
+  globalFlags,
+  resolveGlobals,
+  resolveProfile,
+  type GlobalFlags,
+} from "../global-flags.js";
 import { renderJson } from "../output/format.js";
 
 // `wbhk login` — capture an API key, validate it against the API, and persist it for future commands.
@@ -54,6 +60,7 @@ export const loginCommand = buildCommand<LoginFlags, [], AppContext>({
     const { key, source } = resolved;
 
     const profile = await resolveProfile(this, flags);
+    announceActiveProfile(this, profile);
     const baseUrl = resolveApiBaseUrl({
       flag: flags.apiUrl,
       env: this.process.env?.[ENV_API_URL_VAR],

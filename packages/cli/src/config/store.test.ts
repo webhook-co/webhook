@@ -16,12 +16,17 @@ function memoryBackend(
 ): CredentialBackend {
   const store = new Map<string, StoredCredential>(Object.entries(opts.seed ?? {}));
   const baseUrls = new Map<string, string>();
+  let active = opts.activeProfile;
   return {
     id,
     secure: opts.secure,
     canWrite: opts.canWrite,
     async getActiveProfile() {
-      return opts.activeProfile;
+      return active;
+    },
+    async setActiveProfile(name) {
+      if (!opts.canWrite) throw new BackendNotWritableError(id);
+      active = name;
     },
     async get(profile) {
       return store.get(profile) ?? null;
@@ -134,6 +139,28 @@ describe("resolveStore", () => {
     const file = memoryBackend("file", { secure: false, canWrite: true });
     const store = resolveStore([file], { requireSecureStorage: false });
     await expect(store.getActiveProfile?.()).resolves.toBeUndefined();
+  });
+
+  it("setActiveProfile persists to the first writable backend (skipping a read-only one)", async () => {
+    const env = memoryBackend("env", { secure: false, canWrite: false });
+    const file = memoryBackend("file", { secure: false, canWrite: true });
+    const store = resolveStore([env, file], { requireSecureStorage: false });
+    await store.setActiveProfile?.("staging");
+    await expect(file.getActiveProfile()).resolves.toBe("staging");
+    await expect(env.getActiveProfile()).resolves.toBeUndefined(); // the read-only backend was skipped
+  });
+
+  it("setActiveProfile(undefined) clears the persisted active profile", async () => {
+    const file = memoryBackend("file", { secure: false, canWrite: true, activeProfile: "staging" });
+    const store = resolveStore([file], { requireSecureStorage: false });
+    await store.setActiveProfile?.(undefined);
+    await expect(store.getActiveProfile?.()).resolves.toBeUndefined();
+  });
+
+  it("setActiveProfile refuses when no backend can persist", async () => {
+    const env = memoryBackend("env", { secure: false, canWrite: false });
+    const store = resolveStore([env], { requireSecureStorage: false });
+    await expect(store.setActiveProfile?.("x")).rejects.toBeInstanceOf(SecureStorageRequiredError);
   });
 
   it("lists the union of profiles across backends", async () => {

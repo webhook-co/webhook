@@ -98,6 +98,12 @@ export function createFileBackend(opts: { dir: string } & FsOptions): Credential
       const config = await readOrEmpty();
       return config.activeProfile;
     },
+    async setActiveProfile(name) {
+      const config = await readOrEmpty();
+      if (name === undefined) delete config.activeProfile;
+      else config.activeProfile = name;
+      await write(config);
+    },
     async get(profile) {
       const config = await readOrEmpty();
       return config.profiles[profile]?.credential ?? null;

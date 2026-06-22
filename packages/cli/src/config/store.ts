@@ -11,6 +11,8 @@ export interface CredentialBackend {
   readonly canWrite: boolean;
   /** The persisted active-profile name (config, not per-profile), or undefined when unset. */
   getActiveProfile(): Promise<string | undefined>;
+  /** Persist (or, with undefined, clear) the active-profile name (a writable backend only). */
+  setActiveProfile(name: string | undefined): Promise<void>;
   get(profile: string): Promise<StoredCredential | null>;
   set(profile: string, cred: StoredCredential): Promise<void>;
   erase(profile: string): Promise<void>;
@@ -37,6 +39,9 @@ export interface CredentialStore {
    * default profile.
    */
   getActiveProfile?(): Promise<string | undefined>;
+  /** Persist (or clear, with undefined) the active profile to the first writable backend. Optional for
+   *  the same reason as getActiveProfile (inline test fakes); the real store always implements it. */
+  setActiveProfile?(name: string | undefined): Promise<void>;
   /** The sticky per-profile API base URL (read precedence = backend order), or undefined when unset. */
   getApiBaseUrl(profile?: string): Promise<string | undefined>;
   /** Persist the sticky per-profile API base URL to the first writable backend. */
@@ -54,6 +59,13 @@ export function resolveStore(
         if (hit !== undefined) return hit;
       }
       return undefined;
+    },
+    async setActiveProfile(name) {
+      // The active profile is config (not a secret), so it persists to the first writable backend,
+      // regardless of the secure-storage policy — mirroring setApiBaseUrl.
+      const target = backends.find((b) => b.canWrite);
+      if (!target) throw new SecureStorageRequiredError();
+      await target.setActiveProfile(name);
     },
     async get(profile = DEFAULT_PROFILE) {
       for (const backend of backends) {
