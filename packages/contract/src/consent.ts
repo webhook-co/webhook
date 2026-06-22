@@ -23,8 +23,19 @@ export const ConsentRequestSchema = z.object({
   device: z.object({ name: z.string() }).optional(),
   /** The org the grant is for (the consenting user's active org). */
   org: z.object({ id: z.string(), name: z.string() }),
-  /** Where the request originates — a trust signal. `location` is best-effort and may be null. */
-  origin: z.object({ ip: z.string(), location: z.string().nullable() }),
+  /**
+   * Where the request originates — a trust signal. `location` is the best-effort 2-letter country (may be
+   * null). `city`/`region`/`regionCode` are best-effort geo from the edge — OPTIONAL + nullable (additive;
+   * absent in dev/test or when the edge resolved none). The screen can render e.g. "Lisbon, PT 🇵🇹" (derive
+   * the flag from the 2-letter `location` via Unicode regional-indicator chars).
+   */
+  origin: z.object({
+    ip: z.string(),
+    location: z.string().nullable(),
+    city: z.string().nullish(),
+    region: z.string().nullish(),
+    regionCode: z.string().nullish(),
+  }),
   /** The requested capability scopes — rendered as a read-only summary. */
   scopes: z.array(z.string()),
   /** The resource the resulting token is audience-bound to (e.g. "https://api.webhook.co"). */

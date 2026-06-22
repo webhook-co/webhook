@@ -57,8 +57,15 @@ interface ConsentTicketBase {
   /** Display: the device the user-code was entered on. Forward-looking — NOT populated in v1
    * (/device_authorization captures no device name yet); decideConsent forwards it into props if present. */
   device?: { name: string };
-  /** Display: where the request originates (a trust signal). */
-  origin: { ip: string; location: string | null };
+  /** Display: where the request originates (a trust signal). city/region/regionCode are best-effort geo
+   *  from request.cf (optional/null when the edge resolved none). */
+  origin: {
+    ip: string;
+    location: string | null;
+    city?: string | null;
+    region?: string | null;
+    regionCode?: string | null;
+  };
   /** ISO 8601 — the ~90d grant/refresh lifetime ceiling shown on the screen. */
   grantExpiresAt: string;
   /** The minted access-key TTL in seconds (~24h) shown on the screen. */

@@ -32,10 +32,15 @@ export type { ConsentProps };
 
 type LogFn = (event: string, fields?: Record<string, unknown>) => void;
 
-/** Request origin trust signals, resolved by the mount from the edge headers. */
+/** Request origin trust signals, resolved by the mount from the edge (headers + request.cf geo). */
 export interface AuthorizeOrigin {
   ip: string;
   location: string | null;
+  /** Coarse geo from request.cf — surfaced for the consent "Requesting from"; optional/null when the edge
+   *  resolved none (dev/test). Sealed verbatim into the ticket → the SSR'd ConsentRequest.origin. */
+  city?: string | null;
+  region?: string | null;
+  regionCode?: string | null;
 }
 
 /** Injected seams for building the consent screen state from an authorization request. */
