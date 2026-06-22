@@ -89,3 +89,31 @@ export class InvalidForwardUrlError extends CliError {
     this.userMessage = `invalid forward url \`${value}\` — must be an http:// or https:// URL pointing at localhost (127.0.0.1 / ::1).`;
   }
 }
+
+/** A `--auth-url` / WBHK_AUTH_URL override that isn't an https:// URL (http:// only for loopback dev).
+ *  The OAuth flow carries codes/tokens, so a plaintext or attacker-chosen issuer would leak credentials. */
+export class InvalidAuthUrlError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage: string;
+  constructor(value: string) {
+    super(`invalid auth url: ${value}`);
+    this.name = "InvalidAuthUrlError";
+    this.userMessage = `invalid auth url \`${value}\` — must be an https:// URL (http:// is allowed only for localhost).`;
+  }
+}
+
+/** An OAuth error from the issuer (a 400 `{error, error_description?}`, or a transport failure). Maps to
+ *  the same "not authenticated" exit as a 401, so automation branches on one signal. The `code` is the
+ *  closed OAuth error taxonomy (invalid_grant, access_denied, …) used by the login/refresh flows. */
+export class OAuthError extends CliError {
+  readonly exitCode = CAPABILITY_EXIT.UNAUTHORIZED;
+  readonly userMessage: string;
+  constructor(
+    readonly code: string,
+    detail?: string,
+  ) {
+    super(`oauth error: ${code}${detail ? ` (${detail})` : ""}`);
+    this.name = "OAuthError";
+    this.userMessage = `authentication failed (${code}) — run \`wbhk login\` again.`;
+  }
+}
