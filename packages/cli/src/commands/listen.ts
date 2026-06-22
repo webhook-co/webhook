@@ -15,6 +15,7 @@ import {
   resolveTunnelUrl,
 } from "../api-client.js";
 import { resolveStateDir } from "../config/paths.js";
+import { credentialAccessToken } from "../config/schema.js";
 import type { AppContext, ConnectWebSocket, WsSocket } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import {
@@ -409,7 +410,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       });
       const client = createApiClient({
         baseUrl: apiBaseUrl,
-        apiKey: cred.apiKey,
+        apiKey: credentialAccessToken(cred),
         fetch: this.io.fetch,
       });
       const targetUrl = flags.forward;
@@ -448,7 +449,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       await runListen({
         connect: this.io.connectWebSocket,
         tunnelUrl,
-        apiKey: cred.apiKey,
+        apiKey: credentialAccessToken(cred),
         endpointId,
         since,
         forward,

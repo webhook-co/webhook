@@ -1,7 +1,7 @@
 import { buildCommand } from "@stricli/core";
-import { redactSecret } from "@webhook-co/shared";
 
 import { createApiClient, ENV_API_URL_VAR, resolveApiBaseUrl } from "../api-client.js";
+import { credentialAccessToken } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import {
@@ -11,7 +11,7 @@ import {
   resolveProfile,
   type GlobalFlags,
 } from "../global-flags.js";
-import { renderJson } from "../output/format.js";
+import { redactCredential, renderJson } from "../output/format.js";
 import { sanitizeControl } from "../output/safe-text.js";
 
 // `wbhk whoami` — show the authenticated principal. Reads the stored credential (env › file), calls
@@ -33,11 +33,16 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
       env: this.process.env?.[ENV_API_URL_VAR],
       stored: await this.store.getApiBaseUrl(profile),
     });
-    const client = createApiClient({ baseUrl, apiKey: cred.apiKey, fetch: this.io.fetch });
+    const client = createApiClient({
+      baseUrl,
+      apiKey: credentialAccessToken(cred),
+      fetch: this.io.fetch,
+    });
     const identity = await client.whoami(); // throws ApiError (a CliError) on 401/etc — handled by the app
 
     const { format } = resolveGlobals(this, flags);
-    const handle = redactSecret(cred.apiKey);
+    // Total over the credential union; the OAuth refresh token is never displayed.
+    const handle = redactCredential(cred);
     if (format === "json") {
       // userId is present only for a user principal (OAuth tokens later); omit it for org-scoped keys.
       this.process.stdout.write(
