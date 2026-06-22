@@ -188,6 +188,12 @@ describe("buildAuthConfig", () => {
     expect(buildAuthConfig(input(), cfgDeps()).session?.cookieCache?.enabled).toBe(false);
   });
 
+  it("reads CF's trusted client-IP header for rate limiting (no shared per-path bucket on Workers)", () => {
+    expect(buildAuthConfig(input(), cfgDeps()).advanced?.ipAddress?.ipAddressHeaders).toEqual([
+      "cf-connecting-ip",
+    ]);
+  });
+
   it("includes the magic-link plugin", () => {
     expect(buildAuthConfig(input(), cfgDeps()).plugins?.some((p) => p.id === "magic-link")).toBe(
       true,
