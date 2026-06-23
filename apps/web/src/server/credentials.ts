@@ -46,6 +46,9 @@ export type CredentialsResult =
       readonly keys: readonly ApiKeyItem[];
     }
   | { readonly status: "error" }
+  // Reserved for a future role-aware load — a member viewing an org they may read but not manage. No
+  // current code path returns it (the v1 dashboard is a single personal org); the read-only "denied"
+  // view + its tests are kept so the affordance is ready when membership roles land.
   | { readonly status: "denied" };
 
 /**

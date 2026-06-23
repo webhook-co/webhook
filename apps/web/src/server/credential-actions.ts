@@ -54,28 +54,33 @@ export async function createApiKey(input: CreateKeyInput): Promise<CreateKeyResu
   const scopes = input.scopes.filter((s) => grantable.has(s));
   if (scopes.length === 0) return { ok: false, error: "Choose at least one scope." };
 
+  let created: Awaited<ReturnType<typeof mintApiKey>>;
   try {
-    const created = await mintApiKey({
+    created = await mintApiKey({
       orgId: session.orgId,
       userId: session.userId,
       name,
       scopes,
     });
-    const key: ApiKeyItem = {
-      id: created.id,
-      name: created.name,
-      start: created.start,
-      scopes: created.scopes,
-      createdAt: new Date(),
-      lastUsedAt: null,
-      expiresAt: created.expiresAt,
-      revokedAt: null,
-    };
-    return { ok: true, key, plaintext: created.plaintext };
   } catch (error) {
     logActionError("credential.create_failed", error);
     return { ok: false, error: "We couldn't create the key. Please try again." };
   }
+
+  // Map OUTSIDE the mint try: the key is already committed, so a throw while shaping the result must NOT
+  // be caught and reported as a failure — that would tell the user nothing was created while a live key
+  // exists. The mapping is pure, so in practice it never throws; keeping it out makes that guarantee.
+  const key: ApiKeyItem = {
+    id: created.id,
+    name: created.name,
+    start: created.start,
+    scopes: created.scopes,
+    createdAt: new Date(),
+    lastUsedAt: null,
+    expiresAt: created.expiresAt,
+    revokedAt: null,
+  };
+  return { ok: true, key, plaintext: created.plaintext };
 }
 
 export type RevokeResult = { readonly ok: true } | { readonly ok: false; readonly error: string };
