@@ -38,6 +38,7 @@ import {
   resolveProfile,
   type GlobalFlags,
 } from "../global-flags.js";
+import { CAPABILITY_EXIT } from "../output/exit-codes.js";
 import { type OutputFormat } from "../output/format.js";
 import { sanitizeControl } from "../output/safe-text.js";
 
@@ -62,6 +63,13 @@ const SEEN_CURSOR_CAP = 50_000;
 /** A status-frame backlog at/above this warns the user a replay is coming (the "side-effect cannon"
  *  heads-up, esp. with --forward). Tunable, and intentionally well below the server LISTEN_LAG_CAP. */
 const BACKLOG_GUARD = 1_000;
+
+/** Max forward attempts per event before giving up. A target that PERMANENTLY rejects (always-500,
+ *  refused) must NOT retry forever: the forward chain is serial + cursor-gated, so an endless retry would
+ *  block every later event, never advance the durable cursor, and wedge the whole tail until Ctrl-C. After
+ *  this many attempts we stop the tail with a loud, named error (the event stays un-acked → `--resume`
+ *  retries it once the target is fixed). High enough to ride out a transient blip via the capped backoff. */
+export const FORWARD_MAX_ATTEMPTS = 8;
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -151,6 +159,10 @@ export interface RunListenDeps {
   readonly signal: AbortSignal;
   /** Backoff sleep (real setTimeout in prod; instant under test). */
   readonly sleep: (ms: number) => Promise<void>;
+  /** Stop the tail on an UNRECOVERABLE forward failure (a --forward target that permanently rejects).
+   *  The command wires this to flag a non-zero exit + abort the controller; under test it aborts the
+   *  signal. Only ever called from the forward path's attempt-cap exhaustion. */
+  readonly stop: () => void;
 }
 
 /**
@@ -208,6 +220,17 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
         deps.note(
           `forward ${summary.id} → ${outcome.ok ? `HTTP ${outcome.status}` : outcome.reason} — retrying\n`,
         );
+      }
+      // Bounded: a permanently-failing target must not retry forever (it would block every later event on
+      // the serial chain, never advance the durable cursor, and wedge the tail). Give up loudly — naming
+      // the stuck event + the attempt count — and stop the tail. The event is left UN-ACKED, so a
+      // `--resume` re-run retries it from here once the target is fixed.
+      if (n >= FORWARD_MAX_ATTEMPTS) {
+        deps.note(
+          `giving up on ${summary.id} → ${fwd.targetUrl} after ${n} attempts — stopping the tail (fix the target, then re-run with --resume to retry from here)\n`,
+        );
+        deps.stop();
+        return false;
       }
       await abortableSleep(deps.signal, deps.sleep, backoffMs(n));
     }
@@ -524,6 +547,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
           color,
           signal: controller.signal,
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+          stop: () => controller.abort(), // dead in inspection mode (no auto-forward); required dep
         });
         // If the loop ends on its own (error/abort), close the TUI. `.catch` swallows the rejection on
         // THIS branch only — the real error still rides `await loop` below (so it surfaces once, not as an
@@ -543,6 +567,9 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
     const onSignal = (): void => controller.abort();
     // A closed stdout (e.g. `wbhk listen | head`) raises EPIPE; abort + exit cleanly rather than crash.
     const onStdoutError = (): void => controller.abort();
+    // A --forward target that permanently fails stops the tail (runListen calls `stop`); flag it so we
+    // exit non-zero (distinct from a clean Ctrl-C), since the user's deliveries didn't go through.
+    let forwardFailed = false;
     process.once("SIGINT", onSignal);
     process.once("SIGTERM", onSignal);
     process.stdout.on("error", onStdoutError);
@@ -561,6 +588,10 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         color,
         signal: controller.signal,
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        stop: () => {
+          forwardFailed = true;
+          controller.abort();
+        },
       });
     } finally {
       await persistChain; // flush the final acked cursor to disk before exiting
@@ -568,6 +599,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       process.removeListener("SIGINT", onSignal);
       process.removeListener("SIGTERM", onSignal);
     }
+    if (forwardFailed) this.process.exitCode = CAPABILITY_EXIT.TARGET_UNREACHABLE;
   },
   parameters: {
     positional: {
