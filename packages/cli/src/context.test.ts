@@ -49,6 +49,7 @@ function fakeIo(keychain: KeychainIo = unavailableKeychain): IoSeams {
     keychain,
     openBrowser: nope as unknown as IoSeams["openBrowser"],
     sleep: nope as unknown as IoSeams["sleep"],
+    startLoopbackServer: nope as unknown as IoSeams["startLoopbackServer"],
   };
 }
 
