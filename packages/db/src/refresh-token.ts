@@ -9,6 +9,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { CREDENTIAL_SECRET_BYTES, type CredentialHasher } from "./credential";
+import { sweepExpiredRefreshTokens } from "./sweep";
 
 const REFRESH_PREFIX = "rtk";
 const START_LEN = 11;
@@ -113,7 +114,7 @@ export async function consumeRefreshToken(
 ): Promise<ConsumedRefreshToken | null> {
   const orgId = parseRefreshTokenOrg(plaintext);
   if (!orgId) return null;
-  return withTenant(app, orgId, async (tx) => {
+  const result = await withTenant(app, orgId, async (tx) => {
     // Try each pepper candidate (current, then previous) — a handle was stored under exactly one, so at
     // most one matches. Iterating mirrors the api-key cold-lookup (postgres.js doesn't bind a Buffer[]
     // as bytea[] for `= any()`); the first match's UPDATE is the atomic single-use gate.
@@ -144,6 +145,13 @@ export async function consumeRefreshToken(
     await tx`update auth_refresh_token set replaced_by = ${newId} where id = ${consumed.id}`;
     return { grantId: consumed.grant_id, orgId, audience: consumed.audience, newRefresh: next };
   });
+
+  // Housekeeping: after the consume+rotate transaction has COMMITTED, opportunistically prune this org's
+  // already-expired handles in a separate, best-effort transaction. It's non-fatal (errors are swallowed
+  // inside the sweep), so it can never roll back or fail the consume above — the consume result stands
+  // regardless. Skipped when nothing was consumed (no real activity to piggyback on).
+  if (result) await sweepExpiredRefreshTokens(app, orgId);
+  return result;
 }
 
 /**
