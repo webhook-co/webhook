@@ -16,6 +16,13 @@
   "observability": {
     "enabled": true,
   },
+  // Daily cross-org expiry cron-sweep (ADR-0055): the scheduled() handler in src/worker.ts prunes expired
+  // refresh + session-exchange rows across all orgs as the least-privilege webhook_sweeper role. 04:00 UTC
+  // is a low-traffic window; the on-access per-org sweep handles active orgs, so this only mops up the
+  // churned/abandoned ones — once a day is ample.
+  "triggers": {
+    "crons": ["0 4 * * *"],
+  },
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS",
@@ -52,14 +59,16 @@
       "id": "<AUTH_RATELIMIT_KV_ID>",
     },
   ],
-  // Three cache-DISABLED Hyperdrive clients (deploy slice): HYPERDRIVE_TENANT (webhook_app — identity
+  // Four cache-DISABLED Hyperdrive clients (deploy slice): HYPERDRIVE_TENANT (webhook_app — identity
   // writes + bootstrap + the /token mint + /revoke cascade + getConsentOrg + session-exchange consume),
   // HYPERDRIVE_AUTH (webhook_auth — the Better Auth session runtime + the session-exchange profile read),
-  // HYPERDRIVE_AUTHN (webhook_authn — the /revoke whk_→grant cross-org-by-hash lookup). Caching stays off —
-  // the identity/cold-lookup reads must reflect live revoke/rotate state, and tenant reads are RLS-gated
-  // (the cache can't see the RLS GUC). The frozen issuer routes fail closed without these
-  // (readTokenEnv/readRevokeEnv/readAuthorizeEnv/readSessionExchangeEnv), so they MUST be bound before
-  // routing. The deploy overlay injects the real ids; localConnectionString is the dev/test PG.
+  // HYPERDRIVE_AUTHN (webhook_authn — the /revoke whk_→grant cross-org-by-hash lookup), HYPERDRIVE_SWEEPER
+  // (webhook_sweeper — the daily cross-org expiry cron-sweep, DELETE-only on the two token tables, ADR-0055).
+  // Caching stays off — the identity/cold-lookup reads must reflect live revoke/rotate state, and tenant
+  // reads are RLS-gated (the cache can't see the RLS GUC); a DELETE is never cached anyway. The frozen issuer
+  // routes fail closed without the first three (readTokenEnv/readRevokeEnv/readAuthorizeEnv/
+  // readSessionExchangeEnv), so they MUST be bound before routing. The deploy overlay injects the real ids;
+  // localConnectionString is the dev/test PG (the same DB locally — the role differs only in prod).
   "hyperdrive": [
     {
       "binding": "HYPERDRIVE_TENANT",
@@ -74,6 +83,11 @@
     {
       "binding": "HYPERDRIVE_AUTHN",
       "id": "<HYPERDRIVE_AUTHN_ID>",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
+      "binding": "HYPERDRIVE_SWEEPER",
+      "id": "<HYPERDRIVE_SWEEPER_ID>",
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
   ],

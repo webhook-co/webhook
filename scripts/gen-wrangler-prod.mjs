@@ -43,6 +43,10 @@ const TOKEN = {
   "<AUTH_DEVICE_KV_ID>": reqEnv("AUTH_DEVICE_KV_ID"),
   "<AUTH_RATELIMIT_KV_ID>": reqEnv("AUTH_RATELIMIT_KV_ID"),
   "<HYPERDRIVE_AUTH_ID>": reqEnv("HYPERDRIVE_AUTH_ID"),
+  // The cross-org expiry cron-sweep's webhook_sweeper Hyperdrive (ADR-0055) — bound to a least-privilege,
+  // DELETE-only Neon role. The operator provisions the role + Hyperdrive and sets the HYPERDRIVE_SWEEPER_ID
+  // GH repo var; the auth deploy workflow must provide it like every other id here.
+  "<HYPERDRIVE_SWEEPER_ID>": reqEnv("HYPERDRIVE_SWEEPER_ID"),
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
 };
@@ -135,6 +139,7 @@ const APPS = {
       "<HYPERDRIVE_TENANT_ID>",
       "<HYPERDRIVE_AUTH_ID>",
       "<HYPERDRIVE_AUTHN_ID>",
+      "<HYPERDRIVE_SWEEPER_ID>",
     ],
   },
 };

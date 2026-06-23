@@ -57,6 +57,7 @@ const MANAGED_ROLES = [
   DB_ROLES.authn,
   DB_ROLES.anchor,
   DB_ROLES.auth,
+  DB_ROLES.sweeper,
 ] as const;
 
 function freePort(): Promise<number> {

@@ -44,4 +44,14 @@ export const DB_ROLES = {
    * ADR-0019 — all runtime keys are first-party api_keys). Password injected out of band.
    */
   auth: "webhook_auth",
+  /**
+   * Cross-org expiry cron-sweep role (ADR-0055 / migration 0020). Non-owner, no BYPASSRLS; the daily
+   * auth. cron prunes EXPIRED rows from auth_refresh_token + auth_session_exchange across ALL orgs. Holds
+   * DELETE-ONLY on those two tables (no select/insert/update — it can't read any row data) via a
+   * role-targeted `FOR DELETE TO webhook_sweeper USING (expires_at < now())` policy, so even a bare DELETE
+   * only ever removes already-expired rows. Complements the on-access per-org sweep (which only touches the
+   * consuming org). The cross-org delete is RLS-native: FORCE RLS would defeat a SECURITY-DEFINER/owner
+   * bypass, and BYPASSRLS is forbidden here. Password injected out of band.
+   */
+  sweeper: "webhook_sweeper",
 } as const;

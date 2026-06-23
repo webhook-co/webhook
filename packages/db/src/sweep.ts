@@ -64,6 +64,30 @@ export async function sweepExpiredSessionExchanges(app: Sql, orgId: string): Pro
   }
 }
 
+/**
+ * Cross-org expiry sweep for the daily auth. cron (migration 0020, ADR-0055). Unlike the per-org on-access
+ * sweeps above, this runs as the **webhook_sweeper** role (the caller passes a sweeper-scoped postgres.js
+ * client) — a DELETE-only, non-bypass, control-plane role with a role-targeted `FOR DELETE TO
+ * webhook_sweeper USING (expires_at < now())` policy on each table. There is NO `withTenant` and NO tenant
+ * GUC: the policy scopes the delete to expired rows ACROSS ALL ORGS, which is exactly what fully-churned /
+ * abandoned orgs (never swept on-access) need.
+ *
+ * Two BARE deletes — deliberately no `where expires_at < now()` clause. The role holds NO SELECT privilege,
+ * so it cannot read row data; the policy's USING clause is the only gate and bounds the delete to
+ * already-expired rows. postgres.js exposes `.count` (rows affected) on a DELETE result, so we report the
+ * exact number pruned per table. No PII is read or logged here — only counts are returned.
+ *
+ * No try/catch: the scheduled-handler caller wraps this and logs `auth.sweep.cron.error` on failure, so a
+ * cron error surfaces (and is observable) rather than being silently swallowed by housekeeping.
+ */
+export async function pruneAllExpiredAuthTokens(
+  sql: Sql,
+): Promise<{ refreshTokens: number; sessionExchanges: number }> {
+  const r = await sql`delete from auth_refresh_token`;
+  const s = await sql`delete from auth_session_exchange`;
+  return { refreshTokens: r.count, sessionExchanges: s.count };
+}
+
 /** Log a swallowed sweep failure (table + error message only — never row contents or the handle). */
 function logSweepSkipped(table: string, err: unknown): number {
   console.warn(
