@@ -45,12 +45,22 @@
       "id": "<KV_AUTHZ_ID>",
     },
   ],
+  // AUTH_SESSION_EXCHANGE — the service binding to auth.'s SessionExchange WorkerEntrypoint, so /auth/callback
+  // redeems the A-SX handoff ticket over a direct RPC instead of a public `POST /session/exchange` (the public
+  // route stays as the fetch fallback). Deploy-injected (NOT committed) — like mcp's AUTH_ISSUER — because of
+  // the deploy ORDERING: auth.'s SessionExchange entrypoint must be LIVE before this binding resolves, else CF
+  // late-binds and web fails to start. With NO `services` block here, web starts fine with the binding simply
+  // undefined and `exchangeTicket` transparently falls back to fetch (getSessionExchangeBinding → undefined).
+  // The deploy overlay (scripts/gen-wrangler-prod.mjs) adds:
+  //   "services": [{ "binding": "AUTH_SESSION_EXCHANGE", "service": "webhook-auth", "entrypoint": "SessionExchange" }]
+  //
   // The runtime config the overlay injects at deploy (never committed here; resolved per-request via
   // getCloudflareContext() — see src/server/env.ts). E7 (the auth.→app. handoff) needs:
   //   SESSION_TOKEN_SECRET  Secrets Store — the HMAC key that signs the app. session cookie. Fails CLOSED
   //                         in prod if absent (env.ts never signs with a default); a 256-bit random secret.
   //   AUTH_BASE_URL         var — the auth. origin the /auth/callback backchannels /session/exchange against
-  //                         (defaults to https://auth.webhook.co; set per env for preview/dev).
+  //                         (defaults to https://auth.webhook.co; set per env for preview/dev). Only used when
+  //                         the AUTH_SESSION_EXCHANGE binding above is unbound (the fetch fallback path).
   //   secrets_store      CREDENTIAL_PEPPER + AUDIT_CHAIN_HMAC_KEY — the api-key HMAC pepper + the audit-chain
   //                      key (byte-identical to every surface), overlay-injected at deploy, never committed.
   // The production deploy (the OpenNext build→deploy job + the id/secret overlay) is coordinated with the

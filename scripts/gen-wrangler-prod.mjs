@@ -96,6 +96,14 @@ const APPS = {
     domain: "app.webhook.co",
     secrets: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "SESSION_TOKEN_SECRET"],
     placeholders: ["<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
+    // AUTH_SESSION_EXCHANGE — the service binding to auth.'s SessionExchange WorkerEntrypoint, so /auth/callback
+    // redeems the A-SX handoff ticket over a direct RPC instead of the public POST /session/exchange (which
+    // stays as the fetch fallback). Deploy-injected here (NOT committed) — mirrors mcp's AUTH_ISSUER — because
+    // of the ordering: auth. must be LIVE first (it is — apps/auth deployed), or CF late-binds and web fails to
+    // start. Until this lands, exchangeTicket falls back to the public fetch (no breakage), so the gap is safe.
+    services: [
+      { binding: "AUTH_SESSION_EXCHANGE", service: "webhook-auth", entrypoint: "SessionExchange" },
+    ],
   },
   // The OAuth issuer + Better Auth runtime (auth.webhook.co) — an OpenNext SSR Worker (main = src/worker.ts
   // wrapping .open-next/worker.js with @cloudflare/workers-oauth-provider), deployed by deploy-auth.yml after
