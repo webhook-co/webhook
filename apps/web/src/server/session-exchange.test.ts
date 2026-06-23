@@ -89,4 +89,34 @@ describe("exchangeTicket — service binding (preferred when bound)", () => {
     const result = await exchangeTicket("sxt_abc", { binding: { exchange } });
     expect(result.user.image).toBeNull();
   });
+
+  it("falls back to the public fetch path when the binding RPC THROWS (transport failure)", async () => {
+    // A thrown error is a binding/transport fault (the OpenNext→WorkerEntrypoint RPC), NOT an auth
+    // decision — degrade to the proven public route instead of breaking login. (A `null` result IS an
+    // auth decision and must still throw without falling back — asserted above.)
+    const exchange = vi.fn(async () => {
+      throw new Error("RPC transport failed");
+    });
+    const fetchImpl = vi.fn(async () => jsonResponse(principal));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await exchangeTicket("sxt_abc", { binding: { exchange }, fetch: fetchImpl });
+
+    expect(exchange).toHaveBeenCalledOnce();
+    expect(fetchImpl).toHaveBeenCalledOnce(); // fell through to the fetch path
+    expect(result).toEqual(session);
+    expect(warn).toHaveBeenCalled(); // the fallback is observable (a broken RPC is visible in logs)
+    warn.mockRestore();
+  });
+
+  it("still throws if the binding RPC throws AND the fetch fallback also fails", async () => {
+    const exchange = vi.fn(async () => {
+      throw new Error("RPC transport failed");
+    });
+    const fetchImpl = vi.fn(async () => jsonResponse({ error: "invalid_grant" }, 401));
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    await expect(
+      exchangeTicket("sxt_bad", { binding: { exchange }, fetch: fetchImpl }),
+    ).rejects.toThrow();
+  });
 });
