@@ -65,11 +65,29 @@ export async function exchangeTicket(
 ): Promise<Session> {
   const binding = deps.binding ?? getSessionExchangeBinding();
   if (binding) {
-    const principal = await binding.exchange(ticket);
-    if (!principal) {
-      throw new Error("session exchange failed: ticket invalid or expired");
+    // Wrap ONLY the RPC call so we can tell a binding/transport FAULT (the RPC throws) from an auth
+    // DECISION (the RPC responds with `null` or a principal). A thrown error means the
+    // OpenNext→WorkerEntrypoint RPC itself failed — degrade to the proven public fetch path below
+    // rather than break login (the route stays live until it's retired). Once the RPC has responded
+    // it is authoritative: a `null` verdict (invalid/expired/used/wrong-audience) throws, and a
+    // malformed principal throws in toSession — neither falls back. The fault warns (no PII) so a
+    // silently-broken RPC stays visible in logs (and the public route can't be retired until it's gone).
+    let principal: ExchangePrincipal | null = null;
+    let rpcFaulted = false;
+    try {
+      principal = await binding.exchange(ticket);
+    } catch {
+      console.warn(
+        JSON.stringify({ msg: "session_exchange.binding_rpc_failed", fallback: "public_fetch" }),
+      );
+      rpcFaulted = true;
     }
-    return toSession(principal);
+    if (!rpcFaulted) {
+      if (!principal) {
+        throw new Error("session exchange failed: ticket invalid or expired");
+      }
+      return toSession(principal);
+    }
   }
 
   const fetchImpl = deps.fetch ?? fetch;
