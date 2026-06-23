@@ -52,6 +52,11 @@ session, and make the gate verify it.
 
 - The handoff is **stateless** — no app.-side session store; the signed cookie is the session, and after the
   exchange app. never calls back to `auth.` (the profile rode in on the exchange response).
+- **Revocation model (stateless tradeoff):** because there is no server-side session store, an individual
+  app. session cannot be revoked server-side before its cookie expiry — the fleet-wide kill-switch is
+  **rotating `SESSION_TOKEN_SECRET`** (invalidates every signed cookie at once, forcing re-login). Session
+  lifetime is therefore the primary bound on a leaked cookie; a per-session server-side revocation list is a
+  possible future addition (coordinated with Lane E) if finer-grained revocation is needed.
 - **Deploy obligations:** provision `SESSION_TOKEN_SECRET` (256-bit) in Secrets Store + set `AUTH_BASE_URL`; and
   per ADR-0033, add the app.↔auth. shared-secret/service-binding on `/session/exchange` (defense-in-depth) and
   the rate-limit on `auth./session/handoff`. `AUTH_LOGIN_URL` should point at `auth./login` per env so the gate's
