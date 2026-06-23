@@ -66,7 +66,10 @@ export async function edgeRateLimit(
   rule: RateLimitRule,
 ): Promise<Response | null> {
   if (!deps.kv) return null; // unbound (dev/test) → skip
-  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  // cf-connecting-ip is CF-set + not client-spoofable at the Worker. Absent only off-edge (dev/test); when
+  // it is, FAIL OPEN rather than collapse every header-less request into one poisonable `:ip:unknown` bucket.
+  const ip = request.headers.get("cf-connecting-ip");
+  if (!ip) return null;
   try {
     const result = await consumeRateLimit(
       { kv: deps.kv, nowSeconds: deps.nowSeconds },
@@ -74,7 +77,12 @@ export async function edgeRateLimit(
       rule,
     );
     return result.allowed ? null : tooManyRequests(result.retryAfterSeconds);
-  } catch {
-    return null; // fail open on a KV fault — never block legit traffic on the limiter
+  } catch (error) {
+    // Fail open on a KV fault — never block legit traffic on the limiter — but leave an observability
+    // breadcrumb so a KV outage silently disabling the gate fleet-wide is diagnosable.
+    console.log(
+      JSON.stringify({ message: "edge_rate_limit.fault", endpoint, error: String(error) }),
+    );
+    return null;
   }
 }

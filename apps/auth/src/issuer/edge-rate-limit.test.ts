@@ -10,7 +10,7 @@ function fakeKv() {
   const store = new Map<string, string>();
   return {
     get: async (k: string) => store.get(k) ?? null,
-    put: async (k: string, v: string) => {
+    put: async (k: string, v: string, _opts: { expirationTtl: number }) => {
       store.set(k, v);
     },
   };
@@ -69,6 +69,14 @@ describe("edgeRateLimit", () => {
     expect(
       await edgeRateLimit({ kv, nowSeconds: now }, "revoke", reqFrom("1.1.1.1"), rule),
     ).toBeNull();
+  });
+
+  it("fails OPEN (skips the gate) when there's no client IP — no poisonable shared bucket", async () => {
+    const res = await edgeRateLimit({ kv: fakeKv(), nowSeconds: now }, "token", reqFrom(null), {
+      limit: 1,
+      windowSeconds: 60,
+    });
+    expect(res).toBeNull();
   });
 
   it("fails OPEN when the KV binding is absent (dev/test, unbound)", async () => {
