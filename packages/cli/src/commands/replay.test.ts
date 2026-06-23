@@ -70,17 +70,30 @@ const ATTEMPT = {
 function fakeApi(opts: {
   local: { status: number } | "throw";
   onReplay?: (init: RequestInit) => void;
+  onForward?: (init: RequestInit) => void;
+  payload?: Uint8Array;
 }): typeof fetch {
   return (async (url: string | URL, init?: RequestInit) => {
     const u = String(url);
     const method = (init?.method ?? "GET").toUpperCase();
     if (u.startsWith("http://localhost") || u.includes("127.0.0.1")) {
+      opts.onForward?.(init ?? {});
       if (opts.local === "throw") throw new Error("connect ECONNREFUSED 127.0.0.1:3000");
       return new Response("local-body", { status: opts.local.status });
     }
     if (method === "GET" && u.endsWith(`/v1/events/${EVENT_ID}`)) return Response.json(EVENT);
-    if (method === "GET" && u.endsWith(`/v1/events/${EVENT_ID}/payload`))
-      return Response.json(ENVELOPE);
+    if (method === "GET" && u.endsWith(`/v1/events/${EVENT_ID}/payload`)) {
+      const p = opts.payload;
+      return Response.json(
+        p === undefined
+          ? ENVELOPE
+          : {
+              contentType: "application/octet-stream",
+              bytes: p.byteLength,
+              bodyBase64: bytesToB64(p),
+            },
+      );
+    }
     if (method === "POST" && u.endsWith(`/v1/events/${EVENT_ID}/replay`)) {
       opts.onReplay?.(init ?? {});
       return Response.json(ATTEMPT);
@@ -153,5 +166,81 @@ describe("wbhk replay", () => {
     );
     expect(t.stderr().toLowerCase()).toContain("could not reach");
     expect(recorded).toBe(false);
+  });
+});
+
+describe("wbhk replay --edit", () => {
+  const decode = (b: unknown): string => new TextDecoder().decode(b as Uint8Array);
+
+  it("forwards the EDITED body + warns the signature no longer matches", async () => {
+    let forwarded: RequestInit | undefined;
+    let editorSeen: { initial: string; editor: string } | undefined;
+    const t = makeTestContext({
+      store: loggedInStore(),
+      env: { EDITOR: "vi" },
+      fetch: fakeApi({ local: { status: 200 }, onForward: (i) => (forwarded = i) }),
+      editText: async (initial, editor) => {
+        editorSeen = { initial, editor };
+        return '{"hello":"EDITED"}';
+      },
+    });
+    await run(app, ["replay", EVENT_ID, "--forward", FORWARD, "--edit"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    // The editor saw the captured body + the resolved $EDITOR.
+    expect(editorSeen).toEqual({ initial: '{"hello":"world"}', editor: "vi" });
+    // The EDITED bytes were forwarded (not the original).
+    expect(decode(forwarded?.body)).toBe('{"hello":"EDITED"}');
+    // And the stale-signature caveat was surfaced.
+    expect(t.stderr().toLowerCase()).toContain("signature no longer matches");
+  });
+
+  it("prefers $VISUAL and treats an editor-added trailing newline as unchanged (no warning, original bytes)", async () => {
+    let forwarded: RequestInit | undefined;
+    const t = makeTestContext({
+      store: loggedInStore(),
+      env: { VISUAL: "code --wait", EDITOR: "vi" },
+      fetch: fakeApi({ local: { status: 200 }, onForward: (i) => (forwarded = i) }),
+      // The common `:wq`: the editor appends a trailing newline to a newline-less body but the user
+      // changed nothing — must forward the ORIGINAL bytes (no extra \n) and NOT warn.
+      editText: async (initial) => initial + "\n",
+    });
+    await run(app, ["replay", EVENT_ID, "--forward", FORWARD, "--edit"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(decode(forwarded?.body)).toBe('{"hello":"world"}'); // original bytes, no trailing \n
+    expect(t.stderr().toLowerCase()).not.toContain("signature no longer matches");
+  });
+
+  it("emits JSON on a delivered --edit replay", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      env: { EDITOR: "vi" },
+      fetch: fakeApi({ local: { status: 200 } }),
+      editText: async () => '{"hello":"EDITED"}',
+    });
+    await run(app, ["replay", EVENT_ID, "--forward", FORWARD, "--edit", "--output", "json"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(JSON.parse(t.stdout())).toMatchObject({ delivered: true, status: 200 });
+  });
+
+  it("errors (usage) when neither $VISUAL nor $EDITOR is set", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      env: {},
+      fetch: fakeApi({ local: { status: 200 } }),
+    });
+    await run(app, ["replay", EVENT_ID, "--forward", FORWARD, "--edit"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr()).toContain("$EDITOR");
+  });
+
+  it("errors (usage) on a non-UTF-8 (binary) payload — can't open it as text", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      env: { EDITOR: "vi" },
+      fetch: fakeApi({ local: { status: 200 }, payload: new Uint8Array([0xff, 0xfe, 0x00]) }),
+    });
+    await run(app, ["replay", EVENT_ID, "--forward", FORWARD, "--edit"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("text payload");
   });
 });
