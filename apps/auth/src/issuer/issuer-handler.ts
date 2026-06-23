@@ -22,7 +22,7 @@ import { handleDeviceVerify } from "./device-verify-route";
 import { makeRevokeDeps } from "./revoke-deps";
 import { handleRevokeRequest } from "./revoke-route";
 import { makeSessionExchangeDeps } from "./session-exchange-deps";
-import { handleSessionExchange } from "./session-exchange-route";
+import { handleSessionExchange, isPublicSessionExchangeRetired } from "./session-exchange-route";
 import { makeSessionHandoffDeps } from "./session-handoff-deps";
 import { handleSessionHandoff } from "./session-handoff-route";
 import { redeemAuthCode, redeemRefresh } from "./token-core";
@@ -166,7 +166,14 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
 
       // POST /session/exchange — app.'s server backchannel-redeems a session ticket (A-SX-2a): consume +
       // read the profile → the principal payload. Authenticated by the single-use ticket, not a cookie.
-      if (request.method === "POST" && url.pathname === "/session/exchange") {
+      // RETIRED IN PROD: on the prod host this route falls through to a 404 (no public ticket-redemption
+      // surface) — app. redeems via the AUTH_SESSION_EXCHANGE service-binding RPC, which calls the shared
+      // core directly and never reaches this HTTP route. Kept only for local dev/preview (no bindings there).
+      if (
+        request.method === "POST" &&
+        url.pathname === "/session/exchange" &&
+        !isPublicSessionExchangeRetired(url)
+      ) {
         const limited = await edgeRateLimit(
           rl,
           "session_exchange",
