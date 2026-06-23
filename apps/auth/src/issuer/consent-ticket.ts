@@ -25,6 +25,10 @@ import {
 
 const HMAC_BYTES = 16; // 128-bit truncated HMAC-SHA256 tag — matches the cursor codec (tamper-evidence).
 const TICKET_KEY_BYTES = 32; // a dedicated 32-byte secret (CONSENT_TICKET_KEY), never reused from another key.
+// A type tag sealed into the signed bytes — symmetric with completion-ticket.ts's `t:"loopback_complete"`.
+// The two codecs share CONSENT_TICKET_KEY; without mutually-exclusive tags a completion ticket would parse
+// as a (malformed) consent ticket. signConsentTicket stamps it; verifyConsentTicket rejects any other tag.
+const CONSENT_TICKET_TYPE = "consent";
 
 /** The OAuth authorization request, replayed verbatim into completeAuthorization at the decision. */
 export interface ConsentAuthRequest {
@@ -119,7 +123,8 @@ export async function signConsentTicket(
   payload: ConsentTicketPayload,
   key: CryptoKey,
 ): Promise<string> {
-  const bytes = utf8Encoder.encode(JSON.stringify(payload));
+  // Stamp the type tag into the sealed bytes (domain separation vs the completion ticket — both share the key).
+  const bytes = utf8Encoder.encode(JSON.stringify({ t: CONSENT_TICKET_TYPE, ...payload }));
   const mac = await tag(key, bytes);
   return `${bytesToB64url(bytes)}.${bytesToB64url(mac)}`;
 }
@@ -146,14 +151,18 @@ export async function verifyConsentTicket(
   }
   const expectedMac = await tag(key, bytes);
   if (!timingSafeEqual(presentedMac, expectedMac)) return null;
-  let payload: ConsentTicketPayload;
+  let payload: ConsentTicketPayload & { t?: unknown };
   try {
-    payload = JSON.parse(utf8Decoder.decode(bytes)) as ConsentTicketPayload;
+    payload = JSON.parse(utf8Decoder.decode(bytes)) as ConsentTicketPayload & { t?: unknown };
   } catch {
     return null;
   }
+  // Reject any envelope that isn't a consent ticket (e.g. a completion ticket signed with the shared key).
+  if (payload.t !== CONSENT_TICKET_TYPE) return null;
   if (typeof payload.exp !== "number" || nowSeconds > payload.exp) return null;
-  return payload;
+  // Strip the internal type tag — callers get the ConsentTicketPayload exactly as it was signed.
+  const { t: _t, ...rest } = payload;
+  return rest as ConsentTicketPayload;
 }
 
 /**

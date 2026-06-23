@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { signLoopbackTicket } from "./completion-ticket";
 import {
   consentRequestFromTicket,
   importConsentTicketKey,
@@ -91,7 +92,9 @@ describe("signConsentTicket / verifyConsentTicket", () => {
     const key = await importConsentTicketKey(RAW_KEY);
     const ticket = await signConsentTicket(basePayload(), key);
     const [body, mac] = ticket.split(".");
-    const tampered = `${body}.${mac!.slice(0, -1)}${mac!.slice(-1) === "A" ? "B" : "A"}`;
+    // Flip the FIRST mac char (full-significance): the last base64url char of a 16-byte MAC carries only 2
+    // real bits, so flipping it can decode to the same bytes — tamper a leading char for a reliable change.
+    const tampered = `${body}.${mac![0] === "A" ? "B" : "A"}${mac!.slice(1)}`;
     expect(await verifyConsentTicket(tampered, key, 0)).toBeNull();
   });
 
@@ -145,5 +148,19 @@ describe("consentRequestFromTicket", () => {
     expect(req.flow).toBe("device_code");
     expect(req.client).toEqual({ id: "cli_wbhk", name: "webhook CLI" });
     expect(req.device).toEqual({ name: "Dana's laptop" });
+  });
+});
+
+describe("consent ticket — type-tag domain separation", () => {
+  it("rejects a completion ticket presented as a consent ticket (shared key, different type tag)", async () => {
+    // The completion ticket (loopback bounce) shares CONSENT_TICKET_KEY. Without a symmetric type tag it
+    // would parse as a (malformed) consent ticket; the `t` tag must make the codecs mutually exclusive.
+    const key = await importConsentTicketKey(RAW_KEY);
+    const loopback = await signLoopbackTicket(
+      "http://127.0.0.1:51763/callback?code=x",
+      key,
+      9_999_999_999,
+    );
+    expect(await verifyConsentTicket(loopback, key, 1000)).toBeNull();
   });
 });
