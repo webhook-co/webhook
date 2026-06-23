@@ -11,6 +11,7 @@
     "deploy:dry": "opennextjs-cloudflare build && wrangler deploy --dry-run",
     "start": "next start",
     "test": "vitest run",
+    "test:workers": "vitest run --project workers",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.gen.json",
     "auth:generate": "pnpm dlx @better-auth/cli@latest generate --config src/auth.ts --yes --output ../../packages/db/db/migrations/.better-auth.schema.sql"
   },
