@@ -302,7 +302,10 @@ export async function findApiKeyGrant(
   for (const candidate of hasher.candidates(plaintext)) {
     const [row] = await authn<{ org_id: string; grant_id: string | null }[]>`
       select org_id, grant_id from api_keys where key_hash = ${candidate}`;
-    if (row && row.grant_id !== null) return { orgId: row.org_id, grantId: row.grant_id };
+    if (!row) continue;
+    // key_hash is unique, so a matched row IS the key — no later pepper candidate can match a
+    // different row; stop looping. A standalone key (grant_id null) isn't grant-revocable here -> null.
+    return row.grant_id !== null ? { orgId: row.org_id, grantId: row.grant_id } : null;
   }
   return null;
 }

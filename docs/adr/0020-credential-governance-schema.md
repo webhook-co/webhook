@@ -67,9 +67,18 @@ the control-plane audit chain, and the `api_keys` columns the mint + the conditi
 - The conditional audience stamp + `makeApiKeyColdLookup` reading `api_keys.audience` are A0b; the
   `mintScopedKey`/`mintKeyForGrant` primitives + the `aae1` `appendAuthAuditEntry` helper + the
   `auto_approve_rules` evaluator are A0c.
+- **`org_policy` is effectively read-only in v1 — no mutation surface exists.** It is webhook_app-
+  writable within-org under RLS, but nothing writes it yet. **Forward requirement [SEC-RLS-08]:** when
+  a policy setter lands (the admin console), it MUST (a) gate on admin/owner membership — RLS pins the
+  org but does NOT authorize *who* may change policy — and (b) emit a `policy_changed` auth-audit
+  event (the `aae1` chain already reserves the `policy_changed` event_type). Recorded so it isn't
+  missed when the setter is built.
 - **Reversible** — `dbmate up → down → down → up` verified clean; expand-only, no NOT-NULL contract.
-  The reserved `0015` range is unused. The Better-Auth `apikey`-table drop (ADR-0008's contract
-  migration) remains deferred (contingent on Lane C removing `apiKey()` from the generate config).
+  **`0015` shipped** the composite `api_keys (grant_id, org_id) → auth_grant (id, org_id)` FK
+  hardening (A0c-3 — the cross-tenant grant-binding fix; documented in ADR-0019), so the Lane B
+  migration block 0013–0015 is fully consumed (this supersedes the earlier "0015 reserved/unused"
+  note). The Better-Auth `apikey`-table drop (ADR-0008's contract migration) remains deferred
+  (contingent on Lane C removing `apiKey()` from the generate config).
 - **Tested** (the RLS leak suite, `packages/db/test/rls.test.ts`, now 92 tests): cross-org isolation +
   deny-by-default + FORCE-defeats-owner across all three new tables; `auth_audit_event` append-only
   (chain contiguity, prev_hash linkage, genesis, the immutability trigger vs the cluster superuser);
