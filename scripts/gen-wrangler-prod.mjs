@@ -96,6 +96,13 @@ const APPS = {
     domain: "app.webhook.co",
     secrets: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "SESSION_TOKEN_SECRET"],
     placeholders: ["<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
+    // NOTE: the AUTH_SESSION_EXCHANGE web→auth service binding (entrypoint "SessionExchange") is intentionally
+    // NOT injected yet — this PR ships the binding-AWARE code inert (apps/web falls back to the public fetch
+    // when the binding is unbound, so there's zero behavior change + zero deploy-ordering risk). ACTIVATION is
+    // a deferred follow-up: add `services: [{ binding: "AUTH_SESSION_EXCHANGE", service: "webhook-auth",
+    // entrypoint: "SessionExchange" }]` here ONLY AFTER auth.'s SessionExchange entrypoint is confirmed LIVE
+    // (this PR's deploy), then deploy web + founder e2e the login (the OpenNext→WorkerEntrypoint RPC is
+    // deploy:dry-verified but not yet proven in a live browser login).
   },
   // The OAuth issuer + Better Auth runtime (auth.webhook.co) — an OpenNext SSR Worker (main = src/worker.ts
   // wrapping .open-next/worker.js with @cloudflare/workers-oauth-provider), deployed by deploy-auth.yml after

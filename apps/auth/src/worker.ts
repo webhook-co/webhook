@@ -24,6 +24,7 @@ import openNextHandler from "../.open-next/worker.js";
 import { introspect } from "./issuer/introspect-handler";
 import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
 import { oauthIssuerConfig } from "./issuer/oauth-config";
+import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
 
 export default new OAuthProvider({
@@ -39,5 +40,20 @@ export default new OAuthProvider({
 export class IssuerIntrospect extends WorkerEntrypoint {
   async introspect(token) {
     return introspect(readIntrospectEnv(this.env), token);
+  }
+}
+
+/**
+ * The auth.→app. session-handoff redeem over a service binding (additive — the public POST /session/exchange
+ * route stays). app. (apps/web) RPCs `env.AUTH_SESSION_EXCHANGE.exchange(ticket)` to redeem the single-use
+ * handoff ticket without a public HTTP POST, so /session/exchange need not stay publicly exposed. Returns the
+ * principal { orgId, userId, name, email, image } or null (invalid/expired/used/wrong-audience/user-missing).
+ * The binding + its `entrypoint: "SessionExchange"` are wired on the web side (deploy overlay). Runs in this
+ * Worker with HYPERDRIVE_TENANT/HYPERDRIVE_AUTH + CREDENTIAL_PEPPER. Delegates to the type-checked + tested
+ * redeemSessionExchangeRpc (this file is tsc-excluded), mirroring how IssuerIntrospect delegates to introspect.
+ */
+export class SessionExchange extends WorkerEntrypoint {
+  async exchange(ticket) {
+    return redeemSessionExchangeRpc(this.env, ticket);
   }
 }
