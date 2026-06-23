@@ -28,13 +28,28 @@ async function publicTables(): Promise<string[]> {
   return rows.map((r) => r.relname);
 }
 
+// EVERY non-owner role the migrations create — app/ingest (0002), authn (0008), anchor (0010),
+// auth (0016), sweeper (0020). The list must stay complete: a down() that forgets to drop one is
+// only caught if that role is checked here (else the down-all clean-schema assertion passes blind).
+const MIGRATION_ROLES = [
+  DB_ROLES.app,
+  DB_ROLES.ingest,
+  DB_ROLES.authn,
+  DB_ROLES.anchor,
+  DB_ROLES.auth,
+  DB_ROLES.sweeper,
+];
+
 async function appRoles(): Promise<string[]> {
   const rows = await owner<{ rolname: string }[]>`
     select rolname from pg_roles
-    where rolname in (${DB_ROLES.app}, ${DB_ROLES.ingest}, ${DB_ROLES.authn}, ${DB_ROLES.auth})
+    where rolname in ${owner(MIGRATION_ROLES)}
     order by rolname`;
   return rows.map((r) => r.rolname);
 }
+
+/** The migration roles, sorted by name — the expected appRoles() after a full migrateUp. */
+const ALL_ROLES_SORTED = [...MIGRATION_ROLES].sort();
 
 beforeAll(async () => {
   pg = await startEphemeralPostgres();
@@ -56,12 +71,7 @@ describe("migration reversibility (up -> down -> up)", () => {
       expect(tables).toContain("events");
       expect(tables).toContain("audit_log");
       expect(tables).toContain("schema_migrations");
-      expect(await appRoles()).toEqual([
-        DB_ROLES.app,
-        DB_ROLES.auth,
-        DB_ROLES.authn,
-        DB_ROLES.ingest,
-      ]);
+      expect(await appRoles()).toEqual(ALL_ROLES_SORTED);
     },
     REVERSIBILITY_TIMEOUT_MS,
   );
@@ -82,12 +92,7 @@ describe("migration reversibility (up -> down -> up)", () => {
       migrateUp(pg);
       const tables = await publicTables();
       expect(tables).toContain("events");
-      expect(await appRoles()).toEqual([
-        DB_ROLES.app,
-        DB_ROLES.auth,
-        DB_ROLES.authn,
-        DB_ROLES.ingest,
-      ]);
+      expect(await appRoles()).toEqual(ALL_ROLES_SORTED);
     },
     REVERSIBILITY_TIMEOUT_MS,
   );

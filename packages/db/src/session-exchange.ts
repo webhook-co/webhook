@@ -8,15 +8,14 @@
 // 256-bit secret is the entropy; only its HMAC-SHA256+pepper hash (over the WHOLE plaintext, so the
 // embedded org + audience binding are tamper-covered by the row's hash + audience column) is stored.
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { withTenant, type Sql } from "./client";
-import { CREDENTIAL_SECRET_BYTES, type CredentialHasher } from "./credential";
+import { makeOrgRoutedHandle, parseOrgRoutedHandle, type CredentialHasher } from "./credential";
 import { sweepExpiredSessionExchanges } from "./sweep";
 
 const EXCHANGE_PREFIX = "sxt";
 const START_LEN = 11;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface MintSessionExchangeInput {
   readonly orgId: string;
@@ -43,8 +42,7 @@ export interface ConsumedSessionExchange {
 
 /** `sxt_<orgId>_<secret>` — the org routes the tenant lookup; the secret (hashed) authenticates it. */
 function makeExchangePlaintext(orgId: string): string {
-  const secret = randomBytes(CREDENTIAL_SECRET_BYTES).toString("base64url");
-  return `${EXCHANGE_PREFIX}_${orgId}_${secret}`;
+  return makeOrgRoutedHandle(EXCHANGE_PREFIX, orgId);
 }
 
 /**
@@ -52,10 +50,7 @@ function makeExchangePlaintext(orgId: string): string {
  * prefix, missing segments, or a non-UUID org segment) — the caller treats that as an unknown ticket.
  */
 export function parseSessionExchangeOrg(plaintext: string): string | null {
-  const parts = plaintext.split("_");
-  if (parts.length < 3 || parts[0] !== EXCHANGE_PREFIX) return null;
-  const orgId = parts[1];
-  return orgId && UUID_RE.test(orgId) ? orgId : null;
+  return parseOrgRoutedHandle(EXCHANGE_PREFIX, plaintext);
 }
 
 /** Issue a fresh single-use exchange ticket bound to a user + the app. origin (called after login). */

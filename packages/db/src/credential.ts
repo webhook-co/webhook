@@ -134,6 +134,32 @@ export function mintCredential(prefix: string, hasher: CredentialHasher): Minted
   };
 }
 
+/** A canonical UUID (the org segment embedded in an org-routed handle). */
+export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Mint an ORG-ROUTED opaque handle `<prefix>_<orgId>_<secret>` (the refresh-token / session-exchange
+ * shape). The embedded org is a tenant-routing hint (NOT a secret) so the holder's store can resolve
+ * the org and stay on the normal webhook_app RLS scope; the 256-bit secret is the entropy, and only the
+ * hash of the WHOLE plaintext is stored (so the embedded org is tamper-covered). Pair with
+ * parseOrgRoutedHandle to recover the org.
+ */
+export function makeOrgRoutedHandle(prefix: string, orgId: string): string {
+  const secret = randomBytes(CREDENTIAL_SECRET_BYTES).toString("base64url");
+  return `${prefix}_${orgId}_${secret}`;
+}
+
+/**
+ * Recover the embedded org from an org-routed handle, or null for anything not of `<prefix>_<uuid>_…`
+ * shape (wrong prefix, missing segments, or a non-UUID org). Callers treat null as an unknown handle.
+ */
+export function parseOrgRoutedHandle(prefix: string, plaintext: string): string | null {
+  const parts = plaintext.split("_");
+  if (parts.length < 3 || parts[0] !== prefix) return null;
+  const orgId = parts[1];
+  return orgId && UUID_RE.test(orgId) ? orgId : null;
+}
+
 /**
  * Constant-time hash compare. Defense-in-depth: a by-hash DB lookup already matches on
  * equality, but verification must never branch on a timing-leaky compare. Lengths are
