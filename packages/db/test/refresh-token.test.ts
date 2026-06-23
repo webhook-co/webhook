@@ -288,6 +288,100 @@ describe("consumeRefreshToken", () => {
   });
 });
 
+describe("consumeRefreshToken — opportunistic expiry sweep", () => {
+  // A consume opportunistically prunes the CURRENT org's already-expired handles (housekeeping,
+  // org-scoped under the existing DELETE RLS — no cross-org role). It must NOT touch fresh rows
+  // (including the just-rotated successor), and a prune failure must never fail the consume.
+
+  /** Insert an already-expired handle directly (mints can't produce a past expiry without -ttl). */
+  async function seedExpiredHandle(orgId: string, grantId: string): Promise<Buffer> {
+    const hash = hasher.hash(`rtk_${orgId}_expired_${randomUUID()}`);
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`insert into auth_refresh_token
+             (id, org_id, grant_id, audience, token_hash, prefix, start, expires_at)
+           values (${randomUUID()}, ${orgId}, ${grantId}, ${API}, ${hash}, ${"rtk"}, ${"rtk_expired"},
+                   now() - interval '1 hour')`,
+    );
+    return hash;
+  }
+
+  async function exists(orgId: string, tokenHash: Buffer): Promise<boolean> {
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx<{ n: number }[]>`select 1 as n from auth_refresh_token where token_hash = ${tokenHash}`,
+    );
+    return row !== undefined;
+  }
+
+  it("prunes the org's expired handles on consume, keeping fresh + just-rotated rows", async () => {
+    const orgId = randomUUID();
+    const grantId = await seedGrant(orgId);
+    const expiredHash = await seedExpiredHandle(orgId, grantId);
+    const minted = await mintRefreshToken(
+      app,
+      { orgId, grantId, audience: API, ttlSeconds: REFRESH_TTL },
+      hasher,
+    );
+
+    const result = await consumeRefreshToken(app, minted.plaintext, hasher, REFRESH_TTL);
+    expect(result).not.toBeNull();
+
+    // The pre-existing expired handle is swept away.
+    expect(await exists(orgId, expiredHash)).toBe(false);
+    // The consumed (used-but-unexpired) handle survives — /revoke still resolves it.
+    expect(await exists(orgId, hasher.hash(minted.plaintext))).toBe(true);
+    // The freshly rotated successor survives — it has ~90d to live.
+    expect(await exists(orgId, hasher.hash(result!.newRefresh))).toBe(true);
+  });
+
+  it("does not sweep another org's expired handles (org-scoped)", async () => {
+    const otherOrg = randomUUID();
+    const otherGrant = await seedGrant(otherOrg);
+    const otherExpired = await seedExpiredHandle(otherOrg, otherGrant);
+
+    const orgId = randomUUID();
+    const grantId = await seedGrant(orgId);
+    const minted = await mintRefreshToken(
+      app,
+      { orgId, grantId, audience: API, ttlSeconds: REFRESH_TTL },
+      hasher,
+    );
+    await consumeRefreshToken(app, minted.plaintext, hasher, REFRESH_TTL);
+
+    // The OTHER org's expired handle is untouched — the sweep only sees current_org_id().
+    expect(await exists(otherOrg, otherExpired)).toBe(true);
+  });
+
+  it("returns the consume result even when the sweep fails (non-fatal housekeeping)", async () => {
+    // Inject a real prune failure: revoke webhook_app's DELETE on the table so the post-consume sweep
+    // errors. The consume (the load-bearing op) MUST still commit + return; the sweep error is swallowed.
+    const orgId = randomUUID();
+    const grantId = await seedGrant(orgId);
+    const minted = await mintRefreshToken(
+      app,
+      { orgId, grantId, audience: API, ttlSeconds: REFRESH_TTL },
+      hasher,
+    );
+
+    await owner`revoke delete on auth_refresh_token from webhook_app`;
+    try {
+      const result = await consumeRefreshToken(app, minted.plaintext, hasher, REFRESH_TTL);
+      // The consume committed + rotated despite the sweep being unable to delete.
+      expect(result).toMatchObject({ grantId, orgId, audience: API });
+      expect(result!.newRefresh.startsWith(`rtk_${orgId}_`)).toBe(true);
+      expect((await rowState(orgId, hasher.hash(minted.plaintext)))?.used_at).not.toBeNull();
+    } finally {
+      // Restore the grant so the rest of the suite (and other orgs) keep their sweep behavior.
+      await owner`grant delete on auth_refresh_token to webhook_app`;
+    }
+  });
+});
+
 describe("revokeRefreshTokensForGrant", () => {
   it("revokes all of a grant's handles so none can be consumed", async () => {
     const orgId = randomUUID();

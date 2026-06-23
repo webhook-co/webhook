@@ -130,6 +130,97 @@ describe("mint + consume", () => {
     expect([a, b].filter(Boolean)).toHaveLength(1);
   });
 
+  it("prunes the org's expired tickets on a successful consume (org-scoped housekeeping)", async () => {
+    const { orgId, userId } = await seedOrg();
+    // An already-expired ticket lingering in this org's table.
+    const expiredHash = hasher.hash(`sxt_${orgId}_expired_${randomUUID()}`);
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`insert into auth_session_exchange
+             (id, org_id, user_id, audience, token_hash, prefix, start, expires_at)
+           values (${randomUUID()}, ${orgId}, ${userId}, ${APP}, ${expiredHash}, ${"sxt"}, ${"sxt_expired"},
+                   now() - interval '1 hour')`,
+    );
+    // A fresh, valid ticket we will redeem.
+    const minted = await mintSessionExchange(
+      app,
+      { orgId, userId, audience: APP, ttlSeconds: TTL },
+      hasher,
+    );
+
+    const consumed = await consumeSessionExchange(app, minted.plaintext, hasher, APP);
+    expect(consumed).toEqual({ userId, orgId, audience: APP });
+
+    const present = async (h: Buffer): Promise<boolean> => {
+      const [row] = await withTenant(
+        app,
+        orgId,
+        (tx) =>
+          tx<{ n: number }[]>`select 1 as n from auth_session_exchange where token_hash = ${h}`,
+      );
+      return row !== undefined;
+    };
+    // The expired ticket is swept; the just-consumed (used-but-unexpired) ticket lingers harmlessly.
+    expect(await present(expiredHash)).toBe(false);
+    expect(await present(hasher.hash(minted.plaintext))).toBe(true);
+  });
+
+  it("does not sweep another org's expired tickets on consume (org-scoped)", async () => {
+    const other = await seedOrg();
+    const otherExpired = hasher.hash(`sxt_${other.orgId}_x_${randomUUID()}`);
+    await withTenant(
+      app,
+      other.orgId,
+      (tx) =>
+        tx`insert into auth_session_exchange
+             (id, org_id, user_id, audience, token_hash, prefix, start, expires_at)
+           values (${randomUUID()}, ${other.orgId}, ${other.userId}, ${APP}, ${otherExpired}, ${"sxt"},
+                   ${"sxt_other"}, now() - interval '1 hour')`,
+    );
+
+    const { orgId, userId } = await seedOrg();
+    const minted = await mintSessionExchange(
+      app,
+      { orgId, userId, audience: APP, ttlSeconds: TTL },
+      hasher,
+    );
+    await consumeSessionExchange(app, minted.plaintext, hasher, APP);
+
+    // The OTHER org's expired ticket is untouched — the sweep only sees current_org_id().
+    const [row] = await withTenant(
+      app,
+      other.orgId,
+      (tx) =>
+        tx<
+          { n: number }[]
+        >`select 1 as n from auth_session_exchange where token_hash = ${otherExpired}`,
+    );
+    expect(row).not.toBeUndefined();
+  });
+
+  it("returns the redeem result even when the sweep fails (non-fatal housekeeping)", async () => {
+    // Inject a real prune failure: revoke webhook_app's DELETE so the post-redeem sweep errors. The redeem
+    // (the load-bearing op) MUST still commit + return; the swallowed sweep error never surfaces.
+    const { orgId, userId } = await seedOrg();
+    const minted = await mintSessionExchange(
+      app,
+      { orgId, userId, audience: APP, ttlSeconds: TTL },
+      hasher,
+    );
+
+    await owner`revoke delete on auth_session_exchange from webhook_app`;
+    try {
+      const consumed = await consumeSessionExchange(app, minted.plaintext, hasher, APP);
+      expect(consumed).toEqual({ userId, orgId, audience: APP });
+      // The ticket was genuinely burned (single-use) despite the sweep being unable to delete.
+      expect(await consumeSessionExchange(app, minted.plaintext, hasher, APP)).toBeNull();
+    } finally {
+      await owner`grant delete on auth_session_exchange to webhook_app`;
+    }
+  });
+
   it("stores only the hash — the plaintext secret is not in the row", async () => {
     const { orgId, userId } = await seedOrg();
     const minted = await mintSessionExchange(
