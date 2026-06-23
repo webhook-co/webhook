@@ -75,6 +75,57 @@ describe("createDeviceCode", () => {
   });
 });
 
+describe("user-code RNG (unbiased mapping)", () => {
+  const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // mirror of USER_CODE_ALPHABET (31 chars)
+
+  /** A deps() whose randomBytes serves a fixed queue of bytes, refilling with a benign filler when drained. */
+  function depsWithBytes(kv: DeviceKv, queue: number[], filler = 0): DeviceStoreDeps {
+    let i = 0;
+    return {
+      kv,
+      nowSeconds: () => 1_000,
+      randomBytes: (n) => {
+        const b = new Uint8Array(n);
+        for (let j = 0; j < n; j++) b[j] = i < queue.length ? queue[i++]! : filler;
+        return b;
+      },
+    };
+  }
+
+  it("emits only alphabet characters in the canonical XXXX-XXXX shape", async () => {
+    const kv = fakeKv();
+    for (let k = 0; k < 16; k++) {
+      const { userCode } = await createDeviceCode(deps(kv), CREATE);
+      expect(userCode).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
+      for (const ch of userCode.replace("-", "")) {
+        expect(ALPHABET).toContain(ch);
+      }
+    }
+  });
+
+  // Rejection sampling: 31 doesn't divide 256, so bytes in [248, 255] (the 8 leftover values above
+  // floor(256/31)*31 = 248) must be discarded — not mapped through `% 31` — to keep every symbol equally
+  // likely. Feed a run of reject-range bytes ahead of a valid one and assert the rejects never reach the code.
+  it("discards reject-range bytes (>= 248) rather than mapping them, eliminating modulo bias", async () => {
+    const kv = fakeKv();
+    // createDeviceCode draws the 32-byte device code first; lead the queue with 32 benign bytes so the
+    // user-code draw begins on the bytes we control.
+    const DEVICE_CODE_BYTES = 32;
+    const queue: number[] = new Array(DEVICE_CODE_BYTES).fill(0);
+    // Each of the 8 user-code positions: reject byte(s) (>= 248) then a 0 -> ALPHABET[0] = "A". Position 0
+    // exercises the full reject run 248..255; the rest use a single 255. So the whole code must be "AAAA-AAAA".
+    for (let pos = 0; pos < 8; pos++) {
+      if (pos === 0) for (let r = 248; r <= 255; r++) queue.push(r);
+      else queue.push(255);
+      queue.push(0);
+    }
+    const { userCode } = await createDeviceCode(depsWithBytes(kv, queue), CREATE);
+    // If reject bytes were (buggily) mapped via %31 the output would NOT be all "A" (255 % 31 = 7 -> "H"), so
+    // asserting the canonical all-"A" output proves the rejects were skipped, i.e. rejection sampling is live.
+    expect(userCode).toBe("AAAA-AAAA");
+  });
+});
+
 describe("findByUserCode", () => {
   it("returns null for an unknown user code", async () => {
     const kv = fakeKv();
@@ -143,6 +194,36 @@ describe("setDeviceDecision", () => {
         },
       }),
     ).toBe("already_decided");
+  });
+
+  // A decision made in the final 60s of the code's window must still persist: the KV minimum-TTL skip is for
+  // the cosmetic poll re-write only, never for a status change. Otherwise the consent UI shows success while
+  // the poller keeps seeing `pending` until the code expires (the approval is silently lost).
+  it("persists an approval decided in the final 60s of the window (sub-minute remaining TTL)", async () => {
+    const kv = fakeKv();
+    // ttl=900, so a decision at createdAt+870 leaves 30s < the 60s KV minimum.
+    const { deviceCode, userCode } = await createDeviceCode(deps(kv, 1_000), CREATE);
+    const result = await setDeviceDecision(deps(kv, 1_870), userCode, {
+      decision: "approve",
+      props: {
+        orgId: "org_1",
+        userId: "user_dana",
+        scopes: ["events:read"],
+        audience: "https://api.webhook.co",
+        device: { name: "laptop" },
+      },
+    });
+    expect(result).toBe("ok");
+    // The poller (still within the window) must see the approval, not a stale `pending`.
+    const poll = await pollDeviceCode(deps(kv, 1_875), deviceCode);
+    expect(poll.kind).toBe("approved");
+  });
+
+  it("persists a denial decided in the final 60s of the window (sub-minute remaining TTL)", async () => {
+    const kv = fakeKv();
+    const { deviceCode, userCode } = await createDeviceCode(deps(kv, 1_000), CREATE);
+    expect(await setDeviceDecision(deps(kv, 1_870), userCode, { decision: "deny" })).toBe("ok");
+    expect((await pollDeviceCode(deps(kv, 1_875), deviceCode)).kind).toBe("denied");
   });
 });
 

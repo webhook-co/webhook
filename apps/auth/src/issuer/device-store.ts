@@ -78,13 +78,19 @@ export interface CreatedDeviceCode {
 // matches Lane E's canonical XXXX-XXXX form.
 const USER_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const USER_CODE_LEN = 8;
+// 256 isn't a multiple of the 31-char alphabet, so a plain `byte % len` would over-represent the first
+// (256 mod 31 = 8) symbols. Reject any byte at/above the largest multiple of the alphabet length that fits
+// in a byte (floor(256/31)*31 = 248), so every accepted byte maps to a symbol with equal probability.
+const USER_CODE_REJECT_CEIL =
+  Math.floor(256 / USER_CODE_ALPHABET.length) * USER_CODE_ALPHABET.length;
 const DEVICE_CODE_BYTES = 32;
 // A poll arriving early is bumped by the interval again (RFC 8628 lets the client raise its own interval by
 // 5s on slow_down; the server-side floor mirrors that).
 const SLOW_DOWN_PENALTY_SECONDS = 5;
 // Cloudflare KV rejects an expirationTtl below 60s. Near a code's own expiry the remaining lifetime drops
-// under that, so we skip the (cosmetic) notBefore re-write rather than issue a sub-minute put — the record's
-// `expiresAt` is the authority for logical expiry regardless of the KV TTL.
+// under that: a cosmetic notBefore re-write is skipped (it's throwaway), but a status change is clamped up
+// to this floor so it still lands (see putRecord). The record's `expiresAt` is the authority for logical
+// expiry regardless of the KV TTL.
 const MIN_KV_TTL_SECONDS = 60;
 
 async function sha256Hex(input: string): Promise<string> {
@@ -108,29 +114,61 @@ function normalizeUserCode(raw: string): string {
   return cleaned.length === USER_CODE_LEN ? `${cleaned.slice(0, 4)}-${cleaned.slice(4)}` : cleaned;
 }
 
-/** A human-typeable XXXX-XXXX code drawn from the unambiguous alphabet. */
+/**
+ * A human-typeable XXXX-XXXX code drawn from the unambiguous alphabet, using rejection sampling so each
+ * symbol is equally likely (no modulo bias). Bytes in the reject range are discarded and re-drawn; CSPRNG
+ * bytes are pulled in batches (refilled on demand) to avoid per-byte draws.
+ */
 function generateUserCode(randomBytes: (n: number) => Uint8Array): string {
-  const bytes = randomBytes(USER_CODE_LEN);
+  let pool = randomBytes(USER_CODE_LEN);
+  let next = 0;
+  const drawByte = (): number => {
+    // Reject the leftover values above the largest alphabet-aligned multiple, refilling the pool as needed.
+    for (;;) {
+      if (next >= pool.length) {
+        pool = randomBytes(USER_CODE_LEN);
+        next = 0;
+      }
+      const b = pool[next++]!;
+      if (b < USER_CODE_REJECT_CEIL) return b;
+    }
+  };
   let s = "";
   for (let i = 0; i < USER_CODE_LEN; i++) {
-    s += USER_CODE_ALPHABET[bytes[i]! % USER_CODE_ALPHABET.length];
+    s += USER_CODE_ALPHABET[drawByte() % USER_CODE_ALPHABET.length];
   }
   return `${s.slice(0, 4)}-${s.slice(4)}`;
 }
 
 /**
  * Persist a record under its dc-key with the remaining lifetime as the TTL — never extending the code's
- * life. Skips the write when under the KV minimum (the notBefore bump is cosmetic; `expiresAt` still gates).
+ * logical life (`expiresAt` is the authority; `parseRecord` rejects a past-expiry record on read regardless
+ * of the KV TTL).
+ *
+ * Default behaviour skips the write when the remaining lifetime is under the KV minimum — used for the
+ * cosmetic notBefore/slow_down bump, which is genuinely throwaway in a code's final seconds.
+ *
+ * `clampTtl: true` instead floors the TTL at the KV minimum so the write always lands. This is for the
+ * status-changing path (approve/deny): a decision made in the final 60s must persist, or the poller would
+ * keep seeing `pending` until expiry and the approval would be silently lost. A slightly-longer-lived KV
+ * row is harmless because `parseRecord` still gates on `expiresAt`.
  */
 async function putRecord(
   deps: DeviceStoreDeps,
   deviceHash: string,
   record: DeviceCodeRecord,
   now: number,
+  opts: { clampTtl?: boolean } = {},
 ): Promise<void> {
-  const ttl = record.expiresAt - now;
-  if (ttl < MIN_KV_TTL_SECONDS) return;
-  await deps.kv.put(dcKey(deviceHash), JSON.stringify(record), { expirationTtl: ttl });
+  const remaining = record.expiresAt - now;
+  if (opts.clampTtl) {
+    await deps.kv.put(dcKey(deviceHash), JSON.stringify(record), {
+      expirationTtl: Math.max(MIN_KV_TTL_SECONDS, remaining),
+    });
+    return;
+  }
+  if (remaining < MIN_KV_TTL_SECONDS) return;
+  await deps.kv.put(dcKey(deviceHash), JSON.stringify(record), { expirationTtl: remaining });
 }
 
 /** Mint a device code + user code and store a pending record (RFC 8628 §3.2). */
@@ -213,7 +251,9 @@ export async function setDeviceDecision(
   } else {
     record.status = "denied";
   }
-  await putRecord(deps, deviceHash, record, now);
+  // A status change must always persist — even in the code's final 60s — so the poller observes the decision
+  // rather than a stale `pending`. Clamp the KV TTL up to the minimum (harmless: `expiresAt` still gates).
+  await putRecord(deps, deviceHash, record, now, { clampTtl: true });
   return "ok";
 }
 
