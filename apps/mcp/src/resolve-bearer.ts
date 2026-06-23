@@ -33,3 +33,17 @@ export function makeResourceVerifyBearer(deps: ResourceVerifyDeps): VerifyBearer
       ? deps.apiKeyVerify(token, audience)
       : deps.introspectVerify(token, audience);
 }
+
+/**
+ * Does this raw `Authorization` value carry MORE THAN ONE credential? The Fetch API coalesces duplicate
+ * `Authorization` headers into a single comma-joined value, so a request with two `Authorization` headers
+ * (or a hand-crafted `Bearer a, Bearer b`) arrives here as one string. We must not silently parse the first
+ * and ignore the rest — that's ambiguous which principal the caller meant. Split on the standard
+ * header-list comma and count non-empty members; >1 means the request presented multiple credentials and
+ * should be rejected (the caller turns this into a 401), not resolved.
+ */
+export function hasMultipleCredentials(authorizationHeader: string | null | undefined): boolean {
+  if (!authorizationHeader) return false;
+  const credentials = authorizationHeader.split(",").filter((part) => part.trim().length > 0);
+  return credentials.length > 1;
+}

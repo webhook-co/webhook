@@ -113,6 +113,32 @@ describe("handleResourceRequest", () => {
     expect(setProps.mock.invocationCallOrder[0]).toBeLessThan(serveMcp.mock.invocationCallOrder[0]);
   });
 
+  it("rejects (401) a request carrying more than one Authorization credential, without resolving it", async () => {
+    // Duplicate `Authorization` headers coalesce (Fetch API) into one comma-joined value. We must not
+    // parse the first and ignore the rest — reject the ambiguous request outright.
+    const verifyBearer = vi.fn<VerifyBearer>(async () => CTX);
+    const serveMcp = vi.fn(async () => SERVED.clone());
+    const setProps = vi.fn();
+    const headers = new Headers();
+    headers.append("authorization", "Bearer whk_a");
+    headers.append("authorization", "Bearer whk_b");
+    const res = await handleResourceRequest(
+      deps({
+        authDeps: { verifyBearer, resource: RESOURCE, resourceMetadataUrl: PRM_URL },
+        serveMcp,
+        setProps,
+      }),
+      req("/mcp", { method: "POST", headers }),
+      {},
+      fakeCtx(),
+    );
+    expect(res.status).toBe(401);
+    expect(res.headers.get("www-authenticate") ?? "").toMatch(/^Bearer/i);
+    expect(verifyBearer).not.toHaveBeenCalled();
+    expect(serveMcp).not.toHaveBeenCalled();
+    expect(setProps).not.toHaveBeenCalled();
+  });
+
   it("challenges (401) when the bearer doesn't resolve, without handing off", async () => {
     const verifyBearer: VerifyBearer = async () => {
       throw new UnauthenticatedError();

@@ -66,7 +66,9 @@ export async function handleDeviceAuthorization(
   request: Request,
 ): Promise<Response> {
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) {
+  // Measure the UTF-8 BYTE length (not `.length`, which counts UTF-16 code units) so a multibyte body
+  // / scope list can't slip past a cap intended in bytes.
+  if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
     return oauthError("invalid_request", "request body too large");
   }
   const params = new URLSearchParams(raw);
