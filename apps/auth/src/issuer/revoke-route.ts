@@ -12,6 +12,10 @@
 const ACCESS_PREFIX = "whk_";
 const REFRESH_PREFIX = "rtk_";
 
+// A /revoke body is one token + an optional hint. Cap it as defense in depth on this unauthenticated,
+// DB-touching endpoint (alongside the edge rate-limit).
+const MAX_BODY_BYTES = 2048;
+
 export interface RevokeDeps {
   /** whk_ access key → its grant (cross-org by hash), or null if unknown / standalone. */
   resolveAccessTokenGrant: (token: string) => Promise<{ orgId: string; grantId: string } | null>;
@@ -27,17 +31,26 @@ function ok(): Response {
   return new Response(null, { status: 200, headers: { "cache-control": "no-store" } });
 }
 
+/** A 400 invalid_request (no-store) — the only error shape /revoke emits (never leaks token state). */
+function badRequest(description: string): Response {
+  return new Response(
+    JSON.stringify({ error: "invalid_request", error_description: description }),
+    {
+      status: 400,
+      headers: { "content-type": "application/json;charset=UTF-8", "cache-control": "no-store" },
+    },
+  );
+}
+
 export async function handleRevokeRequest(deps: RevokeDeps, request: Request): Promise<Response> {
-  const params = new URLSearchParams(await request.text());
+  const raw = await request.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    return badRequest("request body too large");
+  }
+  const params = new URLSearchParams(raw);
   const token = params.get("token");
   if (!token) {
-    return new Response(
-      JSON.stringify({ error: "invalid_request", error_description: "token is required" }),
-      {
-        status: 400,
-        headers: { "content-type": "application/json;charset=UTF-8", "cache-control": "no-store" },
-      },
-    );
+    return badRequest("token is required");
   }
 
   // Discriminate by the token's own prefix (authoritative); token_type_hint is advisory and ignored.
