@@ -42,6 +42,9 @@ const HEALTH_PATH = "/healthz";
 /** The OAuth issuer for this resource — now auth.webhook.co (the Lane C issuer), NOT the old co-located one. */
 const AUTH_ISSUER = "https://auth.webhook.co";
 
+/** The injected clock (Unix seconds) for the session-binding envelope's version/expiry stamp + check. */
+const nowSeconds = (): number => Math.floor(Date.now() / 1000);
+
 /** The distinct capability scopes the MCP surface understands (RFC 8414 `scopes_supported`). */
 export const SCOPES_SUPPORTED: string[] = [
   ...new Set([...CAPABILITY_REGISTRY.values()].map((c) => c.auth.scope)),
@@ -110,11 +113,13 @@ async function buildResourceDeps(env: McpEnv): Promise<DepsHandle> {
     setProps: (ctx, props) => {
       (ctx as { props?: unknown }).props = props;
     },
-    // A8c — bind/open the session id to the principal so a reused id can't reach another principal's DO.
+    // A8c — bind/open the session id to the principal so a reused id can't reach another principal's DO. The
+    // envelope is versioned + expires (SESSION_TTL_SECONDS); the clock is injected here (Unix seconds), the
+    // same shape the auth issuer's consent/device codecs take, so the codec itself stays pure + testable.
     bindSession: async (assignedId, principal) =>
-      bindSessionId(sessionKey, assignedId, await principalDigest(principal)),
+      bindSessionId(sessionKey, assignedId, await principalDigest(principal), nowSeconds()),
     unbindSession: async (presentedId, principal) =>
-      unbindSessionId(sessionKey, presentedId, await principalDigest(principal)),
+      unbindSessionId(sessionKey, presentedId, await principalDigest(principal), nowSeconds()),
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
   return { deps, close: () => authn.end() };
