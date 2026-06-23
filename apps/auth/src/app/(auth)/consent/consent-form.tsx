@@ -188,7 +188,9 @@ export function ConsentForm({
       <dl className="divide-y divide-hairline rounded-control border border-hairline px-4">
         <SummaryRow label={request.device ? "Device" : "App"}>
           <span className="font-medium">{subject}</span>
-          <span className="text-fg-faint"> · {request.client.name}</span>
+          {/* The "· app" suffix names the app accessing the device — only meaningful in the Device row.
+              In the App row the subject IS the app, so the suffix would just repeat it. */}
+          {request.device ? <span className="text-fg-faint"> · {request.client.name}</span> : null}
         </SummaryRow>
         <SummaryRow label="Organization">{request.org.name}</SummaryRow>
         <SummaryRow label="Requesting from">

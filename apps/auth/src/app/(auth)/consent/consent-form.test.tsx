@@ -101,6 +101,21 @@ describe("ConsentForm", () => {
     expect(screen.getByRole("button", { name: /deny/i })).toBeInTheDocument();
   });
 
+  it("shows the app name once in the App row when there's no device (no duplicate)", () => {
+    const loopback: ConsentRequest = { ...baseRequest, flow: "pkce_loopback", device: undefined };
+    render(<ConsentForm request={loopback} actions={makeActions()} />);
+    // the subject IS the client here, so a "· {client}" suffix would render "webhook CLI · webhook CLI"
+    const appRow = screen.getByText("App").parentElement?.querySelector("dd");
+    expect(appRow?.textContent?.trim()).toBe("webhook CLI");
+  });
+
+  it("keeps 'device · app' in the Device row (the app suffix is meaningful when they differ)", () => {
+    render(<ConsentForm request={baseRequest} actions={makeActions()} />);
+    const deviceRow = screen.getByText("Device").parentElement?.querySelector("dd");
+    expect(deviceRow?.textContent).toContain("Dana's MacBook Pro");
+    expect(deviceRow?.textContent).toContain("webhook CLI");
+  });
+
   it("renders the origin as place + country flag, with the IP on its own line", () => {
     const { container } = render(<ConsentForm request={baseRequest} actions={makeActions()} />);
     // "San Francisco, US" with the flag derived from the 2-letter country
