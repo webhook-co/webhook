@@ -12,10 +12,15 @@
 
 ## Context
 
-`POST /api/auth/sign-in/magic-link` is unauthenticated, emails an attacker-supplied address, and touches
-the DB — the classic email-bombing / sender-reputation-burn / resource-exhaustion target. The durable
-per-email rate limit (ADR-0027, 5/15 min) bounds repeats to one address but is trivially bypassed by
-rotating addresses. We want a proof-of-humanity a bot can't cheaply rotate around.
+`POST /api/auth/sign-in/magic-link` is unauthenticated, emails a caller-supplied address, and touches the
+DB — a sensitive, abuse-prone surface that we defend in depth. The shipped controls layer:
+
+1. a **durable, per-recipient throttle** (ADR-0027) — fleet-wide rate limiting keyed to the target address;
+2. an **edge/WAF flood-shield** — coarse per-source volume limiting in front of the Worker;
+3. **proof-of-humanity** on the send — the subject of this ADR.
+
+Turnstile adds layer 3: an automated client must pass a human-interaction challenge before a send is
+accepted, complementing the throttle and the flood-shield.
 
 ## Decision
 
@@ -54,7 +59,7 @@ managed siteverify Worker.
   `Turnstile` component is injected through a `Captcha` prop (default), so tests drive a fake through the
   same seam they use for `actions`. **This is clickable UI → it requires a human eyeball** (the widget
   renders Cloudflare's iframe; verify it appears, the send is blocked until solved, and succeeds after).
-- **No CSP change.** `apps/auth` ships no Content-Security-Policy today, so nothing blocks the Turnstile
-  script. Adding a CSP is a separate, larger hardening task (it must not break the login/consent/handoff
-  flows) and is explicitly out of scope here.
-- Deferred: gating signup/social; a global cross-account guess cap; broader edge/WAF volume limits.
+- The widget loads Cloudflare's Turnstile script; CSP hardening for the auth surfaces is tracked separately
+  (out of scope here). Social login is intentionally ungated — it redirects to Google/GitHub, which carry
+  their own bot defenses and no email vector. Further hardening of the login surfaces is tracked in
+  `internal/`.
