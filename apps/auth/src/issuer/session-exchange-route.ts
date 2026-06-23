@@ -10,10 +10,27 @@
 // `consume` (bound to consumeSessionExchange with the TRUSTED expectedAudience = APP_BASE_URL — never a
 // request header) and `getProfile` (the fresh `user`-row read) are injected via the core deps.
 
+import { PROD_AUTH_BASE_URL } from "../runtime/urls";
 import { redeemSessionExchange, type SessionExchangeCoreDeps } from "./session-exchange-core";
 
 // Re-export the shared types so existing importers (session-exchange-deps, issuer-handler) keep their paths.
 export type { SessionPrincipal } from "./session-exchange-core";
+
+const PROD_AUTH_HOST = new URL(PROD_AUTH_BASE_URL).host;
+
+/**
+ * Is the public POST /session/exchange route RETIRED for this request? In production it is: app. redeems the
+ * handoff ticket over the AUTH_SESSION_EXCHANGE service binding (a direct SessionExchange WorkerEntrypoint
+ * RPC that never reaches this HTTP route), so the public route has no legitimate prod caller and is removed
+ * as an attack surface. The dispatcher (issuer-handler) skips the route when this is true, falling through
+ * to a 404. It stays live for LOCAL DEV / PREVIEW, which has no service bindings and reaches auth. by `fetch`
+ * to localhost. The host is set by Cloudflare custom-domain routing in prod (the Worker is only reachable via
+ * auth.webhook.co) and cannot be spoofed to reach this Worker under a different host — and even if it could,
+ * the worst case is serving a single-use, HMAC-signed, audience-bound, atomically-burned ticket.
+ */
+export function isPublicSessionExchangeRetired(url: URL): boolean {
+  return url.host === PROD_AUTH_HOST;
+}
 
 /** The injected I/O the route needs — the shared redeem-core deps (consume + getProfile + log). */
 export type SessionExchangeRouteDeps = SessionExchangeCoreDeps;
