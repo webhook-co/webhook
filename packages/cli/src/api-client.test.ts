@@ -5,7 +5,9 @@ import {
   ApiError,
   createApiClient,
   DEFAULT_API_BASE_URL,
+  DEFAULT_DASHBOARD_URL,
   resolveApiBaseUrl,
+  resolveDashboardUrl,
 } from "./api-client.js";
 import { InvalidApiUrlError, OAuthError } from "./errors.js";
 import { CAPABILITY_EXIT, EXIT } from "./output/exit-codes.js";
@@ -130,6 +132,25 @@ describe("resolveApiBaseUrl", () => {
   it("allows plaintext http ONLY for loopback dev hosts", () => {
     expect(resolveApiBaseUrl({ flag: "http://localhost:8787" })).toBe("http://localhost:8787");
     expect(resolveApiBaseUrl({ flag: "http://127.0.0.1:8787" })).toBe("http://127.0.0.1:8787");
+  });
+});
+
+describe("resolveDashboardUrl", () => {
+  it("prefers env › default (the dashboard the TUI's `o` key opens)", () => {
+    expect(resolveDashboardUrl({ env: "https://app.self-host.example" })).toBe(
+      "https://app.self-host.example",
+    );
+    expect(resolveDashboardUrl({})).toBe(DEFAULT_DASHBOARD_URL);
+  });
+
+  it("requires https (rejecting http + non-URLs) and strips a trailing slash", () => {
+    expect(() => resolveDashboardUrl({ env: "http://evil.example" })).toThrow(InvalidApiUrlError);
+    expect(() => resolveDashboardUrl({ env: "not a url" })).toThrow(InvalidApiUrlError);
+    expect(resolveDashboardUrl({ env: "https://app.example/" })).toBe("https://app.example");
+  });
+
+  it("allows plaintext http ONLY for loopback dev hosts", () => {
+    expect(resolveDashboardUrl({ env: "http://localhost:3000" })).toBe("http://localhost:3000");
   });
 });
 

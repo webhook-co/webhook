@@ -48,6 +48,12 @@ export const DEFAULT_TUNNEL_URL = "wss://wbhk.my";
 /** Env var overriding the tunnel URL (self-host / dev), the sticky alternative to `--tunnel-url`. */
 export const ENV_TUNNEL_URL_VAR = "WBHK_TUNNEL_URL";
 
+/** The canonical web dashboard (where the in-tail TUI's `o` key opens an event). Overridable for self-host. */
+export const DEFAULT_DASHBOARD_URL = "https://app.webhook.co";
+
+/** Env var overriding the dashboard origin (self-host / dev). */
+export const ENV_DASHBOARD_URL_VAR = "WBHK_DASHBOARD_URL";
+
 /**
  * A typed API failure. A closed-taxonomy `code` maps to its stable CLI exit code; an absent code
  * (a transport failure or an unexpected server response) is UNEXPECTED (exit 1). Extends CliError so
@@ -386,5 +392,24 @@ export function resolveTunnelUrl(opts: { flag?: string; env?: string; stored?: s
   const loopbackWsOk = url.protocol === "ws:" && LOOPBACK_HOSTS.has(url.hostname);
   if (url.protocol !== "wss:" && !loopbackWsOk) throw new InvalidTunnelUrlError(raw);
   if (url.search !== "" || url.hash !== "") throw new InvalidTunnelUrlError(raw);
+  return (url.origin + url.pathname).replace(/\/+$/, "");
+}
+
+/**
+ * Resolve the web dashboard origin (`WBHK_DASHBOARD_URL` env › default), the base the in-tail TUI's `o`
+ * key opens an event in. https-only (loopback http allowed for dev); no query/fragment. Mirrors the api
+ * base-URL validation so a tampered override can't redirect the browser to a plaintext or hostile origin.
+ */
+export function resolveDashboardUrl(opts: { env?: string }): string {
+  const raw = opts.env ?? DEFAULT_DASHBOARD_URL;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new InvalidApiUrlError(raw);
+  }
+  const loopbackHttpOk = url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
+  if (url.protocol !== "https:" && !loopbackHttpOk) throw new InvalidApiUrlError(raw);
+  if (url.search !== "" || url.hash !== "") throw new InvalidApiUrlError(raw);
   return (url.origin + url.pathname).replace(/\/+$/, "");
 }

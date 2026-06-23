@@ -12,7 +12,7 @@ import { WebSocket as WsWebSocket } from "ws";
 
 import { KeychainUnavailableError } from "./config/errors.js";
 import type { KeychainIo } from "./config/keychain-store.js";
-import type { IoSeams, LoopbackServer } from "./context.js";
+import type { IoSeams, LoopbackServer, RawInputHandlers } from "./context.js";
 
 // The page shown in the browser tab once the OAuth redirect lands on the loopback server — Lane D's own
 // (the issuer's job ends at the redirect). Static + self-contained (no remote assets); the CLI has already
@@ -275,6 +275,32 @@ function openBrowser(url: string): Promise<void> {
   });
 }
 
+// Raw-mode stdin for the in-tail TUI. Puts the terminal in raw mode (arrows/keys arrive as byte chunks;
+// ISIG off, so Ctrl-C is delivered as the key \x03 — the TUI maps it to quit, not a signal), decodes each
+// chunk to a string, and fires onResize on the stdout SIGWINCH. close() removes both listeners + restores
+// cooked mode (idempotent). Coverage-excluded terminal interaction (the TUI render/logic is tested via run.ts).
+function startRawInput(handlers: RawInputHandlers): { close(): void } {
+  const stdin = process.stdin;
+  stdin.setRawMode?.(true);
+  stdin.resume();
+  stdin.setEncoding("utf-8");
+  const onData = (chunk: string): void => handlers.onKey(chunk);
+  const onResize = (): void => handlers.onResize();
+  stdin.on("data", onData);
+  process.stdout.on("resize", onResize);
+  let closed = false;
+  return {
+    close: () => {
+      if (closed) return;
+      closed = true;
+      stdin.off("data", onData);
+      process.stdout.off("resize", onResize);
+      stdin.setRawMode?.(false);
+      stdin.pause();
+    },
+  };
+}
+
 /** Build the production IoSeams from process globals. */
 export function makeRealIo(): IoSeams {
   return {
@@ -286,6 +312,12 @@ export function makeRealIo(): IoSeams {
     sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
     startLoopbackServer,
     editText,
+    isTTY: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    terminalSize: () => ({
+      columns: process.stdout.columns ?? 80,
+      rows: process.stdout.rows ?? 24,
+    }),
+    startRawInput,
     // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
     // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
     connectWebSocket: (url, { headers, handlers }) => {
