@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { handleSessionExchange, type SessionExchangeRouteDeps } from "./session-exchange-route";
+import {
+  handleSessionExchange,
+  isPublicSessionExchangeRetired,
+  type SessionExchangeRouteDeps,
+} from "./session-exchange-route";
 
 // A-SX-2a — POST /session/exchange: consume the single-use ticket (audience bound to app. in the deps) →
 // read the profile → return the principal. I/O-free (consume + getProfile injected).
@@ -79,5 +83,25 @@ describe("handleSessionExchange", () => {
     );
     expect(res.status).toBe(500);
     await expect(res.json()).resolves.toMatchObject({ error: "server_error" });
+  });
+});
+
+describe("isPublicSessionExchangeRetired", () => {
+  // The public POST /session/exchange route is RETIRED in production — app. redeems via the
+  // AUTH_SESSION_EXCHANGE service-binding RPC (which never reaches this HTTP route). The dispatcher uses this
+  // to fall through to a 404 on the prod host, while keeping the route for local dev/preview (no bindings).
+  it("retires the route on the prod auth host", () => {
+    expect(
+      isPublicSessionExchangeRetired(new URL("https://auth.webhook.co/session/exchange")),
+    ).toBe(true);
+  });
+
+  it("keeps the route on local dev/preview hosts (no service bindings there)", () => {
+    expect(isPublicSessionExchangeRetired(new URL("http://localhost:3001/session/exchange"))).toBe(
+      false,
+    );
+    expect(isPublicSessionExchangeRetired(new URL("http://127.0.0.1:3001/session/exchange"))).toBe(
+      false,
+    );
   });
 });
