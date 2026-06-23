@@ -8,7 +8,13 @@ import type { ConnectWebSocket, RawInputHandlers, WsHandlers } from "../context.
 import { makeTestContext } from "../context.js";
 import type { ForwardInput, ForwardOutcome } from "../forward.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
-import { formatListenEvent, resolveResumeStart, runListen, type ListenSince } from "./listen.js";
+import {
+  formatListenEvent,
+  FORWARD_MAX_ATTEMPTS,
+  resolveResumeStart,
+  runListen,
+  type ListenSince,
+} from "./listen.js";
 
 function loggedInStore(): CredentialStore {
   return {
@@ -85,6 +91,7 @@ function depsFor(
     color: false,
     signal,
     sleep: async () => {}, // instant backoff under test
+    stop: () => {}, // no-op by default; the permanent-failure test wires it to abort
   };
 }
 
@@ -385,6 +392,38 @@ describe("runListen — forward mode (--forward)", () => {
     expect(f.recorded).toEqual(["c1"]); // recorded once, only after the 2xx
 
     ac.abort();
+    await p;
+  });
+
+  it("stops cleanly on a PERMANENTLY failing target — no head-of-line wedge", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const f = fakeForward(() => ({ ok: false, status: 500, latencyMs: 1 })); // always 500
+    // `stop` mirrors prod (the command wires it to controller.abort()): a permanent failure ends the tail.
+    const manyTurns = async (): Promise<void> => {
+      for (let i = 0; i < 40; i += 1) await tick();
+    };
+    const p = runListen({
+      ...depsFor(t, out, ac.signal),
+      forward: f.dep,
+      stop: () => ac.abort(),
+    });
+    await tick();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    await manyTurns();
+
+    // Bounded: it does NOT retry forever — exactly FORWARD_MAX_ATTEMPTS posts, then it gives up.
+    expect(f.posted).toHaveLength(FORWARD_MAX_ATTEMPTS);
+    // A loud, DISTINCT stderr error that NAMES the stuck event + the attempt count (not just "retrying").
+    const notes = out.note.join("");
+    expect(notes).toContain("giving up");
+    expect(notes).toContain(EV);
+    expect(notes).toContain(`${FORWARD_MAX_ATTEMPTS} attempts`);
+    // The event was NOT acked (it stays pending → a --resume re-run retries it once the target is fixed).
+    expect(t.sent).not.toContain(JSON.stringify({ type: "ack", cursor: "c1" }));
+    // And the loop actually stops (doesn't wedge): `p` resolves because stop() aborted.
     await p;
   });
 
