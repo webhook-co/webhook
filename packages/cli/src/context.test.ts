@@ -51,6 +51,9 @@ function fakeIo(keychain: KeychainIo = unavailableKeychain): IoSeams {
     sleep: nope as unknown as IoSeams["sleep"],
     startLoopbackServer: nope as unknown as IoSeams["startLoopbackServer"],
     editText: nope as unknown as IoSeams["editText"],
+    isTTY: false,
+    terminalSize: nope as unknown as IoSeams["terminalSize"],
+    startRawInput: nope as unknown as IoSeams["startRawInput"],
   };
 }
 

@@ -49,6 +49,13 @@ export interface LoopbackServer {
   close(): void;
 }
 
+/** Callbacks the raw-mode terminal drives the in-tail TUI with: a decoded key chunk arrived, or the
+ *  terminal was resized. (Structurally compatible with the TUI runner's input handlers.) */
+export interface RawInputHandlers {
+  onKey(chunk: string): void;
+  onResize(): void;
+}
+
 // The host I/O seams a command needs beyond the process streams: an HTTP client (the API), a piped-
 // stdin reader (`--stdin`), an interactive hidden-secret prompt, and the listen tunnel socket. Grouped
 // + injected so commands are node-tested with fakes; the real implementations (TTY + globals + the ws
@@ -77,6 +84,13 @@ export interface IoSeams {
    *  `replay --edit` round-trip. The real impl writes a 0600 temp file and spawns the editor on the TTY;
    *  a fake supplies the edited text in tests. */
   editText(initialContent: string, editorCommand: string): Promise<string>;
+  /** Whether BOTH stdin and stdout are TTYs — the in-tail TUI takes over the screen, so it gates on both. */
+  readonly isTTY: boolean;
+  /** Current terminal size (columns × rows) — drives the TUI viewport + scrolling. */
+  terminalSize(): { columns: number; rows: number };
+  /** Put stdin in raw mode and deliver decoded key chunks + SIGWINCH resizes to the TUI; the returned
+   *  handle restores cooked mode + removes the listeners on close(). Real impl in io.ts (coverage-excluded). */
+  startRawInput(handlers: RawInputHandlers): { close(): void };
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -191,6 +205,12 @@ export function makeTestContext(opts?: {
   startLoopbackServer?: () => Promise<LoopbackServer>;
   /** Fake `$EDITOR` round-trip for `replay --edit` (returns the "edited" text); defaults to unconfigured. */
   editText?: (initialContent: string, editorCommand: string) => Promise<string>;
+  /** Whether both streams are TTYs — gates the in-tail TUI hand-off (defaults to false: plain tail). */
+  isTTY?: boolean;
+  /** Fake terminal size for the TUI (defaults to 80×24). */
+  terminalSize?: () => { columns: number; rows: number };
+  /** Fake raw-mode input for the TUI (captures handlers so a test can drive keys); defaults to unconfigured. */
+  startRawInput?: (handlers: RawInputHandlers) => { close(): void };
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -234,6 +254,10 @@ export function makeTestContext(opts?: {
       opts?.startLoopbackServer ??
       (unconfigured("startLoopbackServer") as unknown as () => Promise<LoopbackServer>),
     editText: opts?.editText ?? (unconfigured("editText") as unknown as IoSeams["editText"]),
+    isTTY: opts?.isTTY ?? false,
+    terminalSize: opts?.terminalSize ?? (() => ({ columns: 80, rows: 24 })),
+    startRawInput:
+      opts?.startRawInput ?? (unconfigured("startRawInput") as unknown as IoSeams["startRawInput"]),
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",

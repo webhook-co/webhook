@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import { app } from "../app.js";
 import type { CredentialStore } from "../config/store.js";
-import type { ConnectWebSocket, WsHandlers } from "../context.js";
+import type { ConnectWebSocket, RawInputHandlers, WsHandlers } from "../context.js";
 import { makeTestContext } from "../context.js";
 import type { ForwardInput, ForwardOutcome } from "../forward.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
@@ -126,6 +126,27 @@ describe("runListen", () => {
     ac.abort();
     await p;
     expect(t.closeCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("calls observe once per newly-seen event, deduped across redelivery (the TUI feed)", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const observed: EventSummary[] = [];
+    const p = runListen({ ...depsFor(t, out, ac.signal), observe: (s) => void observed.push(s) });
+    await tick();
+    t.h().onOpen();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    // a redelivery of the same cursor (at-least-once) must NOT re-observe — the TUI list stays deduped.
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    t.h().onMessage(
+      encodeServerFrame({ type: "event", summary: summary({ id: EP }), cursor: "c2" }),
+    );
+    await tick();
+    expect(observed.map((e) => e.id)).toEqual([EV, EP]);
+    ac.abort();
+    await p;
   });
 
   it("maps --since now to ?since=now and --since beginning to neither param", async () => {
@@ -643,5 +664,42 @@ describe("runListen — resume persistence + status banner (D6b)", () => {
     expect(out.note.join("")).toBe("");
     ac.abort();
     await p;
+  });
+});
+
+describe("listen command — TUI hand-off (interactive TTY)", () => {
+  it("on a TTY: enters the alt-screen, renders live events, and restores on quit", async () => {
+    const t = fakeTunnel();
+    let keys: RawInputHandlers | undefined;
+    const closed = { n: 0 };
+    const { ctx, stdout } = makeTestContext({
+      isTTY: true,
+      store: loggedInStore(),
+      connectWebSocket: t.connect,
+      startRawInput: (h) => {
+        keys = h;
+        return {
+          close: () => {
+            closed.n += 1;
+          },
+        };
+      },
+    });
+    const p = run(app, ["listen", EP], ctx);
+    await tick();
+    t.h().onOpen();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    await tick();
+
+    expect(stdout()).toContain("\x1b[?1049h"); // entered the alt-screen
+    expect(stdout()).toContain(EV); // the live event landed in the TUI list (via observe)
+
+    keys?.onKey("q"); // quit
+    await p;
+    expect(stdout()).toContain("\x1b[?1049l"); // restored the screen
+    expect(closed.n).toBeGreaterThanOrEqual(1); // raw input torn down
+    // The acked cursor rode the tunnel (the loop still acks under the TUI).
+    expect(t.sent).toContain(JSON.stringify({ type: "ack", cursor: "c1" }));
   });
 });
