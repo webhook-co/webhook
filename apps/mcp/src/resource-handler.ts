@@ -1,9 +1,12 @@
 import {
   authenticateBearer,
+  buildWwwAuthenticate,
   type AuthContext,
   type BearerAuthzDeps,
   type ProtectedResourceMetadata,
 } from "@webhook-co/contract";
+
+import { hasMultipleCredentials } from "./resolve-bearer";
 
 // A8b — the mcp resource-server router. mcp is no longer an OAuth issuer (the co-located OAuthProvider
 // is torn down): it's a pure RESOURCE SERVER of the auth. issuer. This router:
@@ -116,7 +119,20 @@ export async function handleResourceRequest(
     if (request.method === "OPTIONS") {
       return deps.serveMcp(request, env, ctx);
     }
-    const authz = await authenticateBearer(deps.authDeps, request.headers.get("authorization"));
+
+    // Reject a request that presents MORE THAN ONE credential. Duplicate `Authorization` headers coalesce
+    // (Fetch API) into one comma-joined value; parsing only the first would silently pick one of two
+    // intended principals. Treat the ambiguity as unauthenticated (same 401 challenge as a missing bearer).
+    const authorization = request.headers.get("authorization");
+    if (hasMultipleCredentials(authorization)) {
+      deps.log?.("mcp.multiple_credentials", {});
+      return new Response(null, {
+        status: 401,
+        headers: { "www-authenticate": buildWwwAuthenticate(deps.authDeps.resourceMetadataUrl) },
+      });
+    }
+
+    const authz = await authenticateBearer(deps.authDeps, authorization);
     if (!authz.ok) {
       return new Response(null, {
         status: authz.status,

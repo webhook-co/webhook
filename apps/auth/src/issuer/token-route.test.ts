@@ -231,4 +231,27 @@ describe("handleTokenRequest — body cap", () => {
     expect(await res.json()).toMatchObject({ error: "invalid_request" });
     expect(redeemAuthCode).not.toHaveBeenCalled();
   });
+
+  it("caps on UTF-8 BYTES, not UTF-16 units: a multibyte body under the char count but over the byte budget is rejected", async () => {
+    // "𝟙" (U+1D7D9) is 2 UTF-16 code units but 4 UTF-8 bytes. 1600 of them → ~3.2k JS-string
+    // length (under 4096) but ~6.4k bytes (over the 4096-byte cap). A `.length` check would
+    // wrongly admit this; the byte measurement rejects it.
+    const redeemAuthCode = vi.fn(
+      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
+    );
+    // A complete, otherwise-valid auth-code request — only the byte cap should reject it (a missing-field
+    // check must not short-circuit first), so both code and code_verifier are present.
+    const body = `grant_type=authorization_code&code=code_1&code_verifier=${"𝟙".repeat(1600)}`;
+    expect(body.length).toBeLessThan(4096); // under the cap by UTF-16 units
+    expect(new TextEncoder().encode(body).length).toBeGreaterThan(4096); // over it by bytes
+    const req = new Request("https://auth.webhook.co/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const res = await handleTokenRequest(deps({ redeemAuthCode }), req);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_request" });
+    expect(redeemAuthCode).not.toHaveBeenCalled();
+  });
 });

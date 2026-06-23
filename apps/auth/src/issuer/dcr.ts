@@ -8,7 +8,8 @@
 // would let anyone self-register a remote redirect for a confidential/web client): the consent screen that
 // gates such a client is A3-main (not built) and DCR rate-limiting is deferred, so until both land
 // loopback-only is strictly safer at zero v1 cost (the CLI only needs loopback). **A8 relaxes this to
-// allow https for confidential clients once the consent screen + DCR rate-limit exist.** Public
+// allow https for confidential clients once the consent screen + DCR rate-limit exist (future; not yet
+// implemented).** Public
 // registration stays enabled (disallowPublicClientRegistration unset); this callback is the redirect gate.
 //
 // Pure + I/O-free → unit-tested; wired into oauthIssuerConfig.clientRegistrationCallback. Validation reads

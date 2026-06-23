@@ -127,4 +127,23 @@ describe("handleDeviceAuthorization", () => {
     await expect(res.json()).resolves.toMatchObject({ error: "invalid_request" });
     expect(create).not.toHaveBeenCalled();
   });
+
+  it("caps on UTF-8 BYTES, not UTF-16 units: a multibyte body under the char count but over the byte budget is rejected", async () => {
+    // "𝟙" (U+1D7D9) is 2 UTF-16 code units but 4 UTF-8 bytes. 1600 of them → ~3.2k JS-string
+    // length (under 4096) but ~6.4k bytes (over the 4096-byte cap). A `.length` check would
+    // wrongly admit this; the byte measurement rejects it.
+    const create = vi.fn(deps().createDeviceCode);
+    const body = `client_id=cli_wbhk&resource=${API}&scope=events:read ${"𝟙".repeat(1600)}`;
+    expect(body.length).toBeLessThan(4096); // under the cap by UTF-16 units
+    expect(new TextEncoder().encode(body).length).toBeGreaterThan(4096); // over it by bytes
+    const req = new Request("https://auth.webhook.co/device_authorization", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const res = await handleDeviceAuthorization(deps({ createDeviceCode: create }), req);
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({ error: "invalid_request" });
+    expect(create).not.toHaveBeenCalled();
+  });
 });

@@ -61,13 +61,14 @@ export class IssuerIntrospect extends WorkerEntrypoint {
 }
 
 /**
- * The auth.→app. session-handoff redeem over a service binding (additive — the public POST /session/exchange
- * route stays). app. (apps/web) RPCs `env.AUTH_SESSION_EXCHANGE.exchange(ticket)` to redeem the single-use
- * handoff ticket without a public HTTP POST, so /session/exchange need not stay publicly exposed. Returns the
- * principal { orgId, userId, name, email, image } or null (invalid/expired/used/wrong-audience/user-missing).
- * The binding + its `entrypoint: "SessionExchange"` are wired on the web side (deploy overlay). Runs in this
- * Worker with HYPERDRIVE_TENANT/HYPERDRIVE_AUTH + CREDENTIAL_PEPPER. Delegates to the type-checked + tested
- * redeemSessionExchangeRpc (this file is tsc-excluded), mirroring how IssuerIntrospect delegates to introspect.
+ * The auth.→app. session-handoff redeem over a service binding — the ONLY redeem path in prod. app. (apps/web)
+ * RPCs `env.AUTH_SESSION_EXCHANGE.exchange(ticket)` to redeem the single-use handoff ticket directly, never
+ * touching a public HTTP route. The public POST /session/exchange route is RETIRED to a 404 on the prod host
+ * (isPublicSessionExchangeRetired) and survives only for LOCAL DEV / PREVIEW, which has no service bindings.
+ * Returns the principal { orgId, userId, name, email, image } or null (invalid/expired/used/wrong-audience/
+ * user-missing). The binding + its `entrypoint: "SessionExchange"` are wired on the web side (deploy overlay).
+ * Runs in this Worker with HYPERDRIVE_TENANT/HYPERDRIVE_AUTH + CREDENTIAL_PEPPER. Delegates to the type-checked
+ * + tested redeemSessionExchangeRpc (this file is tsc-excluded), mirroring how IssuerIntrospect delegates to introspect.
  */
 export class SessionExchange extends WorkerEntrypoint {
   async exchange(ticket) {

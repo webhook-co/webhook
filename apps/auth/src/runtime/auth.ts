@@ -67,9 +67,10 @@ export interface AuthConfigDeps {
  *
  * Durable send throttle (ADR-0027 must-before-live): Better Auth's built-in limiter is per-isolate
  * in-memory, ineffective fleet-wide for this public, email-triggering endpoint. So the send goes through a
- * durable RATELIMIT_KV throttle (deps.rateLimit, built by makeAuth) keyed by email + caller IP; when a
+ * durable RATELIMIT_KV throttle (deps.rateLimit, built by makeAuth) keyed by the recipient EMAIL only; when a
  * window is exhausted we SILENTLY skip the send (Better Auth still reports success — no "does this email
- * exist" oracle, and the abuse is bounded). A future edge/WAF gate (Turnstile) is defense-in-depth.
+ * exist" oracle, and the abuse is bounded). Per-IP / volume limiting lives at the edge/WAF (and the Turnstile
+ * gate), not here.
  */
 export function magicLinkOptions(deps: {
   sendEmail: EmailSender;

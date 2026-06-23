@@ -1,7 +1,7 @@
 import { type AuthContext, UnauthenticatedError, type VerifyBearer } from "@webhook-co/contract";
 import { describe, expect, it, vi } from "vitest";
 
-import { makeResourceVerifyBearer } from "./resolve-bearer";
+import { hasMultipleCredentials, makeResourceVerifyBearer } from "./resolve-bearer";
 
 // A8a — the two-validator front door: mcp accepts EITHER a first-party `whk_` access key (resolved by
 // the api-key chain) OR an opaque OAuth provider token (validated by introspection). The validator is
@@ -62,5 +62,32 @@ describe("makeResourceVerifyBearer", () => {
     await verify("whknotakey", RESOURCE);
     expect(introspectVerify).toHaveBeenCalledOnce();
     expect(apiKeyVerify).not.toHaveBeenCalled();
+  });
+});
+
+describe("hasMultipleCredentials", () => {
+  it("returns false for a single well-formed credential", () => {
+    expect(hasMultipleCredentials("Bearer whk_token")).toBe(false);
+  });
+
+  it("returns false for an absent / empty header", () => {
+    expect(hasMultipleCredentials(null)).toBe(false);
+    expect(hasMultipleCredentials(undefined)).toBe(false);
+    expect(hasMultipleCredentials("")).toBe(false);
+    expect(hasMultipleCredentials("   ")).toBe(false);
+  });
+
+  it("returns true when the Fetch API coalesced two Authorization headers (comma-joined)", () => {
+    // Duplicate `Authorization` headers are coalesced by the Fetch API into one comma-joined value.
+    expect(hasMultipleCredentials("Bearer aaa, Bearer bbb")).toBe(true);
+  });
+
+  it("returns true for two credentials of different schemes", () => {
+    expect(hasMultipleCredentials("Bearer aaa, Basic Zm9vOmJhcg==")).toBe(true);
+  });
+
+  it("ignores empty list members (a trailing comma is a single credential)", () => {
+    expect(hasMultipleCredentials("Bearer whk_token,")).toBe(false);
+    expect(hasMultipleCredentials(", Bearer whk_token")).toBe(false);
   });
 });

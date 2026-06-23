@@ -96,4 +96,24 @@ describe("handleRevokeRequest", () => {
     expect(d.resolveAccessTokenGrant).not.toHaveBeenCalled();
     expect(d.revokeGrantAndEvict).not.toHaveBeenCalled();
   });
+
+  it("caps on UTF-8 BYTES, not UTF-16 units: a multibyte body under the char count but over the byte budget is rejected", async () => {
+    // "𝟙" (U+1D7D9) is 2 UTF-16 code units but 4 UTF-8 bytes. 800 of them → ~1.6k JS-string
+    // length (under 2048) but ~3.2k bytes (over the 2048-byte cap). A `.length` check would
+    // wrongly admit this; the byte measurement rejects it.
+    const d = deps();
+    const body = `token=${"𝟙".repeat(800)}`;
+    expect(body.length).toBeLessThan(2048); // under the cap by UTF-16 units
+    expect(new TextEncoder().encode(body).length).toBeGreaterThan(2048); // over it by bytes
+    const req = new Request("https://auth.webhook.co/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+    const res = await handleRevokeRequest(d, req);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_request" });
+    expect(d.resolveAccessTokenGrant).not.toHaveBeenCalled();
+    expect(d.revokeGrantAndEvict).not.toHaveBeenCalled();
+  });
 });
