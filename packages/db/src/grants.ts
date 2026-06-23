@@ -316,12 +316,17 @@ export async function mintKeyForGrant(
     // FOR UPDATE locks the grant row so a concurrent revokeGrant (which row-locks the grant via its
     // UPDATE) serializes against this refresh — closing the race where a key minted mid-revoke would
     // escape the cascade. After acquiring the lock we see the committed status, so a just-revoked
-    // grant throws rather than yielding an orphan key.
-    const [grant] = await tx<{ status: GrantStatus; user_id: string }[]>`
-      select status, user_id from auth_grant where id = ${input.grantId} for update`;
+    // grant throws rather than yielding an orphan key. The `expired` flag mirrors consumeRefreshToken's
+    // grant-lifetime gate (status active AND not past expires_at): a non-refresh caller must not mint a
+    // fresh key against a grant that has aged past its ceiling, even if its status hasn't been swept.
+    const [grant] = await tx<{ status: GrantStatus; user_id: string; expired: boolean }[]>`
+      select status, user_id,
+             (expires_at is not null and expires_at <= now()) as expired
+      from auth_grant where id = ${input.grantId} for update`;
     if (!grant) throw new Error("mintKeyForGrant: grant not found");
-    if (grant.status !== "active") {
-      throw new Error(`mintKeyForGrant: grant is not active (status=${grant.status})`);
+    if (grant.status !== "active" || grant.expired) {
+      const reason = grant.expired ? "expired" : grant.status;
+      throw new Error(`mintKeyForGrant: grant is not active (status=${reason})`);
     }
     const minted = await mintKeyOnGrantInTx(tx, input, grant.user_id, hasher, auditKey);
     await tx`update auth_grant set last_used_at = now() where id = ${input.grantId}`;

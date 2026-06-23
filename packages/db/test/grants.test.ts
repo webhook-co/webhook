@@ -385,6 +385,60 @@ describe("mintKeyForGrant — refresh", () => {
       ),
     ).rejects.toThrow(/not active/i);
   });
+
+  it("refuses to mint on an active grant whose expiry has passed (mints no key)", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    // An active grant — then force its expiry into the past (the refresh path's consumeRefreshToken
+    // already gates this; a non-refresh mintKeyForGrant caller must be gated identically).
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        grantTtlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    if (minted.status !== "minted") throw new Error("unreachable");
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`update auth_grant set expires_at = now() - interval '1 second' where id = ${minted.grantId}`,
+    );
+
+    await expect(
+      mintKeyForGrant(
+        app,
+        {
+          orgId,
+          grantId: minted.grantId,
+          scopes: ["events:read"],
+          audience: API,
+          ttlSeconds: 3600,
+        },
+        hasher,
+        auditKey,
+      ),
+    ).rejects.toThrow(/not active/i);
+
+    // No second key was minted — the grant still has exactly the one key from the initial mint.
+    const [{ n }] = await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx<
+          { n: number }[]
+        >`select count(*)::int as n from api_keys where grant_id = ${minted.grantId}`,
+    );
+    expect(n).toBe(1);
+  });
 });
 
 describe("cross-org isolation (RLS)", () => {
