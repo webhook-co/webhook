@@ -73,6 +73,10 @@ export interface IoSeams {
   /** Start the loopback redirect server for the browser OAuth flow (a real http server in prod; a fake
    *  in tests). Bound to the `127.0.0.1` IP literal on an ephemeral port. */
   startLoopbackServer(): Promise<LoopbackServer>;
+  /** Open `initialContent` in `editorCommand` (`$VISUAL`/`$EDITOR`) and resolve the saved text — the
+   *  `replay --edit` round-trip. The real impl writes a 0600 temp file and spawns the editor on the TTY;
+   *  a fake supplies the edited text in tests. */
+  editText(initialContent: string, editorCommand: string): Promise<string>;
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -185,6 +189,8 @@ export function makeTestContext(opts?: {
   sleep?: (ms: number) => Promise<void>;
   /** Fake loopback redirect server for `login` (the browser OAuth flow); defaults to unconfigured. */
   startLoopbackServer?: () => Promise<LoopbackServer>;
+  /** Fake `$EDITOR` round-trip for `replay --edit` (returns the "edited" text); defaults to unconfigured. */
+  editText?: (initialContent: string, editorCommand: string) => Promise<string>;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -227,6 +233,7 @@ export function makeTestContext(opts?: {
     startLoopbackServer:
       opts?.startLoopbackServer ??
       (unconfigured("startLoopbackServer") as unknown as () => Promise<LoopbackServer>),
+    editText: opts?.editText ?? (unconfigured("editText") as unknown as IoSeams["editText"]),
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",
