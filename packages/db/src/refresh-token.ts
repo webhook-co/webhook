@@ -5,15 +5,14 @@
 // role. The 256-bit secret is the entropy; only its HMAC-SHA256+pepper hash (over the WHOLE plaintext,
 // so the embedded org is tamper-covered) is stored. See migration 0017.
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import { withTenant, type Sql, type TenantTx } from "./client";
-import { CREDENTIAL_SECRET_BYTES, type CredentialHasher } from "./credential";
+import { makeOrgRoutedHandle, parseOrgRoutedHandle, type CredentialHasher } from "./credential";
 import { sweepExpiredRefreshTokens } from "./sweep";
 
 const REFRESH_PREFIX = "rtk";
 const START_LEN = 11;
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface MintRefreshTokenInput {
   readonly orgId: string;
@@ -40,8 +39,7 @@ export interface ConsumedRefreshToken {
 
 /** `rtk_<orgId>_<secret>` — the org routes the tenant lookup; the secret (hashed) authenticates it. */
 function makeRefreshPlaintext(orgId: string): string {
-  const secret = randomBytes(CREDENTIAL_SECRET_BYTES).toString("base64url");
-  return `${REFRESH_PREFIX}_${orgId}_${secret}`;
+  return makeOrgRoutedHandle(REFRESH_PREFIX, orgId);
 }
 
 /**
@@ -49,10 +47,7 @@ function makeRefreshPlaintext(orgId: string): string {
  * prefix, missing segments, or a non-UUID org segment) — the caller treats that as an unknown token.
  */
 export function parseRefreshTokenOrg(plaintext: string): string | null {
-  const parts = plaintext.split("_");
-  if (parts.length < 3 || parts[0] !== REFRESH_PREFIX) return null;
-  const orgId = parts[1];
-  return orgId && UUID_RE.test(orgId) ? orgId : null;
+  return parseOrgRoutedHandle(REFRESH_PREFIX, plaintext);
 }
 
 async function insertRefreshToken(
