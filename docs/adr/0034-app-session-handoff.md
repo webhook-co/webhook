@@ -52,11 +52,24 @@ session, and make the gate verify it.
 
 - The handoff is **stateless** — no app.-side session store; the signed cookie is the session, and after the
   exchange app. never calls back to `auth.` (the profile rode in on the exchange response).
-- **Revocation model (stateless tradeoff):** because there is no server-side session store, an individual
-  app. session cannot be revoked server-side before its cookie expiry — the fleet-wide kill-switch is
-  **rotating `SESSION_TOKEN_SECRET`** (invalidates every signed cookie at once, forcing re-login). Session
-  lifetime is therefore the primary bound on a leaked cookie; a per-session server-side revocation list is a
-  possible future addition (coordinated with Lane E) if finer-grained revocation is needed.
+- **Revocation model (stateless tradeoff).** Because there is no server-side session store, an individual
+  app. session cannot be revoked server-side before its cookie expiry. Concretely: **logout clears only the
+  cookie on the device that initiated it** — a token already issued to another device stays valid until it
+  expires — and the only fleet-wide kill-switch is **rotating `SESSION_TOKEN_SECRET`** (invalidates every
+  signed cookie at once, forcing re-login everywhere). The 7-day lifetime + `HttpOnly` + the host-only cookie
+  are therefore the primary bounds on a leaked cookie. **API-key and device-grant revocation are unaffected**
+  — those are durable DB state (Lane B), evicted from `KV_AUTHZ` on revoke; only the *app.-session* cookie is
+  stateless.
+- **Considered: a per-user session epoch (deferred, 2026-06-23).** Targeted revocation ("log out everywhere",
+  or force-revoke one user without rotating the global secret) could be added by storing a per-user
+  `session_epoch` in the DB, stamping it into the token at issuance, and having `verifySession` reject a token
+  whose epoch is behind the user's current one (bump the epoch to revoke). **Deferred deliberately:** the DAL
+  gate is intentionally stateless — an epoch check adds a **DB read to every gated request** (latency + a
+  Hyperdrive dependency on the hot path), a poor trade for the current risk (single personal org, `HttpOnly`,
+  7-day TTL, and the rotate-secret kill-switch already exists). **Revisit when** any of: sessions span
+  shared/multi-member orgs, the TTL lengthens materially, or "log out everywhere"/forced per-user revocation
+  becomes a product requirement — at which point a short-TTL cached epoch (KV) keeps the per-request cost
+  bounded.
 - **Deploy obligations:** provision `SESSION_TOKEN_SECRET` (256-bit) in Secrets Store + set `AUTH_BASE_URL`; and
   per ADR-0033, add the app.↔auth. shared-secret/service-binding on `/session/exchange` (defense-in-depth) and
   the rate-limit on `auth./session/handoff`. `AUTH_LOGIN_URL` should point at `auth./login` per env so the gate's
