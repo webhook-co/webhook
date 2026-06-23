@@ -71,12 +71,11 @@ external for the workerd bundle.
 
 ## consequences
 
-- **Deferred, tracked as must-fix-before-live: durable magic-link rate-limiting.** Better Auth's built-in
-  limiter defaults to IN-MEMORY storage, which is per-isolate on Workers and ineffective fleet-wide — a
-  public, email-triggering endpoint needs durable storage (a `rateLimit` DB table or KV `secondaryStorage`)
-  + ideally a Turnstile/WAF gate. Deferred to the deploy/bindings slice because the fix needs a KV/DB
-  binding and a deliberate session-storage decision, and the endpoint is **not yet deployed** (apps/auth has
-  no CD). A code TODO (`auth.ts`) + this ADR + memory track it.
+- **Durable magic-link rate-limiting — SHIPPED (this supersedes the original "deferred" note).** At the time
+  of this slice the Better Auth built-in limiter defaulted to in-memory storage (per-isolate on Workers,
+  ineffective fleet-wide), so durable storage was deferred to the deploy/bindings slice. It is now live and
+  the endpoint is deployed: a **durable, per-recipient throttle** backs the send, layered with **Turnstile**
+  proof-of-humanity (ADR-0044) and the **edge/WAF flood-shield**. Posture is in place — no outstanding gap.
 - **Deploy substrate (this slice does NOT wire it):** the `webhook_auth` login password + the
   `webhook-prod-auth` Hyperdrive (migration 0016 already applied to prod), the `HYPERDRIVE_AUTH`/
   `HYPERDRIVE_TENANT` bindings + the Google/GitHub/Resend/`BETTER_AUTH_SECRET` Secrets-Store entries, and
