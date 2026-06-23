@@ -1,5 +1,8 @@
 import { spawn } from "node:child_process";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { text } from "node:stream/consumers";
@@ -63,6 +66,47 @@ function startLoopbackServer(): Promise<LoopbackServer> {
         },
       });
     });
+  });
+}
+
+// Open `initialContent` in the user's editor and return the saved text — the `replay --edit` round-trip.
+// The payload may carry PII/PHI, so the temp file is written 0600 (then chmod'd 0600 to defeat any umask
+// slack) inside a private 0700 mkdtemp dir, and the dir is ALWAYS removed — on success, a non-zero editor
+// exit, a spawn error, OR a setup throw (the whole body is guarded so a write/spawn failure can't leak the
+// payload on disk). The editor is split on spaces (so `code --wait` / `emacs -nw` work) and spawned WITHOUT
+// a shell (no injection from the editor string or the controlled temp path), inheriting the TTY so it can
+// drive the terminal. A non-zero editor exit rejects (the caller aborts without forwarding).
+function editText(initialContent: string, editorCommand: string): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    let dir: string | undefined;
+    try {
+      dir = mkdtempSync(join(tmpdir(), "wbhk-edit-"));
+      const file = join(dir, "payload");
+      writeFileSync(file, initialContent, { encoding: "utf-8", mode: 0o600 });
+      chmodSync(file, 0o600); // writeFileSync mode is umask-masked; chmod makes the 0600 literal
+      const [cmd, ...args] = editorCommand.split(" ").filter((part) => part.length > 0);
+      if (cmd === undefined) throw new Error("editor command is empty");
+      const cleanup = (): void => rmSync(dir as string, { recursive: true, force: true });
+      const child = spawn(cmd, [...args, file], { stdio: "inherit" });
+      child.on("error", (err) => {
+        cleanup();
+        reject(err);
+      });
+      child.on("close", (code) => {
+        try {
+          if (code !== 0) {
+            reject(new Error(`editor exited with code ${code ?? "null"}`));
+            return;
+          }
+          resolve(readFileSync(file, "utf-8"));
+        } finally {
+          cleanup();
+        }
+      });
+    } catch (err) {
+      if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
   });
 }
 
@@ -241,6 +285,7 @@ export function makeRealIo(): IoSeams {
     openBrowser,
     sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
     startLoopbackServer,
+    editText,
     // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
     // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
     connectWebSocket: (url, { headers, handlers }) => {

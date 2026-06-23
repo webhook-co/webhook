@@ -82,4 +82,18 @@ describe("handleRevokeRequest", () => {
     expect(await res.json()).toMatchObject({ error: "invalid_request" });
     expect(d.revokeGrantAndEvict).not.toHaveBeenCalled();
   });
+
+  it("rejects an oversized body with 400 invalid_request (before resolving)", async () => {
+    const d = deps();
+    const huge = new Request("https://auth.webhook.co/revoke", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `token=${"a".repeat(3000)}`,
+    });
+    const res = await handleRevokeRequest(d, huge);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "invalid_request" });
+    expect(d.resolveAccessTokenGrant).not.toHaveBeenCalled();
+    expect(d.revokeGrantAndEvict).not.toHaveBeenCalled();
+  });
 });
