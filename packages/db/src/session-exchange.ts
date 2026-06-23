@@ -12,6 +12,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { withTenant, type Sql } from "./client";
 import { CREDENTIAL_SECRET_BYTES, type CredentialHasher } from "./credential";
+import { sweepExpiredSessionExchanges } from "./sweep";
 
 const EXCHANGE_PREFIX = "sxt";
 const START_LEN = 11;
@@ -96,7 +97,7 @@ export async function consumeSessionExchange(
 ): Promise<ConsumedSessionExchange | null> {
   const orgId = parseSessionExchangeOrg(plaintext);
   if (!orgId) return null;
-  return withTenant(app, orgId, async (tx) => {
+  const result = await withTenant(app, orgId, async (tx) => {
     for (const candidate of hasher.candidates(plaintext)) {
       const [consumed] = await tx<{ user_id: string; audience: string }[]>`
         update auth_session_exchange set used_at = now()
@@ -108,4 +109,11 @@ export async function consumeSessionExchange(
     }
     return null;
   });
+
+  // Housekeeping: after the redeem transaction has COMMITTED, opportunistically prune this org's expired
+  // tickets in a separate, best-effort transaction (errors swallowed inside the sweep), so it can never
+  // roll back or fail the redeem above. Skipped when nothing was consumed (a wrong-origin/expired probe
+  // does no real work to piggyback on).
+  if (result) await sweepExpiredSessionExchanges(app, orgId);
+  return result;
 }
