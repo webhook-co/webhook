@@ -70,6 +70,16 @@ function fmtExpiry(iso: string): string {
   return Number.isNaN(at.getTime()) ? iso : at.toISOString().slice(0, 10);
 }
 
+/** A human, sentence-case duration from a count of seconds — the largest unit that divides evenly
+ *  (days only at ≥2d, so a 1-day TTL reads as "24 hours"), pluralized. Used for the access-key TTL. */
+export function fmtDuration(seconds: number): string {
+  const unit = (n: number, label: string) => `${n} ${label}${n === 1 ? "" : "s"}`;
+  if (seconds % 86_400 === 0 && seconds >= 172_800) return unit(seconds / 86_400, "day");
+  if (seconds % 3_600 === 0) return unit(seconds / 3_600, "hour");
+  if (seconds % 60 === 0) return unit(seconds / 60, "minute");
+  return unit(seconds, "second");
+}
+
 /**
  * A country's flag emoji from its ISO-3166 alpha-2 code, via Unicode regional-indicator symbols
  * (A→🇦 … Z→🇿). Returns "" for anything that isn't exactly two ASCII letters, so a null/blank/malformed
@@ -213,11 +223,11 @@ export function ConsentForm({
             ))}
           </span>
         </SummaryRow>
-        {/* Renders the grant ceiling. Lane E (E8) adds a row for `request.keyTtlSeconds` (the ~24h key
-            TTL) so the screen shows BOTH durations — the contract now provides it. */}
+        {/* Both durations: the grant ceiling (a ~90d date) and the per-key TTL (~24h, refreshed). */}
         <SummaryRow label="Authorized until">
           <span className="font-mono text-[13px]">{fmtExpiry(request.grantExpiresAt)}</span>
         </SummaryRow>
+        <SummaryRow label="Key lifetime">{fmtDuration(request.keyTtlSeconds)}</SummaryRow>
       </dl>
 
       <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">

@@ -6,6 +6,7 @@ import {
   ConsentDecisionError,
   ConsentForm,
   flagFromCountry,
+  fmtDuration,
   type ConsentActions,
   type ConsentRequest,
 } from "./consent-form";
@@ -57,8 +58,10 @@ describe("ConsentForm", () => {
     expect(screen.getByText("events:read")).toBeInTheDocument();
     expect(screen.getByText("events:replay")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    // the grant ceiling (Lane E renders the key TTL too at E8 — the contract now carries both)
+    // both durations: the grant ceiling (~90d date) AND the per-key TTL (~24h)
     expect(screen.getByText(/2026-09-18/)).toBeInTheDocument();
+    expect(screen.getByText("Key lifetime")).toBeInTheDocument();
+    expect(screen.getByText("24 hours")).toBeInTheDocument();
     // both decisions are offered
     expect(screen.getByRole("button", { name: /authorize/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /deny/i })).toBeInTheDocument();
@@ -186,5 +189,16 @@ describe("flagFromCountry", () => {
     expect(flagFromCountry("USA")).toBe("");
     expect(flagFromCountry("U1")).toBe("");
     expect(flagFromCountry("1")).toBe("");
+  });
+});
+
+describe("fmtDuration", () => {
+  it("formats a TTL in the largest clean unit, pluralized (days only at ≥2d)", () => {
+    expect(fmtDuration(86_400)).toBe("24 hours");
+    expect(fmtDuration(172_800)).toBe("2 days");
+    expect(fmtDuration(3_600)).toBe("1 hour");
+    expect(fmtDuration(1_800)).toBe("30 minutes");
+    expect(fmtDuration(60)).toBe("1 minute");
+    expect(fmtDuration(90)).toBe("90 seconds");
   });
 });
