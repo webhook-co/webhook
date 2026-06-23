@@ -216,3 +216,19 @@ describe("handleTokenRequest — grant_type dispatch", () => {
     expect(await res.json()).toMatchObject({ error: "authorization_pending" });
   });
 });
+
+describe("handleTokenRequest — body cap", () => {
+  it("rejects an oversized body with invalid_request before redeeming", async () => {
+    const redeemAuthCode = vi.fn(
+      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
+    );
+    const huge = new Request("https://auth.webhook.co/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `grant_type=authorization_code&code=${"A".repeat(5000)}`,
+    });
+    const res = await handleTokenRequest(deps({ redeemAuthCode }), huge);
+    expect(await res.json()).toMatchObject({ error: "invalid_request" });
+    expect(redeemAuthCode).not.toHaveBeenCalled();
+  });
+});

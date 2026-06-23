@@ -62,12 +62,21 @@ function resultToResponse(result: RedeemResult): Response {
   }
 }
 
+// A /token body is tiny (grant_type + code/verifier/refresh handle). Cap it as defense in depth on this
+// unauthenticated, DB-touching endpoint (alongside the edge rate-limit) so a huge body can't force unbounded
+// parse work.
+const MAX_BODY_BYTES = 4096;
+
 export async function handleTokenRequest(
   deps: TokenRouteDeps,
   request: Request,
 ): Promise<Response> {
+  const raw = await request.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    return oauthError("invalid_request", "request body too large");
+  }
   // URLSearchParams never throws; a non-urlencoded / empty body simply yields no grant_type below.
-  const params = new URLSearchParams(await request.text());
+  const params = new URLSearchParams(raw);
   const grantType = params.get("grant_type");
 
   if (grantType === "authorization_code") {

@@ -11,6 +11,9 @@
 
 import { makeAuthorizeDeps } from "./authorize-deps";
 import { handleAuthorize, handleConsentComplete, handleConsentDecision } from "./authorize-route";
+import { EDGE_RULES, edgeRateLimit } from "./edge-rate-limit";
+import { nowSeconds } from "./issuer-constants";
+import type { RateLimitKv } from "./rate-limit";
 import { makeDeviceAuthorizeDeps } from "./device-authorize-deps";
 import { handleDeviceAuthorization } from "./device-authorize-route";
 import { redeemDeviceCode } from "./device-token-core";
@@ -65,10 +68,15 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
     async fetch(request, env, ctx) {
       const url = new URL(request.url);
       const rawEnv = env as Record<string, unknown>;
+      // The per-endpoint edge rate-limit deps (RATELIMIT_KV is optional → fail-open when unbound). The gate
+      // runs at the TOP of each public-endpoint branch, before a pool is opened or the body is read.
+      const rl = { kv: rawEnv.RATELIMIT_KV as RateLimitKv | undefined, nowSeconds };
 
       // GET /authorize — the interactive consent entry point (A3). Resolves the session, builds a signed
       // consent ticket, and redirects to Lane E's /consent screen (served by OpenNext, below).
       if (request.method === "GET" && url.pathname === "/authorize") {
+        const limited = await edgeRateLimit(rl, "authorize", request, EDGE_RULES.authorize);
+        if (limited) return limited;
         const { deps, close } = await makeAuthorizeDeps(readAuthorizeEnv(rawEnv), ctx);
         try {
           return await handleAuthorize(deps, request);
@@ -79,6 +87,13 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
 
       // POST /consent/decision — record the user's approve/deny (A3).
       if (request.method === "POST" && url.pathname === "/consent/decision") {
+        const limited = await edgeRateLimit(
+          rl,
+          "consent_decision",
+          request,
+          EDGE_RULES.consent_decision,
+        );
+        if (limited) return limited;
         const { deps, close } = await makeAuthorizeDeps(readAuthorizeEnv(rawEnv), ctx);
         try {
           return await handleConsentDecision(deps, request);
@@ -91,6 +106,13 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
       // form navigated here with, then SERVER-302 the browser to the http://127.0.0.1 callback (a
       // client-side public→loopback nav is PNA-blocked). Only the ticket key is touched (no pool/session).
       if (request.method === "GET" && url.pathname === "/consent/complete") {
+        const limited = await edgeRateLimit(
+          rl,
+          "consent_complete",
+          request,
+          EDGE_RULES.consent_complete,
+        );
+        if (limited) return limited;
         const { deps, close } = await makeAuthorizeDeps(readAuthorizeEnv(rawEnv), ctx);
         try {
           return await handleConsentComplete(deps, request);
@@ -102,6 +124,13 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
       // POST /device_authorization — the RFC 8628 device-code request (A4b). No pool: it only validates the
       // client (KV) + mints a device code (KV); a key is minted later at the /token poll.
       if (request.method === "POST" && url.pathname === "/device_authorization") {
+        const limited = await edgeRateLimit(
+          rl,
+          "device_authorization",
+          request,
+          EDGE_RULES.device_authorization,
+        );
+        if (limited) return limited;
         const deps = makeDeviceAuthorizeDeps(readDeviceAuthorizeEnv(rawEnv), request.url);
         return await handleDeviceAuthorization(deps, request);
       }
@@ -120,6 +149,13 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
       // GET /session/handoff — the producer of the auth.→app. handoff (A-SX-2b): read the session, mint a
       // single-use exchange ticket, and 302 the browser to app.'s callback with it (→ login if no session).
       if (request.method === "GET" && url.pathname === "/session/handoff") {
+        const limited = await edgeRateLimit(
+          rl,
+          "session_handoff",
+          request,
+          EDGE_RULES.session_handoff,
+        );
+        if (limited) return limited;
         const { deps, close } = await makeSessionHandoffDeps(readAuthEnv(rawEnv), ctx);
         try {
           return await handleSessionHandoff(deps, request);
@@ -131,6 +167,13 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
       // POST /session/exchange — app.'s server backchannel-redeems a session ticket (A-SX-2a): consume +
       // read the profile → the principal payload. Authenticated by the single-use ticket, not a cookie.
       if (request.method === "POST" && url.pathname === "/session/exchange") {
+        const limited = await edgeRateLimit(
+          rl,
+          "session_exchange",
+          request,
+          EDGE_RULES.session_exchange,
+        );
+        if (limited) return limited;
         const { deps, close } = await makeSessionExchangeDeps(readSessionExchangeEnv(rawEnv));
         try {
           return await handleSessionExchange(deps, request);
@@ -140,6 +183,8 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
       }
 
       if (request.method === "POST" && url.pathname === "/token") {
+        const limited = await edgeRateLimit(rl, "token", request, EDGE_RULES.token);
+        if (limited) return limited;
         const { authCode, refresh, device, close } = await makeTokenDeps(
           readTokenEnv(rawEnv),
           request.url,
@@ -159,6 +204,8 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
       }
 
       if (request.method === "POST" && url.pathname === "/revoke") {
+        const limited = await edgeRateLimit(rl, "revoke", request, EDGE_RULES.revoke);
+        if (limited) return limited;
         const { deps, close } = await makeRevokeDeps(readRevokeEnv(rawEnv));
         try {
           return await handleRevokeRequest(deps, request);
