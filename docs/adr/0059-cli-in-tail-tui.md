@@ -1,4 +1,7 @@
-# ADR 0055 — CLI in-tail TUI (interactive replay browser over the live tail) (D10)
+# ADR 0059 — CLI in-tail TUI (interactive replay browser over the live tail) (D10)
+
+> Renumbered from **ADR 0055** (close-out audit, 2026-06-23) to resolve a number collision with
+> `0055-auth-expiry-cron-sweep.md` — the CLI ADR moved to the next free number; the auth ADR kept 0055.
 
 - status: accepted (**D10** — `wbhk listen <endpoint>` on an interactive TTY hands off to an in-tail TUI:
   navigate the live event stream and replay/inspect on demand. The last Lane-D slice; the full TUI is the

@@ -320,3 +320,42 @@ describe("resolveStore — keychain composition (D7)", () => {
     await expect(file.get(DEFAULT_PROFILE)).resolves.toBeNull();
   });
 });
+
+describe("resolveStore — getWithSource (accurate credential source)", () => {
+  const KEY = (k: string): StoredCredential => ({ apiKey: k });
+  const mk = (id: string, seed?: Record<string, StoredCredential>, unavailable = false) =>
+    memoryBackend(id, { secure: id === "keychain", canWrite: id !== "env", seed, unavailable });
+
+  it("reports WHICH backend served the credential (env › keychain › file), not a guess", async () => {
+    // file holds it (keychain unavailable) → "file"
+    let store = resolveStore(
+      [mk("env"), mk("keychain", undefined, true), mk("file", { [DEFAULT_PROFILE]: KEY("whk_f") })],
+      { requireSecureStorage: false },
+    );
+    expect(await store.getWithSource!()).toEqual({ cred: KEY("whk_f"), source: "file" });
+
+    // keychain holds it AHEAD of the file → "keychain" (the bug was reporting this as "file")
+    store = resolveStore(
+      [
+        mk("env"),
+        mk("keychain", { [DEFAULT_PROFILE]: KEY("whk_k") }),
+        mk("file", { [DEFAULT_PROFILE]: KEY("whk_f") }),
+      ],
+      { requireSecureStorage: false },
+    );
+    expect(await store.getWithSource!()).toEqual({ cred: KEY("whk_k"), source: "keychain" });
+
+    // env wins (highest precedence)
+    store = resolveStore(
+      [mk("env", { [DEFAULT_PROFILE]: KEY("whk_e") }), mk("keychain"), mk("file")],
+      { requireSecureStorage: false },
+    );
+    expect(await store.getWithSource!()).toEqual({ cred: KEY("whk_e"), source: "env" });
+
+    // nothing anywhere (keychain unavailable) → null
+    store = resolveStore([mk("env"), mk("keychain", undefined, true), mk("file")], {
+      requireSecureStorage: false,
+    });
+    expect(await store.getWithSource!()).toBeNull();
+  });
+});

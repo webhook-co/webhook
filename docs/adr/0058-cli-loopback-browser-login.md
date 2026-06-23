@@ -1,4 +1,7 @@
-# ADR 0052 — CLI loopback browser login + OAuth-by-default (D8c3b)
+# ADR 0058 — CLI loopback browser login + OAuth-by-default (D8c3b)
+
+> Renumbered from **ADR 0052** (close-out audit, 2026-06-23) to resolve a number collision with
+> `0052-loopback-consent-completion-bounce.md` — the CLI ADR moved to the next free number; the auth ADR kept 0052.
 
 - status: accepted (**D8c3b** — the RFC 8252 §8.3 loopback browser OAuth flow, and the founder-decided
   switch of the DEFAULT `wbhk login` to it. Completes the D8 OAuth client.).

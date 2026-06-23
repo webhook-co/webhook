@@ -139,6 +139,23 @@ describe("wbhk doctor (command)", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
   });
 
+  it("reports the credential source as keychain (not file) when it lives in the OS keychain", async () => {
+    // A working keychain fake holding the credential; no `store` override → the REAL store composes
+    // [env, keychain, file], so doctor's getWithSource reports the actual backend.
+    const m = new Map<string, string>();
+    const keychain = {
+      get: async (a: string) => m.get(a) ?? null,
+      set: async (a: string, s: string) => void m.set(a, s),
+      erase: async (a: string) => void m.delete(a),
+    };
+    await keychain.set("default", JSON.stringify({ apiKey: "whk_kc" })); // keychain stores serialized creds
+    const t = makeTestContext({ keychain, fetch: reachableFetch() });
+    await run(app, ["doctor"], t.ctx);
+    const out = t.stdout();
+    expect(out).toContain("via keychain"); // the fix: NOT mislabeled "via file"
+    expect(out).not.toContain("via file");
+  });
+
   it("exits non-zero when a check fails (a corrupt config — a must-fix local problem)", async () => {
     // A real homedir with an invalid-JSON, 0600 config → CorruptConfigError → the config check fails.
     const home = await mkdtemp(join(tmpdir(), "wbhk-doctor-"));

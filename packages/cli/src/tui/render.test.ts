@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { stripAnsi } from "../output/color.js";
 import { appendEvent, initialState, moveSelection, setStatus, toggleDetail } from "./state.js";
-import { renderFrame } from "./render.js";
+import { fitWidth, renderFrame } from "./render.js";
 
 function evt(id: string, over: Partial<EventSummary> = {}): EventSummary {
   return {
@@ -74,5 +74,20 @@ describe("renderFrame", () => {
     for (const line of renderFrame(s, { color: true, columns: 40 }).split("\n")) {
       expect(stripAnsi(line).length).toBeLessThanOrEqual(40);
     }
+  });
+});
+
+describe("fitWidth (surrogate-safe truncation)", () => {
+  // "ab💥cd": a(0) b(1) [high(2) low(3) = 💥] c(4) d(5)
+  it("drops an incomplete astral char rather than leave a lone surrogate", () => {
+    const out = fitWidth("ab💥cd", 3); // cut at 3 lands between the surrogate pair
+    expect(out).toBe("ab");
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out)).toBe(false); // no lone high surrogate
+  });
+  it("keeps a whole surrogate pair when it fits", () => {
+    expect(fitWidth("ab💥cd", 4)).toBe("ab💥");
+  });
+  it("returns the line unchanged when within the width", () => {
+    expect(fitWidth("abc", 10)).toBe("abc");
   });
 });

@@ -13,7 +13,7 @@ import { postForm, readOAuthError, type OAuthFetch } from "./http.js";
 export const FrozenTokenBodySchema = z.object({
   access_token: z.string().min(1), // the whk_ key
   token_type: z.string(),
-  expires_in: z.number().int().nonnegative(),
+  expires_in: z.number().int().positive(), // a 0-second lifetime is malformed (matches device.ts)
   refresh_token: z.string().min(1), // the rtk_ handle (always rotated on refresh)
   scope: z.string(),
   resource: z.string(),

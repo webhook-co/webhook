@@ -55,7 +55,8 @@ export function terminalCheck(opts: { colorEnabled: boolean; isInteractive: bool
 
 export function credentialCheck(opts: {
   loggedIn: boolean;
-  source: "env" | "file" | null;
+  /** The real backend the credential came from: "env" | "keychain" | "file" (or null when logged out). */
+  source: string | null;
   profile: string;
 }): Check {
   const profile = sanitizeControl(opts.profile);
@@ -165,11 +166,16 @@ export const doctorCommand = buildCommand<GlobalFlags, [], AppContext>({
     // The placeholder version means an unstamped local build → mark it `(dev)` (Open-Q3).
     const versionLabel = VERSION === "0.0.0" ? `${VERSION} (dev)` : VERSION;
 
-    // credential + where it resolves from (env wins over file, per the store's precedence).
-    const cred = await this.store.get(profile);
+    // credential + the REAL backend it resolves from (env › keychain › file). getWithSource reports the
+    // actual backend so a keychain credential reads as "keychain", not a mislabeled "file"; an inline test
+    // fake without it falls back to the env-or-file heuristic.
+    const resolved = this.store.getWithSource ? await this.store.getWithSource(profile) : null;
+    const cred = resolved?.cred ?? (await this.store.get(profile));
     const envKey = env[ENV_API_KEY_VAR];
-    const source: "env" | "file" | null =
-      cred === null ? null : envKey !== undefined && envKey !== "" ? "env" : "file";
+    const source: string | null =
+      cred === null
+        ? null
+        : (resolved?.source ?? (envKey !== undefined && envKey !== "" ? "env" : "file"));
 
     // config file health (existence / perms / parse), via the same trusted reader the store uses.
     const configDir = resolveConfigDir(env, this.homedir);

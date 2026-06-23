@@ -48,7 +48,7 @@ describe("output/format", () => {
   });
 
   it("formatCliError renders the voice-compliant user message, never a stack trace", () => {
-    const line = formatCliError(new NotImplementedError(["login"], "slice 9"), { color: false });
+    const line = formatCliError(new NotImplementedError(["login"], "slice 9"));
     expect(line).toContain("isn't built yet");
     expect(line).toContain("slice 9");
     expect(line).not.toMatch(/\bat \//); // no stack frames
@@ -56,8 +56,8 @@ describe("output/format", () => {
   });
 
   it("formatCliError falls back to a plain message for ordinary errors and non-errors", () => {
-    expect(formatCliError(new Error("boom"), { color: false })).toBe("boom");
-    expect(formatCliError("just a string", { color: false })).toBe("just a string");
+    expect(formatCliError(new Error("boom"))).toBe("boom");
+    expect(formatCliError("just a string")).toBe("just a string");
   });
 });
 

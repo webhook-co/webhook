@@ -197,4 +197,27 @@ describe("createTui", () => {
     t.key("d");
     expect(t.writes.length).toBe(after);
   });
+
+  it("tears down (not an unhandled throw) if a mid-session render write fails — finished resolves", async () => {
+    const writes: string[] = [];
+    let fail = false;
+    let handlers: TuiInputHandlers | undefined;
+    const closed = vi.fn();
+    const term: TuiTerminal = {
+      write: (s) => {
+        if (fail) throw new Error("EPIPE"); // stdout/pipe closed mid-session
+        writes.push(s);
+      },
+      size: () => ({ columns: 80, rows: 24 }),
+      start: (h) => {
+        handlers = h;
+        return { close: closed };
+      },
+    };
+    const tui = createTui({ terminal: term, effects: effects(), color: false }); // initial render OK
+    fail = true; // now break stdout, then trigger a render via a keypress
+    handlers?.onKey("j"); // down → render → write throws → caught → teardown (does not escape the handler)
+    await expect(tui.finished).resolves.toBeUndefined();
+    expect(closed).toHaveBeenCalled(); // raw input torn down (cooked mode restored)
+  });
 });
