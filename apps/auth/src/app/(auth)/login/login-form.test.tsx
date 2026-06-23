@@ -46,6 +46,14 @@ describe("LoginForm", () => {
     expect(screen.getByRole("button", { name: /single sign-on/i })).toBeDisabled();
   });
 
+  it("has no dead self-referential signup link (signup == login)", () => {
+    renderForm(makeActions());
+    // signup and login are one passwordless flow, so there's no separate "Sign up → /login" link
+    expect(screen.queryByRole("link", { name: /sign up/i })).not.toBeInTheDocument();
+    // a link-free note clarifies that signing in creates the account
+    expect(screen.getByText(/signing in creates/i)).toBeInTheDocument();
+  });
+
   it("rejects an invalid email without calling the action", async () => {
     const actions = makeActions();
     renderForm(actions);
