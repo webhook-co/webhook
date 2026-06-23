@@ -188,12 +188,9 @@ export function LoginForm({
         Continue with SSO
       </Button>
 
-      <p className="text-sm text-fg-secondary">
-        Don&apos;t have an account?{" "}
-        <a href="/login" className="text-fg underline">
-          Sign up
-        </a>
-      </p>
+      {/* Signup == login (one passwordless flow), so there's no separate signup page to link to —
+          a link-free note avoids a dead self-referential "/login" link. */}
+      <p className="text-sm text-fg-secondary">No account yet? Signing in creates one.</p>
     </div>
   );
 }
