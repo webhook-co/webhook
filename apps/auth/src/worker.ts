@@ -26,11 +26,28 @@ import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
 import { oauthIssuerConfig } from "./issuer/oauth-config";
 import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
+import { runAuthExpirySweep } from "./runtime/sweep-cron";
 
-export default new OAuthProvider({
+// The OAuth issuer instance — @cloudflare/workers-oauth-provider wrapping the OpenNext handler (A2b-1). We
+// keep a reference rather than exporting it directly because the default export now also carries a
+// scheduled() handler (the expiry cron, ADR-0055): the export below delegates fetch to this provider
+// VERBATIM (so every OAuth + OpenNext route behaves exactly as before) and adds scheduled() alongside it.
+const provider = new OAuthProvider({
   ...oauthIssuerConfig,
   defaultHandler: makeIssuerDefaultHandler(openNextHandler),
 });
+
+export default {
+  // Delegate every request to the OAuth provider unchanged — same fetch handler as before this PR.
+  fetch: (request, env, ctx) => provider.fetch(request, env, ctx),
+
+  // Daily cross-org expiry cron-sweep (ADR-0055). Prunes expired refresh + session-exchange rows across all
+  // orgs as the least-privilege webhook_sweeper role. runAuthExpirySweep is non-throwing (it logs + swallows
+  // its own errors), but we also waitUntil it so the isolate stays alive until the sweep + pool-close finish.
+  scheduled: (_event, env, ctx) => {
+    ctx.waitUntil(runAuthExpirySweep(env));
+  },
+};
 
 /**
  * RFC 7662 token introspection over a service binding (A2b-5, the A8 dependency). mcp validates any bearer

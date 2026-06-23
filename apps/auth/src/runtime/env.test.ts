@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { readAuthEnv, readIntrospectEnv, resolveAuthSecrets, type AuthEnv } from "./env";
+import {
+  readAuthEnv,
+  readIntrospectEnv,
+  readSweepEnv,
+  resolveAuthSecrets,
+  type AuthEnv,
+} from "./env";
 
 // A1b — fail-closed env validation + secret resolution. The Worker's bindings/secrets are untyped at the
 // boundary (getCloudflareContext returns a loose record), so we validate rather than blind-cast: a missing
@@ -68,6 +74,21 @@ describe("readIntrospectEnv", () => {
   it("throws (fail-closed) when OAUTH_KV is absent or not an object", () => {
     expect(() => readIntrospectEnv({})).toThrow(/OAUTH_KV/);
     expect(() => readIntrospectEnv({ OAUTH_KV: "nope" })).toThrow(/OAUTH_KV/);
+  });
+});
+
+describe("readSweepEnv", () => {
+  it("returns the env when HYPERDRIVE_SWEEPER is bound", () => {
+    const env = { HYPERDRIVE_SWEEPER: { connectionString: "postgres://sweeper@hd/db" } };
+    expect(readSweepEnv(env)).toMatchObject(env);
+  });
+
+  it("throws (fail-closed) when HYPERDRIVE_SWEEPER is absent or malformed", () => {
+    expect(() => readSweepEnv({})).toThrow(/HYPERDRIVE_SWEEPER/);
+    expect(() => readSweepEnv({ HYPERDRIVE_SWEEPER: {} })).toThrow(/HYPERDRIVE_SWEEPER/);
+    expect(() => readSweepEnv({ HYPERDRIVE_SWEEPER: { connectionString: "" } })).toThrow(
+      /HYPERDRIVE_SWEEPER/,
+    );
   });
 });
 
