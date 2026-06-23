@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 // auth.webhook.co deploys to Cloudflare Workers via @opennextjs/cloudflare (open-next.config.ts).
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
+import { SECURITY_HEADERS } from "./src/security-headers";
+
 const nextConfig: NextConfig = {
   // @webhook-co/ui ships TS source → transpile it. @webhook-co/db + @webhook-co/shared are consumed as
   // built dist (via tsconfig paths) instead, so their Node/Workers crypto source isn't re-typechecked
@@ -23,6 +25,11 @@ const nextConfig: NextConfig = {
     "pg-cloudflare",
     "postgres",
   ],
+  // Security headers for the auth UI (CSP + hardening) — applied to every Next-served response. See
+  // src/security-headers.ts + docs/adr/0056-auth-csp.md.
+  async headers() {
+    return [{ source: "/(.*)", headers: [...SECURITY_HEADERS] }];
+  },
 };
 
 initOpenNextCloudflareForDev();
