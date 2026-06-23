@@ -81,6 +81,14 @@ describe("createApiKey", () => {
     });
     expect((await createApiKey({ name: "k", scopes: ["events:read"] })).ok).toBe(false);
   });
+
+  it("does not mask a committed key as a failure if result-mapping fails", async () => {
+    // The mint resolved (a live key was committed) but yields a value the mapping can't read.
+    // Reporting {ok:false} would tell the user nothing was created while a key is live — so the
+    // mapping (now OUTSIDE the mint try) must propagate rather than be swallowed into the error result.
+    mintApiKey.mockResolvedValue(null as never);
+    await expect(createApiKey({ name: "k", scopes: ["events:read"] })).rejects.toThrow();
+  });
 });
 
 describe("revokeApiKey / revokeGrant", () => {
