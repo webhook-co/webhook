@@ -103,7 +103,15 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
 
     unwrapToken: async (opaque) => {
       const summary = await helpers.unwrapToken<ConsentProps>(opaque);
-      return summary ? { providerGrantId: summary.grantId, props: summary.grant.props } : null;
+      return summary
+        ? {
+            providerGrantId: summary.grantId,
+            props: summary.grant.props,
+            // The userId the provider grant is actually keyed under — lets token-core detect (and log) the
+            // silent revoke no-op when it differs from the consent-recorded props.userId (G1).
+            grantUserId: summary.userId,
+          }
+        : null;
     },
 
     revokeProviderGrant: (providerGrantId, userId) => helpers.revokeGrant(providerGrantId, userId),

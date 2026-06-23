@@ -106,8 +106,14 @@ export interface AuthCodeDeps {
   ) => Promise<
     { ok: true; opaque: string } | { ok: false; error: OAuthErrorCode; description?: string }
   >;
-  /** Decrypt the provider's opaque token → its grant id + consent props (null = invalid/expired). */
-  unwrapToken: (opaque: string) => Promise<{ providerGrantId: string; props: ConsentProps } | null>;
+  /**
+   * Decrypt the provider's opaque token → its grant id + consent props (null = invalid/expired).
+   * `grantUserId` (when known) is the userId the provider grant is actually keyed under, used only to
+   * detect the silent revoke no-op below — it never feeds the mint, which reads from `props`.
+   */
+  unwrapToken: (
+    opaque: string,
+  ) => Promise<{ providerGrantId: string; props: ConsentProps; grantUserId?: string } | null>;
   /**
    * Revoke the provider's grant (G1) — kills the now-vestigial opaque access + refresh tokens. Takes the
    * consent userId because the provider keys grants by user (its API is `revokeGrant(grantId, userId)`).
@@ -214,7 +220,7 @@ export async function redeemAuthCode(
   if (!unwrapped) {
     return { kind: "error", error: "invalid_grant", description: "grant could not be resolved" };
   }
-  const { providerGrantId, props } = unwrapped;
+  const { providerGrantId, props, grantUserId } = unwrapped;
 
   // Audience comes ONLY from consent — never the request body — and must be a known resource.
   if (!props.audience || !deps.allowedAudiences.includes(props.audience)) {
@@ -271,12 +277,25 @@ export async function redeemAuthCode(
   // G1: kill the provider's now-vestigial grant (its opaque access+refresh). Best-effort — the opaque
   // token was never delivered to the caller, so a revoke failure only leaves a server-side grant to be
   // reaped; failing the whole request here would orphan the client's just-issued credentials.
+  //
+  // OBSERVABILITY: the provider keys grants by user, so revokeProviderGrant(grantId, props.userId) silently
+  // no-ops (no throw) when the consent-recorded userId differs from the userId the grant is stored under —
+  // the vestigial grant then only TTLs out. That no-op was invisible; emit the same counter the throw branch
+  // does, with a short machine-readable reason (no token/PII material), so it's reapable.
+  if (grantUserId !== undefined && grantUserId !== props.userId) {
+    deps.log?.("issuer.provider_grant_revoke_failed", {
+      keyId: minted.keyId,
+      reason: "grant_user_mismatch",
+      reapRequired: true,
+    });
+  }
   try {
     await deps.revokeProviderGrant(providerGrantId, props.userId);
   } catch {
     deps.log?.("issuer.provider_grant_revoke_failed", {
       providerGrantId,
       keyId: minted.keyId,
+      reason: "revoke_threw",
       reapRequired: true,
     });
   }

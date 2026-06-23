@@ -44,7 +44,9 @@ function badRequest(description: string): Response {
 
 export async function handleRevokeRequest(deps: RevokeDeps, request: Request): Promise<Response> {
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) {
+  // Measure the UTF-8 BYTE length (not `.length`, which counts UTF-16 code units) so a multibyte body
+  // can't slip past a cap intended in bytes.
+  if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
     return badRequest("request body too large");
   }
   const params = new URLSearchParams(raw);

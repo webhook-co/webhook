@@ -228,6 +228,32 @@ describe("redeemAuthCode — partial failure compensation (MAJOR-B)", () => {
     const events = (log as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
     expect(events).toContain("issuer.provider_grant_revoke_failed");
   });
+
+  it("emits the revoke-failed counter on the SILENT no-op branch (consent userId != provider-grant userId)", async () => {
+    // G1: the provider keys grants by user, so revokeGrant(grantId, consentUserId) silently no-ops when the
+    // consent-written userId differs from the userId the provider grant is actually stored under — leaving a
+    // vestigial (never-delivered) opaque grant to TTL out. The revoke dep doesn't throw, so without this
+    // counter the no-op was invisible. The mint still succeeds (the opaque was never delivered to the caller).
+    const log = vi.fn();
+    const deps = authCodeDeps({
+      log,
+      unwrapToken: vi.fn(async () => ({
+        providerGrantId: "pg_1",
+        props: consent({ userId: "user_consent" }),
+        grantUserId: "user_provider", // the grant is keyed under a DIFFERENT user → revoke will no-op
+      })),
+      // Tenancy + scope checks use the CONSENT userId, so keep them passing for this user.
+      isOrgMember: vi.fn(async () => true),
+    });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result.kind).toBe("token"); // the client still gets its credentials
+    const events = (log as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]);
+    expect(events).toContain("issuer.provider_grant_revoke_failed");
+    // The counter carries no token/PII material — only a short machine-readable reason.
+    const logged = JSON.stringify((log as ReturnType<typeof vi.fn>).mock.calls);
+    expect(logged).not.toContain("user_consent");
+    expect(logged).not.toContain("user_provider");
+  });
 });
 
 describe("redeemAuthCode — pending approval (R1, dormant v1)", () => {

@@ -72,7 +72,9 @@ export async function handleTokenRequest(
   request: Request,
 ): Promise<Response> {
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) {
+  // Measure the UTF-8 BYTE length (not `.length`, which counts UTF-16 code units) so a multibyte body
+  // can't slip past a cap intended in bytes.
+  if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
     return oauthError("invalid_request", "request body too large");
   }
   // URLSearchParams never throws; a non-urlencoded / empty body simply yields no grant_type below.
