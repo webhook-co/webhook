@@ -79,16 +79,25 @@ describe("wbhk login", () => {
     expect(t.stdout()).toContain("not persisted");
   });
 
-  it("prompts interactively when no --stdin/env is given, and persists the entered key", async () => {
+  it("prompts interactively with --api-key and persists the entered key", async () => {
     const mem = memStore();
     const t = makeTestContext({
       store: mem.store,
       promptResponse: "whk_prompted",
       fetch: okFetch({ orgId: "org_3", scopes: ["audit:read"] }),
     });
-    await run(app, ["login"], t.ctx);
+    await run(app, ["login", "--api-key"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
     expect(mem.current()).toEqual({ apiKey: "whk_prompted" });
+  });
+
+  it("--api-key on a non-interactive terminal errors (no prompt possible)", async () => {
+    const mem = memStore();
+    const t = makeTestContext({ store: mem.store }); // not a TTY
+    await run(app, ["login", "--api-key"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("--api-key needs an interactive terminal");
+    expect(mem.current()).toBeNull();
   });
 
   it("fails fast (does not hang) when --stdin is given on an interactive terminal", async () => {
@@ -100,12 +109,12 @@ describe("wbhk login", () => {
     expect(mem.current()).toBeNull();
   });
 
-  it("errors with a usage code when no key source is available and stdin is not a TTY", async () => {
+  it("errors (usage) on a headless run with no credential source (can't open a browser)", async () => {
     const mem = memStore();
-    const t = makeTestContext({ store: mem.store });
+    const t = makeTestContext({ store: mem.store }); // not a TTY, no flags, no WBHK_API_KEY
     await run(app, ["login"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
-    expect(t.stderr().toLowerCase()).toContain("no api key provided");
+    expect(t.stderr().toLowerCase()).toContain("no credential source for a headless run");
     expect(mem.current()).toBeNull();
   });
 
@@ -280,6 +289,93 @@ describe("wbhk login --device", () => {
       fetch: deviceRoutingFetch([jsonResponse(TOKEN_BODY)]),
     });
     await run(app, ["login", "--device", "--insecure-storage"], t.ctx);
+    expect(m.lastSetOpts()?.allowInsecure).toBe(true);
+  });
+});
+
+/** Routes the loopback round-trip: register → token → whoami. */
+function loopbackRoutingFetch(): typeof fetch {
+  return (async (url: string) => {
+    const u = String(url);
+    if (u.endsWith("/register")) return jsonResponse({ client_id: "client_loop_1" });
+    if (u.endsWith("/token")) return jsonResponse(TOKEN_BODY);
+    if (u.endsWith("/v1/whoami")) return jsonResponse(IDENTITY);
+    return new Response(null, { status: 404 });
+  }) as unknown as typeof fetch;
+}
+
+/** A fake loopback server + browser that mirror the real flow: the recorded authorize URL's `state` is
+ *  echoed back on the callback (the success path). */
+function loopbackHarness() {
+  let authorizeUrl = "";
+  return {
+    openBrowser: async (u: string) => void (authorizeUrl = u),
+    startLoopbackServer: async () => ({
+      port: 51900,
+      waitForCallback: async () => {
+        const state = new URL(authorizeUrl).searchParams.get("state") ?? "";
+        return new URLSearchParams({ code: "loop_code_1", state });
+      },
+      close: () => {},
+    }),
+    authorizeUrl: () => authorizeUrl,
+  };
+}
+
+describe("wbhk login (default: loopback browser OAuth)", () => {
+  it("runs the loopback flow on a plain interactive `login`, opens the browser, and persists the OAuth credential", async () => {
+    const m = memStore();
+    const h = loopbackHarness();
+    const t = makeTestContext({
+      store: m.store,
+      isInteractive: true,
+      fetch: loopbackRoutingFetch(),
+      openBrowser: h.openBrowser,
+      startLoopbackServer: h.startLoopbackServer,
+    });
+    await run(app, ["login"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(m.current()).toMatchObject({
+      oauth: { authMethod: "loopback", clientId: "client_loop_1" },
+    });
+    // The browser was opened to the issuer's /authorize with a loopback redirect.
+    const opened = new URL(h.authorizeUrl());
+    expect(opened.origin + opened.pathname).toBe("https://auth.webhook.co/authorize");
+    expect(opened.searchParams.get("redirect_uri")).toMatch(
+      /^http:\/\/127\.0\.0\.1:\d+\/callback$/,
+    );
+    expect(t.stdout()).toContain("logged in to org_1 via browser");
+    expect(t.stdout()).not.toContain(TOKEN_BODY.refresh_token);
+    expect(t.stdout()).not.toContain(TOKEN_BODY.access_token);
+  });
+
+  it("emits JSON with method oauth (loopback) and never leaks the refresh token", async () => {
+    const m = memStore();
+    const h = loopbackHarness();
+    const t = makeTestContext({
+      store: m.store,
+      isInteractive: true,
+      fetch: loopbackRoutingFetch(),
+      openBrowser: h.openBrowser,
+      startLoopbackServer: h.startLoopbackServer,
+    });
+    await run(app, ["login", "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout());
+    expect(parsed).toMatchObject({ orgId: "org_1", persisted: true, method: "oauth (loopback)" });
+    expect(t.stdout()).not.toContain("rtk_");
+  });
+
+  it("passes --insecure-storage through on the loopback path", async () => {
+    const m = memStore();
+    const h = loopbackHarness();
+    const t = makeTestContext({
+      store: m.store,
+      isInteractive: true,
+      fetch: loopbackRoutingFetch(),
+      openBrowser: h.openBrowser,
+      startLoopbackServer: h.startLoopbackServer,
+    });
+    await run(app, ["login", "--insecure-storage"], t.ctx);
     expect(m.lastSetOpts()?.allowInsecure).toBe(true);
   });
 });

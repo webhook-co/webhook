@@ -36,6 +36,19 @@ export type ConnectWebSocket = (
   opts: { headers: Readonly<Record<string, string>>; handlers: WsHandlers },
 ) => WsSocket;
 
+/**
+ * A transient localhost HTTP server for the loopback OAuth redirect (RFC 8252 §8.3). Bound to the
+ * `127.0.0.1` IP LITERAL on an ephemeral port (never `localhost`/`0.0.0.0`, so no other interface can
+ * intercept the code). `waitForCallback` resolves with the redirect's query (`code`+`state`, or
+ * `error`+`state`) once the browser hits `/callback`; the server serves its own "you can close this tab"
+ * page. Injected so `login` is unit-tested with a fake (no real socket). Always `close()`d by the caller.
+ */
+export interface LoopbackServer {
+  readonly port: number;
+  waitForCallback(): Promise<URLSearchParams>;
+  close(): void;
+}
+
 // The host I/O seams a command needs beyond the process streams: an HTTP client (the API), a piped-
 // stdin reader (`--stdin`), an interactive hidden-secret prompt, and the listen tunnel socket. Grouped
 // + injected so commands are node-tested with fakes; the real implementations (TTY + globals + the ws
@@ -57,6 +70,9 @@ export interface IoSeams {
   openBrowser(url: string): Promise<void>;
   /** Wall-clock sleep (real `setTimeout` in prod; instant under test) — the device-flow poll backoff. */
   sleep(ms: number): Promise<void>;
+  /** Start the loopback redirect server for the browser OAuth flow (a real http server in prod; a fake
+   *  in tests). Bound to the `127.0.0.1` IP literal on an ephemeral port. */
+  startLoopbackServer(): Promise<LoopbackServer>;
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -167,6 +183,8 @@ export function makeTestContext(opts?: {
   openBrowser?: (url: string) => Promise<void>;
   /** Fake sleep (defaults to instant) so device-flow command tests don't wait on real timers. */
   sleep?: (ms: number) => Promise<void>;
+  /** Fake loopback redirect server for `login` (the browser OAuth flow); defaults to unconfigured. */
+  startLoopbackServer?: () => Promise<LoopbackServer>;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -206,6 +224,9 @@ export function makeTestContext(opts?: {
     },
     openBrowser: opts?.openBrowser ?? (async () => {}),
     sleep: opts?.sleep ?? (async () => {}),
+    startLoopbackServer:
+      opts?.startLoopbackServer ??
+      (unconfigured("startLoopbackServer") as unknown as () => Promise<LoopbackServer>),
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",

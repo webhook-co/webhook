@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { OAuthError } from "../errors.js";
-import { registerClient } from "./dcr.js";
+import { CLI_CLIENT_NAME, registerClient } from "./dcr.js";
 
 const jsonRes = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -27,9 +27,12 @@ describe("registerClient (DCR)", () => {
       redirect_uris: string[];
       token_endpoint_auth_method: string;
       grant_types: string[];
+      client_name: string;
     };
     expect(body.redirect_uris).toEqual(["http://127.0.0.1:51000/callback"]);
     expect(body.token_endpoint_auth_method).toBe("none"); // public client, no secret
+    // A human-readable name so the consent screen reads "Authorize webhook.co CLI", not the client_id.
+    expect(body.client_name).toBe(CLI_CLIENT_NAME);
     expect(body.grant_types).toContain("authorization_code");
     expect(body.grant_types).toContain("refresh_token");
   });
