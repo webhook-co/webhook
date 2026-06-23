@@ -2,6 +2,8 @@ import "server-only";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
+import type { SessionExchangeBinding } from "./session-exchange";
+
 /**
  * The app. Worker's runtime config + secrets. Secrets are Cloudflare Secrets Store bindings in prod
  * (read via `.get()`) and plain strings in dev/test; URLs default to the prod hosts. Read per-request
@@ -72,6 +74,21 @@ export function getCredentialPepper(): Promise<string> {
 /** The base64 audit-chain HMAC key — signs the `key_minted` audit row (the same key every surface signs with). */
 export function getAuditChainKey(): Promise<string> {
   return readConfiguredSecret("AUDIT_CHAIN_HMAC_KEY", DEV_AUDIT_CHAIN_KEY);
+}
+
+/**
+ * The `AUTH_SESSION_EXCHANGE` Cloudflare service binding — auth.'s SessionExchange WorkerEntrypoint, reachable
+ * as a direct RPC (no public HTTP hop). Bound only at deploy (the gen-wrangler-prod overlay); `undefined` in
+ * dev/preview and before the binding is provisioned, so `exchangeTicket` transparently falls back to the
+ * public `POST /session/exchange` fetch. Detected structurally (an object with an `exchange` method) so a
+ * mis-shaped binding never masquerades as a working RPC.
+ */
+export function getSessionExchangeBinding(): SessionExchangeBinding | undefined {
+  const binding = workerEnv().AUTH_SESSION_EXCHANGE;
+  if (binding && typeof (binding as { exchange?: unknown }).exchange === "function") {
+    return binding as SessionExchangeBinding;
+  }
+  return undefined;
 }
 
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */

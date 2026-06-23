@@ -11,9 +11,10 @@ import {
 } from "@webhook-co/db";
 import { readSecretBinding } from "@webhook-co/shared";
 
+import { redeemSessionExchange, type SessionPrincipal } from "./session-exchange-core";
 import type { SessionExchangeRouteDeps } from "./session-exchange-route";
 import { APP_BASE_URL } from "../runtime/urls";
-import type { SessionExchangeEnv } from "../runtime/env";
+import { readSessionExchangeEnv, type SessionExchangeEnv } from "../runtime/env";
 
 export interface SessionExchangeDeps {
   deps: SessionExchangeRouteDeps;
@@ -55,4 +56,33 @@ export async function makeSessionExchangeDeps(
       );
     },
   };
+}
+
+/**
+ * The service-binding redeem (the SessionExchange WorkerEntrypoint's logic). app. RPCs this over a Cloudflare
+ * service binding instead of the public `POST /session/exchange` HTTP route, so /session/exchange need not stay
+ * publicly exposed. It validates the env, builds the SAME redeem deps the HTTP route uses, redeems through the
+ * SAME shared core (redeemSessionExchange), and returns the principal — or `null` for an invalid/expired/used/
+ * wrong-audience ticket OR the user-missing edge (both collapse to null: app. redirects to login either way).
+ * The per-request pools are always drained before returning (no waitUntil needed — the RPC awaits the result).
+ *
+ * worker.ts (tsc-excluded for its generated-handler import) calls this from a thin WorkerEntrypoint, mirroring
+ * how IssuerIntrospect delegates to introspect — so the real logic stays in this type-checked + tested module.
+ */
+export async function redeemSessionExchangeRpc(
+  env: Record<string, unknown>,
+  ticket: string,
+): Promise<SessionPrincipal | null> {
+  if (typeof ticket !== "string" || ticket.length === 0) return null;
+  const { deps, close } = await makeSessionExchangeDeps(readSessionExchangeEnv(env));
+  try {
+    const result = await redeemSessionExchange(deps, ticket);
+    return result.status === "ok" ? result.principal : null;
+  } finally {
+    await close().catch((error: unknown) =>
+      console.log(
+        JSON.stringify({ message: "session_exchange.rpc_pool_close_failed", error: String(error) }),
+      ),
+    );
+  }
 }
