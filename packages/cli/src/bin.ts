@@ -25,9 +25,9 @@ exitQuietlyOnEpipe(process.stderr);
 const ctx = buildContext(process);
 const argv = process.argv.slice(2);
 if (argv[0] === "__complete") {
-  // The hidden completion engine the `wbhk completion bash` script calls on TAB. Dispatched here rather
-  // than as a route so it never shows in help / its own completions, and to avoid an app↔command cycle.
-  // The bash function passes `-- <words…>`; drop the leading `--` separator if present.
+  // The hidden completion engine the shell completion scripts (bash/zsh/fish) call on TAB. Dispatched here
+  // rather than as a route so it never shows in help / its own completions, and to avoid an app↔command
+  // cycle. The scripts pass `-- <words…>`; drop the leading `--` separator if present.
   const rest = argv.slice(1);
   await runCompletionProposals(app, rest[0] === "--" ? rest.slice(1) : rest, ctx);
 } else {
