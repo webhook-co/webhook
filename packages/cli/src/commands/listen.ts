@@ -10,8 +10,10 @@ import {
 import {
   createApiClient,
   ENV_API_URL_VAR,
+  ENV_DASHBOARD_URL_VAR,
   ENV_TUNNEL_URL_VAR,
   resolveApiBaseUrl,
+  resolveDashboardUrl,
   resolveTunnelUrl,
 } from "../api-client.js";
 import { resolveStateDir } from "../config/paths.js";
@@ -26,6 +28,7 @@ import {
 } from "../forward.js";
 import { bindAuth } from "../oauth/auth-binding.js";
 import { abortableSleep, backoffMs } from "../retry.js";
+import { createTui, type TuiTerminal } from "../tui/run.js";
 import { clearCursor, loadCursor, saveCursor, type CursorLoad } from "../state/cursor-store.js";
 import { colorize } from "../output/color.js";
 import {
@@ -137,6 +140,9 @@ export interface RunListenDeps {
   readonly forward?: ListenForwardDeps;
   /** When set, persist each acked cursor for cross-run resume (the command serializes the writes). */
   readonly persist?: (cursor: string) => void;
+  /** Fires once per newly-seen event (in arrival order, deduped across at-least-once redelivery) — the
+   *  interactive TUI consumes this to populate its list. Additive + optional; the plain-tail path omits it. */
+  readonly observe?: (summary: EventSummary) => void;
   readonly emit: (line: string) => void;
   readonly note: (line: string) => void;
   readonly format: OutputFormat;
@@ -230,6 +236,7 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
         // the saved cursor advances monotonically; a redelivery re-acks (below) but must NOT re-persist
         // an older cursor (that would move the resume point backwards → cross-run duplicates).
         deps.persist?.(cursor);
+        deps.observe?.(summary); // feed the TUI (deduped: inside the !seen guard)
       }
       // Best-effort ack (advance the durable cursor); a closed socket no-ops and redelivery re-acks.
       sock.send(encodeClientFrame({ type: "ack", cursor }));
@@ -319,6 +326,7 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
               // Persist ONLY a newly-seen event (inside the guard) so the resume cursor advances
               // monotonically; a redelivery re-acks (below) but must NOT re-persist an older cursor.
               deps.persist?.(frame.cursor);
+              deps.observe?.(frame.summary); // feed the TUI (deduped: inside the !seen guard)
             }
             socket.send(encodeClientFrame({ type: "ack", cursor: frame.cursor }));
           },
@@ -409,9 +417,13 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
 
     const controller = new AbortController();
 
-    // --forward: re-deliver each event to a local server (cursor-gated at-least-once) instead of just
-    // printing. Needs the api client (fetch the captured body + record) + a validated loopback target.
+    // --forward: re-deliver an event to a local server (cursor-gated at-least-once). The plain tail
+    // auto-forwards every event (`forward`); the TUI instead arms the `r` key to re-deliver the SELECTED
+    // event on demand (`replaySelected`). Both share one api client + validated loopback target.
     let forward: ListenForwardDeps | undefined;
+    let replaySelected:
+      | ((e: EventSummary) => Promise<{ ok: boolean; message: string }>)
+      | undefined;
     if (flags.forward !== undefined) {
       parseForwardTarget(flags.forward); // throws InvalidForwardUrlError (usage) on a non-loopback target
       const apiBaseUrl = resolveApiBaseUrl({
@@ -427,30 +439,107 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       });
       const targetUrl = flags.forward;
       const forwardSessionId = crypto.randomUUID(); // a logical id for this forward run's records
-      forward = {
-        targetUrl,
-        fetchPayload: async (eventId) => {
-          const event = await client.eventsGet(eventId);
-          const { body } = await client.eventsGetPayload(eventId);
-          return { headers: event.headers, body };
-        },
-        post: (input) =>
-          forwardToLocalhost(
-            { fetch: this.io.fetch, now: () => Date.now(), signal: controller.signal },
-            input,
-          ),
-        record: async (eventId, cursor) => {
-          // cursor as the idempotency key → a redelivered event records exactly once.
-          await client.eventsReplay({
-            eventId,
-            target: { kind: "localhost-tunnel", sessionId: forwardSessionId },
-            idempotencyKey: cursor,
-          });
-        },
+      const fetchPayload = async (
+        eventId: string,
+      ): Promise<{ headers: readonly (readonly [string, string])[]; body: Uint8Array }> => {
+        const event = await client.eventsGet(eventId);
+        const { body } = await client.eventsGetPayload(eventId);
+        return { headers: event.headers, body };
+      };
+      const post = (input: ForwardInput): Promise<ForwardOutcome> =>
+        forwardToLocalhost(
+          { fetch: this.io.fetch, now: () => Date.now(), signal: controller.signal },
+          input,
+        );
+      const record = async (eventId: string, idempotencyKey: string): Promise<void> => {
+        await client.eventsReplay({
+          eventId,
+          target: { kind: "localhost-tunnel", sessionId: forwardSessionId },
+          idempotencyKey,
+        });
+      };
+      // The auto-forward chain keys idempotency on the cursor → a redelivery records exactly once.
+      forward = { targetUrl, fetchPayload, post, record };
+      // The TUI's `r`: a deliberate manual re-delivery of the selected event — a fresh idempotency key
+      // (like `wbhk replay`) so it's recorded as a distinct attempt rather than deduped against the tail.
+      replaySelected = async (e) => {
+        try {
+          const { headers, body } = await fetchPayload(e.id);
+          const outcome = await post({ targetUrl, headers, body });
+          if (!outcome.ok)
+            return { ok: false, message: `could not reach ${targetUrl}: ${outcome.reason}` };
+          if (!isDelivered(outcome))
+            return { ok: false, message: `${targetUrl} returned ${outcome.status} (not recorded)` };
+          await record(e.id, crypto.randomUUID());
+          return {
+            ok: true,
+            message: `delivered ${e.id} → ${targetUrl} · ${outcome.status} · ${outcome.latencyMs}ms`,
+          };
+        } catch (err) {
+          return { ok: false, message: `replay failed: ${errMsg(err)}` };
+        }
       };
     }
 
     const { format, color } = resolveGlobals(this, flags);
+
+    // Interactive TTY → the in-tail TUI (an interactive replay browser: arrow/j/k to navigate, d for
+    // detail, o to open in the dashboard, r to replay the selected event to --forward, q/Ctrl-C to quit).
+    // Off a TTY (piped / non-interactive) fall through to the plain line tail. The TUI runs the loop in
+    // INSPECTION mode even with --forward (it does NOT auto-fire the whole stream at localhost); --forward
+    // only arms the on-demand `r` replay above.
+    if (this.io.isTTY) {
+      const dashboardBase = resolveDashboardUrl({ env: this.process.env?.[ENV_DASHBOARD_URL_VAR] });
+      const terminal: TuiTerminal = {
+        write: (s) => this.process.stdout.write(s),
+        size: () => this.io.terminalSize(),
+        start: (h) => this.io.startRawInput(h),
+      };
+      const tui = createTui({
+        terminal,
+        color,
+        effects: {
+          // encodeURIComponent the server-controlled id (defense-in-depth: it can't break out of the
+          // dashboard path even if a future id format isn't a bare uuid).
+          dashboardUrl: (e) => `${dashboardBase}/events/${encodeURIComponent(e.id)}`,
+          openBrowser: (url) => this.io.openBrowser(url),
+          replay: replaySelected,
+        },
+      });
+      // Raw mode delivers Ctrl-C as a key (the TUI maps it to quit); keep SIGTERM as a safety stop.
+      const onSignalTui = (): void => controller.abort();
+      process.once("SIGTERM", onSignalTui);
+      try {
+        const loop = runListen({
+          connect: this.io.connectWebSocket,
+          tunnelUrl,
+          apiKey: bearer,
+          endpointId,
+          since,
+          persist: resume ? persist : undefined,
+          observe: (s) => tui.pushEvent(s),
+          emit: () => {}, // the TUI list IS the event display (fed via observe) — drop the per-line emit
+          note: (line) => tui.note(line.replace(/\s+$/, "")), // notices/backlog guard → the status line
+          format,
+          color,
+          signal: controller.signal,
+          sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        });
+        // If the loop ends on its own (error/abort), close the TUI. `.catch` swallows the rejection on
+        // THIS branch only — the real error still rides `await loop` below (so it surfaces once, not as an
+        // unhandled rejection).
+        loop.finally(() => tui.stop()).catch(() => {});
+        await tui.finished; // the user quit (q / Ctrl-C inside the TUI)
+        controller.abort(); // stop the tunnel loop
+        await loop; // drain
+      } finally {
+        tui.stop(); // guarantee the screen is restored even if the loop threw
+        await persistChain;
+        process.removeListener("SIGTERM", onSignalTui);
+      }
+      return;
+    }
+
     const onSignal = (): void => controller.abort();
     // A closed stdout (e.g. `wbhk listen | head`) raises EPIPE; abort + exit cleanly rather than crash.
     const onStdoutError = (): void => controller.abort();
