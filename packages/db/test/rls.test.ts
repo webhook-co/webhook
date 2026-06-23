@@ -81,6 +81,7 @@ let app: Sql; // webhook_app — the request-path role
 let ingest: Sql; // webhook_ingest — ingest hot-path role (events INSERT+SELECT)
 let owner: Sql; // webhook_owner — schema owner (non-superuser)
 let anchor: Sql; // webhook_anchor — WORM head-anchor cross-org chain-head reader
+let sweeper: Sql; // webhook_sweeper — cross-org expiry cron-sweep (DELETE-only on the two token tables)
 let root: Sql; // cluster superuser — used only to prove trigger-level immutability
 let orgA: Seeded;
 let orgB: Seeded;
@@ -136,6 +137,7 @@ beforeAll(async () => {
   ingest = createClient(pg.urlFor({ role: DB_ROLES.ingest }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
   anchor = createClient(pg.urlFor({ role: DB_ROLES.anchor }));
+  sweeper = createClient(pg.urlFor({ role: DB_ROLES.sweeper }));
   root = createClient(pg.ownerUrl);
   orgA = await seedOrg("aaa");
   orgB = await seedOrg("bbb");
@@ -146,6 +148,7 @@ afterAll(async () => {
   await ingest?.end();
   await owner?.end();
   await anchor?.end();
+  await sweeper?.end();
   await root?.end();
   await pg?.stop();
 });
@@ -634,6 +637,48 @@ describe("catalog-driven RLS coverage", () => {
       where relkind = 'r' and relnamespace = 'public'::regnamespace
         and pg_get_userbyid(relowner) = ${DB_ROLES.auth}`;
     expect(ownedByAuth[0]?.n).toBe(0);
+  });
+
+  it("the sweeper role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
+    // webhook_sweeper is the cross-org expiry cron-sweep role (migration 0020): it deletes expired rows
+    // from the two token tables across all orgs via a role-targeted DELETE policy, and like every other
+    // job-path role must never be a superuser, never BYPASSRLS, never a table owner.
+    const [role] = await owner<{ rolname: string; super: boolean; bypass: boolean }[]>`
+      select rolname, rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.sweeper}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+
+    const ownedBySweeper = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.sweeper}`;
+    expect(ownedBySweeper[0]?.n).toBe(0);
+  });
+
+  it("the sweeper role holds DELETE — and ONLY delete — on the two token tables, nothing elsewhere", async () => {
+    // DELETE-only least privilege: the cron can't read any handle row (no SELECT), can't mint or rotate
+    // (no INSERT/UPDATE), and the role-targeted USING (expires_at < now()) policy bounds its bare DELETE to
+    // already-expired rows. It holds no privilege on any other tenant table.
+    const tokenTables = ["auth_refresh_token", "auth_session_exchange"] as const;
+    for (const t of tokenTables) {
+      const [p] = await owner<{ s: boolean; i: boolean; u: boolean; d: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'SELECT') as s,
+               has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'INSERT') as i,
+               has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'UPDATE') as u,
+               has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'DELETE') as d`;
+      expect([p.s, p.i, p.u, p.d]).toEqual([false, false, false, true]);
+    }
+    const forbidden = ["orgs", "api_keys", "events", "audit_log", "auth_grant"] as const;
+    for (const t of forbidden) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'SELECT')
+             or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.sweeper}, ${t}, 'DELETE')) as any`;
+      expect(p.any).toBe(false);
+    }
   });
 
   it("the auth role holds DML on the identity tables and nothing on tenant or plugin-apikey tables", async () => {

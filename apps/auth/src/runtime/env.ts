@@ -22,6 +22,12 @@ export interface AuthEnv {
   HYPERDRIVE_AUTH: HyperdriveBinding;
   /** webhook_app role — the personal-org bootstrap path (A1b-2), a separate driver/role. */
   HYPERDRIVE_TENANT: HyperdriveBinding;
+  /**
+   * webhook_sweeper role (ADR-0055) — bound for the daily cross-org expiry cron only (scheduled()), NOT any
+   * request path, so it's OPTIONAL here (readSweepEnv validates it where it's actually used). DELETE-only on
+   * the two token tables; distinct credential from TENANT/AUTH/AUTHN.
+   */
+  HYPERDRIVE_SWEEPER?: HyperdriveBinding;
   BETTER_AUTH_SECRET: Secret;
   /** Base64 credential pepper — keys the bootstrap's default-endpoint ingest-token HMAC. */
   CREDENTIAL_PEPPER: Secret;
@@ -302,6 +308,28 @@ export function readSessionExchangeEnv(env: Record<string, unknown>): SessionExc
     }
   }
   return env as unknown as SessionExchangeEnv;
+}
+
+// --- ADR-0055: the cross-org expiry cron-sweep env slice -------------------------------------------
+// The daily scheduled() sweep connects as the least-privilege webhook_sweeper role (DELETE-only on the two
+// token tables) over its OWN Hyperdrive binding — DISTINCT from HYPERDRIVE_TENANT/AUTH/AUTHN, which carry
+// other roles. No secret/KV/session: the cron only deletes already-expired rows across all orgs.
+export interface SweepEnv {
+  /** webhook_sweeper role — the cross-org DELETE-only client the cron prunes expired handles with. */
+  HYPERDRIVE_SWEEPER: HyperdriveBinding;
+}
+
+/** Validate + narrow the env for the cron sweep, fail-closed (naming the missing key, never its value). */
+export function readSweepEnv(env: Record<string, unknown>): SweepEnv {
+  const binding = env.HYPERDRIVE_SWEEPER as HyperdriveBinding | undefined;
+  if (
+    !binding ||
+    typeof binding.connectionString !== "string" ||
+    binding.connectionString.length === 0
+  ) {
+    throw new Error("sweep env: missing or malformed Hyperdrive binding HYPERDRIVE_SWEEPER");
+  }
+  return env as unknown as SweepEnv;
 }
 
 /** Resolve every secret to a plain string (Better Auth + the hasher take strings). */
