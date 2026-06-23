@@ -159,6 +159,30 @@ jobs:
           "$BIN" __complete -- events "" | grep -qx "list"
           "$BIN" __complete -- whoami -- | grep -q -- "--output"
           echo "completion hook OK (compiled binary)"
+      # The zsh/fish scripts are hand-authored (D4b) — a syntax typo would break a user's shell. Parse-only
+      # check them with the real shells (the interactive tab behavior is a human eyeball; this gates syntax).
+      - name: Install zsh + fish
+        run: sudo apt-get update && sudo apt-get install -y zsh fish
+      - name: zsh + fish completion scripts parse
+        run: |
+          BIN=packages/cli/dist/wbhk
+          "$BIN" completion zsh > /tmp/wbhk.zsh && zsh -n /tmp/wbhk.zsh && echo "zsh -n OK"
+          "$BIN" completion fish > /tmp/wbhk.fish && fish --no-execute /tmp/wbhk.fish && echo "fish parse OK"
+      - name: zsh tokenization guard (the (@) slice must pass SEPARATE words to __complete)
+        run: |
+          # Drive _wbhk with a stub `wbhk` that records its argc. `wbhk events <TAB>` (words=(wbhk events ''),
+          # CURRENT=3) must call `wbhk __complete -- events <empty>` = 4 args. The earlier bug joined the
+          # slice into one word (3 args), silently killing all subcommand/flag completion — guard it.
+          cat > /tmp/zcheck.zsh <<'ZEOF'
+          emulate -L zsh
+          wbhk() { print -r -- "$#" > /tmp/argc.txt }
+          compadd() { : }; compdef() { : }
+          source /tmp/wbhk.zsh
+          words=(wbhk events ''); CURRENT=3
+          _wbhk
+          ZEOF
+          zsh /tmp/zcheck.zsh
+          test "$(cat /tmp/argc.txt)" = "4" && echo "zsh tokenization OK (separate words preserved)"
 
   # Bundle apps/auth for Cloudflare Workers and validate the full deploy shape. The `build` job's
   # `next build` does NOT cover the worker bundle, where workerd-only resolution issues surface (e.g.

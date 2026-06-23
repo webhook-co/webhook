@@ -20,6 +20,39 @@ describe("wbhk completion bash", () => {
   });
 });
 
+describe("wbhk completion zsh", () => {
+  it("prints a sourceable zsh completion script", async () => {
+    const t = makeTestContext({});
+    await run(app, ["completion", "zsh"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    const out = t.stdout();
+    expect(out).toContain("#compdef wbhk"); // fpath autoload marker
+    expect(out).toContain("compdef _wbhk wbhk"); // registers when sourced
+    expect(out).toContain("_wbhk()"); // defines the completion function
+    expect(out).toContain("wbhk __complete"); // defers to the hidden engine
+    // Literal ${...} must survive (a JS-interpolation slip would mangle / throw at module load). The
+    // `(@)` flag is load-bearing: it expands the slice to SEPARATE words (preserving the empty trailing
+    // token) — without it zsh joins them into one arg and subcommand/flag completion silently breaks.
+    expect(out).toContain("${(@)words[2,CURRENT]}");
+    expect(out).toContain("${(@f)");
+  });
+});
+
+describe("wbhk completion fish", () => {
+  it("prints a sourceable fish completion script", async () => {
+    const t = makeTestContext({});
+    await run(app, ["completion", "fish"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    const out = t.stdout();
+    expect(out).toContain("complete -c wbhk"); // registers the completion
+    expect(out).toContain("__wbhk_complete"); // the helper function
+    expect(out).toContain("wbhk __complete"); // defers to the hidden engine
+    expect(out).toContain("commandline -opc"); // captures the previous tokens (fish drops the current)
+    // The explicit trailing empty token (so __complete returns the position's set; fish filters).
+    expect(out).toContain('-- $prev[2..-1] ""');
+  });
+});
+
 describe("runCompletionProposals (the `wbhk __complete` engine)", () => {
   const proposalsFor = async (inputs: string[]): Promise<string[]> => {
     const t = makeTestContext({});
