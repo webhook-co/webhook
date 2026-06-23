@@ -23,12 +23,31 @@ import {
 const HMAC_BYTES = 16; // 128-bit truncated HMAC-SHA256 tag (matches the cursor / consent-ticket codec).
 const SESSION_KEY_BYTES = 32; // a dedicated 32-byte secret (MCP_SESSION_KEY), never reused from another key.
 
-/** The signed envelope: the library's base session id + the bound principal digest. */
+/**
+ * The current envelope version. `unbindSessionId` rejects any envelope whose `v` is missing or != this, so
+ * a future codec change is a clean break: pre-versioning / mismatched envelopes fail to unbind (→ null) and
+ * the in-flight session cleanly re-initializes. Bump this whenever the envelope shape or semantics change.
+ */
+export const SESSION_ENVELOPE_VERSION = 1;
+
+/**
+ * The max session lifetime (24h, in seconds). `bindSessionId` stamps `exp = nowSeconds + this`, and
+ * `unbindSessionId` rejects an envelope once `nowSeconds > exp` — so a leaked/stolen session id can't be
+ * replayed indefinitely; after the ceiling the client must re-initialize (the same fail-closed re-init path
+ * as a version bump). The window is generous enough not to interrupt a normal interactive MCP session.
+ */
+export const SESSION_TTL_SECONDS = 86_400;
+
+/** The signed envelope: version + the library's base session id + the bound principal digest + expiry. */
 interface SessionEnvelope {
+  /** The envelope version — must equal SESSION_ENVELOPE_VERSION to unbind (else the session re-initializes). */
+  v: number;
   /** The base (library-assigned) session id the McpAgent transport routes the DO by. */
   b: string;
   /** The initializing principal's digest — the current request's principal must equal this. */
   p: string;
+  /** Unix seconds — the max session lifetime ceiling; the envelope is dead strictly after this (now > exp). */
+  exp: number;
 }
 
 /**
@@ -67,28 +86,43 @@ async function tag(key: CryptoKey, payload: Uint8Array): Promise<Uint8Array> {
   return sig.slice(0, HMAC_BYTES);
 }
 
-/** Wrap a base session id + principal digest into the signed, opaque session id handed to the client. */
+/**
+ * Wrap a base session id + principal digest into the signed, opaque session id handed to the client. The
+ * envelope is stamped with the current version and an expiry `nowSeconds + SESSION_TTL_SECONDS` (the max
+ * session lifetime). `nowSeconds` is the injected clock (Unix seconds) — the same shape the consent-ticket /
+ * device codecs take — so the codec stays pure and the expiry is deterministically testable.
+ */
 export async function bindSessionId(
   key: CryptoKey,
   baseId: string,
   digest: string,
+  nowSeconds: number,
 ): Promise<string> {
-  const env: SessionEnvelope = { b: baseId, p: digest };
+  const env: SessionEnvelope = {
+    v: SESSION_ENVELOPE_VERSION,
+    b: baseId,
+    p: digest,
+    exp: nowSeconds + SESSION_TTL_SECONDS,
+  };
   const bytes = utf8Encoder.encode(JSON.stringify(env));
   const mac = await tag(key, bytes);
   return `${bytesToB64url(bytes)}.${bytesToB64url(mac)}`;
 }
 
 /**
- * Verify a wrapped session id and return its base session id ONLY when the MAC recomputes AND the bound
- * principal equals `digest` (the current request's principal). Any malformed / tampered / forged / wrong-key
- * id, or a valid id presented by a DIFFERENT principal, returns null (never throws) — the two cases are
- * indistinguishable to the caller (no oracle), so a stolen session id is useless to anyone but its owner.
+ * Verify a wrapped session id and return its base session id ONLY when the MAC recomputes AND the envelope
+ * is the current version AND it has not expired (`nowSeconds <= exp`, inclusive) AND the bound principal
+ * equals `digest` (the current request's principal). Any malformed / tampered / forged / wrong-key id, a
+ * stale-version or expired envelope, or a valid id presented by a DIFFERENT principal, returns null (never
+ * throws) — the cases are indistinguishable to the caller (no oracle), so a stolen session id is useless to
+ * anyone but its owner, and only for as long as its session lives. `nowSeconds` is the injected clock (Unix
+ * seconds). An OLD envelope without `v`/`exp` fails closed → the in-flight session cleanly re-initializes.
  */
 export async function unbindSessionId(
   key: CryptoKey,
   wrapped: string,
   digest: string,
+  nowSeconds: number,
 ): Promise<string | null> {
   const dot = wrapped.indexOf(".");
   if (dot <= 0 || dot === wrapped.length - 1) return null;
@@ -108,6 +142,10 @@ export async function unbindSessionId(
   } catch {
     return null;
   }
+  // Version + expiry gates: a missing/mismatched version or a missing/past expiry fails closed (→ null), so
+  // pre-versioning envelopes and leaked-but-stale ids cleanly re-initialize rather than being honored.
+  if (env.v !== SESSION_ENVELOPE_VERSION) return null;
+  if (typeof env.exp !== "number" || nowSeconds > env.exp) return null;
   if (typeof env.b !== "string" || env.b === "" || typeof env.p !== "string") return null;
   // The bound principal must equal the presenting principal — the heart of the isolation guarantee.
   if (!constantTimeStringEq(env.p, digest)) return null;
