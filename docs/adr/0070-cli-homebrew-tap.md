@@ -25,12 +25,15 @@ After npm + binaries + `get.webhook.co`, Homebrew is the other P2 channel macOS/
    wrong URL or swapped platform would ship a broken `brew install`). The initial `0.1.1` formula was
    generated + committed to the tap by hand; releases regenerate it.
 
-3. **Auto-bump on release.** `release-cli.yml` regenerates the formula from the just-built `checksums.txt`
-   and pushes it to the tap. The cross-repo push needs **`HOMEBREW_TAP_TOKEN`** (a token with
-   `contents:write` on `webhook-co/homebrew-tap` — the ephemeral `GITHUB_TOKEN` is scoped to the build repo
-   only). Auth via `gh auth setup-git` (the token rides `GH_TOKEN`, never embedded in a URL/args). The step
-   is **inert until that secret is set** + real tags only — so it's safe to merge now; the founder adds the
-   token to switch it on.
+3. **Auto-bump on release PUBLISH (not the tag push).** A separate `homebrew-bump.yml` triggers on
+   `release: published` (gated to `cli-v*` tags). It must NOT run on the tag push: release-cli creates a
+   **draft** release, and a draft's assets aren't publicly downloadable — a formula pointing at draft assets
+   would 404 on `brew install`. On publish, the release's `checksums.txt` is a public asset, so the workflow
+   curls it, regenerates the formula, and pushes to the tap. The cross-repo push needs **`HOMEBREW_TAP_TOKEN`**
+   (a token with `contents:write` on `webhook-co/homebrew-tap` — the ephemeral `GITHUB_TOKEN` can't push
+   cross-repo); auth via `gh auth setup-git` (the token rides `GH_TOKEN`, never in a URL/args). **Inert until
+   that secret is set.** So the flow is: cut a tag → draft release (binaries + npm + provenance) → founder
+   reviews + publishes → the formula bumps automatically against the now-public assets.
 
 ## consequences
 

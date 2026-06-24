@@ -145,39 +145,3 @@ jobs:
           npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
           npm publish
           echo "Published @webhook-co/cli@$VERSION to npm with provenance."
-
-      # Auto-bump the Homebrew formula (DIST-10): regenerate Formula/wbhk.rb from THIS release's checksums and
-      # push it to webhook-co/homebrew-tap. Needs HOMEBREW_TAP_TOKEN — a token with contents:write on the TAP
-      # repo; the ephemeral GITHUB_TOKEN is scoped to this repo and can't push cross-repo. Inert until that
-      # secret is set (the initial formula was committed by hand); real tags only.
-      - name: Resolve the homebrew-bump gate
-        id: brewgate
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          if [ -n "$HOMEBREW_TAP_TOKEN" ] && [ "$EVENT_NAME" = "push" ]; then
-            echo "bump=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "homebrew bump skipped (no HOMEBREW_TAP_TOKEN, or not a tag push)"
-            echo "bump=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Bump the Homebrew formula
-        if: steps.brewgate.outputs.bump == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }} # `gh auth setup-git` uses this — token never in a URL/args
-          VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          gh auth setup-git
-          git clone --depth 1 https://github.com/webhook-co/homebrew-tap.git tap
-          WBHK_FORMULA_VERSION="$VERSION" \
-            node packages/cli/scripts/gen-homebrew-formula.mjs packages/cli/out/checksums.txt tap/Formula/wbhk.rb
-          cd tap
-          if git diff --quiet; then
-            echo "homebrew formula already at $VERSION — nothing to bump"
-          else
-            git -c user.name="webhook-co-bot" -c user.email="noreply@webhook.co" commit -aqm "wbhk $VERSION"
-            git push
-            echo "Bumped webhook-co/homebrew-tap to wbhk $VERSION."
-          fi
