@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: write # create the GitHub Release + upload assets
+  id-token: write # npm provenance (OIDC) for `npm publish`
 
 concurrency:
   group: release-cli-${{ github.ref }}
@@ -71,6 +72,51 @@ jobs:
           test "$got" = "$VERSION" \
             || { echo "::error::version mismatch: binary says '$got', expected '$VERSION'"; exit 1; }
 
+      # Build the publishable npm package (DIST-6) — a node-runnable bundle (NOT the compiled binary) →
+      # packages/cli/npm/. This always runs (build + smoke below) so the npm path is exercised every release,
+      # even before publishing is enabled.
+      - name: Build the npm package
+        env:
+          WBHK_BUILD_VERSION: ${{ steps.ver.outputs.version }}
+        run: node packages/cli/scripts/npm-build.mjs
+
+      - name: Smoke the npm package (plain node)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          got="$(node packages/cli/npm/dist/bin.js --version)"
+          test "$got" = "$VERSION" \
+            || { echo "::error::npm bundle version mismatch: says '$got', expected '$VERSION'"; exit 1; }
+
+      # Publish gate: only on a real tag PUSH and only when NPM_TOKEN is configured. Until the founder claims
+      # the `wbhk` name + adds the token, this stays inert (the build + smoke above still run every time), so
+      # the first public npm publish is a deliberate human action — mirroring the draft-Release model.
+      - name: Resolve the npm-publish gate
+        id: npmgate
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ -n "$NPM_TOKEN" ] && [ "$EVENT_NAME" = "push" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm publish skipped (no NPM_TOKEN, or not a tag push)"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm (with provenance)
+        if: steps.npmgate.outputs.publish == 'true'
+        working-directory: packages/cli/npm
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # publishConfig.provenance:true in the generated package.json + id-token:write → npm emits the
+          # provenance attestation automatically (no flag needed). Requires npm >= 9.5 (Node 20 ships npm 10).
+          npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
+          npm publish
+          echo "Published wbhk@$VERSION to npm with provenance."
+
       - name: Create / update the DRAFT GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -84,6 +130,6 @@ jobs:
             gh release create "$TAG" packages/cli/out/wbhk-* packages/cli/out/checksums.txt \
               --draft \
               --title "wbhk $VERSION" \
-              --notes "Draft built by release-cli — darwin arm64/x64, linux x64/arm64, windows x64 + checksums.txt. npm publish + signing land in later distribution phases. Review + publish manually."
+              --notes "Draft built by release-cli — darwin arm64/x64, linux x64/arm64, windows x64 + checksums.txt. The npm package publishes automatically when NPM_TOKEN is configured (with provenance); signing lands in a later distribution phase. Review + publish manually."
           fi
           echo "Draft release ready for $TAG — review + publish from the Releases page."
