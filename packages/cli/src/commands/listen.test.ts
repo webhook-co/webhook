@@ -1,13 +1,19 @@
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { run } from "@stricli/core";
 import { encodeServerFrame, LISTEN_LAG_CAP, type EventSummary } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { app } from "../app.js";
+import { resolveStateDir } from "../config/paths.js";
 import type { CredentialStore } from "../config/store.js";
 import type { ConnectWebSocket, RawInputHandlers, WsHandlers } from "../context.js";
 import { makeTestContext } from "../context.js";
 import type { ForwardInput, ForwardOutcome } from "../forward.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
+import { acquireListenLock } from "../state/listen-lock.js";
 import {
   formatListenEvent,
   FORWARD_MAX_ATTEMPTS,
@@ -535,6 +541,53 @@ describe("wbhk listen command (wiring)", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
     expect(t.stderr().toLowerCase()).toContain("localhost");
   });
+
+  it("rejects a non-numeric --max-backlog as a usage error", async () => {
+    const t = makeTestContext({ store: loggedInStore() });
+    await run(app, ["listen", EP, "--max-backlog", "lots"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+
+  it("exits BACKLOG_EXCEEDED when the backlog is over --max-backlog", async () => {
+    const tun = fakeTunnel();
+    const t = makeTestContext({ store: loggedInStore(), connectWebSocket: tun.connect });
+    const p = run(app, ["listen", EP, "--max-backlog", "100"], t.ctx);
+    await tick();
+    tun
+      .h()
+      .onMessage(
+        encodeServerFrame({ type: "status", caughtUp: false, lag: { backlogCount: 500 } }),
+      );
+    await p;
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.BACKLOG_EXCEEDED);
+    expect(t.stderr().toLowerCase()).toContain("refusing to replay");
+  });
+
+  it("exits LISTENER_BUSY when another --resume listener already holds the lock", async () => {
+    const home = await mkdtemp(join(tmpdir(), "wbhk-listen-busy-"));
+    const stateDir = resolveStateDir({}, home);
+    const held = await acquireListenLock(stateDir, "default", EP); // a live holder (this test process)
+    try {
+      const t = makeTestContext({ store: loggedInStore(), homedir: home });
+      await run(app, ["listen", EP, "--resume"], t.ctx);
+      expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.LISTENER_BUSY);
+      expect(t.stderr().toLowerCase()).toContain("already running");
+    } finally {
+      await held.release();
+    }
+  });
+
+  it("does NOT leak the lock when --forward validation fails under --resume", async () => {
+    // The lock is acquired AFTER --forward validation, so a usage error never holds it. Prove it: after a
+    // failed `--resume --forward <bad>`, the lock is free (a fresh acquire succeeds).
+    const home = await mkdtemp(join(tmpdir(), "wbhk-listen-leak-"));
+    const stateDir = resolveStateDir({}, home);
+    const t = makeTestContext({ store: loggedInStore(), homedir: home });
+    await run(app, ["listen", EP, "--resume", "--forward", "http://evil.example"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    const lock = await acquireListenLock(stateDir, "default", EP); // would throw if the command leaked it
+    await lock.release();
+  });
 });
 
 describe("resolveResumeStart (D6b — where a run starts)", () => {
@@ -701,6 +754,55 @@ describe("runListen — resume persistence + status banner (D6b)", () => {
     );
     await tick();
     expect(out.note.join("")).toBe("");
+    ac.abort();
+    await p;
+  });
+
+  it("--max-backlog: refuses + stops (backlog-exceeded) when the backlog is over the cap", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const reasons: string[] = [];
+    const p = runListen({
+      ...depsFor(t, out, ac.signal),
+      maxBacklog: 100,
+      stop: (r) => {
+        reasons.push(r);
+        ac.abort();
+      },
+    });
+    await tick();
+    t.h().onMessage(
+      encodeServerFrame({ type: "status", caughtUp: false, lag: { backlogCount: 500 } }),
+    );
+    await tick();
+    expect(reasons).toEqual(["backlog-exceeded"]);
+    expect(out.note.join("")).toContain("refusing to replay");
+    expect(out.note.join("")).toContain("--max-backlog 100");
+    await p;
+  });
+
+  it("--max-backlog: a backlog under the cap just shows the banner, no stop", async () => {
+    const t = fakeTunnel();
+    const out = { emit: [] as string[], note: [] as string[] };
+    const ac = new AbortController();
+    const reasons: string[] = [];
+    const p = runListen({
+      ...depsFor(t, out, ac.signal),
+      maxBacklog: 5000,
+      stop: (r) => {
+        reasons.push(r);
+        ac.abort();
+      },
+    });
+    await tick();
+    // 2000 ≥ BACKLOG_GUARD(1000) but < the 5000 cap → banner, not a refusal.
+    t.h().onMessage(
+      encodeServerFrame({ type: "status", caughtUp: false, lag: { backlogCount: 2000 } }),
+    );
+    await tick();
+    expect(reasons).toEqual([]);
+    expect(out.note.join("")).toContain("2000 events behind");
     ac.abort();
     await p;
   });

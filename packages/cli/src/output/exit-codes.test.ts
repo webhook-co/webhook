@@ -38,6 +38,8 @@ describe("exit-codes", () => {
       UNEXPECTED: 1,
       USAGE: 2,
       AUDIT_BREAK: 3,
+      BACKLOG_EXCEEDED: 17,
+      LISTENER_BUSY: 18,
       NOT_IMPLEMENTED: 64,
     });
     expect({ ...CAPABILITY_EXIT }).toEqual({

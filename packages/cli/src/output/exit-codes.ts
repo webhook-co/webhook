@@ -17,6 +17,8 @@ import { CAPABILITY_ERRORS, type CapabilityError } from "@webhook-co/contract";
 //   14  RATE_LIMITED       throttled (after exhausting bounded retries)
 //   15  ENDPOINT_PAUSED    the endpoint is paused
 //   16  TARGET_UNREACHABLE a forward/replay target could not be reached
+//   17  BACKLOG_EXCEEDED   `listen --max-backlog N` refused: the backlog to replay is larger than N
+//   18  LISTENER_BUSY      another `wbhk listen --resume` is already running for this (profile, endpoint)
 export const EXIT = {
   SUCCESS: 0,
   UNEXPECTED: 1,
@@ -25,6 +27,10 @@ export const EXIT = {
   // a cron/CI run alerts, distinct from a transport/usage failure. Low generic code (not a
   // per-capability error, since the request itself returned 200).
   AUDIT_BREAK: 3,
+  // CLI-side runtime guards on `listen` (not capability/server errors). Distinct, stable codes so a
+  // script can tell "refused: backlog too large" / "another listener holds the lock" from a real failure.
+  BACKLOG_EXCEEDED: 17,
+  LISTENER_BUSY: 18,
   NOT_IMPLEMENTED: 64,
 } as const;
 
