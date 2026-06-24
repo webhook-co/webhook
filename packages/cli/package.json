@@ -18,6 +18,9 @@
     "bundle": "node scripts/bundle.mjs"
   },
   "dependencies": {
+    "@sigstore/bundle": "^5.0.0",
+    "@sigstore/protobuf-specs": "^0.5.1",
+    "@sigstore/verify": "^4.0.0",
     "@stricli/core": "^1.2.7",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/shared": "workspace:*",
@@ -26,6 +29,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@sigstore/tuf": "^5.0.0",
     "@types/ws": "^8.18.1"
   }
 }

@@ -95,6 +95,11 @@ export interface IoSeams {
    *  temp file in the same dir, chmod +x, rename over the target, and clear the macOS quarantine flag. The
    *  real impl in io.ts is coverage-excluded wiring; a fake records the call in tests. */
   replaceExecutable(targetPath: string, data: Uint8Array): Promise<void>;
+  /** Verify a downloaded binary's sigstore-signed SLSA build provenance by its sha256 (`wbhk upgrade`):
+   *  fetch the GitHub attestation + verify it was built by this repo's release workflow + attests this
+   *  digest. Throws on any failure. Real impl in io.ts (coverage-excluded — network + the sigstore stack);
+   *  a fake passes/throws in tests. */
+  verifyBinaryProvenance(opts: { digestHex: string }): Promise<void>;
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -231,6 +236,9 @@ export function makeTestContext(opts?: {
   execPath?: string;
   /** Fake self-replace for `wbhk upgrade` (records the call); defaults to unconfigured. */
   replaceExecutable?: (targetPath: string, data: Uint8Array) => Promise<void>;
+  /** Fake provenance verification for `wbhk upgrade` (resolve = verified, reject = failed); defaults to a
+   *  no-op that "passes" so most upgrade tests don't have to wire it. */
+  verifyBinaryProvenance?: (opts: { digestHex: string }) => Promise<void>;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -283,6 +291,9 @@ export function makeTestContext(opts?: {
     replaceExecutable:
       opts?.replaceExecutable ??
       (unconfigured("replaceExecutable") as unknown as IoSeams["replaceExecutable"]),
+    // Defaults to "verified" so existing upgrade tests don't need to wire it; a provenance-specific test
+    // passes a fake that rejects.
+    verifyBinaryProvenance: opts?.verifyBinaryProvenance ?? (async () => {}),
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",

@@ -21,7 +21,8 @@ export function buildNpmManifest(version) {
     bin: { wbhk: "dist/bin.js" },
     // Single bundled entry + docs only — never the TS source, tests, or build scripts.
     files: ["dist", "README.md"],
-    engines: { node: ">=20" },
+    // node >=22: the bundled sigstore verifier (`wbhk upgrade` provenance check) requires it; node 20 is EOL.
+    engines: { node: ">=22" },
     license: "Apache-2.0",
     homepage: "https://webhook.co",
     repository: {

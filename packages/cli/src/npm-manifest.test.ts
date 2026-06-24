@@ -19,10 +19,10 @@ describe("buildNpmManifest", () => {
     expect(buildNpmManifest("1.2.3").bin).toEqual({ wbhk: "dist/bin.js" });
   });
 
-  it("is an ESM package that requires a modern Node", () => {
+  it("is an ESM package that requires Node >= 22 (the bundled sigstore verifier's floor)", () => {
     const m = buildNpmManifest("1.2.3");
     expect(m.type).toBe("module");
-    expect(m.engines?.node).toBeDefined();
+    expect(m.engines?.node).toBe(">=22");
   });
 
   it("is NOT private (a private manifest refuses to publish)", () => {
