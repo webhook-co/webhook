@@ -369,6 +369,9 @@ importers:
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../shared
+      https-proxy-agent:
+        specifier: ^7.0.6
+        version: 7.0.6
       ws:
         specifier: ^8.20.1
         version: 8.20.1
