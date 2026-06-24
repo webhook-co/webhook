@@ -223,6 +223,12 @@ importers:
         specifier: ^4.20260617.1
         version: 4.20260617.1
 
+  apps/telemetry:
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260617.1
+        version: 4.20260617.1
+
   apps/web:
     dependencies:
       '@webhook-co/contract':

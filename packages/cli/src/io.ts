@@ -26,6 +26,7 @@ import {
   statementCoversDigest,
 } from "./provenance.js";
 import { resolveProxy } from "./proxy.js";
+import { TELEMETRY_ENDPOINT, type TelemetryEvent } from "./telemetry.js";
 // The sigstore public-good trusted root, EMBEDDED at build time (regenerate via scripts/gen-trusted-root.mjs
 // if it rotates — rare). We verify against this directly instead of fetching it over TUF at runtime: TUF's
 // seeds.json is dropped by `bun --compile`, and embedding removes a network dependency from `wbhk upgrade`.
@@ -415,6 +416,31 @@ async function verifyBinaryProvenance({ digestHex }: { digestHex: string }): Pro
   throw lastErr instanceof Error ? lastErr : new Error("build provenance verification failed");
 }
 
+// Send one anonymous telemetry event — a fire-and-forget POST that NEVER throws or blocks a command: a short
+// abort timeout caps it, and every error (offline, DNS, timeout, non-2xx) is swallowed. bin.ts fires this
+// without awaiting; since the CLI sets process.exitCode (not process.exit), the event loop drains the pending
+// POST before exiting. Coverage-excluded wiring (network).
+function sendTelemetry(event: TelemetryEvent): Promise<void> {
+  return (async () => {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 1500);
+      try {
+        await globalThis.fetch(TELEMETRY_ENDPOINT, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(event),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch {
+      /* best-effort: telemetry must never throw or affect a command */
+    }
+  })();
+}
+
 // Open a URL in the user's default browser — best-effort, per-OS launcher, NEVER a shell (the URL is a
 // plain argv element, so it can't inject). Detached + unref'd so the launcher's lifetime doesn't tie to
 // the CLI. A missing launcher or any spawn error resolves quietly (the caller has already printed the URL
@@ -485,6 +511,7 @@ export function makeRealIo(): IoSeams {
     startRawInput,
     replaceExecutable,
     verifyBinaryProvenance,
+    sendTelemetry,
     // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
     // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
     // Unlike fetch (which the runtime proxies from env natively), `ws` never auto-proxies — so resolve the

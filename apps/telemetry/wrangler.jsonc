@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webhook-telemetry",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-15",
+  // Cookieless collector on the separate ingestion apex (wbhk.my). No bindings beyond Analytics Engine, no
+  // secrets, no account/zone ids in the repo (wrangler reads the account from CLOUDFLARE_ACCOUNT_ID).
+  "observability": { "enabled": true },
+  // Anonymous events → one Analytics Engine dataset (no database, no PII). The dataset is auto-created.
+  "analytics_engine_datasets": [{ "binding": "TELEMETRY", "dataset": "wbhk_cli_telemetry" }],
+  // Single fixed PUBLIC hostname on wbhk.my; `wrangler deploy` provisions + maintains the custom domain.
+  "routes": [{ "pattern": "telemetry.wbhk.my", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": true,
+}
