@@ -1,4 +1,7 @@
-# ADR 0044 — CLI credential-store composition for an OS keychain
+# ADR 0057 — CLI credential-store composition for an OS keychain
+
+> Renumbered from **ADR 0044** (close-out audit, 2026-06-23) to resolve a number collision with
+> `0044-turnstile-magic-link-captcha.md` — the CLI ADR moved to the next free number; the auth ADR kept 0044.
 
 - status: accepted (**D7a** — the composition machinery + a dormant keychain backend. Wiring it into the
   live context, the OS shell-out seam in io.ts, and the `login --insecure-storage` flag land in **D7b**).

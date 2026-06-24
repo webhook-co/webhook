@@ -42,6 +42,13 @@ export interface SetCredentialOptions {
 
 export interface CredentialStore {
   get(profile?: string): Promise<StoredCredential | null>;
+  /**
+   * The stored credential AND which backend served it (the backend `id`: "env" | "keychain" | "file"), or
+   * null when none. Lets `doctor`/`whoami` report the REAL source — a keychain credential is "keychain",
+   * not mislabeled "file". Optional so the many inline in-memory test fakes need not implement it; callers
+   * fall back to a generic label when it's absent.
+   */
+  getWithSource?(profile?: string): Promise<{ cred: StoredCredential; source: string } | null>;
   set(cred: StoredCredential, profile?: string, opts?: SetCredentialOptions): Promise<void>;
   erase(profile?: string): Promise<void>;
   list(): Promise<string[]>;
@@ -91,6 +98,21 @@ export function resolveStore(
           throw err;
         }
         if (hit) return hit;
+      }
+      return null;
+    },
+    async getWithSource(profile = DEFAULT_PROFILE) {
+      // Same read precedence as get(), but report WHICH backend served the credential (its id) so the
+      // diagnostics show the real source instead of guessing "file" for a keychain credential.
+      for (const backend of backends) {
+        let hit: StoredCredential | null;
+        try {
+          hit = await backend.get(profile);
+        } catch (err) {
+          if (err instanceof KeychainUnavailableError) continue;
+          throw err;
+        }
+        if (hit) return { cred: hit, source: backend.id };
       }
       return null;
     },

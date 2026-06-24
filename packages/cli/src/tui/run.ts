@@ -91,14 +91,26 @@ export function createTui(deps: TuiDeps): TuiController {
     if (closed) return;
     // Re-fit the list viewport to the current terminal height + whether the detail pane is open.
     state = { ...state, viewportRows: listRows(state.detail) };
-    terminal.write(HOME_CLEAR + renderFrame(state, { color, columns: terminal.size().columns }));
+    try {
+      terminal.write(HOME_CLEAR + renderFrame(state, { color, columns: terminal.size().columns }));
+    } catch {
+      // stdout broke mid-session (EPIPE — the terminal/pipe closed). Tear down + stop rather than let the
+      // write throw out of a key/resize handler as an unhandled error (don't rely only on the global hook).
+      teardown();
+    }
   }
 
   function teardown(): void {
     if (closed) return;
     closed = true;
     handle.close();
-    terminal.write(SHOW_CURSOR + LEAVE_ALT);
+    // Best-effort restore — if stdout is already broken this throws; swallow it (cooked mode is restored
+    // by handle.close(), which is what matters), so teardown never throws back into a caller (incl. render).
+    try {
+      terminal.write(SHOW_CURSOR + LEAVE_ALT);
+    } catch {
+      /* stdout already broken; cooked mode is restored above */
+    }
     resolveFinished();
   }
 

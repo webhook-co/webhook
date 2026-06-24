@@ -52,10 +52,14 @@ export const whoamiCommand = buildCommand<WhoamiFlags, [], AppContext>({
     // backend has highest read precedence (env-store.ts), so a non-empty WBHK_API_KEY IS the active
     // credential — report it as the source. All values here are CLI-derived (trusted, no sanitize).
     const method = isOAuthCredential(cred) ? `oauth (${cred.oauth.authMethod})` : "api-key";
-    const source =
-      (this.process.env?.[ENV_API_KEY_VAR] ?? "").length > 0
-        ? `env (${ENV_API_KEY_VAR})`
-        : "stored credential";
+    // env wins (its var is the source of truth for the env backend); otherwise report the REAL backend
+    // ("keychain" | "file") via getWithSource so a keychain credential isn't mislabeled. An inline test
+    // fake without getWithSource falls back to the generic "stored credential".
+    const source = await (async (): Promise<string> => {
+      if ((this.process.env?.[ENV_API_KEY_VAR] ?? "").length > 0) return `env (${ENV_API_KEY_VAR})`;
+      const resolved = this.store.getWithSource ? await this.store.getWithSource(profile) : null;
+      return resolved?.source ?? "stored credential";
+    })();
     if (format === "json") {
       // userId is present only for a user principal (OAuth tokens later); omit it for org-scoped keys.
       this.process.stdout.write(
