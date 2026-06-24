@@ -8,11 +8,13 @@ import { Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 
 import { SERVICE_NAME } from "@webhook-co/shared";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { WebSocket as WsWebSocket } from "ws";
 
 import { KeychainUnavailableError } from "./config/errors.js";
 import type { KeychainIo } from "./config/keychain-store.js";
 import type { IoSeams, LoopbackServer, RawInputHandlers } from "./context.js";
+import { resolveProxy } from "./proxy.js";
 
 // The page shown in the browser tab once the OAuth redirect lands on the loopback server — Lane D's own
 // (the issuer's job ends at the redirect). Static + self-contained (no remote assets); the CLI has already
@@ -320,8 +322,12 @@ export function makeRealIo(): IoSeams {
     startRawInput,
     // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
     // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
+    // Unlike fetch (which the runtime proxies from env natively), `ws` never auto-proxies — so resolve the
+    // proxy for this tunnel URL from the env and route the upgrade through an HTTPS_PROXY CONNECT agent.
     connectWebSocket: (url, { headers, handlers }) => {
-      const ws = new WsWebSocket(url, { headers });
+      const proxyUrl = resolveProxy(url, process.env);
+      const agent = proxyUrl !== undefined ? new HttpsProxyAgent(proxyUrl) : undefined;
+      const ws = new WsWebSocket(url, agent !== undefined ? { headers, agent } : { headers });
       ws.on("open", () => handlers.onOpen());
       ws.on("message", (data) => handlers.onMessage(data.toString()));
       ws.on("close", (code, reason) => handlers.onClose(code, reason.toString()));
