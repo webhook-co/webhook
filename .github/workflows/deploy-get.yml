@@ -7,22 +7,20 @@ name: deploy-get
 #   push to main  -> deploy production (get.webhook.co)
 #   pull_request  -> `wrangler deploy --dry-run` (validates config + the bundle without deploying)
 #
-# The Worker bundles packages/cli/scripts/install.sh as a Text module, so a change to the installer also
-# redeploys get.webhook.co (it's in the path filter). NOT a required status check (lives outside ci.yml).
+# The Worker is content-free — it redirects to the canonical install.sh on GitHub rather than bundling it —
+# so an installer edit needs no redeploy. NOT a required status check (lives outside ci.yml).
 
 on:
   push:
     branches: [main]
     paths:
       - "apps/get/**"
-      - "packages/cli/scripts/install.sh"
       - ".github/workflows/deploy-get.yml"
       - "pnpm-lock.yaml"
   pull_request:
     branches: [main]
     paths:
       - "apps/get/**"
-      - "packages/cli/scripts/install.sh"
       - ".github/workflows/deploy-get.yml"
       - "pnpm-lock.yaml"
 
