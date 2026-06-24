@@ -8,14 +8,15 @@ import { describe, expect, it } from "vitest";
 import { buildNpmManifest } from "../scripts/npm-manifest.mjs";
 
 describe("buildNpmManifest", () => {
-  it("publishes as the unscoped `wbhk` package at the given version", () => {
+  it("publishes as the scoped `@webhook-co/cli` package at the given version", () => {
     const m = buildNpmManifest("1.2.3");
-    expect(m.name).toBe("wbhk");
+    // Scoped under the org: npm's similarity guard refuses the unscoped `wbhk`.
+    expect(m.name).toBe("@webhook-co/cli");
     expect(m.version).toBe("1.2.3");
   });
 
-  it("exposes the `wbhk` bin pointing at the bundled node entry", () => {
-    expect(buildNpmManifest("1.2.3").bin).toEqual({ wbhk: "./dist/bin.js" });
+  it("exposes the `wbhk` bin (no leading ./ — npm rejects that on publish)", () => {
+    expect(buildNpmManifest("1.2.3").bin).toEqual({ wbhk: "dist/bin.js" });
   });
 
   it("is an ESM package that requires a modern Node", () => {

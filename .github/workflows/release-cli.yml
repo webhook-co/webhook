@@ -88,9 +88,26 @@ jobs:
           test "$got" = "$VERSION" \
             || { echo "::error::npm bundle version mismatch: says '$got', expected '$VERSION'"; exit 1; }
 
-      # Publish gate: only on a real tag PUSH and only when NPM_TOKEN is configured. Until the founder claims
-      # the `wbhk` name + adds the token, this stays inert (the build + smoke above still run every time), so
-      # the first public npm publish is a deliberate human action — mirroring the draft-Release model.
+      # Create the binary DRAFT release FIRST — before the npm publish — so the (P1) binaries always land even
+      # if npm has an issue (e.g. a name-policy reject). The shell expands the glob to the explicit asset list.
+      - name: Create / update the DRAFT GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" packages/cli/out/wbhk-* packages/cli/out/checksums.txt --clobber
+          else
+            gh release create "$TAG" packages/cli/out/wbhk-* packages/cli/out/checksums.txt \
+              --draft \
+              --title "wbhk $VERSION" \
+              --notes "Draft built by release-cli — darwin arm64/x64, linux x64/arm64, windows x64 + checksums.txt. The npm package (@webhook-co/cli) publishes automatically when NPM_TOKEN is configured (with provenance); signing lands in a later distribution phase. Review + publish manually."
+          fi
+          echo "Draft release ready for $TAG — review + publish from the Releases page."
+
+      # Publish gate: only on a real tag PUSH and only when NPM_TOKEN is configured (inert otherwise — the
+      # build + smoke above still run every time), so the first npm publish is a deliberate human action.
       - name: Resolve the npm-publish gate
         id: npmgate
         env:
@@ -115,21 +132,4 @@ jobs:
           # provenance attestation automatically (no flag needed). Requires npm >= 9.5 (Node 20 ships npm 10).
           npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
           npm publish
-          echo "Published wbhk@$VERSION to npm with provenance."
-
-      - name: Create / update the DRAFT GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.ver.outputs.version }}
-          TAG: ${{ steps.ver.outputs.tag }}
-        run: |
-          # The shell expands the glob to the explicit asset list before gh sees it.
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" packages/cli/out/wbhk-* packages/cli/out/checksums.txt --clobber
-          else
-            gh release create "$TAG" packages/cli/out/wbhk-* packages/cli/out/checksums.txt \
-              --draft \
-              --title "wbhk $VERSION" \
-              --notes "Draft built by release-cli — darwin arm64/x64, linux x64/arm64, windows x64 + checksums.txt. The npm package publishes automatically when NPM_TOKEN is configured (with provenance); signing lands in a later distribution phase. Review + publish manually."
-          fi
-          echo "Draft release ready for $TAG — review + publish from the Releases page."
+          echo "Published @webhook-co/cli@$VERSION to npm with provenance."
