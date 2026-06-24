@@ -1,0 +1,94 @@
+# Release the `wbhk` CLI. Triggered by a `cli-vX.Y.Z` tag (or a manual dispatch for testing). DIST-3
+# SKELETON: builds the host platform only + uploads to a DRAFT GitHub Release — proves the pipeline
+# end-to-end before DIST-4 adds the cross-compile matrix, DIST-6 the npm publish, and DIST-8/9 signing.
+# A draft is never public until someone publishes it, so pushing a tag / dispatching is safe to test.
+# Calls tooling directly (bun installer + the `gh` CLI) — the org restricts Actions to GitHub-owned
+# publishers, so no marketplace actions (mirrors ci.yml + the deploy CDs).
+name: release-cli
+
+on:
+  push:
+    tags: ["cli-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 0.3.0 (produces a DRAFT release tagged cli-v<version>)"
+        required: true
+
+permissions:
+  contents: write # create the GitHub Release + upload assets
+
+concurrency:
+  group: release-cli-${{ github.ref }}
+  cancel-in-progress: false # never cancel a release mid-flight
+
+jobs:
+  release:
+    name: release (skeleton — single platform)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+
+      # Version-pinned (not SHA-pinned) bun installer — same rationale as ci.yml's completion-smoke job.
+      - name: Install bun (version-pinned)
+        run: |
+          curl -fsSL https://bun.sh/install | bash -s "bun-v1.3.14"
+          echo "$HOME/.bun/bin" >> "$GITHUB_PATH"
+
+      # User-controlled values (the dispatch input) flow through env, never `${{ }}`-interpolated into the
+      # script — that would be a shell-injection vector. EVENT_NAME is a trusted GitHub context.
+      - name: Resolve version + tag from the trigger
+        id: ver
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$DISPATCH_VERSION"
+          else
+            VERSION="${REF_NAME#cli-v}" # tag is cli-vX.Y.Z
+          fi
+          # Guard against a malformed tag/input (a bad version would mis-stamp the binary). After this the
+          # value is constrained to [0-9A-Za-z.+-], so it's safe to use in later steps.
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$' \
+            || { echo "::error::not a valid version: '$VERSION' (expected X.Y.Z, tag cli-vX.Y.Z)"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=cli-v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build the stamped binary
+        env:
+          WBHK_BUILD_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          rm -f packages/cli/dist/wbhk
+          pnpm --filter @webhook-co/cli run bundle
+          test -x packages/cli/dist/wbhk
+
+      - name: Stage artifacts + checksums (single platform — DIST-4 adds the matrix)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          mkdir -p out
+          cp packages/cli/dist/wbhk out/wbhk-linux-x64
+          ( cd out && sha256sum wbhk-linux-x64 > checksums.txt )
+          # Guard the version stamping end-to-end: the released binary MUST report the tag version.
+          got="$(out/wbhk-linux-x64 --version)"
+          test "$got" = "$VERSION" \
+            || { echo "::error::version mismatch: binary says '$got', expected '$VERSION'"; exit 1; }
+
+      - name: Create / update the DRAFT GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" out/wbhk-linux-x64 out/checksums.txt --clobber
+          else
+            gh release create "$TAG" out/wbhk-linux-x64 out/checksums.txt \
+              --draft \
+              --title "wbhk $VERSION" \
+              --notes "Draft built by release-cli (DIST-3 skeleton — linux-x64 only). Cross-platform binaries, npm publish, and signing land in later distribution phases. Review + publish manually."
+          fi
+          echo "Draft release ready for $TAG — review + publish from the Releases page."
