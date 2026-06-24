@@ -28,8 +28,9 @@ import {
 } from "../forward.js";
 import { bindAuth } from "../oauth/auth-binding.js";
 import { abortableSleep, backoffMs } from "../retry.js";
-import { createTui, type TuiTerminal } from "../tui/run.js";
+import { createTui, type TuiController, type TuiTerminal } from "../tui/run.js";
 import { clearCursor, loadCursor, saveCursor, type CursorLoad } from "../state/cursor-store.js";
+import { acquireListenLock, ListenLockedError, type ListenLock } from "../state/listen-lock.js";
 import { colorize } from "../output/color.js";
 import {
   announceActiveProfile,
@@ -38,7 +39,7 @@ import {
   resolveProfile,
   type GlobalFlags,
 } from "../global-flags.js";
-import { CAPABILITY_EXIT } from "../output/exit-codes.js";
+import { CAPABILITY_EXIT, EXIT } from "../output/exit-codes.js";
 import { type OutputFormat } from "../output/format.js";
 import { sanitizeControl } from "../output/safe-text.js";
 
@@ -159,11 +160,17 @@ export interface RunListenDeps {
   readonly signal: AbortSignal;
   /** Backoff sleep (real setTimeout in prod; instant under test). */
   readonly sleep: (ms: number) => Promise<void>;
-  /** Stop the tail on an UNRECOVERABLE forward failure (a --forward target that permanently rejects).
-   *  The command wires this to flag a non-zero exit + abort the controller; under test it aborts the
-   *  signal. Only ever called from the forward path's attempt-cap exhaustion. */
-  readonly stop: () => void;
+  /** Stop the tail on an UNRECOVERABLE condition (a --forward target that permanently rejects, or a
+   *  backlog larger than --max-backlog). The command maps the reason to a distinct non-zero exit + aborts
+   *  the controller; under test it aborts the signal. NOT a user Ctrl-C (that's the signal). */
+  readonly stop: (reason: ListenStopReason) => void;
+  /** Opt-in flood-refusal: if a status frame reports a backlog ≥ this, stop the tail instead of replaying
+   *  it (the `--max-backlog` cap). Undefined = no cap (just the informational banner). */
+  readonly maxBacklog?: number;
 }
+
+/** Why runListen stopped ITSELF (vs a user Ctrl-C). The command maps each to a distinct exit code. */
+export type ListenStopReason = "forward-permanent-failure" | "backlog-exceeded";
 
 /**
  * The reconnect loop: connect → consume server frames (ready saves the session id; event prints +
@@ -229,7 +236,7 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
         deps.note(
           `giving up on ${summary.id} → ${fwd.targetUrl} after ${n} attempts — stopping the tail (fix the target, then re-run with --resume to retry from here)\n`,
         );
-        deps.stop();
+        deps.stop("forward-permanent-failure");
         return false;
       }
       await abortableSleep(deps.signal, deps.sleep, backoffMs(n));
@@ -320,13 +327,24 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
                   deps.note("caught up — now tailing live events\n");
                   caughtUpNoted = true;
                 }
-              } else if (frame.lag !== undefined && frame.lag.backlogCount >= BACKLOG_GUARD) {
-                caughtUpNoted = false; // fell behind again — re-arm the caught-up note
-                const n =
-                  frame.lag.backlogCount > LISTEN_LAG_CAP
-                    ? `${LISTEN_LAG_CAP}+`
-                    : `${frame.lag.backlogCount}`;
-                deps.note(`${n} events behind — replaying the backlog…\n`);
+              } else if (frame.lag !== undefined) {
+                const count = frame.lag.backlogCount;
+                const n = count > LISTEN_LAG_CAP ? `${LISTEN_LAG_CAP}+` : `${count}`;
+                // Opt-in flood-refusal: a backlog at/above --max-backlog stops the tail instead of
+                // replaying it (esp. important with --forward — don't fire a huge backlog at localhost).
+                // Best-effort: it fires on the first status frame that exceeds the cap, so a few events
+                // may arrive before it; raise --max-backlog or use --since now to skip the backlog.
+                if (deps.maxBacklog !== undefined && count >= deps.maxBacklog) {
+                  deps.note(
+                    `refusing to replay: ${n} events behind exceeds --max-backlog ${deps.maxBacklog} — stopping (raise --max-backlog, or use --since now to skip the backlog)\n`,
+                  );
+                  deps.stop("backlog-exceeded");
+                  return;
+                }
+                if (count >= BACKLOG_GUARD) {
+                  caughtUpNoted = false; // fell behind again — re-arm the caught-up note
+                  deps.note(`${n} events behind — replaying the backlog…\n`);
+                }
               }
               return;
             }
@@ -381,12 +399,23 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
   await forwardChain;
 }
 
+/** Parse `--max-backlog` to a non-negative integer (0 = refuse ANY backlog). Throws on a bad value so
+ *  stricli surfaces it as a usage error. */
+function parseMaxBacklog(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 0) {
+    throw new Error(`--max-backlog must be a non-negative integer (got \`${value}\`)`);
+  }
+  return n;
+}
+
 interface ListenFlags extends GlobalFlags {
   tunnelUrl?: string;
   since: string;
   forward?: string;
   resume: boolean;
   reset: boolean;
+  maxBacklog?: number;
 }
 
 export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
@@ -439,6 +468,20 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
     };
 
     const controller = new AbortController();
+    // runListen stops ITSELF on an unrecoverable condition (a permanently-failing --forward target, or a
+    // backlog over --max-backlog). Record WHY so we exit with a distinct, scriptable code — never confused
+    // with a clean Ctrl-C (exit 0).
+    let stopReason: ListenStopReason | undefined;
+    const stopWith = (reason: ListenStopReason): void => {
+      stopReason = reason;
+      controller.abort();
+    };
+    const applyStopExit = (): void => {
+      if (stopReason === "forward-permanent-failure")
+        this.process.exitCode = CAPABILITY_EXIT.TARGET_UNREACHABLE;
+      else if (stopReason === "backlog-exceeded") this.process.exitCode = EXIT.BACKLOG_EXCEEDED;
+    };
+    const maxBacklog = flags.maxBacklog;
 
     // --forward: re-deliver an event to a local server (cursor-gated at-least-once). The plain tail
     // auto-forwards every event (`forward`); the TUI instead arms the `r` key to re-deliver the SELECTED
@@ -506,33 +549,55 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
 
     const { format, color } = resolveGlobals(this, flags);
 
+    // Single-listener courtesy lock (resume only) — acquired AFTER all throwing setup (--forward
+    // validation, resolveGlobals) so a setup error never leaks a held lock; released in each branch's
+    // finally (the TUI's createTui is inside its try, so even a startup throw releases it). Two concurrent
+    // resuming listeners would otherwise race the cursor file (last-finisher wins → a re-delivery window).
+    // A live holder → ListenLockedError (CliError → exit LISTENER_BUSY); a crashed run's stale lock
+    // self-heals (reclaimed once its holder pid is seen dead).
+    let lock: ListenLock | undefined;
+    if (resume) {
+      try {
+        lock = await acquireListenLock(stateDir, profile, endpointId);
+      } catch (err) {
+        if (err instanceof ListenLockedError) return err;
+        throw err;
+      }
+    }
+
     // Interactive TTY → the in-tail TUI (an interactive replay browser: arrow/j/k to navigate, d for
     // detail, o to open in the dashboard, r to replay the selected event to --forward, q/Ctrl-C to quit).
     // Off a TTY (piped / non-interactive) fall through to the plain line tail. The TUI runs the loop in
     // INSPECTION mode even with --forward (it does NOT auto-fire the whole stream at localhost); --forward
     // only arms the on-demand `r` replay above.
     if (this.io.isTTY) {
-      const dashboardBase = resolveDashboardUrl({ env: this.process.env?.[ENV_DASHBOARD_URL_VAR] });
-      const terminal: TuiTerminal = {
-        write: (s) => this.process.stdout.write(s),
-        size: () => this.io.terminalSize(),
-        start: (h) => this.io.startRawInput(h),
-      };
-      const tui = createTui({
-        terminal,
-        color,
-        effects: {
-          // encodeURIComponent the server-controlled id (defense-in-depth: it can't break out of the
-          // dashboard path even if a future id format isn't a bare uuid).
-          dashboardUrl: (e) => `${dashboardBase}/events/${encodeURIComponent(e.id)}`,
-          openBrowser: (url) => this.io.openBrowser(url),
-          replay: replaySelected,
-        },
-      });
       // Raw mode delivers Ctrl-C as a key (the TUI maps it to quit); keep SIGTERM as a safety stop.
       const onSignalTui = (): void => controller.abort();
       process.once("SIGTERM", onSignalTui);
+      // createTui (enters raw mode / alt-screen) lives INSIDE the try so even a startup throw releases the
+      // lock + runs the terminal restore via the finally. tuiRef is captured for the finally.
+      let tuiRef: TuiController | undefined;
       try {
+        const dashboardBase = resolveDashboardUrl({
+          env: this.process.env?.[ENV_DASHBOARD_URL_VAR],
+        });
+        const terminal: TuiTerminal = {
+          write: (s) => this.process.stdout.write(s),
+          size: () => this.io.terminalSize(),
+          start: (h) => this.io.startRawInput(h),
+        };
+        const tui = createTui({
+          terminal,
+          color,
+          effects: {
+            // encodeURIComponent the server-controlled id (defense-in-depth: it can't break out of the
+            // dashboard path even if a future id format isn't a bare uuid).
+            dashboardUrl: (e) => `${dashboardBase}/events/${encodeURIComponent(e.id)}`,
+            openBrowser: (url) => this.io.openBrowser(url),
+            replay: replaySelected,
+          },
+        });
+        tuiRef = tui;
         const loop = runListen({
           connect: this.io.connectWebSocket,
           tunnelUrl,
@@ -547,7 +612,8 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
           color,
           signal: controller.signal,
           sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-          stop: () => controller.abort(), // dead in inspection mode (no auto-forward); required dep
+          stop: stopWith, // forward is off in the TUI; only --max-backlog can trigger this here
+          maxBacklog,
         });
         // If the loop ends on its own (error/abort), close the TUI. `.catch` swallows the rejection on
         // THIS branch only — the real error still rides `await loop` below (so it surfaces once, not as an
@@ -557,19 +623,18 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         controller.abort(); // stop the tunnel loop
         await loop; // drain
       } finally {
-        tui.stop(); // guarantee the screen is restored even if the loop threw
+        tuiRef?.stop(); // restore the screen even if the loop (or createTui) threw
         await persistChain;
+        await lock?.release();
         process.removeListener("SIGTERM", onSignalTui);
       }
+      applyStopExit(); // exit BACKLOG_EXCEEDED if --max-backlog refused a too-large backlog
       return;
     }
 
     const onSignal = (): void => controller.abort();
     // A closed stdout (e.g. `wbhk listen | head`) raises EPIPE; abort + exit cleanly rather than crash.
     const onStdoutError = (): void => controller.abort();
-    // A --forward target that permanently fails stops the tail (runListen calls `stop`); flag it so we
-    // exit non-zero (distinct from a clean Ctrl-C), since the user's deliveries didn't go through.
-    let forwardFailed = false;
     process.once("SIGINT", onSignal);
     process.once("SIGTERM", onSignal);
     process.stdout.on("error", onStdoutError);
@@ -588,18 +653,19 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         color,
         signal: controller.signal,
         sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-        stop: () => {
-          forwardFailed = true;
-          controller.abort();
-        },
+        stop: stopWith,
+        maxBacklog,
       });
     } finally {
       await persistChain; // flush the final acked cursor to disk before exiting
+      await lock?.release();
       process.stdout.removeListener("error", onStdoutError);
       process.removeListener("SIGINT", onSignal);
       process.removeListener("SIGTERM", onSignal);
     }
-    if (forwardFailed) this.process.exitCode = CAPABILITY_EXIT.TARGET_UNREACHABLE;
+    // Distinct non-zero exit when runListen stopped itself (forward permanent-failure → TARGET_UNREACHABLE,
+    // backlog over --max-backlog → BACKLOG_EXCEEDED); a clean Ctrl-C leaves exit 0.
+    applyStopExit();
   },
   parameters: {
     positional: {
@@ -640,6 +706,13 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         kind: "parsed",
         parse: (value: string) => value,
         brief: "forward each event to a local URL, e.g. http://localhost:3000/webhooks",
+        optional: true,
+      },
+      maxBacklog: {
+        kind: "parsed",
+        parse: parseMaxBacklog,
+        brief:
+          "refuse to replay if more than N events are behind (avoids firing a big backlog at --forward)",
         optional: true,
       },
     },
