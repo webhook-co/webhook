@@ -102,6 +102,21 @@ export async function saveCursor(
   }
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- both paths derive from the encoded path
   await rename(tmp, path);
+  // Best-effort fsync of the PARENT DIR so the rename itself is durable (the temp's bytes were fsync'd
+  // above, but the directory entry that publishes them isn't durable until the dir is synced). Swallow
+  // failures: the cursor is a regenerable resume hint (a lost rename just resumes from a touch earlier),
+  // and dir-fsync isn't supported everywhere (e.g. Windows can't open a dir handle).
+  try {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- dir derives from XDG state
+    const dirHandle = await open(dir, "r");
+    try {
+      await dirHandle.sync();
+    } finally {
+      await dirHandle.close();
+    }
+  } catch {
+    /* dir fsync unsupported / failed — acceptable for a regenerable hint */
+  }
 }
 
 /** Forget the persisted cursor for a (profile, endpoint) — the `--reset` path. A no-op when absent. */

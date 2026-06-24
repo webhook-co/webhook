@@ -21,9 +21,15 @@ export interface RenderOpts {
 
 const HINTS = "↑/↓ move · r replay · o open · d detail · q quit";
 
-/** Truncate to at most `columns` VISIBLE chars (the line is still plain here — no color yet). */
-function fit(line: string, columns: number): string {
-  return line.length > columns ? line.slice(0, Math.max(0, columns)) : line;
+/** Truncate to at most `columns` UTF-16 units (the line is still plain here — no color yet). If the cut
+ *  would land between a surrogate pair (an astral char, e.g. an emoji in a provider name), drop the whole
+ *  char rather than leave a lone surrogate that renders as a replacement glyph. */
+export function fitWidth(line: string, columns: number): string {
+  if (line.length <= columns) return line;
+  let end = Math.max(0, columns);
+  const last = line.charCodeAt(end - 1);
+  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end -= 1; // high surrogate at the boundary → back off
+  return line.slice(0, end);
 }
 
 /** Paint whole-word verified/unverified tokens green/yellow (no-op when color is off). Applied AFTER
@@ -81,5 +87,5 @@ export function renderFrame(state: TuiState, opts: RenderOpts): string {
   lines.push(HINTS);
   if (state.status !== null) lines.push(sanitizeControl(state.status));
 
-  return lines.map((line) => paintVerified(fit(line, opts.columns), opts.color)).join("\n");
+  return lines.map((line) => paintVerified(fitWidth(line, opts.columns), opts.color)).join("\n");
 }

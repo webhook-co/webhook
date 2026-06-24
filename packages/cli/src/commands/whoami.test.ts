@@ -176,6 +176,25 @@ describe("wbhk whoami", () => {
     expect(t.stdout()).toContain("source: env (WBHK_API_KEY)");
   });
 
+  it("reports source: keychain when the credential lives in the OS keychain", async () => {
+    // No store override → the real [env, keychain, file] store; a working keychain fake holds the cred,
+    // so getWithSource reports the actual backend (not the generic "stored credential").
+    const m = new Map<string, string>();
+    const keychain = {
+      get: async (a: string) => m.get(a) ?? null,
+      set: async (a: string, s: string) => void m.set(a, s),
+      erase: async (a: string) => void m.delete(a),
+    };
+    await keychain.set("default", JSON.stringify({ apiKey: "whk_kc" }));
+    const t = makeTestContext({
+      keychain,
+      fetch: okFetch({ orgId: "org_k", scopes: ["events:read"] }),
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain("source: keychain");
+  });
+
   it("surfaces a userId when the principal has one (user-scoped token)", async () => {
     const t = makeTestContext({
       store: memStore({ apiKey: "whk_user_token" }),

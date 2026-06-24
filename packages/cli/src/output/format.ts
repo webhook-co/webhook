@@ -31,9 +31,9 @@ export function redactCredential(cred: StoredCredential): string {
 
 /**
  * One voice-compliant line for an error: what happened (and, for CliErrors, why/what next).
- * Never a stack trace or ANSI codes. (Color is reserved for a future styled renderer.)
+ * Never a stack trace or ANSI codes — error output is deliberately plain (no color).
  */
-export function formatCliError(error: unknown, _opts: { color: boolean }): string {
+export function formatCliError(error: unknown): string {
   if (error instanceof CliError) return error.userMessage;
   if (error instanceof Error) return error.message;
   return String(error);
