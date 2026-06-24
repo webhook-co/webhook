@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   release:
-    name: release (skeleton — single platform)
+    name: release (all platforms)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -57,23 +57,17 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=cli-v$VERSION" >> "$GITHUB_OUTPUT"
 
-      - name: Build the stamped binary
+      # Cross-compile EVERY platform from this one runner (DIST-4) → packages/cli/out/wbhk-* + checksums.txt.
+      - name: Build all platform binaries
         env:
           WBHK_BUILD_VERSION: ${{ steps.ver.outputs.version }}
-        run: |
-          rm -f packages/cli/dist/wbhk
-          pnpm --filter @webhook-co/cli run bundle
-          test -x packages/cli/dist/wbhk
+        run: node packages/cli/scripts/release-build.mjs
 
-      - name: Stage artifacts + checksums (single platform — DIST-4 adds the matrix)
+      - name: Smoke the stamped version (native linux-x64 binary)
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
-          mkdir -p out
-          cp packages/cli/dist/wbhk out/wbhk-linux-x64
-          ( cd out && sha256sum wbhk-linux-x64 > checksums.txt )
-          # Guard the version stamping end-to-end: the released binary MUST report the tag version.
-          got="$(out/wbhk-linux-x64 --version)"
+          got="$(packages/cli/out/wbhk-linux-x64 --version)"
           test "$got" = "$VERSION" \
             || { echo "::error::version mismatch: binary says '$got', expected '$VERSION'"; exit 1; }
 
@@ -83,12 +77,13 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
           TAG: ${{ steps.ver.outputs.tag }}
         run: |
+          # The shell expands the glob to the explicit asset list before gh sees it.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" out/wbhk-linux-x64 out/checksums.txt --clobber
+            gh release upload "$TAG" packages/cli/out/wbhk-* packages/cli/out/checksums.txt --clobber
           else
-            gh release create "$TAG" out/wbhk-linux-x64 out/checksums.txt \
+            gh release create "$TAG" packages/cli/out/wbhk-* packages/cli/out/checksums.txt \
               --draft \
               --title "wbhk $VERSION" \
-              --notes "Draft built by release-cli (DIST-3 skeleton — linux-x64 only). Cross-platform binaries, npm publish, and signing land in later distribution phases. Review + publish manually."
+              --notes "Draft built by release-cli — darwin arm64/x64, linux x64/arm64, windows x64 + checksums.txt. npm publish + signing land in later distribution phases. Review + publish manually."
           fi
           echo "Draft release ready for $TAG — review + publish from the Releases page."
