@@ -7,10 +7,10 @@ can build and debug webhook integrations without redeploying or clicking through
 ## Install
 
 ```sh
-# npm (needs Node >= 20)
-npm install -g wbhk
+# npm (needs Node >= 20) — installs the `wbhk` command
+npm install -g @webhook-co/cli
 # or run without installing
-npx wbhk --help
+npx @webhook-co/cli --help
 
 # standalone binary (macOS / Linux / Windows — no Node required)
 curl -fsSL https://get.webhook.co | sh
