@@ -82,14 +82,12 @@ const root = buildRouteMap({
 });
 
 // Route both command-error paths through the one formatter so a CliError prints its
-// voice-compliant message (never a stack trace) and ansiColor is threaded to the single
-// place that will eventually style output.
+// voice-compliant message (never a stack trace). Error output is deliberately plain — stricli passes an
+// ansiColor flag to these callbacks, but we don't style errors, so it's ignored.
 const appText: ApplicationText = {
   ...text_en,
-  commandErrorResult: (err: Error, ansiColor: boolean): string =>
-    formatCliError(err, { color: ansiColor }),
-  exceptionWhileRunningCommand: (exc: unknown, ansiColor: boolean): string =>
-    formatCliError(exc, { color: ansiColor }),
+  commandErrorResult: (err: Error): string => formatCliError(err),
+  exceptionWhileRunningCommand: (exc: unknown): string => formatCliError(exc),
   // An unknown command suggests the closest match (stricli supplies `corrections`) or points at --help.
   noCommandRegisteredForInput: ({ input, corrections }): string =>
     formatUnknownCommand({ input, corrections }),

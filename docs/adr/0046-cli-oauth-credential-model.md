@@ -9,7 +9,7 @@
   `redactCredential`), `packages/cli/src/config/keychain-store.ts` (JSON-serialized credential + legacy
   fallback), read-path threading in `commands/{shared,whoami,listen,replay}.ts`. Tests across
   `schema`/`format`/`keychain-store`/`whoami`/`context`.
-- relates: ADR-0009 (credential foundation), ADR-0039/0040 (config versioning + profiles), ADR-0044/0045
+- relates: ADR-0009 (credential foundation), ADR-0039/0040 (config versioning + profiles), ADR-0057/0045
   (the keychain this serializes into). Consumes the frozen Lane C OAuth contract (see the cli-oauth-contract
   memory + `~/.claude/plans/cozy-greeting-cupcake.md` §D8). `internal/build-plans/lane-d-cli.md` §D8. Lane D.
 - review severity: high (credential storage + the refresh-token-secrecy invariant). One AUTH red-team + one

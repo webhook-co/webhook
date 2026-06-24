@@ -8,7 +8,7 @@
   (`makeRealKeychainIo` + `runKeychainCli`, coverage-excluded), `packages/cli/src/config/store.ts`
   (`resolveStore.get` tolerates `KeychainUnavailableError`), `packages/cli/src/commands/login.ts`
   (`--insecure-storage`). Tests across `context`/`login`/`store`.
-- relates: ADR-0044 (the composition machinery this activates), ADR-0009 (the shell-out-over-NAPI
+- relates: ADR-0057 (the composition machinery this activates), ADR-0009 (the shell-out-over-NAPI
   keychain decision). `internal/build-plans/lane-d-cli.md` §D7. Lane D (`packages/cli`).
 - review severity: high (live credential storage + an OS shell-out). One AUTH red-team + one code review —
   both SHIP; the code review's EPIPE-on-stdin defect was folded.
@@ -23,7 +23,7 @@ it live: the real OS calls, the context wiring, and the user-facing opt-out.
 
 1. **`buildContext` composes `[env, keychain, file]`.** `io` is resolved first so the credential store can
    build the keychain backend over `io.keychain`. Read precedence: env (CI override) › keychain (secure) ›
-   file (insecure fallback); credential writes prefer the keychain, config writes go to the file (ADR-0044).
+   file (insecure fallback); credential writes prefer the keychain, config writes go to the file (ADR-0057).
 
 2. **`makeRealKeychainIo` — `spawn`, never a shell.** macOS `security` (find/add `-U`/delete-generic-password,
    `-s <service> -a <profile>`), Linux `secret-tool` (lookup / store-via-**stdin** / clear); Windows and
@@ -52,7 +52,7 @@ it live: the real OS calls, the context wiring, and the user-facing opt-out.
 
 - `wbhk login` stores the `whk_` key in the OS keychain (encrypted at rest) by default; a box without a
   keychain helper falls back to the 0600 file (or, under require-secure, fails loud pointing at
-  `--insecure-storage`). `logout` clears both (ADR-0044's best-effort erase).
+  `--insecure-storage`). `logout` clears both (ADR-0057's best-effort erase).
 - The macOS command shapes + exit codes are backend-verified against a throwaway temp keychain
   (set/update/get round-trip; not-found → 44). The **Linux `secret-tool` path is unverified here** (no
   libsecret on the build box) — flagged for a real-Linux smoke; it's standard libsecret usage and the
@@ -61,7 +61,7 @@ it live: the real OS calls, the context wiring, and the user-facing opt-out.
 ## alternatives considered
 
 - **Probe keychain availability at startup.** Rejected — async OS probe vs a sync `buildContext`; lazy
-  `KeychainUnavailableError` + the fallback loop (ADR-0044) handles it without a startup cost.
+  `KeychainUnavailableError` + the fallback loop (ADR-0057) handles it without a startup cost.
 - **A profile-name charset allow-list for argv safety.** Deferred (red-team NIT) — the no-shell + positional
   `-a` binding already makes injection impossible; an allow-list would be robust-by-construction
   defense-in-depth, a small follow-up.
