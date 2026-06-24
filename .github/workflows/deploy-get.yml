@@ -1,0 +1,53 @@
+name: deploy-get
+
+# Deploys the get.webhook.co install/download shim Worker (apps/get → `webhook-get`). Mirrors deploy-www:
+# org policy blocks third-party Marketplace actions, so this calls wrangler directly via pnpm; only actions/*
+# are used, pinned by commit SHA. wrangler is a root devDep, so no extra install.
+#
+#   push to main  -> deploy production (get.webhook.co)
+#   pull_request  -> `wrangler deploy --dry-run` (validates config + the bundle without deploying)
+#
+# The Worker bundles packages/cli/scripts/install.sh as a Text module, so a change to the installer also
+# redeploys get.webhook.co (it's in the path filter). NOT a required status check (lives outside ci.yml).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/get/**"
+      - "packages/cli/scripts/install.sh"
+      - ".github/workflows/deploy-get.yml"
+      - "pnpm-lock.yaml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/get/**"
+      - "packages/cli/scripts/install.sh"
+      - ".github/workflows/deploy-get.yml"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-get-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: deploy-get
+    runs-on: ubuntu-latest
+    # Same-repo only: fork PRs don't receive secrets, so a deploy/dry-run can't authenticate there.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+      - name: Deploy production (get.webhook.co)
+        if: github.event_name == 'push'
+        run: pnpm --filter @webhook-co/get exec wrangler deploy
+      - name: Validate deploy (dry-run)
+        if: github.event_name == 'pull_request'
+        run: pnpm --filter @webhook-co/get exec wrangler deploy --dry-run

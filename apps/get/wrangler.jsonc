@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webhook-get",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-15",
+  // Serve install.sh from the canonical source via a Text-module import (rules below) — no Worker bindings,
+  // no secrets, no account/zone ids in the repo (wrangler reads the account from CLOUDFLARE_ACCOUNT_ID).
+  "rules": [{ "type": "Text", "globs": ["**/*.sh"], "fallthrough": true }],
+  "observability": { "enabled": true },
+  // Production lives only on the get.webhook.co custom domain. Unlike the wedge/auth Workers (whose routes
+  // carry per-env zone ids via a deploy overlay), get is a single fixed PUBLIC hostname with no secrets, so
+  // the custom domain is committed: `wrangler deploy` provisions + maintains it (DNS + cert) idempotently.
+  "routes": [{ "pattern": "get.webhook.co", "custom_domain": true }],
+  // No production *.workers.dev; per-version preview URLs stay on so a PR dry-run can validate the build.
+  "workers_dev": false,
+  "preview_urls": true,
+}
