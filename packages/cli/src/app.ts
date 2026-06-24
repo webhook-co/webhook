@@ -16,6 +16,7 @@ import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
 import { profileRoute } from "./commands/profile.js";
 import { replayCommand } from "./commands/replay.js";
+import { upgradeCommand } from "./commands/upgrade.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
 import { CliError } from "./errors.js";
@@ -76,6 +77,7 @@ const root = buildRouteMap({
     audit: auditRoute,
     listen: listenCommand,
     replay: replayCommand,
+    upgrade: upgradeCommand,
     completion: completionRoute,
   },
   docs: { brief: "webhook.co — capture, inspect, and replay webhooks" },
