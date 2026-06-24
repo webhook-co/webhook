@@ -117,11 +117,20 @@ ADR numbers = claim-next-free at PR time (currently **0062+**).
 
 ### Phase 2 — binaries everywhere · *needs-founder (first public artifact)*
 - **DIST-4 multi-platform matrix.** Build `bun --compile --target` for darwin-arm64/x64, linux-x64/arm64,
-  win-x64; attach all + checksums to the Release. **Spike first:** confirm `bun build --compile --target=…`
-  cross-compiles each from the CI host (Bun supports cross-target compile) — this is the riskiest unknown.
-- **DIST-5 `install.sh`** — `curl -fsSL <url> | sh`: detect OS/arch, download the right binary, verify the
-  checksum, install to `~/.local/bin` (or a PATH dir), clear the macOS quarantine bit. Hosted from the
-  Release / a stable URL.
+  win-x64; attach all + checksums to the Release. **✅ Spike DONE (2026-06-24): cross-compile works for ALL
+  targets from ONE host** — proved on macOS-arm64 (bun 1.3.14): linux-x64-baseline (ELF x86-64),
+  linux-arm64 (ELF aarch64), windows-x64-baseline (PE32+), darwin-arm64 + darwin-x64 (Mach-O) all built
+  clean (the native one runs). So CI needs only a **single runner** (no per-OS matrix) — simpler + cheaper.
+  Build notes: (a) use the **`-baseline` x64** targets to avoid "Illegal instruction" on pre-2013 CPUs
+  (Bun's AVX2 SIMD warning; arm64 has no baseline); (b) the **Windows `.exe` metadata flags** (icon/version)
+  can't be set when cross-compiling — skip for v1, or build win-x64 on a Windows runner just for metadata;
+  (c) `bun-linux-*-musl` are separate targets if we want Alpine — defer; (d) VERSION via `--define` (DIST-1).
+- **DIST-5 `install.sh`** — `curl -fsSL https://get.webhook.co | sh`: detect OS/arch, download the right
+  binary, verify the checksum, install to `~/.local/bin` (or a PATH dir), clear the macOS quarantine bit.
+  **Hosting (recommended): GitHub Releases for the binaries** (free CDN + checksums/provenance tied to the
+  tag) **+ a thin `get.webhook.co` Cloudflare Worker** that serves `install.sh` + 302-redirects `latest`
+  downloads to the Release assets. Branded one-liner + on-stack (CF), but the binaries stay on GitHub's CDN
+  (don't re-host). Phase-2 can ship the raw Releases URL first; the Worker is a quick fast-follow.
 
 ### Phase 3 — npm + provenance · *needs-founder (publishes a public package)*
 - **DIST-6 npm package.** Decide shape (§1; recommend node-runnable JS), produce the publishable `dist/` +
@@ -144,24 +153,27 @@ ADR numbers = claim-next-free at PR time (currently **0062+**).
 
 ---
 
-## 5. Decisions needed (confirm before/along the build)
+## 5. Decisions (✓ = resolved by the founder 2026-06-24)
 
-1. **Channels** — confirmed: ALL practical (npm, binaries, Homebrew, Scoop, Docker; Winget/AUR/Nix later).
-2. **npm package shape** — node-runnable JS (recommended) vs a binary-installer package. (Spike DIST-6.)
-3. **npm name** — `wbhk` (confirm availability) vs `@webhook-co/cli`.
-4. **Signing** — defer (recommended) vs include from the start. Needs: Apple Developer ($99/yr) for macOS;
-   an OV/EV cert or Azure Trusted Signing for Windows. (See §3.)
+1. **Channels** — ✓ **ALL practical** (npm, binaries, Homebrew, Scoop, Docker; Winget/AUR/Nix later).
+2. **npm package shape** — node-runnable JS (recommended) vs a binary-installer package. (Confirm via Spike
+   DIST-6 that the CLI runs under plain Node.)
+3. **npm name** — ✓ **`wbhk`** (founder OK to claim; grab it early to reserve it).
+4. **Signing** — ✓ **DEFER** (ship unsigned + free provenance now; add macOS notarization / Windows signing
+   in Phase 4 only if/when accounts exist — Apple $99/yr, Windows ~$100–700/yr or Azure Trusted Signing).
 5. **Release trigger + version source** — a `cli-vX.Y.Z` git tag (recommended) vs manual dispatch; version
-   from the tag vs `package.json`.
-6. **Telemetry** — confirm silent-opt-out is wanted + the privacy stance, or drop DIST-14.
-7. **Distribution domain** — is there a `get.webhook.co` / stable URL for `install.sh` + the latest-binary
-   redirect, or host from GitHub Releases directly?
+   from the tag (recommended) vs `package.json`. *(open — low-stakes, recommend the tag.)*
+6. **Telemetry** — confirm silent-opt-out is wanted + the privacy stance, or drop DIST-14. *(open.)*
+7. **Distribution domain** — ✓ **recommendation: GitHub Releases for the binaries + a thin `get.webhook.co`
+   Cloudflare Worker** (serves `install.sh` + 302→Release assets). Founder to confirm provisioning
+   `get.webhook.co` (DNS + a tiny Worker, on the existing CF stack); not blocking — Phase 2 can ship the raw
+   Releases URL first.
 
 ## 6. Risks
 
 | Risk | Sev | Stance |
 | --- | --- | --- |
-| Bun cross-target compile doesn't cover all OS/arch from one CI host | High | Spike DIST-4 first; fall back to a per-OS CI matrix (native runners) if cross-compile is incomplete. |
+| ~~Bun cross-target compile doesn't cover all OS/arch from one CI host~~ | ~~High~~ → **RESOLVED** | ✅ Spike done 2026-06-24: all 5 targets cross-compile from one macOS host (correct ELF/PE32+/Mach-O; native runs). Single-runner CI. Caveats: `-baseline` x64, Windows-metadata-needs-a-Windows-runner (skippable). |
 | CLI doesn't run clean under plain Node (npm path) | Med | Spike DIST-6 (`node dist/bin.js` e2e); the tsconfig-paths dance from the bundle must be resolved for the npm build. |
 | Org blocks 3rd-party GH Actions | Med | Call tooling directly (bun, npm, gh, cosign) — same pattern as the existing CDs. |
 | Unsigned-binary friction (Gatekeeper/SmartScreen) | Med | install.sh clears quarantine; npm/brew/scoop avoid it; add signing in Phase 4. |
