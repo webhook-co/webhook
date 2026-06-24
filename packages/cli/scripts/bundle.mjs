@@ -21,14 +21,18 @@ const stashed = join(cliDir, "tsconfig.json.bundlebak");
 // would leave the real tsconfig stashed + missing. Restore it before starting so the repo never wedges.
 if (existsSync(stashed) && !existsSync(tsconfig)) renameSync(stashed, tsconfig);
 
+// Stamp the version when the release pipeline sets WBHK_BUILD_VERSION (from the cli-vX.Y.Z tag); a local
+// dev bundle leaves it unset → the binary reports "0.0.0 (dev)". `--define` replaces the WBHK_VERSION
+// identifier in version.ts at bundle time; JSON.stringify gives the quoted JS string literal bun expects.
+const buildVersion = process.env.WBHK_BUILD_VERSION;
+const args = ["build", "--compile", "--minify", "--sourcemap"];
+if (buildVersion) args.push("--define", `WBHK_VERSION=${JSON.stringify(buildVersion)}`);
+args.push("src/bin.ts", "--outfile", "dist/wbhk");
+
 renameSync(tsconfig, stashed);
 let result;
 try {
-  result = spawnSync(
-    "bun",
-    ["build", "--compile", "--minify", "--sourcemap", "src/bin.ts", "--outfile", "dist/wbhk"],
-    { cwd: cliDir, stdio: "inherit" },
-  );
+  result = spawnSync("bun", args, { cwd: cliDir, stdio: "inherit" });
 } finally {
   // Restore the tsconfig BEFORE exiting. process.exit() does not run finally blocks, so the exit is
   // deferred to after this restore (a process.exit inside the try would leave the tsconfig stashed).
