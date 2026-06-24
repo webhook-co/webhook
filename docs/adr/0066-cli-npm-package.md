@@ -27,11 +27,16 @@ published as-is: it's `private`, and it depends on `@webhook-co/contract` / `@we
    so `npm install` can't break on a transitive resolution. (`bun build --target=node`, not `--compile`.)
 
 2. **The published `package.json` is GENERATED, not the workspace manifest.** `npm-manifest.mjs`
-   (`buildNpmManifest(version)`, unit-tested) produces the public manifest: name `wbhk`, `bin`, `files`
-   (`dist` + `README.md` only), `engines.node >=20`, `type: module`, Apache-2.0, `repository` (required for
-   provenance), and `publishConfig: { access: public, provenance: true }`. The tests pin that it is **not**
-   `private`, declares **no** deps, and never leaks a `workspace:` string — a regression there ships a broken
-   or mis-published package.
+   (`buildNpmManifest(version)`, unit-tested) produces the public manifest: name **`@webhook-co/cli`**, `bin`
+   (`wbhk` → `dist/bin.js`), `files` (`dist` + `README.md` only), `engines.node >=20`, `type: module`,
+   Apache-2.0, `repository` (required for provenance), and `publishConfig: { access: public, provenance: true }`
+   (`access: public` is required — scoped packages default to restricted). The tests pin that it is **not**
+   `private`, declares **no** deps, and never leaks a `workspace:` string.
+   **Name = scoped (resolved at first publish):** the founder first chose the unscoped `wbhk`, but npm's
+   similarity guard **403s it** ("too similar to 'walk'" — short unscoped names are effectively unpublishable),
+   so it ships **scoped under the `webhook-co` org as `@webhook-co/cli`** (the installed *command* is still
+   `wbhk` via `bin`). The `bin` path has **no leading `./`** — npm strips/removes a `./`-prefixed bin entry on
+   publish (which would ship a package with no command).
 
 3. **Build via `--outdir`, not `--outfile`.** With external `--sourcemap` bun emits `bin.js` + `bin.js.map`
    (two outputs) and silently ignores `--outfile`, dropping the files next to the entry. `--outdir` names the
