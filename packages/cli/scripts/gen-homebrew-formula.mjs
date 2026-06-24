@@ -37,6 +37,11 @@ export function buildFormula(version, sums) {
   if (typeof version !== "string" || version.length === 0) {
     throw new Error("buildFormula: a version is required (e.g. 0.1.1)");
   }
+  // The version flows into the .rb (`version "..."` + the asset URLs); constrain its charset so it can't
+  // break out of the Ruby string / inject (defense-in-depth — the release tag is also validated upstream).
+  if (!/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(version)) {
+    throw new Error(`buildFormula: invalid version: ${version}`);
+  }
   const block = ({ asset, cpu }) => {
     const sha = sums.get(asset);
     if (sha === undefined) throw new Error(`buildFormula: no checksum for ${asset}`);
