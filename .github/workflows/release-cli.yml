@@ -17,7 +17,8 @@ on:
 
 permissions:
   contents: write # create the GitHub Release + upload assets
-  id-token: write # npm provenance (OIDC) for `npm publish`
+  id-token: write # OIDC for npm provenance (`npm publish`) + the binary build attestation
+  attestations: write # sigstore-signed SLSA build provenance for the binaries (DIST-7)
 
 concurrency:
   group: release-cli-${{ github.ref }}
@@ -71,6 +72,17 @@ jobs:
           got="$(packages/cli/out/wbhk-linux-x64 --version)"
           test "$got" = "$VERSION" \
             || { echo "::error::version mismatch: binary says '$got', expected '$VERSION'"; exit 1; }
+
+      # Sigstore-signed SLSA build provenance for every released binary (DIST-7). `subject-checksums` reads
+      # checksums.txt (sha256sum format) and attests each listed binary's digest in ONE step. The attestation
+      # is stored on GitHub (sigstore/Rekor-backed) — verify with `gh attestation verify <bin> --repo
+      # webhook-co/webhook`. GitHub-OWNED action (allowed by the org's github_owned_allowed policy), SHA-pinned.
+      # Real tags only (a workflow_dispatch test shouldn't mint provenance for a throwaway build).
+      - name: Attest build provenance (sigstore + SLSA)
+        if: github.event_name == 'push'
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-checksums: packages/cli/out/checksums.txt
 
       # Build the publishable npm package (DIST-6) — a node-runnable bundle (NOT the compiled binary) →
       # packages/cli/npm/. This always runs (build + smoke below) so the npm path is exercised every release,
