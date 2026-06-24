@@ -7,6 +7,9 @@ can build and debug webhook integrations without redeploying or clicking through
 ## Install
 
 ```sh
+# Homebrew (macOS / Linux)
+brew install webhook-co/tap/wbhk
+
 # npm (needs Node >= 20) — installs the `wbhk` command
 npm install -g @webhook-co/cli
 # or run without installing
