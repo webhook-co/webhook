@@ -65,7 +65,7 @@ jobs:
       AUTH_DEVICE_KV_ID: ${{ vars.AUTH_DEVICE_KV_ID }}
       AUTH_RATELIMIT_KV_ID: ${{ vars.AUTH_RATELIMIT_KV_ID }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/setup
       # apps/auth's OpenNext build type-checks against the workspace deps' built .d.ts (the tsconfig
       # dist-redirects for the WebCrypto/KVNamespace helpers), so build their dist first.
