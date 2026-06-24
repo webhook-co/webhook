@@ -3,9 +3,9 @@
   "name": "webhook-get",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-15",
-  // Serve install.sh from the canonical source via a Text-module import (rules below) — no Worker bindings,
-  // no secrets, no account/zone ids in the repo (wrangler reads the account from CLOUDFLARE_ACCOUNT_ID).
-  "rules": [{ "type": "Text", "globs": ["**/*.sh"], "fallthrough": true }],
+  // No Worker bindings, no secrets, no account/zone ids in the repo (wrangler reads the account from
+  // CLOUDFLARE_ACCOUNT_ID). The Worker is content-free — it redirects to the installer rather than embedding
+  // it — so the script upload isn't blocked by Cloudflare's API WAF (see src/router.ts).
   "observability": { "enabled": true },
   // Production lives only on the get.webhook.co custom domain. Unlike the wedge/auth Workers (whose routes
   // carry per-env zone ids via a deploy overlay), get is a single fixed PUBLIC hostname with no secrets, so

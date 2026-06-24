@@ -1,11 +1,19 @@
-// The get.webhook.co request router (pure: URL + the install-script text → Response). Two jobs:
-//   GET /  ·  /install.sh            → serve the wbhk installer (so `curl -fsSL https://get.webhook.co | sh`)
+// The get.webhook.co request router (pure: URL → Response). Two jobs:
+//   GET /  ·  /install.sh            → 302 to the canonical install.sh (so `curl -fsSL https://get…  | sh`)
 //   GET /<asset>  ·  /v<ver>/<asset> → 302 to the matching GitHub release asset
-// Everything else 404s. Redirects are restricted to a FIXED asset allowlist + the canonical releases host,
-// so there is no open-redirect: a caller can never steer the Location at an arbitrary destination.
+// Everything else 404s.
+//
+// We REDIRECT to the installer rather than embedding it: a Worker-script upload whose bundle contains the
+// shell installer (`curl … | sh`, `rm -rf`, `xattr`, …) is blocked by Cloudflare's API WAF (an HTML 403 on
+// the script PUT, from any origin). install.sh already depends on GitHub for the binaries, so serving it from
+// the repo's raw URL adds no new dependency and keeps the Worker content-free. Redirect targets are a FIXED
+// allowlist (the installer URL + the release assets) on canonical hosts → no open redirect.
 
 const REPO = "webhook-co/webhook";
 const RELEASES = `https://github.com/${REPO}/releases`;
+// The canonical installer on the default branch (it self-resolves the latest release at runtime, so `main`
+// is correct — the script is version-agnostic; the binaries it fetches are the latest published release).
+const INSTALL_SH = `https://raw.githubusercontent.com/${REPO}/main/packages/cli/scripts/install.sh`;
 
 // The published release-asset names (mirror packages/cli/scripts/release-build.mjs) + checksums.txt.
 const ASSETS: ReadonlySet<string> = new Set([
@@ -22,8 +30,8 @@ const VERSIONED = /^v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\/(.+)$/;
 
 const SECURITY_HEADERS: Readonly<Record<string, string>> = {
   "x-content-type-options": "nosniff",
-  // get.webhook.co only — host-scoped via the response header (no includeSubDomains, so it never bleeds
-  // onto api./mcp./auth. on the shared zone; see the www CD notes).
+  // get.webhook.co only — host-scoped (no includeSubDomains, so it never bleeds onto api./mcp./auth. on the
+  // shared zone; see the www CD notes).
   "strict-transport-security": "max-age=63072000",
   "referrer-policy": "strict-origin-when-cross-origin",
 };
@@ -35,15 +43,9 @@ function redirect(location: string): Response {
   });
 }
 
-export function handleGet(url: URL, installScript: string): Response {
+export function handleGet(url: URL): Response {
   if (url.pathname === "/" || url.pathname === "/install.sh") {
-    return new Response(installScript, {
-      headers: {
-        "content-type": "text/x-shellscript; charset=utf-8",
-        "cache-control": "public, max-age=300",
-        ...SECURITY_HEADERS,
-      },
-    });
+    return redirect(INSTALL_SH);
   }
 
   const path = url.pathname.replace(/^\/+/, "");
