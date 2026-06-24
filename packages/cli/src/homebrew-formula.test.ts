@@ -71,4 +71,11 @@ describe("buildFormula", () => {
   it("throws without a version", () => {
     expect(() => buildFormula("", SUMS)).toThrow(/version/i);
   });
+
+  it("rejects a version with unsafe characters (no Ruby-string break-out)", () => {
+    expect(() => buildFormula('0.1.2"; system("x")', SUMS)).toThrow(/invalid version/i);
+    expect(() => buildFormula("0.1.2 rm -rf", SUMS)).toThrow(/invalid version/i);
+    // a normal prerelease/build version is still fine
+    expect(() => buildFormula("1.2.3-rc.1", SUMS)).not.toThrow();
+  });
 });

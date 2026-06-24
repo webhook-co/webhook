@@ -1,0 +1,53 @@
+name: homebrew-bump
+
+# Bump the Homebrew formula in webhook-co/homebrew-tap when a CLI release is PUBLISHED (DIST-10). Triggered on
+# `release: published` — NOT the tag push — because release-cli creates a DRAFT release whose assets aren't
+# publicly downloadable; the formula must point at a PUBLISHED release or `brew install` would 404. Needs
+# HOMEBREW_TAP_TOKEN (a token with contents:write on the TAP repo; the ephemeral GITHUB_TOKEN can't push
+# cross-repo) — inert until that secret is set. Calls tooling directly (org blocks marketplace actions);
+# `gh auth setup-git` keeps the token out of any URL/args.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: homebrew-bump
+    # Only the CLI's own releases (the repo may publish other tags).
+    if: startsWith(github.event.release.tag_name, 'cli-v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+      - name: Bump the Homebrew formula
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }} # gh auth setup-git uses this — never in a URL/args
+          TAG: ${{ github.event.release.tag_name }} # trusted (release events come from repo members), but kept out of run via env
+        run: |
+          if [ -z "$GH_TOKEN" ]; then echo "HOMEBREW_TAP_TOKEN not set — skipping homebrew bump"; exit 0; fi
+          version="${TAG#cli-v}"
+          # Guard the version charset before it reaches a URL / the generator / a commit message.
+          echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$' \
+            || { echo "::error::not a valid CLI version: '$version'"; exit 1; }
+          # The release is published, so its checksums.txt is a public asset.
+          curl -fsSL "https://github.com/webhook-co/webhook/releases/download/${TAG}/checksums.txt" -o checksums.txt
+          gh auth setup-git
+          git clone --depth 1 https://github.com/webhook-co/homebrew-tap.git tap
+          WBHK_FORMULA_VERSION="$version" \
+            node packages/cli/scripts/gen-homebrew-formula.mjs checksums.txt tap/Formula/wbhk.rb
+          cd tap
+          if git diff --quiet; then
+            echo "homebrew formula already at $version — nothing to bump"
+          else
+            git -c user.name="webhook-co-bot" -c user.email="noreply@webhook.co" commit -aqm "wbhk $version"
+            git push
+            echo "Bumped webhook-co/homebrew-tap to wbhk $version."
+          fi
