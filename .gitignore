@@ -11,6 +11,8 @@ build/
 .open-next/
 out/
 *.tsbuildinfo
+# generated publishable npm package (packages/cli/scripts/npm-build.mjs)
+packages/cli/npm/
 
 # Per-environment wrangler deploy overlays: generated at deploy from the committed
 # wrangler.jsonc + out-of-band ids/secret refs. Real ids never get committed (no-secrets).
