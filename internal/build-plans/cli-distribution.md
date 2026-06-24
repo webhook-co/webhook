@@ -1,9 +1,11 @@
 # CLI distribution — robust plan (`wbhk` shipping & release)
 
 > **Status:** plan-only (no code). Scopes the distribution epic that was explicitly OUT of the Lane-D
-> core-CLI plan. Founder direction (2026-06-24): **ship via ALL practical channels**; **defer paid
-> signing** until accounts exist (everything else ships first); write a robust, sequenced plan before
-> building. Build is **not yet authorized** — this is the artifact to review + sequence from.
+> core-CLI plan. **All decisions resolved with the founder (2026-06-24):** ship ALL practical channels ·
+> npm name **`wbhk`** · **defer paid signing** · release on a **`cli-vX.Y.Z` tag** (version from the tag) ·
+> **ship opt-out telemetry** · host binaries on **GitHub Releases + a thin `get.webhook.co` Cloudflare
+> Worker**. The riskiest unknown (Bun cross-compile) is **de-risked** (§4 DIST-4 — one runner builds all 5
+> targets). Ready to merge as the plan-of-record + start **Phase 1** on the founder's go.
 
 ## Context
 
@@ -131,6 +133,10 @@ ADR numbers = claim-next-free at PR time (currently **0062+**).
   tag) **+ a thin `get.webhook.co` Cloudflare Worker** that serves `install.sh` + 302-redirects `latest`
   downloads to the Release assets. Branded one-liner + on-stack (CF), but the binaries stay on GitHub's CDN
   (don't re-host). Phase-2 can ship the raw Releases URL first; the Worker is a quick fast-follow.
+- **DIST-5b `get.webhook.co` Worker** — a thin Cloudflare Worker on the existing stack: serves `install.sh`
+  at `/` and 302-redirects `latest`/versioned binary paths to the GitHub Release assets. DNS + a deploy-CD
+  entry mirroring the `deploy-wedge`/`deploy-web` pattern (direct `wrangler`, no 3rd-party actions).
+  *needs-founder · infra (DNS + Worker provisioning).*
 
 ### Phase 3 — npm + provenance · *needs-founder (publishes a public package)*
 - **DIST-6 npm package.** Decide shape (§1; recommend node-runnable JS), produce the publishable `dist/` +
@@ -161,13 +167,15 @@ ADR numbers = claim-next-free at PR time (currently **0062+**).
 3. **npm name** — ✓ **`wbhk`** (founder OK to claim; grab it early to reserve it).
 4. **Signing** — ✓ **DEFER** (ship unsigned + free provenance now; add macOS notarization / Windows signing
    in Phase 4 only if/when accounts exist — Apple $99/yr, Windows ~$100–700/yr or Azure Trusted Signing).
-5. **Release trigger + version source** — a `cli-vX.Y.Z` git tag (recommended) vs manual dispatch; version
-   from the tag (recommended) vs `package.json`. *(open — low-stakes, recommend the tag.)*
-6. **Telemetry** — confirm silent-opt-out is wanted + the privacy stance, or drop DIST-14. *(open.)*
-7. **Distribution domain** — ✓ **recommendation: GitHub Releases for the binaries + a thin `get.webhook.co`
-   Cloudflare Worker** (serves `install.sh` + 302→Release assets). Founder to confirm provisioning
-   `get.webhook.co` (DNS + a tiny Worker, on the existing CF stack); not blocking — Phase 2 can ship the raw
-   Releases URL first.
+5. **Release trigger + version source** — ✓ **a `cli-vX.Y.Z` git tag triggers the release; the version is
+   derived from the tag** (injected via `--define`, DIST-1). No manual dispatch as the primary path.
+6. **Telemetry** — ✓ **YES — ship DIST-14**: silent, **opt-out** usage telemetry with a clear privacy note
+   + an obvious `WBHK_TELEMETRY=0` / `wbhk telemetry off` opt-out (no PII; sequence last).
+7. **Distribution hosting** — ✓ **GitHub Releases for the binaries + a thin `get.webhook.co` Cloudflare
+   Worker** (serves `install.sh` + 302-redirects `latest`/versioned downloads to the Release assets; the
+   binaries stay on GitHub's CDN). Founder approved provisioning **`get.webhook.co`** (DNS + a small Worker
+   on the existing CF stack, mirroring the deploy-CD pattern) — tracked as **DIST-5b** (a fast-follow to
+   DIST-5; Phase 2 can ship the raw Releases URL first, so it's not blocking).
 
 ## 6. Risks
 
