@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { text } from "node:stream/consumers";
@@ -252,6 +252,67 @@ function makeRealKeychainIo(): KeychainIo {
   return { get: unavailable, set: unavailable, erase: unavailable };
 }
 
+// `wbhk upgrade`'s self-replace. Write the verified new bytes to a temp file in the SAME directory as the
+// running binary (so the rename is atomic — same filesystem, no EXDEV), make it executable, then rename it
+// over the target. On POSIX a rename-over-a-running-binary works (the live process keeps the old inode; the
+// new file is in place for the next exec). On Windows a running .exe can't be overwritten in place but CAN
+// be renamed, so the current binary is moved aside first. macOS quarantine is cleared best-effort so
+// Gatekeeper doesn't block the new (unsigned) binary. Coverage-excluded wiring; verified by the upgrade
+// command's tests via the injected seam + a human end-to-end once the first public release exists.
+function replaceExecutable(targetPath: string, data: Uint8Array): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const dir = dirname(targetPath);
+    const tmp = join(dir, `.wbhk-upgrade-${process.pid}-${Date.now()}.tmp`);
+    try {
+      writeFileSync(tmp, data, { mode: 0o755 });
+      chmodSync(tmp, 0o755); // writeFileSync mode is umask-masked; chmod makes 0755 literal (executable)
+      if (process.platform === "win32") {
+        const old = `${targetPath}.old`;
+        try {
+          rmSync(old, { force: true });
+        } catch {
+          /* a prior .old may still be locked by a running process — Windows reclaims it later */
+        }
+        renameSync(targetPath, old); // move the running .exe aside (rename is allowed while running)
+        try {
+          renameSync(tmp, targetPath);
+        } catch (err) {
+          // The new binary didn't land — restore the original so we never leave wbhk MISSING (the whole
+          // point of moving it aside, not deleting it). Best-effort; rethrow the real failure either way.
+          try {
+            renameSync(old, targetPath);
+          } catch {
+            /* rollback failed too — `${targetPath}.old` holds the working binary for manual recovery */
+          }
+          throw err;
+        }
+      } else {
+        renameSync(tmp, targetPath); // atomic same-fs replace
+        if (process.platform === "darwin") {
+          try {
+            const x = spawn("xattr", ["-d", "com.apple.quarantine", targetPath], {
+              stdio: "ignore",
+            });
+            x.on("error", () => {}); // xattr missing / attribute absent — best-effort
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      resolve();
+    } catch (err) {
+      // Don't leave the temp behind in the install dir on any failure (a successful rename already consumed
+      // it; rmSync force-ignores ENOENT).
+      try {
+        rmSync(tmp, { force: true });
+      } catch {
+        /* ignore */
+      }
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
+
 // Open a URL in the user's default browser — best-effort, per-OS launcher, NEVER a shell (the URL is a
 // plain argv element, so it can't inject). Detached + unref'd so the launcher's lifetime doesn't tie to
 // the CLI. A missing launcher or any spawn error resolves quietly (the caller has already printed the URL
@@ -320,6 +381,7 @@ export function makeRealIo(): IoSeams {
       rows: process.stdout.rows ?? 24,
     }),
     startRawInput,
+    replaceExecutable,
     // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
     // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
     // Unlike fetch (which the runtime proxies from env natively), `ws` never auto-proxies — so resolve the

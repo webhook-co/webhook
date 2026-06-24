@@ -91,6 +91,10 @@ export interface IoSeams {
   /** Put stdin in raw mode and deliver decoded key chunks + SIGWINCH resizes to the TUI; the returned
    *  handle restores cooked mode + removes the listeners on close(). Real impl in io.ts (coverage-excluded). */
   startRawInput(handlers: RawInputHandlers): { close(): void };
+  /** Atomically replace the executable at `targetPath` with `data` (`wbhk upgrade`'s self-update): write a
+   *  temp file in the same dir, chmod +x, rename over the target, and clear the macOS quarantine flag. The
+   *  real impl in io.ts is coverage-excluded wiring; a fake records the call in tests. */
+  replaceExecutable(targetPath: string, data: Uint8Array): Promise<void>;
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -104,6 +108,10 @@ export interface HostProcess {
   readonly stderr: { write(s: string): void };
   readonly env: Record<string, string | undefined>;
   readonly platform: NodeJS.Platform;
+  /** CPU architecture (process.arch) — selects the release asset for `wbhk upgrade`. */
+  readonly arch: string;
+  /** Path to the running executable (process.execPath) — the self-replace target for `wbhk upgrade`. */
+  readonly execPath: string;
   exitCode?: number | string | null;
 }
 
@@ -117,6 +125,10 @@ export interface AppContext extends ApplicationContext {
   readonly homedir: string;
   /** The host platform — gates the POSIX config-permission check (used by `doctor`). */
   readonly platform: NodeJS.Platform;
+  /** CPU architecture (process.arch) — selects the release asset for `wbhk upgrade`. */
+  readonly arch: string;
+  /** Path to the running executable (process.execPath) — the self-replace target for `wbhk upgrade`. */
+  readonly execPath: string;
 }
 
 function isTruthyEnv(value: string | undefined): boolean {
@@ -173,6 +185,8 @@ export function buildContext(
     colorEnabled: resolveColor(proc),
     homedir: home,
     platform: proc.platform,
+    arch: proc.arch,
+    execPath: proc.execPath,
     io,
   };
 }
@@ -211,6 +225,12 @@ export function makeTestContext(opts?: {
   terminalSize?: () => { columns: number; rows: number };
   /** Fake raw-mode input for the TUI (captures handlers so a test can drive keys); defaults to unconfigured. */
   startRawInput?: (handlers: RawInputHandlers) => { close(): void };
+  /** CPU arch reported on the context (defaults to "x64") — `wbhk upgrade` asset selection. */
+  arch?: string;
+  /** Running-executable path reported on the context (defaults to a fake binary) — `wbhk upgrade` target. */
+  execPath?: string;
+  /** Fake self-replace for `wbhk upgrade` (records the call); defaults to unconfigured. */
+  replaceExecutable?: (targetPath: string, data: Uint8Array) => Promise<void>;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -219,6 +239,8 @@ export function makeTestContext(opts?: {
     stderr: { write: (s: string) => void err.push(s) },
     env: opts?.env ?? {},
     platform: "linux",
+    arch: opts?.arch ?? "x64",
+    execPath: opts?.execPath ?? "/nonexistent-wbhk-test-home/.local/bin/wbhk",
     exitCode: undefined,
   };
   const unconfigured = (name: string) => (): never => {
@@ -258,6 +280,9 @@ export function makeTestContext(opts?: {
     terminalSize: opts?.terminalSize ?? (() => ({ columns: 80, rows: 24 })),
     startRawInput:
       opts?.startRawInput ?? (unconfigured("startRawInput") as unknown as IoSeams["startRawInput"]),
+    replaceExecutable:
+      opts?.replaceExecutable ??
+      (unconfigured("replaceExecutable") as unknown as IoSeams["replaceExecutable"]),
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",
