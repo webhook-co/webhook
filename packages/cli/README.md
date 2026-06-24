@@ -37,6 +37,23 @@ Everything is scriptable — add `--output json` to any read command and pipe it
 and verification follow the [Standard Webhooks](https://www.standardwebhooks.com/) spec. Nothing is public
 unless you make it so, and credentials are stored in your OS keychain when one is available.
 
+## Verifying a download
+
+Every release is built in CI and is independently verifiable:
+
+```sh
+# npm — published with provenance; verify the installed package's signatures + provenance
+npm audit signatures
+
+# binaries — sigstore-signed SLSA build provenance (needs the GitHub CLI)
+gh attestation verify wbhk-darwin-arm64 --repo webhook-co/webhook
+
+# or just the checksum (curl | sh does this for you)
+shasum -a 256 -c <(grep ' wbhk-darwin-arm64$' checksums.txt)
+```
+
+The provenance proves a binary was built from this repository's GitHub Actions — not hand-uploaded.
+
 ## Links
 
 - Docs: https://webhook.co
