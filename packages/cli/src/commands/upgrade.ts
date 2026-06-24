@@ -260,6 +260,7 @@ async function fetchVerifiedAsset(
 
 interface UpgradeFlags extends GlobalFlags {
   check?: boolean;
+  verifyProvenance?: boolean;
 }
 
 export const upgradeCommand = buildCommand<UpgradeFlags, [], AppContext>({
@@ -347,6 +348,22 @@ export const upgradeCommand = buildCommand<UpgradeFlags, [], AppContext>({
         // Resolve + download + verify, surfacing any failure (missing asset / network / bad checksum) as a
         // clean UpgradeError — fail-closed BEFORE we touch the binary.
         const data = await fetchVerifiedAsset(this.io.fetch, release, plan.assetName);
+        // Verify the sigstore/SLSA build provenance (that GitHub Actions built this exact binary from this
+        // repo) — strict by default; on top of the checksum. `--no-verify-provenance` is the escape hatch
+        // for an air-gapped box or a sigstore outage (falls back to the checksum alone).
+        if (flags.verifyProvenance !== false) {
+          if (format !== "json") this.process.stderr.write(`verifying provenance…\n`);
+          const digestHex = createHash("sha256").update(data).digest("hex");
+          try {
+            await this.io.verifyBinaryProvenance({ digestHex });
+          } catch (err) {
+            throw new UpgradeError(
+              `build provenance verification failed — refusing to install: ` +
+                `${err instanceof Error ? err.message : String(err)} ` +
+                `(re-run with --no-verify-provenance to skip, e.g. offline).`,
+            );
+          }
+        }
         try {
           await this.io.replaceExecutable(this.execPath, data);
         } catch (err) {
@@ -377,6 +394,12 @@ export const upgradeCommand = buildCommand<UpgradeFlags, [], AppContext>({
         kind: "boolean",
         optional: true,
         brief: "only check whether an update is available (don't install)",
+      },
+      verifyProvenance: {
+        kind: "boolean",
+        optional: true,
+        brief:
+          "verify the binary's sigstore/SLSA build provenance before installing (--no-verify-provenance to skip)",
       },
     },
   },

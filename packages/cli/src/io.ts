@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import nodeCrypto from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -7,6 +8,9 @@ import { createInterface } from "node:readline";
 import { Writable } from "node:stream";
 import { text } from "node:stream/consumers";
 
+import { bundleFromJSON } from "@sigstore/bundle";
+import { TrustedRoot } from "@sigstore/protobuf-specs";
+import { toSignedEntity, toTrustMaterial, Verifier } from "@sigstore/verify";
 import { SERVICE_NAME } from "@webhook-co/shared";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { WebSocket as WsWebSocket } from "ws";
@@ -14,7 +18,18 @@ import { WebSocket as WsWebSocket } from "ws";
 import { KeychainUnavailableError } from "./config/errors.js";
 import type { KeychainIo } from "./config/keychain-store.js";
 import type { IoSeams, LoopbackServer, RawInputHandlers } from "./context.js";
+import {
+  attestationApiUrl,
+  decodeStatement,
+  PROVENANCE_ISSUER,
+  PROVENANCE_SAN_PATTERN,
+  statementCoversDigest,
+} from "./provenance.js";
 import { resolveProxy } from "./proxy.js";
+// The sigstore public-good trusted root, EMBEDDED at build time (regenerate via scripts/gen-trusted-root.mjs
+// if it rotates — rare). We verify against this directly instead of fetching it over TUF at runtime: TUF's
+// seeds.json is dropped by `bun --compile`, and embedding removes a network dependency from `wbhk upgrade`.
+import trustedRootJson from "./trusted-root.json";
 
 // The page shown in the browser tab once the OAuth redirect lands on the loopback server — Lane D's own
 // (the issuer's job ends at the redirect). Static + self-contained (no remote assets); the CLI has already
@@ -313,6 +328,93 @@ function replaceExecutable(targetPath: string, data: Uint8Array): Promise<void> 
   });
 }
 
+// bun's `crypto.verify` THROWS on an `undefined` algorithm for ECDSA, whereas Node derives the digest from
+// the EC curve. sigstore-js calls `verify(undefined, …)` for every EC check (the Rekor SET, the Fulcio cert
+// chain, the SCT), so under the bun-compiled binary all of them fail ("inclusion promise could not be
+// verified"). This bun-only shim supplies the curve-matched digest when none is given — restoring Node's
+// behavior so the FULL verification (incl. transparency-log inclusion) passes. Idempotent; pass-through for
+// any explicit algorithm, so it can't weaken a defined-digest verification.
+let bunCryptoVerifyShimmed = false;
+function ensureBunCryptoVerifyShim(): void {
+  if (bunCryptoVerifyShimmed || (globalThis as { Bun?: unknown }).Bun === undefined) return;
+  bunCryptoVerifyShimmed = true;
+  const orig = nodeCrypto.verify.bind(nodeCrypto) as (...args: unknown[]) => unknown;
+  const digestForKey = (key: unknown): string => {
+    try {
+      const ko =
+        key instanceof nodeCrypto.KeyObject ? key : nodeCrypto.createPublicKey(key as never);
+      const curve = (ko.asymmetricKeyDetails as { namedCurve?: string } | undefined)?.namedCurve;
+      return curve === "secp384r1" ? "sha384" : curve === "secp521r1" ? "sha512" : "sha256";
+    } catch {
+      return "sha256";
+    }
+  };
+  (nodeCrypto as { verify: unknown }).verify = (
+    algorithm: string | null | undefined,
+    data: unknown,
+    key: unknown,
+    signature: unknown,
+    callback?: unknown,
+  ): unknown => {
+    const alg = algorithm ?? digestForKey(key);
+    return callback === undefined
+      ? orig(alg, data, key, signature)
+      : orig(alg, data, key, signature, callback);
+  };
+}
+
+// Verify a downloaded binary's sigstore-signed SLSA build provenance IN-PROCESS (`wbhk upgrade`). Fetch the
+// attestation from GitHub's PUBLIC attestations API by the binary's digest, then verify each bundle against
+// the EMBEDDED public-good sigstore trust root. The verifier proves the in-toto statement was authentically
+// signed by THIS repo's release-cli workflow (pinned SAN regex + OIDC issuer) and is Rekor-logged — then we
+// MUST separately confirm the statement's subject digest equals our binary's (sigstore does not). Throws on
+// any failure (no attestation, bad signature, wrong identity, subject-digest mismatch). Coverage-excluded
+// wiring (network + the sigstore stack).
+async function verifyBinaryProvenance({ digestHex }: { digestHex: string }): Promise<void> {
+  ensureBunCryptoVerifyShim();
+  const res = await globalThis.fetch(attestationApiUrl(digestHex), {
+    headers: { "user-agent": "wbhk-cli", accept: "application/vnd.github+json" },
+  });
+  if (!res.ok) {
+    throw new Error(
+      res.status === 404
+        ? "no build provenance was found for this binary on GitHub"
+        : `could not fetch build provenance (GitHub returned ${res.status})`,
+    );
+  }
+  const body = (await res.json()) as { attestations?: { bundle: unknown }[] };
+  const attestations = body.attestations ?? [];
+  if (attestations.length === 0) throw new Error("no build provenance attestation for this binary");
+
+  const verifier = new Verifier(toTrustMaterial(TrustedRoot.fromJSON(trustedRootJson)), {
+    tlogThreshold: 1, // require a Rekor inclusion proof
+    ctlogThreshold: 1, // require an SCT
+  });
+  let lastErr: unknown;
+  for (const { bundle } of attestations) {
+    try {
+      const parsed = bundleFromJSON(bundle as Parameters<typeof bundleFromJSON>[0]);
+      // Proves the DSSE statement is authentically signed by the pinned identity + Rekor-logged.
+      verifier.verify(toSignedEntity(parsed), {
+        subjectAlternativeName: PROVENANCE_SAN_PATTERN,
+        extensions: { issuer: PROVENANCE_ISSUER },
+      });
+      const content = parsed.content as { dsseEnvelope?: { payload: Buffer | string } };
+      if (content.dsseEnvelope === undefined)
+        throw new Error("attestation is not a DSSE statement");
+      const statement = decodeStatement(content.dsseEnvelope.payload);
+      // The check the verifier does NOT do: that this statement is about OUR binary.
+      if (!statementCoversDigest(statement, digestHex)) {
+        throw new Error("the build provenance does not attest this binary's digest");
+      }
+      return; // one fully-valid attestation is enough
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("build provenance verification failed");
+}
+
 // Open a URL in the user's default browser — best-effort, per-OS launcher, NEVER a shell (the URL is a
 // plain argv element, so it can't inject). Detached + unref'd so the launcher's lifetime doesn't tie to
 // the CLI. A missing launcher or any spawn error resolves quietly (the caller has already printed the URL
@@ -382,6 +484,7 @@ export function makeRealIo(): IoSeams {
     }),
     startRawInput,
     replaceExecutable,
+    verifyBinaryProvenance,
     // The `ws` client can set the upgrade Authorization header (the global WHATWG WebSocket can't),
     // and works under both Node and the Bun-compiled binary. Text frames arrive as Buffer → string.
     // Unlike fetch (which the runtime proxies from env natively), `ws` never auto-proxies — so resolve the

@@ -72,6 +72,56 @@ describe("wbhk upgrade — standalone binary", () => {
     expect(t.stdout()).toContain("upgraded wbhk 0.0.0 → 0.4.0");
   });
 
+  it("verifies the binary's build provenance (by its sha256) before replacing", async () => {
+    const rec = recordingReplace();
+    const verified: string[] = [];
+    const t = makeTestContext({
+      execPath: "/home/dev/.local/bin/wbhk",
+      fetch: upgradeFetch(releasesWithUpdate, { [ASSET_URL]: NEW_BINARY, [SUMS_URL]: goodSums }),
+      replaceExecutable: rec.replace,
+      verifyBinaryProvenance: async ({ digestHex }) => {
+        verified.push(digestHex);
+      },
+    });
+    await run(app, ["upgrade"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(verified).toEqual([sha]); // verified the exact downloaded bytes' digest
+    expect(rec.calls).toHaveLength(1); // and only then replaced
+  });
+
+  it("REFUSES to replace when provenance verification fails", async () => {
+    const rec = recordingReplace();
+    const t = makeTestContext({
+      execPath: "/home/dev/.local/bin/wbhk",
+      fetch: upgradeFetch(releasesWithUpdate, { [ASSET_URL]: NEW_BINARY, [SUMS_URL]: goodSums }),
+      replaceExecutable: rec.replace,
+      verifyBinaryProvenance: async () => {
+        throw new Error("no build provenance was found for this binary");
+      },
+    });
+    await run(app, ["upgrade"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.UNEXPECTED);
+    expect(rec.calls).toHaveLength(0); // never touched the binary
+    expect(t.stderr().toLowerCase()).toContain("provenance");
+  });
+
+  it("--no-verify-provenance skips the provenance check (checksum only)", async () => {
+    const rec = recordingReplace();
+    let called = false;
+    const t = makeTestContext({
+      execPath: "/home/dev/.local/bin/wbhk",
+      fetch: upgradeFetch(releasesWithUpdate, { [ASSET_URL]: NEW_BINARY, [SUMS_URL]: goodSums }),
+      replaceExecutable: rec.replace,
+      verifyBinaryProvenance: async () => {
+        called = true;
+      },
+    });
+    await run(app, ["upgrade", "--no-verify-provenance"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(called).toBe(false); // verification was skipped
+    expect(rec.calls).toHaveLength(1); // still installed
+  });
+
   it("emits a structured result with --output json", async () => {
     const rec = recordingReplace();
     const t = makeTestContext({
