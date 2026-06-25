@@ -205,3 +205,42 @@ describe("createCredentialResolver — pepper rotation", () => {
     expect(await newOnly.resolve("whk_legacy")).toBeNull();
   });
 });
+
+describe("createCredentialResolver — opt-in precheck (ADR-0073 edge guard)", () => {
+  it("short-circuits to null BEFORE any cache.get or cold lookup when precheck fails", async () => {
+    const cache = new InMemoryCredentialCache();
+    const getSpy = vi.spyOn(cache, "get");
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
+    const resolver = createCredentialResolver({
+      hasher,
+      cache,
+      coldLookup: cold,
+      precheck: () => false, // e.g. a malformed/old-format key
+    });
+
+    expect(await resolver.resolve("whk_malformed")).toBeNull();
+    expect(getSpy).not.toHaveBeenCalled(); // no KV hit
+    expect(cold).not.toHaveBeenCalled(); // no DB hit — rejected at the edge
+  });
+
+  it("passes through the normal hot/cold path when precheck succeeds", async () => {
+    const cache = new InMemoryCredentialCache();
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
+    const resolver = createCredentialResolver({
+      hasher,
+      cache,
+      coldLookup: cold,
+      precheck: () => true,
+    });
+
+    expect((await resolver.resolve("whk_ok"))?.orgId).toBe(ORG);
+    expect(cold).toHaveBeenCalledTimes(1);
+  });
+
+  it("is opt-in: with no precheck, every credential resolves normally (ingest path unaffected)", async () => {
+    const cache = new InMemoryCredentialCache();
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+    expect((await resolver.resolve("whep_anything"))?.orgId).toBe(ORG);
+  });
+});

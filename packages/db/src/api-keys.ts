@@ -21,7 +21,11 @@ import { randomUUID } from "node:crypto";
 
 import { appendAuthAuditEntry } from "./auth-audit";
 import { withTenant, type Sql, type TenantTx } from "./client";
-import { credentialHashEquals, mintCredential, type CredentialHasher } from "./credential";
+import {
+  credentialHashEquals,
+  mintChecksummedCredential,
+  type CredentialHasher,
+} from "./credential";
 import type { ResolvedPrincipal } from "./credential-cache";
 
 /** Default display prefix for api keys (the non-secret handle). */
@@ -123,7 +127,7 @@ export async function insertApiKey(
   input: CreateApiKeyInput,
   hasher: CredentialHasher,
 ): Promise<CreatedApiKey & { readonly keyHash: Buffer }> {
-  const { plaintext, keyHash, start } = mintCredential(API_KEY_PREFIX, hasher);
+  const { plaintext, keyHash, start } = mintChecksummedCredential(API_KEY_PREFIX, hasher);
   const id = randomUUID();
   const scopes = [...input.scopes];
   const expiresAt = input.expiresAt ?? null;

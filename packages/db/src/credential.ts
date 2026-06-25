@@ -28,6 +28,8 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
+import { keyChecksum, RANDOM_BODY_LEN, toBase62Fixed } from "./key-checksum";
+
 /** Bytes of CSPRNG entropy in a minted secret. 32 bytes = 256 bits (ADR-0003 floor). */
 export const CREDENTIAL_SECRET_BYTES = 32;
 
@@ -127,6 +129,34 @@ function assertPepperLength(pepper: Buffer): void {
 export function mintCredential(prefix: string, hasher: CredentialHasher): MintedCredential {
   const secret = randomBytes(CREDENTIAL_SECRET_BYTES);
   const plaintext = `${prefix}_${secret.toString("base64url")}`;
+  return {
+    plaintext,
+    keyHash: hasher.hash(plaintext),
+    start: plaintext.slice(0, START_LEN),
+  };
+}
+
+/**
+ * Mint a SELF-DESCRIBING-CHECKSUM credential (ADR-0073) — the api-key format:
+ *   `<prefix>_<43 base62: 256-bit CSPRNG body><6 base62: CRC32 of the body>`
+ * The 256-bit body is the SAME entropy floor as mintCredential; only the encoding differs
+ * (base64url -> base62, + a trailing CRC). The body is a fixed-width base62 bijection of one
+ * randomBytes(32) draw (left-padded to 43 — no modulo bias, no leading-zero truncation), and
+ * the checksum lets a malformed/typo'd key be rejected before any DB lookup + makes the format
+ * registrable with secret-scanning. The CHECKSUM IS INSIDE the hashed plaintext, so key_hash
+ * still covers the whole string and at-rest storage/auth is unchanged. The CHECKSUM IS NOT A
+ * SECURITY CONTROL (see key-checksum.ts). Distinct from mintCredential, which is left untouched
+ * so ingest tokens (whep_, endpoints.ts/orgs.ts) keep their base64url format.
+ */
+export function mintChecksummedCredential(
+  prefix: string,
+  hasher: CredentialHasher,
+): MintedCredential {
+  const body = toBase62Fixed(
+    BigInt(`0x${randomBytes(CREDENTIAL_SECRET_BYTES).toString("hex")}`),
+    RANDOM_BODY_LEN,
+  );
+  const plaintext = `${prefix}_${body}${keyChecksum(body)}`;
   return {
     plaintext,
     keyHash: hasher.hash(plaintext),

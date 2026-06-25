@@ -62,6 +62,17 @@ export interface CredentialResolverOptions {
    * confined to their bound surface while legacy keys remain valid across the org's surfaces.
    */
   readonly resource?: string;
+  /**
+   * OPT-IN structural precheck (ADR-0073). When supplied, it runs FIRST in `resolve()` — before
+   * hashing, the cache, and the cold lookup — and a `false` result returns `null` immediately
+   * (the same shape as an unknown credential: no oracle, no DB/KV work). The api-key path injects
+   * `verifyKeyChecksum` here (via auth-deps) to reject malformed/typo'd/old-format `whk_` keys at
+   * the edge. It is OPT-IN on purpose: this same factory also serves `whep_` ingest tokens (which
+   * carry no checksum), so an unconditional guard would wrongly reject them — the ingest resolver
+   * simply omits it. NOT a security control: the checksum is public error-detection (see
+   * key-checksum.ts); its value here is cheap DoS-shedding + a self-validating format.
+   */
+  readonly precheck?: (plaintext: string) => boolean;
 }
 
 function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
@@ -124,6 +135,13 @@ export function createCredentialResolver(opts: CredentialResolverOptions): Crede
     p.audience !== undefined || opts.resource === undefined ? p : { ...p, audience: opts.resource };
 
   async function resolve(plaintext: string): Promise<ResolvedPrincipal | null> {
+    // EDGE GUARD (ADR-0073, opt-in): reject a structurally-invalid credential before any
+    // hashing / cache / DB work. A failed precheck returns null — byte-identical to an unknown
+    // credential, so it is no auth oracle (it distinguishes only well-formed-ness, which is
+    // public; the timing fast-fail leaks zero secret bits — it is deliberately a cheap
+    // DoS-shedding filter, NOT an authentication boundary). Omitted on the ingest path.
+    if (opts.precheck !== undefined && !opts.precheck(plaintext)) return null;
+
     // Candidate hashes: current pepper first, then any previous peppers (rotation window).
     // The common single-pepper case is exactly one hash -> one cache get / one cold lookup,
     // identical to the un-peppered path; extra candidates only exist mid-rotation.
