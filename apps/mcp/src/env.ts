@@ -21,6 +21,13 @@ export interface McpEnv {
   HYPERDRIVE_TENANT: Hyperdrive;
   /** KV caching resolved principals (keyed by api-key hash); invalidated on revoke. */
   KV_AUTHZ: KVNamespace;
+  /**
+   * The cookieless ingest apex the endpoints.create tool builds its one-time ingest URL from (prod:
+   * https://wbhk.my). A plain wrangler `vars` value (NOT a secret, NOT deploy-injected — the overlay
+   * carries no `vars`, so it is committed in wrangler.jsonc). Must match api's INGEST_BASE_URL + the
+   * engine route apex.
+   */
+  INGEST_BASE_URL: string;
   // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
   // below is ONE account secret each, shared byte-identically with engine + api. Never DB columns.
   /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */

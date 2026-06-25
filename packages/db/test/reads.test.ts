@@ -16,7 +16,7 @@ import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
 import { createEndpoint } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
-import { createReadHandlers, type ReadHandlers } from "../src/read-handlers";
+import { createReadHandlers, type CapabilityHandlers } from "../src/read-handlers";
 import {
   getEndpoint,
   getEvent,
@@ -41,7 +41,7 @@ let pg: EphemeralPostgres;
 let app: Sql;
 let cursorKey: CryptoKey;
 let auditKey: CryptoKey;
-let handlers: ReadHandlers;
+let handlers: CapabilityHandlers;
 let orgA: string;
 let orgB: string;
 let epA: string; // an endpoint in org A with several events

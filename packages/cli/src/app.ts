@@ -9,7 +9,11 @@ import {
 import { auditVerifyCommand } from "./commands/audit.js";
 import { completionRoute } from "./commands/completion.js";
 import { doctorCommand } from "./commands/doctor.js";
-import { endpointsGetCommand, endpointsListCommand } from "./commands/endpoints.js";
+import {
+  endpointsCreateCommand,
+  endpointsGetCommand,
+  endpointsListCommand,
+} from "./commands/endpoints.js";
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
 import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
@@ -34,6 +38,7 @@ export { VERSION };
 export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "endpoints.list": ["endpoints", "list"],
   "endpoints.get": ["endpoints", "get"],
+  "endpoints.create": ["endpoints", "create"],
   "events.list": ["events", "list"],
   "events.get": ["events", "get"],
   "events.getPayload": ["events", "payload"],
@@ -46,6 +51,7 @@ const endpointsRoute = buildRouteMap({
   routes: {
     list: endpointsListCommand,
     get: endpointsGetCommand,
+    create: endpointsCreateCommand,
   },
   docs: { brief: "inspect your endpoints" },
 });

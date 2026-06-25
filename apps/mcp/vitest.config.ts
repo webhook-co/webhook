@@ -23,6 +23,7 @@ export default defineConfig({
           CURSOR_KEY: TEST_KEY_32,
           AUDIT_CHAIN_HMAC_KEY: TEST_KEY_32,
           MCP_SESSION_KEY: TEST_KEY_32, // A8c — the session-binding HMAC key (32 bytes, like the others)
+          INGEST_BASE_URL: "https://wbhk.my", // plain var the endpoints.create write handler reads
         },
       },
     }),

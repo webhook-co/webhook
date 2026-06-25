@@ -1,7 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import type { AnyCapability, AuthContext } from "@webhook-co/contract";
-import { createClient, createReadHandlers } from "@webhook-co/db";
+import {
+  buildCapabilityHandlers,
+  createClient,
+  createCredentialHasherFromBase64,
+  type CredentialHasher,
+} from "@webhook-co/db";
 import { b64ToBytes, importAuditKey, importCursorKey, readSecretBinding } from "@webhook-co/shared";
 import type { z } from "zod";
 
@@ -41,6 +46,8 @@ const SERVER_VERSION = "0.0.0";
 const TOOL_DESCRIPTIONS: Record<string, string> = {
   "endpoints.list": "List the org's webhook endpoints (paginated).",
   "endpoints.get": "Get a single webhook endpoint by id.",
+  "endpoints.create":
+    "Create a webhook endpoint and return its ingest URL. The URL contains a secret token shown ONLY ONCE in this response — surface it to the user to save; it cannot be retrieved again.",
   "events.list": "List received events for an endpoint (paginated; optional provider filter).",
   "events.get": "Get a received event by id — headers, verification result, and payload pointer.",
   "events.tail":
@@ -64,6 +71,9 @@ export class WebhookMcp extends McpAgent<McpEnv> {
   // only a tenant DB client. Definite-assignment: init() always sets these before tools dispatch.
   private cursorKey!: CryptoKey;
   private auditKey!: CryptoKey;
+  // The credential hasher (CREDENTIAL_PEPPER) — needed by the WRITE handlers (endpoints.create mints
+  // an ingest token inside the DO). Reads never use it; built once in init() like the keys above.
+  private hasher!: CredentialHasher;
 
   /** Structured observability log (mirrors the engine/api `console.log(JSON…)` convention). */
   private log(event: string, fields: Record<string, unknown>): void {
@@ -71,10 +81,12 @@ export class WebhookMcp extends McpAgent<McpEnv> {
   }
 
   async init(): Promise<void> {
-    const [cursorRaw, auditRaw] = await Promise.all([
+    const [pepper, cursorRaw, auditRaw] = await Promise.all([
+      readSecretBinding(this.env.CREDENTIAL_PEPPER),
       readSecretBinding(this.env.CURSOR_KEY),
       readSecretBinding(this.env.AUDIT_CHAIN_HMAC_KEY),
     ]);
+    this.hasher = createCredentialHasherFromBase64(pepper);
     [this.cursorKey, this.auditKey] = await Promise.all([
       importCursorKey(b64ToBytes(cursorRaw)),
       importAuditKey(b64ToBytes(auditRaw)),
@@ -112,10 +124,17 @@ export class WebhookMcp extends McpAgent<McpEnv> {
     // connection (mirrors apps/api + apps/engine). Caching is off on this binding.
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
-      const handlers = createReadHandlers({
+      // The merged read+write capability-handler map, single-sourced in @webhook-co/db (the same map
+      // apps/api builds, so the surfaces can't drift). This is load-bearing: endpoints.create
+      // auto-registers as a tool (MCP_BOUND_CAPABILITIES), so without the write handlers a call would
+      // fall through to the no-handler path. The write handlers mint inside this DO (this.hasher) and
+      // validate INGEST_BASE_URL lazily + fail-closed at create time.
+      const handlers = buildCapabilityHandlers({
         tenant,
         cursorKey: this.cursorKey,
         auditKey: this.auditKey,
+        hasher: this.hasher,
+        ingestBaseUrl: this.env.INGEST_BASE_URL,
       });
       return await runCapabilityTool(handlers, capabilityName, ctx, args, (event, fields) =>
         this.log(event, fields),

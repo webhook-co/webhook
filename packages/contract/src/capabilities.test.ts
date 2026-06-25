@@ -4,6 +4,7 @@ import {
   auditVerify,
   CAPABILITIES,
   CAPABILITY_REGISTRY,
+  endpointsCreate,
   eventsReplay,
   eventsTail,
 } from "./capabilities";
@@ -17,6 +18,7 @@ import {
 const EXPECTED_NAMES = [
   "endpoints.list",
   "endpoints.get",
+  "endpoints.create",
   "events.list",
   "events.get",
   "events.getPayload",
@@ -136,6 +138,52 @@ describe("capability registry", () => {
       headCursor: "sig.cursor",
     });
     expect(list.success).toBe(true);
+  });
+});
+
+describe("endpoints.create", () => {
+  it("is the write capability — endpoints:write scope, bound on api/cli/mcp, web deferred, not idempotent", () => {
+    expect(endpointsCreate.auth.scope).toBe("endpoints:write");
+    expect(endpointsCreate.semantics.idempotent).toBeUndefined();
+    expect(requiredSurfaces(endpointsCreate)).toEqual(["api", "cli", "mcp"]);
+    expect(Object.keys(endpointsCreate.surfaceExempt ?? {})).toEqual(["web"]);
+    // FORBIDDEN must be declarable so an under-scoped caller maps to 403; RATE_LIMITED for the soft cap.
+    expect(endpointsCreate.errors).toContain("FORBIDDEN");
+    expect(endpointsCreate.errors).toContain("RATE_LIMITED");
+  });
+
+  it("endpoints:write is in the closed grantable scope set", () => {
+    expect(new Set<string>(CAPABILITY_SCOPES).has("endpoints:write")).toBe(true);
+  });
+
+  it("validates the name input (trims, requires 1..200 chars)", () => {
+    expect(endpointsCreate.input.safeParse({ name: "stripe prod" }).success).toBe(true);
+    expect(endpointsCreate.input.safeParse({ name: "" }).success).toBe(false);
+    expect(endpointsCreate.input.safeParse({ name: "   " }).success).toBe(false); // trims to empty
+    expect(endpointsCreate.input.safeParse({ name: "x".repeat(201) }).success).toBe(false);
+    expect(endpointsCreate.input.safeParse({}).success).toBe(false);
+  });
+
+  it("output is an endpoint plus a one-time ingestUrl", () => {
+    const ok = endpointsCreate.output.safeParse({
+      id: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
+      orgId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061",
+      name: "stripe prod",
+      paused: false,
+      createdAt: "2026-06-25T00:00:00.000Z",
+      ingestUrl: "https://wbhk.my/whep_abc",
+    });
+    expect(ok.success).toBe(true);
+    // A non-URL ingestUrl is rejected by z.url().
+    const bad = endpointsCreate.output.safeParse({
+      id: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
+      orgId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061",
+      name: "stripe prod",
+      paused: false,
+      createdAt: "2026-06-25T00:00:00.000Z",
+      ingestUrl: "not a url",
+    });
+    expect(bad.success).toBe(false);
   });
 });
 

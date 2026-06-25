@@ -9,6 +9,14 @@
   "observability": {
     "enabled": true,
   },
+  // Plain (non-secret) vars. INGEST_BASE_URL is the cookieless ingest apex the endpoints.create tool
+  // builds its one-time ingest URL from. COMMITTED here (NOT deploy-injected): the prod-overlay generator
+  // carries account ids/secrets/services but NO `vars`, and only PREPENDS to this config, so the value
+  // survives to prod. Must match api's INGEST_BASE_URL + the engine route apex (wbhk.my). Override via
+  // .dev.vars for local dev.
+  "vars": {
+    "INGEST_BASE_URL": "https://wbhk.my",
+  },
   // The McpAgent runs as a Durable Object (SQLite-backed). `WebhookMcp.serve("/mcp")` resolves the
   // namespace by the default binding name MCP_OBJECT; the class is exported from src/index.ts.
   "durable_objects": {

@@ -1,5 +1,5 @@
 import { AuthContextSchema, CapabilityFault, type AuthContext } from "@webhook-co/contract";
-import type { ReadHandlers, ReplayHandler } from "@webhook-co/db";
+import type { CapabilityHandlers, ReplayHandler } from "@webhook-co/db";
 import { bytesToB64 } from "@webhook-co/shared";
 
 import { authenticate, authorize, type ApiAuthDeps } from "./auth.js";
@@ -14,7 +14,7 @@ import { httpStatusForCapabilityError } from "./http-status.js";
 
 export interface ApiDeps {
   readonly authDeps: ApiAuthDeps;
-  readonly handlers: ReadHandlers;
+  readonly handlers: CapabilityHandlers;
   /**
    * The payloads R2 bucket — consumed ONLY by the events.getPayload route (the other routes are pure
    * DB reads through `handlers`). Optional in this router bag because it's route-specific; production
@@ -60,6 +60,13 @@ function matchRoute(
   if (method === "GET" && rest.length === 1 && rest[0] === "endpoints") {
     return { capability: "endpoints.list", input: listInput(query, {}) };
   }
+  if (method === "POST" && rest.length === 1 && rest[0] === "endpoints") {
+    // endpoints.create: a WRITE dispatched via the SHARED handlers map (createWriteHandlers merged in
+    // index.ts) — unlike events.replay's dedicated field, so mcp binds the same handler. The `name`
+    // comes from the JSON body (read in handleCreateEndpoint); the handler enforces endpoints:write,
+    // appends the audit row, and returns the one-time ingest URL.
+    return { capability: "endpoints.create", input: {} };
+  }
   if (method === "GET" && rest.length === 2 && rest[0] === "endpoints") {
     return { capability: "endpoints.get", input: { endpointId: rest[1] } };
   }
@@ -91,7 +98,7 @@ function matchRoute(
     return { capability: "events.get", input: { eventId: rest[1] } };
   }
   if (method === "GET" && rest.length === 3 && rest[0] === "events" && rest[2] === "payload") {
-    // events.getPayload: the raw stored body (base64 envelope). Not a DB ReadHandler — dispatched
+    // events.getPayload: the raw stored body (base64 envelope). Not a DB CapabilityHandler — dispatched
     // specially in handleRequest (it does the RLS metadata read THEN an R2 GET). ADR-0015.
     return { capability: "events.getPayload", input: { eventId: rest[1] } };
   }
@@ -154,13 +161,16 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
   }
 
   // Dispatch inside the fault-mapping try/catch. events.getPayload is special-cased: it is NOT a DB
-  // ReadHandler — it does the RLS metadata read (via the events.get handler) then streams the R2 body.
+  // CapabilityHandler — it does the RLS metadata read (via the events.get handler) then streams the R2 body.
   try {
     if (route.capability === "events.getPayload") {
       return await handlePayload(deps, authz.ctx, String(route.input.eventId));
     }
     if (route.capability === "events.replay") {
       return await handleReplay(deps, authz.ctx, String(route.input.eventId), request);
+    }
+    if (route.capability === "endpoints.create") {
+      return await handleCreateEndpoint(deps, authz.ctx, request);
     }
     const handler = deps.handlers.get(route.capability);
     if (handler === undefined) {
@@ -192,7 +202,7 @@ async function handlePayload(deps: ApiDeps, ctx: AuthContext, eventId: string): 
   if (eventsGet === undefined) throw new Error("no handler bound for capability: events.get");
   // events.get returns an EventSchema-validated row (getEvent runs EventSchema.parse), so
   // payloadR2Key is a guaranteed string (z.string()) — a projection drift throws upstream rather
-  // than yielding an undefined key. The cast only narrows the ReadHandler's `unknown` return.
+  // than yielding an undefined key. The cast only narrows the CapabilityHandler's `unknown` return.
   const event = (await eventsGet(ctx, { eventId })) as {
     payloadR2Key: string;
     contentType: string | null;
@@ -231,4 +241,31 @@ async function handleReplay(
   }
   const input = { ...(typeof body === "object" && body !== null ? body : {}), eventId };
   return Response.json(await deps.replay(ctx, input));
+}
+
+/**
+ * endpoints.create: a WRITE dispatched via the SHARED handlers map (createWriteHandlers, merged into
+ * deps.handlers in index.ts) — NOT a dedicated field like replay, so apps/mcp binds the very same
+ * handler. The whole input is the JSON body ({ name }); the handler enforces the endpoints:write scope
+ * (the api edge already did via authorizeBearer; this is the in-handler belt-and-suspenders), validates
+ * the body (bad/missing name → VALIDATION_ERROR), mints + inserts + audits in one tx, and returns the
+ * endpoint plus its one-time ingest URL.
+ */
+async function handleCreateEndpoint(
+  deps: ApiDeps,
+  ctx: AuthContext,
+  request: Request,
+): Promise<Response> {
+  const handler = deps.handlers.get("endpoints.create");
+  if (handler === undefined) {
+    throw new Error("no handler bound for capability: endpoints.create"); // wiring bug -> 5xx
+  }
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
+  }
+  const input = typeof body === "object" && body !== null ? body : {};
+  return Response.json(await handler(ctx, input));
 }

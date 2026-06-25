@@ -9,10 +9,11 @@ import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
 describe("MCP bound capabilities", () => {
   const names = MCP_BOUND_CAPABILITIES.map((c) => c.name).sort();
 
-  it("binds the 5 reads + events.tail cursor-pull as of slice 11", () => {
+  it("binds the 5 reads + events.tail + the endpoints.create write (api/cli/mcp parity)", () => {
     expect(names).toEqual(
       [
         "audit.verify",
+        "endpoints.create",
         "endpoints.get",
         "endpoints.list",
         "events.get",

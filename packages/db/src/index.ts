@@ -33,4 +33,5 @@ export * from "./verify-bearer";
 export * from "./auth-deps";
 export * from "./reads";
 export * from "./read-handlers";
+export * from "./write-handlers";
 export * from "./replay";
