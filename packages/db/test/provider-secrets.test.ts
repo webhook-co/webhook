@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { LocalKmsProvider, SecretStore } from "@webhook-co/shared";
+import { LocalKmsProvider, SecretStore, type SecretSealer } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
@@ -57,6 +57,29 @@ afterAll(async () => {
 });
 
 describe("addProviderSecret + getEndpointProviderSecrets", () => {
+  it("seals through any SecretSealer (not just SecretStore) — the api/mcp remote-sealer seam", async () => {
+    // In prod, api/mcp don't hold the KEK: they delegate sealing to the engine over a service binding
+    // (ADR-0078 / D1). That sealer is structurally just { sealString }. Prove addProviderSecret depends
+    // only on that narrow seam by sealing through a plain delegating object, then round-tripping.
+    const sealedUnder: string[] = [];
+    const remoteLike: SecretSealer = {
+      sealString: (plaintext, context) => {
+        sealedUnder.push(context.keyId);
+        return store.sealString(plaintext, context);
+      },
+    };
+    const plaintext = `whsec_${randomUUID()}`;
+    const added = await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: epA, provider: "github", plaintext },
+      remoteLike,
+    );
+    expect(sealedUnder).toEqual([added.id]); // sealed under the new row id as the AAD keyId, via the seam
+    const found = (await getEndpointProviderSecrets(authn, epA)).find((s) => s.id === added.id);
+    expect(found).toBeDefined();
+    expect(await unseal(found!)).toBe(plaintext);
+  });
+
   it("seals a secret, stores only ciphertext, and the round-trip unseals to the plaintext", async () => {
     const plaintext = `whsec_${randomUUID()}`;
     const added = await addProviderSecret(
