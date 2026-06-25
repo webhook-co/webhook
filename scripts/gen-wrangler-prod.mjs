@@ -77,6 +77,9 @@ const APPS = {
       "<HYPERDRIVE_AUTHN_ID>",
       "<HYPERDRIVE_TENANT_ID>",
       "<KV_AUTHZ_ID>",
+      // KV_CONFIG: the engine's ingest cache, bound into api ONLY to evict on endpoints.delete/rotate
+      // (ADR-0076). Reuses the existing KV_CONFIG_ID GH repo var (no new var) — same namespace as engine.
+      "<KV_CONFIG_ID>",
       "webhook-payloads-dev",
     ],
   },
@@ -84,7 +87,14 @@ const APPS = {
     domain: "mcp.webhook.co",
     // + MCP_SESSION_KEY (A8c): the mcp-specific session-binding HMAC key (not shared with engine/api).
     secrets: [...SHARED, "MCP_SESSION_KEY"],
-    placeholders: ["<HYPERDRIVE_AUTHN_ID>", "<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
+    // KV_CONFIG (ADR-0076): bound into mcp ONLY to evict on the endpoints.delete/rotate tools — same
+    // namespace as engine via the existing KV_CONFIG_ID repo var (no new var).
+    placeholders: [
+      "<HYPERDRIVE_AUTHN_ID>",
+      "<HYPERDRIVE_TENANT_ID>",
+      "<KV_AUTHZ_ID>",
+      "<KV_CONFIG_ID>",
+    ],
     // AUTH_ISSUER (A8) — the service binding to auth.'s IssuerIntrospect WorkerEntrypoint, so mcp validates
     // opaque OAuth provider tokens by introspection. Deploy-injected here (NOT committed) because of the
     // ordering: auth. must be LIVE first (it is now — apps/auth deployed), or CF late-binds and mcp fails to

@@ -2,8 +2,10 @@ import {
   AuthContextSchema,
   auditVerify as auditVerifyCap,
   endpointsCreate as endpointsCreateCap,
+  endpointsDelete as endpointsDeleteCap,
   endpointsGet as endpointsGetCap,
   endpointsList as endpointsListCap,
+  endpointsRotate as endpointsRotateCap,
   eventsGet as eventsGetCap,
   eventsGetPayload as eventsGetPayloadCap,
   eventsList as eventsListCap,
@@ -11,6 +13,7 @@ import {
   type AuthContext,
   type CapabilityError,
   type CreatedEndpoint,
+  type DeletedEndpoint,
   type Target,
 } from "@webhook-co/contract";
 import {
@@ -137,6 +140,17 @@ export interface ApiClient {
    * idempotent=false so a transient failure is never blind-retried (no accidental duplicate).
    */
   endpointsCreate(input: { name: string }): Promise<CreatedEndpoint>;
+  /**
+   * Soft-delete an endpoint (`DELETE /v1/endpoints/:id`). Idempotent — a re-delete returns the recorded
+   * deletedAt, an unknown id is NOT_FOUND. The ingest URL stops accepting events; captured events remain.
+   */
+  endpointsDelete(endpointId: string): Promise<DeletedEndpoint>;
+  /**
+   * Rotate an endpoint's ingest URL (`POST /v1/endpoints/:id/rotate`). NOT idempotent — mints a fresh
+   * one-time `ingestUrl` and immediately kills the old one (hard cutover). Sent with idempotent=false so
+   * a transient failure is never blind-retried (no accidental second rotation).
+   */
+  endpointsRotate(endpointId: string): Promise<CreatedEndpoint>;
   /** A page of an endpoint's captured events (`GET /v1/endpoints/:id/events`). */
   eventsList(endpointId: string, params?: EventsListParams): Promise<Page<EventSummary>>;
   /** A single event in full fidelity by id (`GET /v1/events/:id`). */
@@ -198,7 +212,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   // non-idempotent request, is never retried — so a replay can't be double-delivered by a blind retry.
   async function request(
     path: string,
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "DELETE",
     opts: { body?: unknown; idempotent: boolean },
   ): Promise<unknown> {
     // The live bearer — mutated when the reactive refresh hook hands back a rotated access token. A 401
@@ -253,6 +267,10 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   const getJson = (path: string): Promise<unknown> => request(path, "GET", { idempotent: true });
   const postJson = (path: string, body: unknown, idempotent: boolean): Promise<unknown> =>
     request(path, "POST", { body, idempotent });
+  // DELETE is HTTP-idempotent and the server handler is idempotent (a re-delete returns the recorded
+  // deletedAt), so a transient failure is safe to blind-retry.
+  const deleteJson = (path: string): Promise<unknown> =>
+    request(path, "DELETE", { idempotent: true });
 
   // Parse a response against its shared contract schema; an unexpected shape is UNEXPECTED (never a
   // capability code), so a server/version skew surfaces as "unexpected response", not a misleading 4xx.
@@ -284,6 +302,16 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       // idempotent=false: a create is not safe to blind-retry (it would mint a duplicate endpoint).
       const json = await postJson("/v1/endpoints", { name: input.name }, false);
       return parseOrThrow(endpointsCreateCap.output, json, "endpoint");
+    },
+    async endpointsDelete(endpointId): Promise<DeletedEndpoint> {
+      const path = `/v1/endpoints/${encodeURIComponent(endpointId)}`;
+      return parseOrThrow(endpointsDeleteCap.output, await deleteJson(path), "deleted endpoint");
+    },
+    async endpointsRotate(endpointId): Promise<CreatedEndpoint> {
+      // idempotent=false: rotate mints a new token; a blind retry would rotate again (a second cutover).
+      const path = `/v1/endpoints/${encodeURIComponent(endpointId)}/rotate`;
+      const json = await postJson(path, undefined, false);
+      return parseOrThrow(endpointsRotateCap.output, json, "rotated endpoint");
     },
     async eventsList(endpointId, params = {}): Promise<Page<EventSummary>> {
       const path = withQuery(`/v1/endpoints/${encodeURIComponent(endpointId)}/events`, {

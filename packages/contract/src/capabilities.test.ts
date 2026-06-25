@@ -5,6 +5,8 @@ import {
   CAPABILITIES,
   CAPABILITY_REGISTRY,
   endpointsCreate,
+  endpointsDelete,
+  endpointsRotate,
   eventsReplay,
   eventsTail,
 } from "./capabilities";
@@ -19,6 +21,8 @@ const EXPECTED_NAMES = [
   "endpoints.list",
   "endpoints.get",
   "endpoints.create",
+  "endpoints.delete",
+  "endpoints.rotate",
   "events.list",
   "events.get",
   "events.getPayload",
@@ -184,6 +188,60 @@ describe("endpoints.create", () => {
       ingestUrl: "not a url",
     });
     expect(bad.success).toBe(false);
+  });
+});
+
+describe("endpoints.delete", () => {
+  it("is a write capability — endpoints:write, bound on api/cli/mcp, web deferred, idempotent", () => {
+    expect(endpointsDelete.auth.scope).toBe("endpoints:write");
+    expect(endpointsDelete.semantics.idempotent).toBe(true);
+    expect(requiredSurfaces(endpointsDelete)).toEqual(["api", "cli", "mcp"]);
+    expect(Object.keys(endpointsDelete.surfaceExempt ?? {})).toEqual(["web"]);
+    // FORBIDDEN so an under-scoped caller maps to 403; NOT_FOUND for an unknown id.
+    expect(endpointsDelete.errors).toContain("FORBIDDEN");
+    expect(endpointsDelete.errors).toContain("NOT_FOUND");
+  });
+
+  it("validates the endpointId input (rejects a non-uuid)", () => {
+    expect(
+      endpointsDelete.input.safeParse({ endpointId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060" })
+        .success,
+    ).toBe(true);
+    expect(endpointsDelete.input.safeParse({ endpointId: "not-a-uuid" }).success).toBe(false);
+    expect(endpointsDelete.input.safeParse({}).success).toBe(false);
+  });
+
+  it("output is the deleted id plus a deletedAt timestamp (coerced)", () => {
+    const ok = endpointsDelete.output.safeParse({
+      id: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
+      deletedAt: "2026-06-25T00:00:00.000Z",
+    });
+    expect(ok.success).toBe(true);
+    const bad = endpointsDelete.output.safeParse({ id: "not-a-uuid", deletedAt: "x" });
+    expect(bad.success).toBe(false);
+  });
+});
+
+describe("endpoints.rotate", () => {
+  it("is a write capability — endpoints:write, bound on api/cli/mcp, web deferred, NOT idempotent", () => {
+    expect(endpointsRotate.auth.scope).toBe("endpoints:write");
+    expect(endpointsRotate.semantics.idempotent).toBeUndefined();
+    expect(requiredSurfaces(endpointsRotate)).toEqual(["api", "cli", "mcp"]);
+    expect(Object.keys(endpointsRotate.surfaceExempt ?? {})).toEqual(["web"]);
+    expect(endpointsRotate.errors).toContain("FORBIDDEN");
+    expect(endpointsRotate.errors).toContain("NOT_FOUND");
+  });
+
+  it("output is an endpoint plus a fresh one-time ingestUrl (same shape as create)", () => {
+    const ok = endpointsRotate.output.safeParse({
+      id: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
+      orgId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061",
+      name: "stripe prod",
+      paused: false,
+      createdAt: "2026-06-25T00:00:00.000Z",
+      ingestUrl: "https://wbhk.my/whep_new",
+    });
+    expect(ok.success).toBe(true);
   });
 });
 

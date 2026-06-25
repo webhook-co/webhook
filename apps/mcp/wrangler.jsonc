@@ -36,10 +36,16 @@
   // KV_AUTHZ caches resolved api-key principals (keyed by hash), invalidated on revoke (KV can be
   // invalidated, Hyperdrive's query cache can't). The OAuthProvider's OAUTH_KV token/grant/client store
   // is GONE (A8): mcp is no longer an issuer — opaque OAuth tokens are validated by introspection to auth.
+  // KV_CONFIG is the engine's INGEST-token cache (the SAME namespace by id, overlay-injected): mcp binds
+  // it ONLY to EVICT a token's entry after the endpoints.delete / endpoints.rotate tools (ADR-0076).
   "kv_namespaces": [
     {
       "binding": "KV_AUTHZ",
       "id": "<KV_AUTHZ_ID>",
+    },
+    {
+      "binding": "KV_CONFIG",
+      "id": "<KV_CONFIG_ID>",
     },
   ],
   // AUTH_ISSUER — the service binding to auth.'s IssuerIntrospect WorkerEntrypoint (A8): validates opaque

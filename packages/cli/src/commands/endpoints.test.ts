@@ -220,6 +220,100 @@ describe("wbhk endpoints create", () => {
   });
 });
 
+describe("wbhk endpoints delete", () => {
+  const deleted = { id: EP1, deletedAt: "2026-05-01T00:00:00.000Z" };
+
+  it("with --yes, soft-deletes and prints the {id, deleted} record", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(deleted) });
+    await run(app, ["endpoints", "delete", EP1, "--yes"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain("deleted");
+    expect(t.stdout()).toContain(EP1);
+  });
+
+  it("emits the record as one JSON value with --output json (no stderr noise)", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(deleted) });
+    await run(app, ["endpoints", "delete", EP1, "--yes", "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout()) as { id: string; deletedAt: string };
+    expect(parsed.id).toBe(EP1);
+    expect(t.stderr()).toBe("");
+  });
+
+  it("refuses without --yes in a non-TTY (usage error) and never calls the api", async () => {
+    // Default makeTestContext: isInteractive=false, and io.fetch throws if ever called.
+    const t = makeTestContext({ store: loggedInStore() });
+    await run(app, ["endpoints", "delete", EP1], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("--yes");
+  });
+
+  it("prompts in an interactive TTY and proceeds when the user types 'yes'", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch(deleted),
+      lineResponse: "yes",
+    });
+    await run(app, ["endpoints", "delete", EP1], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain(EP1);
+  });
+
+  it("aborts (usage error) when the interactive confirmation is declined", async () => {
+    const t = makeTestContext({ store: loggedInStore(), lineResponse: "no" });
+    await run(app, ["endpoints", "delete", EP1], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("aborted");
+  });
+
+  it("maps a 404 to the NOT_FOUND exit code", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: statusFetch(404) });
+    await run(app, ["endpoints", "delete", EP1, "--yes"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.NOT_FOUND);
+  });
+
+  it("requires a credential (NotLoggedInError → UNAUTHORIZED exit)", async () => {
+    const t = makeTestContext({ store: emptyStore() });
+    await run(app, ["endpoints", "delete", EP1, "--yes"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.UNAUTHORIZED);
+  });
+});
+
+describe("wbhk endpoints rotate", () => {
+  const rotated = {
+    id: EP1,
+    orgId: ORG,
+    name: "orders-prod",
+    paused: false,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    ingestUrl: "https://wbhk.my/whep_rotated_secret_token_value_bbbbbbbbbbbb",
+  };
+
+  it("with --yes, reveals the NEW ingest url on stdout and the caveat on stderr (pipe-safe)", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(rotated) });
+    await run(app, ["endpoints", "rotate", EP1, "--yes"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain(rotated.ingestUrl);
+    expect(t.stderr().toLowerCase()).toContain("save");
+    expect(t.stderr().toLowerCase()).toContain("previous url"); // the old url is dead (hard cutover)
+  });
+
+  it("refuses without --yes in a non-TTY (usage error) and never calls the api", async () => {
+    const t = makeTestContext({ store: loggedInStore() });
+    await run(app, ["endpoints", "rotate", EP1], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("--yes");
+  });
+
+  it("emits the full record (incl. new ingestUrl) as one JSON value with --output json", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(rotated) });
+    await run(app, ["endpoints", "rotate", EP1, "--yes", "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout()) as { id: string; ingestUrl: string };
+    expect(parsed.id).toBe(EP1);
+    expect(parsed.ingestUrl).toBe(rotated.ingestUrl);
+    expect(t.stderr()).toBe("");
+  });
+});
+
 describe("global --color / --no-color (end to end)", () => {
   const ANSI = "["; // any ANSI escape
 

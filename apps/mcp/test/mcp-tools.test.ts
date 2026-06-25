@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 // validator (KV credential-cache hot path) -> the resolved principal on ctx.props -> the WebhookMcp
 // Durable Object -> the MCP transport. We drive the JSON-RPC
 // handshake directly over SELF.fetch (each request reads its response to completion, so no SSE
-// stream lingers) and assert tools/list surfaces the 7 bound tools. This is the first time init()
+// stream lingers) and assert tools/list surfaces the 9 bound tools. This is the first time init()
 // runs in workerd, so it also proves the zod-input -> MCP-tool-schema conversion. The tenant DB
 // read itself is covered exhaustively in the db pool (packages/db reads.test.ts), so this test
 // deliberately stops at tools/list (no Postgres): it proves the WIRING, not the reads.
@@ -23,8 +23,10 @@ const TOKEN = `whk_${TOKEN_BODY}${keyChecksum(TOKEN_BODY)}`;
 const BOUND_TOOLS = [
   "audit.verify",
   "endpoints.create",
+  "endpoints.delete",
   "endpoints.get",
   "endpoints.list",
+  "endpoints.rotate",
   "events.get",
   "events.list",
   "events.tail",
@@ -136,7 +138,7 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     await seedApiKey(["endpoints:read", "events:read", "audit:read"]);
   });
 
-  it("lists exactly the 7 bound tools after the initialize handshake", async () => {
+  it("lists exactly the 9 bound tools after the initialize handshake", async () => {
     const { sessionId, protocolVersion } = await handshake();
     const res = await rpc(
       { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },

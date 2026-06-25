@@ -12,16 +12,22 @@
 import {
   CapabilityFault,
   endpointsCreate,
+  endpointsDelete,
+  endpointsRotate,
   type AnyCapability,
   type AuthContext,
 } from "@webhook-co/contract";
 
 import type { Sql } from "./client";
 import type { CredentialHasher } from "./credential";
-import { createEndpointWithAudit } from "./endpoints";
+import {
+  createEndpointWithAudit,
+  deleteEndpointWithAudit,
+  rotateEndpointWithAudit,
+} from "./endpoints";
 import { createReadHandlers, type CapabilityHandlers, type ReadHandlerDeps } from "./read-handlers";
 
-/** Per-org endpoint soft cap (ADR-0075): an abuse backstop while there is no endpoints.delete. Tunable. */
+/** Per-org endpoint soft cap (ADR-0075): an abuse backstop. Counts LIVE endpoints (delete relieves it). */
 export const DEFAULT_MAX_ENDPOINTS_PER_ORG = 100;
 
 export interface WriteHandlerDeps {
@@ -35,6 +41,13 @@ export interface WriteHandlerDeps {
   readonly ingestBaseUrl: string;
   /** Per-org endpoint soft cap; defaults to DEFAULT_MAX_ENDPOINTS_PER_ORG. */
   readonly maxEndpoints?: number;
+  /**
+   * Evict an ingest-token hash from the KV ingest cache (ADR-0076) — required by endpoints.delete +
+   * endpoints.rotate to stop/redirect ingest on the wbhk.my hot path. Build it with makeIngestHashEvictor
+   * over the engine's KV_CONFIG namespace (bound into api + mcp). Best-effort by construction (the
+   * mutation is durable + self-healing without it); the read-only surfaces don't supply it.
+   */
+  readonly invalidateIngestHash?: (keyHash: Buffer) => Promise<void>;
 }
 
 /**
@@ -95,6 +108,59 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
       paused: created.paused,
       createdAt: created.createdAt,
       ingestUrl: `${apex}/${created.plaintext}`,
+    };
+  });
+
+  // endpoints.delete + endpoints.rotate both need the KV ingest-cache evictor (ADR-0076). It's optional
+  // on WriteHandlerDeps (read-only surfaces don't supply it), so resolve it once and fail LOUD (a plain
+  // Error -> 500 / generic tool error, never a client CapabilityFault) if a write surface forgot to wire
+  // it — a missing evictor would silently leave ingest live after a delete/rotate.
+  function requireEvictor(): (keyHash: Buffer) => Promise<void> {
+    if (deps.invalidateIngestHash === undefined) {
+      throw new Error("write handlers: invalidateIngestHash dep is required for delete/rotate");
+    }
+    return deps.invalidateIngestHash;
+  }
+
+  handlers.set(endpointsDelete.name, async (ctx, input) => {
+    ensureScope(ctx, endpointsDelete); // FIRST — sole authz gate on mcp
+    const parsed = endpointsDelete.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const evict = requireEvictor();
+    const deleted = await deleteEndpointWithAudit(
+      deps.tenant,
+      { orgId: ctx.orgId, endpointId: parsed.data.endpointId, actor: ctx.userId ?? null },
+      deps.auditKey,
+    );
+    // Evict so the deleted endpoint's token stops resolving NOW (the cold-lookup deleted_at filter is
+    // the durable stop + the TTL self-heal; this makes it immediate). Best-effort — never fails the call.
+    await evict(deleted.tokenHash);
+    return { id: deleted.id, deletedAt: deleted.deletedAt };
+  });
+
+  handlers.set(endpointsRotate.name, async (ctx, input) => {
+    ensureScope(ctx, endpointsRotate); // FIRST — sole authz gate on mcp
+    const parsed = endpointsRotate.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const apex = normalizeIngestApex(deps.ingestBaseUrl); // validate BEFORE minting (mirrors create)
+    const evict = requireEvictor();
+    const rotated = await rotateEndpointWithAudit(
+      deps.tenant,
+      { orgId: ctx.orgId, endpointId: parsed.data.endpointId, actor: ctx.userId ?? null },
+      deps.hasher,
+      deps.auditKey,
+    );
+    // HARD cutover: evict the OLD token so the old URL stops resolving immediately. Best-effort —
+    // never fails the call (a thrown eviction would lose the one-time reveal of the NEW url below).
+    await evict(rotated.oldTokenHash);
+    // The ingestUrl EMBEDS the freshly-minted plaintext token — the one-time reveal. Return it once.
+    return {
+      id: rotated.id,
+      orgId: rotated.orgId,
+      name: rotated.name,
+      paused: rotated.paused,
+      createdAt: rotated.createdAt,
+      ingestUrl: `${apex}/${rotated.plaintext}`,
     };
   });
 

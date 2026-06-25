@@ -11,8 +11,10 @@ import { completionRoute } from "./commands/completion.js";
 import { doctorCommand } from "./commands/doctor.js";
 import {
   endpointsCreateCommand,
+  endpointsDeleteCommand,
   endpointsGetCommand,
   endpointsListCommand,
+  endpointsRotateCommand,
 } from "./commands/endpoints.js";
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
 import { listenCommand } from "./commands/listen.js";
@@ -39,6 +41,8 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "endpoints.list": ["endpoints", "list"],
   "endpoints.get": ["endpoints", "get"],
   "endpoints.create": ["endpoints", "create"],
+  "endpoints.delete": ["endpoints", "delete"],
+  "endpoints.rotate": ["endpoints", "rotate"],
   "events.list": ["events", "list"],
   "events.get": ["events", "get"],
   "events.getPayload": ["events", "payload"],
@@ -52,8 +56,10 @@ const endpointsRoute = buildRouteMap({
     list: endpointsListCommand,
     get: endpointsGetCommand,
     create: endpointsCreateCommand,
+    delete: endpointsDeleteCommand,
+    rotate: endpointsRotateCommand,
   },
-  docs: { brief: "inspect your endpoints" },
+  docs: { brief: "inspect and manage your endpoints" },
 });
 
 const eventsRoute = buildRouteMap({

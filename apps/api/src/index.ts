@@ -9,6 +9,7 @@ import {
   createCredentialHasherFromBase64,
   createReplayHandler,
   makeApiKeyAuthDeps,
+  makeIngestHashEvictor,
 } from "@webhook-co/db";
 import {
   b64ToBytes,
@@ -47,6 +48,13 @@ export interface Env {
   HYPERDRIVE_TENANT: Hyperdrive;
   /** KV caching resolved principals (keyed by api-key hash); invalidated on revoke. */
   KV_AUTHZ: KVNamespace;
+  /**
+   * The engine's ingest-token cache namespace (the SAME KV_CONFIG the engine reads on the wbhk.my hot
+   * path). api binds it ONLY to EVICT a token's entry after endpoints.delete / endpoints.rotate
+   * (ADR-0076), via makeIngestHashEvictor — never to read/write principals. KV is global-by-id, so this
+   * is the same namespace by id (overlay-injected); the delete is keyed by credentialCacheKey(hash).
+   */
+  KV_CONFIG: KVNamespace;
   /**
    * The payloads bucket (shared with engine, which writes it). The api only ever GETs from it —
    * events.getPayload streams a captured event's stored body after an RLS metadata read (ADR-0015).
@@ -126,6 +134,13 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
       auditKey,
       hasher,
       ingestBaseUrl: env.INGEST_BASE_URL,
+      // endpoints.delete / endpoints.rotate evict the token's hot entry from the engine's ingest cache
+      // (ADR-0076). Best-effort: the soft-delete deleted_at filter + the rotated hash mismatch already
+      // self-heal within the KV TTL, so a KV blip is logged (never fails the request — which for rotate
+      // would lose the one-time URL reveal).
+      invalidateIngestHash: makeIngestHashEvictor(kvCredentialCache(env.KV_CONFIG), (err) =>
+        console.log(JSON.stringify({ message: "api.ingest_evict_failed", error: String(err) })),
+      ),
     }),
     payloads: env.R2_PAYLOADS,
     replay: createReplayHandler({ tenant }),
