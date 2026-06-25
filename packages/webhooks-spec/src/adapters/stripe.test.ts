@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { hmacSha256, bytesToHex, utf8Encoder } from "../bytes";
 import { stripeAdapter } from "./stripe";
+import { MAX_VERIFIABLE_BODY_BYTES } from "./shared";
 
 const SECRET = "whsec_stripe_test_secret";
 const ROTATED = "whsec_rotated_secret";
@@ -167,7 +168,7 @@ describe("stripeAdapter", () => {
   });
 
   it("diagnoses an oversized body without attempting the HMAC", async () => {
-    const huge = new Uint8Array(1024 * 1024 + 1);
+    const huge = new Uint8Array(MAX_VERIFIABLE_BODY_BYTES + 1);
     const result = await stripeAdapter.verify({
       rawBody: huge,
       headers: headers(`t=${nowSec},v1=${"a".repeat(64)}`),
@@ -202,6 +203,21 @@ describe("stripeAdapter", () => {
       now: NOW,
     });
     expect(result.ok).toBe(true);
+  });
+
+  it("verifies a valid v1 regardless of its position among many entries (no false-reject)", async () => {
+    const good = await signStripe(BODY, nowSec, SECRET); // "t=<ts>,v1=<good-hex>"
+    const goodV1 = good.slice(good.indexOf("v1="));
+    const bogus = Array(50)
+      .fill(`v1=${"0".repeat(64)}`)
+      .join(",");
+    const result = await stripeAdapter.verify({
+      rawBody: utf8Encoder.encode(BODY),
+      headers: headers(`t=${nowSec},${bogus},${goodV1}`),
+      secrets: [SECRET],
+      now: NOW,
+    });
+    expect(result.ok).toBe(true); // the valid v1 is checked regardless of position
   });
 
   it("returns the MOST INFORMATIVE diagnosis across multiple failing v1 entries", async () => {

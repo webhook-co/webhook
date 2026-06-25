@@ -46,7 +46,7 @@ describe("verifyHmacHex", () => {
     const result = await verifyHmacHex({
       scheme: "github",
       rawBody: new Uint8Array([1, 2, 3]),
-      expectedHex: "nothex",
+      expectedHexes: ["nothex"],
       candidates,
       buildMessage: (b) => b,
     });
@@ -58,7 +58,7 @@ describe("verifyHmacHex", () => {
     const result = await verifyHmacHex({
       scheme: "github",
       rawBody: new Uint8Array([1]),
-      expectedHex: "ab",
+      expectedHexes: ["ab"],
       candidates: [],
       buildMessage: (b) => b,
     });
@@ -74,7 +74,7 @@ describe("verifyHmacHex", () => {
     const result = await verifyHmacHex({
       scheme: "github",
       rawBody: new Uint8Array([1, 2, 3]),
-      expectedHex: "ab",
+      expectedHexes: ["ab"],
       candidates,
       buildMessage: (b) => b,
     });
@@ -87,7 +87,7 @@ describe("verifyHmacHex", () => {
     const result = await verifyHmacHex({
       scheme: "github",
       rawBody: new Uint8Array([0xff, 0xfe, 0xfd]),
-      expectedHex: "a".repeat(64),
+      expectedHexes: ["a".repeat(64)],
       candidates,
       buildMessage: (b) => b,
     });
