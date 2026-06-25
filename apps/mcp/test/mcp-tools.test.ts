@@ -1,4 +1,4 @@
-import { createCredentialHasherFromBase64, credentialCacheKey } from "@webhook-co/db";
+import { createCredentialHasherFromBase64, credentialCacheKey, keyChecksum } from "@webhook-co/db";
 import { readSecretBinding } from "@webhook-co/shared";
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -15,8 +15,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 const ORIGIN = "https://mcp.webhook.co";
 // A real first-party access key shape (`whk_`, the API_KEY_PREFIX): the two-validator front door routes
 // it to the api-key chain (a non-`whk_` token would route to introspection). The resolver hashes the
-// whole plaintext, so any `whk_…` value works once its hash is seeded into the KV cache below.
-const TOKEN = "whk_test_integration_key";
+// whole plaintext (so the seeded KV hash matches), and since ADR-0073 the api-key path also runs a
+// checksum precheck — so the token must be a VALID checksummed `whk_` key (43 base62 body + 6-char CRC),
+// built here deterministically rather than an arbitrary literal.
+const TOKEN_BODY = "testintegrationkey".padEnd(43, "0");
+const TOKEN = `whk_${TOKEN_BODY}${keyChecksum(TOKEN_BODY)}`;
 const READ_TOOLS = [
   "audit.verify",
   "endpoints.get",
