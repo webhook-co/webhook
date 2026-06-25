@@ -17,6 +17,14 @@
   "observability": {
     "enabled": true,
   },
+  // Plain (non-secret) var. INGEST_BASE_URL is the cookieless ingest apex the dashboard's endpoint
+  // create/rotate actions build the one-time ingest URL from (`${INGEST_BASE_URL}/<token>`), mirroring
+  // apps/api. COMMITTED here (NOT deploy-injected): the prod overlay carries account ids/secrets/routes but
+  // no `vars` and only PREPENDS to this config, so the value survives to prod. endpoint-mint validates it
+  // fail-closed (a bad value throws before any mint, never returning a broken URL). Must match wbhk.my.
+  "vars": {
+    "INGEST_BASE_URL": "https://wbhk.my",
+  },
   // OpenNext emits the client/static assets under `.open-next/assets`; the worker serves them via this
   // binding (run-time-handled by the OpenNext server). No `account_id`/`routes` here — app.webhook.co is
   // bound at the zone per environment (mirrors apps/api + apps/www; no ids in the repo).
@@ -43,6 +51,25 @@
     {
       "binding": "KV_AUTHZ",
       "id": "<KV_AUTHZ_ID>",
+    },
+    // KV_CONFIG — the engine's INGEST-token cache (the SAME namespace by id, overlay-injected). The
+    // dashboard binds it ONLY to EVICT a token's entry after the endpoint delete/rotate actions (ADR-0076,
+    // mirrors api/mcp) so rotate's hard cutover stops the old URL immediately; never to read/write
+    // principals. Eviction is best-effort (the deleted_at filter + 300s TTL self-heal are the durable stop).
+    {
+      "binding": "KV_CONFIG",
+      "id": "<KV_CONFIG_ID>",
+    },
+  ],
+  // The payloads bucket (shared with engine, which WRITES it). The dashboard only ever GETs from it — the
+  // event payload-inspect view streams a captured event's stored body after an RLS metadata read (ADR-0015),
+  // exactly like apps/api's events.getPayload. Read-only is a usage discipline (a scoped token is a future
+  // hardening), not a binding mode. Miniflare provides a local R2 in `wrangler dev`; the deploy overlay maps
+  // webhook-payloads-dev → webhook-payloads-prod.
+  "r2_buckets": [
+    {
+      "binding": "R2_PAYLOADS",
+      "bucket_name": "webhook-payloads-dev",
     },
   ],
   // AUTH_SESSION_EXCHANGE — the service binding to auth.'s SessionExchange WorkerEntrypoint, so /auth/callback

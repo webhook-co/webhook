@@ -12,7 +12,9 @@
     "./grants": "./src/grants.ts",
     "./credential": "./src/credential.ts",
     "./credential-resolver": "./src/credential-resolver.ts",
-    "./auth-audit": "./src/auth-audit.ts"
+    "./auth-audit": "./src/auth-audit.ts",
+    "./reads": "./src/reads.ts",
+    "./endpoints": "./src/endpoints.ts"
   },
   "scripts": {
     "build": "tsc",

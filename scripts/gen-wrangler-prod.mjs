@@ -104,12 +104,22 @@ const APPS = {
   // The dashboard (app.webhook.co) — an OpenNext SSR Worker (main = .open-next/worker.js), deployed by
   // deploy-web.yml after `opennextjs-cloudflare build`. It reads the credential pepper + audit-chain key
   // (byte-identical to api/engine/mcp) and SESSION_TOKEN_SECRET (its own session-cookie HMAC key, web-only —
-  // not in SHARED). Binds the SAME webhook_app Hyperdrive (HYPERDRIVE_TENANT) + shared KV_AUTHZ the wedge
-  // uses. AUTH_BASE_URL isn't injected — env.ts defaults it to https://auth.webhook.co in prod.
+  // not in SHARED). Binds the same webhook_app Hyperdrive (HYPERDRIVE_TENANT), shared KV_AUTHZ, the engine's
+  // KV_CONFIG (ingest-token cache, evict-only — the endpoint delete/rotate actions, ADR-0076/0077) + the
+  // R2_PAYLOADS bucket (read-only, the event payload-inspect view). AUTH_BASE_URL isn't injected — env.ts
+  // defaults it to https://auth.webhook.co in prod.
   web: {
     domain: "app.webhook.co",
     secrets: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "SESSION_TOKEN_SECRET"],
-    placeholders: ["<HYPERDRIVE_TENANT_ID>", "<KV_AUTHZ_ID>"],
+    // + KV_CONFIG (the engine's ingest-token cache, same namespace by id) so the dashboard's endpoint
+    // delete/rotate actions evict the old token (ADR-0076/0077); + R2_PAYLOADS (webhook-payloads-dev →
+    // -prod) for the event payload-inspect view. Both reuse existing GH repo vars/buckets — no new infra.
+    placeholders: [
+      "<HYPERDRIVE_TENANT_ID>",
+      "<KV_AUTHZ_ID>",
+      "<KV_CONFIG_ID>",
+      "webhook-payloads-dev",
+    ],
     // AUTH_SESSION_EXCHANGE — the web→auth service binding to auth.'s SessionExchange WorkerEntrypoint, so the
     // app. session handoff redeems its single-use ticket over a private RPC instead of the public
     // POST /session/exchange route. Deploy-injected (NOT committed), exactly like mcp's AUTH_ISSUER: auth. must
