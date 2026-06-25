@@ -1,4 +1,4 @@
-import { createCredentialHasherFromBase64, credentialCacheKey } from "@webhook-co/db";
+import { createCredentialHasherFromBase64, credentialCacheKey, keyChecksum } from "@webhook-co/db";
 import { readSecretBinding } from "@webhook-co/shared";
 import { env, SELF } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -10,8 +10,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 // the request is rejected (404) before the transport can route. This is the cross-principal warm-DO test.
 
 const ORIGIN = "https://mcp.webhook.co";
-const TOKEN_A = "whk_isolation_principal_a"; // org_a
-const TOKEN_B = "whk_isolation_principal_b"; // org_b
+// Valid checksummed `whk_` keys (43 base62 body + 6-char CRC) — the ADR-0073 api-key precheck rejects
+// malformed keys before the seeded KV lookup, so these must be well-formed (and distinct per principal).
+const TOKEN_A_BODY = "isolationprincipala".padEnd(43, "0");
+const TOKEN_B_BODY = "isolationprincipalb".padEnd(43, "0");
+const TOKEN_A = `whk_${TOKEN_A_BODY}${keyChecksum(TOKEN_A_BODY)}`; // org_a
+const TOKEN_B = `whk_${TOKEN_B_BODY}${keyChecksum(TOKEN_B_BODY)}`; // org_b
 
 /** Seed the KV credential-cache hot path so `token` resolves to `orgId` (audience-bound) without Postgres. */
 async function seedKey(token: string, orgId: string): Promise<void> {

@@ -5,11 +5,12 @@
 // the cold lookup and the resolver stamp must agree on). Per ADR-0010 r5/r7, a minted `whk_` key
 // validates through THIS seam — there is no second key store.
 
-import { makeApiKeyColdLookup } from "./api-keys";
+import { API_KEY_PREFIX, makeApiKeyColdLookup } from "./api-keys";
 import { type Sql } from "./client";
 import { type CredentialHasher } from "./credential";
 import { type CredentialCache } from "./credential-cache";
 import { createCredentialResolver } from "./credential-resolver";
+import { verifyKeyChecksum } from "./key-checksum";
 import { makeVerifyBearer } from "./verify-bearer";
 
 /** Canonical RFC 8707 audience for api.webhook.co (the api REST surface + the engine /listen tunnel). */
@@ -52,6 +53,11 @@ export function makeApiKeyAuthDeps(opts: ApiKeyAuthDepsOptions): ApiKeyAuthDeps 
     // `resource` is the surface audience the resolver conditionally stamps on the undefined case (A0b).
     coldLookup: makeApiKeyColdLookup(opts.authn),
     resource: opts.resource,
+    // ADR-0073: reject a malformed/typo'd/old-format whk_ key at the edge (before hash/cache/DB).
+    // This is INTENTIONALLY only on the api-key path — the ingest resolver (whep_ tokens, which carry
+    // no checksum) omits it. Forgetting it elsewhere only forfeits cheap DoS-shedding, never auth
+    // (the by-hash lookup is the real auth); the checksum is not a security control.
+    precheck: (plaintext) => verifyKeyChecksum(API_KEY_PREFIX, plaintext),
   });
   return { verifyBearer: makeVerifyBearer(resolver), resource: opts.resource };
 }
