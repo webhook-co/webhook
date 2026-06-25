@@ -202,6 +202,66 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     const deps: ApiDeps = { authDeps: authDeps(verify(scoped)), handlers: handlersOf({}) };
     expect((await handleRequest(get("/v1/nonsense"), deps)).status).toBe(404);
   });
+
+  // endpoints.delete + endpoints.rotate (ADR-0076): WRITEs with NO body, so they dispatch via the
+  // GENERIC shared-handlers map (the endpointId comes from the path). Both need endpoints:write.
+  const writeScoped: AuthContext = { orgId: ORG, scopes: ["endpoints:write"] };
+  function del(path: string, token: string | null = "whk_ok"): Request {
+    return new Request(`${RESOURCE}${path}`, {
+      method: "DELETE",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+  }
+
+  it("dispatches DELETE /v1/endpoints/:id to endpoints.delete with the path id as input", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({
+        "endpoints.delete": async (_ctx, input) => {
+          seen = input;
+          return { id: EP, deletedAt: "2026-06-25T00:00:00.000Z" };
+        },
+      }),
+    };
+    const res = await handleRequest(del(`/v1/endpoints/${EP}`), deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ endpointId: EP });
+    expect(await res.json()).toMatchObject({ id: EP });
+  });
+
+  it("dispatches POST /v1/endpoints/:id/rotate to endpoints.rotate with the path id as input", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({
+        "endpoints.rotate": async (_ctx, input) => {
+          seen = input;
+          return { id: EP, ingestUrl: "https://wbhk.my/whep_new" };
+        },
+      }),
+    };
+    const res = await handleRequest(post(`/v1/endpoints/${EP}/rotate`, undefined, "whk_ok"), deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ endpointId: EP });
+    expect(await res.json()).toMatchObject({ ingestUrl: "https://wbhk.my/whep_new" });
+  });
+
+  it("403s a delete when the bearer lacks endpoints:write (scope enforced before dispatch)", async () => {
+    let called = false;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)), // read scopes only
+      handlers: handlersOf({
+        "endpoints.delete": async () => {
+          called = true;
+          return {};
+        },
+      }),
+    };
+    const res = await handleRequest(del(`/v1/endpoints/${EP}`), deps);
+    expect(res.status).toBe(403);
+    expect(called).toBe(false); // never dispatched
+  });
 });
 
 describe("handleRequest — GET /v1/whoami (scope-free identity)", () => {

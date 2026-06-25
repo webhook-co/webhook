@@ -70,6 +70,18 @@ function matchRoute(
   if (method === "GET" && rest.length === 2 && rest[0] === "endpoints") {
     return { capability: "endpoints.get", input: { endpointId: rest[1] } };
   }
+  if (method === "DELETE" && rest.length === 2 && rest[0] === "endpoints") {
+    // endpoints.delete (ADR-0076): a WRITE with NO body — the endpointId is the path segment, so it
+    // dispatches via the GENERIC shared-handlers map (unlike create/replay, which read a JSON body).
+    // The handler enforces endpoints:write, soft-deletes + audits, evicts the ingest cache, and is
+    // idempotent (a re-delete returns the recorded deletedAt; an unknown id is NOT_FOUND -> 404).
+    return { capability: "endpoints.delete", input: { endpointId: rest[1] } };
+  }
+  if (method === "POST" && rest.length === 3 && rest[0] === "endpoints" && rest[2] === "rotate") {
+    // endpoints.rotate (ADR-0076): a WRITE with NO body — generic dispatch like delete. Mints a new
+    // ingest token, evicts the old (hard cutover), and returns the new one-time ingest URL.
+    return { capability: "endpoints.rotate", input: { endpointId: rest[1] } };
+  }
   if (method === "GET" && rest.length === 3 && rest[0] === "endpoints" && rest[2] === "events") {
     const input = listInput(query, { endpointId: rest[1] });
     const provider = query.get("provider");

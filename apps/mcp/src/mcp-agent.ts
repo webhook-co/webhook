@@ -5,9 +5,11 @@ import {
   buildCapabilityHandlers,
   createClient,
   createCredentialHasherFromBase64,
+  makeIngestHashEvictor,
   type CredentialHasher,
 } from "@webhook-co/db";
 import { b64ToBytes, importAuditKey, importCursorKey, readSecretBinding } from "@webhook-co/shared";
+import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import type { z } from "zod";
 
 import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
@@ -48,6 +50,10 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   "endpoints.get": "Get a single webhook endpoint by id.",
   "endpoints.create":
     "Create a webhook endpoint and return its ingest URL. The URL contains a secret token shown ONLY ONCE in this response — surface it to the user to save; it cannot be retrieved again.",
+  "endpoints.delete":
+    "DESTRUCTIVE: permanently soft-delete a webhook endpoint by id. Its ingest URL stops accepting new events and it is removed from listings; captured events are retained but the endpoint can no longer receive new ones. Confirm with the user before calling.",
+  "endpoints.rotate":
+    "DESTRUCTIVE: rotate a webhook endpoint's ingest URL by id — mints a NEW URL and revokes the old one (for a leaked or lost URL). The endpoint id, name, and captured events are kept. The new URL contains a secret token shown ONLY ONCE in this response — surface it to the user to save. Confirm with the user before calling.",
   "events.list": "List received events for an endpoint (paginated; optional provider filter).",
   "events.get": "Get a received event by id — headers, verification result, and payload pointer.",
   "events.tail":
@@ -135,6 +141,12 @@ export class WebhookMcp extends McpAgent<McpEnv> {
         auditKey: this.auditKey,
         hasher: this.hasher,
         ingestBaseUrl: this.env.INGEST_BASE_URL,
+        // endpoints.delete / endpoints.rotate tools evict the token's hot entry from the engine's ingest
+        // cache (ADR-0076). Best-effort: the deleted_at filter + rotated-hash mismatch self-heal within
+        // the KV TTL, so a KV blip is logged, never thrown (a throw would lose the rotate URL reveal).
+        invalidateIngestHash: makeIngestHashEvictor(kvCredentialCache(this.env.KV_CONFIG), (err) =>
+          this.log("mcp.ingest_evict_failed", { error: String(err) }),
+        ),
       });
       return await runCapabilityTool(handlers, capabilityName, ctx, args, (event, fields) =>
         this.log(event, fields),

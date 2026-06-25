@@ -12,7 +12,7 @@
 // guard reads pause state from that one KV read, never a synchronous DB count.
 
 import { type Sql } from "./client";
-import { type CredentialHasher } from "./credential";
+import { credentialCacheKey, type CredentialHasher } from "./credential";
 import { type CredentialCache } from "./credential-cache";
 import {
   createCredentialResolver,
@@ -68,4 +68,28 @@ export function createIngestResolver(opts: IngestResolverOptions): CredentialRes
     coldLookup,
     ttlSeconds: opts.ttlSeconds,
   });
+}
+
+/**
+ * Build the by-hash ingest-cache evictor that endpoints.delete / endpoints.rotate call to drop a token's
+ * hot KV entry (ADR-0076). It deletes `credentialCacheKey(keyHash)` — the SAME key the ingest resolver
+ * caches the principal under (the bare hash hex, prefix-free), so it hits exactly the engine's entry.
+ * The api + mcp surfaces (which run the write handlers) bind the engine's KV_CONFIG namespace and pass
+ * the wrapped namespace here. Eviction is BEST-EFFORT: it runs AFTER the DB mutation has committed, and
+ * both verbs are self-healing without it (delete via the cold lookup's deleted_at filter; rotate because
+ * the old hash matches no row) within the KV TTL — so a transient KV error must NOT fail the request
+ * (for rotate that would lose the one-time URL reveal). `onError` is invoked (loud log at the surface)
+ * and swallowed.
+ */
+export function makeIngestHashEvictor(
+  cache: CredentialCache,
+  onError?: (err: unknown) => void,
+): (keyHash: Buffer) => Promise<void> {
+  return async (keyHash) => {
+    try {
+      await cache.delete(credentialCacheKey(keyHash));
+    } catch (err) {
+      onError?.(err);
+    }
+  };
 }

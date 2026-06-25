@@ -102,8 +102,11 @@ export function createReplayHandler(deps: { readonly tenant: Sql }): ReplayHandl
     return withTenant(deps.tenant, ctx.orgId, async (tx) => {
       const event = await getEvent(tx, eventId);
       if (!event) throw new CapabilityFault("NOT_FOUND", "event not found");
-      const endpoint = await getEndpoint(tx, event.endpointId);
-      // The FK guarantees the endpoint exists; treat an unexpected miss as NOT_FOUND, not a 5xx.
+      // includeDeleted (ADR-0076): a soft-deleted endpoint's captured events are RETAINED and stay
+      // REPLAYABLE — replay forwards the stored payload to localhost, not via the (dead) ingest URL.
+      // (Without it, getEndpoint would filter the soft-deleted row and replay a retained event would
+      // wrongly 404.) The FK guarantees the endpoint exists; treat an unexpected miss as NOT_FOUND.
+      const endpoint = await getEndpoint(tx, event.endpointId, { includeDeleted: true });
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "event not found");
       if (endpoint.paused) throw new CapabilityFault("ENDPOINT_PAUSED", "endpoint is paused");
       return recordDeliveryAttempt(tx, {

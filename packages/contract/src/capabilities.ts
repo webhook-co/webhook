@@ -62,11 +62,11 @@ export const endpointsGet = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED },
 });
 
-// endpoints.create is the one WRITE capability bound on api+cli+mcp (web stays deferred with the
-// dashboard epic). Its output is the standard EndpointSchema PLUS `ingestUrl` — the wbhk.my/<token>
-// URL that embeds the freshly-minted ingest token. The token is a secret shown EXACTLY ONCE: the
-// endpoints table stores only its hash and has no token column, so the URL is unrecoverable after
-// creation (rotation = create a new endpoint). It is therefore never returned by endpoints.get/list.
+// endpoints.create + endpoints.rotate are WRITE capabilities bound on api+cli+mcp (web stays deferred
+// with the dashboard epic). Their output is the standard EndpointSchema PLUS `ingestUrl` — the
+// wbhk.my/<token> URL that embeds the freshly-minted ingest token. The token is a secret shown EXACTLY
+// ONCE: the endpoints table stores only its hash and has no token column, so the URL is unrecoverable
+// after creation/rotation. It is therefore never returned by endpoints.get/list.
 export const CreatedEndpointSchema = EndpointSchema.extend({ ingestUrl: z.url() });
 export type CreatedEndpoint = z.infer<typeof CreatedEndpointSchema>;
 
@@ -79,6 +79,42 @@ export const endpointsCreate = defineCapability({
   // endpoint soft cap (ADR-0074) — an abuse backstop, since there is no endpoints.delete yet. Not
   // idempotent: each call mints a new endpoint + token (the api-client never blind-retries this POST).
   errors: ["UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED },
+});
+
+// endpoints.delete SOFT-deletes an endpoint (ADR-0076): it stops resolving on the wbhk.my ingest path
+// (its KV cache entry is evicted AND the cold lookup filters `deleted_at is null`, so ingest 404s) and
+// no longer counts against the per-org create soft cap — while its captured events + R2 payload bodies
+// are RETAINED (inspection history; a later retention job hard-purges). Idempotent (idempotent:true): a
+// re-delete of an already-deleted endpoint returns its recorded deletedAt; an unknown id is NOT_FOUND.
+export const DeletedEndpointSchema = z.object({ id: uuid, deletedAt: z.coerce.date() });
+export type DeletedEndpoint = z.infer<typeof DeletedEndpointSchema>;
+
+export const endpointsDelete = defineCapability({
+  name: "endpoints.delete",
+  input: z.object({ endpointId: uuid }),
+  output: DeletedEndpointSchema,
+  // FORBIDDEN: a bearer lacking endpoints:write (the api edge 403s before dispatch; on mcp the handler's
+  // scope check is the sole gate). NOT_FOUND: an unknown id (a re-delete of an already-deleted endpoint
+  // is a 200 idempotent success). RATE_LIMITED reserved for a future per-org delete throttle.
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: { idempotent: true },
+  surfaceExempt: { web: WEB_DEFERRED },
+});
+
+// endpoints.rotate replaces an endpoint's ingest token (the wbhk.my/<token> secret) IN PLACE (ADR-0076):
+// it mints a NEW token, HARD-cuts over (the old token is evicted immediately and stops resolving), and
+// returns the new one-time ingestUrl — exactly like create's reveal. The endpoint id, name, paused state,
+// captured events, and provider secrets are PRESERVED (unlike delete+recreate). For a leaked/lost URL.
+// NOT idempotent: each call mints a new token (the api-client never blind-retries it), same as create.
+export const endpointsRotate = defineCapability({
+  name: "endpoints.rotate",
+  input: z.object({ endpointId: uuid }),
+  output: CreatedEndpointSchema,
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
   semantics: {},
   surfaceExempt: { web: WEB_DEFERRED },
@@ -215,6 +251,8 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   endpointsList,
   endpointsGet,
   endpointsCreate,
+  endpointsDelete,
+  endpointsRotate,
   eventsList,
   eventsGet,
   eventsGetPayload,
