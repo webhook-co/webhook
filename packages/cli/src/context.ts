@@ -9,6 +9,7 @@ import { createKeychainBackend, type KeychainIo } from "./config/keychain-store.
 import { resolveConfigDir } from "./config/paths.js";
 import { resolveStore, type CredentialStore } from "./config/store.js";
 import { makeRealIo } from "./io.js";
+import type { TelemetryEvent } from "./telemetry.js";
 
 /** Env var that forces a hard fail rather than persisting a plaintext credential. */
 export const REQUIRE_SECURE_STORAGE_VAR = "WBHK_REQUIRE_SECURE_STORAGE";
@@ -100,6 +101,10 @@ export interface IoSeams {
    *  digest. Throws on any failure. Real impl in io.ts (coverage-excluded — network + the sigstore stack);
    *  a fake passes/throws in tests. */
   verifyBinaryProvenance(opts: { digestHex: string }): Promise<void>;
+  /** Send one anonymous telemetry event — a fire-and-forget POST to the collector that NEVER throws or
+   *  blocks (short timeout, all errors swallowed). Real impl in io.ts (coverage-excluded); a fake records
+   *  the call in tests. */
+  sendTelemetry(event: TelemetryEvent): Promise<void>;
 }
 
 // The minimal host surface the CLI needs — Node's `process` satisfies it, and tests pass a
@@ -239,6 +244,8 @@ export function makeTestContext(opts?: {
   /** Fake provenance verification for `wbhk upgrade` (resolve = verified, reject = failed); defaults to a
    *  no-op that "passes" so most upgrade tests don't have to wire it. */
   verifyBinaryProvenance?: (opts: { digestHex: string }) => Promise<void>;
+  /** Fake telemetry sender (records the event); defaults to a no-op. */
+  sendTelemetry?: (event: TelemetryEvent) => Promise<void>;
 }): { ctx: AppContext; stdout: () => string; stderr: () => string } {
   const out: string[] = [];
   const err: string[] = [];
@@ -294,6 +301,7 @@ export function makeTestContext(opts?: {
     // Defaults to "verified" so existing upgrade tests don't need to wire it; a provenance-specific test
     // passes a fake that rejects.
     verifyBinaryProvenance: opts?.verifyBinaryProvenance ?? (async () => {}),
+    sendTelemetry: opts?.sendTelemetry ?? (async () => {}),
   };
   const ctx = buildContext(proc, {
     homedir: opts?.homedir ?? "/nonexistent-wbhk-test-home",
