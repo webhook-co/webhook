@@ -22,6 +22,7 @@ export * from "./session-exchange";
 export * from "./sweep";
 export * from "./auth-user";
 export * from "./credential";
+export * from "./key-checksum";
 export * from "./credential-cache";
 export * from "./credential-resolver";
 export * from "./ingest-resolver";
