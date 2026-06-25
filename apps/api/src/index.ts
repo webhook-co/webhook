@@ -4,9 +4,9 @@ import {
 } from "@webhook-co/contract";
 import {
   API_RESOURCE,
+  buildCapabilityHandlers,
   createClient,
   createCredentialHasherFromBase64,
-  createReadHandlers,
   createReplayHandler,
   makeApiKeyAuthDeps,
 } from "@webhook-co/db";
@@ -61,6 +61,14 @@ export interface Env {
   CURSOR_KEY: SecretsStoreSecret;
   /** Base64 audit-chain HMAC key — the same key the chain rows are signed with. */
   AUDIT_CHAIN_HMAC_KEY: SecretsStoreSecret;
+  /**
+   * The cookieless ingest apex the endpoints.create response builds its one-time ingest URL from
+   * (prod: https://wbhk.my). A plain wrangler `vars` value (NOT a secret, NOT deploy-injected — the
+   * overlay generator carries no `vars`, so it must be committed in wrangler.jsonc). Validated
+   * fail-closed by the shared write handler (normalizeIngestApex) lazily AT CREATE TIME — a missing/
+   * garbage value 500s only the create path, never minting `undefined/<token>` and never breaking reads.
+   */
+  INGEST_BASE_URL: string;
 }
 
 // Built once at module load (pure); served on the public PRM route with no tenant deps.
@@ -107,7 +115,17 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
       }),
       resourceMetadataUrl: `${API_RESOURCE}${PRM_PATH}`,
     },
-    handlers: createReadHandlers({ tenant, cursorKey, auditKey }),
+    // The merged read+write capability-handler map (single-sourced in @webhook-co/db so apps/mcp builds
+    // the identical map and the surfaces can't drift). endpoints.create dispatches through this map; its
+    // handler validates INGEST_BASE_URL lazily + fail-closed at create time, so a bad create-only var
+    // never breaks these reads (it 500s only the create path).
+    handlers: buildCapabilityHandlers({
+      tenant,
+      cursorKey,
+      auditKey,
+      hasher,
+      ingestBaseUrl: env.INGEST_BASE_URL,
+    }),
     payloads: env.R2_PAYLOADS,
     replay: createReplayHandler({ tenant }),
   };

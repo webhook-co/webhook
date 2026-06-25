@@ -15,12 +15,22 @@
 
 import { randomUUID } from "node:crypto";
 
+import { CapabilityFault } from "@webhook-co/contract";
+
+import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import { credentialHashEquals, mintCredential, type CredentialHasher } from "./credential";
 import type { ResolvedPrincipal } from "./credential-cache";
 
 /** Display + path prefix for ingest tokens (the wbhk.my/<token> path token). */
 export const INGEST_TOKEN_PREFIX = "whep";
+
+/**
+ * Per-org advisory-lock namespace (the second arg to hashtextextended) that serializes concurrent
+ * endpoint creates for an org, so the soft cap is EXACT rather than best-effort. Distinct from the
+ * audit-chain namespaces so it never contends with them. ("ENDP".)
+ */
+const ENDPOINT_CREATE_LOCK_NAMESPACE = 0x454e4450;
 
 export interface CreateEndpointInput {
   readonly orgId: string;
@@ -56,6 +66,74 @@ export async function createEndpoint(
       values (${id}, ${input.orgId}, ${keyHash}, ${input.name})`;
   });
   return { id, orgId: input.orgId, name: input.name, paused: false, start, plaintext };
+}
+
+export interface CreateEndpointWithAuditInput extends CreateEndpointInput {
+  /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
+  readonly actor: string | null;
+  /** Per-org endpoint soft cap (ADR-0075). Exceeding it throws RATE_LIMITED — an abuse backstop. */
+  readonly maxEndpoints: number;
+}
+
+export interface CreatedEndpointRow {
+  readonly id: string;
+  readonly orgId: string;
+  readonly name: string;
+  readonly paused: boolean;
+  readonly createdAt: Date;
+  /** Plaintext ingest token — returned ONCE; the wbhk.my URL that embeds it is the one-time reveal. */
+  readonly plaintext: string;
+}
+
+/**
+ * Create an endpoint, mint its ingest token, AND append a tamper-evident control-plane audit row — all
+ * in ONE transaction under the org's RLS context (webhook_app). The audited variant used by the
+ * endpoints.create capability; the bare createEndpoint above (own tx, no audit) is kept for the
+ * operator bootstrap. This MUST be its own tx (it does NOT call createEndpoint, which opens a separate
+ * one) so the endpoint row and its wha1/audit_log row commit or roll back together. A per-org advisory
+ * lock is taken first, so the soft-cap check (BEFORE the mint/insert; an over-cap call neither mints a
+ * token nor writes audit) is EXACT under concurrency — not best-effort. The cap is an abuse backstop
+ * while there is no endpoints.delete yet.
+ */
+export async function createEndpointWithAudit(
+  app: Sql,
+  input: CreateEndpointWithAuditInput,
+  hasher: CredentialHasher,
+  auditKey: CryptoKey,
+): Promise<CreatedEndpointRow> {
+  const { plaintext, keyHash } = mintCredential(INGEST_TOKEN_PREFIX, hasher);
+  const id = randomUUID();
+  const createdAt = await withTenant(app, input.orgId, async (tx) => {
+    // Serialize concurrent creates for THIS org (transaction-scoped, released on commit/rollback) so the
+    // soft-cap check below is exact rather than racy (cap+N under a burst). Creates are infrequent, so
+    // the per-org serialization is cheap; it never contends with the audit lock (distinct namespace).
+    await tx`select pg_advisory_xact_lock(hashtextextended(${input.orgId}, ${ENDPOINT_CREATE_LOCK_NAMESPACE}))`;
+    // Counts only THIS org's rows (RLS pins app.current_org). bigint count -> int4 -> JS number.
+    const countRows = await tx<{ count: number }[]>`select count(*)::int as count from endpoints`;
+    const count = countRows[0]?.count ?? 0;
+    if (count >= input.maxEndpoints) {
+      throw new CapabilityFault(
+        "RATE_LIMITED",
+        `endpoint limit reached (${input.maxEndpoints} per org)`,
+      );
+    }
+    const rows = await tx<{ created_at: Date }[]>`
+      insert into endpoints (id, org_id, ingest_token_hash, name)
+      values (${id}, ${input.orgId}, ${keyHash}, ${input.name})
+      returning created_at`;
+    const inserted = rows[0];
+    if (!inserted) throw new Error("createEndpointWithAudit: insert returned no row");
+    // Same tx, same RLS context: the control-plane audit event (wha1/audit_log). actor may be null
+    // (api-key bearers carry no user_id); audit_log.actor is nullable text.
+    await appendAuditEntry(tx, auditKey, {
+      orgId: input.orgId,
+      actor: input.actor,
+      action: "endpoint.created",
+      target: id,
+    });
+    return inserted.created_at;
+  });
+  return { id, orgId: input.orgId, name: input.name, paused: false, createdAt, plaintext };
 }
 
 /**

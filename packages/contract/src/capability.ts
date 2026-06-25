@@ -60,6 +60,7 @@ export interface CapabilitySemantics {
  */
 export const CAPABILITY_SCOPES = [
   "endpoints:read",
+  "endpoints:write",
   "events:read",
   "events:replay",
   "audit:read",

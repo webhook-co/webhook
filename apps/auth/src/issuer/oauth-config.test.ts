@@ -33,6 +33,7 @@ describe("oauthIssuerConfig", () => {
     expect(oauthIssuerConfig.scopesSupported).toEqual([
       "audit:read",
       "endpoints:read",
+      "endpoints:write",
       "events:read",
       "events:replay",
     ]);

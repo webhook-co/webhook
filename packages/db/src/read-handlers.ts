@@ -47,10 +47,14 @@ export interface ReadHandlerDeps {
   readonly auditKey: CryptoKey;
 }
 
-export type ReadHandler = (ctx: AuthContext, input: unknown) => Promise<unknown>;
-export type ReadHandlers = Map<string, ReadHandler>;
+// A bound capability handler — the shared shape for BOTH reads (createReadHandlers) and writes
+// (createWriteHandlers). Named for the capability, not the verb: api/mcp merge the read + write maps
+// into one and dispatch by name, so a single type spans both. (Was ReadHandler; renamed when the first
+// write capability — endpoints.create — joined the map.)
+export type CapabilityHandler = (ctx: AuthContext, input: unknown) => Promise<unknown>;
+export type CapabilityHandlers = Map<string, CapabilityHandler>;
 
-export function createReadHandlers(deps: ReadHandlerDeps): ReadHandlers {
+export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
   function ensureScope(ctx: AuthContext, cap: AnyCapability): void {
     if (!ctx.scopes.includes(cap.auth.scope)) {
       throw new CapabilityFault("FORBIDDEN", `missing required scope: ${cap.auth.scope}`);
@@ -76,7 +80,7 @@ export function createReadHandlers(deps: ReadHandlerDeps): ReadHandlers {
     return cursor ? encodeCursor(cursor, deps.cursorKey) : null;
   }
 
-  const handlers: ReadHandlers = new Map();
+  const handlers: CapabilityHandlers = new Map();
 
   handlers.set(endpointsList.name, async (ctx, input) => {
     ensureScope(ctx, endpointsList);

@@ -5,7 +5,7 @@ import {
   type BearerAuthzDeps,
   type VerifyBearer,
 } from "@webhook-co/contract";
-import type { ReadHandlers } from "@webhook-co/db";
+import type { CapabilityHandlers } from "@webhook-co/db";
 import { b64ToBytes } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
@@ -27,7 +27,7 @@ function authDeps(v: VerifyBearer): BearerAuthzDeps {
 }
 function handlersOf(
   impl: Record<string, (ctx: AuthContext, input: unknown) => Promise<unknown>>,
-): ReadHandlers {
+): CapabilityHandlers {
   return new Map(Object.entries(impl));
 }
 function get(path: string, token: string | null = "whk_ok"): Request {
@@ -264,7 +264,7 @@ describe("handleRequest — GET /v1/events/:id/payload (events.getPayload)", () 
   const eventsGetOk = (
     payloadR2Key = "org/x/ep/y/z",
     contentType: string | null = "application/json",
-  ): ReadHandlers =>
+  ): CapabilityHandlers =>
     handlersOf({ "events.get": async () => ({ id: EVENT_ID, payloadR2Key, contentType }) });
 
   it("returns a base64 envelope whose bytes round-trip exactly", async () => {
@@ -440,5 +440,96 @@ describe("handleRequest — POST /v1/events/:id/replay (events.replay)", () => {
         deps,
       ),
     ).rejects.toThrow(/replay handler/);
+  });
+});
+
+describe("handleRequest — POST /v1/endpoints (endpoints.create)", () => {
+  const writeScoped: AuthContext = { orgId: ORG, scopes: ["endpoints:write"] };
+  const created = {
+    id: EP,
+    orgId: ORG,
+    name: "stripe prod",
+    paused: false,
+    createdAt: "2026-06-25T00:00:00.000Z",
+    ingestUrl: "https://wbhk.my/whep_one_time_secret",
+  };
+
+  it("dispatches the JSON body to the shared endpoints.create handler and returns the created endpoint", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({
+        "endpoints.create": async (_ctx, input) => {
+          seen = input;
+          return created;
+        },
+      }),
+    };
+    const res = await handleRequest(post("/v1/endpoints", { name: "stripe prod" }), deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ name: "stripe prod" }); // the whole body is the input
+    expect(await res.json()).toEqual(created); // pass-through — Response.json(handler output)
+  });
+
+  it("403s (insufficient_scope) without endpoints:write and never reaches the handler", async () => {
+    let called = false;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)), // read scopes only
+      handlers: handlersOf({
+        "endpoints.create": async () => {
+          called = true;
+          return created;
+        },
+      }),
+    };
+    const res = await handleRequest(post("/v1/endpoints", { name: "x" }), deps);
+    expect(res.status).toBe(403);
+    expect(res.headers.get("www-authenticate")).toContain('error="insufficient_scope"');
+    expect(called).toBe(false); // edge gate stops it before any mint
+  });
+
+  it("401s without a credential", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({ "endpoints.create": async () => created }),
+    };
+    const res = await handleRequest(post("/v1/endpoints", { name: "x" }, null), deps);
+    expect(res.status).toBe(401);
+  });
+
+  it("400s a malformed JSON body as VALIDATION_ERROR", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({ "endpoints.create": async () => created }),
+    };
+    const req = new Request(`${RESOURCE}/v1/endpoints`, {
+      method: "POST",
+      headers: { authorization: "Bearer whk_ok", "content-type": "application/json" },
+      body: "{not json",
+    });
+    const res = await handleRequest(req, deps);
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: "VALIDATION_ERROR" });
+  });
+
+  it("maps a handler RATE_LIMITED fault (the per-org soft cap) to 429", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({
+        "endpoints.create": async () => {
+          throw new CapabilityFault("RATE_LIMITED", "endpoint limit reached");
+        },
+      }),
+    };
+    const res = await handleRequest(post("/v1/endpoints", { name: "x" }), deps);
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ error: "RATE_LIMITED" });
+  });
+
+  it("propagates a 5xx when the endpoints.create handler is not bound (wiring bug)", async () => {
+    const deps: ApiDeps = { authDeps: authDeps(verify(writeScoped)), handlers: handlersOf({}) };
+    await expect(handleRequest(post("/v1/endpoints", { name: "x" }), deps)).rejects.toThrow(
+      /endpoints\.create/,
+    );
   });
 });

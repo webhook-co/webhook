@@ -1,6 +1,7 @@
 import {
   AuthContextSchema,
   auditVerify as auditVerifyCap,
+  endpointsCreate as endpointsCreateCap,
   endpointsGet as endpointsGetCap,
   endpointsList as endpointsListCap,
   eventsGet as eventsGetCap,
@@ -9,6 +10,7 @@ import {
   eventsReplay as eventsReplayCap,
   type AuthContext,
   type CapabilityError,
+  type CreatedEndpoint,
   type Target,
 } from "@webhook-co/contract";
 import {
@@ -129,6 +131,12 @@ export interface ApiClient {
   endpointsList(params?: ListParams): Promise<Page<Endpoint>>;
   /** A single endpoint by id (`GET /v1/endpoints/:id`). */
   endpointsGet(endpointId: string): Promise<Endpoint>;
+  /**
+   * Create an endpoint (`POST /v1/endpoints`). NOT idempotent — each call mints a new endpoint + a
+   * one-time ingest URL (returned once in `ingestUrl`; never recoverable after). Sent with
+   * idempotent=false so a transient failure is never blind-retried (no accidental duplicate).
+   */
+  endpointsCreate(input: { name: string }): Promise<CreatedEndpoint>;
   /** A page of an endpoint's captured events (`GET /v1/endpoints/:id/events`). */
   eventsList(endpointId: string, params?: EventsListParams): Promise<Page<EventSummary>>;
   /** A single event in full fidelity by id (`GET /v1/events/:id`). */
@@ -271,6 +279,11 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     async endpointsGet(endpointId): Promise<Endpoint> {
       const path = `/v1/endpoints/${encodeURIComponent(endpointId)}`;
       return parseOrThrow(endpointsGetCap.output, await getJson(path), "endpoint");
+    },
+    async endpointsCreate(input): Promise<CreatedEndpoint> {
+      // idempotent=false: a create is not safe to blind-retry (it would mint a duplicate endpoint).
+      const json = await postJson("/v1/endpoints", { name: input.name }, false);
+      return parseOrThrow(endpointsCreateCap.output, json, "endpoint");
     },
     async eventsList(endpointId, params = {}): Promise<Page<EventSummary>> {
       const path = withQuery(`/v1/endpoints/${encodeURIComponent(endpointId)}/events`, {

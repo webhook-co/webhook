@@ -10,6 +10,15 @@
   "observability": {
     "enabled": true,
   },
+  // Plain (non-secret) vars. INGEST_BASE_URL is the cookieless ingest apex the endpoints.create response
+  // builds its one-time ingest URL from. It is COMMITTED here (NOT deploy-injected): the prod-overlay
+  // generator carries account ids/secrets/routes but NO `vars`, and it only PREPENDS to the committed
+  // config, so this value survives to prod. For local `wrangler dev` point it at the local engine via a
+  // .dev.vars override. apps/api/index.ts validates it fail-closed (a bad value 500s, never mints a
+  // broken `undefined/<token>` URL). Must match the engine route apex (wbhk.my).
+  "vars": {
+    "INGEST_BASE_URL": "https://wbhk.my",
+  },
   // The public REST API on api.webhook.co (bearer-token, cookieless). Consumed server-to-server
   // today (the CLI + the MCP server), so NO CORS is set. The PRD's "CORS allowlist = app only"
   // applies once the browser dashboard (the deferred frontend epic) calls it; CORS lands then.
