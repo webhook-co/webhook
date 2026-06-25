@@ -20,6 +20,7 @@ import {
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { handleRequest, type ApiDeps } from "./router.js";
+import { handleGithubSecretScanning } from "./secret-scanning.js";
 
 // The api.webhook.co REST read server: a bearer-auth resource server over the contract's read
 // capabilities. It validates API keys (OAuth tokens are opaque + mcp-bound, ADR-0010) through the
@@ -150,6 +151,20 @@ export default {
         status: 200,
         headers: { "content-type": "text/plain; charset=utf-8" },
       });
+    }
+    // GitHub Secret Scanning Partner Program webhook (ADR-0074). Unauthenticated — the ECDSA
+    // signature IS the auth; the handler verifies BEFORE opening any DB client and owns its own
+    // teardown, so it sits with the other pre-router branches (not behind the bearer router).
+    if (request.method === "POST" && url.pathname === "/secret-scanning/github") {
+      try {
+        return await handleGithubSecretScanning(request, env);
+      } catch (err) {
+        console.log(JSON.stringify({ message: "secret_scanning.unhandled", error: String(err) }));
+        return new Response("internal error", {
+          status: 500,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }
     }
 
     // buildDeps is inside the try so a config/connection fault returns a graceful 500 (not an

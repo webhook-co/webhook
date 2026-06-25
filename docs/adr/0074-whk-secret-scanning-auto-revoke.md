@@ -1,12 +1,12 @@
 # ADR 0074 — `whk_` secret-scanning auto-revoke webhook + partner registration
 
-- status: **proposed** — a tracked fast-follow to ADR-0073, gated on the concurrent
-  `endpoints.create` work clearing `apps/api` (this endpoint also edits the `apps/api` fetch
-  handler, so it lands after, to avoid a merge race). The format/checksum half (ADR-0073) is
-  already shipped, so this is additive and non-breaking; no urgency.
+- status: **accepted** — the webhook is built + shipped (was a proposed fast-follow to ADR-0073;
+  `endpoints.create` (ADR-0075) landed and cleared `apps/api`, so the merge race is gone). The
+  format/checksum half (ADR-0073) shipped first; this is the additive response path. The GitHub
+  partner **registration** itself is a manual founder step (no API) — see "as built".
 - date: 2026-06-25
-- scope (when built): `apps/api` (a new unauthenticated raw route) + a new `packages/db` helper
-  (`revokeApiKeyByPlaintext`). No schema change.
+- scope: `apps/api` (`secret-scanning.ts` + an unauthenticated `POST /secret-scanning/github` raw
+  route in `index.ts`) + `revokeApiKeyByPlaintext` in `packages/db` (`api-keys.ts`). No schema change.
 - relates: ADR-0073 (the `whk_` checksum + format that makes the prefix registrable), ADR-0008
   (hash-at-rest), the `aae1` auth-audit chain.
 - review severity (when built): high — a public, unauthenticated endpoint that can revoke a live
@@ -31,14 +31,16 @@ carries no bearer; its signature is the authentication. Handled as a raw branch 
 1. **Cheap guards first, no DB/egress.** A hard body-size cap (→ `413`); read the **raw bytes**
    and verify the signature over *those exact bytes* (never parse-then-restringify); cap the
    token-array length; a per-endpoint rate-limit.
-2. **Fail-closed signature gate — DER-aware.** The `Github-Public-Key-Identifier` must be in a
-   **pinned allowlist** of known GitHub `secret_scanning` key-ids — an unknown id is rejected
-   **without** any outbound fetch (no attacker-triggered egress). Keys are cached and refreshed
-   out-of-band (a conditional / low-privilege request), fail-closed if unavailable. GitHub signs
-   **ASN.1/DER** ECDSA-P256 (`ECDSA-NIST-P256V1-SHA256`); verify with a **DER-aware** verifier
-   (`node:crypto` `crypto.verify(..., { dsaEncoding: "der" }, sig)`, or convert DER→raw r‖s) —
-   WebCrypto's `subtle.verify` accepts only raw r‖s and would silently reject every real GitHub
-   request. Build DB deps only **after** the signature passes.
+2. **Fail-closed signature gate — DER-aware.** The `Github-Public-Key-Identifier` selects the key
+   from a **KV-cached** copy of GitHub's `secret_scanning` public keys. An unknown key-id triggers
+   **at most one bounded refresh** per lock window (60s) — so rotation is handled but neither a
+   cold-start stampede nor an attacker spamming random key-ids can drive unbounded outbound egress;
+   fail-closed (`null` → 401) when the key is absent or the keys are unavailable. (This supersedes
+   an earlier "pinned static allowlist" idea, which would have been brittle against GitHub's key
+   rotation.) GitHub signs **ASN.1/DER** ECDSA-P256 (`ECDSA-NIST-P256V1-SHA256`); verify DER-aware —
+   we use **WebCrypto** after a DER→raw r‖s conversion (native + guaranteed on workerd; `node:crypto`
+   EC verify is uncertain there, and WebCrypto's `subtle.verify` accepts only raw r‖s). Build DB
+   deps only **after** the signature passes.
 3. **Resolve + revoke (idempotent).** For each token: `verifyKeyChecksum` first — on failure,
    label it and stop (definitively not ours). On success, a new `packages/db`
    `revokeApiKeyByPlaintext` modeled on `findApiKeyGrant`: a **cross-org org-discovery-by-hash**
@@ -73,3 +75,23 @@ live before submission (it is validated during onboarding).
   response path, never before it.
 - Reuses existing revoke + audit + cache-evict primitives; the only genuinely new code is the
   by-plaintext cross-org lookup and the signed-webhook handler.
+
+## as built
+
+- **Signature verify** is WebCrypto (`crypto.subtle`) after a DER→raw r‖s conversion — NOT
+  `node:crypto` sign/verify (its EC-key support on workerd is uncertain; WebCrypto is native).
+  Unit-tested with a self-generated P-256 key signing in DER (`node:crypto`), which is exactly
+  GitHub's encoding. Public keys are fetched from `…/meta/public_keys/secret_scanning` and
+  **KV-cached** (`KV_AUTHZ`, hourly TTL) with a **60s bounded refresh** on an unknown key-id, so
+  rotation is handled without unbounded attacker-triggered egress.
+- The handler does the cheap guards (256 KiB body cap, 200-token array cap, key-id, signature)
+  **before** opening any DB client, and skips the DB entirely when no reported token passes the
+  checksum. `revokeApiKeyByPlaintext` discovers the org as `webhook_authn` (it can read only the
+  granted columns — `id` is resolved later under `webhook_app`), then revokes + audits
+  (`key_revoked`, `source: github_secret_scanning`) under the org's RLS context, and the handler
+  evicts `KV_AUTHZ` by hash. A revoke logs `secret_scanning.key_revoked` (the out-of-band alert).
+- **Registration is the remaining MANUAL step** — there is no GitHub API for the partner program;
+  an org-authorized contact emails `secret-scanning@github.com` with the name/regex/endpoint/test
+  token and accepts the Partner Program Agreement (the packet is prepared for the founder). The
+  endpoint is live, so GitHub can validate it during onboarding. Until registration completes, the
+  endpoint simply receives no traffic — shipping it early is safe (it advertises nothing).
