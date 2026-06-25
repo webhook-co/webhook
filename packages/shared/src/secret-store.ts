@@ -22,6 +22,19 @@ import {
 } from "./envelope";
 import type { OrgScopedDekCache } from "./kms/lru";
 
+/**
+ * The narrow WRITE-ONLY seam over {@link SecretStore.sealString}. A control-plane Worker that must
+ * SEAL a secret without holding the KEK custodian — api/mcp, which delegate sealing to the engine
+ * over a service binding (ADR-0078 / decision D1) — depends only on this, never on the full
+ * {@link SecretStore} (which can also `open`/unseal). `SecretStore` satisfies it structurally, and so
+ * does the engine's `ProviderSecretSealer` RPC stub: plaintext in, sealed record out, no unseal
+ * capability crosses the seam. Keeping unseal off this interface is the point — a compromised
+ * api/mcp can seal new secrets but can never decrypt existing ones.
+ */
+export interface SecretSealer {
+  sealString(plaintext: string, context: EncryptionContext): Promise<SealedRecord>;
+}
+
 /** A self-contained sealed record: everything a row needs to round-trip one secret. */
 export interface SealedRecord {
   /** AES-256-GCM ciphertext with the 16-byte tag appended. */

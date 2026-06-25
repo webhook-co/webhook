@@ -15,7 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import { type EncryptionContext, type SealedRecord, type SecretStore } from "@webhook-co/shared";
+import { type EncryptionContext, type SealedRecord, type SecretSealer } from "@webhook-co/shared";
 
 import { withTenant, type Sql } from "./client";
 import { type CachedSealedSecret } from "./credential-cache";
@@ -59,7 +59,7 @@ export interface SealedProviderSecret {
 export async function addProviderSecret(
   app: Sql,
   input: AddProviderSecretInput,
-  store: SecretStore,
+  sealer: SecretSealer,
 ): Promise<AddedProviderSecret> {
   const id = randomUUID();
   const context: EncryptionContext = {
@@ -67,7 +67,9 @@ export async function addProviderSecret(
     endpointId: input.endpointId,
     keyId: id,
   };
-  const sealed = await store.sealString(input.plaintext, context);
+  // Seal via the narrow write-only seam: a local SecretStore in tests, the engine's remote sealer in
+  // prod (api/mcp delegate to it over a service binding, never holding the KEK — ADR-0078 / D1).
+  const sealed = await sealer.sealString(input.plaintext, context);
   await withTenant(app, input.orgId, async (tx) => {
     // enc_context is jsonb — bind via tx.json so postgres.js serializes it EXACTLY once. A manual
     // JSON.stringify(...)::jsonb double-encodes (postgres.js re-encodes the string, storing a jsonb
