@@ -19,15 +19,43 @@ export function bytesToHex(bytes: Uint8Array): string {
   return s;
 }
 
-/** Decode a hex string to bytes. Returns null on odd length or non-hex input. */
+/**
+ * Decode a hex string to bytes. Returns null on odd length or any non-hex character.
+ * Strict on the alphabet (Number.parseInt is lenient — parseInt("1z",16) === 1 — so the
+ * regex guard is what makes a structurally-malformed signature decode to null, hence a
+ * MALFORMED_SIGNATURE diagnostic rather than a misleading mismatch).
+ */
 export function hexToBytes(hex: string): Uint8Array | null {
   if (hex.length % 2 !== 0) return null;
+  if (!/^[0-9a-fA-F]*$/.test(hex)) return null;
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {
-    const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    if (Number.isNaN(byte)) return null;
-    out[i] = byte;
+    out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
   }
+  return out;
+}
+
+/**
+ * Decode a standard-alphabet base64 string (`+/`, optional `=` padding) to bytes. Returns
+ * null on invalid input — NEVER throws — so a malformed provider signature becomes a typed
+ * MALFORMED_SIGNATURE diagnostic, never an exception into the capture path. This is the
+ * base64 sibling of {@link hexToBytes} (verification-only; it intentionally does NOT mirror
+ * `packages/shared`'s throwing `b64ToBytes`, which is for trusted wire formats).
+ */
+export function b64ToBytes(b64: string): Uint8Array | null {
+  // Reject anything outside the canonical alphabet up front. `atob` implements WHATWG
+  // "forgiving base64" — it strips embedded ASCII whitespace and tolerates mangled padding —
+  // so without this guard an in-transit-corrupted (e.g. line-folded) signature would decode
+  // "successfully" and be reported as a mismatch instead of MALFORMED_SIGNATURE.
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(b64)) return null;
+  let bin: string;
+  try {
+    bin = atob(b64);
+  } catch {
+    return null;
+  }
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
 

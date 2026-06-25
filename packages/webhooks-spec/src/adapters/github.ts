@@ -7,7 +7,7 @@
 import { CLOCK_SKEW_TOLERANCE_SECONDS } from "../scheme";
 import { verificationFailed, type VerificationResult } from "../verification";
 import type { VerifyAdapter, VerifyInput } from "../adapter";
-import { MAX_VERIFIABLE_BODY_BYTES, findHeader, toCandidates, verifyHmacHex } from "./shared";
+import { findHeader, oversizeBodyFailure, toCandidates, verifyHmacHex } from "./shared";
 
 const SCHEME = "github" as const;
 const HEADER = "x-hub-signature-256";
@@ -19,13 +19,8 @@ async function verify(input: VerifyInput): Promise<VerificationResult> {
     return verificationFailed({ code: "MISSING_HEADER", header: HEADER, scheme: SCHEME });
   }
 
-  if (input.rawBody.length > MAX_VERIFIABLE_BODY_BYTES) {
-    return verificationFailed({
-      code: "MALFORMED_SIGNATURE",
-      detail: `body exceeds ${MAX_VERIFIABLE_BODY_BYTES} bytes; not verified`,
-      scheme: SCHEME,
-    });
-  }
+  const oversize = oversizeBodyFailure(SCHEME, input.rawBody);
+  if (oversize !== null) return oversize;
 
   if (!headerValue.startsWith(PREFIX)) {
     return verificationFailed({
@@ -39,7 +34,7 @@ async function verify(input: VerifyInput): Promise<VerificationResult> {
   return verifyHmacHex({
     scheme: SCHEME,
     rawBody: input.rawBody,
-    expectedHex,
+    expectedHexes: [expectedHex],
     candidates: toCandidates(input.secrets),
     // GitHub signs the raw body verbatim.
     buildMessage: (body) => body,

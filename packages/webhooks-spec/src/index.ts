@@ -9,10 +9,9 @@ export * from "./scheme";
 export * from "./verification";
 export * from "./adapter";
 
-// Per-scheme verify adapters. Stripe + GitHub are fully functional; Shopify,
-// Slack, and Standard Webhooks are scaffolded follow-ups (documented constructions,
-// honest UNSUPPORTED_SCHEME diagnostics until filled in). The registry + header-based
-// detection are the entry points every surface uses.
+// Per-scheme verify adapters — all five (Stripe, GitHub, Shopify, Slack, Standard
+// Webhooks) are fully functional. The registry + header-based detection are the entry
+// points every surface uses.
 export { stripeAdapter } from "./adapters/stripe";
 export { githubAdapter } from "./adapters/github";
 export { shopifyAdapter } from "./adapters/shopify";
