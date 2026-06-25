@@ -43,10 +43,17 @@
   ],
   // Caches resolved principals keyed by api-key hash; invalidated on revoke (KV can be invalidated,
   // Hyperdrive's query cache can't). Miniflare provides a local KV in tests; real id set at deploy.
+  // KV_CONFIG is the engine's INGEST-token cache (the SAME namespace by id, overlay-injected): api binds
+  // it ONLY to EVICT a token's entry after endpoints.delete / endpoints.rotate (ADR-0076), never to
+  // read/write principals. KV is global-by-id, so the eviction reaches the entry the engine reads.
   "kv_namespaces": [
     {
       "binding": "KV_AUTHZ",
       "id": "<KV_AUTHZ_ID>",
+    },
+    {
+      "binding": "KV_CONFIG",
+      "id": "<KV_CONFIG_ID>",
     },
   ],
   // The payloads bucket (shared with engine, which WRITES it). The api only ever GETs from it —

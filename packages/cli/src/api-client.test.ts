@@ -223,6 +223,60 @@ describe("createApiClient.endpointsCreate", () => {
   });
 });
 
+describe("createApiClient.endpointsDelete", () => {
+  const deleted = { id: EP_ID, deletedAt: "2026-06-25T00:00:00.000Z" };
+
+  it("DELETEs /v1/endpoints/:id and parses {id, deletedAt} (deletedAt coerced to a Date)", async () => {
+    const { fetch, calls } = fakeFetch(json(deleted));
+    const out = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsDelete(EP_ID);
+    expect(calls[0].url).toBe(`${BASE}/v1/endpoints/${EP_ID}`);
+    expect(calls[0].method).toBe("DELETE");
+    expect(calls[0].headers.get("authorization")).toBe(`Bearer ${KEY}`);
+    expect(out.id).toBe(EP_ID);
+    expect(out.deletedAt).toBeInstanceOf(Date);
+  });
+
+  it("retries a transient 503 — DELETE is idempotent (the server handler is too)", async () => {
+    const { fetch, calls } = sequenceFetch([new Response(null, { status: 503 }), json(deleted)]);
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: instantSleep });
+    expect((await client.endpointsDelete(EP_ID)).id).toBe(EP_ID);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("maps a 404 to ApiError(NOT_FOUND)", async () => {
+    const { fetch } = fakeFetch(new Response(null, { status: 404 }));
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: async () => {} })
+      .endpointsDelete(EP_ID)
+      .catch((e) => e);
+    expect((err as ApiError).code).toBe("NOT_FOUND");
+  });
+});
+
+describe("createApiClient.endpointsRotate", () => {
+  const rotated = {
+    ...endpoint,
+    ingestUrl: "https://wbhk.my/whep_rotated_secret_token_value_bbbbbbbbbbbb",
+  };
+
+  it("POSTs /v1/endpoints/:id/rotate and parses the endpoint + new one-time ingestUrl", async () => {
+    const { fetch, calls } = fakeFetch(json(rotated));
+    const out = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsRotate(EP_ID);
+    expect(calls[0].url).toBe(`${BASE}/v1/endpoints/${EP_ID}/rotate`);
+    expect(calls[0].method).toBe("POST");
+    expect(out.ingestUrl).toBe(rotated.ingestUrl);
+    expect(out.id).toBe(EP_ID);
+  });
+
+  it("does NOT retry a transient failure — rotate is not idempotent (no second cutover)", async () => {
+    const { fetch, calls } = fakeFetch(new Response(null, { status: 503 }));
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: async () => {} })
+      .endpointsRotate(EP_ID)
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(calls).toHaveLength(1);
+  });
+});
+
 describe("createApiClient read methods", () => {
   it("endpointsList GETs /v1/endpoints (no query when no params) and parses the page", async () => {
     const { fetch, calls } = fakeFetch(json({ items: [endpoint], nextCursor: null }));

@@ -109,19 +109,34 @@ function toEndpoint(r: EndpointRow): Endpoint {
 export async function listEndpoints(tx: TenantTx, opts: ListOptions = {}): Promise<Page<Endpoint>> {
   const limit = clampLimit(opts.limit);
   const cursor = opts.cursor;
+  // `deleted_at is null` hides soft-deleted endpoints (ADR-0076) from endpoints.list.
   const rows = await tx<EndpointRow[]>`
     select id, org_id, name, paused, created_at
     from endpoints
-    ${cursor ? tx`where (date_trunc('milliseconds', created_at), id) < (${cursor.receivedAt}::timestamptz, ${cursor.id}::uuid)` : tx``}
+    where deleted_at is null
+    ${cursor ? tx`and (date_trunc('milliseconds', created_at), id) < (${cursor.receivedAt}::timestamptz, ${cursor.id}::uuid)` : tx``}
     order by date_trunc('milliseconds', created_at) desc, id desc
     limit ${limit + 1}`;
 
   return buildPage(rows, limit, toEndpoint, (r) => ({ receivedAt: r.created_at, id: r.id }));
 }
 
-export async function getEndpoint(tx: TenantTx, id: string): Promise<Endpoint | null> {
+/**
+ * Resolve one endpoint by id under RLS. By default a soft-deleted endpoint reads as not-found (ADR-0076),
+ * so the `endpoints.get` capability 404s after a delete. `includeDeleted` keeps a soft-deleted endpoint
+ * resolvable: the EVENT handlers (events.list / events.tail / events.replay) gate on this — a deleted
+ * endpoint's captured events + payloads are RETAINED and stay listable/tailable/replayable by id (the
+ * inspection-history rationale soft delete was chosen for), even though the endpoint is hidden from
+ * `endpoints.list` / `endpoints.get`.
+ */
+export async function getEndpoint(
+  tx: TenantTx,
+  id: string,
+  opts: { readonly includeDeleted?: boolean } = {},
+): Promise<Endpoint | null> {
   const [row] = await tx<EndpointRow[]>`
-    select id, org_id, name, paused, created_at from endpoints where id = ${id}`;
+    select id, org_id, name, paused, created_at from endpoints
+    where id = ${id} ${opts.includeDeleted ? tx`` : tx`and deleted_at is null`}`;
   return row ? toEndpoint(row) : null;
 }
 

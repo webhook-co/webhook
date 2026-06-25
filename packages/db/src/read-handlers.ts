@@ -111,7 +111,9 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
     const decoded = await decode(cursor);
     const { page, headCursor } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       // Distinguish "no such endpoint for this org" (NOT_FOUND) from "endpoint with no events".
-      const endpoint = await getEndpoint(tx, endpointId);
+      // includeDeleted (ADR-0076): a soft-deleted endpoint's captured events are RETAINED + stay
+      // listable by id — so the existence gate resolves a deleted endpoint (endpoints.list hides it).
+      const endpoint = await getEndpoint(tx, endpointId, { includeDeleted: true });
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
       const browsed = await listEvents(tx, {
         endpointId,
@@ -156,7 +158,8 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       // cutoff (now() - δ) Postgres-side, so a slow caller can't pin an old cutoff and there's no
       // Worker↔Postgres clock skew in the gapless invariant. tailMeta reuses that exact window for the
       // head + the (capped) backlog count, in the same RLS-scoped tx.
-      const endpoint = await getEndpoint(tx, endpointId);
+      // includeDeleted (ADR-0076): a soft-deleted endpoint's captured events stay tailable by id.
+      const endpoint = await getEndpoint(tx, endpointId, { includeDeleted: true });
       if (!endpoint) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
       // Resolve `--since` to a cursor ONCE (after the guard, under RLS), then iterate by it.
       const from = parsedSince

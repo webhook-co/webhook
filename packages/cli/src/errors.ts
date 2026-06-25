@@ -29,6 +29,17 @@ export class MissingApiKeyError extends CliError {
   }
 }
 
+/** A destructive command (`endpoints delete` / `endpoints rotate`) ran without `--yes` and either could
+ *  not prompt (non-TTY) or the prompt was declined. A usage error (exit 2) so a script that forgot `--yes`
+ *  — or a human who said no — sees a clear non-zero, and nothing was mutated. */
+export class ConfirmationError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  constructor(readonly userMessage: string) {
+    super(userMessage);
+    this.name = "ConfirmationError";
+  }
+}
+
 /** A command needs a credential but none is stored (and none in WBHK_API_KEY). Maps to the same
  *  "not authenticated" exit code as a server 401, so automation branches on one signal. */
 export class NotLoggedInError extends CliError {

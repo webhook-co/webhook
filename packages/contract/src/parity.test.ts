@@ -73,14 +73,16 @@ describe("capability parity", () => {
 // map in lockstep; the frontend epic adds the web bindings and removes the WEB_DEFERRED ones.
 describe("capability parity — current GA surfaces conformance", () => {
   // The real registered sets, mirrored here from each surface:
-  //   cli  — packages/cli CAPABILITY_COMMANDS (all 7: `listen`/`replay` map tail/replay)
-  //   api  — apps/api router (the 5 reads + events.tail cursor-pull, slice 11)
-  //   mcp  — apps/mcp McpAgent tools (the same 6 capabilities)
+  //   cli  — packages/cli CAPABILITY_COMMANDS (every command: `listen`/`replay` map tail/replay)
+  //   api  — apps/api router (the reads + endpoints.create/delete/rotate writes + events.tail cursor-pull)
+  //   mcp  — apps/mcp McpAgent tools (the same set)
   //   web  — none (dashboard deferred)
   const API_MCP_BOUND = [
     "endpoints.list",
     "endpoints.get",
     "endpoints.create",
+    "endpoints.delete",
+    "endpoints.rotate",
     "events.list",
     "events.get",
     "events.tail",

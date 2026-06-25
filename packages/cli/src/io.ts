@@ -153,6 +153,19 @@ function promptSecret(message: string): Promise<string> {
   });
 }
 
+function promptLine(message: string): Promise<string> {
+  // An ECHOING line prompt for a (non-secret) confirmation — the prompt AND the user's keystrokes go to
+  // stderr, so they SEE what they type, while stdout stays clean for a piped capture. Contrast
+  // promptSecret, which mutes the echo for secret entry. terminal:true keeps line editing working.
+  const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+  return new Promise<string>((resolve) => {
+    rl.question(message, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
 // Run an OS keychain CLI with args (NEVER a shell — args are passed as an array, so a profile name can't
 // inject). The secret can be supplied on STDIN (no argv exposure, used for `secret-tool store`). A missing
 // binary (ENOENT) becomes KeychainUnavailableError so the store falls back to the file; a non-zero exit is
@@ -498,6 +511,7 @@ export function makeRealIo(): IoSeams {
     fetch: (input, init) => globalThis.fetch(input, init),
     isInteractive: process.stdin.isTTY === true,
     promptSecret,
+    promptLine,
     readStdin: async () => (await text(process.stdin)).trim(),
     openBrowser,
     sleep: (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)),

@@ -270,6 +270,8 @@ describe("buildCapabilityHandlers", () => {
     });
     expect(map.has("endpoints.list")).toBe(true); // a read handler
     expect(map.has("endpoints.create")).toBe(true); // a write handler
+    expect(map.has("endpoints.delete")).toBe(true); // a write handler (ADR-0076)
+    expect(map.has("endpoints.rotate")).toBe(true); // a write handler (ADR-0076)
     expect(map.has("audit.verify")).toBe(true);
   });
 });

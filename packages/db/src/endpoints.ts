@@ -92,8 +92,8 @@ export interface CreatedEndpointRow {
  * operator bootstrap. This MUST be its own tx (it does NOT call createEndpoint, which opens a separate
  * one) so the endpoint row and its wha1/audit_log row commit or roll back together. A per-org advisory
  * lock is taken first, so the soft-cap check (BEFORE the mint/insert; an over-cap call neither mints a
- * token nor writes audit) is EXACT under concurrency — not best-effort. The cap is an abuse backstop
- * while there is no endpoints.delete yet.
+ * token nor writes audit) is EXACT under concurrency — not best-effort. The cap is an abuse backstop; it
+ * counts only LIVE endpoints (deleted_at is null), so endpoints.delete (ADR-0076) relieves it.
  */
 export async function createEndpointWithAudit(
   app: Sql,
@@ -108,8 +108,10 @@ export async function createEndpointWithAudit(
     // soft-cap check below is exact rather than racy (cap+N under a burst). Creates are infrequent, so
     // the per-org serialization is cheap; it never contends with the audit lock (distinct namespace).
     await tx`select pg_advisory_xact_lock(hashtextextended(${input.orgId}, ${ENDPOINT_CREATE_LOCK_NAMESPACE}))`;
-    // Counts only THIS org's rows (RLS pins app.current_org). bigint count -> int4 -> JS number.
-    const countRows = await tx<{ count: number }[]>`select count(*)::int as count from endpoints`;
+    // Counts only THIS org's LIVE rows (RLS pins app.current_org; `deleted_at is null` excludes
+    // soft-deleted endpoints, ADR-0076 — so endpoints.delete actually relieves the cap). bigint -> int4.
+    const countRows = await tx<{ count: number }[]>`
+      select count(*)::int as count from endpoints where deleted_at is null`;
     const count = countRows[0]?.count ?? 0;
     if (count >= input.maxEndpoints) {
       throw new CapabilityFault(
@@ -134,6 +136,139 @@ export async function createEndpointWithAudit(
     return inserted.created_at;
   });
   return { id, orgId: input.orgId, name: input.name, paused: false, createdAt, plaintext };
+}
+
+export interface DeleteEndpointInput {
+  readonly orgId: string;
+  readonly endpointId: string;
+  /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
+  readonly actor: string | null;
+}
+
+export interface DeletedEndpointRow {
+  readonly id: string;
+  /** When the endpoint was soft-deleted (the original time on an idempotent re-delete). */
+  readonly deletedAt: Date;
+  /** The stored ingest-token hash — the caller evicts it from the KV ingest cache to stop ingest now. */
+  readonly tokenHash: Buffer;
+  /** True on the state transition (this call did the delete); false on an idempotent re-delete. */
+  readonly wasLive: boolean;
+}
+
+/**
+ * SOFT-delete an endpoint (set deleted_at) and append the control-plane audit row, in ONE tx under the
+ * org's RLS context (webhook_app). Returns the stored ingest-token hash so the caller evicts the KV
+ * ingest cache — the immediate stop; the durable stop is the cold lookup's `deleted_at is null` filter,
+ * which also self-heals within the KV TTL if an eviction is missed. IDEMPOTENT: a re-delete of an
+ * already-deleted endpoint returns its recorded deletedAt and does NOT append a second audit row (the
+ * transition happened once). An unknown / cross-org id is RLS-invisible -> CapabilityFault NOT_FOUND.
+ * One statement: a `cur` CTE captures the prior deleted_at (so we know if this was the transition), then
+ * `coalesce(deleted_at, now())` makes the write idempotent (already-deleted rows keep their time). The
+ * `cur` select takes `for update` (like rotate) so two concurrent first-deletes of the same live endpoint
+ * SERIALIZE — the second blocks, then re-reads prev_deleted_at as non-null (was_live=false) — instead of
+ * both snapshotting null and each appending an `endpoint.deleted` row (audit-once-per-transition).
+ */
+export async function deleteEndpointWithAudit(
+  app: Sql,
+  input: DeleteEndpointInput,
+  auditKey: CryptoKey,
+): Promise<DeletedEndpointRow> {
+  return withTenant(app, input.orgId, async (tx) => {
+    const rows = await tx<{ ingest_token_hash: Buffer; deleted_at: Date; was_live: boolean }[]>`
+      with cur as (
+        select id, deleted_at as prev_deleted_at from endpoints where id = ${input.endpointId} for update
+      )
+      update endpoints e
+         set deleted_at = coalesce(e.deleted_at, now())
+        from cur
+       where e.id = cur.id
+      returning e.ingest_token_hash, e.deleted_at, (cur.prev_deleted_at is null) as was_live`;
+    const row = rows[0];
+    if (!row) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
+    if (row.was_live) {
+      // Audit ONLY the actual state transition (not an idempotent re-delete). Same tx + RLS context.
+      await appendAuditEntry(tx, auditKey, {
+        orgId: input.orgId,
+        actor: input.actor,
+        action: "endpoint.deleted",
+        target: input.endpointId,
+      });
+    }
+    return {
+      id: input.endpointId,
+      deletedAt: row.deleted_at,
+      tokenHash: Buffer.from(row.ingest_token_hash),
+      wasLive: row.was_live,
+    };
+  });
+}
+
+export interface RotateEndpointInput {
+  readonly orgId: string;
+  readonly endpointId: string;
+  /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
+  readonly actor: string | null;
+}
+
+export interface RotatedEndpointRow {
+  readonly id: string;
+  readonly orgId: string;
+  readonly name: string;
+  readonly paused: boolean;
+  readonly createdAt: Date;
+  /** The OLD ingest-token hash — the caller evicts it from the KV ingest cache (the HARD cutover). */
+  readonly oldTokenHash: Buffer;
+  /** The NEW plaintext ingest token — returned ONCE; the wbhk.my URL embeds it (one-time reveal). */
+  readonly plaintext: string;
+}
+
+/**
+ * ROTATE a LIVE endpoint's ingest token IN PLACE (ADR-0076) and append the control-plane audit row, in
+ * ONE tx under the org's RLS context (webhook_app). Mints a fresh token, swaps endpoints.ingest_token_hash
+ * to the new hash (the `cur` CTE takes `for update` to serialize concurrent rotate/delete on the same
+ * endpoint), and returns the OLD hash so the caller evicts it from the KV ingest cache — the HARD cutover
+ * that kills the old URL. The endpoint id/name/paused/createdAt + its captured events and provider secrets
+ * are preserved (unlike delete+recreate). A deleted / unknown / cross-org id is invisible -> NOT_FOUND.
+ * (Even without the eviction the old token dies on the next cold miss — its hash matches no row — but the
+ * eviction makes it immediate rather than within the KV TTL; the new token resolves immediately.)
+ */
+export async function rotateEndpointWithAudit(
+  app: Sql,
+  input: RotateEndpointInput,
+  hasher: CredentialHasher,
+  auditKey: CryptoKey,
+): Promise<RotatedEndpointRow> {
+  const { plaintext, keyHash } = mintCredential(INGEST_TOKEN_PREFIX, hasher);
+  return withTenant(app, input.orgId, async (tx) => {
+    const rows = await tx<{ old_hash: Buffer; name: string; paused: boolean; created_at: Date }[]>`
+      with cur as (
+        select ingest_token_hash as old_hash, name, paused, created_at
+        from endpoints
+        where id = ${input.endpointId} and deleted_at is null
+        for update
+      )
+      update endpoints e set ingest_token_hash = ${keyHash}
+        from cur
+       where e.id = ${input.endpointId}
+      returning cur.old_hash, cur.name, cur.paused, cur.created_at`;
+    const row = rows[0];
+    if (!row) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
+    await appendAuditEntry(tx, auditKey, {
+      orgId: input.orgId,
+      actor: input.actor,
+      action: "endpoint.rotated",
+      target: input.endpointId,
+    });
+    return {
+      id: input.endpointId,
+      orgId: input.orgId,
+      name: row.name,
+      paused: row.paused,
+      createdAt: row.created_at,
+      oldTokenHash: Buffer.from(row.old_hash),
+      plaintext,
+    };
+  });
 }
 
 /**
@@ -177,16 +312,21 @@ interface EndpointResolveRow {
  * (webhook_authn holds a FOR SELECT TO webhook_authn USING(true) policy + a column-scoped
  * grant on endpoints, migration 0011). The lookup matches on equality, but we never resolve
  * a principal off an unverified compare -- re-check the stored hash against the queried hash
- * in constant time (defense-in-depth; that's what credentialHashEquals is for). Ingest tokens
- * have no revoke/expiry columns (unlike api keys); rotation/removal is a row delete + KV
- * invalidation. Use as the `coldLookup` of an ingest credential resolver.
+ * in constant time (defense-in-depth; that's what credentialHashEquals is for). Removal is a soft
+ * delete (deleted_at, ADR-0076) and rotation swaps ingest_token_hash in place — both paired with a KV
+ * eviction. Use as the `coldLookup` of an ingest credential resolver.
  */
 export function makeEndpointTokenColdLookup(authn: Sql) {
   return async function coldLookup(tokenHash: Buffer): Promise<ResolvedPrincipal | null> {
+    // `deleted_at is null` (ADR-0076) is the DURABLE stop for endpoints.delete: a soft-deleted
+    // endpoint's token resolves to no row -> the ingest path 404s. Without it, the explicit KV
+    // eviction would be undone by the very next cold miss re-caching the still-present row; with it,
+    // the system also SELF-HEALS within the KV TTL if an eviction is ever missed. (webhook_authn was
+    // granted select(deleted_at) in migration 0021 so this column read is permitted.)
     const rows = await authn<EndpointResolveRow[]>`
       select id, org_id, ingest_token_hash, paused
       from endpoints
-      where ingest_token_hash = ${tokenHash}`;
+      where ingest_token_hash = ${tokenHash} and deleted_at is null`;
     const row = rows[0];
     if (!row) return null;
     if (!credentialHashEquals(Buffer.from(row.ingest_token_hash), tokenHash)) return null;

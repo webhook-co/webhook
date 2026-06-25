@@ -163,6 +163,21 @@ describe("createReplayHandler (events.replay)", () => {
     ).toBe("ENDPOINT_PAUSED");
   });
 
+  it("STILL replays a retained event whose endpoint was SOFT-DELETED (ADR-0076 inspection retention)", async () => {
+    // A soft-deleted endpoint's captured events stay replayable — replay forwards the stored payload to
+    // localhost, not via the (dead) ingest URL. The handler resolves the endpoint with includeDeleted, so
+    // this must NOT 404 (the regression the code review caught: the deleted_at filter on getEndpoint).
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-deleted" }, hasher)).id;
+    const ev = await seedEvent(orgA, ep);
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update endpoints set deleted_at = now() where id = ${ep}`,
+    );
+    const out = await handler(ctxA, { eventId: ev, target: TARGET, idempotencyKey: "k-deleted" });
+    expect(out).toMatchObject({ eventId: ev, orgId: orgA, status: "forwarded" });
+  });
+
   it("records a 'forwarded' delivery attempt and is idempotent on the key", async () => {
     const a = await handler(ctxA, { eventId: evA, target: TARGET, idempotencyKey: "k-go" });
     expect(a).toMatchObject({

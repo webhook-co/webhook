@@ -1,4 +1,4 @@
-import type { CreatedEndpoint } from "@webhook-co/contract";
+import type { CreatedEndpoint, DeletedEndpoint } from "@webhook-co/contract";
 import type { Endpoint, Event, EventSummary } from "@webhook-co/shared";
 
 import type { AuditVerifyResult } from "../api-client.js";
@@ -91,6 +91,14 @@ export function renderCreatedEndpoint(e: CreatedEndpoint, color: boolean): strin
     ["status", statusWord(e.paused, color)],
     ["created", fmtDateTime(e.createdAt)],
     ["ingest url", field(e.ingestUrl)],
+  ]);
+}
+
+/** A just soft-deleted endpoint: its id + when it was deleted (the `endpoints delete` confirmation). */
+export function renderDeletedEndpoint(d: DeletedEndpoint): string {
+  return block([
+    ["id", field(d.id)],
+    ["deleted", fmtDateTime(d.deletedAt)],
   ]);
 }
 

@@ -68,6 +68,8 @@ export interface IoSeams {
   readonly isInteractive: boolean;
   /** Prompt on stderr and read one line from stdin without echoing it (secret entry). */
   promptSecret(message: string): Promise<string>;
+  /** Prompt on stderr and read one ECHOING line from stdin (a visible destructive-action confirmation). */
+  promptLine(message: string): Promise<string>;
   /** Read all of piped stdin to EOF, trimmed (the `--stdin` key path). */
   readStdin(): Promise<string>;
   /** Open the bearer-authed listen tunnel WebSocket (the `ws` client in prod; a fake in tests). */
@@ -213,6 +215,8 @@ export function makeTestContext(opts?: {
   stdin?: string;
   /** What `io.promptSecret()` resolves to (the interactive path); also implies isInteractive. */
   promptResponse?: string;
+  /** What `io.promptLine()` resolves to (the destructive-confirm path); also implies isInteractive. */
+  lineResponse?: string;
   /** Whether stdin is an interactive TTY (defaults to true when promptResponse is given, else false). */
   isInteractive?: boolean;
   /** Override the credential store (an in-memory fake) so command tests never touch disk. */
@@ -263,11 +267,17 @@ export function makeTestContext(opts?: {
   };
   const io: IoSeams = {
     fetch: opts?.fetch ?? (unconfigured("fetch") as unknown as typeof fetch),
-    isInteractive: opts?.isInteractive ?? opts?.promptResponse !== undefined,
+    isInteractive:
+      opts?.isInteractive ??
+      (opts?.promptResponse !== undefined || opts?.lineResponse !== undefined),
     promptSecret:
       opts?.promptResponse !== undefined
         ? async () => opts.promptResponse as string
         : unconfigured("promptSecret"),
+    promptLine:
+      opts?.lineResponse !== undefined
+        ? async () => opts.lineResponse as string
+        : unconfigured("promptLine"),
     readStdin:
       opts?.stdin !== undefined ? async () => opts.stdin as string : unconfigured("readStdin"),
     connectWebSocket:

@@ -22,6 +22,13 @@ export interface McpEnv {
   /** KV caching resolved principals (keyed by api-key hash); invalidated on revoke. */
   KV_AUTHZ: KVNamespace;
   /**
+   * The engine's ingest-token cache namespace (the SAME KV_CONFIG the engine reads on the wbhk.my hot
+   * path). mcp binds it ONLY to EVICT a token's entry after the endpoints.delete / endpoints.rotate tools
+   * (ADR-0076), via makeIngestHashEvictor — never to read/write principals. Same namespace by id (KV is
+   * global-by-id; overlay-injected). The McpAgent DO reads it from env on each write-tool call.
+   */
+  KV_CONFIG: KVNamespace;
+  /**
    * The cookieless ingest apex the endpoints.create tool builds its one-time ingest URL from (prod:
    * https://wbhk.my). A plain wrangler `vars` value (NOT a secret, NOT deploy-injected — the overlay
    * carries no `vars`, so it is committed in wrangler.jsonc). Must match api's INGEST_BASE_URL + the
