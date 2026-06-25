@@ -2,29 +2,11 @@
 
 import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
 
+import { logActionError } from "./action-log";
 import { mintApiKey } from "./credential-mint";
 import { revokeGrantById, revokeKeyById } from "./credential-revoke";
 import type { ApiKeyItem } from "./credentials";
 import { verifySession } from "./session";
-
-/**
- * Surface the real cause of an otherwise-swallowed action failure to Workers observability — scrubbed:
- * the error name/message + (for a PG error) its SQLSTATE code, never a key/plaintext/pepper or a row
- * value. The user still gets a generic message; this keeps a credential-mutation failure diagnosable
- * instead of silent (a silent `catch {}` is what hid the `(void 0) is not a function` bundling bug).
- * (Not exported — "use server" files may only export async actions.)
- */
-function logActionError(event: string, error: unknown): void {
-  const e = error as { name?: string; message?: string; code?: string };
-  console.error(
-    JSON.stringify({
-      message: event,
-      name: e?.name,
-      error: e?.message ?? String(error),
-      code: e?.code,
-    }),
-  );
-}
 
 export interface CreateKeyInput {
   readonly name: string;

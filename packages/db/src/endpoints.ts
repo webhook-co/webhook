@@ -15,7 +15,12 @@
 
 import { randomUUID } from "node:crypto";
 
-import { CapabilityFault } from "@webhook-co/contract";
+// Import CapabilityFault from the LEAF (not the `@webhook-co/contract` barrel): apps/web pulls this module
+// (DB-direct endpoint mutations) under Turbopack/OpenNext, where a named binding from a transpiled-package
+// `export *` barrel resolves to `undefined` at runtime — so a barrel import would make `new CapabilityFault`
+// throw "not a constructor" on the error paths (RATE_LIMITED / NOT_FOUND). The leaf resolves reliably
+// everywhere (see [[turbopack-contract-barrel]]; same leaf apps/web already uses for CAPABILITY_SCOPES).
+import { CapabilityFault } from "@webhook-co/contract/capability";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
@@ -67,6 +72,13 @@ export async function createEndpoint(
   });
   return { id, orgId: input.orgId, name: input.name, paused: false, start, plaintext };
 }
+
+/**
+ * Per-org endpoint soft cap (ADR-0075): the abuse backstop the create path enforces EXACTLY under the
+ * per-org advisory lock; counts LIVE endpoints (delete relieves it). The SINGLE source of truth for the cap
+ * across every surface — api/mcp pass it via the write handler, the dashboard (DB-direct) imports it here.
+ */
+export const DEFAULT_MAX_ENDPOINTS_PER_ORG = 100;
 
 export interface CreateEndpointWithAuditInput extends CreateEndpointInput {
   /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */

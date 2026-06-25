@@ -22,13 +22,15 @@ import type { Sql } from "./client";
 import type { CredentialHasher } from "./credential";
 import {
   createEndpointWithAudit,
+  DEFAULT_MAX_ENDPOINTS_PER_ORG,
   deleteEndpointWithAudit,
   rotateEndpointWithAudit,
 } from "./endpoints";
 import { createReadHandlers, type CapabilityHandlers, type ReadHandlerDeps } from "./read-handlers";
 
-/** Per-org endpoint soft cap (ADR-0075): an abuse backstop. Counts LIVE endpoints (delete relieves it). */
-export const DEFAULT_MAX_ENDPOINTS_PER_ORG = 100;
+// DEFAULT_MAX_ENDPOINTS_PER_ORG now lives in ./endpoints (the single source of truth, so the DB-direct
+// dashboard imports the same value, not a copy); createWriteHandlers applies it when deps.maxEndpoints is
+// omitted, and the barrel still re-exports it via `export * from "./endpoints"`.
 
 export interface WriteHandlerDeps {
   /** webhook_app over the cache-disabled tenant binding — tenant writes run here. */

@@ -9,6 +9,8 @@ vi.mock("@/server/session", () => ({
   })),
 }));
 vi.mock("@/server/auth-actions", () => ({ logout: vi.fn() }));
+// The sidebar (AppNav) is a client component that reads the active route via usePathname.
+vi.mock("next/navigation", () => ({ usePathname: () => "/endpoints" }));
 
 import AppLayout from "./layout";
 
@@ -17,6 +19,7 @@ describe("AppLayout (gated dashboard shell)", () => {
     render(await AppLayout({ children: <p>page content</p> }));
     expect(screen.getByText("page content")).toBeInTheDocument();
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Endpoints" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Account menu" })).toBeInTheDocument();
   });
