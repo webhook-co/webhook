@@ -2,16 +2,23 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
+import { importAuditKey } from "@webhook-co/shared";
+
 import {
   API_KEY_PREFIX,
   createApiKey,
   listApiKeys,
   makeApiKeyColdLookup,
+  revokeApiKeyByPlaintext,
   revokeApiKeyInTx,
 } from "../src/api-keys";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
+import {
+  createCredentialHasher,
+  CREDENTIAL_PEPPER_MIN_BYTES,
+  mintChecksummedCredential,
+} from "../src/credential";
 import { expectNoSecretInSerialized } from "./secret-leak";
 import { InMemoryCredentialCache } from "../src/credential-cache";
 import { createCredentialResolver } from "../src/credential-resolver";
@@ -38,6 +45,7 @@ const hasher = createCredentialHasher({ current: Buffer.alloc(CREDENTIAL_PEPPER_
 let pg: EphemeralPostgres;
 let app: Sql; // webhook_app pool — create/list/revoke (tenant DML under RLS)
 let authn: Sql; // webhook_authn pool — verify cold path (column-scoped SELECT)
+let auditKey: CryptoKey; // aae1 auth-audit chain key (revokeApiKeyByPlaintext audits the revoke)
 let orgA: string;
 let orgB: string;
 
@@ -45,6 +53,18 @@ async function seedOrg(orgId: string): Promise<void> {
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
   });
+}
+
+/** Read an org's auth-audit event types in order (to assert the secret-scanning revoke is audited). */
+async function auditTypes(orgId: string): Promise<string[]> {
+  const rows = await withTenant(
+    app,
+    orgId,
+    (tx) =>
+      tx<{ event_type: string }[]>`
+      select event_type from auth_audit_event where org_id = ${orgId} order by seq asc`,
+  );
+  return rows.map((r) => r.event_type);
 }
 
 /** A verify helper wiring the authn cold lookup behind a (fresh) in-memory cache. */
@@ -71,6 +91,9 @@ beforeAll(async () => {
   // CACHE-DISABLED Hyperdrive binding; here both hit the ephemeral PG directly.
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
+  auditKey = await importAuditKey(
+    new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 13) % 256)),
+  );
 
   orgA = randomUUID();
   orgB = randomUUID();
@@ -259,5 +282,48 @@ describe("per-key audience (A0b conditional stamp, real DB)", () => {
     });
     const { resolver } = makeResolver(); // resource = API_RESOURCE
     expect((await resolver.resolve(created.plaintext))?.audience).toBe(API_RESOURCE);
+  });
+});
+
+describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () => {
+  it("finds a key by plaintext alone, revokes it (audited), returns the hash, and is idempotent", async () => {
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "leaked", scopes: ["events:read"] },
+      hasher,
+    );
+    // Resolves before revocation.
+    const { resolver } = makeResolver();
+    expect((await resolver.resolve(created.plaintext))?.orgId).toBe(orgA);
+
+    // Only the plaintext is in hand — no orgId, no keyId (exactly what GitHub sends us).
+    const r = await revokeApiKeyByPlaintext(authn, app, created.plaintext, hasher, auditKey);
+    expect(r.found).toBe(true);
+    expect(r.revoked).toBe(true);
+    expect(r.orgId).toBe(orgA);
+    expect(r.keyId).toBe(created.id);
+    expect(r.keyHash).not.toBeNull();
+    expect(Buffer.compare(r.keyHash!, hasher.hash(created.plaintext))).toBe(0); // caller evicts KV by this
+
+    // No longer resolves (cold lookup honors revoked_at), and the revoke is audited.
+    expect(await makeResolver().resolver.resolve(created.plaintext)).toBeNull();
+    expect(await auditTypes(orgA)).toContain("key_revoked");
+
+    // Idempotent: a re-report (GitHub has no nonce → replay) finds it but flips nothing.
+    const again = await revokeApiKeyByPlaintext(authn, app, created.plaintext, hasher, auditKey);
+    expect(again).toMatchObject({ found: true, revoked: false });
+  });
+
+  it("revokes the RIGHT org's key (cross-org discovery by hash)", async () => {
+    const inB = await createApiKey(app, { orgId: orgB, name: "leaked-b", scopes: [] }, hasher);
+    const r = await revokeApiKeyByPlaintext(authn, app, inB.plaintext, hasher, auditKey);
+    expect(r).toMatchObject({ found: true, revoked: true, orgId: orgB, keyId: inB.id });
+    expect(await makeResolver().resolver.resolve(inB.plaintext)).toBeNull();
+  });
+
+  it("returns { found: false } for an unknown (but well-formed) key — nothing to revoke", async () => {
+    const { plaintext } = mintChecksummedCredential(API_KEY_PREFIX, hasher); // valid shape, never inserted
+    const r = await revokeApiKeyByPlaintext(authn, app, plaintext, hasher, auditKey);
+    expect(r).toMatchObject({ found: false, revoked: false });
   });
 });

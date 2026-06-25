@@ -314,6 +314,72 @@ export async function findApiKeyGrant(
   return null;
 }
 
+/** Outcome of a by-plaintext revoke: whether the key existed, whether this call flipped it, and its hash. */
+export interface RevokedByPlaintext {
+  /** True if a key with this plaintext exists (any org), revoked or not. */
+  readonly found: boolean;
+  /** True only if THIS call stamped revoked_at (a re-report of an already-revoked key is false). */
+  readonly revoked: boolean;
+  readonly orgId: string | null;
+  readonly keyId: string | null;
+  /** The stored key_hash, so the caller can evict the credential cache. null when not found. */
+  readonly keyHash: Buffer | null;
+}
+
+/**
+ * Revoke an api key given ONLY its raw plaintext — the secret-scanning auto-revoke path (ADR-0074),
+ * where GitHub hands us a leaked token with no orgId/keyId. Two steps:
+ *   1. CROSS-ORG discovery-by-hash as `webhook_authn` (loops pepper candidates so a key minted under a
+ *      previous pepper still resolves), modeled on findApiKeyGrant but returning the KEY id + hash and
+ *      NOT filtering revoked — so a re-report (GitHub's payload has no nonce → replayable) is idempotent.
+ *   2. Audited revoke as `webhook_app`, tenant-scoped: withTenant + revokeApiKeyInTx + an `aae1`
+ *      key_revoked audit row (actor null = system; metadata records the source) when a row flips.
+ * Returns the org/key/hash so the caller evicts the KV credential cache by `credentialCacheKey(keyHash)`.
+ * Not an authentication path: the caller already holds the token; no constant-time compare needed.
+ */
+export async function revokeApiKeyByPlaintext(
+  authn: Sql,
+  app: Sql,
+  plaintext: string,
+  hasher: CredentialHasher,
+  auditKey: CryptoKey,
+): Promise<RevokedByPlaintext> {
+  // Discovery uses ONLY webhook_authn's column-scoped grant (org_id + key_hash — same columns the
+  // cold lookup reads); `id` is NOT granted to authn, so the keyId is resolved later under webhook_app.
+  let match: { orgId: string; keyHash: Buffer } | null = null;
+  for (const candidate of hasher.candidates(plaintext)) {
+    const [row] = await authn<{ org_id: string; key_hash: Buffer }[]>`
+      select org_id, key_hash from api_keys where key_hash = ${candidate}`;
+    if (row) {
+      // key_hash is unique, so a matched row IS the key — stop looping (no later candidate matches another).
+      match = { orgId: row.org_id, keyHash: Buffer.from(row.key_hash) };
+      break;
+    }
+  }
+  if (match === null)
+    return { found: false, revoked: false, orgId: null, keyId: null, keyHash: null };
+
+  const { orgId, keyHash } = match;
+  // As webhook_app under the org's RLS context: resolve the key id (app has full SELECT on its org's
+  // rows, unlike authn), then revoke + audit via the shared tx-level primitive.
+  const { revoked, keyId } = await withTenant(app, orgId, async (tx) => {
+    const [row] = await tx<{ id: string }[]>`select id from api_keys where key_hash = ${keyHash}`;
+    if (!row) return { revoked: false, keyId: null as string | null };
+    const result = await revokeApiKeyInTx(tx, row.id);
+    if (result.revoked) {
+      await appendAuthAuditEntry(tx, auditKey, {
+        orgId,
+        actor: null,
+        eventType: "key_revoked",
+        targetId: row.id,
+        metadata: { source: "github_secret_scanning" },
+      });
+    }
+    return { revoked: result.revoked, keyId: row.id };
+  });
+  return { found: true, revoked, orgId, keyId, keyHash };
+}
+
 /** Coerce the jsonb `scopes` column (postgres.js returns it parsed) to a string[]. */
 function toScopes(value: unknown): readonly string[] {
   if (!Array.isArray(value)) return [];
