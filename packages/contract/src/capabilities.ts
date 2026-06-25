@@ -62,6 +62,28 @@ export const endpointsGet = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED },
 });
 
+// endpoints.create is the one WRITE capability bound on api+cli+mcp (web stays deferred with the
+// dashboard epic). Its output is the standard EndpointSchema PLUS `ingestUrl` — the wbhk.my/<token>
+// URL that embeds the freshly-minted ingest token. The token is a secret shown EXACTLY ONCE: the
+// endpoints table stores only its hash and has no token column, so the URL is unrecoverable after
+// creation (rotation = create a new endpoint). It is therefore never returned by endpoints.get/list.
+export const CreatedEndpointSchema = EndpointSchema.extend({ ingestUrl: z.url() });
+export type CreatedEndpoint = z.infer<typeof CreatedEndpointSchema>;
+
+export const endpointsCreate = defineCapability({
+  name: "endpoints.create",
+  input: z.object({ name: z.string().trim().min(1).max(200) }),
+  output: CreatedEndpointSchema,
+  // FORBIDDEN: a bearer lacking endpoints:write (the api edge returns 403 before dispatch; mcp has no
+  // edge scope gate, so the handler's scope check is the sole gate there). RATE_LIMITED: the per-org
+  // endpoint soft cap (ADR-0074) — an abuse backstop, since there is no endpoints.delete yet. Not
+  // idempotent: each call mints a new endpoint + token (the api-client never blind-retries this POST).
+  errors: ["UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED },
+});
+
 export const eventsList = defineCapability({
   name: "events.list",
   input: z.object({
@@ -192,6 +214,7 @@ export const eventsReplay = defineCapability({
 export const CAPABILITIES: readonly AnyCapability[] = [
   endpointsList,
   endpointsGet,
+  endpointsCreate,
   eventsList,
   eventsGet,
   eventsGetPayload,

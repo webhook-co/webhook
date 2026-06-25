@@ -80,6 +80,7 @@ describe("capability parity — current GA surfaces conformance", () => {
   const API_MCP_BOUND = [
     "endpoints.list",
     "endpoints.get",
+    "endpoints.create",
     "events.list",
     "events.get",
     "events.tail",

@@ -1,3 +1,4 @@
+import type { CreatedEndpoint } from "@webhook-co/contract";
 import type { Endpoint, Event, EventSummary } from "@webhook-co/shared";
 
 import type { AuditVerifyResult } from "../api-client.js";
@@ -76,6 +77,20 @@ export function renderEndpoint(e: Endpoint, color: boolean): string {
     ["name", field(e.name)],
     ["status", statusWord(e.paused, color)],
     ["created", fmtDateTime(e.createdAt)],
+  ]);
+}
+
+/**
+ * A just-created endpoint, including the one-time ingest URL (which embeds the secret token). The
+ * "save this" caveat is printed separately to stderr by the command so stdout stays the record.
+ */
+export function renderCreatedEndpoint(e: CreatedEndpoint, color: boolean): string {
+  return block([
+    ["id", field(e.id)],
+    ["name", field(e.name)],
+    ["status", statusWord(e.paused, color)],
+    ["created", fmtDateTime(e.createdAt)],
+    ["ingest url", field(e.ingestUrl)],
   ]);
 }
 

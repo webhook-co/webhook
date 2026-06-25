@@ -173,6 +173,53 @@ describe("wbhk endpoints get", () => {
   });
 });
 
+describe("wbhk endpoints create", () => {
+  const created = {
+    id: EP1,
+    orgId: ORG,
+    name: "orders-prod",
+    paused: false,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    ingestUrl: "https://wbhk.my/whep_one_time_secret_token_value_aaaaaaaaaaaa",
+  };
+
+  it("reveals the ingest url on stdout and the save-it caveat on stderr (pipe-safe)", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(created) });
+    await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    // The record (with the one-time ingest url) is on stdout.
+    expect(t.stdout()).toContain("ingest url");
+    expect(t.stdout()).toContain(created.ingestUrl);
+    expect(t.stdout()).toContain("orders-prod");
+    // The save-it caveat is on stderr only — stdout stays a clean record.
+    expect(t.stderr().toLowerCase()).toContain("save");
+    expect(t.stderr().toLowerCase()).toContain("once");
+    expect(t.stdout().toLowerCase()).not.toContain("save the ingest url");
+  });
+
+  it("emits the full record (incl. ingestUrl) as one JSON value with --output json, no stderr noise", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(created) });
+    await run(app, ["endpoints", "create", "orders-prod", "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout()) as { id: string; ingestUrl: string };
+    expect(parsed.id).toBe(EP1);
+    expect(parsed.ingestUrl).toBe(created.ingestUrl);
+    expect(t.stderr()).toBe(""); // script-safe: nothing on stderr in json mode
+  });
+
+  it("requires a credential (NotLoggedInError → UNAUTHORIZED exit)", async () => {
+    const t = makeTestContext({ store: emptyStore() });
+    await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.UNAUTHORIZED);
+    expect(t.stderr().toLowerCase()).toContain("not logged in");
+  });
+
+  it("maps a 429 (per-org soft cap) to the RATE_LIMITED exit code", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: statusFetch(429) });
+    await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.RATE_LIMITED);
+  });
+});
+
 describe("global --color / --no-color (end to end)", () => {
   const ANSI = "["; // any ANSI escape
 

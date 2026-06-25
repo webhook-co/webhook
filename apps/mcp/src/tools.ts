@@ -1,5 +1,5 @@
 import { CapabilityFault, type AuthContext } from "@webhook-co/contract";
-import type { ReadHandlers } from "@webhook-co/db";
+import type { CapabilityHandlers } from "@webhook-co/db";
 
 // The MCP transport adapter for a read capability. It dispatches to the SHARED read handler
 // (the same map apps/api binds), then maps the outcome to an MCP tool result. Crucially it NEVER
@@ -41,7 +41,7 @@ function faultResult(fault: CapabilityFault): McpToolResult {
 }
 
 export async function runCapabilityTool(
-  handlers: ReadHandlers,
+  handlers: CapabilityHandlers,
   capabilityName: string,
   ctx: AuthContext,
   input: unknown,

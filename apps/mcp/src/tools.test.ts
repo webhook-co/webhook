@@ -1,13 +1,13 @@
 import { CapabilityFault } from "@webhook-co/contract";
 import type { AuthContext } from "@webhook-co/contract";
-import type { ReadHandler, ReadHandlers } from "@webhook-co/db";
+import type { CapabilityHandler, CapabilityHandlers } from "@webhook-co/db";
 import { describe, expect, it, vi } from "vitest";
 
 import { runCapabilityTool } from "./tools";
 
 const CTX: AuthContext = { orgId: "org_1", scopes: ["endpoints:read"] };
 
-function handlersOf(name: string, fn: ReadHandler): ReadHandlers {
+function handlersOf(name: string, fn: CapabilityHandler): CapabilityHandlers {
   return new Map([[name, fn]]);
 }
 

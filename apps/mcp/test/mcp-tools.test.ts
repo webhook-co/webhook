@@ -7,7 +7,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 // validator (KV credential-cache hot path) -> the resolved principal on ctx.props -> the WebhookMcp
 // Durable Object -> the MCP transport. We drive the JSON-RPC
 // handshake directly over SELF.fetch (each request reads its response to completion, so no SSE
-// stream lingers) and assert tools/list surfaces the 6 bound tools. This is the first time init()
+// stream lingers) and assert tools/list surfaces the 7 bound tools. This is the first time init()
 // runs in workerd, so it also proves the zod-input -> MCP-tool-schema conversion. The tenant DB
 // read itself is covered exhaustively in the db pool (packages/db reads.test.ts), so this test
 // deliberately stops at tools/list (no Postgres): it proves the WIRING, not the reads.
@@ -20,8 +20,9 @@ const ORIGIN = "https://mcp.webhook.co";
 // built here deterministically rather than an arbitrary literal.
 const TOKEN_BODY = "testintegrationkey".padEnd(43, "0");
 const TOKEN = `whk_${TOKEN_BODY}${keyChecksum(TOKEN_BODY)}`;
-const READ_TOOLS = [
+const BOUND_TOOLS = [
   "audit.verify",
+  "endpoints.create",
   "endpoints.get",
   "endpoints.list",
   "events.get",
@@ -135,7 +136,7 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     await seedApiKey(["endpoints:read", "events:read", "audit:read"]);
   });
 
-  it("lists exactly the 6 bound tools after the initialize handshake", async () => {
+  it("lists exactly the 7 bound tools after the initialize handshake", async () => {
     const { sessionId, protocolVersion } = await handshake();
     const res = await rpc(
       { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
@@ -143,7 +144,7 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     );
     expect(res.status).toBe(200);
     const { tools } = res.message?.result as { tools: { name: string }[] };
-    expect(tools.map((t) => t.name).sort()).toEqual([...READ_TOOLS].sort());
+    expect(tools.map((t) => t.name).sort()).toEqual([...BOUND_TOOLS].sort());
   });
 
   it("advertises an input schema exposing the endpointId parameter for events.list", async () => {
@@ -165,6 +166,19 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     await seedApiKey(["endpoints:read", "events:read"]);
     const session = await handshake();
     const result = await callTool("audit.verify", {}, session, 4);
+    expect(result.isError).toBe(true);
+    expect(JSON.parse(result.content[0].text).error).toBe("FORBIDDEN");
+  });
+
+  it("denies endpoints.create when the key lacks endpoints:write (FORBIDDEN, no mint, no DB)", async () => {
+    // The write tool auto-registers (MCP_BOUND_CAPABILITIES) and dispatches through the merged
+    // read+write handler map. Its handler checks the scope FIRST — the sole authz gate on mcp (no edge
+    // gate) — so a key without endpoints:write fails closed before any mint/insert, proving the tool is
+    // wired AND the scope gate holds end-to-end in workerd, with no Postgres. (The mint success path is
+    // covered by the db pool + the workerd mint-runtime spike + a prod smoke.)
+    await seedApiKey(["endpoints:read"]);
+    const session = await handshake();
+    const result = await callTool("endpoints.create", { name: "should-not-mint" }, session, 5);
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text).error).toBe("FORBIDDEN");
   });

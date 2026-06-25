@@ -4,7 +4,7 @@ import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
-import { renderEndpoint, renderEndpointsTable } from "../output/render.js";
+import { renderCreatedEndpoint, renderEndpoint, renderEndpointsTable } from "../output/render.js";
 import { authedClient, collectPages, emitList, parseLimit } from "./shared.js";
 
 // `wbhk endpoints list` / `wbhk endpoints get <id>` — read views over the org's endpoints. Both reuse
@@ -80,4 +80,34 @@ export const endpointsGetCommand = buildCommand<GetFlags, [string], AppContext>(
     flags: { ...globalFlags },
   },
   docs: { brief: "show a single endpoint by id" },
+});
+
+export const endpointsCreateCommand = buildCommand<GetFlags, [string], AppContext>({
+  async func(this: AppContext, flags, name) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format, color } = resolveGlobals(this, flags);
+    const created = await client.endpointsCreate({ name });
+    if (format === "json") {
+      // Machine view: the whole record (incl. the one-time ingestUrl) to stdout, nothing to stderr.
+      this.process.stdout.write(`${renderJson(created)}\n`);
+      return;
+    }
+    // Human view: the record (with the ingest url) to stdout; the save-it caveat to stderr so a pipe
+    // capturing stdout still gets a clean record. The ingest url embeds a secret shown only once.
+    this.process.stdout.write(`${renderCreatedEndpoint(created, color)}\n`);
+    this.process.stderr.write(
+      "save the ingest url now — it's shown once and can't be recovered (rotate by creating a new endpoint).\n",
+    );
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        { parse: (value: string) => value, brief: "a name for the endpoint", placeholder: "name" },
+      ],
+    },
+    flags: { ...globalFlags },
+  },
+  docs: { brief: "create an endpoint and reveal its ingest url (shown once)" },
 });

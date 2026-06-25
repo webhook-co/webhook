@@ -187,6 +187,42 @@ const fullEvent = {
   verification: null,
 };
 
+describe("createApiClient.endpointsCreate", () => {
+  const created = {
+    ...endpoint,
+    ingestUrl: "https://wbhk.my/whep_one_time_secret_token_value_aaaaaaaaaaaa",
+  };
+
+  it("POSTs /v1/endpoints with the name body and parses the created endpoint + ingestUrl", async () => {
+    const { fetch, calls } = fakeFetch(json(created));
+    const out = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsCreate({
+      name: "orders-prod",
+    });
+    expect(calls[0].url).toBe(`${BASE}/v1/endpoints`);
+    expect(calls[0].method).toBe("POST");
+    expect(calls[0].headers.get("authorization")).toBe(`Bearer ${KEY}`);
+    expect(out.ingestUrl).toBe(created.ingestUrl);
+    expect(out.createdAt).toBeInstanceOf(Date);
+  });
+
+  it("does NOT retry a transient failure — a create is not idempotent (no duplicate endpoint)", async () => {
+    const { fetch, calls } = fakeFetch(new Response(null, { status: 503 }));
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: async () => {} })
+      .endpointsCreate({ name: "x" })
+      .catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(calls).toHaveLength(1); // single attempt: a non-idempotent POST is never blind-retried
+  });
+
+  it("maps a 429 (per-org soft cap) to ApiError(RATE_LIMITED)", async () => {
+    const { fetch } = fakeFetch(new Response(null, { status: 429 }));
+    const err = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch, sleep: async () => {} })
+      .endpointsCreate({ name: "x" })
+      .catch((e) => e);
+    expect((err as ApiError).code).toBe("RATE_LIMITED");
+  });
+});
+
 describe("createApiClient read methods", () => {
   it("endpointsList GETs /v1/endpoints (no query when no params) and parses the page", async () => {
     const { fetch, calls } = fakeFetch(json({ items: [endpoint], nextCursor: null }));
