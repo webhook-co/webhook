@@ -3,6 +3,8 @@ import type { NextConfig } from "next";
 // The dashboard deploys to Cloudflare Workers via `@opennextjs/cloudflare` (open-next.config.ts).
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
+import { SECURITY_HEADERS } from "./src/security-headers";
+
 const nextConfig: NextConfig = {
   // These workspace packages ship as TypeScript source; let Next transpile them. `@webhook-co/contract`/
   // `@webhook-co/db` are consumed only by SERVER modules (the credential actions + the gated reads); the
@@ -21,6 +23,16 @@ const nextConfig: NextConfig = {
   // Linting is owned by the repo-wide ESLint gate (`pnpm lint`); Next 16 no longer
   // runs lint at build time, so there is exactly one lint authority.
   reactStrictMode: true,
+  // Security response headers (CSP + hardening) — applied to every Next-served response. OpenNext on
+  // Workers has no middleware/nonce, so script/style fall back to 'unsafe-inline' (Next hydration + the
+  // theme-init script + Radix inline styles); React's output-escaping stays the primary XSS defense (load-
+  // bearing for the event payload-inspect view, which renders attacker-controlled bytes as escaped text).
+  // See src/security-headers.ts + docs/adr/0077-web-dashboard-surface.md. This does NOT set
+  // serverActions.allowedOrigins — Next's same-origin server-action check stays the CSRF guard, pinned by
+  // next-config-csrf.test.ts.
+  async headers() {
+    return [{ source: "/(.*)", headers: [...SECURITY_HEADERS] }];
+  },
 };
 
 initOpenNextCloudflareForDev();
