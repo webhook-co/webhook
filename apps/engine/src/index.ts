@@ -15,16 +15,19 @@ import {
 import {
   AwsKmsProvider,
   b64ToBytes,
+  type EncryptionContext,
   importAuditKey,
   type KmsProvider,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
   parseSince,
   readSecretBinding,
+  type SealedRecord,
   SecretStore,
   SERVICE_NAME,
 } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
+import { WorkerEntrypoint } from "cloudflare:workers";
 
 import { runAnchorCron } from "./anchor-cron";
 import {
@@ -101,7 +104,25 @@ const DEDUP_BUCKET_WIDTH_MS = 24 * 60 * 60 * 1000;
 // isolate, lazily on first verify.
 const DEK_CACHE = new OrgScopedDekCache({ maxEntries: 256 });
 export type VerifyFn = (input: VerifyIngestInput) => Promise<VerificationOutcome>;
-let verifyFnPromise: Promise<VerifyFn> | undefined;
+
+/**
+ * Memoize an async factory once per isolate, NOT caching a rejected init: a transient config/KMS
+ * fault clears the memo so the next request retries rather than poisoning the isolate for its
+ * lifetime; concurrent callers share the single in-flight promise. The `env` is captured on the first
+ * call (one env per isolate). Backs the lazily-built per-isolate verify fn + seal store.
+ */
+function memoizeIsolate<A, T>(factory: (arg: A) => Promise<T>): (arg: A) => Promise<T> {
+  let promise: Promise<T> | undefined;
+  return (arg) => {
+    if (promise === undefined) {
+      promise = factory(arg).catch((err: unknown) => {
+        promise = undefined;
+        throw err;
+      });
+    }
+    return promise;
+  };
+}
 
 /**
  * Build the production KEK custodian — AWS KMS (ADR-0007 / ADR-0009 day-one KMS), behind the shared
@@ -138,23 +159,22 @@ export function buildVerifyFn(kms: KmsProvider, now: () => Date = () => new Date
 }
 
 /**
- * Lazily build the per-isolate verify function over the AWS KMS custodian. Memoized so the provider +
- * SecretStore construction happens once per isolate. A REJECTED init (incomplete KMS config) is NOT
- * cached: the memo is cleared so a later request retries rather than the isolate being poisoned for
- * its lifetime (handleIngest's verify guard still degrades a failing build to verified=false, never
- * blocking capture).
+ * Lazily build the per-isolate verify function over the AWS KMS custodian (memoized; see
+ * memoizeIsolate). A failing build (incomplete KMS config) isn't cached — handleIngest's verify guard
+ * still degrades it to verified=false, never blocking capture.
  */
-export function getVerifyFn(env: Env): Promise<VerifyFn> {
-  if (verifyFnPromise === undefined) {
-    verifyFnPromise = (async () => buildVerifyFn(await kmsProviderFromEnv(env)))().catch(
-      (err: unknown) => {
-        verifyFnPromise = undefined; // don't cache a failed init — let the next request retry
-        throw err;
-      },
-    );
-  }
-  return verifyFnPromise;
-}
+export const getVerifyFn = memoizeIsolate(async (env: Env) =>
+  buildVerifyFn(await kmsProviderFromEnv(env)),
+);
+
+/**
+ * The per-isolate SECRET-SEALING store backing the ProviderSecretSealer service entrypoint (B0).
+ * Distinct from the verify store: sealing only generates fresh DEKs (never unwraps), so it needs NO
+ * DEK cache (memoized; see memoizeIsolate).
+ */
+export const getSealStore = memoizeIsolate(
+  async (env: Env) => new SecretStore(await kmsProviderFromEnv(env)),
+);
 
 /** Per-request ingest deps plus the teardown for the DB clients they hold. */
 export interface IngestDepsHandle {
@@ -434,6 +454,25 @@ export default {
     );
   },
 } satisfies ExportedHandler<Env>;
+
+/**
+ * Seal-only provider-secret sealing over a Cloudflare service binding (Slice B0 / ADR-0078, decision
+ * D1). api + mcp RPC `env.<binding>.sealString(plaintext, ctx)` to seal a provider signing secret
+ * under the KMS envelope WITHOUT ever holding the KEK custodian — only the engine constructs a
+ * SecretStore + the AWS KMS provider, so only the engine can UNSEAL. This entrypoint exposes SEAL
+ * ONLY (there is deliberately no open/unseal method), so a compromised api/mcp can register new
+ * secrets but can never decrypt existing ones. The binding is worker-to-worker (not public) and
+ * deploy-injected into api/mcp via the prod overlay, live once this engine deploys (B1 adds the
+ * caller — mirrors how auth.'s IssuerIntrospect/SessionExchange entrypoints shipped before their
+ * consumers' bindings). The returned SealedRecord (ciphertext/nonce/wrapped-DEK Uint8Arrays) crosses
+ * the binding by structured clone.
+ */
+export class ProviderSecretSealer extends WorkerEntrypoint<Env> {
+  async sealString(plaintext: string, context: EncryptionContext): Promise<SealedRecord> {
+    const store = await getSealStore(this.env);
+    return store.sealString(plaintext, context);
+  }
+}
 
 /** Wire the real deps (anchor DB connection, R2 anchor bucket, HMAC key) and run the cron. */
 async function runAuditAnchorCron(env: Env): Promise<void> {
