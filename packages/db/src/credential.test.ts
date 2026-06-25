@@ -9,8 +9,10 @@ import {
   credentialHashEquals,
   CREDENTIAL_PEPPER_MIN_BYTES,
   CREDENTIAL_SECRET_BYTES,
+  mintChecksummedCredential,
   mintCredential,
 } from "./credential";
+import { verifyKeyChecksum } from "./key-checksum";
 
 // Fixed, distinct test peppers (>=32 bytes). Real peppers come from a secret, never a literal.
 const PEPPER_A = Buffer.alloc(CREDENTIAL_PEPPER_MIN_BYTES, 0xa1);
@@ -143,5 +145,44 @@ describe("credentialCacheKey", () => {
     const key = credentialCacheKey(keyHash);
     expect(key).toBe(keyHash.toString("hex"));
     expect(key).not.toContain(plaintext.slice(4)); // the secret body
+  });
+});
+
+describe("mintChecksummedCredential", () => {
+  it("mints whk_ + 43 base62 body + 6 base62 checksum (53 chars) that self-verifies", () => {
+    const { plaintext } = mintChecksummedCredential("whk", hasherA);
+    expect(plaintext).toMatch(/^whk_[0-9A-Za-z]{49}$/);
+    expect(plaintext).toHaveLength(53);
+    // The checksum is part of the plaintext and passes its own verifier.
+    expect(verifyKeyChecksum("whk", plaintext)).toBe(true);
+  });
+
+  it("hashes the FULL plaintext (checksum included) — at-rest semantics unchanged", () => {
+    const { plaintext, keyHash } = mintChecksummedCredential("whk", hasherA);
+    const expected = createHmac("sha256", PEPPER_A).update(plaintext, "utf8").digest();
+    expect(Buffer.compare(keyHash, expected)).toBe(0);
+    expect(keyHash.length).toBe(32);
+  });
+
+  it("keeps `start` an 11-char non-secret prefix that never reaches the checksum", () => {
+    const { plaintext, start } = mintChecksummedCredential("whk", hasherA);
+    expect(start).toHaveLength(11);
+    expect(plaintext.startsWith(start)).toBe(true);
+    // index 11 is well inside the 43-char random body, far from the trailing 6-char checksum.
+    expect(start).toBe(plaintext.slice(0, 11));
+  });
+
+  it("uses fresh entropy each mint (no collisions)", () => {
+    const a = mintChecksummedCredential("whk", hasherA).plaintext;
+    const b = mintChecksummedCredential("whk", hasherA).plaintext;
+    expect(a).not.toBe(b);
+  });
+
+  it("does NOT change the generic mintCredential (ingest tokens stay base64url)", () => {
+    // Regression guard: whep_ ingest tokens are minted via mintCredential and must be untouched
+    // (base64url body, no checksum) — so they are NOT rejected by verifyKeyChecksum's whk_ shape.
+    const { plaintext } = mintCredential("whep", hasherA);
+    expect(plaintext.startsWith("whep_")).toBe(true);
+    expect(verifyKeyChecksum("whep", plaintext)).toBe(false); // no checksum -> not the new shape
   });
 });
