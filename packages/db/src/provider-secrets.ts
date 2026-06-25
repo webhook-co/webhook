@@ -185,25 +185,37 @@ export async function getEndpointProviderSecrets(
   return rows.map(toSealed);
 }
 
+export interface RevokeProviderSecretInput {
+  readonly orgId: string;
+  /** The endpoint the secret must belong to — makes this endpointId authoritative for KV eviction. */
+  readonly endpointId: string;
+  readonly secretId: string;
+}
+
 /**
- * Revoke a provider secret by id (status -> 'revoked') under the org's RLS context. A revoked secret
- * is excluded from getEndpointProviderSecrets, so the verify path stops honoring it. Returns true iff
- * a row transitioned -- a missing / cross-org (RLS-invisible) / already-revoked id yields false.
+ * Revoke a provider secret BELONGING TO an endpoint (status -> 'revoked') under the org's RLS context;
+ * returns its revoke time, or null if no active/retiring secret with that id belongs to the endpoint
+ * (unknown / cross-org / already-revoked / wrong-endpoint -> null). A revoked secret is excluded from
+ * getEndpointProviderSecrets, so the verify path stops honoring it. Scoping by endpoint_id (NOT just
+ * id) is the eviction-correctness guard: a secret id from a DIFFERENT endpoint can't be revoked here,
+ * so the caller's endpointId is always the one to evict (no cross-endpoint cache miss — ADR-0015).
  *
- * Like revokeApiKey, this touches ONLY the row of record. The CALLER is responsible for (a) appending
- * the control-plane audit entry and (b) invalidating the ingest resolver's cached principal for the
- * endpoint -- the revoked secret rides on that cached principal (sealedSecrets snapshot) until the KV
- * entry is evicted, so without invalidation a forged signature keeps verifying until the TTL backstop.
- * Derive the eviction key with getEndpointIngestTokenHash + resolver.invalidateHash (see ADR-0015).
+ * The CALLER must then invalidate the endpoint's cached principal — the revoked secret rides on the KV
+ * sealedSecrets snapshot until evicted, so without it a signature made with the revoked secret keeps
+ * verifying until the TTL backstop. Derive the key via getEndpointIngestTokenHash + invalidateHash.
  */
-export async function revokeProviderSecret(app: Sql, orgId: string, id: string): Promise<boolean> {
-  const count = await withTenant(app, orgId, async (tx) => {
-    const res = await tx`
+export async function revokeProviderSecret(
+  app: Sql,
+  input: RevokeProviderSecretInput,
+): Promise<{ readonly id: string; readonly revokedAt: Date } | null> {
+  const rows = await withTenant(app, input.orgId, async (tx) => {
+    return tx<{ revoked_at: Date }[]>`
       update provider_secrets set status = 'revoked'
-      where id = ${id} and status <> 'revoked'`;
-    return res.count;
+      where id = ${input.secretId} and endpoint_id = ${input.endpointId} and status <> 'revoked'
+      returning now()::timestamptz as revoked_at`;
   });
-  return count > 0;
+  const row = rows[0];
+  return row ? { id: input.secretId, revokedAt: row.revoked_at } : null;
 }
 
 /**
@@ -224,4 +236,49 @@ export async function retireProviderSecret(app: Sql, orgId: string, id: string):
     return res.count;
   });
   return count > 0;
+}
+
+/** An endpoint's provider secret as NON-secret metadata — never the sealed bytes or the plaintext. */
+export interface ProviderSecretMetadata {
+  readonly id: string;
+  readonly provider: string;
+  readonly status: ProviderSecretStatus;
+  readonly label: string | null;
+  readonly createdAt: Date;
+}
+
+/**
+ * List an endpoint's provider secrets as metadata only (id/provider/status/label/createdAt),
+ * newest-first, under the org's RLS context (webhook_app) — the management `listProviderSecrets`
+ * surface. CRITICAL: this SELECTs no ciphertext / wrapped-DEK / nonce columns, so the sealed bytes
+ * and the plaintext never leave the DB through this read. Includes revoked secrets too (the operator
+ * sees full history), unlike getEndpointProviderSecrets which the verify path filters to the honored set.
+ */
+export async function listEndpointProviderSecrets(
+  app: Sql,
+  orgId: string,
+  endpointId: string,
+): Promise<ProviderSecretMetadata[]> {
+  const rows = await withTenant(app, orgId, async (tx) => {
+    return tx<
+      {
+        id: string;
+        provider: string;
+        status: ProviderSecretStatus;
+        label: string | null;
+        created_at: Date;
+      }[]
+    >`
+      select id, provider, status, label, created_at
+      from provider_secrets
+      where endpoint_id = ${endpointId}
+      order by created_at desc, id desc`;
+  });
+  return rows.map((r) => ({
+    id: r.id,
+    provider: r.provider,
+    status: r.status,
+    label: r.label,
+    createdAt: r.created_at,
+  }));
 }

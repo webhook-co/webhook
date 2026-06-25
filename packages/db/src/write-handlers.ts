@@ -11,12 +11,16 @@
 
 import {
   CapabilityFault,
+  endpointsAddProviderSecret,
   endpointsCreate,
   endpointsDelete,
+  endpointsListProviderSecrets,
+  endpointsRevokeProviderSecret,
   endpointsRotate,
   type AnyCapability,
   type AuthContext,
 } from "@webhook-co/contract";
+import type { SecretSealer } from "@webhook-co/shared";
 
 import type { Sql } from "./client";
 import type { CredentialHasher } from "./credential";
@@ -24,8 +28,14 @@ import {
   createEndpointWithAudit,
   DEFAULT_MAX_ENDPOINTS_PER_ORG,
   deleteEndpointWithAudit,
+  getEndpointIngestTokenHash,
   rotateEndpointWithAudit,
 } from "./endpoints";
+import {
+  addProviderSecret,
+  listEndpointProviderSecrets,
+  revokeProviderSecret,
+} from "./provider-secrets";
 import { createReadHandlers, type CapabilityHandlers, type ReadHandlerDeps } from "./read-handlers";
 
 // DEFAULT_MAX_ENDPOINTS_PER_ORG now lives in ./endpoints (the single source of truth, so the DB-direct
@@ -43,6 +53,12 @@ export interface WriteHandlerDeps {
   readonly ingestBaseUrl: string;
   /** Per-org endpoint soft cap; defaults to DEFAULT_MAX_ENDPOINTS_PER_ORG. */
   readonly maxEndpoints?: number;
+  /**
+   * Seals a provider signing secret on endpoints.addProviderSecret. In prod this is the engine's
+   * ProviderSecretSealer reached over a service binding (api/mcp never hold the KEK — B0/D1); in tests
+   * a local SecretStore. Write-only seam (`sealString`); required by addProviderSecret only.
+   */
+  readonly secretSealer?: SecretSealer;
   /**
    * Evict an ingest-token hash from the KV ingest cache (ADR-0076) — required by endpoints.delete +
    * endpoints.rotate to stop/redirect ingest on the wbhk.my hot path. Build it with makeIngestHashEvictor
@@ -124,6 +140,15 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     return deps.invalidateIngestHash;
   }
 
+  function requireSealer(): SecretSealer {
+    if (deps.secretSealer === undefined) {
+      throw new Error(
+        "write handlers: secretSealer dep is required for endpoints.addProviderSecret",
+      );
+    }
+    return deps.secretSealer;
+  }
+
   handlers.set(endpointsDelete.name, async (ctx, input) => {
     ensureScope(ctx, endpointsDelete); // FIRST — sole authz gate on mcp
     const parsed = endpointsDelete.input.safeParse(input);
@@ -164,6 +189,84 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
       createdAt: rotated.createdAt,
       ingestUrl: `${apex}/${rotated.plaintext}`,
     };
+  });
+
+  // ── Provider signing-secret management (ADR-0078) ──────────────────────────────────────────────
+  handlers.set(endpointsAddProviderSecret.name, async (ctx, input) => {
+    ensureScope(ctx, endpointsAddProviderSecret); // FIRST — sole authz gate on mcp
+    const parsed = endpointsAddProviderSecret.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    // Registration-time format check: a Standard Webhooks secret is `whsec_`+base64. A mis-stored one
+    // (base64url / hex / raw) decodes to no usable key, so verify would report NO_MATCHING_KEY forever
+    // — indistinguishable from "no secret registered". Reject it here so the operator gets a real error.
+    if (parsed.data.provider === "standard_webhooks") {
+      const body = parsed.data.secret.startsWith("whsec_")
+        ? parsed.data.secret.slice("whsec_".length)
+        : parsed.data.secret;
+      if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body)) {
+        throw new CapabilityFault(
+          "VALIDATION_ERROR",
+          "a standard_webhooks secret must be whsec_ followed by standard base64",
+        );
+      }
+    }
+    const evict = requireEvictor();
+    const sealer = requireSealer();
+    // The endpoint must exist (this org's) before we seal/insert — a clean NOT_FOUND and the hash to
+    // evict. (The provider_secrets FK would also reject a bad endpoint, but as a 500, not a 404.)
+    const tokenHash = await getEndpointIngestTokenHash(
+      deps.tenant,
+      ctx.orgId,
+      parsed.data.endpointId,
+    );
+    if (tokenHash === null) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
+    const added = await addProviderSecret(
+      deps.tenant,
+      {
+        orgId: ctx.orgId,
+        endpointId: parsed.data.endpointId,
+        provider: parsed.data.provider,
+        label: parsed.data.label,
+        plaintext: parsed.data.secret, // sealed by the sealer; never persisted/returned as plaintext
+      },
+      sealer,
+    );
+    // Evict so the new secret is honored on the NEXT ingest, not after the KV TTL. Best-effort.
+    await evict(tokenHash);
+    return { id: added.id, provider: added.provider, status: added.status };
+  });
+
+  handlers.set(endpointsListProviderSecrets.name, async (ctx, input) => {
+    ensureScope(ctx, endpointsListProviderSecrets); // endpoints:read
+    const parsed = endpointsListProviderSecrets.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    // Metadata only — listEndpointProviderSecrets SELECTs no ciphertext, so the sealed bytes/plaintext
+    // never leave the DB. Small N (rotation overlap): return the whole set, nextCursor null.
+    const items = await listEndpointProviderSecrets(deps.tenant, ctx.orgId, parsed.data.endpointId);
+    return { items, nextCursor: null };
+  });
+
+  handlers.set(endpointsRevokeProviderSecret.name, async (ctx, input) => {
+    ensureScope(ctx, endpointsRevokeProviderSecret); // FIRST — sole authz gate on mcp
+    const parsed = endpointsRevokeProviderSecret.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const evict = requireEvictor();
+    const revoked = await revokeProviderSecret(deps.tenant, {
+      orgId: ctx.orgId,
+      endpointId: parsed.data.endpointId,
+      secretId: parsed.data.secretId,
+    });
+    if (revoked === null) throw new CapabilityFault("NOT_FOUND", "provider secret not found");
+    // Security-critical eviction (ADR-0015): drop the endpoint's cached principal so the verify path
+    // stops honoring the revoked secret NOW, not within the KV TTL. endpointId is authoritative (the
+    // revoke is endpoint-scoped). Best-effort — status='revoked' + the TTL is the durable backstop.
+    const tokenHash = await getEndpointIngestTokenHash(
+      deps.tenant,
+      ctx.orgId,
+      parsed.data.endpointId,
+    );
+    if (tokenHash !== null) await evict(tokenHash);
+    return { id: revoked.id, revokedAt: revoked.revokedAt };
   });
 
   return handlers;

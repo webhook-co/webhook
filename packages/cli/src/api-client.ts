@@ -1,19 +1,25 @@
 import {
   AuthContextSchema,
   auditVerify as auditVerifyCap,
+  endpointsAddProviderSecret as endpointsAddProviderSecretCap,
   endpointsCreate as endpointsCreateCap,
   endpointsDelete as endpointsDeleteCap,
   endpointsGet as endpointsGetCap,
   endpointsList as endpointsListCap,
+  endpointsListProviderSecrets as endpointsListProviderSecretsCap,
+  endpointsRevokeProviderSecret as endpointsRevokeProviderSecretCap,
   endpointsRotate as endpointsRotateCap,
   eventsGet as eventsGetCap,
   eventsGetPayload as eventsGetPayloadCap,
   eventsList as eventsListCap,
   eventsReplay as eventsReplayCap,
+  type AddedProviderSecret,
   type AuthContext,
   type CapabilityError,
   type CreatedEndpoint,
   type DeletedEndpoint,
+  type ProviderSecretSummary,
+  type RevokedProviderSecret,
   type Target,
 } from "@webhook-co/contract";
 import {
@@ -151,6 +157,27 @@ export interface ApiClient {
    * a transient failure is never blind-retried (no accidental second rotation).
    */
   endpointsRotate(endpointId: string): Promise<CreatedEndpoint>;
+  /**
+   * Register a provider signing secret on an endpoint (`POST /v1/endpoints/:id/provider-secrets`). The
+   * plaintext `secret` is sealed server-side and NEVER returned. NOT idempotent — each call adds a
+   * secret; sent with idempotent=false so a transient failure is never blind-retried.
+   */
+  addProviderSecret(input: {
+    endpointId: string;
+    provider: string;
+    secret: string;
+    label?: string;
+  }): Promise<AddedProviderSecret>;
+  /** A page of an endpoint's provider secrets as METADATA (`GET /v1/endpoints/:id/provider-secrets`). */
+  listProviderSecrets(
+    endpointId: string,
+    params?: ListParams,
+  ): Promise<Page<ProviderSecretSummary>>;
+  /** Revoke a provider secret (`DELETE /v1/endpoints/:id/provider-secrets/:secretId`). */
+  revokeProviderSecret(input: {
+    endpointId: string;
+    secretId: string;
+  }): Promise<RevokedProviderSecret>;
   /** A page of an endpoint's captured events (`GET /v1/endpoints/:id/events`). */
   eventsList(endpointId: string, params?: EventsListParams): Promise<Page<EventSummary>>;
   /** A single event in full fidelity by id (`GET /v1/events/:id`). */
@@ -312,6 +339,33 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       const path = `/v1/endpoints/${encodeURIComponent(endpointId)}/rotate`;
       const json = await postJson(path, undefined, false);
       return parseOrThrow(endpointsRotateCap.output, json, "rotated endpoint");
+    },
+    async addProviderSecret(input): Promise<AddedProviderSecret> {
+      // idempotent=false: each call registers a new secret; a blind retry would add a duplicate.
+      const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}/provider-secrets`;
+      const body: Record<string, unknown> = { provider: input.provider, secret: input.secret };
+      if (input.label !== undefined) body.label = input.label;
+      const json = await postJson(path, body, false);
+      return parseOrThrow(endpointsAddProviderSecretCap.output, json, "provider secret");
+    },
+    async listProviderSecrets(endpointId, params = {}): Promise<Page<ProviderSecretSummary>> {
+      const path = withQuery(`/v1/endpoints/${encodeURIComponent(endpointId)}/provider-secrets`, {
+        cursor: params.cursor,
+        limit: params.limit,
+      });
+      return parseOrThrow(
+        endpointsListProviderSecretsCap.output,
+        await getJson(path),
+        "provider secrets",
+      );
+    },
+    async revokeProviderSecret(input): Promise<RevokedProviderSecret> {
+      const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}/provider-secrets/${encodeURIComponent(input.secretId)}`;
+      return parseOrThrow(
+        endpointsRevokeProviderSecretCap.output,
+        await deleteJson(path),
+        "revoked secret",
+      );
     },
     async eventsList(endpointId, params = {}): Promise<Page<EventSummary>> {
       const path = withQuery(`/v1/endpoints/${encodeURIComponent(endpointId)}/events`, {

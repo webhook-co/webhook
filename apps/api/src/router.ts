@@ -82,6 +82,42 @@ function matchRoute(
     // ingest token, evicts the old (hard cutover), and returns the new one-time ingest URL.
     return { capability: "endpoints.rotate", input: { endpointId: rest[1] } };
   }
+  if (
+    method === "POST" &&
+    rest.length === 3 &&
+    rest[0] === "endpoints" &&
+    rest[2] === "provider-secrets"
+  ) {
+    // endpoints.addProviderSecret (ADR-0078): endpointId from the path; {provider,label?,secret} from
+    // the JSON body (read in handleAddProviderSecret, like create). The handler seals via the engine
+    // ProviderSecretSealer binding + evicts the ingest cache. The secret is never echoed back.
+    return { capability: "endpoints.addProviderSecret", input: { endpointId: rest[1] } };
+  }
+  if (
+    method === "GET" &&
+    rest.length === 3 &&
+    rest[0] === "endpoints" &&
+    rest[2] === "provider-secrets"
+  ) {
+    // endpoints.listProviderSecrets: metadata page (no ciphertext); generic dispatch, paginated input.
+    return {
+      capability: "endpoints.listProviderSecrets",
+      input: listInput(query, { endpointId: rest[1] }),
+    };
+  }
+  if (
+    method === "DELETE" &&
+    rest.length === 4 &&
+    rest[0] === "endpoints" &&
+    rest[2] === "provider-secrets"
+  ) {
+    // endpoints.revokeProviderSecret: a WRITE with NO body — endpointId + secretId from the path;
+    // generic dispatch. The handler revokes (endpoint-scoped) + evicts the ingest cache.
+    return {
+      capability: "endpoints.revokeProviderSecret",
+      input: { endpointId: rest[1], secretId: rest[3] },
+    };
+  }
   if (method === "GET" && rest.length === 3 && rest[0] === "endpoints" && rest[2] === "events") {
     const input = listInput(query, { endpointId: rest[1] });
     const provider = query.get("provider");
@@ -184,6 +220,14 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
     if (route.capability === "endpoints.create") {
       return await handleCreateEndpoint(deps, authz.ctx, request);
     }
+    if (route.capability === "endpoints.addProviderSecret") {
+      return await handleAddProviderSecret(
+        deps,
+        authz.ctx,
+        String(route.input.endpointId),
+        request,
+      );
+    }
     const handler = deps.handlers.get(route.capability);
     if (handler === undefined) {
       // A routed capability with no bound handler is a wiring bug, not a client error.
@@ -279,5 +323,32 @@ async function handleCreateEndpoint(
     throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
   }
   const input = typeof body === "object" && body !== null ? body : {};
+  return Response.json(await handler(ctx, input));
+}
+
+/**
+ * endpoints.addProviderSecret: a WRITE dispatched via the SHARED handlers map (so mcp binds the same
+ * handler). The endpointId is the path segment (authoritative); { provider, label?, secret } come from
+ * the JSON body. The handler enforces endpoints:write, seals the plaintext via the engine sealer
+ * binding, inserts under RLS, evicts the ingest cache, and returns { id, provider, status } — the
+ * plaintext secret is NEVER echoed back.
+ */
+async function handleAddProviderSecret(
+  deps: ApiDeps,
+  ctx: AuthContext,
+  endpointId: string,
+  request: Request,
+): Promise<Response> {
+  const handler = deps.handlers.get("endpoints.addProviderSecret");
+  if (handler === undefined) {
+    throw new Error("no handler bound for capability: endpoints.addProviderSecret"); // wiring bug -> 5xx
+  }
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
+  }
+  const input = { ...(typeof body === "object" && body !== null ? body : {}), endpointId };
   return Response.json(await handler(ctx, input));
 }

@@ -27,6 +27,9 @@ const BOUND_TOOLS = [
   "endpoints.get",
   "endpoints.list",
   "endpoints.rotate",
+  "endpoints.addProviderSecret",
+  "endpoints.listProviderSecrets",
+  "endpoints.revokeProviderSecret",
   "events.get",
   "events.list",
   "events.tail",
@@ -138,7 +141,7 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     await seedApiKey(["endpoints:read", "events:read", "audit:read"]);
   });
 
-  it("lists exactly the 9 bound tools after the initialize handshake", async () => {
+  it("lists exactly the 12 bound tools after the initialize handshake", async () => {
     const { sessionId, protocolVersion } = await handshake();
     const res = await rpc(
       { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },

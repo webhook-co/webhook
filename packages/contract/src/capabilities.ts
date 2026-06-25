@@ -237,6 +237,81 @@ export const eventsReplay = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_MCP_EXEMPT },
 });
 
+// ── Provider signing-secret management (ADR-0078, decisions D1/D2) ───────────────────────────────
+// Per-endpoint inbound-verification secrets. The plaintext secret is sealed under the KMS envelope —
+// api/mcp delegate sealing to the engine's ProviderSecretSealer over a service binding and NEVER hold
+// the KEK (B0) — and stored as ciphertext only. The secret is accepted on add and is NEVER returned by
+// any read; listProviderSecrets returns METADATA ONLY (no ciphertext). Full MCP parity (D2): add/list/
+// revoke are bound on api+cli+mcp; the web (dashboard config form) is S1's, so it stays web-deferred.
+const ProviderSecretStatusSchema = z.enum(["active", "retiring", "revoked"]);
+
+export const AddedProviderSecretSchema = z.object({
+  id: uuid,
+  provider: ProviderSchema,
+  status: ProviderSecretStatusSchema,
+});
+export type AddedProviderSecret = z.infer<typeof AddedProviderSecretSchema>;
+
+/** A provider secret's NON-secret metadata — never carries the sealed bytes or the plaintext. */
+export const ProviderSecretSummarySchema = z.object({
+  id: uuid,
+  provider: ProviderSchema,
+  status: ProviderSecretStatusSchema,
+  label: z.string().nullable(),
+  createdAt: z.coerce.date(),
+});
+export type ProviderSecretSummary = z.infer<typeof ProviderSecretSummarySchema>;
+
+export const RevokedProviderSecretSchema = z.object({ id: uuid, revokedAt: z.coerce.date() });
+export type RevokedProviderSecret = z.infer<typeof RevokedProviderSecretSchema>;
+
+export const endpointsAddProviderSecret = defineCapability({
+  name: "endpoints.addProviderSecret",
+  // The plaintext signing secret is the one secret IN: sealed by the engine, never persisted as
+  // plaintext, never echoed back. NOT_FOUND for an unknown/cross-org endpoint; FORBIDDEN without
+  // endpoints:write (mcp's sole gate is the handler scope check).
+  input: z.object({
+    endpointId: uuid,
+    provider: ProviderSchema,
+    label: z.string().trim().min(1).max(200).optional(),
+    secret: z.string().min(1).max(4096),
+  }),
+  output: AddedProviderSecretSchema,
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED },
+});
+
+export const endpointsListProviderSecrets = defineCapability({
+  name: "endpoints.listProviderSecrets",
+  input: z.object({
+    endpointId: uuid,
+    cursor: cursor.optional(),
+    limit: z.number().int().positive().max(200).optional(),
+  }),
+  // Metadata only — the sealed ciphertext + plaintext are never in the output. A read scope: an agent
+  // can audit which providers are configured + each secret's status without write power.
+  output: paged(ProviderSecretSummarySchema),
+  errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:read" },
+  semantics: { paginated: true },
+  surfaceExempt: { web: WEB_DEFERRED },
+});
+
+export const endpointsRevokeProviderSecret = defineCapability({
+  name: "endpoints.revokeProviderSecret",
+  // Revoking removes the secret from the honored set AND evicts the ingest KV cache (ADR-0015) so the
+  // verify path stops honoring it immediately. NOT_FOUND if the secret isn't an active/retiring one
+  // belonging to this endpoint (a re-revoke of an already-revoked secret is NOT_FOUND).
+  input: z.object({ endpointId: uuid, secretId: uuid }),
+  output: RevokedProviderSecretSchema,
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED },
+});
+
 /**
  * The capability surface every binding implements. The six wedge capabilities
  * plus `audit.verify` — the compliance-by-design audit-chain verifier (ADR-0004),
@@ -248,6 +323,9 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   endpointsCreate,
   endpointsDelete,
   endpointsRotate,
+  endpointsAddProviderSecret,
+  endpointsListProviderSecrets,
+  endpointsRevokeProviderSecret,
   eventsList,
   eventsGet,
   eventsGetPayload,
