@@ -40,6 +40,15 @@ export class ConfirmationError extends CliError {
   }
 }
 
+/** A command needed an interactive-or-piped input (e.g. a provider secret) but got none — usage (exit 2). */
+export class MissingInputError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  constructor(readonly userMessage: string) {
+    super(userMessage);
+    this.name = "MissingInputError";
+  }
+}
+
 /** A command needs a credential but none is stored (and none in WBHK_API_KEY). Maps to the same
  *  "not authenticated" exit code as a server 401, so automation branches on one signal. */
 export class NotLoggedInError extends CliError {

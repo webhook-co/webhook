@@ -5,6 +5,7 @@
 // The McpAgent tools run inside the MCP_OBJECT Durable Object; bearer resolution runs out here on the Worker.
 
 import type { TokenIntrospector } from "@webhook-co/contract";
+import type { SecretSealer } from "@webhook-co/shared";
 
 export interface McpEnv {
   /** The McpAgent Durable Object namespace. `WebhookMcp.serve("/mcp")` looks it up by this name. */
@@ -28,6 +29,14 @@ export interface McpEnv {
    * global-by-id; overlay-injected). The McpAgent DO reads it from env on each write-tool call.
    */
   KV_CONFIG: KVNamespace;
+  /**
+   * Seal-only RPC to the engine's ProviderSecretSealer WorkerEntrypoint (B0/ADR-0078, D1/D2): the
+   * endpoints.addProviderSecret tool seals the plaintext via `env.PROVIDER_SECRET_SEALER.sealString(...)`
+   * so the McpAgent NEVER holds the KEK (seal yes, unseal no). The RPC stub satisfies the write-only
+   * SecretSealer interface directly. Deploy-injected by the overlay generator (engine entrypoint live
+   * from B0 #246) — NOT committed, exactly like AUTH_ISSUER. (D2: agents may add/list/revoke secrets.)
+   */
+  PROVIDER_SECRET_SEALER: SecretSealer;
   /**
    * The cookieless ingest apex the endpoints.create tool builds its one-time ingest URL from (prod:
    * https://wbhk.my). A plain wrangler `vars` value (NOT a secret, NOT deploy-injected — the overlay

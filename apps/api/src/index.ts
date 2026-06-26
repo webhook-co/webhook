@@ -16,6 +16,7 @@ import {
   importAuditKey,
   importCursorKey,
   readSecretBinding,
+  type SecretSealer,
   SERVICE_NAME,
 } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
@@ -62,6 +63,14 @@ export interface Env {
    * hardening), so never call put/delete here.
    */
   R2_PAYLOADS: R2Bucket;
+  /**
+   * Seal-only RPC to the engine's ProviderSecretSealer WorkerEntrypoint (B0/ADR-0078, decision D1):
+   * endpoints.addProviderSecret seals the plaintext via `env.PROVIDER_SECRET_SEALER.sealString(...)`
+   * so api NEVER holds the KEK (it can seal, never unseal). The binding's RPC stub satisfies the
+   * write-only SecretSealer interface directly. Deploy-injected by the overlay generator (the engine
+   * entrypoint is live from B0 #246) — NOT in the committed wrangler.jsonc, exactly like mcp's AUTH_ISSUER.
+   */
+  PROVIDER_SECRET_SEALER: SecretSealer;
   // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
   // below is ONE account secret each, shared byte-identically with engine + mcp. Never DB columns.
   /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */
@@ -141,6 +150,8 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
       invalidateIngestHash: makeIngestHashEvictor(kvCredentialCache(env.KV_CONFIG), (err) =>
         console.log(JSON.stringify({ message: "api.ingest_evict_failed", error: String(err) })),
       ),
+      // endpoints.addProviderSecret seals via the engine (api never holds the KEK — B0/D1).
+      secretSealer: env.PROVIDER_SECRET_SEALER,
     }),
     payloads: env.R2_PAYLOADS,
     replay: createReplayHandler({ tenant }),
