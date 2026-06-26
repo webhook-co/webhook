@@ -247,3 +247,110 @@ describe("handleIngest — the wbhk.my write path", () => {
     expect(logged).not.toContain("SECRETSIG");
   });
 });
+
+describe("handleIngest — Slack url_verification handshake (Slice C)", () => {
+  // Slack POSTs these headers on a (signed) Request URL verification; their presence makes
+  // detectScheme resolve the request to the slack scheme — the gate that confines the JSON parse.
+  const SLACK = {
+    "x-slack-signature": "v0=abc",
+    "x-slack-request-timestamp": "1700000000",
+    "content-type": "application/json",
+  };
+
+  it("echoes the challenge (200 JSON {challenge}) for a slack url_verification, capturing NOTHING", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      req(GOOD, {
+        body: `{"token":"Jhj5","challenge":"3eZbrw1a","type":"url_verification"}`,
+        headers: SLACK,
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await res.json()).toEqual({ challenge: "3eZbrw1a" });
+    // Pre-capture echo: nothing durable, nothing verified, nothing stored — it's a control message.
+    expect(calls.put).toHaveLength(0);
+    expect(calls.verify).toHaveLength(0);
+    expect(calls.ingest).toHaveLength(0);
+    // cookieless, no CORS (same posture as every wbhk.my response)
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("captures a normal slack EVENT (not url_verification) — the handshake is type-gated", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      req(GOOD, {
+        body: `{"type":"event_callback","event":{"type":"message"}}`,
+        headers: SLACK,
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(calls.put).toHaveLength(1); // captured normally
+    expect(calls.ingest).toHaveLength(1);
+    expect(calls.ingest[0]!.provider).toBe("slack");
+  });
+
+  it("a non-JSON slack body falls through to normal capture (the no-drop floor is never at risk)", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(req(GOOD, { body: `not json{`, headers: SLACK }), deps);
+    expect(res.status).toBe(200);
+    expect(calls.put).toHaveLength(1); // still captured
+    expect(calls.ingest).toHaveLength(1);
+  });
+
+  it("a url_verification body WITHOUT slack headers is captured, NOT echoed (handshake confined to slack)", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      req(GOOD, {
+        body: `{"type":"url_verification","challenge":"3eZbrw1a"}`,
+        headers: { "content-type": "application/json" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(calls.put).toHaveLength(1); // a non-slack sender's body is a normal event, captured
+    expect(calls.ingest).toHaveLength(1);
+  });
+
+  it("a url_verification with a non-string challenge falls through to capture (shape-gated)", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      req(GOOD, { body: `{"type":"url_verification","challenge":123}`, headers: SLACK }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(calls.put).toHaveLength(1);
+    expect(calls.ingest).toHaveLength(1);
+  });
+
+  it("a url_verification with an EMPTY challenge falls through to capture (not a real handshake)", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      req(GOOD, { body: `{"type":"url_verification","challenge":""}`, headers: SLACK }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(calls.put).toHaveLength(1); // captured, not echoed — an empty challenge is degenerate
+    expect(calls.ingest).toHaveLength(1);
+  });
+
+  it("a slack event_callback carrying an event_id is captured (the handshake parse is skipped)", async () => {
+    // event_id present -> deriveDedup sets providerEventId -> the handshake branch is skipped entirely.
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      req(GOOD, {
+        body: `{"type":"event_callback","event_id":"Ev0001","event":{"type":"message"}}`,
+        headers: SLACK,
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(calls.put).toHaveLength(1);
+    expect(calls.ingest).toHaveLength(1);
+    expect(calls.ingest[0]!.provider).toBe("slack");
+    expect(calls.ingest[0]!.dedupStrategy).toBe("provider_event_id");
+  });
+});
