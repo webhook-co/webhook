@@ -295,10 +295,12 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   const getJson = (path: string): Promise<unknown> => request(path, "GET", { idempotent: true });
   const postJson = (path: string, body: unknown, idempotent: boolean): Promise<unknown> =>
     request(path, "POST", { body, idempotent });
-  // DELETE is HTTP-idempotent and the server handler is idempotent (a re-delete returns the recorded
-  // deletedAt), so a transient failure is safe to blind-retry.
-  const deleteJson = (path: string): Promise<unknown> =>
-    request(path, "DELETE", { idempotent: true });
+  // DELETE defaults to idempotent (endpoints.delete coalesces a re-delete to the recorded deletedAt, so
+  // a blind retry is safe). The caller passes idempotent=false where the server handler is NOT idempotent
+  // — e.g. revokeProviderSecret, where a re-revoke returns NOT_FOUND, so a blind retry after a lost
+  // response would surface a false "not found" for a revoke that actually committed.
+  const deleteJson = (path: string, idempotent = true): Promise<unknown> =>
+    request(path, "DELETE", { idempotent });
 
   // Parse a response against its shared contract schema; an unexpected shape is UNEXPECTED (never a
   // capability code), so a server/version skew surfaces as "unexpected response", not a misleading 4xx.
@@ -360,9 +362,11 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     },
     async revokeProviderSecret(input): Promise<RevokedProviderSecret> {
       const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}/provider-secrets/${encodeURIComponent(input.secretId)}`;
+      // idempotent=false: the server revoke is NOT idempotent (a re-revoke is NOT_FOUND), so never
+      // blind-retry — a retry after a lost response would report a false "not found" for a committed revoke.
       return parseOrThrow(
         endpointsRevokeProviderSecretCap.output,
-        await deleteJson(path),
+        await deleteJson(path, false),
         "revoked secret",
       );
     },

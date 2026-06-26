@@ -99,11 +99,9 @@ function matchRoute(
     rest[0] === "endpoints" &&
     rest[2] === "provider-secrets"
   ) {
-    // endpoints.listProviderSecrets: metadata page (no ciphertext); generic dispatch, paginated input.
-    return {
-      capability: "endpoints.listProviderSecrets",
-      input: listInput(query, { endpointId: rest[1] }),
-    };
+    // endpoints.listProviderSecrets: metadata only (no ciphertext); generic dispatch. NOT paginated —
+    // a human-managed handful per endpoint, so the whole set is returned (no cursor/limit to thread).
+    return { capability: "endpoints.listProviderSecrets", input: { endpointId: rest[1] } };
   }
   if (
     method === "DELETE" &&
@@ -296,14 +294,6 @@ async function handleReplay(
   return Response.json(await deps.replay(ctx, input));
 }
 
-/**
- * endpoints.create: a WRITE dispatched via the SHARED handlers map (createWriteHandlers, merged into
- * deps.handlers in index.ts) — NOT a dedicated field like replay, so apps/mcp binds the very same
- * handler. The whole input is the JSON body ({ name }); the handler enforces the endpoints:write scope
- * (the api edge already did via authorizeBearer; this is the in-handler belt-and-suspenders), validates
- * the body (bad/missing name → VALIDATION_ERROR), mints + inserts + audits in one tx, and returns the
- * endpoint plus its one-time ingest URL.
- */
 /**
  * Dispatch a body-bearing WRITE through the SHARED handlers map (so mcp binds the same handler). Reads
  * the JSON body (invalid JSON -> VALIDATION_ERROR), merges any path-derived fields (`extra`, e.g. the

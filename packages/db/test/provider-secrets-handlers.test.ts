@@ -131,6 +131,18 @@ describe("endpoints.addProviderSecret handler", () => {
     ).rejects.toMatchObject({ name: "CapabilityFault", code: "NOT_FOUND" });
   });
 
+  it("NOT_FOUND when the endpoint is soft-deleted (no secret on a dead endpoint)", async () => {
+    // Register against a soft-deleted endpoint (ADR-0076): the existence gate is LIVE-only, so this is
+    // NOT_FOUND, not a misleading 'active' no-op on an endpoint that ingests nothing.
+    const epDel = (await createEndpoint(app, { orgId: orgA, name: "ep-del" }, hasher)).id;
+    await handlers().get("endpoints.delete")!(rw(orgA), { endpointId: epDel });
+    const h = handlers().get("endpoints.addProviderSecret")!;
+    await expect(
+      h(rw(orgA), { endpointId: epDel, provider: "stripe", secret: "whsec_x" }),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "NOT_FOUND" });
+    expect(evicted).toHaveLength(0); // no seal/insert/evict against a dead endpoint
+  });
+
   it("rejects a malformed standard_webhooks secret with VALIDATION_ERROR", async () => {
     const h = handlers().get("endpoints.addProviderSecret")!;
     await expect(

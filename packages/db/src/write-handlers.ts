@@ -196,9 +196,16 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     ensureScope(ctx, endpointsAddProviderSecret); // FIRST — sole authz gate on mcp
     // safeParse enforces the contract input — INCLUDING the standard_webhooks secret-format refinement
     // (whsec_+valid-base64, validated with the same decoder the verify path uses). A mis-stored SW
-    // secret is rejected here rather than verifying as NO_MATCHING_KEY forever.
+    // secret is rejected here rather than verifying as NO_MATCHING_KEY forever. Surface the failing
+    // issue's message (e.g. "a standard_webhooks secret must be whsec_ followed by standard base64") so
+    // the operator can self-correct — the messages are fixed strings, never the secret value.
     const parsed = endpointsAddProviderSecret.input.safeParse(input);
-    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    if (!parsed.success) {
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
+    }
     const evict = requireEvictor();
     const sealer = requireSealer();
     // The endpoint must exist (this org's) before we seal/insert — a clean NOT_FOUND and the hash to
@@ -243,19 +250,30 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     const evict = requireEvictor();
     // The revoke and the ingest-token-hash lookup are independent (the hash needs only org+endpoint,
     // both known up front), so run them concurrently rather than serializing two round-trips. The
-    // revoke also appends the wha1 provider_secret.revoked row in-tx (only on a real transition).
+    // revoke also appends the wha1 provider_secret.revoked row in-tx (only on a real transition). The
+    // hash lookup is BEST-EFFORT: the revoke is the durable, security-relevant act — if the (concurrent)
+    // hash read fails, fall back to null so we still 200 a successful revoke instead of throwing a 5xx
+    // that would (a) mislead the operator into thinking the revoke didn't happen and (b) make a retry
+    // hit NOT_FOUND. Eviction itself (ADR-0015) is best-effort over the KV TTL backstop either way.
     const [revoked, tokenHash] = await Promise.all([
       revokeProviderSecret(
         deps.tenant,
         { orgId: ctx.orgId, endpointId: parsed.data.endpointId, secretId: parsed.data.secretId },
         { auditKey: deps.auditKey, actor: ctx.userId ?? null },
       ),
-      getEndpointIngestTokenHash(deps.tenant, ctx.orgId, parsed.data.endpointId),
+      getEndpointIngestTokenHash(deps.tenant, ctx.orgId, parsed.data.endpointId).catch((err) => {
+        console.log(
+          JSON.stringify({
+            message: "provider_secret.revoke_evict_lookup_failed",
+            error: String(err),
+          }),
+        );
+        return null;
+      }),
     ]);
     if (revoked === null) throw new CapabilityFault("NOT_FOUND", "provider secret not found");
-    // Security-critical eviction (ADR-0015): drop the endpoint's cached principal so the verify path
-    // stops honoring the revoked secret NOW, not within the KV TTL. endpointId is authoritative (the
-    // revoke is endpoint-scoped). Best-effort — status='revoked' + the TTL is the durable backstop.
+    // Drop the endpoint's cached principal so the verify path stops honoring the revoked secret NOW,
+    // not within the KV TTL. endpointId is authoritative (the revoke is endpoint-scoped).
     if (tokenHash !== null) await evict(tokenHash);
     return { id: revoked.id, revokedAt: revoked.revokedAt };
   });

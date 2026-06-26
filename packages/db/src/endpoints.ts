@@ -303,8 +303,11 @@ export async function getEndpointIngestTokenHash(
   endpointId: string,
 ): Promise<Buffer | null> {
   const rows = await withTenant(app, orgId, async (tx) => {
+    // LIVE endpoints only (`deleted_at is null`): a soft-deleted endpoint (ADR-0076) has no live ingest
+    // cache entry to derive — and provider-secret registration uses this as its existence gate, so a
+    // soft-deleted endpoint must read as NOT_FOUND rather than silently accepting a no-op secret.
     return tx<{ ingest_token_hash: Buffer }[]>`
-      select ingest_token_hash from endpoints where id = ${endpointId}`;
+      select ingest_token_hash from endpoints where id = ${endpointId} and deleted_at is null`;
   });
   const row = rows[0];
   return row ? Buffer.from(row.ingest_token_hash) : null;
