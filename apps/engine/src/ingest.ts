@@ -18,6 +18,7 @@ import {
   newId,
   payloadR2Key,
   redactHeadersForLog,
+  utf8Decoder,
   type DedupStrategy,
   type Provider,
   type VerificationResult,
@@ -138,16 +139,18 @@ function plain(status: number, body: string, headers: Record<string, string> = {
 }
 
 /**
- * If `raw` is a Slack `url_verification` handshake body, return its challenge string; otherwise null.
- * Slack POSTs `{ "type": "url_verification", "challenge": "<nonce>", "token": "…" }` during Request URL
- * setup and expects the challenge echoed back (it proves URL control; it carries no secret). PURE and
- * TOTAL: any decode/parse failure or unexpected shape returns null — it can NEVER throw into the ingest
- * path, so the no-drop capture floor is preserved (a non-handshake body just falls through to capture).
+ * If `raw` is a Slack `url_verification` handshake body, return its (non-empty) challenge string;
+ * otherwise null. Slack POSTs `{ "type": "url_verification", "challenge": "<nonce>", "token": "…" }`
+ * during Request URL setup and expects the challenge echoed back (it proves URL control; it carries no
+ * secret). PURE and TOTAL: any decode/parse failure or unexpected shape (wrong type, missing/empty/
+ * non-string challenge) returns null — it can NEVER throw into the ingest path, so the no-drop capture
+ * floor is preserved (a non-handshake body just falls through to capture). A real challenge is a
+ * non-empty nonce; an empty one is treated as not-a-handshake (captured, not diverted).
  */
 export function slackUrlVerificationChallenge(raw: Uint8Array): string | null {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(new TextDecoder().decode(raw));
+    parsed = JSON.parse(utf8Decoder.decode(raw));
   } catch {
     return null; // not JSON -> not a handshake -> capture normally
   }
@@ -155,7 +158,8 @@ export function slackUrlVerificationChallenge(raw: Uint8Array): string | null {
     typeof parsed === "object" &&
     parsed !== null &&
     (parsed as { type?: unknown }).type === "url_verification" &&
-    typeof (parsed as { challenge?: unknown }).challenge === "string"
+    typeof (parsed as { challenge?: unknown }).challenge === "string" &&
+    (parsed as { challenge: string }).challenge.length > 0
   ) {
     return (parsed as { challenge: string }).challenge;
   }
@@ -196,21 +200,23 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
 
   // Slack Request URL verification handshake (ADR-0011 / Slice C). During Request URL setup Slack POSTs
   // a signed `{ type: "url_verification", challenge }` and expects the challenge echoed — BEFORE any
-  // real event, and often before the operator has even registered a signing secret. For a request whose
-  // DETECTED scheme is slack we echo `{ challenge }` and capture NOTHING (it's a control message, not an
-  // event). The JSON parse is confined to slack-detected traffic (derived.provider), and the helper is
-  // pure + total (any non-handshake shape -> null -> fall through to normal capture), so the no-drop
-  // floor is never at risk. No signature check is needed: the challenge is Slack's own nonce bounced 1:1
-  // — it leaks nothing, we never store it, and a non-slack sender (no x-slack-signature) never reaches
-  // this branch. This runs BEFORE the R2 PUT, so a handshake never writes a payload or a metadata row.
-  if (derived.provider === "slack") {
+  // real event, and often before the operator has even registered a signing secret. For a slack-detected
+  // request we echo `{ challenge }` and capture NOTHING (it's a control message, not an event). The
+  // helper is pure + total (any non-handshake shape -> null -> fall through to normal capture), so the
+  // no-drop floor is never at risk. No signature check is needed: the challenge is Slack's own nonce
+  // bounced 1:1 — it leaks nothing, we never store it, and a non-slack sender (no x-slack-signature)
+  // never reaches this branch. This runs BEFORE the R2 PUT, so a handshake never writes a payload/row.
+  //
+  // The `providerEventId === null` guard confines the second JSON parse to slack bodies WITHOUT an event
+  // id: a real Slack `event_callback` carries an `event_id` (deriveDedup already extracted it), so the
+  // common steady-state event path skips this parse entirely — only a handshake (no event_id) pays it.
+  if (derived.provider === "slack" && derived.providerEventId === null) {
     const challenge = slackUrlVerificationChallenge(raw);
     if (challenge !== null) {
       deps.log("ingest.slack_url_verification", { endpointId: endpoint.endpointId });
-      return new Response(JSON.stringify({ challenge }), {
-        status: 200,
-        headers: { "content-type": "application/json; charset=utf-8" },
-      });
+      // Response.json: application/json, no Set-Cookie / no Access-Control-* — the cookieless, no-CORS
+      // wbhk.my posture (same guarantee plain() documents for the text responses), by construction.
+      return Response.json({ challenge }, { status: 200 });
     }
   }
 

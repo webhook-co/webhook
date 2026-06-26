@@ -31,12 +31,15 @@ Everything else falls through to normal capture.
 
 Specifics:
 
-- **Scheme-gated parse.** The JSON parse is confined to slack-detected traffic (`derived.provider ===
-  "slack"`, already computed for dedup/verify), so non-Slack senders pay zero extra cost and can never
-  trigger the branch. The detection is header-based, so a sender without `x-slack-signature` is never in
-  this path — its `{type:"url_verification"}`-shaped body is just a normal event, captured.
+- **Scheme- and shape-gated parse.** The JSON parse is confined to slack-detected traffic
+  (`derived.provider === "slack"`, header-based — a sender without `x-slack-signature` is never in this
+  path) AND to slack bodies that carry **no `event_id`** (`derived.providerEventId === null`). A real Slack
+  `event_callback` carries an `event_id` (which `deriveDedup` already extracted), so the common
+  steady-state event path skips this second parse entirely — only a handshake (which has no `event_id`)
+  pays it. Non-Slack senders pay zero extra cost.
 - **Pure, total helper.** `slackUrlVerificationChallenge(raw)` is pure and total: any decode/parse failure,
-  a wrong `type`, or a non-string `challenge` returns `null`. It can never throw, so the no-drop floor is
+  a wrong `type`, or a missing / non-string / **empty** `challenge` returns `null` (an empty challenge is
+  never a real handshake, so it is captured, not diverted). It can never throw, so the no-drop floor is
   intact — a malformed or non-handshake slack body falls straight through to capture.
 - **Pre-capture.** The echo runs **before** the R2 PUT, so a handshake never writes a payload or a metadata
   row. It is a control message, not an event.

@@ -325,4 +325,32 @@ describe("handleIngest — Slack url_verification handshake (Slice C)", () => {
     expect(calls.put).toHaveLength(1);
     expect(calls.ingest).toHaveLength(1);
   });
+
+  it("a url_verification with an EMPTY challenge falls through to capture (not a real handshake)", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      req(GOOD, { body: `{"type":"url_verification","challenge":""}`, headers: SLACK }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(calls.put).toHaveLength(1); // captured, not echoed — an empty challenge is degenerate
+    expect(calls.ingest).toHaveLength(1);
+  });
+
+  it("a slack event_callback carrying an event_id is captured (the handshake parse is skipped)", async () => {
+    // event_id present -> deriveDedup sets providerEventId -> the handshake branch is skipped entirely.
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      req(GOOD, {
+        body: `{"type":"event_callback","event_id":"Ev0001","event":{"type":"message"}}`,
+        headers: SLACK,
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(calls.put).toHaveLength(1);
+    expect(calls.ingest).toHaveLength(1);
+    expect(calls.ingest[0]!.provider).toBe("slack");
+    expect(calls.ingest[0]!.dedupStrategy).toBe("provider_event_id");
+  });
 });
