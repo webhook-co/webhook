@@ -24,7 +24,10 @@ export default function RootLayout({ children }: { children: ReactNode }) {
       suppressHydrationWarning
     >
       <head>
-        {/* Set the theme before paint to avoid a light-to-dark flash. */}
+        {/* Set the theme before paint to avoid a light-to-dark flash. This inline <script> is harmless in
+            production (it runs once on parse). In `next dev` ONLY, React 19 logs a "scripts inside React
+            components" warning when the not-found render path client-renders the layout — a dev-overlay
+            cosmetic that does not affect the deployed app. See docs/adr/0077. */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
       </head>
       <body>{children}</body>

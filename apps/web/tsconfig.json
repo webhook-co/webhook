@@ -22,7 +22,18 @@
       // (db's modules already cast around this, so they need no redirect.)
       "@webhook-co/shared/audit": ["../../packages/shared/dist/audit.js"],
       "@webhook-co/shared/bytes": ["../../packages/shared/dist/bytes.js"],
-      "@webhook-co/shared/kv-cache": ["../../packages/shared/dist/kv-cache.js"]
+      "@webhook-co/shared/kv-cache": ["../../packages/shared/dist/kv-cache.js"],
+      // The `@webhook-co/shared` BARREL → dist too: @webhook-co/db/reads (transpiled from src here)
+      // imports the shared barrel for its entity schemas, and the barrel's `export *` pulls shared's
+      // un-cast WebCrypto modules (audit-anchor/envelope/kms/secrets/webhooks-spec/bytes) into THIS
+      // app's DOM-lib typecheck → the node Uint8Array<ArrayBufferLike> vs DOM BufferSource clash. Point
+      // at the real `dist/index.js` (workerd-safe runtime; tsc reads the sibling `.d.ts` for types), same
+      // discipline as the leaves above. The more-specific leaf paths still win for those subpaths.
+      "@webhook-co/shared": ["../../packages/shared/dist/index.js"],
+      // …and webhooks-spec → dist for the same reason: shared's entity types reference its
+      // VerificationResult schema, so resolving shared's types pulls webhooks-spec's WebCrypto src (the
+      // same BufferSource clash) unless it too is consumed as built output. (Mirrors apps/auth.)
+      "@webhook-co/webhooks-spec": ["../../packages/webhooks-spec/dist/index.js"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],

@@ -146,11 +146,11 @@ describe("capability registry", () => {
 });
 
 describe("endpoints.create", () => {
-  it("is the write capability — endpoints:write scope, bound on api/cli/mcp, web deferred, not idempotent", () => {
+  it("is the write capability — endpoints:write scope, bound on all surfaces (web included), not idempotent", () => {
     expect(endpointsCreate.auth.scope).toBe("endpoints:write");
     expect(endpointsCreate.semantics.idempotent).toBeUndefined();
-    expect(requiredSurfaces(endpointsCreate)).toEqual(["api", "cli", "mcp"]);
-    expect(Object.keys(endpointsCreate.surfaceExempt ?? {})).toEqual(["web"]);
+    expect(requiredSurfaces(endpointsCreate)).toEqual(["api", "cli", "mcp", "web"]);
+    expect(Object.keys(endpointsCreate.surfaceExempt ?? {})).toEqual([]);
     // FORBIDDEN must be declarable so an under-scoped caller maps to 403; RATE_LIMITED for the soft cap.
     expect(endpointsCreate.errors).toContain("FORBIDDEN");
     expect(endpointsCreate.errors).toContain("RATE_LIMITED");
@@ -192,11 +192,11 @@ describe("endpoints.create", () => {
 });
 
 describe("endpoints.delete", () => {
-  it("is a write capability — endpoints:write, bound on api/cli/mcp, web deferred, idempotent", () => {
+  it("is a write capability — endpoints:write, bound on all surfaces (web included), idempotent", () => {
     expect(endpointsDelete.auth.scope).toBe("endpoints:write");
     expect(endpointsDelete.semantics.idempotent).toBe(true);
-    expect(requiredSurfaces(endpointsDelete)).toEqual(["api", "cli", "mcp"]);
-    expect(Object.keys(endpointsDelete.surfaceExempt ?? {})).toEqual(["web"]);
+    expect(requiredSurfaces(endpointsDelete)).toEqual(["api", "cli", "mcp", "web"]);
+    expect(Object.keys(endpointsDelete.surfaceExempt ?? {})).toEqual([]);
     // FORBIDDEN so an under-scoped caller maps to 403; NOT_FOUND for an unknown id.
     expect(endpointsDelete.errors).toContain("FORBIDDEN");
     expect(endpointsDelete.errors).toContain("NOT_FOUND");
@@ -223,11 +223,11 @@ describe("endpoints.delete", () => {
 });
 
 describe("endpoints.rotate", () => {
-  it("is a write capability — endpoints:write, bound on api/cli/mcp, web deferred, NOT idempotent", () => {
+  it("is a write capability — endpoints:write, bound on all surfaces (web included), NOT idempotent", () => {
     expect(endpointsRotate.auth.scope).toBe("endpoints:write");
     expect(endpointsRotate.semantics.idempotent).toBeUndefined();
-    expect(requiredSurfaces(endpointsRotate)).toEqual(["api", "cli", "mcp"]);
-    expect(Object.keys(endpointsRotate.surfaceExempt ?? {})).toEqual(["web"]);
+    expect(requiredSurfaces(endpointsRotate)).toEqual(["api", "cli", "mcp", "web"]);
+    expect(Object.keys(endpointsRotate.surfaceExempt ?? {})).toEqual([]);
     expect(endpointsRotate.errors).toContain("FORBIDDEN");
     expect(endpointsRotate.errors).toContain("NOT_FOUND");
   });
