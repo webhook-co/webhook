@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 
 import { EndpointsManager } from "@/components/endpoints-manager";
-import { createEndpointAction } from "@/server/endpoint-actions";
+import {
+  createEndpointAction,
+  deleteEndpointAction,
+  rotateEndpointAction,
+} from "@/server/endpoint-actions";
 import { loadEndpoints } from "@/server/endpoints";
 import { verifySession } from "@/server/session";
 
@@ -22,7 +26,12 @@ export default async function EndpointsPage() {
           your provider at it; rotate or delete it anytime from its page.
         </p>
       </div>
-      <EndpointsManager initialResult={result} createEndpoint={createEndpointAction} />
+      <EndpointsManager
+        initialResult={result}
+        createEndpoint={createEndpointAction}
+        rotateEndpoint={rotateEndpointAction}
+        deleteEndpoint={deleteEndpointAction}
+      />
     </div>
   );
 }

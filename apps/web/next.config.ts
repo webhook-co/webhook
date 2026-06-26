@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 // The dashboard deploys to Cloudflare Workers via `@opennextjs/cloudflare` (open-next.config.ts).
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
-import { SECURITY_HEADERS } from "./src/security-headers";
+import { securityHeaders } from "./src/security-headers";
 
 const nextConfig: NextConfig = {
   // These workspace packages ship as TypeScript source; let Next transpile them. `@webhook-co/contract`/
@@ -31,7 +31,14 @@ const nextConfig: NextConfig = {
   // serverActions.allowedOrigins — Next's same-origin server-action check stays the CSRF guard, pinned by
   // next-config-csrf.test.ts.
   async headers() {
-    return [{ source: "/(.*)", headers: [...SECURITY_HEADERS] }];
+    // Relax the CSP for `next dev` ONLY (Turbopack evaluates client modules with eval() + opens an HMR
+    // websocket); production stays tight (no 'unsafe-eval'). NODE_ENV is "development" under `next dev`.
+    return [
+      {
+        source: "/(.*)",
+        headers: [...securityHeaders(process.env.NODE_ENV !== "production")],
+      },
+    ];
   },
 };
 

@@ -20,30 +20,43 @@ const created: CreateEndpointResult = {
   ingestUrl: "https://wbhk.my/whep_secret123",
 };
 
+// The rotate/delete actions are exercised in endpoint-controls.test.tsx; default them to no-ops for the
+// list-level tests that don't drive a per-row action.
+const noopActions = {
+  rotateEndpoint: vi.fn(),
+  deleteEndpoint: vi.fn(),
+};
+
 describe("EndpointsManager", () => {
   it("renders a create affordance and the empty state when there are no endpoints", () => {
     render(
-      <EndpointsManager initialResult={{ status: "ok", endpoints: [] }} createEndpoint={vi.fn()} />,
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [] }}
+        createEndpoint={vi.fn()}
+        {...noopActions}
+      />,
     );
     expect(screen.getByRole("button", { name: /create endpoint/i })).toBeInTheDocument();
     expect(screen.getByText(/no endpoints yet/i)).toBeInTheDocument();
   });
 
-  it("lists the org's endpoints with a status and a link to the detail page", () => {
+  it("lists the org's endpoints with a status, a detail link, and a per-row actions menu", () => {
     render(
       <EndpointsManager
         initialResult={{ status: "ok", endpoints: [ep] }}
         createEndpoint={vi.fn()}
+        {...noopActions}
       />,
     );
     const link = screen.getByRole("link", { name: "Stripe prod" });
     expect(link).toHaveAttribute("href", "/endpoints/ep_1");
     expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Actions for Stripe prod" })).toBeInTheDocument();
   });
 
   it("shows the error state when the load failed", () => {
     const result: EndpointsResult = { status: "error" };
-    render(<EndpointsManager initialResult={result} createEndpoint={vi.fn()} />);
+    render(<EndpointsManager initialResult={result} createEndpoint={vi.fn()} {...noopActions} />);
     expect(screen.getByText(/couldn't load your endpoints/i)).toBeInTheDocument();
   });
 
@@ -54,6 +67,7 @@ describe("EndpointsManager", () => {
       <EndpointsManager
         initialResult={{ status: "ok", endpoints: [] }}
         createEndpoint={createEndpoint}
+        {...noopActions}
       />,
     );
 
@@ -80,6 +94,7 @@ describe("EndpointsManager", () => {
       <EndpointsManager
         initialResult={{ status: "ok", endpoints: [] }}
         createEndpoint={createEndpoint}
+        {...noopActions}
       />,
     );
 
@@ -90,5 +105,30 @@ describe("EndpointsManager", () => {
 
     await waitFor(() => expect(screen.getByText(/endpoint limit reached/i)).toBeInTheDocument());
     expect(screen.queryByText(/only time you'll see this url/i)).not.toBeInTheDocument();
+  });
+
+  it("removes a row in place when its ⋯ menu delete succeeds (no reload)", async () => {
+    const user = userEvent.setup();
+    const deleteEndpoint = vi.fn(async () => ({ ok: true as const }));
+    render(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [ep] }}
+        createEndpoint={vi.fn()}
+        rotateEndpoint={vi.fn()}
+        deleteEndpoint={deleteEndpoint}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Actions for Stripe prod" }));
+    await user.click(screen.getByRole("menuitem", { name: /delete/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /delete endpoint/i }));
+
+    expect(deleteEndpoint).toHaveBeenCalledWith("ep_1");
+    // The row is dropped optimistically and the empty state takes its place — no page reload needed.
+    await waitFor(() =>
+      expect(screen.queryByRole("link", { name: "Stripe prod" })).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText(/no endpoints yet/i)).toBeInTheDocument();
   });
 });

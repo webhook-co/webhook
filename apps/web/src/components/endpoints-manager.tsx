@@ -25,18 +25,32 @@ import Link from "next/link";
 import * as React from "react";
 
 import { formatDate } from "@/lib/format";
-import type { CreateEndpointResult } from "@/server/endpoint-actions";
+import type {
+  CreateEndpointResult,
+  EndpointActionResult,
+  RotateEndpointResult,
+} from "@/server/endpoint-actions";
 import type { EndpointItem, EndpointsResult } from "@/server/endpoints";
 
+import { EndpointControls } from "./endpoint-controls";
 import { OneTimeUrlDialog } from "./one-time-url-dialog";
 
 export interface EndpointsManagerProps {
   initialResult: EndpointsResult;
   /** The create-endpoint server action, injected by the gated page. */
   createEndpoint: (input: { name: string }) => Promise<CreateEndpointResult>;
+  /** Rotate an endpoint's ingest token (hard cutover) → its NEW one-time URL. Injected by the page. */
+  rotateEndpoint: (endpointId: string) => Promise<RotateEndpointResult>;
+  /** Soft-delete an endpoint. Injected by the page. */
+  deleteEndpoint: (endpointId: string) => Promise<EndpointActionResult>;
 }
 
-export function EndpointsManager({ initialResult, createEndpoint }: EndpointsManagerProps) {
+export function EndpointsManager({
+  initialResult,
+  createEndpoint,
+  rotateEndpoint,
+  deleteEndpoint,
+}: EndpointsManagerProps) {
   const [endpoints, setEndpoints] = React.useState<readonly EndpointItem[]>(
     initialResult.status === "ok" ? initialResult.endpoints : [],
   );
@@ -140,11 +154,14 @@ export function EndpointsManager({ initialResult, createEndpoint }: EndpointsMan
             <TableHead>Name</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Created</TableHead>
+            <TableHead className="w-0 text-right">
+              <span className="sr-only">Actions</span>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {endpoints.length === 0 ? (
-            <TableEmpty colSpan={3}>
+            <TableEmpty colSpan={4}>
               No endpoints yet. Create one to get a signed webhook URL.
             </TableEmpty>
           ) : (
@@ -165,6 +182,19 @@ export function EndpointsManager({ initialResult, createEndpoint }: EndpointsMan
                 </TableCell>
                 <TableCell className="text-fg-secondary">
                   {formatDate(endpoint.createdAt)}
+                </TableCell>
+                <TableCell className="text-right">
+                  <div className="flex justify-end">
+                    <EndpointControls
+                      endpoint={endpoint}
+                      variant="menu"
+                      rotateEndpoint={rotateEndpoint}
+                      deleteEndpoint={deleteEndpoint}
+                      onDeleted={() =>
+                        setEndpoints((prev) => prev.filter((e) => e.id !== endpoint.id))
+                      }
+                    />
+                  </div>
                 </TableCell>
               </TableRow>
             ))

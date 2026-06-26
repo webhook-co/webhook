@@ -17,39 +17,51 @@
  * Turnstile), the dashboard loads NO third-party origin: it talks only to itself + same-origin server
  * actions, and the auth handoff is a server-side service binding, never a browser fetch. A nonce/hash CSP is
  * a follow-up gated on a Workers nonce-injection story.
+ *
+ * DEV vs PROD: `next dev` (Turbopack) evaluates client modules with `eval()` and opens an HMR websocket —
+ * both are DEV-ONLY (React never uses `eval` in production). Without `'unsafe-eval'` the dev client runtime
+ * can't boot (client-side navigation blanks); without `ws:` the HMR socket is blocked. So the dev policy
+ * adds those two; the PRODUCTION policy stays tight (no `eval`, connect inherits `'self'`).
  */
 
 // Insertion order is the serialized order. Each value array is space-joined; directives are "; "-joined.
 // Only directives that DIFFER from default-src are listed: fetch directives that would merely restate
 // `default-src 'self'` (connect-src, font-src, …) are omitted and inherit it. Add an explicit directive
 // when a real cross-origin need lands — an OAuth avatar CDN on img-src if a view renders `user.image` (the
-// session carries it; the account menu shows initials today), or connect-src for client polling / web
-// analytics if the events surface adds them.
-const CSP_DIRECTIVES: Record<string, readonly string[]> = {
-  "default-src": ["'self'"],
-  "script-src": ["'self'", "'unsafe-inline'"],
-  "style-src": ["'self'", "'unsafe-inline'"],
-  "img-src": ["'self'", "data:"],
-  "frame-ancestors": ["'none'"],
-  "base-uri": ["'self'"],
-  "form-action": ["'self'"],
-  "object-src": ["'none'"],
-};
+// session carries it; the account menu shows initials today).
+function cspDirectives(dev: boolean): Record<string, readonly string[]> {
+  return {
+    "default-src": ["'self'"],
+    "script-src": dev
+      ? ["'self'", "'unsafe-inline'", "'unsafe-eval'"]
+      : ["'self'", "'unsafe-inline'"],
+    "style-src": ["'self'", "'unsafe-inline'"],
+    "img-src": ["'self'", "data:"],
+    // Dev only: the Turbopack HMR websocket (prod inherits default-src 'self').
+    ...(dev ? { "connect-src": ["'self'", "ws:", "wss:"] } : {}),
+    "frame-ancestors": ["'none'"],
+    "base-uri": ["'self'"],
+    "form-action": ["'self'"],
+    "object-src": ["'none'"],
+  };
+}
 
-/** Serialize {@link CSP_DIRECTIVES} into a `Content-Security-Policy` header value. */
-export function buildContentSecurityPolicy(): string {
-  return Object.entries(CSP_DIRECTIVES)
+/** Serialize the CSP directives into a `Content-Security-Policy` header value (prod policy by default). */
+export function buildContentSecurityPolicy(dev = false): string {
+  return Object.entries(cspDirectives(dev))
     .map(([directive, values]) => `${directive} ${values.join(" ")}`)
     .join("; ");
 }
 
 /** Header name/value pairs for next.config `headers()` — applied to every dashboard response. */
-export const SECURITY_HEADERS: ReadonlyArray<{ key: string; value: string }> = [
-  { key: "Content-Security-Policy", value: buildContentSecurityPolicy() },
-  { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  { key: "X-Frame-Options", value: "DENY" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-  // app.webhook.co is a leaf host — no includeSubDomains/preload (sticky + hard to walk back; mirrors auth/www).
-  { key: "Strict-Transport-Security", value: "max-age=63072000" },
-];
+export function securityHeaders(dev = false): ReadonlyArray<{ key: string; value: string }> {
+  return [
+    { key: "Content-Security-Policy", value: buildContentSecurityPolicy(dev) },
+    { key: "X-Content-Type-Options", value: "nosniff" },
+    { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+    { key: "X-Frame-Options", value: "DENY" },
+    { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+    // app.webhook.co is a leaf host — no includeSubDomains/preload (sticky + hard to walk back; mirrors auth/www).
+    { key: "Strict-Transport-Security", value: "max-age=63072000" },
+  ];
+}

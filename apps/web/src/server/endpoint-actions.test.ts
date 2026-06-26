@@ -8,6 +8,8 @@ vi.mock("./session", () => ({
     user: { name: "", email: "", image: null },
   })),
 }));
+// revalidatePath needs a Next request scope it doesn't have in a unit test — stub it.
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 // The DB-touching mutations (Lane B over the tenant pool + KV_CONFIG eviction) — mocked here; the glue is
 // unit-tested in endpoint-mutations.test.ts and the db fns in the db package's integration suite.

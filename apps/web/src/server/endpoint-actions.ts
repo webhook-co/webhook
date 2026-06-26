@@ -1,5 +1,7 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+
 import { logActionError } from "./action-log";
 import {
   createEndpoint,
@@ -69,6 +71,7 @@ export async function createEndpointAction(input: { name: string }): Promise<Cre
   }
   // Map OUTSIDE the try: the endpoint is already committed, so a throw while shaping the result must NOT be
   // reported as a failure (that would tell the user nothing was created while a live endpoint + URL exist).
+  revalidatePath("/endpoints"); // the list's cached RSC is now stale
   return { ok: true, endpoint: toItem(minted), ingestUrl: minted.ingestUrl };
 }
 
@@ -109,6 +112,7 @@ export async function deleteEndpointAction(endpointId: string): Promise<Endpoint
   if (!isUuid(endpointId)) return { ok: false, error: "That endpoint no longer exists." };
   try {
     await deleteEndpoint({ orgId: session.orgId, userId: session.userId, endpointId });
+    revalidatePath("/endpoints"); // drop the deleted endpoint from the list's cached RSC
     return { ok: true };
   } catch (error) {
     logActionError("endpoint.delete_failed", error);

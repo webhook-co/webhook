@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { buildContentSecurityPolicy, SECURITY_HEADERS } from "./security-headers";
+import { buildContentSecurityPolicy, securityHeaders } from "./security-headers";
 
-describe("dashboard CSP", () => {
+describe("dashboard CSP (production)", () => {
   it("locks down framing, plugins, base-uri, and form targets", () => {
     const csp = buildContentSecurityPolicy();
     expect(csp).toContain("default-src 'self'");
@@ -21,6 +21,8 @@ describe("dashboard CSP", () => {
     expect(csp).toContain("default-src 'self'");
     expect(csp).not.toContain("connect-src");
     expect(csp).not.toContain("font-src");
+    // NO eval in production — React never uses it; only `next dev` does.
+    expect(csp).not.toContain("'unsafe-eval'");
   });
 
   it("loads NO third-party origin (unlike apps/auth's Turnstile allowlist)", () => {
@@ -30,9 +32,21 @@ describe("dashboard CSP", () => {
   });
 });
 
+describe("dashboard CSP (development)", () => {
+  it("adds 'unsafe-eval' + the HMR websocket for `next dev` (Turbopack), prod does not", () => {
+    const dev = buildContentSecurityPolicy(true);
+    expect(dev).toContain("script-src 'self' 'unsafe-inline' 'unsafe-eval'");
+    expect(dev).toContain("connect-src 'self' ws: wss:");
+    // The prod policy must NOT carry either relaxation.
+    const prod = buildContentSecurityPolicy(false);
+    expect(prod).not.toContain("'unsafe-eval'");
+    expect(prod).not.toContain("ws:");
+  });
+});
+
 describe("dashboard security headers", () => {
   it("ships the standard hardening headers alongside the CSP", () => {
-    const byKey = new Map(SECURITY_HEADERS.map((h) => [h.key, h.value]));
+    const byKey = new Map(securityHeaders().map((h) => [h.key, h.value]));
     expect(byKey.get("X-Content-Type-Options")).toBe("nosniff");
     expect(byKey.get("X-Frame-Options")).toBe("DENY");
     expect(byKey.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
