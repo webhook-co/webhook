@@ -137,6 +137,31 @@ function plain(status: number, body: string, headers: Record<string, string> = {
   });
 }
 
+/**
+ * If `raw` is a Slack `url_verification` handshake body, return its challenge string; otherwise null.
+ * Slack POSTs `{ "type": "url_verification", "challenge": "<nonce>", "token": "…" }` during Request URL
+ * setup and expects the challenge echoed back (it proves URL control; it carries no secret). PURE and
+ * TOTAL: any decode/parse failure or unexpected shape returns null — it can NEVER throw into the ingest
+ * path, so the no-drop capture floor is preserved (a non-handshake body just falls through to capture).
+ */
+export function slackUrlVerificationChallenge(raw: Uint8Array): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(raw));
+  } catch {
+    return null; // not JSON -> not a handshake -> capture normally
+  }
+  if (
+    typeof parsed === "object" &&
+    parsed !== null &&
+    (parsed as { type?: unknown }).type === "url_verification" &&
+    typeof (parsed as { challenge?: unknown }).challenge === "string"
+  ) {
+    return (parsed as { challenge: string }).challenge;
+  }
+  return null;
+}
+
 export async function handleIngest(request: Request, deps: IngestDeps): Promise<Response> {
   // Webhooks are POST. (GET verification-handshakes are a follow-up.) Method-checked first so the
   // rejection is uniform and leaks no token validity.
@@ -168,6 +193,26 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   const headers: [string, string][] = [...request.headers];
   const contentType = request.headers.get("content-type");
   const derived = await deriveDedup(raw, headers, deps.now(), deps.dedupBucketWidthMs);
+
+  // Slack Request URL verification handshake (ADR-0011 / Slice C). During Request URL setup Slack POSTs
+  // a signed `{ type: "url_verification", challenge }` and expects the challenge echoed — BEFORE any
+  // real event, and often before the operator has even registered a signing secret. For a request whose
+  // DETECTED scheme is slack we echo `{ challenge }` and capture NOTHING (it's a control message, not an
+  // event). The JSON parse is confined to slack-detected traffic (derived.provider), and the helper is
+  // pure + total (any non-handshake shape -> null -> fall through to normal capture), so the no-drop
+  // floor is never at risk. No signature check is needed: the challenge is Slack's own nonce bounced 1:1
+  // — it leaks nothing, we never store it, and a non-slack sender (no x-slack-signature) never reaches
+  // this branch. This runs BEFORE the R2 PUT, so a handshake never writes a payload or a metadata row.
+  if (derived.provider === "slack") {
+    const challenge = slackUrlVerificationChallenge(raw);
+    if (challenge !== null) {
+      deps.log("ingest.slack_url_verification", { endpointId: endpoint.endpointId });
+      return new Response(JSON.stringify({ challenge }), {
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+      });
+    }
+  }
 
   // R2 PUT FIRST: the body is durable before any metadata row can point at it. A PUT failure means
   // the body isn't durable -> 500, and we never write the row (never ACK an undurable event).
