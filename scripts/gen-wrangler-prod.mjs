@@ -82,6 +82,17 @@ const APPS = {
       "<KV_CONFIG_ID>",
       "webhook-payloads-dev",
     ],
+    // PROVIDER_SECRET_SEALER (ADR-0078/B0) — the service binding to the engine's ProviderSecretSealer
+    // WorkerEntrypoint, so endpoints.addProviderSecret seals via the engine (api never holds the KEK).
+    // Deploy-injected (NOT committed), exactly like mcp's AUTH_ISSUER: the engine entrypoint is LIVE
+    // (B0 #246), so CF late-binds it fine; committing it would block a cold deploy.
+    services: [
+      {
+        binding: "PROVIDER_SECRET_SEALER",
+        service: "webhook-engine",
+        entrypoint: "ProviderSecretSealer",
+      },
+    ],
   },
   mcp: {
     domain: "mcp.webhook.co",
@@ -99,7 +110,16 @@ const APPS = {
     // opaque OAuth provider tokens by introspection. Deploy-injected here (NOT committed) because of the
     // ordering: auth. must be LIVE first (it is now — apps/auth deployed), or CF late-binds and mcp fails to
     // start. Until this, a non-`whk_` token at mcp 500s (fail-closed); with it, introspection works.
-    services: [{ binding: "AUTH_ISSUER", service: "webhook-auth", entrypoint: "IssuerIntrospect" }],
+    services: [
+      { binding: "AUTH_ISSUER", service: "webhook-auth", entrypoint: "IssuerIntrospect" },
+      // PROVIDER_SECRET_SEALER (ADR-0078/B0, D2) — seal via the engine's ProviderSecretSealer entrypoint
+      // (the McpAgent never holds the KEK). Engine entrypoint LIVE from B0 #246; same late-bind safety.
+      {
+        binding: "PROVIDER_SECRET_SEALER",
+        service: "webhook-engine",
+        entrypoint: "ProviderSecretSealer",
+      },
+    ],
   },
   // The dashboard (app.webhook.co) — an OpenNext SSR Worker (main = .open-next/worker.js), deployed by
   // deploy-web.yml after `opennextjs-cloudflare build`. It reads the credential pepper + audit-chain key

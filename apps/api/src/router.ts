@@ -82,6 +82,40 @@ function matchRoute(
     // ingest token, evicts the old (hard cutover), and returns the new one-time ingest URL.
     return { capability: "endpoints.rotate", input: { endpointId: rest[1] } };
   }
+  if (
+    method === "POST" &&
+    rest.length === 3 &&
+    rest[0] === "endpoints" &&
+    rest[2] === "provider-secrets"
+  ) {
+    // endpoints.addProviderSecret (ADR-0078): endpointId from the path; {provider,label?,secret} from
+    // the JSON body (read in handleAddProviderSecret, like create). The handler seals via the engine
+    // ProviderSecretSealer binding + evicts the ingest cache. The secret is never echoed back.
+    return { capability: "endpoints.addProviderSecret", input: { endpointId: rest[1] } };
+  }
+  if (
+    method === "GET" &&
+    rest.length === 3 &&
+    rest[0] === "endpoints" &&
+    rest[2] === "provider-secrets"
+  ) {
+    // endpoints.listProviderSecrets: metadata only (no ciphertext); generic dispatch. NOT paginated —
+    // a human-managed handful per endpoint, so the whole set is returned (no cursor/limit to thread).
+    return { capability: "endpoints.listProviderSecrets", input: { endpointId: rest[1] } };
+  }
+  if (
+    method === "DELETE" &&
+    rest.length === 4 &&
+    rest[0] === "endpoints" &&
+    rest[2] === "provider-secrets"
+  ) {
+    // endpoints.revokeProviderSecret: a WRITE with NO body — endpointId + secretId from the path;
+    // generic dispatch. The handler revokes (endpoint-scoped) + evicts the ingest cache.
+    return {
+      capability: "endpoints.revokeProviderSecret",
+      input: { endpointId: rest[1], secretId: rest[3] },
+    };
+  }
   if (method === "GET" && rest.length === 3 && rest[0] === "endpoints" && rest[2] === "events") {
     const input = listInput(query, { endpointId: rest[1] });
     const provider = query.get("provider");
@@ -182,7 +216,12 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
       return await handleReplay(deps, authz.ctx, String(route.input.eventId), request);
     }
     if (route.capability === "endpoints.create") {
-      return await handleCreateEndpoint(deps, authz.ctx, request);
+      return await dispatchJsonBody(deps, authz.ctx, "endpoints.create", request);
+    }
+    if (route.capability === "endpoints.addProviderSecret") {
+      return await dispatchJsonBody(deps, authz.ctx, "endpoints.addProviderSecret", request, {
+        endpointId: String(route.input.endpointId),
+      });
     }
     const handler = deps.handlers.get(route.capability);
     if (handler === undefined) {
@@ -256,21 +295,23 @@ async function handleReplay(
 }
 
 /**
- * endpoints.create: a WRITE dispatched via the SHARED handlers map (createWriteHandlers, merged into
- * deps.handlers in index.ts) — NOT a dedicated field like replay, so apps/mcp binds the very same
- * handler. The whole input is the JSON body ({ name }); the handler enforces the endpoints:write scope
- * (the api edge already did via authorizeBearer; this is the in-handler belt-and-suspenders), validates
- * the body (bad/missing name → VALIDATION_ERROR), mints + inserts + audits in one tx, and returns the
- * endpoint plus its one-time ingest URL.
+ * Dispatch a body-bearing WRITE through the SHARED handlers map (so mcp binds the same handler). Reads
+ * the JSON body (invalid JSON -> VALIDATION_ERROR), merges any path-derived fields (`extra`, e.g. the
+ * authoritative endpointId), and returns the handler's contract-shaped output. Used by endpoints.create
+ * ({name} from the body) and endpoints.addProviderSecret ({provider,label?,secret} from the body, the
+ * endpointId from the path) — the only routes that read a request body. A routed capability with no
+ * bound handler is a wiring bug (-> 5xx), not a client error.
  */
-async function handleCreateEndpoint(
+async function dispatchJsonBody(
   deps: ApiDeps,
   ctx: AuthContext,
+  capability: string,
   request: Request,
+  extra?: Record<string, unknown>,
 ): Promise<Response> {
-  const handler = deps.handlers.get("endpoints.create");
+  const handler = deps.handlers.get(capability);
   if (handler === undefined) {
-    throw new Error("no handler bound for capability: endpoints.create"); // wiring bug -> 5xx
+    throw new Error(`no handler bound for capability: ${capability}`);
   }
   let body: unknown;
   try {
@@ -278,6 +319,6 @@ async function handleCreateEndpoint(
   } catch {
     throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
   }
-  const input = typeof body === "object" && body !== null ? body : {};
+  const input = { ...(typeof body === "object" && body !== null ? body : {}), ...extra };
   return Response.json(await handler(ctx, input));
 }

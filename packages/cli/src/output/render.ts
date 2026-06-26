@@ -1,4 +1,10 @@
-import type { CreatedEndpoint, DeletedEndpoint } from "@webhook-co/contract";
+import type {
+  AddedProviderSecret,
+  CreatedEndpoint,
+  DeletedEndpoint,
+  ProviderSecretSummary,
+  RevokedProviderSecret,
+} from "@webhook-co/contract";
 import type { Endpoint, Event, EventSummary } from "@webhook-co/shared";
 
 import type { AuditVerifyResult } from "../api-client.js";
@@ -99,6 +105,47 @@ export function renderDeletedEndpoint(d: DeletedEndpoint): string {
   return block([
     ["id", field(d.id)],
     ["deleted", fmtDateTime(d.deletedAt)],
+  ]);
+}
+
+/** Color a provider secret's lifecycle status (active/retiring/revoked). */
+function secretStatusWord(status: string, color: boolean): string {
+  if (status === "active") return colorize("active", "green", color);
+  if (status === "retiring") return colorize("retiring", "yellow", color);
+  return colorize("revoked", "red", color);
+}
+
+/** An endpoint's provider secrets as a metadata table — never the sealed bytes/plaintext. */
+export function renderProviderSecretsTable(
+  items: readonly ProviderSecretSummary[],
+  color: boolean,
+): string {
+  return renderTable(
+    ["PROVIDER", "STATUS", "LABEL", "CREATED", "ID"],
+    items.map((s) => [
+      field(s.provider),
+      secretStatusWord(s.status, color),
+      s.label === null ? NONE : field(s.label),
+      fmtDate(s.createdAt),
+      field(s.id),
+    ]),
+  );
+}
+
+/** A just-registered provider secret (id/provider/status) — the plaintext is never shown. */
+export function renderAddedProviderSecret(s: AddedProviderSecret, color: boolean): string {
+  return block([
+    ["id", field(s.id)],
+    ["provider", field(s.provider)],
+    ["status", secretStatusWord(s.status, color)],
+  ]);
+}
+
+/** A just-revoked provider secret: its id + when it was revoked. */
+export function renderRevokedProviderSecret(r: RevokedProviderSecret): string {
+  return block([
+    ["id", field(r.id)],
+    ["revoked", fmtDateTime(r.revokedAt)],
   ]);
 }
 

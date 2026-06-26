@@ -10,10 +10,13 @@ import { auditVerifyCommand } from "./commands/audit.js";
 import { completionRoute } from "./commands/completion.js";
 import { doctorCommand } from "./commands/doctor.js";
 import {
+  endpointsAddProviderSecretCommand,
   endpointsCreateCommand,
   endpointsDeleteCommand,
   endpointsGetCommand,
   endpointsListCommand,
+  endpointsListProviderSecretsCommand,
+  endpointsRevokeProviderSecretCommand,
   endpointsRotateCommand,
 } from "./commands/endpoints.js";
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
@@ -43,6 +46,9 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "endpoints.create": ["endpoints", "create"],
   "endpoints.delete": ["endpoints", "delete"],
   "endpoints.rotate": ["endpoints", "rotate"],
+  "endpoints.addProviderSecret": ["endpoints", "add-provider-secret"],
+  "endpoints.listProviderSecrets": ["endpoints", "list-provider-secrets"],
+  "endpoints.revokeProviderSecret": ["endpoints", "revoke-provider-secret"],
   "events.list": ["events", "list"],
   "events.get": ["events", "get"],
   "events.getPayload": ["events", "payload"],
@@ -58,6 +64,9 @@ const endpointsRoute = buildRouteMap({
     create: endpointsCreateCommand,
     delete: endpointsDeleteCommand,
     rotate: endpointsRotateCommand,
+    "add-provider-secret": endpointsAddProviderSecretCommand,
+    "list-provider-secrets": endpointsListProviderSecretsCommand,
+    "revoke-provider-secret": endpointsRevokeProviderSecretCommand,
   },
   docs: { brief: "inspect and manage your endpoints" },
 });

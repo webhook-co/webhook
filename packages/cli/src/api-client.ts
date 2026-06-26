@@ -1,19 +1,25 @@
 import {
   AuthContextSchema,
   auditVerify as auditVerifyCap,
+  endpointsAddProviderSecret as endpointsAddProviderSecretCap,
   endpointsCreate as endpointsCreateCap,
   endpointsDelete as endpointsDeleteCap,
   endpointsGet as endpointsGetCap,
   endpointsList as endpointsListCap,
+  endpointsListProviderSecrets as endpointsListProviderSecretsCap,
+  endpointsRevokeProviderSecret as endpointsRevokeProviderSecretCap,
   endpointsRotate as endpointsRotateCap,
   eventsGet as eventsGetCap,
   eventsGetPayload as eventsGetPayloadCap,
   eventsList as eventsListCap,
   eventsReplay as eventsReplayCap,
+  type AddedProviderSecret,
   type AuthContext,
   type CapabilityError,
   type CreatedEndpoint,
   type DeletedEndpoint,
+  type ProviderSecretSummary,
+  type RevokedProviderSecret,
   type Target,
 } from "@webhook-co/contract";
 import {
@@ -22,6 +28,7 @@ import {
   type Endpoint,
   type Event,
   type EventSummary,
+  type Provider,
 } from "@webhook-co/shared";
 import type { z } from "zod";
 
@@ -151,6 +158,27 @@ export interface ApiClient {
    * a transient failure is never blind-retried (no accidental second rotation).
    */
   endpointsRotate(endpointId: string): Promise<CreatedEndpoint>;
+  /**
+   * Register a provider signing secret on an endpoint (`POST /v1/endpoints/:id/provider-secrets`). The
+   * plaintext `secret` is sealed server-side and NEVER returned. NOT idempotent — each call adds a
+   * secret; sent with idempotent=false so a transient failure is never blind-retried.
+   */
+  addProviderSecret(input: {
+    endpointId: string;
+    provider: Provider;
+    secret: string;
+    label?: string;
+  }): Promise<AddedProviderSecret>;
+  /**
+   * An endpoint's provider secrets as METADATA (`GET /v1/endpoints/:id/provider-secrets`). Not
+   * paginated — a human-managed handful per endpoint, so the whole set is returned at once.
+   */
+  listProviderSecrets(endpointId: string): Promise<readonly ProviderSecretSummary[]>;
+  /** Revoke a provider secret (`DELETE /v1/endpoints/:id/provider-secrets/:secretId`). */
+  revokeProviderSecret(input: {
+    endpointId: string;
+    secretId: string;
+  }): Promise<RevokedProviderSecret>;
   /** A page of an endpoint's captured events (`GET /v1/endpoints/:id/events`). */
   eventsList(endpointId: string, params?: EventsListParams): Promise<Page<EventSummary>>;
   /** A single event in full fidelity by id (`GET /v1/events/:id`). */
@@ -267,10 +295,12 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   const getJson = (path: string): Promise<unknown> => request(path, "GET", { idempotent: true });
   const postJson = (path: string, body: unknown, idempotent: boolean): Promise<unknown> =>
     request(path, "POST", { body, idempotent });
-  // DELETE is HTTP-idempotent and the server handler is idempotent (a re-delete returns the recorded
-  // deletedAt), so a transient failure is safe to blind-retry.
-  const deleteJson = (path: string): Promise<unknown> =>
-    request(path, "DELETE", { idempotent: true });
+  // DELETE defaults to idempotent (endpoints.delete coalesces a re-delete to the recorded deletedAt, so
+  // a blind retry is safe). The caller passes idempotent=false where the server handler is NOT idempotent
+  // — e.g. revokeProviderSecret, where a re-revoke returns NOT_FOUND, so a blind retry after a lost
+  // response would surface a false "not found" for a revoke that actually committed.
+  const deleteJson = (path: string, idempotent = true): Promise<unknown> =>
+    request(path, "DELETE", { idempotent });
 
   // Parse a response against its shared contract schema; an unexpected shape is UNEXPECTED (never a
   // capability code), so a server/version skew surfaces as "unexpected response", not a misleading 4xx.
@@ -312,6 +342,33 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       const path = `/v1/endpoints/${encodeURIComponent(endpointId)}/rotate`;
       const json = await postJson(path, undefined, false);
       return parseOrThrow(endpointsRotateCap.output, json, "rotated endpoint");
+    },
+    async addProviderSecret(input): Promise<AddedProviderSecret> {
+      // idempotent=false: each call registers a new secret; a blind retry would add a duplicate.
+      const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}/provider-secrets`;
+      const body: Record<string, unknown> = { provider: input.provider, secret: input.secret };
+      if (input.label !== undefined) body.label = input.label;
+      const json = await postJson(path, body, false);
+      return parseOrThrow(endpointsAddProviderSecretCap.output, json, "provider secret");
+    },
+    async listProviderSecrets(endpointId): Promise<readonly ProviderSecretSummary[]> {
+      const path = `/v1/endpoints/${encodeURIComponent(endpointId)}/provider-secrets`;
+      const { items } = parseOrThrow(
+        endpointsListProviderSecretsCap.output,
+        await getJson(path),
+        "provider secrets",
+      );
+      return items;
+    },
+    async revokeProviderSecret(input): Promise<RevokedProviderSecret> {
+      const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}/provider-secrets/${encodeURIComponent(input.secretId)}`;
+      // idempotent=false: the server revoke is NOT idempotent (a re-revoke is NOT_FOUND), so never
+      // blind-retry — a retry after a lost response would report a false "not found" for a committed revoke.
+      return parseOrThrow(
+        endpointsRevokeProviderSecretCap.output,
+        await deleteJson(path, false),
+        "revoked secret",
+      );
     },
     async eventsList(endpointId, params = {}): Promise<Page<EventSummary>> {
       const path = withQuery(`/v1/endpoints/${encodeURIComponent(endpointId)}/events`, {

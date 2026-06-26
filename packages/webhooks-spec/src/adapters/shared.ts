@@ -101,6 +101,22 @@ export function toStandardWebhooksCandidates(secrets: readonly string[]): Secret
 }
 
 /**
+ * Is a registered Standard Webhooks secret USABLE — i.e. does it decode to a non-empty key the verify
+ * path can actually use? A SW secret is `whsec_`+base64; the verify path strips the prefix and base64-
+ * decodes the remainder (toStandardWebhooksCandidates, above) to get the raw key. This applies the SAME
+ * decoder, so registration accepts a secret IFF verification can decode it — closing the gap where a
+ * value that merely matches the base64 *alphabet* but is not valid base64 (e.g. a length ≡ 1 mod 4
+ * paste, or hex/raw) would register yet decode to nothing, then verify as NO_MATCHING_KEY forever
+ * (indistinguishable from "no secret"). Registration callers use this to reject a mis-stored secret up
+ * front with a real error. Pure (no I/O); the single source of "is this SW secret decodable".
+ */
+export function isUsableStandardWebhooksSecret(secret: string): boolean {
+  const raw = secret.startsWith(WHSEC_PREFIX) ? secret.slice(WHSEC_PREFIX.length) : secret;
+  const bytes = b64ToBytes(raw);
+  return bytes !== null && bytes.length > 0;
+}
+
+/**
  * Enforce a scheme's replay window against a signed unix-seconds timestamp. Returns a typed
  * failure if outside tolerance, else null. Call BEFORE spending any HMAC cycles. Shared by the
  * timestamped schemes (Stripe, Slack, Standard Webhooks).

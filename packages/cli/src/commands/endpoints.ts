@@ -1,14 +1,18 @@
 import { buildCommand } from "@stricli/core";
+import { PROVIDERS, type Provider } from "@webhook-co/shared";
 
 import type { AppContext } from "../context.js";
-import { ConfirmationError, NotLoggedInError } from "../errors.js";
+import { ConfirmationError, MissingInputError, NotLoggedInError } from "../errors.js";
 import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
 import {
+  renderAddedProviderSecret,
   renderCreatedEndpoint,
   renderDeletedEndpoint,
   renderEndpoint,
   renderEndpointsTable,
+  renderProviderSecretsTable,
+  renderRevokedProviderSecret,
 } from "../output/render.js";
 import { authedClient, collectPages, emitList, parseLimit } from "./shared.js";
 
@@ -223,4 +227,139 @@ export const endpointsRotateCommand = buildCommand<DestructiveFlags, [string], A
     flags: { ...globalFlags, ...yesFlag },
   },
   docs: { brief: "rotate an endpoint's ingest url (kills the old one, reveals a new one once)" },
+});
+
+// `wbhk endpoints add-provider-secret <id> --provider <p>` / `list-provider-secrets <id>` /
+// `revoke-provider-secret <id> <secretId>` — manage an endpoint's inbound-verification signing secrets
+// (ADR-0078). The secret is read via a no-echo prompt or piped stdin (NEVER an argv flag — that would
+// leak into shell history + the process list); the server seals it and never returns the plaintext.
+
+interface AddProviderSecretFlags extends GlobalFlags {
+  provider: Provider;
+  label?: string;
+}
+
+export const endpointsAddProviderSecretCommand = buildCommand<
+  AddProviderSecretFlags,
+  [string],
+  AppContext
+>({
+  async func(this: AppContext, flags, endpointId) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format, color } = resolveGlobals(this, flags);
+    // NEVER take the secret as an argv flag. Interactive: a hidden (no-echo) prompt on stderr.
+    // Non-interactive (scripts/CI): read it from piped stdin.
+    const secret = (
+      this.io.isInteractive
+        ? await this.io.promptSecret(`${flags.provider} signing secret: `)
+        : await this.io.readStdin()
+    ).trim();
+    if (secret.length === 0) {
+      return new MissingInputError(
+        "no secret provided — type it at the prompt, or pipe it on stdin.",
+      );
+    }
+    const added = await client.addProviderSecret({
+      endpointId,
+      provider: flags.provider,
+      secret,
+      label: flags.label,
+    });
+    this.process.stdout.write(
+      format === "json" ? `${renderJson(added)}\n` : `${renderAddedProviderSecret(added, color)}\n`,
+    );
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        { parse: (value: string) => value, brief: "the endpoint id", placeholder: "endpointId" },
+      ],
+    },
+    flags: {
+      ...globalFlags,
+      provider: {
+        kind: "enum",
+        values: PROVIDERS,
+        brief: `the provider scheme (${PROVIDERS.join("|")})`,
+        placeholder: "provider",
+      },
+      label: {
+        kind: "parsed",
+        parse: (value: string) => value,
+        brief: "an optional display label",
+        optional: true,
+      },
+    },
+  },
+  docs: {
+    brief: "register a provider signing secret on an endpoint (read via prompt or piped stdin)",
+  },
+});
+
+export const endpointsListProviderSecretsCommand = buildCommand<GlobalFlags, [string], AppContext>({
+  async func(this: AppContext, flags, endpointId) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format, color } = resolveGlobals(this, flags);
+    // Not paginated — a human-managed handful per endpoint; the server returns the whole set at once.
+    const items = await client.listProviderSecrets(endpointId);
+    if (format === "json") {
+      this.process.stdout.write(`${renderJson({ items })}\n`);
+      return;
+    }
+    this.process.stdout.write(
+      items.length === 0
+        ? "no provider secrets.\n"
+        : `${renderProviderSecretsTable(items, color)}\n`,
+    );
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        { parse: (value: string) => value, brief: "the endpoint id", placeholder: "endpointId" },
+      ],
+    },
+    flags: { ...globalFlags },
+  },
+  docs: { brief: "list an endpoint's provider signing secrets (metadata only)" },
+});
+
+export const endpointsRevokeProviderSecretCommand = buildCommand<
+  DestructiveFlags,
+  [string, string],
+  AppContext
+>({
+  async func(this: AppContext, flags, endpointId, secretId) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format } = resolveGlobals(this, flags);
+    const blocked = await confirmDestructive(
+      this,
+      flags.yes,
+      `revoke provider secret ${secretId} on endpoint ${endpointId}? inbound webhooks signed with it stop verifying immediately.`,
+    );
+    if (blocked) return blocked;
+    const revoked = await client.revokeProviderSecret({ endpointId, secretId });
+    this.process.stdout.write(
+      format === "json" ? `${renderJson(revoked)}\n` : `${renderRevokedProviderSecret(revoked)}\n`,
+    );
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        { parse: (value: string) => value, brief: "the endpoint id", placeholder: "endpointId" },
+        {
+          parse: (value: string) => value,
+          brief: "the provider secret id",
+          placeholder: "secretId",
+        },
+      ],
+    },
+    flags: { ...globalFlags, ...yesFlag },
+  },
+  docs: { brief: "revoke a provider signing secret (verification stops honoring it immediately)" },
 });

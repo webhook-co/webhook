@@ -83,6 +83,10 @@ describe("capability parity — current GA surfaces conformance", () => {
     "endpoints.create",
     "endpoints.delete",
     "endpoints.rotate",
+    // Provider-secret management (ADR-0078): full MCP parity (D2) — add/list/revoke on api+mcp+cli.
+    "endpoints.addProviderSecret",
+    "endpoints.listProviderSecrets",
+    "endpoints.revokeProviderSecret",
     "events.list",
     "events.get",
     "events.tail",
