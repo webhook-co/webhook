@@ -1,5 +1,11 @@
 # ADR 0075 — `endpoints.create` capability + the `endpoints:write` scope
 
+> **Superseded (partial), 2026-06-26.** The *one-time, unrecoverable reveal* of the ingest URL described
+> here is superseded by a decision to make the ingest URL **always-shown** — retrievable on demand and
+> stored **envelope-encrypted at rest** (not hash-only). The create flow keeps minting the URL; only the
+> "shown exactly once" property changes. This ADR will be revised when that change ships (tracked in the
+> internal backlog). API keys are unaffected — they remain one-time-reveal.
+
 - status: accepted.
 - date: 2026-06-25
 - scope: server + cli. `packages/contract` (new `endpoints.create` capability, `CreatedEndpointSchema`,
