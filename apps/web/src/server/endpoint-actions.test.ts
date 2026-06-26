@@ -20,6 +20,8 @@ const { createEndpoint, rotateEndpoint, deleteEndpoint } = vi.hoisted(() => ({
 }));
 vi.mock("./endpoint-mutations", () => ({ createEndpoint, rotateEndpoint, deleteEndpoint }));
 
+import { revalidatePath } from "next/cache";
+
 import {
   createEndpointAction,
   deleteEndpointAction,
@@ -163,6 +165,16 @@ describe("deleteEndpointAction", () => {
     const result = await deleteEndpointAction(ID);
     expect(deleteEndpoint).toHaveBeenCalledWith({ orgId: "o", userId: "u", endpointId: ID });
     expect(result).toEqual({ ok: true });
+  });
+
+  it("still returns ok when the post-delete cache revalidation throws (best-effort)", async () => {
+    // A revalidatePath failure must NOT flip a committed soft-delete into a reported failure — the
+    // endpoint is already deleted, so reporting ok:false would tell the user it's still live.
+    vi.mocked(revalidatePath).mockImplementationOnce(() => {
+      throw new Error("revalidate boom");
+    });
+    expect(await deleteEndpointAction(ID)).toEqual({ ok: true });
+    expect(deleteEndpoint).toHaveBeenCalledWith({ orgId: "o", userId: "u", endpointId: ID });
   });
 
   it("surfaces NOT_FOUND distinctly when the endpoint is gone", async () => {

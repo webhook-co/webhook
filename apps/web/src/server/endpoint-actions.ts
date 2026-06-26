@@ -71,7 +71,9 @@ export async function createEndpointAction(input: { name: string }): Promise<Cre
   }
   // Map OUTSIDE the try: the endpoint is already committed, so a throw while shaping the result must NOT be
   // reported as a failure (that would tell the user nothing was created while a live endpoint + URL exist).
-  revalidatePath("/endpoints"); // the list's cached RSC is now stale
+  // No revalidatePath here: create never navigates — EndpointsManager prepends the new row optimistically
+  // and stays on /endpoints; a later real navigation re-runs loadEndpoints (the page is dynamic via
+  // cookies()), so revalidating would only run a verifySession + DB round-trip whose RSC nothing renders.
   return { ok: true, endpoint: toItem(minted), ingestUrl: minted.ingestUrl };
 }
 
@@ -112,7 +114,15 @@ export async function deleteEndpointAction(endpointId: string): Promise<Endpoint
   if (!isUuid(endpointId)) return { ok: false, error: "That endpoint no longer exists." };
   try {
     await deleteEndpoint({ orgId: session.orgId, userId: session.userId, endpointId });
-    revalidatePath("/endpoints"); // drop the deleted endpoint from the list's cached RSC
+    // Best-effort cache bust so a subsequent navigation — notably the detail page's delete →
+    // router.push("/endpoints") — shows the endpoint gone. Wrapped so a revalidate throw can NEVER flip a
+    // committed soft-delete into a reported failure: the contract is "{ok:false} means the mutation failed",
+    // and the list-row flow has already dropped the row optimistically regardless.
+    try {
+      revalidatePath("/endpoints");
+    } catch (revalidateError) {
+      logActionError("endpoint.revalidate_failed", revalidateError);
+    }
     return { ok: true };
   } catch (error) {
     logActionError("endpoint.delete_failed", error);

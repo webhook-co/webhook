@@ -16,6 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@webhook-co/ui";
 import * as React from "react";
+import { flushSync } from "react-dom";
 
 import type { EndpointActionResult, RotateEndpointResult } from "@/server/endpoint-actions";
 import type { EndpointItem } from "@/server/endpoints";
@@ -101,7 +102,12 @@ export function EndpointControls({
         deletePendingRef.current = false;
         return;
       }
-      setDeleteOpen(false);
+      // Commit the dialog close BEFORE the parent removes this row. The Dialog has no exit animation, so
+      // flushSync forces Radix + react-remove-scroll to run their close cleanup (restoring <body>
+      // pointer-events / scroll-lock) synchronously; otherwise React could batch the close with the
+      // parent's optimistic row removal into one commit that unmounts the still-open modal and strands
+      // those body styles, leaving the page unclickable until a reload.
+      flushSync(() => setDeleteOpen(false));
       onDeleted();
     } catch {
       setDeleteError("We couldn't delete the endpoint. Please try again.");
