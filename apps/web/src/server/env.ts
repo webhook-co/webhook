@@ -91,6 +91,22 @@ export function getSessionExchangeBinding(): SessionExchangeBinding | undefined 
   return undefined;
 }
 
+/**
+ * The cookieless ingest apex (e.g. https://wbhk.my) the endpoint create/rotate one-time URL is built on
+ * (`${apex}/<token>`). A COMMITTED wrangler var (not a secret — see apps/web/wrangler.jsonc); defaults to
+ * the prod apex outside a bound request (node/test/dev). The endpoint mutations validate it fail-closed
+ * before minting, so a misconfigured value throws rather than returning a broken URL.
+ */
+export function getIngestBaseUrl(): string {
+  const fromBinding = workerEnv().INGEST_BASE_URL;
+  const url =
+    (typeof fromBinding === "string" && fromBinding.length > 0 ? fromBinding : null) ??
+    (process.env.INGEST_BASE_URL && process.env.INGEST_BASE_URL.length > 0
+      ? process.env.INGEST_BASE_URL
+      : null);
+  return url ?? "https://wbhk.my";
+}
+
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */
 export function getAuthBaseUrl(): string {
   const fromBinding = workerEnv().AUTH_BASE_URL;

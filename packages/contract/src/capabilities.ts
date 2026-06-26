@@ -49,7 +49,6 @@ export const endpointsList = defineCapability({
   errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:read" },
   semantics: { paginated: true },
-  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 export const endpointsGet = defineCapability({
@@ -59,7 +58,6 @@ export const endpointsGet = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "RATE_LIMITED"],
   auth: { scope: "endpoints:read" },
   semantics: {},
-  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 // endpoints.create + endpoints.rotate are WRITE capabilities bound on api+cli+mcp (web stays deferred
@@ -81,7 +79,6 @@ export const endpointsCreate = defineCapability({
   errors: ["UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
   semantics: {},
-  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 // endpoints.delete SOFT-deletes an endpoint (ADR-0076): it stops resolving on the wbhk.my ingest path
@@ -102,7 +99,6 @@ export const endpointsDelete = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
   semantics: { idempotent: true },
-  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 // endpoints.rotate replaces an endpoint's ingest token (the wbhk.my/<token> secret) IN PLACE (ADR-0076):
@@ -117,7 +113,6 @@ export const endpointsRotate = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
   semantics: {},
-  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 export const eventsList = defineCapability({
