@@ -1,5 +1,11 @@
 # ADR 0077 — web dashboard surface: events + endpoint management at parity (DB-direct, R2/KV-on-web, CSP)
 
+> **Superseded (partial), 2026-06-26.** The ingest-URL **one-time reveal** in the dashboard (the "shown only
+> once" copy) is superseded by a decision to make the ingest URL **always-shown** — retrievable on demand
+> from the endpoint detail and stored **envelope-encrypted at rest** (not hash-only). The create/rotate
+> reveal dialogs and the detail page will be revised when that change ships (tracked in the internal
+> backlog). API keys are unaffected — they remain one-time-reveal.
+
 - status: accepted.
 - date: 2026-06-25
 - scope: web + a small `packages/contract` + `packages/db` change, shipped across three slices.
