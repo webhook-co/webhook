@@ -1,10 +1,16 @@
 import { randomUUID } from "node:crypto";
 
 import { type AuthContext } from "@webhook-co/contract";
-import { importAuditKey, LocalKmsProvider, SecretStore } from "@webhook-co/shared";
+import {
+  importAuditKey,
+  LocalKmsProvider,
+  SecretStore,
+  verifyAuditChain,
+} from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createClient, type Sql } from "../src/client";
+import { readAuditChain } from "../src/audit-append";
+import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
 import { createEndpoint, getEndpointIngestTokenHash } from "../src/endpoints";
@@ -81,6 +87,25 @@ describe("endpoints.addProviderSecret handler", () => {
     // Evicted the endpoint's token hash so the new secret is honored on the next ingest (not after TTL).
     const hash = await getEndpointIngestTokenHash(app, orgA, epA);
     expect(evicted.some((e) => e.equals(hash!))).toBe(true);
+    // An in-tx wha1 audit row was appended (parity with the endpoints lifecycle): provider_secret.added,
+    // target = the new secret id, actor null (api-key bearer), and the chain still verifies.
+    const rows = await withTenant(app, orgA, (tx) => readAuditChain(tx, orgA));
+    const last = rows[rows.length - 1]!;
+    expect(last.action).toBe("provider_secret.added");
+    expect(last.target).toBe(out.id);
+    expect(last.actor).toBeNull();
+    expect((await verifyAuditChain(auditKey, orgA, rows)).ok).toBe(true);
+  });
+
+  it("rejects a standard_webhooks secret that matches the base64 alphabet but is not valid base64", async () => {
+    // `whsec_AAAAA` (body length 5 ≡ 1 mod 4) passes a naive `[A-Za-z0-9+/]+` alphabet check but is NOT
+    // decodable base64 — the verify path's decoder returns null, so it would verify as NO_MATCHING_KEY
+    // forever. The contract refinement uses that same decoder, so registration rejects it up front.
+    const h = handlers().get("endpoints.addProviderSecret")!;
+    await expect(
+      h(rw(orgA), { endpointId: epA, provider: "standard_webhooks", secret: "whsec_AAAAA" }),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "VALIDATION_ERROR" });
+    expect(evicted).toHaveLength(0); // rejected before any seal/insert/evict
   });
 
   it("rejects a caller without endpoints:write (FORBIDDEN) and seals/evicts NOTHING", async () => {
@@ -126,10 +151,8 @@ describe("endpoints.listProviderSecrets handler", () => {
     const h = handlers().get("endpoints.listProviderSecrets")!;
     const out = (await h(rw(orgA), { endpointId: epA })) as {
       items: Record<string, unknown>[];
-      nextCursor: string | null;
     };
     expect(out.items.length).toBeGreaterThan(0);
-    expect(out.nextCursor).toBeNull();
     for (const item of out.items) {
       expect(Object.keys(item).sort()).toEqual(["createdAt", "id", "label", "provider", "status"]);
     }
@@ -163,15 +186,25 @@ describe("endpoints.revokeProviderSecret handler", () => {
     expect(out.revokedAt).toBeDefined();
     const hash = await getEndpointIngestTokenHash(app, orgA, epA);
     expect(evicted.some((e) => e.equals(hash!))).toBe(true);
+    // The revoke appended a provider_secret.revoked wha1 row (target = the secret id) in-tx.
+    const rows = await withTenant(app, orgA, (tx) => readAuditChain(tx, orgA));
+    const last = rows[rows.length - 1]!;
+    expect(last.action).toBe("provider_secret.revoked");
+    expect(last.target).toBe(added.id);
+    expect((await verifyAuditChain(auditKey, orgA, rows)).ok).toBe(true);
   });
 
-  it("NOT_FOUND for an unknown secret id (and no eviction)", async () => {
+  it("NOT_FOUND for an unknown secret id (no eviction, no audit row)", async () => {
     const h = handlers().get("endpoints.revokeProviderSecret")!;
+    const before = (await withTenant(app, orgA, (tx) => readAuditChain(tx, orgA))).length;
     await expect(h(rw(orgA), { endpointId: epA, secretId: randomUUID() })).rejects.toMatchObject({
       name: "CapabilityFault",
       code: "NOT_FOUND",
     });
     expect(evicted).toHaveLength(0);
+    // A no-op revoke leaves the audit chain untouched (audit only a real transition).
+    const after = (await withTenant(app, orgA, (tx) => readAuditChain(tx, orgA))).length;
+    expect(after).toBe(before);
   });
 
   it("rejects a caller without endpoints:write (FORBIDDEN)", async () => {

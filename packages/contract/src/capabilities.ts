@@ -3,6 +3,7 @@ import {
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
+  isUsableStandardWebhooksSecret,
   LagSchema,
   ProviderSchema,
   WATERMARK_DELTA_MS,
@@ -270,12 +271,28 @@ export const endpointsAddProviderSecret = defineCapability({
   // The plaintext signing secret is the one secret IN: sealed by the engine, never persisted as
   // plaintext, never echoed back. NOT_FOUND for an unknown/cross-org endpoint; FORBIDDEN without
   // endpoints:write (mcp's sole gate is the handler scope check).
-  input: z.object({
-    endpointId: uuid,
-    provider: ProviderSchema,
-    label: z.string().trim().min(1).max(200).optional(),
-    secret: z.string().min(1).max(4096),
-  }),
+  input: z
+    .object({
+      endpointId: uuid,
+      provider: ProviderSchema,
+      label: z.string().trim().min(1).max(200).optional(),
+      secret: z.string().min(1).max(4096),
+    })
+    // A Standard Webhooks secret is `whsec_`+base64; the verify path strips the prefix and base64-
+    // decodes the remainder to the raw key. Validate at the schema boundary with the SAME decoder
+    // (isUsableStandardWebhooksSecret) so a value that matches the base64 alphabet but is not valid
+    // base64 (e.g. a length ≡ 1 mod 4 paste, hex, or raw) is rejected up front — otherwise it would
+    // store fine yet decode to nothing and verify as NO_MATCHING_KEY forever (indistinguishable from
+    // "no secret"). Single-sourced here so every surface (api/mcp) enforces it identically.
+    .superRefine((val, ctx) => {
+      if (val.provider === "standard_webhooks" && !isUsableStandardWebhooksSecret(val.secret)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["secret"],
+          message: "a standard_webhooks secret must be whsec_ followed by standard base64",
+        });
+      }
+    }),
   output: AddedProviderSecretSchema,
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
@@ -285,17 +302,16 @@ export const endpointsAddProviderSecret = defineCapability({
 
 export const endpointsListProviderSecrets = defineCapability({
   name: "endpoints.listProviderSecrets",
-  input: z.object({
-    endpointId: uuid,
-    cursor: cursor.optional(),
-    limit: z.number().int().positive().max(200).optional(),
-  }),
+  input: z.object({ endpointId: uuid }),
   // Metadata only — the sealed ciphertext + plaintext are never in the output. A read scope: an agent
-  // can audit which providers are configured + each secret's status without write power.
-  output: paged(ProviderSecretSummarySchema),
+  // can audit which providers are configured + each secret's status without write power. NOT paginated:
+  // an endpoint's provider secrets are a human-managed handful (a couple active/retiring + the revoked
+  // history of rotations), so the whole set is returned at once — no cursor, no limit (don't advertise
+  // pagination the surface doesn't implement).
+  output: z.object({ items: z.array(ProviderSecretSummarySchema) }),
   errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:read" },
-  semantics: { paginated: true },
+  semantics: {},
   surfaceExempt: { web: WEB_DEFERRED },
 });
 

@@ -74,9 +74,24 @@ always the right one.
 signature beyond the cap; the O(candidates) engine bounds HMAC work by the (org-controlled) candidate count
 regardless of header entry count, so the cap is unnecessary and was removed.
 
-**Registration validation.** A Standard Webhooks secret must be `whsec_`+base64; a mis-stored one would
-otherwise verify as `NO_MATCHING_KEY` forever (indistinguishable from "no secret"), so the add handler rejects
-it with a real error.
+**Registration validation at the schema boundary.** A Standard Webhooks secret must be `whsec_`+base64; a
+mis-stored one would otherwise verify as `NO_MATCHING_KEY` forever (indistinguishable from "no secret"). The
+check is a contract `superRefine` on the add input — single-sourced so every surface (api/mcp) enforces it
+identically — and it uses the SAME decoder the verify path uses (`isUsableStandardWebhooksSecret`, exported
+from `webhooks-spec`): registration accepts a secret IFF verification can decode it. That closes the gap
+where a value matching the base64 *alphabet* but not valid base64 (e.g. a length ≡ 1 mod 4 paste) would
+register yet decode to nothing — an alphabet-only regex would have let it through.
+
+**Control-plane audit on add + revoke.** Both mutations append a tamper-evident `wha1`/audit_log row
+(`provider_secret.added` / `provider_secret.revoked`) IN THE SAME tx as the insert/update — parity with the
+endpoints lifecycle (`endpoint.created/.deleted/.rotated`). Revoke audits only a real transition (a no-op
+revoke of an unknown/already-revoked secret writes nothing). The audit HMAC key comes from the runtime
+binding, never the DB role (ADR-0004). The secret id is the audit target; no plaintext/ciphertext is logged.
+
+**The metadata list is not paginated.** An endpoint's provider secrets are a human-managed handful (a couple
+active/retiring + the revoked history of rotations), so `listProviderSecrets` returns the whole set at once —
+no cursor, no limit. The contract output is `{ items }` (not the `paged(...)` envelope); we don't advertise
+pagination the surface doesn't implement.
 
 **Deploy ordering.** The engine entrypoint shipped first (B0), live before B1 adds the api/mcp bindings — and
 the bindings are deploy-injected (overlay), never committed, so no Worker references a not-yet-live service
@@ -87,5 +102,5 @@ the bindings are deploy-injected (overlay), never committed, so no Worker refere
 Inbound webhooks from Stripe, GitHub, Shopify, Slack, and Standard Webhooks are verified once a per-endpoint
 secret is registered; a correctly-signed event shows `verified=true` with an `ok` diagnostic, a tampered one
 `verified=false` with a typed reason, and a revoke stops honoring the secret immediately. Capture's no-drop
-floor is unchanged (verify never throws into the ingest path). Provider-secret control-plane audit (a `wha1`
-row on add/revoke, for parity with the endpoints lifecycle) is a tracked fast-follow — not in this slice.
+floor is unchanged (verify never throws into the ingest path). Add and revoke each append a `wha1` audit row
+(parity with the endpoints lifecycle), so the credential-mutation audit trail has no gap.

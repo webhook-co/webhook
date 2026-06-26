@@ -16,14 +16,6 @@ import {
 } from "../output/render.js";
 import { authedClient, collectPages, emitList, parseLimit } from "./shared.js";
 
-/** Parse + validate the `--provider` flag against the closed provider enum (a usage error if invalid). */
-function parseProvider(value: string): Provider {
-  if (!(PROVIDERS as readonly string[]).includes(value)) {
-    throw new Error(`provider must be one of: ${PROVIDERS.join(", ")}`);
-  }
-  return value as Provider;
-}
-
 // `wbhk endpoints list` / `wbhk endpoints get <id>` — read views over the org's endpoints. Both reuse
 // the Slice-9 api-client (Bearer + the shared output schema). List paginates (one page, `--all`, or a
 // `--cursor`); get prints a single record as a key:value block. `--output json` is the machine view.
@@ -288,8 +280,8 @@ export const endpointsAddProviderSecretCommand = buildCommand<
     flags: {
       ...globalFlags,
       provider: {
-        kind: "parsed",
-        parse: parseProvider,
+        kind: "enum",
+        values: PROVIDERS,
         brief: `the provider scheme (${PROVIDERS.join("|")})`,
         placeholder: "provider",
       },
@@ -306,31 +298,22 @@ export const endpointsAddProviderSecretCommand = buildCommand<
   },
 });
 
-interface ListProviderSecretsFlags extends GlobalFlags {
-  limit?: number;
-  cursor?: string;
-  all: boolean;
-}
-
-export const endpointsListProviderSecretsCommand = buildCommand<
-  ListProviderSecretsFlags,
-  [string],
-  AppContext
->({
+export const endpointsListProviderSecretsCommand = buildCommand<GlobalFlags, [string], AppContext>({
   async func(this: AppContext, flags, endpointId) {
     const client = await authedClient(this, flags);
     if (client instanceof NotLoggedInError) return client;
     const { format, color } = resolveGlobals(this, flags);
-    const result = await collectPages(
-      (cursor) => client.listProviderSecrets(endpointId, { cursor, limit: flags.limit }),
-      { cursor: flags.cursor, all: flags.all },
+    // Not paginated — a human-managed handful per endpoint; the server returns the whole set at once.
+    const items = await client.listProviderSecrets(endpointId);
+    if (format === "json") {
+      this.process.stdout.write(`${renderJson({ items })}\n`);
+      return;
+    }
+    this.process.stdout.write(
+      items.length === 0
+        ? "no provider secrets.\n"
+        : `${renderProviderSecretsTable(items, color)}\n`,
     );
-    emitList(this, result, {
-      format,
-      color,
-      renderTable: renderProviderSecretsTable,
-      empty: "no provider secrets.",
-    });
   },
   parameters: {
     positional: {
@@ -339,26 +322,7 @@ export const endpointsListProviderSecretsCommand = buildCommand<
         { parse: (value: string) => value, brief: "the endpoint id", placeholder: "endpointId" },
       ],
     },
-    flags: {
-      ...globalFlags,
-      limit: {
-        kind: "parsed",
-        parse: parseLimit,
-        brief: "max results per page (1–200)",
-        optional: true,
-      },
-      cursor: {
-        kind: "parsed",
-        parse: (value: string) => value,
-        brief: "resume from a nextCursor token (advanced)",
-        optional: true,
-      },
-      all: {
-        kind: "boolean",
-        brief: "fetch every page (follow the cursor to the end)",
-        default: false,
-      },
-    },
+    flags: { ...globalFlags },
   },
   docs: { brief: "list an endpoint's provider signing secrets (metadata only)" },
 });

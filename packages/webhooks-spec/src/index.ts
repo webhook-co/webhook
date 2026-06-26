@@ -23,4 +23,8 @@ export {
   ADAPTER_SCHEMES,
   type AdapterScheme,
 } from "./adapters/registry";
-export { MAX_VERIFIABLE_BODY_BYTES, findHeader } from "./adapters/shared";
+export {
+  MAX_VERIFIABLE_BODY_BYTES,
+  findHeader,
+  isUsableStandardWebhooksSecret,
+} from "./adapters/shared";

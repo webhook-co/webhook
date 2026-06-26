@@ -17,11 +17,25 @@ import { randomUUID } from "node:crypto";
 
 import { type EncryptionContext, type SealedRecord, type SecretSealer } from "@webhook-co/shared";
 
+import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import { type CachedSealedSecret } from "./credential-cache";
 
 /** Usable rotation states for an endpoint's provider secret (revoked is excluded from reads). */
 export type ProviderSecretStatus = "active" | "retiring" | "revoked";
+
+/**
+ * Control-plane audit context for a provider-secret mutation (add/revoke). When supplied, the mutation
+ * appends a tamper-evident wha1/audit_log row IN THE SAME tx (atomic with the insert/update), for parity
+ * with the endpoints lifecycle (endpoint.created/.deleted/.rotated). The HMAC key comes from a runtime
+ * binding, never the DB role (ADR-0004). Optional so the low-level db-function tests can exercise the
+ * mutation without an audit key; the management handlers always supply it.
+ */
+export interface ProviderSecretAudit {
+  readonly auditKey: CryptoKey;
+  /** Pseudonymous actor (Better Auth user_id), or null for api-key/system actors. */
+  readonly actor: string | null;
+}
 
 export interface AddProviderSecretInput {
   readonly orgId: string;
@@ -60,6 +74,7 @@ export async function addProviderSecret(
   app: Sql,
   input: AddProviderSecretInput,
   sealer: SecretSealer,
+  audit?: ProviderSecretAudit,
 ): Promise<AddedProviderSecret> {
   const id = randomUUID();
   const context: EncryptionContext = {
@@ -87,6 +102,16 @@ export async function addProviderSecret(
         ${sealed.wrapped.kekRef}, ${Buffer.from(sealed.nonce)}, ${tx.json(context as unknown as Parameters<typeof tx.json>[0])}::jsonb,
         ${sealed.envelopeVersion}, 'active'
       )`;
+    // Same tx, same RLS context: the control-plane audit row (parity with endpoint.created). The
+    // secret id is the audit target; the plaintext/ciphertext is never in the audit row.
+    if (audit) {
+      await appendAuditEntry(tx, audit.auditKey, {
+        orgId: input.orgId,
+        actor: audit.actor,
+        action: "provider_secret.added",
+        target: id,
+      });
+    }
   });
   return { id, provider: input.provider, status: "active" };
 }
@@ -203,16 +228,30 @@ export interface RevokeProviderSecretInput {
  * The CALLER must then invalidate the endpoint's cached principal — the revoked secret rides on the KV
  * sealedSecrets snapshot until evicted, so without it a signature made with the revoked secret keeps
  * verifying until the TTL backstop. Derive the key via getEndpointIngestTokenHash + invalidateHash.
+ *
+ * When `audit` is supplied, a `provider_secret.revoked` wha1 row is appended in the SAME tx — but only
+ * if a row actually transitioned (a no-op revoke of an unknown/already-revoked secret writes no audit).
  */
 export async function revokeProviderSecret(
   app: Sql,
   input: RevokeProviderSecretInput,
+  audit?: ProviderSecretAudit,
 ): Promise<{ readonly id: string; readonly revokedAt: Date } | null> {
   const rows = await withTenant(app, input.orgId, async (tx) => {
-    return tx<{ revoked_at: Date }[]>`
+    const updated = await tx<{ revoked_at: Date }[]>`
       update provider_secrets set status = 'revoked'
       where id = ${input.secretId} and endpoint_id = ${input.endpointId} and status <> 'revoked'
       returning now()::timestamptz as revoked_at`;
+    // Audit only a real transition (updated.length > 0): a no-op revoke leaves the chain untouched.
+    if (updated.length > 0 && audit) {
+      await appendAuditEntry(tx, audit.auditKey, {
+        orgId: input.orgId,
+        actor: audit.actor,
+        action: "provider_secret.revoked",
+        target: input.secretId,
+      });
+    }
+    return updated;
   });
   const row = rows[0];
   return row ? { id: input.secretId, revokedAt: row.revoked_at } : null;

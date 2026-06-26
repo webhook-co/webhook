@@ -218,15 +218,12 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
       return await handleReplay(deps, authz.ctx, String(route.input.eventId), request);
     }
     if (route.capability === "endpoints.create") {
-      return await handleCreateEndpoint(deps, authz.ctx, request);
+      return await dispatchJsonBody(deps, authz.ctx, "endpoints.create", request);
     }
     if (route.capability === "endpoints.addProviderSecret") {
-      return await handleAddProviderSecret(
-        deps,
-        authz.ctx,
-        String(route.input.endpointId),
-        request,
-      );
+      return await dispatchJsonBody(deps, authz.ctx, "endpoints.addProviderSecret", request, {
+        endpointId: String(route.input.endpointId),
+      });
     }
     const handler = deps.handlers.get(route.capability);
     if (handler === undefined) {
@@ -307,41 +304,24 @@ async function handleReplay(
  * the body (bad/missing name → VALIDATION_ERROR), mints + inserts + audits in one tx, and returns the
  * endpoint plus its one-time ingest URL.
  */
-async function handleCreateEndpoint(
-  deps: ApiDeps,
-  ctx: AuthContext,
-  request: Request,
-): Promise<Response> {
-  const handler = deps.handlers.get("endpoints.create");
-  if (handler === undefined) {
-    throw new Error("no handler bound for capability: endpoints.create"); // wiring bug -> 5xx
-  }
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
-  }
-  const input = typeof body === "object" && body !== null ? body : {};
-  return Response.json(await handler(ctx, input));
-}
-
 /**
- * endpoints.addProviderSecret: a WRITE dispatched via the SHARED handlers map (so mcp binds the same
- * handler). The endpointId is the path segment (authoritative); { provider, label?, secret } come from
- * the JSON body. The handler enforces endpoints:write, seals the plaintext via the engine sealer
- * binding, inserts under RLS, evicts the ingest cache, and returns { id, provider, status } — the
- * plaintext secret is NEVER echoed back.
+ * Dispatch a body-bearing WRITE through the SHARED handlers map (so mcp binds the same handler). Reads
+ * the JSON body (invalid JSON -> VALIDATION_ERROR), merges any path-derived fields (`extra`, e.g. the
+ * authoritative endpointId), and returns the handler's contract-shaped output. Used by endpoints.create
+ * ({name} from the body) and endpoints.addProviderSecret ({provider,label?,secret} from the body, the
+ * endpointId from the path) — the only routes that read a request body. A routed capability with no
+ * bound handler is a wiring bug (-> 5xx), not a client error.
  */
-async function handleAddProviderSecret(
+async function dispatchJsonBody(
   deps: ApiDeps,
   ctx: AuthContext,
-  endpointId: string,
+  capability: string,
   request: Request,
+  extra?: Record<string, unknown>,
 ): Promise<Response> {
-  const handler = deps.handlers.get("endpoints.addProviderSecret");
+  const handler = deps.handlers.get(capability);
   if (handler === undefined) {
-    throw new Error("no handler bound for capability: endpoints.addProviderSecret"); // wiring bug -> 5xx
+    throw new Error(`no handler bound for capability: ${capability}`);
   }
   let body: unknown;
   try {
@@ -349,6 +329,6 @@ async function handleAddProviderSecret(
   } catch {
     throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
   }
-  const input = { ...(typeof body === "object" && body !== null ? body : {}), endpointId };
+  const input = { ...(typeof body === "object" && body !== null ? body : {}), ...extra };
   return Response.json(await handler(ctx, input));
 }

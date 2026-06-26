@@ -28,6 +28,7 @@ import {
   type Endpoint,
   type Event,
   type EventSummary,
+  type Provider,
 } from "@webhook-co/shared";
 import type { z } from "zod";
 
@@ -164,15 +165,15 @@ export interface ApiClient {
    */
   addProviderSecret(input: {
     endpointId: string;
-    provider: string;
+    provider: Provider;
     secret: string;
     label?: string;
   }): Promise<AddedProviderSecret>;
-  /** A page of an endpoint's provider secrets as METADATA (`GET /v1/endpoints/:id/provider-secrets`). */
-  listProviderSecrets(
-    endpointId: string,
-    params?: ListParams,
-  ): Promise<Page<ProviderSecretSummary>>;
+  /**
+   * An endpoint's provider secrets as METADATA (`GET /v1/endpoints/:id/provider-secrets`). Not
+   * paginated — a human-managed handful per endpoint, so the whole set is returned at once.
+   */
+  listProviderSecrets(endpointId: string): Promise<readonly ProviderSecretSummary[]>;
   /** Revoke a provider secret (`DELETE /v1/endpoints/:id/provider-secrets/:secretId`). */
   revokeProviderSecret(input: {
     endpointId: string;
@@ -348,16 +349,14 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       const json = await postJson(path, body, false);
       return parseOrThrow(endpointsAddProviderSecretCap.output, json, "provider secret");
     },
-    async listProviderSecrets(endpointId, params = {}): Promise<Page<ProviderSecretSummary>> {
-      const path = withQuery(`/v1/endpoints/${encodeURIComponent(endpointId)}/provider-secrets`, {
-        cursor: params.cursor,
-        limit: params.limit,
-      });
-      return parseOrThrow(
+    async listProviderSecrets(endpointId): Promise<readonly ProviderSecretSummary[]> {
+      const path = `/v1/endpoints/${encodeURIComponent(endpointId)}/provider-secrets`;
+      const { items } = parseOrThrow(
         endpointsListProviderSecretsCap.output,
         await getJson(path),
         "provider secrets",
       );
+      return items;
     },
     async revokeProviderSecret(input): Promise<RevokedProviderSecret> {
       const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}/provider-secrets/${encodeURIComponent(input.secretId)}`;
