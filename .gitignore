@@ -52,3 +52,7 @@ playwright-report/
 
 # Cursor plan files (local working artifacts, not committed; the rest of .cursor/ stays tracked)
 .cursor/plans/
+
+# Internal build plans / founder working docs — local-only, never committed.
+# The public repo intentionally excludes internal planning (see AGENTS.md).
+internal/
