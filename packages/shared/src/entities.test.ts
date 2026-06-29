@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DeliveryAttemptSchema,
+  deriveVerificationState,
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
@@ -9,6 +10,34 @@ import {
 } from "./entities";
 
 const uuid = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
+
+describe("deriveVerificationState", () => {
+  it("maps the (verified, verification) pair to the truthful tri-state", () => {
+    expect(deriveVerificationState(true, { ok: true })).toBe("verified");
+    // verified=false WITH a non-null verification = an adapter ran and rejected.
+    expect(deriveVerificationState(false, { ok: false, reason: { code: "WRONG_SECRET" } })).toBe(
+      "failed",
+    );
+    // verification IS NULL = no signature was checked (no secret / header absent / KMS error).
+    expect(deriveVerificationState(false, null)).toBe("unattempted");
+    expect(deriveVerificationState(false, undefined)).toBe("unattempted");
+  });
+
+  it("is OPTIONAL on EventSummary — a row without it still parses (version-skew safe)", () => {
+    const parsed = EventSummarySchema.parse({
+      id: uuid,
+      orgId: uuid,
+      endpointId: uuid,
+      receivedAt: "2026-06-28T00:00:00.000Z",
+      provider: "stripe",
+      dedupKey: "dk",
+      dedupStrategy: "sw_webhook_id",
+      verified: true,
+      // no verificationState
+    });
+    expect(parsed.verificationState).toBeUndefined();
+  });
+});
 
 describe("entity schemas", () => {
   it("parses an Org and coerces an ISO date string", () => {

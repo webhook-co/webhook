@@ -63,10 +63,17 @@ let eTail3: string;
 async function seedEvent(
   orgId: string,
   endpointId: string,
-  opts: { provider?: string | null } = {},
+  opts: { provider?: string | null; verified?: boolean; verification?: unknown } = {},
 ): Promise<string> {
   const id = newId();
   const externalId: string | null = null; // explicit typed NULL (no bare null in the SQL template)
+  // Default = a verified event ({ok:true}); pass verified/verification to seed a failed (false + ok:false)
+  // or unattempted (false + null) row for the verification-state tests.
+  const verified = opts.verified ?? true;
+  const verification =
+    opts.verification !== undefined
+      ? opts.verification
+      : { ok: true, keyId: "key_1", scheme: "stripe" };
   await withTenant(app, orgId, async (tx) => {
     await tx`
       insert into events
@@ -79,7 +86,7 @@ async function seedEvent(
            ["x-test", "1"],
          ])},
          ${newId()}, ${"content_hash"}, ${opts.provider ?? null}, ${"evt_123"}, ${externalId},
-         ${true}, ${tx.json({ ok: true, keyId: "key_1", scheme: "stripe" })})`;
+         ${verified}, ${verification === null ? null : tx.json(verification)})`;
   });
   return id;
 }
@@ -243,6 +250,78 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(page.items.map((e) => e.id)).toEqual([eTail3]);
   });
 
+  it("listEvents projects + filters the verification tri-state (verified | failed | unattempted)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-verif" }, hasher)).id;
+    const vId = await seedEvent(orgA, ep, {
+      provider: "stripe",
+      verified: true,
+      verification: { ok: true, keyId: "k", scheme: "stripe" },
+    });
+    const fId = await seedEvent(orgA, ep, {
+      provider: "stripe",
+      verified: false,
+      verification: { ok: false, reason: { code: "WRONG_SECRET", confidence: "high" } },
+    });
+    const uId = await seedEvent(orgA, ep, {
+      provider: "stripe",
+      verified: false,
+      verification: null,
+    });
+
+    const all = await withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: ep, limit: 50 }));
+    const byId = new Map(all.items.map((e) => [e.id, e.verificationState]));
+    expect(byId.get(vId)).toBe("verified");
+    expect(byId.get(fId)).toBe("failed"); // verified=false AND verification non-null
+    expect(byId.get(uId)).toBe("unattempted"); // verification IS NULL
+
+    const failed = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "failed" }),
+    );
+    expect(failed.items.map((e) => e.id)).toEqual([fId]);
+
+    const unattempted = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "unattempted" }),
+    );
+    expect(unattempted.items.map((e) => e.id)).toEqual([uId]);
+
+    const verified = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "verified" }),
+    );
+    expect(verified.items.map((e) => e.id)).toEqual([vId]);
+  });
+
+  it("the unattempted filter mirrors the CASE: a verified=true row with null verification stays 'verified'", async () => {
+    // The invariant is verified=true ⇒ verification non-null, but nothing in the schema enforces it. A
+    // pathological (verified=true, verification=null) row is labeled 'verified' by the CASE, so the
+    // `unattempted` filter (`not verified and verification is null`) must NOT return it — else its pill
+    // would contradict the filter. This guards the predicate↔CASE agreement.
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-verif-edge" }, hasher)).id;
+    const pathId = await seedEvent(orgA, ep, { verified: true, verification: null });
+
+    const all = await withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: ep, limit: 50 }));
+    expect(all.items.find((e) => e.id === pathId)?.verificationState).toBe("verified");
+
+    const unattempted = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "unattempted" }),
+    );
+    expect(unattempted.items.map((e) => e.id)).not.toContain(pathId);
+
+    const verified = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "verified" }),
+    );
+    expect(verified.items.map((e) => e.id)).toContain(pathId);
+  });
+
+  it("getEvent derives the verificationState (failed = an adapter ran and rejected)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-verif-get" }, hasher)).id;
+    const fId = await seedEvent(orgA, ep, {
+      verified: false,
+      verification: { ok: false, reason: { code: "SIGNATURE_MISMATCH" } },
+    });
+    const ev = await withTenant(app, orgA, (tx) => getEvent(tx, fId));
+    expect(ev?.verificationState).toBe("failed");
+  });
+
   it("listEndpoints filters by a case-insensitive name substring", async () => {
     const tail = await withTenant(app, orgA, (tx) =>
       listEndpoints(tx, { limit: 50, name: "TAIL" }),
@@ -337,6 +416,31 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
       handlers.get("events.list")!(ctxA, {
         endpointId: epTail,
         filter: { receivedBefore: "not-a-timestamp" },
+      }),
+      "VALIDATION_ERROR",
+    );
+  });
+
+  it("events.list threads the verificationState filter (all tail fixtures are verified)", async () => {
+    // The tail fixtures are seeded verified=true, so verificationState=verified returns all three and
+    // failed/unattempted return none — proving the filter reaches listEvents through the handler.
+    const verified = (await handlers.get("events.list")!(ctxA, {
+      endpointId: epTail,
+      filter: { verificationState: "verified" },
+    })) as { items: { id: string }[] };
+    expect(new Set(verified.items.map((e) => e.id))).toEqual(new Set([eTail1, eTail2, eTail3]));
+    const failed = (await handlers.get("events.list")!(ctxA, {
+      endpointId: epTail,
+      filter: { verificationState: "failed" },
+    })) as { items: unknown[] };
+    expect(failed.items).toEqual([]);
+  });
+
+  it("events.list rejects an unknown verificationState with VALIDATION_ERROR (closed enum)", async () => {
+    await expectFault(
+      handlers.get("events.list")!(ctxA, {
+        endpointId: epTail,
+        filter: { verificationState: "bogus" },
       }),
       "VALIDATION_ERROR",
     );

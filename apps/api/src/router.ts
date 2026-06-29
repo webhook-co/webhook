@@ -134,6 +134,8 @@ function matchRoute(
     if (receivedAfter) filter.receivedAfter = receivedAfter;
     const receivedBefore = query.get("receivedBefore");
     if (receivedBefore) filter.receivedBefore = receivedBefore;
+    const verificationState = query.get("verificationState");
+    if (verificationState) filter.verificationState = verificationState;
     if (Object.keys(filter).length > 0) input.filter = filter;
     return { capability: "events.list", input };
   }

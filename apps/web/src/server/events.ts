@@ -111,6 +111,7 @@ function toSummaryItem(e: EventSummary): EventSummaryItem {
     dedupKey: e.dedupKey,
     dedupStrategy: e.dedupStrategy,
     verified: e.verified,
+    verificationState: e.verificationState,
   };
 }
 

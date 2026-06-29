@@ -37,6 +37,29 @@ export const EndpointSchema = z.object({
 });
 export type Endpoint = z.infer<typeof EndpointSchema>;
 
+/**
+ * The truthfully-distinguishable verification outcome of a stored event, derived from
+ * (`verified`, `verification`): `verified` (an adapter matched the signature) / `failed` (an
+ * adapter ran and rejected — `verified=false` AND `verification` non-null) / `unattempted`
+ * (`verification IS NULL` — no signature was checked: no secret, header absent, or a rare
+ * KMS/internal error; these collapse to one bucket the row can't tell apart, so `unattempted`
+ * must never be presented as a failure).
+ */
+export const VerificationStateSchema = z.enum(["verified", "failed", "unattempted"]);
+export type VerificationState = z.infer<typeof VerificationStateSchema>;
+/** The canonical verification-state vocabulary (single source for CLI/web filter controls). */
+export const VERIFICATION_STATES = VerificationStateSchema.options;
+
+/** Derive the verification state from the stored pair. `verification` non-null with `verified=false`
+ *  is the genuine "failed" case; null is "unattempted". */
+export function deriveVerificationState(
+  verified: boolean,
+  verification: unknown,
+): VerificationState {
+  if (verified) return "verified";
+  return verification != null ? "failed" : "unattempted";
+}
+
 /** The list view of an event (events.list) — no body, no full headers. */
 export const EventSummarySchema = z.object({
   id: uuid,
@@ -47,6 +70,12 @@ export const EventSummarySchema = z.object({
   dedupKey: z.string(),
   dedupStrategy: DedupStrategySchema,
   verified: z.boolean(),
+  // OPTIONAL on purpose: under producer/consumer version skew a `wbhk listen` frame from an older
+  // engine would lack this field, and EventFrameSchema embeds EventSummarySchema with parseServerFrame
+  // doing safeParse → a REQUIRED field would fail the parse and SILENTLY DROP the frame (event loss on
+  // the tail). Optional keeps an old frame valid. Every current read projects it (the db CASE / the
+  // getEvent derive), so it is always present in practice; absent is treated as "unknown".
+  verificationState: VerificationStateSchema.optional(),
 });
 export type EventSummary = z.infer<typeof EventSummarySchema>;
 

@@ -1,5 +1,5 @@
 import { buildCommand } from "@stricli/core";
-import { bytesToB64, PROVIDERS } from "@webhook-co/shared";
+import { bytesToB64, PROVIDERS, VERIFICATION_STATES } from "@webhook-co/shared";
 
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
@@ -20,6 +20,7 @@ interface ListFlags extends GlobalFlags {
   provider?: (typeof PROVIDERS)[number];
   after?: string;
   before?: string;
+  status?: (typeof VERIFICATION_STATES)[number];
 }
 
 type GetFlags = GlobalFlags;
@@ -37,6 +38,7 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
           provider: flags.provider,
           receivedAfter: flags.after,
           receivedBefore: flags.before,
+          verificationState: flags.status,
         }),
       { cursor: flags.cursor, all: flags.all },
     );
@@ -84,6 +86,12 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
         kind: "parsed",
         parse: parseIsoDate,
         brief: "only events received strictly before this time (ISO-8601 / RFC3339)",
+        optional: true,
+      },
+      status: {
+        kind: "enum",
+        values: VERIFICATION_STATES,
+        brief: "filter by verification state (verified | failed | unattempted)",
         optional: true,
       },
     },

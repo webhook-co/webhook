@@ -7,6 +7,7 @@ import {
   LagSchema,
   ProviderSchema,
   SW_SECRET_PROVIDERS,
+  VerificationStateSchema,
   WATERMARK_DELTA_MS,
 } from "@webhook-co/shared";
 import { z } from "zod";
@@ -138,6 +139,9 @@ export const eventsList = defineCapability({
         provider: ProviderSchema.optional(),
         receivedAfter: z.string().optional(),
         receivedBefore: z.string().optional(),
+        // The truthful verification tri-state (verified | failed | unattempted). A plain enum →
+        // JSON-Schema-clean for the MCP tool inputSchema.
+        verificationState: VerificationStateSchema.optional(),
       })
       .optional(),
   }),

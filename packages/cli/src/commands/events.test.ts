@@ -112,6 +112,23 @@ describe("wbhk events list", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
   });
 
+  it("passes --status through as the verificationState query param", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["events", "list", EP, "--status", "failed"], t.ctx);
+    const u = new URL(cap.urls[0]);
+    expect(u.searchParams.get("verificationState")).toBe("failed");
+  });
+
+  it("rejects an unknown --status as a usage error (closed enum)", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list", EP, "--status", "bogus"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+
   it("emits the envelope with --output json", async () => {
     const t = makeTestContext({
       store: loggedInStore(),
