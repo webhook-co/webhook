@@ -56,7 +56,8 @@ function parseSignatureHeader(
     case "csvKv": {
       const fields: Record<string, string> = {};
       const signatures: string[] = [];
-      for (const part of headerValue.split(",")) {
+      // Comma-delimited by default (Stripe `t=,v1=`); Paddle uses a semicolon (`ts=;h1=`).
+      for (const part of headerValue.split(format.delimiter ?? ",")) {
         const eq = part.indexOf("=");
         if (eq === -1) continue;
         const key = part.slice(0, eq).trim();
@@ -77,6 +78,17 @@ function parseSignatureHeader(
       }
       if (signatures.length === 0) return { error: `no ${format.sigTag} signatures` };
       return { signatures, fields: {} };
+    }
+    case "positional": {
+      // A comma-separated list whose FIRST element is the timestamp and the rest are signatures
+      // (Recurly: `<unix>,<sig1>,<sig2>`). The timestamp is exposed as `timestampField` so the
+      // standard sigField timestamp/replay machinery drives it.
+      const items = headerValue.split(",").map((p) => p.trim());
+      if (items.length < 2 || items[0] === "")
+        return { error: "expected timestamp + signature(s)" };
+      const signatures = items.slice(1).filter((p) => p.length > 0);
+      if (signatures.length === 0) return { error: "no signatures" };
+      return { signatures, fields: { [format.timestampField]: items[0]! } };
     }
   }
 }

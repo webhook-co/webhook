@@ -66,6 +66,9 @@ export const PROVIDERS = [
   "front",
   "zendesk",
   "twitch",
+  // W1 final framework-needs — non-comma CSV delimiter (paddle) + positional CSV (recurly).
+  "paddle",
+  "recurly",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -109,15 +112,19 @@ export type TimestampSource =
  * How the signature header value is parsed into one or more signatures (rotation / multi-sig):
  * - `plain`: the whole value (after stripping `signatureValuePrefix`) is a single signature
  *   (GitHub `sha256=…`, Shopify `<base64>`, Slack `v0=…`).
- * - `csvKv`: a comma-separated list of `key=value`; signatures are the values whose key is
- *   `sigKey`, and the other keys are exposed as fields (Stripe `t=…,v1=…,v1=…`, sigKey `v1`).
+ * - `csvKv`: a `delimiter`-separated (default `,`) list of `key=value`; signatures are the values
+ *   whose key is `sigKey`, and the other keys are exposed as fields (Stripe `t=…,v1=…`, sigKey `v1`;
+ *   Paddle `ts=…;h1=…` with delimiter `;`, sigKey `h1`).
  * - `spaceList`: a space-separated list of `tag,value` entries; signatures are the values whose
  *   tag is `sigTag`, others skipped (Standard Webhooks `v1,<b64>` entries, `v1a` skipped).
+ * - `positional`: a comma-separated list whose FIRST element is the timestamp and the rest are
+ *   signatures (Recurly `<unix>,<sig1>,<sig2>`); the timestamp is exposed as `timestampField`.
  */
 export type SignatureFormat =
   | { readonly kind: "plain" }
-  | { readonly kind: "csvKv"; readonly sigKey: string }
-  | { readonly kind: "spaceList"; readonly sigTag: string };
+  | { readonly kind: "csvKv"; readonly sigKey: string; readonly delimiter?: string }
+  | { readonly kind: "spaceList"; readonly sigTag: string }
+  | { readonly kind: "positional"; readonly timestampField: string };
 
 /**
  * One ordered part of the signed message. The factory concatenates these to build the bytes the
@@ -456,6 +463,28 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
       { kind: "body" },
     ],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.twitch,
+  },
+  // W1 final framework-needs — non-comma CSV delimiter (paddle) + positional CSV (recurly).
+  // paddle: `Paddle-Signature: ts=<unix>;h1=<hex>` (semicolon-delimited); signed `{ts}:{body}`.
+  paddle: {
+    slug: "paddle",
+    signatureHeader: "paddle-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "h1", delimiter: ";" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "ts" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: ":" }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.paddle,
+  },
+  // recurly: `recurly-signature: <unix>,<sig1>,<sig2>` (positional; multiple sigs during rotation);
+  // signed `{ts}.{body}`. Verify passes if any listed signature matches a registered secret.
+  recurly: {
+    slug: "recurly",
+    signatureHeader: "recurly-signature",
+    signatureFormat: { kind: "positional", timestampField: "ts" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "ts" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.recurly,
   },
 };
 
