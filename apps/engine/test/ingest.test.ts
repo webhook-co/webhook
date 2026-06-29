@@ -151,6 +151,21 @@ describe("handleIngest — the wbhk.my write path", () => {
     expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  it("forwards the full request URL + method to verify (F3: Tier-2 url/method-signed providers)", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?id=42&topic=orders`, {
+        method: "POST",
+        body: `{"id":"evt_url"}`,
+        headers: { "content-type": "application/json" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(calls.verify[0]!.requestUrl).toBe(`https://wbhk.my/${GOOD}?id=42&topic=orders`);
+    expect(calls.verify[0]!.method).toBe("POST");
+  });
+
   it("verifies AFTER the durable R2 PUT and writes the outcome (verified + diagnostic) to the insert", async () => {
     const verification = { ok: true, keyId: "secret_0", scheme: "stripe" };
     const secret = {

@@ -146,7 +146,22 @@ export type MessagePart =
   | { readonly kind: "literal"; readonly value: string }
   | { readonly kind: "timestamp" }
   | { readonly kind: "header"; readonly header: string }
-  | { readonly kind: "body" };
+  | { readonly kind: "body" }
+  // ── Tier-2 request-context parts (F3). These resolve from VerifyInput's requestUrl / method /
+  // form-encoded body; a part whose source is absent is a typed MALFORMED_SIGNATURE (never a throw).
+  /** The request HTTP method, e.g. `POST` (HubSpot, Contentful). */
+  | { readonly kind: "method" }
+  /** The request URL: `full` (scheme+host+path+query, Square/Twilio/Trello) or `path` (Contentful). */
+  | { readonly kind: "url"; readonly component: "full" | "path" }
+  /** A named query-string parameter from the request URL (Mercado Pago's manifest). */
+  | { readonly kind: "queryParam"; readonly name: string }
+  /** A named field from the `application/x-www-form-urlencoded` body (Mailgun's token/timestamp). */
+  | { readonly kind: "formField"; readonly name: string }
+  /**
+   * All `application/x-www-form-urlencoded` body fields sorted by key, each rendered as `key`+`value`
+   * with no separator and concatenated (Twilio / Mandrill sign `{url}{sortedFormFields}`).
+   */
+  | { readonly kind: "sortedFormFields" };
 
 /** The signed message is the raw body verbatim unless a config says otherwise. */
 export const RAW_BODY_MESSAGE: readonly MessagePart[] = [{ kind: "body" }];
