@@ -123,6 +123,20 @@ export function toStandardWebhooksCandidates(secrets: readonly string[]): Secret
 }
 
 /**
+ * Map secrets onto keyed candidates by HEX-DECODING each to the raw key bytes (Authorize.Net's
+ * "Signature Key" is a hex string used as bytes). Non-hex or zero-length keys are skipped (never
+ * throws); positional keyIds keep their original index so `secret_0` is the newest provided secret.
+ */
+export function toHexKeyCandidates(secrets: readonly string[]): SecretCandidate[] {
+  const out: SecretCandidate[] = [];
+  secrets.forEach((s, i) => {
+    const bytes = hexToBytes(s);
+    if (bytes !== null && bytes.length > 0) out.push({ keyId: `secret_${i}`, bytes });
+  });
+  return out;
+}
+
+/**
  * Is a registered Standard Webhooks secret USABLE — i.e. does it decode to a non-empty key the verify
  * path can actually use? A SW secret is `whsec_`+base64; the verify path strips the prefix and base64-
  * decodes the remainder (toStandardWebhooksCandidates, above) to get the raw key. This applies the SAME

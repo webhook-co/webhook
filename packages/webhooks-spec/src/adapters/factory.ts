@@ -26,6 +26,7 @@ import {
   findHeader,
   oversizeBodyFailure,
   toCandidates,
+  toHexKeyCandidates,
   toStandardWebhooksCandidates,
   verifyHmac,
 } from "./shared";
@@ -152,6 +153,7 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
   const tsSource: TimestampSource = config.timestamp ?? { kind: "none" };
   const keyMode = config.keyDerivation ?? "utf8";
   const digest = config.digest ?? "sha256";
+  const enforceWindow = config.enforceReplayWindow ?? true;
 
   async function verify(input: VerifyInput): Promise<VerificationResult> {
     // Collect the signature(s) (presence = MISSING_HEADER). Numbered schemes (DocuSign) gather one
@@ -222,8 +224,9 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
       resolved.push(utf8Encoder.encode(value));
     }
 
-    // Enforce the replay window AFTER all structural checks, BEFORE spending HMAC cycles.
-    if (ts !== null) {
+    // Enforce the replay window AFTER all structural checks, BEFORE spending HMAC cycles — unless the
+    // scheme signs a timestamp but documents no window (Sanity): then the ts is in the message only.
+    if (ts !== null && enforceWindow) {
       const skewFailure = enforceSkew(scheme, ts.epochSeconds, input.now);
       if (skewFailure !== null) return skewFailure;
     }
@@ -236,7 +239,9 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
     const candidates =
       keyMode === "whsec-base64"
         ? toStandardWebhooksCandidates(input.secrets)
-        : toCandidates(input.secrets);
+        : keyMode === "hex"
+          ? toHexKeyCandidates(input.secrets)
+          : toCandidates(input.secrets);
 
     return verifyHmac({
       scheme,
