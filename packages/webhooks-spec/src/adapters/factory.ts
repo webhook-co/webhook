@@ -27,6 +27,7 @@ import {
   oversizeBodyFailure,
   toCandidates,
   toHexKeyCandidates,
+  toSha1KeyCandidates,
   toStandardWebhooksCandidates,
   verifyHmac,
 } from "./shared";
@@ -89,6 +90,19 @@ function parseSignatureHeader(
       const signatures = items.slice(1).filter((p) => p.length > 0);
       if (signatures.length === 0) return { error: "no signatures" };
       return { signatures, fields: { [format.timestampField]: items[0]! } };
+    }
+    case "pipePairs": {
+      // `&`-joined `publicKey|signature` pairs (Braintree `bt_signature`); collect every signature
+      // (the part after the FIRST `|`) and match-any — our key only reproduces our own pair's sig.
+      const signatures: string[] = [];
+      for (const pair of headerValue.split("&")) {
+        const bar = pair.indexOf("|");
+        if (bar === -1) continue;
+        const sig = pair.slice(bar + 1).trim();
+        if (sig.length > 0) signatures.push(sig);
+      }
+      if (signatures.length === 0) return { error: "no publicKey|signature pairs" };
+      return { signatures, fields: {} };
     }
   }
 }
@@ -175,8 +189,8 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
   async function verify(input: VerifyInput): Promise<VerificationResult> {
     const malformed = (detail: string): VerificationResult =>
       verificationFailed({ code: "MALFORMED_SIGNATURE", detail, scheme });
-    // Lazily parse the body as JSON — only when a scheme reads its signature or signed fields from the
-    // body (Adyen). Never throws: a non-JSON body yields undefined → MALFORMED downstream.
+    // Lazy body parsers — JSON (Adyen) and form (Braintree's sig + payload) — used by both signature
+    // collection and the message parts. Never throw: a non-JSON body yields undefined → MALFORMED.
     let jsonState: { ok: true; value: unknown } | { ok: false } | undefined;
     const jsonBody = (): unknown | undefined => {
       if (jsonState === undefined) {
@@ -188,20 +202,36 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
       }
       return jsonState.ok ? jsonState.value : undefined;
     };
+    let formBody: URLSearchParams | undefined;
+    const formFields = (): URLSearchParams => {
+      if (formBody === undefined) formBody = new URLSearchParams(utf8Decoder.decode(input.rawBody));
+      return formBody;
+    };
 
-    // Collect the signature(s) (presence = MISSING_HEADER). `signatureSource` reads it from the JSON
-    // body; numbered schemes (DocuSign) gather one per `<prefix>N` header; everyone else parses the
-    // single signature header value. Order — presence → oversize → signature-parse — is identical.
+    // Collect the signature(s) (presence = MISSING_HEADER). `signatureSource` reads the raw signature
+    // string from the JSON body (Adyen) or a form field (Braintree) then applies `signatureFormat` to it;
+    // numbered schemes (DocuSign) gather one per `<prefix>N` header; everyone else parses the single
+    // signature header value. Order — presence → oversize → signature-parse — is identical.
     let signatures: string[];
     let sigFields: Record<string, string> = {};
-    if (config.signatureSource?.kind === "jsonField") {
+    if (config.signatureSource) {
       const oversize = oversizeBodyFailure(scheme, input.rawBody);
       if (oversize !== null) return oversize;
-      const body = jsonBody();
-      const sig = body === undefined ? undefined : jsonPathValue(body, config.signatureSource.path);
-      if (sig === undefined || sig === "")
-        return malformed(`missing ${config.signatureSource.path}`);
-      signatures = [sig];
+      let raw: string | undefined;
+      let label: string;
+      if (config.signatureSource.kind === "jsonField") {
+        const body = jsonBody();
+        raw = body === undefined ? undefined : jsonPathValue(body, config.signatureSource.path);
+        label = config.signatureSource.path;
+      } else {
+        raw = formFields().get(config.signatureSource.name) ?? undefined;
+        label = config.signatureSource.name;
+      }
+      if (raw === undefined || raw === "") return malformed(`missing ${label}`);
+      const parsed = parseSignatureHeader(raw, format, config.signatureValuePrefix);
+      if ("error" in parsed) return malformed(parsed.error);
+      signatures = parsed.signatures;
+      sigFields = parsed.fields;
     } else if (config.numberedSignatureHeaders) {
       signatures = collectNumberedSignatures(input, config.numberedSignatureHeaders);
       if (signatures.length === 0) {
@@ -242,11 +272,6 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
         }
       }
       return parsedUrl;
-    };
-    let formBody: URLSearchParams | undefined;
-    const formFields = (): URLSearchParams => {
-      if (formBody === undefined) formBody = new URLSearchParams(utf8Decoder.decode(input.rawBody));
-      return formBody;
     };
 
     // Resolve every non-body message part to bytes (a referenced source that's absent is MALFORMED).
@@ -354,7 +379,9 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
         ? toStandardWebhooksCandidates(input.secrets)
         : keyMode === "hex"
           ? toHexKeyCandidates(input.secrets)
-          : toCandidates(input.secrets);
+          : keyMode === "sha1-secret"
+            ? await toSha1KeyCandidates(input.secrets)
+            : toCandidates(input.secrets);
 
     return verifyHmac({
       scheme,
