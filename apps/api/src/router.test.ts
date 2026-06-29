@@ -80,6 +80,71 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     expect(seen).toEqual({ endpointId: EP, filter: { provider: "stripe" } });
   });
 
+  it("builds events.list filter from provider + received-at range query params (raw strings)", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "events.list": async (_ctx, input) => {
+          seen = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    // The router maps raw query strings into filter; the events.list Zod schema coerces them downstream.
+    await handleRequest(
+      get(
+        `/v1/endpoints/${EP}/events?provider=github&receivedAfter=2026-06-01T00:00:00Z&receivedBefore=2026-06-02T00:00:00Z`,
+      ),
+      deps,
+    );
+    expect(seen).toEqual({
+      endpointId: EP,
+      filter: {
+        provider: "github",
+        receivedAfter: "2026-06-01T00:00:00Z",
+        receivedBefore: "2026-06-02T00:00:00Z",
+      },
+    });
+  });
+
+  it("builds endpoints.list name filter from the query", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "endpoints.list": async (_ctx, input) => {
+          seen = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    await handleRequest(get("/v1/endpoints?name=acme"), deps);
+    expect(seen).toEqual({ filter: { name: "acme" } });
+  });
+
+  it("treats an EMPTY ?name= / ?provider= as no filter (a cleared filter, not a 400)", async () => {
+    let endpointsInput: unknown;
+    let eventsInput: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "endpoints.list": async (_ctx, input) => {
+          endpointsInput = input;
+          return { items: [], nextCursor: null };
+        },
+        "events.list": async (_ctx, input) => {
+          eventsInput = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    await handleRequest(get("/v1/endpoints?name="), deps);
+    expect(endpointsInput).toEqual({}); // no filter key — would otherwise 400 on the contract's min(1)
+    await handleRequest(get(`/v1/endpoints/${EP}/events?provider=&receivedAfter=`), deps);
+    expect(eventsInput).toEqual({ endpointId: EP }); // empty filter params dropped
+  });
+
   it("builds events.tail input from the path + optional sinceCursor", async () => {
     let seen: unknown;
     const deps: ApiDeps = {

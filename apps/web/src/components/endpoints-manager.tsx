@@ -37,6 +37,9 @@ import { OneTimeUrlDialog } from "./one-time-url-dialog";
 
 export interface EndpointsManagerProps {
   initialResult: EndpointsResult;
+  /** The active name-search term (the server already filtered `initialResult` by it). Drives the
+   *  empty-state copy AND gates optimistic create so a non-matching new endpoint isn't shown filtered. */
+  nameFilter?: string;
   /** The create-endpoint server action, injected by the gated page. */
   createEndpoint: (input: { name: string }) => Promise<CreateEndpointResult>;
   /** Rotate an endpoint's ingest token (hard cutover) → its NEW one-time URL. Injected by the page. */
@@ -47,13 +50,22 @@ export interface EndpointsManagerProps {
 
 export function EndpointsManager({
   initialResult,
+  nameFilter,
   createEndpoint,
   rotateEndpoint,
   deleteEndpoint,
 }: EndpointsManagerProps) {
-  const [endpoints, setEndpoints] = React.useState<readonly EndpointItem[]>(
-    initialResult.status === "ok" ? initialResult.endpoints : [],
-  );
+  const liveEndpoints = initialResult.status === "ok" ? initialResult.endpoints : [];
+  const [endpoints, setEndpoints] = React.useState<readonly EndpointItem[]>(liveEndpoints);
+  // Re-sync the list to a freshly server-filtered `initialResult` WITHOUT remounting — the manager
+  // stays mounted so a one-time ingest URL (the transient `revealed` below) survives a search-debounce
+  // navigation that would otherwise discard it. (Replaces the page-level `key` remount.)
+  const [seededResult, setSeededResult] = React.useState(initialResult);
+  if (seededResult !== initialResult) {
+    setSeededResult(initialResult);
+    setEndpoints(liveEndpoints);
+  }
+  const isFiltered = Boolean(nameFilter && nameFilter.trim() !== "");
   const [createOpen, setCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
   const [pending, setPending] = React.useState(false);
@@ -89,7 +101,13 @@ export function EndpointsManager({
         setFormError(result.error);
         return;
       }
-      setEndpoints((prev) => [result.endpoint, ...prev]);
+      // Only show the new endpoint in the list if it matches the active name filter — otherwise it
+      // would appear in a filtered view it doesn't belong to (it's server-persisted and surfaces once
+      // the filter is cleared). The reveal dialog still confirms creation + shows the one-time URL.
+      const matchesFilter =
+        !isFiltered ||
+        result.endpoint.name.toLowerCase().includes(nameFilter!.trim().toLowerCase());
+      if (matchesFilter) setEndpoints((prev) => [result.endpoint, ...prev]);
       setCreateOpen(false);
       resetForm();
       setRevealed({ name: result.endpoint.name, ingestUrl: result.ingestUrl });
@@ -162,7 +180,9 @@ export function EndpointsManager({
         <TableBody>
           {endpoints.length === 0 ? (
             <TableEmpty colSpan={4}>
-              No endpoints yet. Create one to get a signed webhook URL.
+              {isFiltered
+                ? "No endpoints match your search."
+                : "No endpoints yet. Create one to get a signed webhook URL."}
             </TableEmpty>
           ) : (
             endpoints.map((endpoint) => (

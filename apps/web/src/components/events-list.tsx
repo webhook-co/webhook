@@ -16,6 +16,7 @@ import type { Cursor } from "@webhook-co/shared";
 import Link from "next/link";
 import * as React from "react";
 
+import type { EventFilterParams } from "@/lib/event-filters";
 import { formatDateTime } from "@/lib/format";
 import type { LoadMoreEventsResult } from "@/server/event-actions";
 import type { EventSummaryItem } from "@/server/events";
@@ -24,11 +25,27 @@ export interface EventsListProps {
   endpointId: string;
   initialItems: readonly EventSummaryItem[];
   initialCursor: Cursor | null;
+  /** The active filters (raw), threaded into "Load older" so paging stays within the filtered set. */
+  filterParams: EventFilterParams;
+  /** Whether a filter is actually APPLIED (computed from the PARSED filters by the page) — drives the
+   *  empty-state copy honestly (a dropped/invalid param doesn't claim "no events match"). */
+  isFiltered: boolean;
   /** Fetch the next page (server action), injected by the gated page. */
-  loadMore: (input: { endpointId: string; cursor: Cursor }) => Promise<LoadMoreEventsResult>;
+  loadMore: (input: {
+    endpointId: string;
+    cursor: Cursor;
+    filters: EventFilterParams;
+  }) => Promise<LoadMoreEventsResult>;
 }
 
-export function EventsList({ endpointId, initialItems, initialCursor, loadMore }: EventsListProps) {
+export function EventsList({
+  endpointId,
+  initialItems,
+  initialCursor,
+  filterParams,
+  isFiltered,
+  loadMore,
+}: EventsListProps) {
   const [items, setItems] = React.useState<readonly EventSummaryItem[]>(initialItems);
   const [cursor, setCursor] = React.useState<Cursor | null>(initialCursor);
   const [pending, setPending] = React.useState(false);
@@ -43,7 +60,7 @@ export function EventsList({ endpointId, initialItems, initialCursor, loadMore }
     setPending(true);
     setError(null);
     try {
-      const result = await loadMore({ endpointId, cursor });
+      const result = await loadMore({ endpointId, cursor, filters: filterParams });
       if (!result.ok) {
         setError("We couldn't load more events. Try again.");
         return;
@@ -72,8 +89,9 @@ export function EventsList({ endpointId, initialItems, initialCursor, loadMore }
         <TableBody>
           {items.length === 0 ? (
             <TableEmpty colSpan={4}>
-              No events yet. Point a provider at this endpoint&apos;s webhook URL to start receiving
-              events.
+              {isFiltered
+                ? "No events match these filters. Adjust or clear them to see more."
+                : "No events yet. Point a provider at this endpoint's webhook URL to start receiving events."}
             </TableEmpty>
           ) : (
             items.map((event) => (

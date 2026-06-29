@@ -1,6 +1,9 @@
 "use server";
 
 import type { Cursor } from "@webhook-co/shared";
+import { PROVIDERS } from "@webhook-co/webhooks-spec";
+
+import { parseEventFilters, type EventFilterParams } from "@/lib/event-filters";
 
 import { logActionError } from "./action-log";
 import { isUuid } from "./endpoints";
@@ -32,6 +35,7 @@ export type LoadMoreEventsResult =
 export async function loadMoreEventsAction(input: {
   endpointId: string;
   cursor: Cursor;
+  filters?: EventFilterParams;
 }): Promise<LoadMoreEventsResult> {
   const session = await verifySession();
 
@@ -44,8 +48,18 @@ export async function loadMoreEventsAction(input: {
     cursor.receivedAt instanceof Date ? cursor.receivedAt : new Date(cursor.receivedAt as string);
   if (Number.isNaN(receivedAt.getTime())) return { ok: false };
 
+  // Re-parse the active filters server-side (the action is independently callable): the SAME coercion +
+  // provider validation the page used, so paging stays within the active filter set and a tampered or
+  // unknown value is just dropped.
+  const filters = parseEventFilters(input?.filters ?? {}, PROVIDERS);
+
   try {
-    const page = await loadMoreEvents(session.orgId, endpointId, { receivedAt, id: cursor.id });
+    const page = await loadMoreEvents(
+      session.orgId,
+      endpointId,
+      { receivedAt, id: cursor.id },
+      filters,
+    );
     return { ok: true, items: page.items, nextCursor: page.nextCursor };
   } catch (error) {
     logActionError("events.load_more_failed", error);

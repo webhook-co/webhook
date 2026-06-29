@@ -31,7 +31,7 @@ export type EndpointResult =
 
 /** The reads this surface needs, injectable for tests; the default binds the per-request tenant tx. */
 export interface EndpointReaders {
-  listEndpoints(orgId: string): Promise<readonly EndpointItem[]>;
+  listEndpoints(orgId: string, name?: string): Promise<readonly EndpointItem[]>;
   getEndpoint(orgId: string, id: string): Promise<EndpointItem | null>;
 }
 
@@ -75,10 +75,14 @@ export async function collectAllEndpoints(
 
 function boundReaders(app: Sql): EndpointReaders {
   return {
-    listEndpoints: (orgId) =>
+    listEndpoints: (orgId, name) =>
       withTenant(app, orgId, (tx) =>
         collectAllEndpoints(async (cursor) => {
-          const page = await listEndpoints(tx, { cursor, limit: DEFAULT_MAX_ENDPOINTS_PER_ORG });
+          const page = await listEndpoints(tx, {
+            cursor,
+            limit: DEFAULT_MAX_ENDPOINTS_PER_ORG,
+            name,
+          });
           return { items: page.items.map(toItem), nextCursor: page.nextCursor };
         }),
       ),
@@ -97,20 +101,25 @@ function boundReaders(app: Sql): EndpointReaders {
  */
 export async function loadEndpoints(
   orgId: string,
+  name?: string,
   readers?: EndpointReaders,
 ): Promise<EndpointsResult> {
-  if (readers) return readEndpoints(orgId, readers);
+  if (readers) return readEndpoints(orgId, name, readers);
   const app = await getTenantDb();
   try {
-    return await readEndpoints(orgId, boundReaders(app));
+    return await readEndpoints(orgId, name, boundReaders(app));
   } finally {
     await app.end({ timeout: 5 }).catch(() => {});
   }
 }
 
-async function readEndpoints(orgId: string, r: EndpointReaders): Promise<EndpointsResult> {
+async function readEndpoints(
+  orgId: string,
+  name: string | undefined,
+  r: EndpointReaders,
+): Promise<EndpointsResult> {
   try {
-    return { status: "ok", endpoints: await r.listEndpoints(orgId) };
+    return { status: "ok", endpoints: await r.listEndpoints(orgId, name) };
   } catch {
     return { status: "error" };
   }

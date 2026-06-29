@@ -44,6 +44,14 @@ function sequenceFetch(...responses: Response[]): typeof fetch {
   let i = 0;
   return (async () => responses[Math.min(i++, responses.length - 1)]) as unknown as typeof fetch;
 }
+function capturingFetch(body: unknown): { fetch: typeof fetch; urls: string[] } {
+  const urls: string[] = [];
+  const fetch = (async (url: string | URL | Request) => {
+    urls.push(String(url));
+    return json(body);
+  }) as unknown as typeof fetch;
+  return { fetch, urls };
+}
 
 const endpoint = (id: string, name: string, paused = false) => ({
   id,
@@ -75,6 +83,15 @@ describe("wbhk endpoints list", () => {
     const parsed = JSON.parse(t.stdout());
     expect(parsed.nextCursor).toBe("c_next");
     expect(parsed.items[0].id).toBe(EP1);
+  });
+
+  it("passes the --name filter through as a query param", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "list", "--name", "orders"], t.ctx);
+    const u = new URL(cap.urls[0]);
+    expect(u.pathname).toBe("/v1/endpoints");
+    expect(u.searchParams.get("name")).toBe("orders");
   });
 
   it("prints a stderr hint (stdout stays clean of the token) when more results exist", async () => {

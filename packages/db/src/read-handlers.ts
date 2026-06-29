@@ -54,6 +54,16 @@ export interface ReadHandlerDeps {
 export type CapabilityHandler = (ctx: AuthContext, input: unknown) => Promise<unknown>;
 export type CapabilityHandlers = Map<string, CapabilityHandler>;
 
+/** Coerce an optional RFC3339 received-at bound (string) to a Date; a malformed value → VALIDATION_ERROR. */
+function toInstantBound(value: string | undefined): Date | undefined {
+  if (value === undefined) return undefined;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    throw new CapabilityFault("VALIDATION_ERROR", "invalid received-at bound");
+  }
+  return d;
+}
+
 export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
   function ensureScope(ctx: AuthContext, cap: AnyCapability): void {
     if (!ctx.scopes.includes(cap.auth.scope)) {
@@ -84,10 +94,14 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
 
   handlers.set(endpointsList.name, async (ctx, input) => {
     ensureScope(ctx, endpointsList);
-    const { cursor, limit } = parse(endpointsList, input) as { cursor?: string; limit?: number };
+    const { cursor, limit, filter } = parse(endpointsList, input) as {
+      cursor?: string;
+      limit?: number;
+      filter?: { name?: string };
+    };
     const decoded = await decode(cursor);
     const page = await withTenant(deps.tenant, ctx.orgId, (tx) =>
-      listEndpoints(tx, { cursor: decoded, limit }),
+      listEndpoints(tx, { cursor: decoded, limit, name: filter?.name }),
     );
     return { items: page.items, nextCursor: await encode(page.nextCursor) };
   });
@@ -106,8 +120,13 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       endpointId: string;
       cursor?: string;
       limit?: number;
-      filter?: { provider: string };
+      filter?: { provider?: string; receivedAfter?: string; receivedBefore?: string };
     };
+    // The range bounds arrive as RFC3339 strings (the contract input is a plain string so the MCP tool
+    // inputSchema stays JSON-Schema-clean); validate + coerce them to Dates HERE — a malformed bound is
+    // a VALIDATION_ERROR, never a raw string handed to SQL.
+    const receivedAfter = toInstantBound(filter?.receivedAfter);
+    const receivedBefore = toInstantBound(filter?.receivedBefore);
     const decoded = await decode(cursor);
     const { page, headCursor } = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       // Distinguish "no such endpoint for this org" (NOT_FOUND) from "endpoint with no events".
@@ -120,6 +139,8 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         cursor: decoded,
         limit,
         provider: filter?.provider,
+        receivedAfter,
+        receivedBefore,
       });
       // events.list is a newest-first browse; surface the watermark-bounded head as a resumable
       // checkpoint (caughtUp/lag are forward-tail concepts and don't apply to a DESC browse).

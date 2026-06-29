@@ -26,13 +26,20 @@ function readers(over: Partial<EndpointReaders> = {}): EndpointReaders {
 
 describe("loadEndpoints", () => {
   it("returns the org's endpoints on success", async () => {
-    const result = await loadEndpoints("o", readers());
+    const result = await loadEndpoints("o", undefined, readers());
     expect(result).toEqual({ status: "ok", endpoints: [ep] });
+  });
+
+  it("threads the name filter into the list reader", async () => {
+    const r = readers();
+    await loadEndpoints("o", "stripe", r);
+    expect(r.listEndpoints).toHaveBeenCalledWith("o", "stripe");
   });
 
   it("surfaces a db fault as the error state (no throw)", async () => {
     const result = await loadEndpoints(
       "o",
+      undefined,
       readers({
         listEndpoints: vi.fn(async () => {
           throw new Error("hyperdrive down");

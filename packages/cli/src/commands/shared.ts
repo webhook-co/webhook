@@ -55,6 +55,19 @@ export function parseLimit(value: string): number {
 }
 
 /**
+ * Parse a date/time flag (any value `new Date()` accepts — RFC3339 is the documented form) and
+ * normalize to an ISO-8601 string for the query. Rejects an unparseable value at the CLI (a usage
+ * error) rather than passing garbage to the server.
+ */
+export function parseIsoDate(value: string): string {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    throw new Error(`invalid date: ${value} (use an ISO-8601 / RFC3339 timestamp)`);
+  }
+  return d.toISOString();
+}
+
+/**
  * One server page by default; with `all`, follow `nextCursor` to exhaustion, accumulating into a
  * single result (the keyset cursor strictly advances, so the walk terminates). `cursor` seeds the
  * first page either way.

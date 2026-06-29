@@ -6,17 +6,20 @@ import { NotLoggedInError } from "../errors.js";
 import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
 import { renderEvent, renderEventsTable } from "../output/render.js";
-import { authedClient, collectPages, emitList, parseLimit } from "./shared.js";
+import { authedClient, collectPages, emitList, parseIsoDate, parseLimit } from "./shared.js";
 
 // `wbhk events list <endpointId>` / `wbhk events get <id>` — read views over captured events. List
-// paginates and filters by `--provider`; get prints a single event in full fidelity. Same auth +
-// shared-schema parsing as endpoints; `--output json` is the machine view.
+// paginates and filters by `--provider` and a `--after`/`--before` received-at range; get prints a
+// single event in full fidelity. Same auth + shared-schema parsing as endpoints; `--output json` is
+// the machine view.
 
 interface ListFlags extends GlobalFlags {
   limit?: number;
   cursor?: string;
   all: boolean;
   provider?: (typeof PROVIDERS)[number];
+  after?: string;
+  before?: string;
 }
 
 type GetFlags = GlobalFlags;
@@ -28,7 +31,13 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
     const { format, color } = resolveGlobals(this, flags);
     const result = await collectPages(
       (cursor) =>
-        client.eventsList(endpointId, { cursor, limit: flags.limit, provider: flags.provider }),
+        client.eventsList(endpointId, {
+          cursor,
+          limit: flags.limit,
+          provider: flags.provider,
+          receivedAfter: flags.after,
+          receivedBefore: flags.before,
+        }),
       { cursor: flags.cursor, all: flags.all },
     );
     emitList(this, result, { format, color, renderTable: renderEventsTable, empty: "no events." });
@@ -63,6 +72,18 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
         kind: "enum",
         values: PROVIDERS,
         brief: "filter by provider",
+        optional: true,
+      },
+      after: {
+        kind: "parsed",
+        parse: parseIsoDate,
+        brief: "only events received at/after this time (ISO-8601 / RFC3339)",
+        optional: true,
+      },
+      before: {
+        kind: "parsed",
+        parse: parseIsoDate,
+        brief: "only events received strictly before this time (ISO-8601 / RFC3339)",
         optional: true,
       },
     },

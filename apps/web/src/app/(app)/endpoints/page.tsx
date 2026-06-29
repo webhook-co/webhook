@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 
 import { EndpointsManager } from "@/components/endpoints-manager";
+import { EndpointsSearch } from "@/components/endpoints-search";
+import { firstParam } from "@/lib/event-filters";
 import {
   createEndpointAction,
   deleteEndpointAction,
@@ -13,9 +15,15 @@ export const metadata: Metadata = {
   title: "Endpoints · webhook.co",
 };
 
-export default async function EndpointsPage() {
+export default async function EndpointsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ name?: string | string[] }>;
+}) {
   const session = await verifySession();
-  const result = await loadEndpoints(session.orgId);
+  const { name } = await searchParams;
+  const trimmed = firstParam(name)?.trim();
+  const result = await loadEndpoints(session.orgId, trimmed || undefined);
 
   return (
     <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
@@ -26,8 +34,12 @@ export default async function EndpointsPage() {
           your provider at it; rotate or delete it anytime from its page.
         </p>
       </div>
+      <EndpointsSearch />
       <EndpointsManager
+        // No `key` remount on filter change — the manager re-syncs its list from initialResult itself,
+        // so a one-time ingest URL shown mid-search isn't discarded by a search-debounce navigation.
         initialResult={result}
+        nameFilter={trimmed}
         createEndpoint={createEndpointAction}
         rotateEndpoint={rotateEndpointAction}
         deleteEndpoint={deleteEndpointAction}

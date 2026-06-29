@@ -33,6 +33,7 @@ export {
 export { Button, buttonVariants, type ButtonProps } from "./components/button";
 export { IconButton, type IconButtonProps } from "./components/icon-button";
 export { Input, Label, type InputProps, type LabelProps } from "./components/input";
+export { Select, type SelectProps } from "./components/select";
 export { Field, type FieldProps } from "./components/field";
 export { Spinner, type SpinnerProps } from "./components/spinner";
 export { Checkbox } from "./components/checkbox";

@@ -14,7 +14,9 @@ function buildNextConfig(dev: boolean): NextConfig {
     // `@webhook-co/db` are consumed only by SERVER modules (the credential actions + the gated reads); the
     // client manager takes its data as props, so neither registry enters a browser bundle. `@webhook-co/db`
     // is imported via leaf subpaths (e.g. `@webhook-co/db/api-keys`) — its `export *` barrel resolves to
-    // `undefined` under Turbopack (see `@webhook-co/contract`'s index note).
+    // `undefined` under Turbopack (see `@webhook-co/contract`'s index note). (`@webhook-co/webhooks-spec`
+    // is NOT here — the events filter bar's provider vocabulary is consumed from its BUILT dist via the
+    // tsconfig `paths` redirect, like the shared-barrel leaves, so it never enters this DOM-lib typecheck.)
     transpilePackages: [
       "@webhook-co/ui",
       "@webhook-co/shared",

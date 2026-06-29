@@ -88,6 +88,15 @@ function keysetBefore(tx: TenantTx, c: Cursor) {
   return tx`and (date_trunc('milliseconds', received_at), id) < (${c.receivedAt}::timestamptz, ${c.id}::uuid)`;
 }
 
+// Wrap a user search term as a case-insensitive CONTAINS pattern for `ILIKE`, escaping the LIKE
+// metacharacters (\ % _) so the term matches literally — a user typing `50%` searches for "50%", not
+// "50<anything>". The term is always a BOUND param (never interpolated), so this is correctness, not an
+// injection defense. ILIKE's default escape char is backslash. Shared by the endpoints name filter and
+// the events search filter.
+export function likeContains(term: string): string {
+  return `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+}
+
 interface EndpointRow {
   id: string;
   org_id: string;
@@ -106,14 +115,23 @@ function toEndpoint(r: EndpointRow): Endpoint {
   });
 }
 
-export async function listEndpoints(tx: TenantTx, opts: ListOptions = {}): Promise<Page<Endpoint>> {
+export interface ListEndpointsOptions extends ListOptions {
+  /** Optional case-insensitive substring filter on the endpoint name (unindexed; the set is small). */
+  readonly name?: string;
+}
+
+export async function listEndpoints(
+  tx: TenantTx,
+  opts: ListEndpointsOptions = {},
+): Promise<Page<Endpoint>> {
   const limit = clampLimit(opts.limit);
-  const cursor = opts.cursor;
+  const { cursor, name } = opts;
   // `deleted_at is null` hides soft-deleted endpoints (ADR-0076) from endpoints.list.
   const rows = await tx<EndpointRow[]>`
     select id, org_id, name, paused, created_at
     from endpoints
     where deleted_at is null
+    ${name ? tx`and name ilike ${likeContains(name)}` : tx``}
     ${cursor ? tx`and (date_trunc('milliseconds', created_at), id) < (${cursor.receivedAt}::timestamptz, ${cursor.id}::uuid)` : tx``}
     order by date_trunc('milliseconds', created_at) desc, id desc
     limit ${limit + 1}`;
@@ -174,6 +192,10 @@ function toEventSummary(r: EventRow): EventSummary {
 export interface ListEventsOptions extends ListOptions {
   readonly endpointId: string;
   readonly provider?: string;
+  /** Inclusive lower bound on received_at (events at or after this instant). */
+  readonly receivedAfter?: Date;
+  /** Exclusive upper bound on received_at (events strictly before this instant). */
+  readonly receivedBefore?: Date;
 }
 
 export async function listEvents(
@@ -181,12 +203,17 @@ export async function listEvents(
   opts: ListEventsOptions,
 ): Promise<Page<EventSummary>> {
   const limit = clampLimit(opts.limit);
-  const { cursor, endpointId, provider } = opts;
+  const { cursor, endpointId, provider, receivedAfter, receivedBefore } = opts;
+  // The received-at range is bound on the RAW received_at (sargable against events_tunnel_idx /
+  // events_provider_idx, which lead with endpoint_id then received_at) — it only narrows the per-endpoint
+  // scan. The keyset still compares date_trunc('ms', …) to match the cursor resolution.
   const rows = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified
     from events
     where endpoint_id = ${endpointId}
     ${provider ? tx`and provider = ${provider}` : tx``}
+    ${receivedAfter ? tx`and received_at >= ${receivedAfter}` : tx``}
+    ${receivedBefore ? tx`and received_at < ${receivedBefore}` : tx``}
     ${cursor ? keysetBefore(tx, cursor) : tx``}
     order by date_trunc('milliseconds', received_at) desc, id desc
     limit ${limit + 1}`;
