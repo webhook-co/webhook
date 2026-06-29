@@ -29,6 +29,19 @@ export const PROVIDERS = [
   "supabase",
   "render",
   "brex",
+  // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
+  "razorpay",
+  "sentry",
+  "linear",
+  "dropbox",
+  "checkout_com",
+  "lemon_squeezy",
+  "coinbase_commerce",
+  "dwolla",
+  "gocardless",
+  "notion",
+  "meta",
+  "woocommerce",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -39,19 +52,14 @@ export const ProviderSchema = z.enum(PROVIDERS);
  * (5 min) matches Stripe's and Slack's documented defaults. `scheme.ts` folds `unknown` in
  * and exposes this as CLOCK_SKEW_TOLERANCE_SECONDS.
  */
-export const PROVIDER_TOLERANCE_SECONDS: Readonly<Record<Provider, number>> = {
-  stripe: 300,
-  github: 300,
-  shopify: 300,
-  slack: 300,
-  standard_webhooks: 300,
-  clerk: 300,
-  resend: 300,
-  stytch: 300,
-  supabase: 300,
-  render: 300,
-  brex: 300,
+const DEFAULT_TOLERANCE_SECONDS = 300;
+/** Overrides for the few providers documenting a replay window other than the 300s default. */
+const TOLERANCE_OVERRIDES: Partial<Record<Provider, number>> = {
+  // e.g. twitch: 600 — added alongside that provider's config.
 };
+export const PROVIDER_TOLERANCE_SECONDS: Readonly<Record<Provider, number>> = Object.fromEntries(
+  PROVIDERS.map((p) => [p, TOLERANCE_OVERRIDES[p] ?? DEFAULT_TOLERANCE_SECONDS]),
+) as Record<Provider, number>;
 
 /**
  * Where a scheme's signed unix-seconds timestamp comes from. `none` = the scheme has no signed
@@ -207,6 +215,26 @@ function standardWebhooksConfig(slug: Provider, prefix: "webhook" | "svix"): Hma
   };
 }
 
+/**
+ * Build a raw-body HMAC-SHA256 config: the signature is computed over the EXACT request body verbatim
+ * (no timestamp, no header framing) — the most common provider scheme. `encoding` is hex or base64;
+ * `prefix` is an optional fixed prefix on the header value to strip + require (e.g. `sha256=`).
+ */
+function rawBodyHmacConfig(
+  slug: Provider,
+  signatureHeader: string,
+  encoding: "hex" | "base64",
+  prefix?: string,
+): HmacProviderConfig {
+  return {
+    slug,
+    signatureHeader,
+    ...(prefix !== undefined ? { signatureValuePrefix: prefix } : {}),
+    encoding,
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS[slug],
+  };
+}
+
 /** Standard Webhooks (ADR-0008): the canonical `webhook-*` header trio. */
 export const STANDARD_WEBHOOKS_CONFIG = standardWebhooksConfig("standard_webhooks", "webhook");
 
@@ -237,6 +265,20 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
   supabase: SUPABASE_CONFIG,
   render: RENDER_CONFIG,
   brex: BREX_CONFIG,
+  // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256 (utf8 key, no timestamp). Headers + encoding
+  // verified per provider against the S2.1 research matrix / official signing docs.
+  razorpay: rawBodyHmacConfig("razorpay", "x-razorpay-signature", "hex"),
+  sentry: rawBodyHmacConfig("sentry", "sentry-hook-signature", "hex"),
+  linear: rawBodyHmacConfig("linear", "linear-signature", "hex"),
+  dropbox: rawBodyHmacConfig("dropbox", "x-dropbox-signature", "hex"),
+  checkout_com: rawBodyHmacConfig("checkout_com", "cko-signature", "hex"),
+  lemon_squeezy: rawBodyHmacConfig("lemon_squeezy", "x-signature", "hex"),
+  coinbase_commerce: rawBodyHmacConfig("coinbase_commerce", "x-cc-webhook-signature", "hex"),
+  dwolla: rawBodyHmacConfig("dwolla", "x-request-signature-sha-256", "hex"),
+  gocardless: rawBodyHmacConfig("gocardless", "webhook-signature", "hex"),
+  notion: rawBodyHmacConfig("notion", "x-notion-signature", "hex", "sha256="),
+  meta: rawBodyHmacConfig("meta", "x-hub-signature-256", "hex", "sha256="),
+  woocommerce: rawBodyHmacConfig("woocommerce", "x-wc-webhook-signature", "base64"),
 };
 
 /**
