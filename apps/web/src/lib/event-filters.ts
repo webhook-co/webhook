@@ -15,6 +15,7 @@
 
 import type { VerificationState } from "@webhook-co/shared";
 
+import { isDatePreset, resolvePresetBound } from "./date-range";
 import { VERIFICATION_STATES } from "./verification-state";
 
 /** The coerced, SQL-ready filter (instant bounds). Mirrors the db `ListEventsOptions` filter fields. */
@@ -36,6 +37,8 @@ export interface EventFilterParams {
   readonly status?: string | null;
   /** Free-text substring search over the event ID fields (`?search=`). */
   readonly search?: string | null;
+  /** A relative date preset (`?range=`): 1h | 24h | 7d | 30d — resolves to a receivedAfter bound. */
+  readonly range?: string | null;
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -71,6 +74,7 @@ function toInstant(value: string | null | undefined): Date | undefined {
 export function parseEventFilters(
   params: EventFilterParams,
   validProviders?: readonly string[],
+  now: Date = new Date(),
 ): EventFilters {
   const filters: {
     provider?: string;
@@ -86,10 +90,18 @@ export function parseEventFilters(
   ) {
     filters.provider = provider;
   }
-  const receivedAfter = toInstant(params.from);
-  if (receivedAfter !== undefined) filters.receivedAfter = receivedAfter;
-  const receivedBefore = toInstant(params.to);
-  if (receivedBefore !== undefined) filters.receivedBefore = receivedBefore;
+  // Date range: a valid relative preset (`?range=7d`) OWNS the range — it resolves to a receivedAfter
+  // lower bound (`now − window`) and any custom from/to are ignored. Otherwise the explicit from/to
+  // bounds apply (half-open: `receivedAfter >=`, `receivedBefore <`). A bad preset id falls through to
+  // from/to, and a bad date is dropped — so a hand-edited value never reaches SQL as garbage.
+  if (isDatePreset(params.range)) {
+    filters.receivedAfter = resolvePresetBound(params.range, now);
+  } else {
+    const receivedAfter = toInstant(params.from);
+    if (receivedAfter !== undefined) filters.receivedAfter = receivedAfter;
+    const receivedBefore = toInstant(params.to);
+    if (receivedBefore !== undefined) filters.receivedBefore = receivedBefore;
+  }
   const status = cleanString(params.status);
   // Validate against the closed enum (a hand-edited `?status=foo` is dropped, not passed to SQL).
   if (status !== undefined && (VERIFICATION_STATES as readonly string[]).includes(status)) {

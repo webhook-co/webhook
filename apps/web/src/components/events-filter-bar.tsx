@@ -1,18 +1,21 @@
 "use client";
 
-import { Button, Input, Label, Select } from "@webhook-co/ui";
+import { Button, Input, Select } from "@webhook-co/ui";
+import { Search } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 
+import { DateRangeFilter } from "@/components/date-range-filter";
 import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verification-state";
 
-// The events-list filter bar: provider + verification-state dropdowns + a received-at date range + a
-// free-text search, driven entirely by the URL query (`?provider=&status=&from=&to=&search=`) so the
-// filtered view is shareable, bookmarkable, and refresh-safe. The dropdowns/dates push on change; the
-// search debounces (it's free typing). The server page re-reads the query, re-runs the filtered load, and
-// re-keys the list. No client-side filtering — the DB does it.
+// The events-list filter bar, driven entirely by the URL query so the filtered view is shareable,
+// bookmarkable, and refresh-safe. Two tiers encode two jobs: a full-width SEARCH row (find one event by
+// id) sits apart from the faceting row below — provider, verification, and a date-range control
+// (`?provider=&status=&range|from|to=&search=`). The selects/date push on change; the search debounces
+// (it's free typing). The server page re-reads the query, re-runs the filtered load, and re-keys the
+// list. No client-side filtering — the DB does it.
 
-const FILTER_KEYS = ["provider", "status", "from", "to", "search"] as const;
+const FILTER_KEYS = ["provider", "status", "from", "to", "search", "range"] as const;
 const SEARCH_DEBOUNCE_MS = 300;
 
 export interface EventsFilterBarProps {
@@ -31,7 +34,9 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
   const search = searchParams.get("search") ?? "";
-  const active = provider !== "" || status !== "" || from !== "" || to !== "" || search !== "";
+  const range = searchParams.get("range") ?? "";
+  const active =
+    provider !== "" || status !== "" || from !== "" || to !== "" || search !== "" || range !== "";
 
   // The query string WE last pushed. Changing two controls within the RSC-navigation commit window
   // would otherwise both start from the stale `searchParams` snapshot and clobber each other; merging
@@ -47,12 +52,26 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
-  function update(key: (typeof FILTER_KEYS)[number], value: string) {
+  // Apply a patch of one or more keys in a single merge against the last-pushed value (so concurrent
+  // control changes aren't split or clobbered). The date control sets a preset + clears from/to (or vice
+  // versa) in one push; the selects set a single key.
+  function applyPatch(patch: Record<string, string>) {
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
-    if (value) next.set(key, value);
-    else next.delete(key);
+    for (const [key, value] of Object.entries(patch)) {
+      if (value) next.set(key, value);
+      else next.delete(key);
+    }
     apply(next);
   }
+
+  function update(key: (typeof FILTER_KEYS)[number], value: string) {
+    applyPatch({ [key]: value });
+  }
+
+  // Whether the date control's custom inputs are revealed. Owned here (not in the child) so a "Clear
+  // filters" can collapse them — the child is value-driven and can't otherwise tell a clear from a
+  // just-opened-empty-custom state.
+  const [dateInputsOpen, setDateInputsOpen] = React.useState(false);
 
   // The free-text search debounces (typing) and re-syncs from an external ?search change (back button).
   // `searchPending` is true while the input is "ahead" of the URL (a debounce in flight); it suppresses
@@ -82,74 +101,25 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
   }, [searchInput, search, committedQuery, router, pathname]);
 
   function clear() {
-    // Wipe every filter — including the search box. Reset the input + the pending flag so an in-flight
-    // search debounce (still scheduled if the user typed then hit Clear within the window) no-ops instead
-    // of re-pushing the just-cleared term: with searchInput now "" the debounce sees trimmed === search.
+    // Wipe every filter — including the search box and the revealed custom date inputs. Reset the search
+    // input + pending flag so an in-flight debounce (if the user typed then hit Clear within the window)
+    // no-ops instead of re-pushing the just-cleared term, and collapse the custom date inputs.
     setSearchInput("");
     searchPendingRef.current = false;
+    setDateInputsOpen(false);
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     for (const key of FILTER_KEYS) next.delete(key);
     apply(next);
   }
 
   return (
-    <div className="flex flex-wrap items-end gap-4 rounded-card border border-hairline bg-surface-sunken p-4">
-      <div className="flex w-52 flex-col gap-1.5">
-        <Label htmlFor="filter-provider">Provider</Label>
-        <Select
-          id="filter-provider"
-          value={provider}
-          onChange={(e) => update("provider", e.target.value)}
-        >
-          <option value="">All providers</option>
-          {providers.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </Select>
-      </div>
-
-      <div className="flex w-44 flex-col gap-1.5">
-        <Label htmlFor="filter-status">Verification</Label>
-        <Select
-          id="filter-status"
-          value={status}
-          onChange={(e) => update("status", e.target.value)}
-        >
-          <option value="">All</option>
-          {VERIFICATION_STATES.map((s) => (
-            <option key={s} value={s}>
-              {VERIFICATION_STATE_LABELS[s]}
-            </option>
-          ))}
-        </Select>
-      </div>
-
-      <div className="flex w-44 flex-col gap-1.5">
-        <Label htmlFor="filter-from">From</Label>
-        <Input
-          id="filter-from"
-          type="date"
-          value={from}
-          max={to || undefined}
-          onChange={(e) => update("from", e.target.value)}
+    <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface-sunken p-4">
+      {/* Tier 1 — find: a full-width search, set apart from the faceting controls below. */}
+      <div className="relative">
+        <Search
+          aria-hidden
+          className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-fg-muted"
         />
-      </div>
-
-      <div className="flex w-44 flex-col gap-1.5">
-        <Label htmlFor="filter-to">To (exclusive)</Label>
-        <Input
-          id="filter-to"
-          type="date"
-          value={to}
-          min={from || undefined}
-          onChange={(e) => update("to", e.target.value)}
-        />
-      </div>
-
-      <div className="flex w-64 flex-col gap-1.5">
-        <Label htmlFor="filter-search">Search</Label>
         <Input
           id="filter-search"
           type="search"
@@ -160,16 +130,61 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
             // doesn't re-sync over the typing; the debounce clears it after pushing.
             searchPendingRef.current = e.target.value.trim() !== search;
           }}
-          placeholder="event / provider / external id"
-          aria-label="Search events by id"
+          placeholder="Search by event id, external id, or provider event id"
+          aria-label="Search events"
+          className="pl-9"
         />
       </div>
 
-      {active ? (
-        <Button variant="secondary" onClick={clear}>
+      {/* Tier 2 — narrow: the faceting controls, with Clear right-aligned (disabled when nothing's set). */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          aria-label="Filter by provider"
+          value={provider}
+          onChange={(e) => update("provider", e.target.value)}
+          className="w-44"
+        >
+          <option value="">All providers</option>
+          {providers.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </Select>
+
+        <Select
+          aria-label="Filter by verification status"
+          value={status}
+          onChange={(e) => update("status", e.target.value)}
+          className="w-40"
+        >
+          <option value="">All statuses</option>
+          {VERIFICATION_STATES.map((s) => (
+            <option key={s} value={s}>
+              {VERIFICATION_STATE_LABELS[s]}
+            </option>
+          ))}
+        </Select>
+
+        <DateRangeFilter
+          value={{ range, from, to }}
+          onApply={applyPatch}
+          customOpen={dateInputsOpen}
+          onCustomOpenChange={setDateInputsOpen}
+        />
+
+        <Button
+          variant="secondary"
+          onClick={clear}
+          // Enabled when any filter is applied OR the custom date inputs are revealed — so Clear is the
+          // escape hatch that collapses empty, just-opened custom inputs (which set no URL param, so
+          // `active` alone would leave Clear disabled with no other way to dismiss them).
+          disabled={!active && !dateInputsOpen}
+          className="ml-auto"
+        >
           Clear filters
         </Button>
-      ) : null}
+      </div>
     </div>
   );
 }

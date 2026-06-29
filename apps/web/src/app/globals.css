@@ -17,3 +17,14 @@
   --wh-font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
   --wh-font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", "Cascadia Code", monospace;
 }
+
+/* Native form controls (the date-input calendar indicator + its picker popup, number spinners,
+   scrollbars) follow the app theme. The theme is a `data-theme` attribute, not the OS scheme, so
+   without this the browser paints the calendar icon black-on-dark in dark mode. Pinning
+   `color-scheme` per theme makes the native chrome render light-on-dark to match. */
+[data-theme="light"] {
+  color-scheme: light;
+}
+[data-theme="dark"] {
+  color-scheme: dark;
+}

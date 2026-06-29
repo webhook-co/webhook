@@ -78,6 +78,41 @@ describe("parseEventFilters", () => {
   });
 });
 
+describe("parseEventFilters — date range presets (?range=)", () => {
+  const NOW = new Date("2026-06-29T12:00:00.000Z");
+
+  it("resolves a valid preset to a receivedAfter bound (now − window), no upper bound", () => {
+    const f = parseEventFilters({ range: "7d" }, undefined, NOW);
+    expect(f.receivedAfter?.toISOString()).toBe("2026-06-22T12:00:00.000Z");
+    expect(f.receivedBefore).toBeUndefined();
+  });
+
+  it("lets a valid preset OWN the range — custom from/to are ignored", () => {
+    const f = parseEventFilters(
+      { range: "24h", from: "2026-01-01", to: "2026-01-02" },
+      undefined,
+      NOW,
+    );
+    expect(f.receivedAfter?.toISOString()).toBe("2026-06-28T12:00:00.000Z");
+    expect(f.receivedBefore).toBeUndefined();
+  });
+
+  it("falls through to from/to when the preset id is unknown (hand-edited ?range=foo)", () => {
+    const f = parseEventFilters(
+      { range: "foo", from: "2026-06-01", to: "2026-06-02" },
+      undefined,
+      NOW,
+    );
+    expect(f.receivedAfter?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
+    expect(f.receivedBefore?.toISOString()).toBe("2026-06-02T00:00:00.000Z");
+  });
+
+  it("applies plain from/to when no range is present", () => {
+    const f = parseEventFilters({ from: "2026-06-01" }, undefined, NOW);
+    expect(f.receivedAfter?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
+  });
+});
+
 describe("hasAppliedFilters", () => {
   it("reflects the PARSED filters (a dropped bad date is not 'filtered')", () => {
     expect(hasAppliedFilters({})).toBe(false);
