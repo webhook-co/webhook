@@ -111,6 +111,23 @@ function collectNumberedSignatures(
 }
 
 /**
+ * Read a scalar at a dot-path in a parsed JSON value (numeric segments index arrays). Returns the
+ * stringified scalar (number/boolean/string), or undefined for an absent/null/non-scalar value. Pure +
+ * total — never throws on any shape (a non-object mid-path just yields undefined).
+ */
+function jsonPathValue(root: unknown, path: string): string | undefined {
+  let cur: unknown = root;
+  for (const seg of path.split(".")) {
+    if (cur === null || typeof cur !== "object") return undefined;
+    cur = Array.isArray(cur) ? cur[Number(seg)] : (cur as Record<string, unknown>)[seg];
+  }
+  if (typeof cur === "string" || typeof cur === "number" || typeof cur === "boolean") {
+    return String(cur);
+  }
+  return undefined;
+}
+
+/**
  * Resolve the signed timestamp. `null` = the scheme has none; string = MALFORMED detail. `tsRaw` is
  * used VERBATIM in the signed message (whatever the provider signs); `epochSeconds` drives the replay
  * window — so a milliseconds or ISO-8601/RFC3339 datetime timestamp verifies correctly even though the
@@ -156,12 +173,36 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
   const enforceWindow = config.enforceReplayWindow ?? true;
 
   async function verify(input: VerifyInput): Promise<VerificationResult> {
-    // Collect the signature(s) (presence = MISSING_HEADER). Numbered schemes (DocuSign) gather one
-    // signature per `<prefix>N` header; everyone else parses the single signature header value. The
-    // diagnosis order — MISSING_HEADER → oversize → signature-parse — is identical for both.
+    const malformed = (detail: string): VerificationResult =>
+      verificationFailed({ code: "MALFORMED_SIGNATURE", detail, scheme });
+    // Lazily parse the body as JSON — only when a scheme reads its signature or signed fields from the
+    // body (Adyen). Never throws: a non-JSON body yields undefined → MALFORMED downstream.
+    let jsonState: { ok: true; value: unknown } | { ok: false } | undefined;
+    const jsonBody = (): unknown | undefined => {
+      if (jsonState === undefined) {
+        try {
+          jsonState = { ok: true, value: JSON.parse(utf8Decoder.decode(input.rawBody)) };
+        } catch {
+          jsonState = { ok: false };
+        }
+      }
+      return jsonState.ok ? jsonState.value : undefined;
+    };
+
+    // Collect the signature(s) (presence = MISSING_HEADER). `signatureSource` reads it from the JSON
+    // body; numbered schemes (DocuSign) gather one per `<prefix>N` header; everyone else parses the
+    // single signature header value. Order — presence → oversize → signature-parse — is identical.
     let signatures: string[];
     let sigFields: Record<string, string> = {};
-    if (config.numberedSignatureHeaders) {
+    if (config.signatureSource?.kind === "jsonField") {
+      const oversize = oversizeBodyFailure(scheme, input.rawBody);
+      if (oversize !== null) return oversize;
+      const body = jsonBody();
+      const sig = body === undefined ? undefined : jsonPathValue(body, config.signatureSource.path);
+      if (sig === undefined || sig === "")
+        return malformed(`missing ${config.signatureSource.path}`);
+      signatures = [sig];
+    } else if (config.numberedSignatureHeaders) {
       signatures = collectNumberedSignatures(input, config.numberedSignatureHeaders);
       if (signatures.length === 0) {
         return verificationFailed({ code: "MISSING_HEADER", header, scheme });
@@ -207,8 +248,6 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
       if (formBody === undefined) formBody = new URLSearchParams(utf8Decoder.decode(input.rawBody));
       return formBody;
     };
-    const malformed = (detail: string): VerificationResult =>
-      verificationFailed({ code: "MALFORMED_SIGNATURE", detail, scheme });
 
     // Resolve every non-body message part to bytes (a referenced source that's absent is MALFORMED).
     // `null` marks the body placeholder, substituted per-call so the engine's mutation probes work.
@@ -270,6 +309,12 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
           // (a reject, never a forge); revisit this if such a provider is added.
           const keys = [...new Set(form.keys())].sort();
           value = keys.map((k) => `${k}${form.get(k)}`).join("");
+          break;
+        }
+        case "jsonField": {
+          // An absent signed field is the EMPTY string in position (Adyen's colon-join), never MALFORMED.
+          const body = jsonBody();
+          value = body === undefined ? "" : (jsonPathValue(body, part.path) ?? "");
           break;
         }
       }

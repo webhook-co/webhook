@@ -118,7 +118,10 @@ export function makeVerifyIngest(
         // to, and keep `verification: null` for a non-matching capture instead of a noisy
         // MISSING_HEADER. (So every adapter we run HAS its header — it never returns MISSING_HEADER
         // — and keeping the first failure yields the hint-first-ordered diagnostic.)
-        if (!hasHeader(input.headers, adapter.signatureHeader)) continue;
+        // A body-signature provider (Adyen) has no signature header to pre-filter on (signatureHeader
+        // is ""); always attempt it. Otherwise skip a provider whose signature header isn't present.
+        if (adapter.signatureHeader !== "" && !hasHeader(input.headers, adapter.signatureHeader))
+          continue;
         const secrets = await unsealFor(input, provider);
         const result = await adapter.verify({
           rawBody: input.rawBody,
