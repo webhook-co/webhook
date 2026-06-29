@@ -94,7 +94,7 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     // The router maps raw query strings into filter; the events.list Zod schema coerces them downstream.
     await handleRequest(
       get(
-        `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=2026-06-01T00:00:00Z&receivedBefore=2026-06-02T00:00:00Z`,
+        `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=2026-06-01T00:00:00Z&receivedBefore=2026-06-02T00:00:00Z&search=evt_abc`,
       ),
       deps,
     );
@@ -105,8 +105,26 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
         verificationState: "failed",
         receivedAfter: "2026-06-01T00:00:00Z",
         receivedBefore: "2026-06-02T00:00:00Z",
+        search: "evt_abc",
       },
     });
+  });
+
+  it("drops a whitespace-only ?search= so it never trips the contract's min(1) (no filter key)", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "events.list": async (_ctx, input) => {
+          seen = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    // "%20%20" → "  ": a blank/whitespace term is omitted entirely rather than sent as "" (which the
+    // contract's `.trim().min(1)` would 400) — the router treats whitespace-only as "no search filter".
+    await handleRequest(get(`/v1/endpoints/${EP}/events?search=%20%20`), deps);
+    expect(seen).toEqual({ endpointId: EP });
   });
 
   it("builds endpoints.list name filter from the query", async () => {

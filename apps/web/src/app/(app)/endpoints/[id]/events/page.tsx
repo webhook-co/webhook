@@ -30,6 +30,7 @@ export default async function EventsPage({
     status?: string | string[];
     from?: string | string[];
     to?: string | string[];
+    search?: string | string[];
   }>;
 }) {
   const session = await verifySession();
@@ -43,6 +44,7 @@ export default async function EventsPage({
     status: firstParam(sp.status),
     from: firstParam(sp.from),
     to: firstParam(sp.to),
+    search: firstParam(sp.search),
   };
   const filters = parseEventFilters(filterParams, PROVIDERS);
   const result = await loadEvents(session.orgId, id, filters);
@@ -83,7 +85,7 @@ export default async function EventsPage({
           <EventsList
             // Re-key on the endpoint AND the active filters so the list's once-seeded useState
             // (items/cursor) is replaced with the freshly-filtered first page on any filter change.
-            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}`}
+            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}:${filterParams.search ?? ""}`}
             endpointId={id}
             initialItems={result.items}
             initialCursor={result.nextCursor}

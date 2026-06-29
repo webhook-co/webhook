@@ -23,6 +23,7 @@ export interface EventFilters {
   readonly receivedAfter?: Date;
   readonly receivedBefore?: Date;
   readonly verificationState?: VerificationState;
+  readonly search?: string;
 }
 
 /** The raw, human-facing filter values as they ride in the URL query + across the load-more boundary. */
@@ -33,6 +34,8 @@ export interface EventFilterParams {
   readonly to?: string | null;
   /** Verification tri-state (`?status=`): verified | failed | unattempted. */
   readonly status?: string | null;
+  /** Free-text substring search over the event ID fields (`?search=`). */
+  readonly search?: string | null;
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -74,6 +77,7 @@ export function parseEventFilters(
     receivedAfter?: Date;
     receivedBefore?: Date;
     verificationState?: VerificationState;
+    search?: string;
   } = {};
   const provider = cleanString(params.provider);
   if (
@@ -91,6 +95,10 @@ export function parseEventFilters(
   if (status !== undefined && (VERIFICATION_STATES as readonly string[]).includes(status)) {
     filters.verificationState = status as VerificationState;
   }
+  // Cap at 256 to match the contract's `.max(256)` so the web surface doesn't accept a longer term than
+  // API/CLI/MCP (cross-surface parity); a hand-edited over-long `?search=` is dropped rather than run.
+  const search = cleanString(params.search);
+  if (search !== undefined && search.length <= 256) filters.search = search;
   return filters;
 }
 
@@ -104,6 +112,7 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
     filters.provider !== undefined ||
     filters.receivedAfter !== undefined ||
     filters.receivedBefore !== undefined ||
-    filters.verificationState !== undefined
+    filters.verificationState !== undefined ||
+    filters.search !== undefined
   );
 }

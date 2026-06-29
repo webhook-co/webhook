@@ -21,6 +21,7 @@ interface ListFlags extends GlobalFlags {
   after?: string;
   before?: string;
   status?: (typeof VERIFICATION_STATES)[number];
+  search?: string;
 }
 
 type GetFlags = GlobalFlags;
@@ -39,6 +40,7 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
           receivedAfter: flags.after,
           receivedBefore: flags.before,
           verificationState: flags.status,
+          search: flags.search,
         }),
       { cursor: flags.cursor, all: flags.all },
     );
@@ -92,6 +94,12 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
         kind: "enum",
         values: VERIFICATION_STATES,
         brief: "filter by verification state (verified | failed | unattempted)",
+        optional: true,
+      },
+      search: {
+        kind: "parsed",
+        parse: (value: string) => value,
+        brief: "substring search over event/provider/external ids (+ exact event id)",
         optional: true,
       },
     },

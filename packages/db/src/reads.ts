@@ -99,6 +99,21 @@ export function likeContains(term: string): string {
   return `%${term.replace(/[\\%_]/g, "\\$&")}%`;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The events.list free-text search. A FULL-uuid term is an exact event-id lookup (the user pasted an
+// event id to jump to it) — resolved by the PK alone, NOT OR'd into the substring scans (which would run
+// three wasted trigram scans alongside the PK probe; and a non-uuid term must never reach `id =`, which
+// would raise 22P02). Any other term is a case-insensitive substring across the ID fields
+// (provider_event_id, external_id, dedup_key), backed by trigram GIN indexes (migration 0023). All inputs
+// are bound params.
+function eventSearchFilter(tx: TenantTx, search: string | undefined) {
+  if (!search) return tx``;
+  if (UUID_RE.test(search)) return tx`and id = ${search}`;
+  const pattern = likeContains(search);
+  return tx`and (provider_event_id ilike ${pattern} or external_id ilike ${pattern} or dedup_key ilike ${pattern})`;
+}
+
 interface EndpointRow {
   id: string;
   org_id: string;
@@ -221,6 +236,8 @@ export interface ListEventsOptions extends ListOptions {
   readonly receivedBefore?: Date;
   /** Verification tri-state filter (verified | failed | unattempted). */
   readonly verificationState?: VerificationState;
+  /** Case-insensitive substring across the event ID fields (+ exact id match when a uuid). */
+  readonly search?: string;
 }
 
 export async function listEvents(
@@ -228,7 +245,8 @@ export async function listEvents(
   opts: ListEventsOptions,
 ): Promise<Page<EventSummary>> {
   const limit = clampLimit(opts.limit);
-  const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState } = opts;
+  const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState, search } =
+    opts;
   // The received-at range is bound on the RAW received_at (sargable against events_tunnel_idx /
   // events_provider_idx, which lead with endpoint_id then received_at) — it only narrows the per-endpoint
   // scan. The keyset still compares date_trunc('ms', …) to match the cursor resolution. The sparse
@@ -242,6 +260,7 @@ export async function listEvents(
     ${receivedAfter ? tx`and received_at >= ${receivedAfter}` : tx``}
     ${receivedBefore ? tx`and received_at < ${receivedBefore}` : tx``}
     ${verificationStateFilter(tx, verificationState)}
+    ${eventSearchFilter(tx, search)}
     ${cursor ? keysetBefore(tx, cursor) : tx``}
     order by date_trunc('milliseconds', received_at) desc, id desc
     limit ${limit + 1}`;

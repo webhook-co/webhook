@@ -129,6 +129,14 @@ describe("wbhk events list", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
   });
 
+  it("passes --search through as the search query param", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["events", "list", EP, "--search", "evt_123"], t.ctx);
+    const u = new URL(cap.urls[0]);
+    expect(u.searchParams.get("search")).toBe("evt_123");
+  });
+
   it("emits the envelope with --output json", async () => {
     const t = makeTestContext({
       store: loggedInStore(),

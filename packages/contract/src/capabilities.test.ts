@@ -199,6 +199,19 @@ describe("events.list filter (provider + received-at range)", () => {
     expect(bad.success).toBe(false);
   });
 
+  it("accepts a trimmed search term and rejects a blank one", () => {
+    const ok = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { search: "  evt_abc  " },
+    });
+    expect(ok.filter?.search).toBe("evt_abc"); // trimmed
+    const blank = eventsList.input.safeParse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { search: "   " },
+    });
+    expect(blank.success).toBe(false); // min(1) after trim
+  });
+
   it("produces a JSON-Schema-serializable input (no ZodDate) — MCP tools/list must not throw", () => {
     // Regression for the z.coerce.date() bug: the MCP surface converts this input to a JSON Schema, which
     // a ZodDate (from z.coerce.date()) can't represent. z.toJSONSchema must not throw on the filter.

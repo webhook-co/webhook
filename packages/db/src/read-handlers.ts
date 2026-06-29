@@ -125,6 +125,7 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         receivedAfter?: string;
         receivedBefore?: string;
         verificationState?: "verified" | "failed" | "unattempted";
+        search?: string;
       };
     };
     // The range bounds arrive as RFC3339 strings (the contract input is a plain string so the MCP tool
@@ -147,6 +148,7 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         receivedAfter,
         receivedBefore,
         verificationState: filter?.verificationState,
+        search: filter?.search,
       });
       // events.list is a newest-first browse; surface the watermark-bounded head as a resumable
       // checkpoint (caughtUp/lag are forward-tail concepts and don't apply to a DESC browse).

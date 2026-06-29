@@ -136,6 +136,10 @@ function matchRoute(
     if (receivedBefore) filter.receivedBefore = receivedBefore;
     const verificationState = query.get("verificationState");
     if (verificationState) filter.verificationState = verificationState;
+    // A whitespace-only / empty `?search=` means "no search" (the contract trims + min(1)s it, so passing
+    // it would 400 the whole request) — skip it, matching the lenient web surface.
+    const search = query.get("search");
+    if (search && search.trim() !== "") filter.search = search;
     if (Object.keys(filter).length > 0) input.filter = filter;
     return { capability: "events.list", input };
   }

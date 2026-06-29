@@ -63,17 +63,26 @@ let eTail3: string;
 async function seedEvent(
   orgId: string,
   endpointId: string,
-  opts: { provider?: string | null; verified?: boolean; verification?: unknown } = {},
+  opts: {
+    provider?: string | null;
+    verified?: boolean;
+    verification?: unknown;
+    providerEventId?: string | null;
+    externalId?: string | null;
+    dedupKey?: string;
+  } = {},
 ): Promise<string> {
   const id = newId();
-  const externalId: string | null = null; // explicit typed NULL (no bare null in the SQL template)
   // Default = a verified event ({ok:true}); pass verified/verification to seed a failed (false + ok:false)
-  // or unattempted (false + null) row for the verification-state tests.
+  // or unattempted (false + null) row; pass providerEventId/externalId/dedupKey for the search tests.
   const verified = opts.verified ?? true;
   const verification =
     opts.verification !== undefined
       ? opts.verification
       : { ok: true, keyId: "key_1", scheme: "stripe" };
+  const providerEventId = opts.providerEventId !== undefined ? opts.providerEventId : "evt_123";
+  const externalId = opts.externalId !== undefined ? opts.externalId : null;
+  const dedupKey = opts.dedupKey ?? newId();
   await withTenant(app, orgId, async (tx) => {
     await tx`
       insert into events
@@ -85,7 +94,7 @@ async function seedEvent(
            ["content-type", "application/json"],
            ["x-test", "1"],
          ])},
-         ${newId()}, ${"content_hash"}, ${opts.provider ?? null}, ${"evt_123"}, ${externalId},
+         ${dedupKey}, ${"content_hash"}, ${opts.provider ?? null}, ${providerEventId}, ${externalId},
          ${verified}, ${verification === null ? null : tx.json(verification)})`;
   });
   return id;
@@ -320,6 +329,31 @@ describe("reads repos (RLS + keyset pagination)", () => {
     });
     const ev = await withTenant(app, orgA, (tx) => getEvent(tx, fId));
     expect(ev?.verificationState).toBe("failed");
+  });
+
+  it("listEvents searches across provider_event_id / external_id / dedup_key (+ uuid id exact)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-search" }, hasher)).id;
+    const a = await seedEvent(orgA, ep, { providerEventId: "evt_STRIPE_abc", externalId: null });
+    const b = await seedEvent(orgA, ep, { providerEventId: "pi_xyz", externalId: "order-9981" });
+    const c = await seedEvent(orgA, ep, {
+      providerEventId: null,
+      externalId: null,
+      dedupKey: "whid_special_777",
+    });
+
+    const search = (term: string) =>
+      withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: ep, limit: 50, search: term }));
+
+    // case-insensitive substring on provider_event_id
+    expect((await search("stripe")).items.map((e) => e.id)).toEqual([a]);
+    // substring on external_id
+    expect((await search("9981")).items.map((e) => e.id)).toEqual([b]);
+    // substring on dedup_key
+    expect((await search("special")).items.map((e) => e.id)).toEqual([c]);
+    // exact id match when the term is a uuid (the PK)
+    expect((await search(b)).items.map((e) => e.id)).toEqual([b]);
+    // no match → empty (a non-uuid term never reaches `id =`, so no 22P02)
+    expect((await search("no-such-token")).items).toEqual([]);
   });
 
   it("listEndpoints filters by a case-insensitive name substring", async () => {

@@ -131,12 +131,13 @@ export interface EndpointsListParams extends ListParams {
   readonly name?: string;
 }
 
-/** events.list adds optional provider + received-at range + verification-state filters. */
+/** events.list adds optional provider + received-at range + verification-state + search filters. */
 export interface EventsListParams extends ListParams {
   readonly provider?: string;
   readonly receivedAfter?: string;
   readonly receivedBefore?: string;
   readonly verificationState?: string;
+  readonly search?: string;
 }
 
 /** The audit-chain verification result (the shared `audit.verify` output: ok + rowsVerified, or a break). */
@@ -390,6 +391,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         receivedAfter: params.receivedAfter,
         receivedBefore: params.receivedBefore,
         verificationState: params.verificationState,
+        search: params.search,
       });
       return parseOrThrow(eventsListCap.output, await getJson(path), "events");
     },

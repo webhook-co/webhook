@@ -59,6 +59,23 @@ describe("parseEventFilters", () => {
     expect(parseEventFilters({ status: "bogus" })).toEqual({}); // hand-edited junk dropped
     expect(parseEventFilters({ status: "  " })).toEqual({});
   });
+
+  it("passes a trimmed search term through and drops blank", () => {
+    expect(parseEventFilters({ search: "  evt_123  " })).toEqual({ search: "evt_123" });
+    expect(parseEventFilters({ search: "   " })).toEqual({});
+    expect(parseEventFilters({ search: null })).toEqual({});
+  });
+
+  it("caps search at 256 chars (parity with the contract .max(256)) — over-long is dropped", () => {
+    // A hand-edited `?search=` longer than the contract ceiling is dropped rather than run, so the web
+    // surface never accepts a longer term than API/CLI/MCP would (the contract `.trim().min(1).max(256)`).
+    expect(parseEventFilters({ search: "a".repeat(256) })).toEqual({ search: "a".repeat(256) });
+    expect(parseEventFilters({ search: "a".repeat(257) })).toEqual({});
+    // Trim happens BEFORE the length check, so trailing whitespace doesn't push a 256-char term over.
+    expect(parseEventFilters({ search: `${"a".repeat(256)}   ` })).toEqual({
+      search: "a".repeat(256),
+    });
+  });
 });
 
 describe("hasAppliedFilters", () => {
