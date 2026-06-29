@@ -55,13 +55,17 @@ export const PROVIDERS = [
   "circleci",
   "pagerduty",
   "airtable",
-  // W1 batch 3 — timestamped Tier-1 (signed message includes a header/sig-field unix-SECONDS
-  // timestamp). zendesk + twitch sign over datetime timestamps (ISO-8601 / RFC3339) and need a
-  // factory timestamp-format extension — deferred to that group, not config-expressible yet.
+  // W1 batch 3 — timestamped Tier-1 (unix-SECONDS timestamp in the signed message).
   "calendly",
   "zoom",
   "customerio",
   "sinch",
+  // W1 timestamp-format extension — millisecond (workos/front) and datetime/RFC3339 (zendesk/twitch)
+  // timestamps, enabled by the factory's TimestampSource `format`.
+  "workos",
+  "front",
+  "zendesk",
+  "twitch",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -75,23 +79,31 @@ export const ProviderSchema = z.enum(PROVIDERS);
 const DEFAULT_TOLERANCE_SECONDS = 300;
 /** Overrides for the few providers documenting a replay window other than the 300s default. */
 const TOLERANCE_OVERRIDES: Partial<Record<Provider, number>> = {
-  // e.g. twitch: 600 (10-min window) — returns with twitch's config once datetime timestamps are supported.
+  twitch: 600, // Twitch EventSub documents a 10-minute replay window.
 };
 export const PROVIDER_TOLERANCE_SECONDS: Readonly<Record<Provider, number>> = Object.fromEntries(
   PROVIDERS.map((p) => [p, TOLERANCE_OVERRIDES[p] ?? DEFAULT_TOLERANCE_SECONDS]),
 ) as Record<Provider, number>;
 
 /**
- * Where a scheme's signed unix-seconds timestamp comes from. `none` = the scheme has no signed
- * timestamp (no replay window). `header` = a dedicated header (Slack's `x-slack-request-timestamp`,
- * Standard Webhooks' `webhook-timestamp`). `sigField` = a `key=value` field embedded in the
- * signature header itself (Stripe's `t=` in `t=…,v1=…`). A timestamp must be a canonical integer
- * string or it's a typed MALFORMED_SIGNATURE.
+ * How a scheme's signed timestamp is encoded for the replay-window check. `seconds` (default) and
+ * `milliseconds` are canonical-integer epoch strings; `datetime` is an ISO-8601 / RFC3339 string
+ * (parsed via Date.parse, tolerating fractional/nanosecond seconds). In EVERY case the RAW string is
+ * what goes into the signed message — only the replay-window math differs.
+ */
+export type TimestampFormat = "seconds" | "milliseconds" | "datetime";
+
+/**
+ * Where a scheme's signed timestamp comes from. `none` = no signed timestamp (no replay window).
+ * `header` = a dedicated header (Slack's `x-slack-request-timestamp`, Standard Webhooks'
+ * `webhook-timestamp`). `sigField` = a `key=value` field embedded in the signature header itself
+ * (Stripe's `t=` in `t=…,v1=…`). `format` defaults to `seconds`; a value that doesn't match its
+ * format is a typed MALFORMED_SIGNATURE (never a silently-skipped replay check).
  */
 export type TimestampSource =
   | { readonly kind: "none" }
-  | { readonly kind: "header"; readonly header: string }
-  | { readonly kind: "sigField"; readonly field: string };
+  | { readonly kind: "header"; readonly header: string; readonly format?: TimestampFormat }
+  | { readonly kind: "sigField"; readonly field: string; readonly format?: TimestampFormat };
 
 /**
  * How the signature header value is parsed into one or more signatures (rotation / multi-sig):
@@ -396,6 +408,54 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
       { kind: "timestamp" },
     ],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.sinch,
+  },
+  // W1 timestamp-format extension — millisecond (workos/front) + datetime (zendesk/twitch) timestamps.
+  // workos: `WorkOS-Signature: t=<ms>,v1=<hex>`; signed `{t}.{body}`; `t` is MILLISECONDS since epoch.
+  workos: {
+    slug: "workos",
+    signatureHeader: "workos-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "t", format: "milliseconds" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.workos,
+  },
+  // front: `X-Front-Signature` (base64) + `X-Front-Request-Timestamp` (MILLISECONDS); signed `{ts}:{body}`.
+  front: {
+    slug: "front",
+    signatureHeader: "x-front-signature",
+    encoding: "base64",
+    timestamp: { kind: "header", header: "x-front-request-timestamp", format: "milliseconds" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: ":" }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.front,
+  },
+  // zendesk: `X-Zendesk-Webhook-Signature` (base64) + `…-Timestamp` (ISO-8601 datetime); signed `{ts}{body}`.
+  zendesk: {
+    slug: "zendesk",
+    signatureHeader: "x-zendesk-webhook-signature",
+    encoding: "base64",
+    timestamp: {
+      kind: "header",
+      header: "x-zendesk-webhook-signature-timestamp",
+      format: "datetime",
+    },
+    message: [{ kind: "timestamp" }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.zendesk,
+  },
+  // twitch (EventSub): `Twitch-Eventsub-Message-Signature: sha256=<hex>` + Message-Id + Message-Timestamp
+  // (RFC3339 datetime); signed `{messageId}{timestamp}{body}` (no separators); 10-minute replay window.
+  twitch: {
+    slug: "twitch",
+    signatureHeader: "twitch-eventsub-message-signature",
+    signatureValuePrefix: "sha256=",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "twitch-eventsub-message-timestamp", format: "datetime" },
+    message: [
+      { kind: "header", header: "twitch-eventsub-message-id" },
+      { kind: "timestamp" },
+      { kind: "body" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.twitch,
   },
 };
 

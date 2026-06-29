@@ -81,12 +81,17 @@ function parseSignatureHeader(
   }
 }
 
-/** Resolve the signed timestamp. `null` = the scheme has none; string = MALFORMED detail. */
+/**
+ * Resolve the signed timestamp. `null` = the scheme has none; string = MALFORMED detail. `tsRaw` is
+ * used VERBATIM in the signed message (whatever the provider signs); `epochSeconds` drives the replay
+ * window — so a milliseconds or ISO-8601/RFC3339 datetime timestamp verifies correctly even though the
+ * raw string (not an integer-seconds value) is what goes into the HMAC.
+ */
 function resolveTimestamp(
   source: TimestampSource,
   input: VerifyInput,
   fields: Record<string, string>,
-): { tsRaw: string; tsNum: number } | null | { error: string } {
+): { tsRaw: string; epochSeconds: number } | null | { error: string } {
   if (source.kind === "none") return null;
   const raw =
     source.kind === "header" ? findHeader(input.headers, source.header) : fields[source.field];
@@ -96,11 +101,19 @@ function resolveTimestamp(
     };
   }
   const label = source.kind === "header" ? source.header : source.field;
+  const fmt = source.format ?? "seconds";
+  if (fmt === "datetime") {
+    // ISO-8601 / RFC3339 (e.g. Zendesk, Twitch). Signed verbatim; Date.parse gives the epoch for the
+    // replay check (it tolerates fractional/nanosecond seconds, truncating to ms).
+    const ms = Date.parse(raw);
+    if (!Number.isFinite(ms)) return { error: `unparseable ${label}` };
+    return { tsRaw: raw, epochSeconds: Math.floor(ms / 1000) };
+  }
+  // seconds / milliseconds: require a canonical integer (Number.parseInt is lenient); a non-canonical
+  // or garbage timestamp is MALFORMED, never a silently-skipped replay check.
   const n = Number.parseInt(raw, 10);
-  // Require a canonical integer (Number.parseInt is lenient); a non-canonical/garbage timestamp is
-  // MALFORMED, never a silently-skipped replay check.
   if (!Number.isFinite(n) || String(n) !== raw) return { error: `non-integer ${label}` };
-  return { tsRaw: raw, tsNum: n };
+  return { tsRaw: raw, epochSeconds: fmt === "milliseconds" ? Math.floor(n / 1000) : n };
 }
 
 export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
@@ -168,7 +181,7 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
 
     // Enforce the replay window AFTER all structural checks, BEFORE spending HMAC cycles.
     if (ts !== null) {
-      const skewFailure = enforceSkew(scheme, ts.tsNum, input.now);
+      const skewFailure = enforceSkew(scheme, ts.epochSeconds, input.now);
       if (skewFailure !== null) return skewFailure;
     }
 
