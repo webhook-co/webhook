@@ -11,10 +11,9 @@ export const DEDUP_STRATEGIES = ["sw_webhook_id", "provider_event_id", "content_
 export const DedupStrategySchema = z.enum(DEDUP_STRATEGIES);
 export type DedupStrategy = z.infer<typeof DedupStrategySchema>;
 
-/** Recognized inbound providers (best-effort detection; never blocks ingest). */
-export const PROVIDERS = ["stripe", "github", "shopify", "slack", "standard_webhooks"] as const;
-export const ProviderSchema = z.enum(PROVIDERS);
-export type Provider = z.infer<typeof ProviderSchema>;
+// PROVIDERS / ProviderSchema / Provider are defined in @webhook-co/webhooks-spec (the leaf
+// package that owns the provider vocabulary + verification adapters) and re-exported by this
+// package's index, so there is still one cross-surface import site (`@webhook-co/shared`).
 
 /** Lifecycle of an envelope-encrypted key (signing_keys / provider_secrets). */
 export const KEY_STATUSES = ["active", "retiring", "revoked"] as const;
