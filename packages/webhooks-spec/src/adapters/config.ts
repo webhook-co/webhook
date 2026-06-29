@@ -42,6 +42,19 @@ export const PROVIDERS = [
   "notion",
   "meta",
   "woocommerce",
+  // W1 batch 2 — raw-body (+ value prefix), CSV multi-sig, and a base64-keyed provider.
+  "bitbucket",
+  "atlassian_jira",
+  "x",
+  "clickup",
+  "npm",
+  "heroku",
+  "dub",
+  "cal_com",
+  "asana",
+  "circleci",
+  "pagerduty",
+  "airtable",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -279,6 +292,49 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
   notion: rawBodyHmacConfig("notion", "x-notion-signature", "hex", "sha256="),
   meta: rawBodyHmacConfig("meta", "x-hub-signature-256", "hex", "sha256="),
   woocommerce: rawBodyHmacConfig("woocommerce", "x-wc-webhook-signature", "base64"),
+  // W1 batch 2 — raw-body (+ value prefix) + CSV multi-sig + a base64-keyed provider.
+  bitbucket: rawBodyHmacConfig("bitbucket", "x-hub-signature", "hex", "sha256="),
+  atlassian_jira: rawBodyHmacConfig("atlassian_jira", "x-hub-signature", "hex", "sha256="),
+  // x (Twitter/X): POST event signature over the raw body (base64). The GET crc_token challenge (a
+  // separate HMAC-of-the-token handshake) is an ingest-path follow-up, like asana's X-Hook-Secret.
+  x: rawBodyHmacConfig("x", "x-twitter-webhooks-signature", "base64", "sha256="),
+  clickup: rawBodyHmacConfig("clickup", "x-signature", "hex"),
+  npm: rawBodyHmacConfig("npm", "x-npm-signature", "hex", "sha256="),
+  heroku: rawBodyHmacConfig("heroku", "heroku-webhook-hmac-sha256", "base64"),
+  dub: rawBodyHmacConfig("dub", "dub-signature", "hex"),
+  cal_com: rawBodyHmacConfig("cal_com", "x-cal-signature-256", "hex"),
+  // asana: raw-body HMAC; the X-Hook-Secret handshake (how the operator obtains the secret) is a
+  // separate ingest-path follow-up — verification works once the secret is registered.
+  asana: rawBodyHmacConfig("asana", "x-hook-signature", "hex"),
+  // circleci: `circleci-signature: v1=<hex>` is a VERSIONED signature over the raw body (a single
+  // signing secret; a future `v2=` would be a stronger scheme, not a second active secret). CircleCI
+  // emits only `v1=` today, so accepting the listed `v1` is correct. FORWARD-WATCH: if a `v2=` ever
+  // ships alongside `v1=`, prefer the highest version rather than any-matching (downgrade defense).
+  circleci: {
+    slug: "circleci",
+    signatureHeader: "circleci-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "hex",
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.circleci,
+  },
+  // pagerduty: `X-PagerDuty-Signature: v1=<hex>,v1=<hex>` — multiple ACTIVE secrets during rotation;
+  // verify passes if ANY entry matches (verifyHmacCore compares the candidate MAC against all of them).
+  pagerduty: {
+    slug: "pagerduty",
+    signatureHeader: "x-pagerduty-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "hex",
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.pagerduty,
+  },
+  // airtable: `X-Airtable-Content-MAC: hmac-sha256=<hex>`; the macSecret is base64, decoded to the key.
+  airtable: {
+    slug: "airtable",
+    signatureHeader: "x-airtable-content-mac",
+    signatureValuePrefix: "hmac-sha256=",
+    encoding: "hex",
+    keyDerivation: "whsec-base64",
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.airtable,
+  },
 };
 
 /**
