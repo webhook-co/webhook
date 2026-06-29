@@ -137,6 +137,22 @@ export function toHexKeyCandidates(secrets: readonly string[]): SecretCandidate[
 }
 
 /**
+ * Map secrets onto keyed candidates where the HMAC key is the SHA-1 RAW 20 bytes of each secret
+ * (Braintree keys HMAC-SHA1 with `SHA1(private_key)`, not the private key itself). Async (crypto.subtle
+ * .digest); empty secrets are skipped. Positional keyIds keep `secret_0` = newest.
+ */
+export async function toSha1KeyCandidates(secrets: readonly string[]): Promise<SecretCandidate[]> {
+  const out: SecretCandidate[] = [];
+  for (let i = 0; i < secrets.length; i++) {
+    const raw = utf8Encoder.encode(secrets[i]!);
+    if (raw.length === 0) continue;
+    const digest = new Uint8Array(await crypto.subtle.digest("SHA-1", raw));
+    out.push({ keyId: `secret_${i}`, bytes: digest });
+  }
+  return out;
+}
+
+/**
  * Is a registered Standard Webhooks secret USABLE — i.e. does it decode to a non-empty key the verify
  * path can actually use? A SW secret is `whsec_`+base64; the verify path strips the prefix and base64-
  * decodes the remainder (toStandardWebhooksCandidates, above) to get the raw key. This applies the SAME

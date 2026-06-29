@@ -90,6 +90,8 @@ export const PROVIDERS = [
   "mailgun",
   // W3b — Mercado Pago: a query/header manifest with a lowercased data.id + conditional segments.
   "mercado_pago",
+  // W3b — Braintree: bt_signature pairs in a form field + SHA1(private_key) HMAC key.
+  "braintree",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -145,7 +147,10 @@ export type SignatureFormat =
   | { readonly kind: "plain" }
   | { readonly kind: "csvKv"; readonly sigKey: string; readonly delimiter?: string }
   | { readonly kind: "spaceList"; readonly sigTag: string }
-  | { readonly kind: "positional"; readonly timestampField: string };
+  | { readonly kind: "positional"; readonly timestampField: string }
+  // `&`-joined `publicKey|signature` pairs (Braintree `bt_signature`); the signatures are the parts
+  // after each `|`. We try them all (match-any) — our key only ever reproduces our own pair's sig.
+  | { readonly kind: "pipePairs" };
 
 /**
  * One ordered part of the signed message. The factory concatenates these to build the bytes the
@@ -204,8 +209,10 @@ export const RAW_BODY_MESSAGE: readonly MessagePart[] = [{ kind: "body" }];
  * (Stripe/GitHub/Shopify/Slack). `whsec-base64` = strip a `whsec_` prefix and base64-decode the
  * remainder to the raw key (Standard Webhooks). `hex` = hex-decode the secret to the raw key —
  * Authorize.Net's "Signature Key" is a hex string used as bytes, not as its ASCII characters.
+ * `sha1-secret` = the HMAC key is the SHA-1 RAW 20 bytes of the secret (Braintree keys with
+ * `SHA1(private_key)`, not the private key itself).
  */
-export type KeyDerivation = "utf8" | "whsec-base64" | "hex";
+export type KeyDerivation = "utf8" | "whsec-base64" | "hex" | "sha1-secret";
 
 /**
  * The HMAC digest a scheme signs with. SHA-256 is the default and by far the most common; SHA-1
@@ -237,10 +244,13 @@ export interface HmacProviderConfig {
   readonly signatureHeader: string;
   /**
    * Where the signature comes from when it is NOT a header value. `jsonField` reads it from a dot-path
-   * in the JSON body (Adyen's `notificationItems.0.NotificationRequestItem.additionalData.hmacSignature`).
-   * When set, `signatureHeader` is `""` and the header-parse path is bypassed.
+   * in the JSON body (Adyen's `…additionalData.hmacSignature`); `formField` reads it from a named
+   * `x-www-form-urlencoded` body field (Braintree's `bt_signature`). When set, `signatureHeader` is `""`
+   * and the header-parse path is bypassed; `signatureFormat` is then applied to the extracted value.
    */
-  readonly signatureSource?: { readonly kind: "jsonField"; readonly path: string };
+  readonly signatureSource?:
+    | { readonly kind: "jsonField"; readonly path: string }
+    | { readonly kind: "formField"; readonly name: string };
   /**
    * Collect signatures from NUMBERED headers `<prefix>1`, `<prefix>2`, …, `<prefix>max` instead of one
    * header value — each header carries one complete signature. DocuSign Connect emits one such header
@@ -777,6 +787,21 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
       { kind: "literal", value: ";" },
     ],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.mercado_pago,
+  },
+  // braintree: two form fields — `bt_signature` = `publicKey|sig&publicKey|sig` pairs (match-any), and
+  // `bt_payload` = a base64 string signed VERBATIM (incl. the trailing newline Braintree's encoder adds,
+  // which survives form url-decoding). The HMAC key is the SHA-1 RAW bytes of the private key; HMAC-SHA1,
+  // lowercase hex. Mirrors braintree_python/php. No timestamp.
+  braintree: {
+    slug: "braintree",
+    signatureHeader: "", // no header — the signature is the `bt_signature` form field
+    signatureSource: { kind: "formField", name: "bt_signature" },
+    signatureFormat: { kind: "pipePairs" },
+    encoding: "hex",
+    digest: "sha1",
+    keyDerivation: "sha1-secret",
+    message: [{ kind: "formField", name: "bt_payload" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.braintree,
   },
 };
 
