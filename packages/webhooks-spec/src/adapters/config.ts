@@ -151,6 +151,19 @@ export const RAW_BODY_MESSAGE: readonly MessagePart[] = [{ kind: "body" }];
 export type KeyDerivation = "utf8" | "whsec-base64";
 
 /**
+ * The HMAC digest a scheme signs with. SHA-256 is the default and by far the most common; SHA-1
+ * (20-byte MAC) and SHA-512 (64-byte MAC) cover the handful of providers that chose otherwise. The
+ * digest only changes the key import + the matchable MAC length — the rest of the engine is identical.
+ */
+export type HmacDigest = "sha256" | "sha1" | "sha512";
+
+/**
+ * How a scheme encodes its MAC in the header. `hex` and `base64` are standard; `base64url` is the
+ * URL-safe alphabet (`-`/`_`, usually unpadded) a few providers emit. Orthogonal to {@link HmacDigest}.
+ */
+export type SignatureEncoding = "hex" | "base64" | "base64url";
+
+/**
  * A config-driven HMAC verify adapter recipe. The factory (./factory) routes every one of these
  * through the SAME audited `verifyHmacCore`, so the only per-provider surface is this declarative
  * data — no bespoke crypto.
@@ -179,8 +192,10 @@ export interface HmacProviderConfig {
   readonly signatureValuePrefix?: string;
   /** How the header value is parsed into signatures. Defaults to `plain`. */
   readonly signatureFormat?: SignatureFormat;
-  /** How the signature is encoded in the header. */
-  readonly encoding: "hex" | "base64";
+  /** How the signature is encoded in the header (hex / base64 / base64url). */
+  readonly encoding: SignatureEncoding;
+  /** The HMAC digest. Defaults to `sha256` (the overwhelming majority of providers). */
+  readonly digest?: HmacDigest;
   /** How a registered secret becomes the HMAC key. Defaults to `utf8`. */
   readonly keyDerivation?: KeyDerivation;
   /** Where the signed timestamp comes from (drives the replay window). Defaults to `none`. */
