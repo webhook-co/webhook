@@ -51,6 +51,13 @@ export interface VerifyIngestInput {
 export interface VerificationOutcome {
   readonly verified: boolean;
   readonly verification: VerificationResult | null;
+  /**
+   * The provider that actually verified the event (the registered provider whose adapter matched).
+   * Set only on a successful verification, where it's the AUTHORITATIVE label for the event's
+   * `provider` — more reliable than header detection when providers collide on a signature header.
+   * Undefined on failure/unverified (the event keeps the best-effort detected provider).
+   */
+  readonly provider?: Provider;
 }
 
 /** The full-fidelity capture row handed to ingest_event (variant B). */
@@ -263,7 +270,12 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       contentType,
       contentHash: derived.contentHash,
       headers,
-      provider: derived.provider,
+      // A successful verify names the provider authoritatively (header detection can mis-pick when
+      // providers collide on a signature header); otherwise fall back to the detected provider. The
+      // providerEventId/dedupStrategy/dedupBucket below stay under the DETECTED provider (the dedup
+      // basis) — that only diverges from `provider` if a request carried two providers' signature
+      // headers, impossible for the current providers (no shared header); revisit if that changes.
+      provider: outcome.provider ?? derived.provider,
       providerEventId: derived.providerEventId,
       dedupBucket: derived.dedupBucket,
       verified: outcome.verified,

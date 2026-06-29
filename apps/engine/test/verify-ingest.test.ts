@@ -35,6 +35,32 @@ async function stripeSignature(secret: string, t: number, body: string): Promise
   return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** Seal a secret registered under an arbitrary provider (for the multi-/registered-provider cases). */
+async function sealAs(
+  store: SecretStore,
+  plaintext: string,
+  keyId: string,
+  provider: string,
+): Promise<CachedSealedSecret> {
+  const context: EncryptionContext = { orgId: ORG, endpointId: EP, keyId };
+  const sealed = await store.sealString(plaintext, context);
+  return toCachedSealedSecret({ id: keyId, provider, status: "active", sealed, context });
+}
+
+/** A GitHub signature: `sha256=<hex>` HMAC-SHA256 over the raw body (utf8 key). */
+async function githubSignature(secret: string, body: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, enc.encode(body));
+  const hex = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return `sha256=${hex}`;
+}
+
 const T = 1_750_000_000; // fixed signing timestamp
 const at = (): Date => new Date(T * 1000); // verify clock == signing time (skew 0)
 
@@ -130,7 +156,9 @@ describe("makeVerifyIngest", () => {
 
     await verify({
       rawBody: enc.encode("{}"),
-      headers: [],
+      // The stripe signature header must be present for verify to engage the stripe provider (and
+      // thus attempt — and fail — the unseal); a request with no matching header is skipped entirely.
+      headers: [["stripe-signature", `t=${T},v1=deadbeef`]],
       provider: "stripe",
       orgId: ORG,
       endpointId: EP,
@@ -157,5 +185,69 @@ describe("makeVerifyIngest", () => {
       sealedSecrets: [corrupt, good], // the corrupt one must not abort verification
     });
     expect(outcome.verified).toBe(true);
+  });
+
+  it("verifies against the REGISTERED provider even when header detection picked the wrong one", async () => {
+    // The collision case: a GitHub event (x-hub-signature-256) can be mis-detected as another scheme
+    // that shares that header. Selection by the endpoint's registered provider fixes it — a wrong
+    // detection hint must not stop the registered github secret from verifying.
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const SECRET = "gh_secret";
+    const cached = await sealAs(store, SECRET, "sec-gh", "github");
+    const body = `{"action":"opened"}`;
+    const sig = await githubSignature(SECRET, body);
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [["x-hub-signature-256", sig]],
+      provider: "stripe", // a WRONG detected hint
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [cached],
+    });
+    expect(outcome.verified).toBe(true);
+    expect(outcome.verification).toMatchObject({ ok: true, scheme: "github" });
+    expect(outcome.provider).toBe("github"); // names the matched provider authoritatively
+  });
+
+  it("verifies against the registered provider when detection found nothing (hint null)", async () => {
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const SECRET = "gh_secret";
+    const cached = await sealAs(store, SECRET, "sec-gh", "github");
+    const body = `{"action":"opened"}`;
+    const sig = await githubSignature(SECRET, body);
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [["x-hub-signature-256", sig]],
+      provider: null,
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [cached],
+    });
+    expect(outcome.verified).toBe(true);
+    expect(outcome.provider).toBe("github");
+  });
+
+  it("verifies the matching provider on a multi-provider endpoint (stripe + github registered)", async () => {
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const stripeCached = await sealAs(store, "whsec_multi", "sec-stripe", "stripe");
+    const githubCached = await sealAs(store, "gh_multi", "sec-gh", "github");
+    const body = `{"action":"opened"}`;
+    const sig = await githubSignature("gh_multi", body);
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [["x-hub-signature-256", sig]],
+      provider: null,
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [stripeCached, githubCached], // both registered; the github-signed event verifies via github
+    });
+    expect(outcome.verified).toBe(true);
+    expect(outcome.provider).toBe("github");
   });
 });
