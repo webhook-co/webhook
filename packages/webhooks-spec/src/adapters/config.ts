@@ -69,6 +69,8 @@ export const PROVIDERS = [
   // W1 final framework-needs — non-comma CSV delimiter (paddle) + positional CSV (recurly).
   "paddle",
   "recurly",
+  // W1 final framework-needs — numbered multi-header signatures (docusign).
+  "docusign",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -156,8 +158,19 @@ export type KeyDerivation = "utf8" | "whsec-base64";
 export interface HmacProviderConfig {
   /** The provider slug; becomes the adapter's `scheme`. */
   readonly slug: Provider;
-  /** The lowercase header carrying the signature. */
+  /**
+   * The lowercase header carrying the signature. When `numberedSignatureHeaders` is set this is the
+   * canonical (`…-1`) header — used for detection and the engine's header-presence gate — while the
+   * signatures themselves are collected across the numbered set.
+   */
   readonly signatureHeader: string;
+  /**
+   * Collect signatures from NUMBERED headers `<prefix>1`, `<prefix>2`, …, `<prefix>max` instead of one
+   * header value — each header carries one complete signature. DocuSign Connect emits one such header
+   * per configured HMAC key (rotation = an extra header). When set, `signatureFormat` /
+   * `signatureValuePrefix` are not applied (each numbered header IS one raw signature).
+   */
+  readonly numberedSignatureHeaders?: { readonly prefix: string; readonly max: number };
   /**
    * For `plain` signature formats only: a fixed prefix on the header value that is stripped
    * before decoding and REQUIRED to be present (e.g. GitHub's `sha256=`, Slack's `v0=`). A value
@@ -485,6 +498,20 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
     timestamp: { kind: "sigField", field: "ts" },
     message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.recurly,
+  },
+  // docusign (Connect): one base64 HMAC-SHA256-over-raw-body per configured key, spread across the
+  // NUMBERED headers `X-DocuSign-Signature-1`, `X-DocuSign-Signature-2`, … (so rotation = adding a key,
+  // each emitting its own header). `numberedSignatureHeaders` collects them all; verify passes if any
+  // matches a registered secret. `signatureHeader` (the -1 header, always present) drives detection.
+  // `max: 100` matches DocuSign's documented ceiling of 100 HMAC keys — a registered secret that is the
+  // operator's Nth key arrives in `…-N`, so under-scanning would silently false-reject it; over-scanning
+  // is free (absent indices are simply skipped).
+  docusign: {
+    slug: "docusign",
+    signatureHeader: "x-docusign-signature-1",
+    numberedSignatureHeaders: { prefix: "x-docusign-signature-", max: 100 },
+    encoding: "base64",
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.docusign,
   },
 };
 

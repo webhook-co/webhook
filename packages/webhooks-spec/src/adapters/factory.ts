@@ -94,6 +94,23 @@ function parseSignatureHeader(
 }
 
 /**
+ * Collect signatures from numbered headers `<prefix>1` … `<prefix>max` (DocuSign Connect: one base64
+ * MAC per configured key). Each present, non-empty header IS one complete signature; gaps are tolerated
+ * (a missing index doesn't stop the scan). Returns every signature found, in index order.
+ */
+function collectNumberedSignatures(
+  input: VerifyInput,
+  source: { prefix: string; max: number },
+): string[] {
+  const signatures: string[] = [];
+  for (let i = 1; i <= source.max; i++) {
+    const value = findHeader(input.headers, `${source.prefix}${i}`);
+    if (value !== undefined && value.trim() !== "") signatures.push(value.trim());
+  }
+  return signatures;
+}
+
+/**
  * Resolve the signed timestamp. `null` = the scheme has none; string = MALFORMED detail. `tsRaw` is
  * used VERBATIM in the signed message (whatever the provider signs); `epochSeconds` drives the replay
  * window — so a milliseconds or ISO-8601/RFC3339 datetime timestamp verifies correctly even though the
@@ -137,21 +154,35 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
   const keyMode = config.keyDerivation ?? "utf8";
 
   async function verify(input: VerifyInput): Promise<VerificationResult> {
-    const headerValue = findHeader(input.headers, header);
-    if (headerValue === undefined) {
-      return verificationFailed({ code: "MISSING_HEADER", header, scheme });
-    }
-
-    const oversize = oversizeBodyFailure(scheme, input.rawBody);
-    if (oversize !== null) return oversize;
-
-    const parsed = parseSignatureHeader(headerValue, format, config.signatureValuePrefix);
-    if ("error" in parsed) {
-      return verificationFailed({ code: "MALFORMED_SIGNATURE", detail: parsed.error, scheme });
+    // Collect the signature(s) (presence = MISSING_HEADER). Numbered schemes (DocuSign) gather one
+    // signature per `<prefix>N` header; everyone else parses the single signature header value. The
+    // diagnosis order — MISSING_HEADER → oversize → signature-parse — is identical for both.
+    let signatures: string[];
+    let sigFields: Record<string, string> = {};
+    if (config.numberedSignatureHeaders) {
+      signatures = collectNumberedSignatures(input, config.numberedSignatureHeaders);
+      if (signatures.length === 0) {
+        return verificationFailed({ code: "MISSING_HEADER", header, scheme });
+      }
+      const oversize = oversizeBodyFailure(scheme, input.rawBody);
+      if (oversize !== null) return oversize;
+    } else {
+      const headerValue = findHeader(input.headers, header);
+      if (headerValue === undefined) {
+        return verificationFailed({ code: "MISSING_HEADER", header, scheme });
+      }
+      const oversize = oversizeBodyFailure(scheme, input.rawBody);
+      if (oversize !== null) return oversize;
+      const parsed = parseSignatureHeader(headerValue, format, config.signatureValuePrefix);
+      if ("error" in parsed) {
+        return verificationFailed({ code: "MALFORMED_SIGNATURE", detail: parsed.error, scheme });
+      }
+      signatures = parsed.signatures;
+      sigFields = parsed.fields;
     }
 
     // Resolve (and format-validate) the timestamp, but DON'T enforce the window yet.
-    const ts = resolveTimestamp(tsSource, input, parsed.fields);
+    const ts = resolveTimestamp(tsSource, input, sigFields);
     if (ts !== null && "error" in ts) {
       return verificationFailed({ code: "MALFORMED_SIGNATURE", detail: ts.error, scheme });
     }
@@ -211,7 +242,7 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
       return verifyHmacHex({
         scheme,
         rawBody: input.rawBody,
-        expectedHexes: parsed.signatures,
+        expectedHexes: signatures,
         candidates,
         buildMessage,
       });
@@ -219,7 +250,7 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
     return verifyHmacBase64({
       scheme,
       rawBody: input.rawBody,
-      expectedBase64s: parsed.signatures,
+      expectedBase64s: signatures,
       candidates,
       buildMessage,
     });
