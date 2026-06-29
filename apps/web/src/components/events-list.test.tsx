@@ -32,10 +32,50 @@ describe("EventsList", () => {
         endpointId={ENDPOINT_ID}
         initialItems={[]}
         initialCursor={null}
+        filterParams={{}}
+        isFiltered={false}
         loadMore={vi.fn()}
       />,
     );
     expect(screen.getByText(/no events yet/i)).toBeInTheDocument();
+  });
+
+  it("shows a filtered-empty message (not the onboarding copy) when filters are active", () => {
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[]}
+        initialCursor={null}
+        filterParams={{ provider: "github" }}
+        isFiltered={true}
+        loadMore={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/no events match these filters/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no events yet/i)).not.toBeInTheDocument();
+  });
+
+  it("threads the active filterParams into the load-more action", async () => {
+    const user = userEvent.setup();
+    const cursor: Cursor = { receivedAt: new Date("2026-06-28T12:00:00Z"), id: A };
+    const loadMore = vi.fn(async () => ({ ok: true as const, items: [], nextCursor: null }));
+    const filterParams = { provider: "stripe", from: "2026-06-01" };
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[ev(A)]}
+        initialCursor={cursor}
+        filterParams={filterParams}
+        isFiltered={true}
+        loadMore={loadMore}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /load older events/i }));
+    expect(loadMore).toHaveBeenCalledWith({
+      endpointId: ENDPOINT_ID,
+      cursor,
+      filters: filterParams,
+    });
   });
 
   it("shows a verified pill for verified events and a neutral 'Not verified' for unsigned (no alarm)", () => {
@@ -44,6 +84,8 @@ describe("EventsList", () => {
         endpointId={ENDPOINT_ID}
         initialItems={[ev(A, { verified: true }), ev(B, { verified: false, provider: null })]}
         initialCursor={null}
+        filterParams={{}}
+        isFiltered={false}
         loadMore={vi.fn()}
       />,
     );
@@ -74,12 +116,14 @@ describe("EventsList", () => {
         endpointId={ENDPOINT_ID}
         initialItems={[ev(A)]}
         initialCursor={cursor}
+        filterParams={{}}
+        isFiltered={false}
         loadMore={loadMore}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: /load older events/i }));
-    expect(loadMore).toHaveBeenCalledWith({ endpointId: ENDPOINT_ID, cursor });
+    expect(loadMore).toHaveBeenCalledWith({ endpointId: ENDPOINT_ID, cursor, filters: {} });
     await waitFor(() => expect(screen.getByText(B)).toBeInTheDocument());
     // both pages are now shown
     expect(screen.getByText(A)).toBeInTheDocument();
@@ -96,6 +140,8 @@ describe("EventsList", () => {
         endpointId={ENDPOINT_ID}
         initialItems={[ev(A)]}
         initialCursor={cursor}
+        filterParams={{}}
+        isFiltered={false}
         loadMore={loadMore}
       />,
     );

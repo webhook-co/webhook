@@ -90,6 +90,28 @@ describe("wbhk events list", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
   });
 
+  it("passes a --after/--before range through as normalized ISO query params", async () => {
+    const cap = capturingFetch({ items: [], nextCursor: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["events", "list", EP, "--after", "2026-06-01T00:00:00Z", "--before", "2026-06-02"],
+      t.ctx,
+    );
+    const u = new URL(cap.urls[0]);
+    expect(u.searchParams.get("receivedAfter")).toBe("2026-06-01T00:00:00.000Z");
+    expect(u.searchParams.get("receivedBefore")).toBe("2026-06-02T00:00:00.000Z");
+  });
+
+  it("rejects an unparseable --after as a usage error", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["events", "list", EP, "--after", "not-a-date"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+  });
+
   it("emits the envelope with --output json", async () => {
     const t = makeTestContext({
       store: loggedInStore(),

@@ -21,6 +21,7 @@ import {
   getEndpoint,
   getEvent,
   latestTailCursor,
+  likeContains,
   listEndpoints,
   listEvents,
   resolveSince,
@@ -160,6 +161,14 @@ function expectFault(p: Promise<unknown>, code: string): Promise<void> {
   return expect(p).rejects.toMatchObject({ name: "CapabilityFault", code });
 }
 
+describe("likeContains (LIKE-metachar escaping)", () => {
+  it("wraps a term as a CONTAINS pattern and escapes \\ % _", () => {
+    expect(likeContains("acme")).toBe("%acme%");
+    // %, _ and \ are escaped so they match literally (a user typing "50%" searches for "50%").
+    expect(likeContains("50%_x\\y")).toBe("%50\\%\\_x\\\\y%");
+  });
+});
+
 describe("reads repos (RLS + keyset pagination)", () => {
   it("listEndpoints is org-scoped and getEndpoint returns null cross-org", async () => {
     const page = await withTenant(app, orgA, (tx) => listEndpoints(tx, { limit: 50 }));
@@ -196,6 +205,55 @@ describe("reads repos (RLS + keyset pagination)", () => {
     );
     expect(page.items.length).toBe(1);
     expect(page.items[0]?.provider).toBe("github");
+  });
+
+  it("listEvents filters by a received-at range (>= after, < before)", async () => {
+    // epTail's 3 events sit at tailAt(1000) < tailAt(2000) < tailAt(3000).
+    const after = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: epTail, limit: 50, receivedAfter: tailAt(2000) }),
+    );
+    expect(new Set(after.items.map((e) => e.id))).toEqual(new Set([eTail2, eTail3])); // >= 2000
+
+    const before = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: epTail, limit: 50, receivedBefore: tailAt(2000) }),
+    );
+    expect(before.items.map((e) => e.id)).toEqual([eTail1]); // strictly < 2000
+
+    const between = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, {
+        endpointId: epTail,
+        limit: 50,
+        receivedAfter: tailAt(1500),
+        receivedBefore: tailAt(2500),
+      }),
+    );
+    expect(between.items.map((e) => e.id)).toEqual([eTail2]); // only the middle one
+  });
+
+  it("listEvents composes a provider + received-at range filter (AND)", async () => {
+    // stripe events on epTail are eTail1 (1000) + eTail3 (3000); the range keeps only eTail3.
+    const page = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, {
+        endpointId: epTail,
+        limit: 50,
+        provider: "stripe",
+        receivedAfter: tailAt(2000),
+      }),
+    );
+    expect(page.items.map((e) => e.id)).toEqual([eTail3]);
+  });
+
+  it("listEndpoints filters by a case-insensitive name substring", async () => {
+    const tail = await withTenant(app, orgA, (tx) =>
+      listEndpoints(tx, { limit: 50, name: "TAIL" }),
+    );
+    expect(tail.items.map((e) => e.id)).toEqual([epTail]); // matches "ep-tail", case-insensitively
+    expect(tail.items.map((e) => e.id)).not.toContain(epA);
+
+    const none = await withTenant(app, orgA, (tx) =>
+      listEndpoints(tx, { limit: 50, name: "no-such-endpoint" }),
+    );
+    expect(none.items).toEqual([]);
   });
 
   it("listEvents does not skip same-millisecond events across a backward keyset page", async () => {
@@ -264,6 +322,31 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
 
   it("events.list returns NOT_FOUND for an endpoint the org does not own", async () => {
     await expectFault(handlers.get("events.list")!(ctxA, { endpointId: epB }), "NOT_FOUND");
+  });
+
+  it("events.list coerces a received-at range filter (RFC3339 strings) and applies it", async () => {
+    const page = (await handlers.get("events.list")!(ctxA, {
+      endpointId: epTail,
+      filter: { receivedAfter: tailAt(2000).toISOString() },
+    })) as { items: { id: string }[] };
+    expect(new Set(page.items.map((e) => e.id))).toEqual(new Set([eTail2, eTail3]));
+  });
+
+  it("events.list rejects a malformed range bound with VALIDATION_ERROR", async () => {
+    await expectFault(
+      handlers.get("events.list")!(ctxA, {
+        endpointId: epTail,
+        filter: { receivedBefore: "not-a-timestamp" },
+      }),
+      "VALIDATION_ERROR",
+    );
+  });
+
+  it("endpoints.list applies a name substring filter via the handler", async () => {
+    const page = (await handlers.get("endpoints.list")!(ctxA, { filter: { name: "tail" } })) as {
+      items: { id: string }[];
+    };
+    expect(page.items.map((e) => e.id)).toEqual([epTail]);
   });
 
   it("events.tail returns a forward page of summaries up to the watermark", async () => {

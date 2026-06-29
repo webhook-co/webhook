@@ -46,6 +46,9 @@ export const endpointsList = defineCapability({
   input: z.object({
     cursor: cursor.optional(),
     limit: z.number().int().positive().max(200).optional(),
+    // Optional substring name filter (case-insensitive). The endpoint set is small/capped per org, so
+    // this is an unindexed residual filter by design — no migration needed.
+    filter: z.object({ name: z.string().trim().min(1).max(200).optional() }).optional(),
   }),
   output: paged(EndpointSchema),
   errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
@@ -123,7 +126,20 @@ export const eventsList = defineCapability({
     endpointId: uuid,
     cursor: cursor.optional(),
     limit: z.number().int().positive().max(200).optional(),
-    filter: z.object({ provider: ProviderSchema }).optional(),
+    // All filter fields are optional and AND together. `provider` is index-covered
+    // (events_provider_idx); the received-at range is sargable on events_tunnel_idx. The range bounds
+    // are RFC3339 instant STRINGS (receivedAfter inclusive `>=`, receivedBefore exclusive `<`) — a plain
+    // string keeps the MCP tool inputSchema JSON-Schema-clean (z.coerce.date() emits a ZodDate the
+    // JSON-Schema converter can't represent, which breaks mcp tools/list). The shared read-handler
+    // parses + validates each bound into a Date (a malformed value → VALIDATION_ERROR, never a raw
+    // string handed to SQL → a Postgres 22P02), so the check lives in exactly one place.
+    filter: z
+      .object({
+        provider: ProviderSchema.optional(),
+        receivedAfter: z.string().optional(),
+        receivedBefore: z.string().optional(),
+      })
+      .optional(),
   }),
   // events.list is a newest-first browse; it carries headCursor only (the watermark-bounded resumable
   // position) — caughtUp/lag are forward-tail concepts that don't map onto a DESC browse.

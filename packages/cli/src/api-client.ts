@@ -126,9 +126,16 @@ export interface ListParams {
   readonly limit?: number;
 }
 
-/** events.list adds an optional provider filter. */
+/** endpoints.list adds an optional case-insensitive substring name filter. */
+export interface EndpointsListParams extends ListParams {
+  readonly name?: string;
+}
+
+/** events.list adds optional provider + received-at range filters (range bounds as RFC3339 strings). */
 export interface EventsListParams extends ListParams {
   readonly provider?: string;
+  readonly receivedAfter?: string;
+  readonly receivedBefore?: string;
 }
 
 /** The audit-chain verification result (the shared `audit.verify` output: ok + rowsVerified, or a break). */
@@ -137,8 +144,8 @@ export type AuditVerifyResult = z.infer<typeof auditVerifyCap.output>;
 export interface ApiClient {
   /** Resolve the caller's own identity — validates the key (`GET /v1/whoami`). */
   whoami(): Promise<AuthContext>;
-  /** A page of the org's endpoints (`GET /v1/endpoints`). */
-  endpointsList(params?: ListParams): Promise<Page<Endpoint>>;
+  /** A page of the org's endpoints (`GET /v1/endpoints`), optionally filtered by `name` substring. */
+  endpointsList(params?: EndpointsListParams): Promise<Page<Endpoint>>;
   /** A single endpoint by id (`GET /v1/endpoints/:id`). */
   endpointsGet(endpointId: string): Promise<Endpoint>;
   /**
@@ -321,7 +328,11 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       return parseOrThrow(AuthContextSchema, await getJson("/v1/whoami"), "identity");
     },
     async endpointsList(params = {}): Promise<Page<Endpoint>> {
-      const path = withQuery("/v1/endpoints", { cursor: params.cursor, limit: params.limit });
+      const path = withQuery("/v1/endpoints", {
+        cursor: params.cursor,
+        limit: params.limit,
+        name: params.name,
+      });
       return parseOrThrow(endpointsListCap.output, await getJson(path), "endpoints");
     },
     async endpointsGet(endpointId): Promise<Endpoint> {
@@ -375,6 +386,8 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         cursor: params.cursor,
         limit: params.limit,
         provider: params.provider,
+        receivedAfter: params.receivedAfter,
+        receivedBefore: params.receivedBefore,
       });
       return parseOrThrow(eventsListCap.output, await getJson(path), "events");
     },

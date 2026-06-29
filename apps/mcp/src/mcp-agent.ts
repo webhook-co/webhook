@@ -46,7 +46,8 @@ const SERVER_VERSION = "0.0.0";
 
 /** Concise, agent-facing descriptions for the bound read tools (MCP tool discovery). */
 const TOOL_DESCRIPTIONS: Record<string, string> = {
-  "endpoints.list": "List the org's webhook endpoints (paginated).",
+  "endpoints.list":
+    "List the org's webhook endpoints (paginated). Optional `filter.name` does a case-insensitive substring match on the endpoint name.",
   "endpoints.get": "Get a single webhook endpoint by id.",
   "endpoints.create":
     "Create a webhook endpoint and return its ingest URL. The URL contains a secret token shown ONLY ONCE in this response — surface it to the user to save; it cannot be retrieved again.",
@@ -54,7 +55,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     "DESTRUCTIVE: permanently soft-delete a webhook endpoint by id. Its ingest URL stops accepting new events and it is removed from listings; captured events are retained but the endpoint can no longer receive new ones. Confirm with the user before calling.",
   "endpoints.rotate":
     "DESTRUCTIVE: rotate a webhook endpoint's ingest URL by id — mints a NEW URL and revokes the old one (for a leaked or lost URL). The endpoint id, name, and captured events are kept. The new URL contains a secret token shown ONLY ONCE in this response — surface it to the user to save. Confirm with the user before calling.",
-  "events.list": "List received events for an endpoint (paginated; optional provider filter).",
+  "events.list":
+    "List received events for an endpoint (paginated, newest-first). Optional filters (AND together): `filter.provider`; and a received-at range `filter.receivedAfter` (inclusive) / `filter.receivedBefore` (exclusive), each an RFC 3339 timestamp.",
   "events.get": "Get a received event by id — headers, verification result, and payload pointer.",
   "events.tail":
     "Tail an endpoint's events forward, oldest-first, up to the safety watermark. Start from `since` (now | beginning | a duration like 30m/2h | an RFC 3339 timestamp) or resume from a prior cursor; pass the returned nextCursor back to continue. The response also reports headCursor + caughtUp so you can tell when you've reached the head.",

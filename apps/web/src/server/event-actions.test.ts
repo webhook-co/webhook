@@ -30,10 +30,28 @@ describe("loadMoreEventsAction", () => {
     loadMoreEvents.mockResolvedValueOnce({ items: [], nextCursor: null });
     const result = await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor });
     expect(result).toEqual({ ok: true, items: [], nextCursor: null });
-    expect(loadMoreEvents).toHaveBeenCalledWith("o", ENDPOINT_ID, {
-      receivedAt: cursor.receivedAt,
-      id: CURSOR_ID,
+    expect(loadMoreEvents).toHaveBeenCalledWith(
+      "o",
+      ENDPOINT_ID,
+      { receivedAt: cursor.receivedAt, id: CURSOR_ID },
+      {},
+    );
+  });
+
+  it("parses + threads the active filters (from → an instant lower bound)", async () => {
+    loadMoreEvents.mockReset();
+    loadMoreEvents.mockResolvedValueOnce({ items: [], nextCursor: null });
+    await loadMoreEventsAction({
+      endpointId: ENDPOINT_ID,
+      cursor,
+      filters: { provider: "stripe", from: "2026-06-01" },
     });
+    expect(loadMoreEvents).toHaveBeenCalledWith(
+      "o",
+      ENDPOINT_ID,
+      { receivedAt: cursor.receivedAt, id: CURSOR_ID },
+      { provider: "stripe", receivedAfter: new Date("2026-06-01T00:00:00.000Z") },
+    );
   });
 
   it("rejects a non-uuid endpoint id without paging", async () => {
@@ -66,10 +84,12 @@ describe("loadMoreEventsAction", () => {
     const wire = { receivedAt: "2026-06-28T00:00:00.000Z", id: CURSOR_ID } as unknown as Cursor;
     const result = await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: wire });
     expect(result.ok).toBe(true);
-    expect(loadMoreEvents).toHaveBeenCalledWith("o", ENDPOINT_ID, {
-      receivedAt: new Date("2026-06-28T00:00:00.000Z"),
-      id: CURSOR_ID,
-    });
+    expect(loadMoreEvents).toHaveBeenCalledWith(
+      "o",
+      ENDPOINT_ID,
+      { receivedAt: new Date("2026-06-28T00:00:00.000Z"), id: CURSOR_ID },
+      {},
+    );
   });
 
   it("returns ok:false (no throw) when the pager faults", async () => {

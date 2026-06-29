@@ -107,6 +107,101 @@ describe("EndpointsManager", () => {
     expect(screen.queryByText(/only time you'll see this url/i)).not.toBeInTheDocument();
   });
 
+  it("re-syncs the list to a new initialResult WITHOUT remounting (server-filtered search)", () => {
+    const { rerender } = render(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [ep] }}
+        createEndpoint={vi.fn()}
+        {...noopActions}
+      />,
+    );
+    expect(screen.getByRole("link", { name: "Stripe prod" })).toBeInTheDocument();
+    const ep2: EndpointItem = {
+      id: "ep_2",
+      name: "GitHub prod",
+      paused: false,
+      createdAt: new Date("2026-06-26T00:00:00Z"),
+    };
+    rerender(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [ep2] }}
+        nameFilter="github"
+        createEndpoint={vi.fn()}
+        {...noopActions}
+      />,
+    );
+    expect(screen.queryByRole("link", { name: "Stripe prod" })).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "GitHub prod" })).toBeInTheDocument();
+  });
+
+  it("shows a 'no match' empty state (not the onboarding copy) when a name filter is active", () => {
+    render(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [] }}
+        nameFilter="prod"
+        createEndpoint={vi.fn()}
+        {...noopActions}
+      />,
+    );
+    expect(screen.getByText(/no endpoints match your search/i)).toBeInTheDocument();
+    expect(screen.queryByText(/no endpoints yet/i)).not.toBeInTheDocument();
+  });
+
+  it("does not add a created endpoint that doesn't match the active filter, but still reveals its URL", async () => {
+    const user = userEvent.setup();
+    const createEndpoint = vi.fn(async () => created); // creates "GitHub"
+    render(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [] }}
+        nameFilter="stripe"
+        createEndpoint={createEndpoint}
+        {...noopActions}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /create endpoint/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
+    await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
+
+    // The one-time URL is still revealed (creation succeeded)...
+    await waitFor(() =>
+      expect(screen.getByText("https://wbhk.my/whep_secret123")).toBeInTheDocument(),
+    );
+    // ...but "GitHub" doesn't match the active "stripe" filter, so it isn't shown in the filtered list.
+    expect(screen.queryByRole("link", { name: "GitHub" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the one-time URL visible across an initialResult re-sync (no remount discards it)", async () => {
+    const user = userEvent.setup();
+    const createEndpoint = vi.fn(async () => created);
+    const { rerender } = render(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [] }}
+        createEndpoint={createEndpoint}
+        {...noopActions}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /create endpoint/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
+    await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
+    await waitFor(() =>
+      expect(screen.getByText("https://wbhk.my/whep_secret123")).toBeInTheDocument(),
+    );
+
+    // A search-debounce navigation re-renders the page with a fresh initialResult; the reveal — the
+    // one-time ingest URL that is never shown again — must SURVIVE (the bug the re-key remount caused).
+    rerender(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [ep] }}
+        nameFilter="z"
+        createEndpoint={createEndpoint}
+        {...noopActions}
+      />,
+    );
+    expect(screen.getByText("https://wbhk.my/whep_secret123")).toBeInTheDocument();
+  });
+
   it("removes a row in place when its ⋯ menu delete succeeds (no reload)", async () => {
     const user = userEvent.setup();
     const deleteEndpoint = vi.fn(async () => ({ ok: true as const }));

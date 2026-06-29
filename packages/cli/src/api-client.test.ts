@@ -301,6 +301,14 @@ describe("createApiClient read methods", () => {
     expect(u.searchParams.get("limit")).toBe("25");
   });
 
+  it("endpointsList encodes a name filter as a query param", async () => {
+    const { fetch, calls } = fakeFetch(json({ items: [], nextCursor: null }));
+    await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsList({ name: "acme" });
+    const u = new URL(calls[0].url);
+    expect(u.pathname).toBe("/v1/endpoints");
+    expect(u.searchParams.get("name")).toBe("acme");
+  });
+
   it("endpointsGet GETs /v1/endpoints/:id and parses the entity", async () => {
     const { fetch, calls } = fakeFetch(json(endpoint));
     const ep = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsGet(EP_ID);
@@ -333,6 +341,17 @@ describe("createApiClient read methods", () => {
     expect(u.searchParams.get("provider")).toBe("stripe");
     expect(page.nextCursor).toBe("ev_next");
     expect(page.items[0].verified).toBe(true);
+  });
+
+  it("eventsList encodes a received-at range as query params", async () => {
+    const { fetch, calls } = fakeFetch(json({ items: [], nextCursor: null }));
+    await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).eventsList(EP_ID, {
+      receivedAfter: "2026-06-01T00:00:00.000Z",
+      receivedBefore: "2026-06-02T00:00:00.000Z",
+    });
+    const u = new URL(calls[0].url);
+    expect(u.searchParams.get("receivedAfter")).toBe("2026-06-01T00:00:00.000Z");
+    expect(u.searchParams.get("receivedBefore")).toBe("2026-06-02T00:00:00.000Z");
   });
 
   it("eventsGet GETs /v1/events/:id and parses the full event", async () => {

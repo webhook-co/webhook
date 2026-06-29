@@ -24,6 +24,7 @@ interface ListFlags extends GlobalFlags {
   limit?: number;
   cursor?: string;
   all: boolean;
+  name?: string;
 }
 
 type GetFlags = GlobalFlags;
@@ -34,7 +35,7 @@ export const endpointsListCommand = buildCommand<ListFlags, [], AppContext>({
     if (client instanceof NotLoggedInError) return client;
     const { format, color } = resolveGlobals(this, flags);
     const result = await collectPages(
-      (cursor) => client.endpointsList({ cursor, limit: flags.limit }),
+      (cursor) => client.endpointsList({ cursor, limit: flags.limit, name: flags.name }),
       { cursor: flags.cursor, all: flags.all },
     );
     emitList(this, result, {
@@ -63,6 +64,12 @@ export const endpointsListCommand = buildCommand<ListFlags, [], AppContext>({
         kind: "boolean",
         brief: "fetch every page (follow the cursor to the end)",
         default: false,
+      },
+      name: {
+        kind: "parsed",
+        parse: (value: string) => value,
+        brief: "filter by name (case-insensitive substring)",
+        optional: true,
       },
     },
   },

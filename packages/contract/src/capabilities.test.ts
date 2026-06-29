@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import {
   auditVerify,
@@ -6,7 +7,9 @@ import {
   CAPABILITY_REGISTRY,
   endpointsCreate,
   endpointsDelete,
+  endpointsList,
   endpointsRotate,
+  eventsList,
   eventsReplay,
   eventsTail,
 } from "./capabilities";
@@ -44,6 +47,15 @@ describe("capability registry", () => {
     for (const cap of CAPABILITIES) {
       expect(cap.auth.scope.length).toBeGreaterThan(0);
       for (const e of cap.errors) expect(CAPABILITY_ERRORS).toContain(e);
+    }
+  });
+
+  it("every capability INPUT is JSON-Schema-serializable (MCP tools/list builds inputSchema from it)", () => {
+    // The MCP surface converts each bound tool's input Zod schema to a JSON Schema. A ZodDate (e.g. from
+    // z.coerce.date()) can't be represented and makes tools/list throw — so NO capability input may
+    // contain one. Use RFC3339 strings for date inputs and coerce in the handler.
+    for (const cap of CAPABILITIES) {
+      expect(() => z.toJSONSchema(cap.input), `${cap.name} input must serialize`).not.toThrow();
     }
   });
 
@@ -145,6 +157,50 @@ describe("capability registry", () => {
       headCursor: "sig.cursor",
     });
     expect(list.success).toBe(true);
+  });
+});
+
+describe("events.list filter (provider + received-at range)", () => {
+  it("accepts all filter fields optionally; the range bounds are RFC3339 strings (handler coerces)", () => {
+    const parsed = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: {
+        provider: "stripe",
+        receivedAfter: "2026-06-01T00:00:00Z",
+        receivedBefore: "2026-06-02T00:00:00Z",
+      },
+    });
+    expect(parsed.filter?.provider).toBe("stripe");
+    // Plain strings (NOT z.coerce.date()) so the MCP tool inputSchema stays JSON-Schema-clean; the
+    // shared read-handler validates + coerces them to Dates (see read-handlers/reads tests).
+    expect(parsed.filter?.receivedAfter).toBe("2026-06-01T00:00:00Z");
+    expect(parsed.filter?.receivedBefore).toBe("2026-06-02T00:00:00Z");
+  });
+
+  it("allows a range-only filter (provider is optional within the filter)", () => {
+    const parsed = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { receivedAfter: "2026-06-01T00:00:00Z" },
+    });
+    expect(parsed.filter?.provider).toBeUndefined();
+    expect(parsed.filter?.receivedAfter).toBe("2026-06-01T00:00:00Z");
+  });
+
+  it("produces a JSON-Schema-serializable input (no ZodDate) — MCP tools/list must not throw", () => {
+    // Regression for the z.coerce.date() bug: the MCP surface converts this input to a JSON Schema, which
+    // a ZodDate (from z.coerce.date()) can't represent. z.toJSONSchema must not throw on the filter.
+    expect(() => z.toJSONSchema(eventsList.input)).not.toThrow();
+  });
+});
+
+describe("endpoints.list name filter", () => {
+  it("accepts and trims a name substring", () => {
+    const parsed = endpointsList.input.parse({ filter: { name: "  acme  " } });
+    expect(parsed.filter?.name).toBe("acme");
+  });
+
+  it("rejects an empty name", () => {
+    expect(() => endpointsList.input.parse({ filter: { name: "" } })).toThrow();
   });
 });
 

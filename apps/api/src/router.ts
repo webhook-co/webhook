@@ -58,7 +58,12 @@ function matchRoute(
   const rest = segments.slice(1);
 
   if (method === "GET" && rest.length === 1 && rest[0] === "endpoints") {
-    return { capability: "endpoints.list", input: listInput(query, {}) };
+    const input = listInput(query, {});
+    // An EMPTY `?name=` means "no name filter" (a cleared filter), not `name: ""` — the contract's
+    // `min(1)` would otherwise 400 a clear-the-filter call. Truthiness skips both null and "".
+    const name = query.get("name");
+    if (name) input.filter = { name };
+    return { capability: "endpoints.list", input };
   }
   if (method === "POST" && rest.length === 1 && rest[0] === "endpoints") {
     // endpoints.create: a WRITE dispatched via the SHARED handlers map (createWriteHandlers merged in
@@ -118,8 +123,18 @@ function matchRoute(
   }
   if (method === "GET" && rest.length === 3 && rest[0] === "endpoints" && rest[2] === "events") {
     const input = listInput(query, { endpointId: rest[1] });
+    // Filter fields ride as raw query strings; the events.list Zod schema validates + coerces them
+    // (provider enum, `z.coerce.date()` for the range) → a bad value is a clean VALIDATION_ERROR.
+    // An EMPTY param (`?provider=`, `?receivedAfter=`) means "filter cleared", not a literal "" — skip
+    // it (truthiness drops null + "") so a cleared filter doesn't 400 on the enum / date coercion.
+    const filter: Record<string, unknown> = {};
     const provider = query.get("provider");
-    if (provider !== null) input.filter = { provider };
+    if (provider) filter.provider = provider;
+    const receivedAfter = query.get("receivedAfter");
+    if (receivedAfter) filter.receivedAfter = receivedAfter;
+    const receivedBefore = query.get("receivedBefore");
+    if (receivedBefore) filter.receivedBefore = receivedBefore;
+    if (Object.keys(filter).length > 0) input.filter = filter;
     return { capability: "events.list", input };
   }
   if (

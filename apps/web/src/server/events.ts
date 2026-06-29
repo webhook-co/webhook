@@ -4,6 +4,7 @@ import { withTenant, type Sql, type TenantTx } from "@webhook-co/db/client";
 import { getEndpoint, getEvent, listEvents } from "@webhook-co/db/reads";
 import type { Cursor, Event, EventSummary } from "@webhook-co/shared";
 
+import type { EventFilters } from "@/lib/event-filters";
 import { isSensitiveHeader } from "@/lib/sensitive-headers";
 
 import { logActionError } from "./action-log";
@@ -80,13 +81,20 @@ export type EventResult =
 
 /** The reads this surface needs, injectable for tests; the default binds the per-request tenant tx. */
 export interface EventReaders {
-  /** First page of an endpoint's events + its existence/deleted state, resolved in ONE tenant tx. */
+  /** First page of an endpoint's events (filtered) + its existence/deleted state, in ONE tenant tx. */
   firstPage(
     orgId: string,
     endpointId: string,
+    filters?: EventFilters,
   ): Promise<{ meta: EndpointMeta | null; page: EventsPage }>;
-  /** A subsequent page (the "Load more" path); existence was established on the first page. */
-  listEvents(orgId: string, endpointId: string, cursor: Cursor): Promise<EventsPage>;
+  /** A subsequent page (the "Load more" path); existence was established on the first page. The same
+   *  filters as the first page must be threaded so paging stays within the active filter set. */
+  listEvents(
+    orgId: string,
+    endpointId: string,
+    cursor: Cursor,
+    filters?: EventFilters,
+  ): Promise<EventsPage>;
   getEvent(orgId: string, eventId: string): Promise<EventDetailItem | null>;
   /** The raw value of a SENSITIVE header (re-read under RLS); null if the endpoint/event/header is absent
    *  or the header isn't sensitive. */
@@ -149,7 +157,7 @@ export async function getEventForEndpoint(
 
 function boundReaders(app: Sql): EventReaders {
   return {
-    firstPage: (orgId, endpointId) =>
+    firstPage: (orgId, endpointId, filters) =>
       withTenant(app, orgId, async (tx) => {
         // One endpoint read in the common (live) case; a second only to tell soft-deleted from absent
         // (getEndpoint doesn't return deleted_at). includeDeleted keeps a soft-deleted endpoint's
@@ -164,15 +172,15 @@ function boundReaders(app: Sql): EventReaders {
         }
         if (!meta) return { meta: null, page: { items: [], nextCursor: null } };
         // No limit → the shared DB default (clampLimit) so the page size can't drift from other surfaces.
-        const page = await listEvents(tx, { endpointId });
+        const page = await listEvents(tx, { endpointId, ...filters });
         return {
           meta,
           page: { items: page.items.map(toSummaryItem), nextCursor: page.nextCursor },
         };
       }),
-    listEvents: (orgId, endpointId, cursor) =>
+    listEvents: (orgId, endpointId, cursor, filters) =>
       withTenant(app, orgId, async (tx) => {
-        const page = await listEvents(tx, { endpointId, cursor });
+        const page = await listEvents(tx, { endpointId, cursor, ...filters });
         return { items: page.items.map(toSummaryItem), nextCursor: page.nextCursor };
       }),
     getEvent: (orgId, eventId) =>
@@ -203,20 +211,22 @@ function boundReaders(app: Sql): EventReaders {
 export async function loadEvents(
   orgId: string,
   endpointId: string,
+  filters?: EventFilters,
   readers?: EventReaders,
 ): Promise<EventsResult> {
   if (!isUuid(endpointId)) return { status: "not_found" };
-  if (readers) return readEvents(orgId, endpointId, readers);
-  return withTenantDb((app) => readEvents(orgId, endpointId, boundReaders(app)));
+  if (readers) return readEvents(orgId, endpointId, filters, readers);
+  return withTenantDb((app) => readEvents(orgId, endpointId, filters, boundReaders(app)));
 }
 
 async function readEvents(
   orgId: string,
   endpointId: string,
+  filters: EventFilters | undefined,
   r: EventReaders,
 ): Promise<EventsResult> {
   try {
-    const { meta, page } = await r.firstPage(orgId, endpointId);
+    const { meta, page } = await r.firstPage(orgId, endpointId, filters);
     if (!meta) return { status: "not_found" };
     return {
       status: "ok",
@@ -240,10 +250,11 @@ export async function loadMoreEvents(
   orgId: string,
   endpointId: string,
   cursor: Cursor,
+  filters?: EventFilters,
   readers?: EventReaders,
 ): Promise<EventsPage> {
-  if (readers) return readers.listEvents(orgId, endpointId, cursor);
-  return withTenantDb((app) => boundReaders(app).listEvents(orgId, endpointId, cursor));
+  if (readers) return readers.listEvents(orgId, endpointId, cursor, filters);
+  return withTenantDb((app) => boundReaders(app).listEvents(orgId, endpointId, cursor, filters));
 }
 
 /**

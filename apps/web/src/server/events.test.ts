@@ -51,7 +51,7 @@ function readers(over: Partial<EventReaders> = {}): EventReaders {
 
 describe("loadEvents", () => {
   it("returns the endpoint name + events on success", async () => {
-    const result = await loadEvents("o", ENDPOINT_ID, readers());
+    const result = await loadEvents("o", ENDPOINT_ID, undefined, readers());
     expect(result).toEqual({
       status: "ok",
       endpointName: "Stripe prod",
@@ -65,6 +65,7 @@ describe("loadEvents", () => {
     const result = await loadEvents(
       "o",
       ENDPOINT_ID,
+      undefined,
       readers({
         firstPage: vi.fn(async () => ({
           meta: { name: "Stripe prod", deleted: true },
@@ -79,6 +80,7 @@ describe("loadEvents", () => {
     const result = await loadEvents(
       "o",
       ENDPOINT_ID,
+      undefined,
       readers({
         firstPage: vi.fn(async () => ({ meta: null, page: { items: [], nextCursor: null } })),
       }),
@@ -88,15 +90,23 @@ describe("loadEvents", () => {
 
   it("returns not_found for a non-uuid endpoint id WITHOUT touching the db", async () => {
     const r = readers();
-    const result = await loadEvents("o", "not-a-uuid", r);
+    const result = await loadEvents("o", "not-a-uuid", undefined, r);
     expect(result).toEqual({ status: "not_found" });
     expect(r.firstPage).not.toHaveBeenCalled();
+  });
+
+  it("threads the active filters into the first-page reader", async () => {
+    const r = readers();
+    const filters = { provider: "github", receivedAfter: new Date("2026-06-01T00:00:00Z") };
+    await loadEvents("o", ENDPOINT_ID, filters, r);
+    expect(r.firstPage).toHaveBeenCalledWith("o", ENDPOINT_ID, filters);
   });
 
   it("surfaces a db fault as the error state (no throw)", async () => {
     const result = await loadEvents(
       "o",
       ENDPOINT_ID,
+      undefined,
       readers({
         firstPage: vi.fn(async () => {
           throw new Error("hyperdrive down");
@@ -159,9 +169,16 @@ describe("loadMoreEvents", () => {
   it("returns the next page via the injected reader", async () => {
     const next = { receivedAt: new Date("2026-06-27T00:00:00Z"), id: EVENT_ID };
     const r = readers({ listEvents: vi.fn(async () => ({ items: [summary], nextCursor: next })) });
-    const page = await loadMoreEvents("o", ENDPOINT_ID, cursor, r);
+    const page = await loadMoreEvents("o", ENDPOINT_ID, cursor, undefined, r);
     expect(page).toEqual({ items: [summary], nextCursor: next });
-    expect(r.listEvents).toHaveBeenCalledWith("o", ENDPOINT_ID, cursor);
+    expect(r.listEvents).toHaveBeenCalledWith("o", ENDPOINT_ID, cursor, undefined);
+  });
+
+  it("threads the active filters into the load-more reader", async () => {
+    const r = readers();
+    const filters = { provider: "stripe", receivedBefore: new Date("2026-06-02T00:00:00Z") };
+    await loadMoreEvents("o", ENDPOINT_ID, cursor, filters, r);
+    expect(r.listEvents).toHaveBeenCalledWith("o", ENDPOINT_ID, cursor, filters);
   });
 });
 
