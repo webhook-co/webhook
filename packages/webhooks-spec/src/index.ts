@@ -28,3 +28,13 @@ export {
   findHeader,
   isUsableStandardWebhooksSecret,
 } from "./adapters/shared";
+// The provider vocabulary (single source of truth) + the config-driven adapter factory.
+// packages/shared re-exports PROVIDERS/ProviderSchema/Provider as the cross-surface definition.
+export {
+  PROVIDERS,
+  ProviderSchema,
+  type Provider,
+  type HmacProviderConfig,
+  type MessagePart,
+} from "./adapters/config";
+export { makeHmacAdapter } from "./adapters/factory";
