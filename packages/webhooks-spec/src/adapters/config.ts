@@ -55,6 +55,13 @@ export const PROVIDERS = [
   "circleci",
   "pagerduty",
   "airtable",
+  // W1 batch 3 — timestamped Tier-1 (signed message includes a header/sig-field unix-SECONDS
+  // timestamp). zendesk + twitch sign over datetime timestamps (ISO-8601 / RFC3339) and need a
+  // factory timestamp-format extension — deferred to that group, not config-expressible yet.
+  "calendly",
+  "zoom",
+  "customerio",
+  "sinch",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -68,7 +75,7 @@ export const ProviderSchema = z.enum(PROVIDERS);
 const DEFAULT_TOLERANCE_SECONDS = 300;
 /** Overrides for the few providers documenting a replay window other than the 300s default. */
 const TOLERANCE_OVERRIDES: Partial<Record<Provider, number>> = {
-  // e.g. twitch: 600 — added alongside that provider's config.
+  // e.g. twitch: 600 (10-min window) — returns with twitch's config once datetime timestamps are supported.
 };
 export const PROVIDER_TOLERANCE_SECONDS: Readonly<Record<Provider, number>> = Object.fromEntries(
   PROVIDERS.map((p) => [p, TOLERANCE_OVERRIDES[p] ?? DEFAULT_TOLERANCE_SECONDS]),
@@ -334,6 +341,61 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
     encoding: "hex",
     keyDerivation: "whsec-base64",
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.airtable,
+  },
+  // W1 batch 3 — timestamped Tier-1 (HMAC over a message that includes the signed timestamp).
+  // calendly: `Calendly-Webhook-Signature: t=<unix>,v1=<hex>`; signed `{t}.{body}` (Stripe-shaped).
+  calendly: {
+    slug: "calendly",
+    signatureHeader: "calendly-webhook-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "t" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.calendly,
+  },
+  // zoom: `x-zm-signature: v0=<hex>` + `x-zm-request-timestamp`; signed `v0:{ts}:{body}` (Slack-shaped).
+  zoom: {
+    slug: "zoom",
+    signatureHeader: "x-zm-signature",
+    signatureValuePrefix: "v0=",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "x-zm-request-timestamp" },
+    message: [
+      { kind: "literal", value: "v0:" },
+      { kind: "timestamp" },
+      { kind: "literal", value: ":" },
+      { kind: "body" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.zoom,
+  },
+  // customerio: `X-CIO-Signature` (bare hex) + `X-CIO-Timestamp`; signed `v0:{ts}:{body}` (no sig prefix).
+  customerio: {
+    slug: "customerio",
+    signatureHeader: "x-cio-signature",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "x-cio-timestamp" },
+    message: [
+      { kind: "literal", value: "v0:" },
+      { kind: "timestamp" },
+      { kind: "literal", value: ":" },
+      { kind: "body" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.customerio,
+  },
+  // sinch: `x-sinch-webhook-signature` (base64) + nonce + timestamp headers; signed `{body}.{nonce}.{ts}`.
+  sinch: {
+    slug: "sinch",
+    signatureHeader: "x-sinch-webhook-signature",
+    encoding: "base64",
+    timestamp: { kind: "header", header: "x-sinch-webhook-signature-timestamp" },
+    message: [
+      { kind: "body" },
+      { kind: "literal", value: "." },
+      { kind: "header", header: "x-sinch-webhook-signature-nonce" },
+      { kind: "literal", value: "." },
+      { kind: "timestamp" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.sinch,
   },
 };
 
