@@ -49,6 +49,23 @@ describe("standardWebhooksAdapter", () => {
     expect(standardWebhooksAdapter.toleranceSeconds).toBe(300);
   });
 
+  it("reports MALFORMED (structural reason) when a stale timestamp coincides with no v1 signature", async () => {
+    // A doubly-malformed request: the timestamp is outside the replay window AND the signature
+    // header carries no `v1` entry. The config-driven factory surfaces the structural problem
+    // (MALFORMED_SIGNATURE) before the replay-window check — one consistent diagnosis order across
+    // every provider. (Both outcomes reject; this just pins which reason wins.)
+    const stale = String(TS - 10_000); // well outside the 300s window
+    const noV1 = `v1a,${bytesToB64(new Uint8Array(64))}`; // asymmetric-only entry: no v1
+    const result = await standardWebhooksAdapter.verify({
+      rawBody: utf8Encoder.encode(BODY),
+      headers: headers(noV1, ID, stale),
+      secrets: [SECRET],
+      now: NOW,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason.code).toBe("MALFORMED_SIGNATURE");
+  });
+
   // The gold byte-correctness anchor: the published spec vector (independently recomputed).
   // https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md
   it("verifies the Standard Webhooks spec vector (byte-correctness)", async () => {

@@ -1,26 +1,19 @@
-// Adapter registry + header-based scheme detection. One adapter per scheme (excluding
-// `unknown`, which is a captured-but-unverifiable sender — capture never blocks on a
-// missing adapter). Detection is by the presence of a scheme's signature header.
+// Adapter registry + header-based scheme detection. Every adapter is produced from its config
+// (./config) by `makeHmacAdapter`, so the REGISTRY is fully DERIVED from PROVIDER_CONFIGS — a new
+// provider is one config row and nothing here changes. `unknown` has no adapter (capture never
+// blocks on a missing adapter). Detection is by the presence of a scheme's signature header.
 
 import type { VerifyAdapter } from "../adapter";
 import type { WebhookScheme } from "../scheme";
-import { PROVIDERS } from "./config";
-import { githubAdapter } from "./github";
-import { shopifyAdapter } from "./shopify";
-import { slackAdapter } from "./slack";
-import { standardWebhooksAdapter } from "./standard-webhooks";
-import { stripeAdapter } from "./stripe";
+import { PROVIDER_CONFIGS, PROVIDERS } from "./config";
+import { makeHmacAdapter } from "./factory";
 
 /** Every scheme that has an adapter (i.e. all of WEBHOOK_SCHEMES except `unknown`). */
 export type AdapterScheme = Exclude<WebhookScheme, "unknown">;
 
-const REGISTRY: Readonly<Record<AdapterScheme, VerifyAdapter>> = {
-  stripe: stripeAdapter,
-  github: githubAdapter,
-  shopify: shopifyAdapter,
-  slack: slackAdapter,
-  standard_webhooks: standardWebhooksAdapter,
-};
+const REGISTRY: Readonly<Record<AdapterScheme, VerifyAdapter>> = Object.fromEntries(
+  PROVIDERS.map((slug) => [slug, makeHmacAdapter(PROVIDER_CONFIGS[slug])]),
+) as Record<AdapterScheme, VerifyAdapter>;
 
 /** The schemes for which an adapter exists, in detection-precedence order (= PROVIDERS). */
 export const ADAPTER_SCHEMES: readonly AdapterScheme[] = PROVIDERS;

@@ -1,10 +1,8 @@
-// GitHub verify adapter — produced from the declarative GITHUB_CONFIG (./config) via the
-// shared `makeHmacAdapter` factory. Header `X-Hub-Signature-256: sha256=<hex>`, HMAC-SHA256
-// over the raw body verbatim, no signed timestamp. The behavior (and its tests) are unchanged
-// by the config migration; the crypto lives once in `verifyHmacCore`.
+// GitHub verify adapter — the registry instance produced from GITHUB_CONFIG (./config). Header
+// `X-Hub-Signature-256: sha256=<hex>`, HMAC-SHA256 over the raw body, no signed timestamp. The
+// recipe lives in the config; this named export is kept for the adapter's test suite.
 // See https://docs.github.com/webhooks/securing-your-webhooks.
 
-import { GITHUB_CONFIG } from "./config";
-import { makeHmacAdapter } from "./factory";
+import { getAdapterForScheme } from "./registry";
 
-export const githubAdapter = makeHmacAdapter(GITHUB_CONFIG);
+export const githubAdapter = getAdapterForScheme("github")!;
