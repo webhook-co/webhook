@@ -77,7 +77,13 @@ export function AppShell({
   return (
     <div
       className={cn(
-        "grid h-[100dvh] w-full grid-cols-1 overflow-hidden bg-surface-page md:grid-cols-[252px_1fr]",
+        // A FIXED frame, sized to the DYNAMIC viewport (`h-[100dvh]`), not an in-flow block. Two reasons:
+        // (1) an in-flow viewport-height element with a nested tall scroll container (the <main> below)
+        // makes the document itself gain phantom scroll height in Chrome, so a tall page over-scrolls past
+        // the shell — `position: fixed` takes the frame out of flow and kills that. (2) `h-[100dvh]` (vs
+        // `inset-0`, which would use the layout viewport) tracks the dynamic viewport, so on mobile Safari
+        // the bottom of <main> isn't clipped behind the retracting toolbar. Only <main> scrolls.
+        "fixed inset-x-0 top-0 h-[100dvh] grid grid-cols-1 overflow-hidden bg-surface-page md:grid-cols-[252px_1fr]",
         className,
       )}
     >

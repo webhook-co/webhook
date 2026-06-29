@@ -1,0 +1,106 @@
+import type { Cursor } from "@webhook-co/shared";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import type { EventSummaryItem } from "@/server/events";
+
+import { EventsList } from "./events-list";
+
+const ENDPOINT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
+
+function ev(id: string, over: Partial<EventSummaryItem> = {}): EventSummaryItem {
+  return {
+    id,
+    endpointId: ENDPOINT_ID,
+    receivedAt: new Date("2026-06-28T12:00:00Z"),
+    provider: "stripe",
+    dedupKey: "evt",
+    dedupStrategy: "sw_webhook_id",
+    verified: true,
+    ...over,
+  };
+}
+
+const A = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
+const B = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5062";
+
+describe("EventsList", () => {
+  it("renders an empty state when there are no events", () => {
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[]}
+        initialCursor={null}
+        loadMore={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/no events yet/i)).toBeInTheDocument();
+  });
+
+  it("shows a verified pill for verified events and a neutral 'Not verified' for unsigned (no alarm)", () => {
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[ev(A, { verified: true }), ev(B, { verified: false, provider: null })]}
+        initialCursor={null}
+        loadMore={vi.fn()}
+      />,
+    );
+    // Scope to each row (the table HEADER cell is also "Verified", so a bare getByText collides).
+    const verifiedRow = screen.getByText(A).closest("tr")!;
+    expect(within(verifiedRow).getByText("Verified")).toBeInTheDocument();
+    const unsignedRow = screen.getByText(B).closest("tr")!;
+    expect(within(unsignedRow).getByText("Not verified")).toBeInTheDocument();
+    // unsigned event shows the provider placeholder, not a crash
+    expect(within(unsignedRow).getByText("—")).toBeInTheDocument();
+    // links to the event detail
+    expect(within(verifiedRow).getByRole("link")).toHaveAttribute(
+      "href",
+      `/endpoints/${ENDPOINT_ID}/events/${A}`,
+    );
+  });
+
+  it("loads more, appends the next page, and hides the button when the cursor is exhausted", async () => {
+    const user = userEvent.setup();
+    const cursor: Cursor = { receivedAt: new Date("2026-06-28T12:00:00Z"), id: A };
+    const loadMore = vi.fn(async () => ({
+      ok: true as const,
+      items: [ev(B)],
+      nextCursor: null,
+    }));
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[ev(A)]}
+        initialCursor={cursor}
+        loadMore={loadMore}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /load older events/i }));
+    expect(loadMore).toHaveBeenCalledWith({ endpointId: ENDPOINT_ID, cursor });
+    await waitFor(() => expect(screen.getByText(B)).toBeInTheDocument());
+    // both pages are now shown
+    expect(screen.getByText(A)).toBeInTheDocument();
+    // cursor exhausted → the button is gone
+    expect(screen.queryByRole("button", { name: /load older events/i })).not.toBeInTheDocument();
+  });
+
+  it("surfaces a load-more failure without losing the existing rows", async () => {
+    const user = userEvent.setup();
+    const cursor: Cursor = { receivedAt: new Date("2026-06-28T12:00:00Z"), id: A };
+    const loadMore = vi.fn(async () => ({ ok: false as const }));
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[ev(A)]}
+        initialCursor={cursor}
+        loadMore={loadMore}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: /load older events/i }));
+    await waitFor(() => expect(screen.getByText(/couldn't load more events/i)).toBeInTheDocument());
+    expect(screen.getByText(A)).toBeInTheDocument();
+  });
+});
