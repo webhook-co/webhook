@@ -10,14 +10,16 @@ vi.mock("./session", () => ({
   })),
 }));
 
-// The DB-touching reads (over the tenant pool) — mocked; the glue is unit-tested in events.test.ts.
-const { loadMoreEvents, revealHeader } = vi.hoisted(() => ({
+// The DB-touching reads (over the tenant pool) — mocked; the glue is unit-tested in events/payloads tests.
+const { loadMoreEvents, revealHeader, loadEventPayload } = vi.hoisted(() => ({
   loadMoreEvents: vi.fn(),
   revealHeader: vi.fn(),
+  loadEventPayload: vi.fn(),
 }));
 vi.mock("./events", () => ({ loadMoreEvents, revealHeader }));
+vi.mock("./payloads", () => ({ loadEventPayload }));
 
-import { loadMoreEventsAction, revealHeaderAction } from "./event-actions";
+import { loadEventPayloadAction, loadMoreEventsAction, revealHeaderAction } from "./event-actions";
 
 const ENDPOINT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const CURSOR_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
@@ -112,5 +114,28 @@ describe("revealHeaderAction", () => {
     revealHeader.mockReset();
     revealHeader.mockRejectedValueOnce(new Error("db down"));
     expect(await revealHeaderAction(input)).toEqual({ ok: false });
+  });
+});
+
+describe("loadEventPayloadAction", () => {
+  it("delegates to loadEventPayload with the session org", async () => {
+    loadEventPayload.mockReset();
+    loadEventPayload.mockResolvedValueOnce({
+      kind: "text",
+      text: "{}",
+      bytes: 2,
+      contentType: "application/json",
+    });
+    const result = await loadEventPayloadAction({ endpointId: ENDPOINT_ID, eventId: CURSOR_ID });
+    expect(result).toEqual({ kind: "text", text: "{}", bytes: 2, contentType: "application/json" });
+    expect(loadEventPayload).toHaveBeenCalledWith("o", ENDPOINT_ID, CURSOR_ID);
+  });
+
+  it("returns not_found for a malformed (non-string) input without reading", async () => {
+    loadEventPayload.mockReset();
+    expect(
+      await loadEventPayloadAction({ endpointId: 123 as unknown as string, eventId: CURSOR_ID }),
+    ).toEqual({ kind: "not_found" });
+    expect(loadEventPayload).not.toHaveBeenCalled();
   });
 });

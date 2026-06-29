@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { EventDetailItem, RevealHeaderResult } from "@/server/events";
+import type { PayloadResult } from "@/server/payloads";
 
 import { EventDetail } from "./event-detail";
 
@@ -31,6 +32,9 @@ function detail(over: Partial<EventDetailItem> = {}): EventDetailItem {
 
 // Default reveal action: never called in most tests; specific tests pass their own.
 const noReveal = vi.fn(async (): Promise<RevealHeaderResult> => ({ ok: false }));
+// Default payload load: never resolves, so the viewer stays in "Loading…" and fires no post-mount state
+// update in the metadata/header tests (the payload viewer has its own test).
+const noLoadPayload = vi.fn(() => new Promise<PayloadResult>(() => {}));
 
 function renderDetail(
   event: EventDetailItem,
@@ -40,7 +44,14 @@ function renderDetail(
     index: number;
   }) => Promise<RevealHeaderResult> = noReveal,
 ) {
-  return render(<EventDetail event={event} endpointId={ENDPOINT_ID} revealHeader={revealHeader} />);
+  return render(
+    <EventDetail
+      event={event}
+      endpointId={ENDPOINT_ID}
+      revealHeader={revealHeader}
+      loadPayload={noLoadPayload}
+    />,
+  );
 }
 
 describe("EventDetail", () => {

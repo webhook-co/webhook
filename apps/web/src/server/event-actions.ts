@@ -10,6 +10,7 @@ import {
   type EventSummaryItem,
   type RevealHeaderResult,
 } from "./events";
+import { loadEventPayload, type PayloadResult } from "./payloads";
 import { verifySession } from "./session";
 
 export type LoadMoreEventsResult =
@@ -77,4 +78,20 @@ export async function revealHeaderAction(input: {
     logActionError("events.reveal_header_failed", error);
     return { ok: false };
   }
+}
+
+/**
+ * Load an event's body for the inline preview (the payload viewer calls this on mount). Session +
+ * RLS-org-pinning + endpoint scope is the authz; size/binary gating + the R2 read happen in
+ * `loadEventPayload`, which never returns the R2 key. A bad input or unknown event resolves to
+ * `{kind:"not_found"}`; a fault to `{kind:"error"}` (already logged inside).
+ */
+export async function loadEventPayloadAction(input: {
+  endpointId: string;
+  eventId: string;
+}): Promise<PayloadResult> {
+  const session = await verifySession();
+  const { endpointId, eventId } = input ?? {};
+  if (typeof endpointId !== "string" || typeof eventId !== "string") return { kind: "not_found" };
+  return loadEventPayload(session.orgId, endpointId, eventId);
 }

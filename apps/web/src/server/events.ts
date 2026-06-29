@@ -1,6 +1,6 @@
 import "server-only";
 
-import { withTenant, type Sql } from "@webhook-co/db/client";
+import { withTenant, type Sql, type TenantTx } from "@webhook-co/db/client";
 import { getEndpoint, getEvent, listEvents } from "@webhook-co/db/reads";
 import type { Cursor, Event, EventSummary } from "@webhook-co/shared";
 
@@ -133,6 +133,20 @@ function toDetailItem(e: Event): EventDetailItem {
   };
 }
 
+/**
+ * Resolve an event under RLS, scoped to its endpoint — the shared cross-endpoint guard for the reveal and
+ * payload reads. `getEvent` is org-scoped only (RLS), so an event reached under the wrong `[id]` path
+ * resolves to null here. One place to tighten if endpoint-scoping ever changes.
+ */
+export async function getEventForEndpoint(
+  tx: TenantTx,
+  endpointId: string,
+  eventId: string,
+): Promise<Event | null> {
+  const e = await getEvent(tx, eventId);
+  return e && e.endpointId === endpointId ? e : null;
+}
+
 function boundReaders(app: Sql): EventReaders {
   return {
     firstPage: (orgId, endpointId) =>
@@ -168,10 +182,8 @@ function boundReaders(app: Sql): EventReaders {
       }),
     revealHeader: (orgId, { endpointId, eventId, index }) =>
       withTenant(app, orgId, async (tx) => {
-        const e = await getEvent(tx, eventId);
-        // Endpoint-scope parity with the page read (readEvent): an event reached under the wrong [id]
-        // path can't reveal its headers either.
-        if (!e || e.endpointId !== endpointId) return null;
+        const e = await getEventForEndpoint(tx, endpointId, eventId);
+        if (!e) return null;
         const header = e.headers[index];
         if (!header) return null;
         const [name, value] = header;
