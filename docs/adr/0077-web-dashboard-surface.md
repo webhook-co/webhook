@@ -135,3 +135,45 @@ are locked to `'self'`. The existing `next-config-csrf.test.ts` tripwire (which 
   apps/auth (+ apps/www's `_headers`); a repo guard asserting the `INGEST_BASE_URL` apex matches across the
   engine/api/mcp/web configs; and replacing the `@webhook-co/db` `export *` barrel with explicit named
   re-exports (the durable fix for the per-module leaf-export workaround).
+
+## amendment — as-built (2026-06-29)
+
+The surface shipped as **four** PRs (the "events slice" split into 3a + 3b): #243 foundation (leaf exports,
+R2/KV bindings, CSP), #245 endpoint management, **#250 events list + detail (3a)**, **#256 events.getPayload
+payload viewer + download (3b)**. Three founder decisions during the build refined this ADR's
+`truthful UX` — recorded here:
+
+- **Inbound headers are REDACTED server-side, not shown verbatim.** The detail view's headers table was
+  designed to display the captured (unscrubbed) headers; in build the founder chose **server-side redaction
+  with click-to-reveal** instead. A header whose name is NOT on a **fail-closed safe allowlist**
+  (`@webhook-co/shared` `LOGGABLE_HEADER_ALLOWLIST` ∪ a web-inspector benign-request-header set in
+  `apps/web/src/lib/sensitive-headers.ts`) has its **value stripped at the boundary** (never serialized into
+  the client props); the value is fetched one-at-a-time via `revealHeaderAction`, which re-reads the event
+  under RLS + endpoint scope. Fail-closed = an unanticipated secret header can't leak by omission. (The
+  body, by contrast, is shown in full — it is the inspection target, not a secret.)
+- **The events-list verified pill is NEUTRAL for unsigned**, not red. `EventSummary` carries only the lossy
+  `verified` boolean (it can't distinguish a verification *failure* from *never-attempted* — the common
+  no-secret-yet state), so the list pill renders verified=true as a quiet "Verified" and verified=false as a
+  muted "Not verified"; **red is reserved for the detail view**, where the structured `verification` is known
+  to be `ok:false`.
+- **Payload viewer (3b) = inline preview for small text + streaming download for binary/large.** Lazy-loaded
+  via `loadEventPayloadAction` (RLS + endpoint scope; `payloads.ts`). Gated by `payloadBytes` at **256 KiB**
+  (too-large → download, no R2 read); a **strict UTF-8 decode** sends non-text/binary bytes to the download
+  affordance (no U+FFFD mojibake). Text defaults to **RAW** (the exact bytes — the inspector's job), with an
+  opt-in **Pretty** JSON view (Pretty re-formats via JSON.parse/stringify, which can normalize numbers, so it
+  is not the default). The streaming **download route** (`…/payload/route.ts`) calls `verifySession()`
+  first-line (route handlers bypass the layout gate) and forces `Content-Type: application/octet-stream` +
+  `Content-Disposition: attachment` + `X-Content-Type-Options: nosniff` + `Cache-Control: private, no-store`
+  — never the stored content type, never inline — so an attacker-controlled `text/html`/`svg` body can't
+  execute on the app/session origin. The "Copy as cURL" affordance from the brief was **dropped** (captured
+  headers are unscrubbed → a naïve cURL is a shell-injection footgun); a JSON tree / syntax-highlighting /
+  key-search viewer was **not built** (raw/pretty `<pre>` is v1).
+- **AppShell scroll fix (`packages/ui`).** The dashboard frame root changed from an in-flow `h-[100dvh]`
+  block to a `fixed inset-x-0 top-0 h-[100dvh]` fixed frame: an in-flow viewport-height element with a nested
+  tall scroll container (`<main>`) made the document gain phantom over-scroll in Chrome; the fixed frame
+  (still dynamic-viewport-sized, so mobile-Safari-safe) eliminates it — only `<main>` scrolls.
+
+The **events provider filter** (the brief's v1 list filter; the backend already supports `events.list.filter.provider`)
+was deferred to the founder-requested **dashboard search + filtering** fast-follow (provider / verified-status /
+date-range / text-search on events, name search on endpoints — most need a contract `filter` + db-query
+extension), tracked in the internal backlog.
