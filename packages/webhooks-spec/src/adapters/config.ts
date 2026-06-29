@@ -79,6 +79,12 @@ export const PROVIDERS = [
   // no replay window (sanity, verified against its published gold vectors).
   "authorize_net",
   "sanity",
+  // W3a — Tier-2 providers signing over request context (URL / method / sorted form fields), F3 blocks.
+  "square",
+  "trello",
+  "twilio",
+  "mandrill",
+  "hubspot",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -595,6 +601,64 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
     message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
     enforceReplayWindow: false,
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.sanity,
+  },
+  // W3a — Tier-2 providers signing over request context. NB: square/trello/mandrill/hubspot sign the
+  // URL; we feed `requestUrl` (the only value we hold). For wbhk.my the request URL IS the configured
+  // ingest URL, so it matches in the common case; a non-canonical configured URL (trailing slash,
+  // provider-appended query) can false-reject — validated by the prod-e2e sampler. Per-provider message
+  // construction verified against official docs/SDKs (square has a reproduced published vector).
+  // square: `x-square-hmacsha256-signature` (base64) over `{url}{body}` (URL first).
+  square: {
+    slug: "square",
+    signatureHeader: "x-square-hmacsha256-signature",
+    encoding: "base64",
+    message: [{ kind: "url", component: "full" }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.square,
+  },
+  // trello: `x-trello-webhook` (sha1/base64) over `{body}{callbackURL}` (BODY first, then URL).
+  trello: {
+    slug: "trello",
+    signatureHeader: "x-trello-webhook",
+    encoding: "base64",
+    digest: "sha1",
+    message: [{ kind: "body" }, { kind: "url", component: "full" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.trello,
+  },
+  // twilio (form mode): `x-twilio-signature` (sha1/base64) over `{url}{sortedFormFields}` (key+value,
+  // keys ASCII case-sensitive sort). The JSON/raw-body bodySHA256 mode is a separate follow-up.
+  twilio: {
+    slug: "twilio",
+    signatureHeader: "x-twilio-signature",
+    encoding: "base64",
+    digest: "sha1",
+    message: [{ kind: "url", component: "full" }, { kind: "sortedFormFields" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.twilio,
+  },
+  // mandrill: `x-mandrill-signature` (sha1/base64, NOT hex) over `{url}{sortedFormFields}`. The
+  // params-less validation ping signs just the URL (sortedFormFields of an empty body = "").
+  mandrill: {
+    slug: "mandrill",
+    signatureHeader: "x-mandrill-signature",
+    encoding: "base64",
+    digest: "sha1",
+    message: [{ kind: "url", component: "full" }, { kind: "sortedFormFields" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.mandrill,
+  },
+  // hubspot (v3): `x-hubspot-signature-v3` (sha256/base64) over `{method}{url}{body}{ts}` +
+  // `x-hubspot-request-timestamp` (MILLISECONDS); the timestamp is the trailing signed component AND
+  // drives the documented 5-minute replay window (toleranceSeconds 300, enforced).
+  hubspot: {
+    slug: "hubspot",
+    signatureHeader: "x-hubspot-signature-v3",
+    encoding: "base64",
+    timestamp: { kind: "header", header: "x-hubspot-request-timestamp", format: "milliseconds" },
+    message: [
+      { kind: "method" },
+      { kind: "url", component: "full" },
+      { kind: "body" },
+      { kind: "timestamp" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.hubspot,
   },
 };
 
