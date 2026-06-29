@@ -72,10 +72,13 @@ export const PROVIDERS = [
   // W1 final framework-needs — numbered multi-header signatures (docusign).
   "docusign",
   // W2 — raw-body HMAC behind the F2 digest knobs: sha1 (vercel/intercom), sha512 (paystack).
-  // (authorize_net + sanity land in the same wave once their exact schemes are doc-confirmed.)
   "vercel",
   "intercom",
   "paystack",
+  // W2b — sha512 with a HEX-DECODED key (authorize_net) + base64url over a ms-timestamp message,
+  // no replay window (sanity, verified against its published gold vectors).
+  "authorize_net",
+  "sanity",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -151,9 +154,10 @@ export const RAW_BODY_MESSAGE: readonly MessagePart[] = [{ kind: "body" }];
 /**
  * How a registered secret string becomes the HMAC key bytes. `utf8` = the secret verbatim
  * (Stripe/GitHub/Shopify/Slack). `whsec-base64` = strip a `whsec_` prefix and base64-decode the
- * remainder to the raw key (Standard Webhooks).
+ * remainder to the raw key (Standard Webhooks). `hex` = hex-decode the secret to the raw key —
+ * Authorize.Net's "Signature Key" is a hex string used as bytes, not as its ASCII characters.
  */
-export type KeyDerivation = "utf8" | "whsec-base64";
+export type KeyDerivation = "utf8" | "whsec-base64" | "hex";
 
 /**
  * The HMAC digest a scheme signs with. SHA-256 is the default and by far the most common; SHA-1
@@ -207,6 +211,13 @@ export interface HmacProviderConfig {
   readonly timestamp?: TimestampSource;
   /** The signed message, assembled from these parts in order. Defaults to the raw body. */
   readonly message?: readonly MessagePart[];
+  /**
+   * Whether to enforce the replay window when the scheme signs a timestamp. Defaults to `true`. Set
+   * `false` for a provider that puts the timestamp in the SIGNED MESSAGE but does NOT itself reject on
+   * age (Sanity): the timestamp must still resolve to build the message, but we don't reject a valid
+   * signature merely for being old — matching the provider avoids false-rejecting a delayed delivery.
+   */
+  readonly enforceReplayWindow?: boolean;
   /** Replay tolerance (seconds); sourced from PROVIDER_TOLERANCE_SECONDS for one definition. */
   readonly toleranceSeconds: number;
 }
@@ -543,6 +554,33 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
   intercom: rawBodyHmacConfig("intercom", "x-hub-signature", "hex", "sha1=", "sha1"),
   // paystack: `x-paystack-signature: <hex>` — bare HMAC-SHA512 over the raw body (utf8 key, no prefix).
   paystack: rawBodyHmacConfig("paystack", "x-paystack-signature", "hex", undefined, "sha512"),
+  // W2b — providers needing a small engine knob beyond the F2 digest/encoding axes.
+  // authorize_net: `X-ANET-Signature: sha512=<HEX>` — HMAC-SHA512/hex over the raw body, but the key is
+  // the account "Signature Key" HEX-DECODED to bytes (official PHP `hex2bin` / Java `hexStringToByteArray`
+  // SDK samples), so keyDerivation is `hex`. No timestamp. Hex is case-insensitive (decoder lowercases).
+  authorize_net: {
+    slug: "authorize_net",
+    signatureHeader: "x-anet-signature",
+    signatureValuePrefix: "sha512=",
+    encoding: "hex",
+    digest: "sha512",
+    keyDerivation: "hex",
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.authorize_net,
+  },
+  // sanity: `sanity-webhook-signature: t=<ms>,v1=<base64url>` — HMAC-SHA256/base64url over `{t}.{body}`,
+  // the timestamp in MILLISECONDS. @sanity/webhook signs the timestamp but enforces NO replay window, so
+  // we resolve it for the message yet keep `enforceReplayWindow: false` (don't false-reject a stale-but-
+  // valid delivery). Verified against the library's published gold vectors.
+  sanity: {
+    slug: "sanity",
+    signatureHeader: "sanity-webhook-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "base64url",
+    timestamp: { kind: "sigField", field: "t", format: "milliseconds" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    enforceReplayWindow: false,
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.sanity,
+  },
 };
 
 /**
