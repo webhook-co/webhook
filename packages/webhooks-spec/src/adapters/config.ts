@@ -85,6 +85,8 @@ export const PROVIDERS = [
   "twilio",
   "mandrill",
   "hubspot",
+  // W3b — sig-in-body JSON: Adyen (colon-joined item fields + hex key).
+  "adyen",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -167,7 +169,14 @@ export type MessagePart =
    * All `application/x-www-form-urlencoded` body fields sorted by key, each rendered as `key`+`value`
    * with no separator and concatenated (Twilio / Mandrill sign `{url}{sortedFormFields}`).
    */
-  | { readonly kind: "sortedFormFields" };
+  | { readonly kind: "sortedFormFields" }
+  /**
+   * A scalar value at a dot-path in the JSON request body (array indices are numeric segments, e.g.
+   * `notificationItems.0.NotificationRequestItem.amount.value`). Numbers/booleans are stringified; an
+   * ABSENT field resolves to the EMPTY string in position (Adyen signs absent fields as `""` between
+   * its colons). Use for providers that sign over body fields rather than the raw body.
+   */
+  | { readonly kind: "jsonField"; readonly path: string };
 
 /** The signed message is the raw body verbatim unless a config says otherwise. */
 export const RAW_BODY_MESSAGE: readonly MessagePart[] = [{ kind: "body" }];
@@ -204,9 +213,16 @@ export interface HmacProviderConfig {
   /**
    * The lowercase header carrying the signature. When `numberedSignatureHeaders` is set this is the
    * canonical (`…-1`) header — used for detection and the engine's header-presence gate — while the
-   * signatures themselves are collected across the numbered set.
+   * signatures themselves are collected across the numbered set. An EMPTY string means the signature
+   * does NOT live in a header (see `signatureSource`); the engine then skips the header-presence gate.
    */
   readonly signatureHeader: string;
+  /**
+   * Where the signature comes from when it is NOT a header value. `jsonField` reads it from a dot-path
+   * in the JSON body (Adyen's `notificationItems.0.NotificationRequestItem.additionalData.hmacSignature`).
+   * When set, `signatureHeader` is `""` and the header-parse path is bypassed.
+   */
+  readonly signatureSource?: { readonly kind: "jsonField"; readonly path: string };
   /**
    * Collect signatures from NUMBERED headers `<prefix>1`, `<prefix>2`, …, `<prefix>max` instead of one
    * header value — each header carries one complete signature. DocuSign Connect emits one such header
@@ -660,6 +676,41 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
     ],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.hubspot,
   },
+  // adyen: the signature lives in the JSON body at
+  // `notificationItems[0].NotificationRequestItem.additionalData.hmacSignature` (base64). The signed
+  // message is 8 item fields joined by a plain colon (NO escaping/sorting — that is the legacy HPP path),
+  // absent fields = empty string. Key = the Customer-Area HMAC key HEX-DECODED. HMAC-SHA256, no timestamp.
+  // Verified against Adyen's published worked example (openssl-reproduced). One item verified per request.
+  adyen: (() => {
+    const item = "notificationItems.0.NotificationRequestItem";
+    const colon = { kind: "literal" as const, value: ":" };
+    const field = (p: string): MessagePart => ({ kind: "jsonField", path: `${item}.${p}` });
+    return {
+      slug: "adyen",
+      signatureHeader: "", // no header — the signature comes from the body (signatureSource)
+      signatureSource: { kind: "jsonField", path: `${item}.additionalData.hmacSignature` },
+      encoding: "base64",
+      keyDerivation: "hex",
+      message: [
+        field("pspReference"),
+        colon,
+        field("originalReference"),
+        colon,
+        field("merchantAccountCode"),
+        colon,
+        field("merchantReference"),
+        colon,
+        field("amount.value"),
+        colon,
+        field("amount.currency"),
+        colon,
+        field("eventCode"),
+        colon,
+        field("success"),
+      ],
+      toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.adyen,
+    };
+  })(),
 };
 
 /**
