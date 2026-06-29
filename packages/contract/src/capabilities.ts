@@ -130,7 +130,7 @@ export const eventsList = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "events:read" },
   semantics: { paginated: true },
-  surfaceExempt: { web: WEB_DEFERRED },
+  // Bound on api + cli + mcp + web (the dashboard events list, slice 3 of the dashboard epic).
 });
 
 export const eventsGet = defineCapability({
@@ -140,7 +140,7 @@ export const eventsGet = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "RATE_LIMITED"],
   auth: { scope: "events:read" },
   semantics: {},
-  surfaceExempt: { web: WEB_DEFERRED },
+  // Bound on api + cli + mcp + web (the dashboard event detail, slice 3 of the dashboard epic).
 });
 
 export const eventsGetPayload = defineCapability({

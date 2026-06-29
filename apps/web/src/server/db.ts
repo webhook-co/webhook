@@ -24,3 +24,19 @@ export async function getTenantDb(): Promise<Sql> {
   }
   return createClient(hyperdrive.connectionString, { max: 1 });
 }
+
+/**
+ * Run `fn` with a per-request tenant pool, releasing it afterward (the 5s-timeout teardown is best-effort
+ * so a slow close never fails the request, and a leaked connection on Workers is what exhausts the pool).
+ * The single owner of the acquire/release policy — callers pass only their reader/writer closure. (The
+ * older credential + endpoint server modules still hand-roll this block; migrating them here is a tracked
+ * cleanup.)
+ */
+export async function withTenantDb<T>(fn: (app: Sql) => Promise<T>): Promise<T> {
+  const app = await getTenantDb();
+  try {
+    return await fn(app);
+  } finally {
+    await app.end({ timeout: 5 }).catch(() => {});
+  }
+}

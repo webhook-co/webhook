@@ -28,7 +28,15 @@ export default async function EndpointDetailPage({ params }: { params: Promise<{
         >
           ← Endpoints
         </Link>
-        <h1 className="text-2xl font-semibold tracking-heading text-fg">Endpoint</h1>
+        <div className="flex items-center justify-between gap-3">
+          <h1 className="text-2xl font-semibold tracking-heading text-fg">Endpoint</h1>
+          <Link
+            href={`/endpoints/${id}/events`}
+            className="text-sm font-medium text-fg underline-offset-4 hover:underline"
+          >
+            View events →
+          </Link>
+        </div>
       </div>
       {result.status === "error" ? (
         <Banner tone="danger">We couldn&apos;t load this endpoint. Refresh to try again.</Banner>
