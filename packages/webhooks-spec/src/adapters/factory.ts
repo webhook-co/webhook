@@ -2,42 +2,114 @@
 // (./config) into a VerifyAdapter, routing every provider through the SAME audited engine
 // (`verifyHmacCore`, via verifyHmacHex/Base64 in ./shared). This is the seam that lets a new
 // provider be one config row instead of a hand-written adapter — there is no per-provider crypto.
+//
+// Diagnosis order: MISSING_HEADER → oversize → signature-parse / timestamp-format /
+// referenced-header (all MALFORMED_SIGNATURE) → replay-window (TIMESTAMP_*) → HMAC. Every structural
+// (header-shape) problem is surfaced BEFORE the skew check — ONE consistent order for every provider.
+// This matches the hand-written Stripe/Slack adapters exactly, and applies the same order to Standard
+// Webhooks (whose bespoke adapter checked the replay window before parsing signatures): a request
+// that is BOTH stale and missing a v1 signature reports MALFORMED_SIGNATURE rather than
+// TIMESTAMP_TOO_OLD — both reject; the structural reason is the more actionable one. (A not-valid
+// hex/base64 signature is diagnosed inside verifyHmacCore, i.e. after the skew check.)
 
 import { concatBytes, utf8Encoder } from "../bytes";
 import { verificationFailed, type VerificationResult } from "../verification";
 import type { VerifyAdapter, VerifyInput } from "../adapter";
-import { RAW_BODY_MESSAGE, type HmacProviderConfig, type MessagePart } from "./config";
 import {
+  RAW_BODY_MESSAGE,
+  type HmacProviderConfig,
+  type SignatureFormat,
+  type TimestampSource,
+} from "./config";
+import {
+  enforceSkew,
   findHeader,
   oversizeBodyFailure,
   toCandidates,
+  toStandardWebhooksCandidates,
   verifyHmacBase64,
   verifyHmacHex,
 } from "./shared";
 
-/** Concatenate the configured message parts into the EXACT bytes the HMAC is computed over. */
-function buildMessage(parts: readonly MessagePart[], rawBody: Uint8Array): Uint8Array {
-  // The overwhelmingly common case (raw body verbatim) avoids a copy.
-  if (parts.length === 1 && parts[0]!.kind === "body") return rawBody;
-  const chunks: Uint8Array[] = [];
-  for (const part of parts) {
-    chunks.push(part.kind === "body" ? rawBody : utf8Encoder.encode(part.value));
-  }
-  return concatBytes(...chunks);
+interface ParsedSignatureHeader {
+  /** Every signature present in the header (rotation / multi-sig). */
+  readonly signatures: string[];
+  /** `key=value` fields parsed out of the header (csvKv only; e.g. Stripe's `t`). */
+  readonly fields: Record<string, string>;
 }
 
-/**
- * Build a `VerifyAdapter` from a declarative HMAC config. The adapter computes over the EXACT
- * captured raw bytes, tries each registered secret newest-first (rotation), constant-time
- * compares decoded MAC bytes, and NEVER throws — all of that lives in the shared engine; this
- * factory only does the per-config framing: header lookup, oversize guard, optional value-prefix
- * strip, signed-message assembly, and hex-vs-base64 dispatch.
- */
+/** Parse the signature header into its signatures (+ any embedded fields). String = MALFORMED detail. */
+function parseSignatureHeader(
+  headerValue: string,
+  format: SignatureFormat,
+  prefix: string | undefined,
+): ParsedSignatureHeader | { error: string } {
+  switch (format.kind) {
+    case "plain": {
+      let value = headerValue;
+      if (prefix !== undefined) {
+        if (!headerValue.startsWith(prefix)) return { error: `expected "${prefix}" prefix` };
+        value = headerValue.slice(prefix.length);
+      }
+      return { signatures: [value], fields: {} };
+    }
+    case "csvKv": {
+      const fields: Record<string, string> = {};
+      const signatures: string[] = [];
+      for (const part of headerValue.split(",")) {
+        const eq = part.indexOf("=");
+        if (eq === -1) continue;
+        const key = part.slice(0, eq).trim();
+        const val = part.slice(eq + 1).trim();
+        if (key === format.sigKey) signatures.push(val);
+        else fields[key] = val;
+      }
+      if (signatures.length === 0) return { error: `missing ${format.sigKey}=` };
+      return { signatures, fields };
+    }
+    case "spaceList": {
+      const signatures: string[] = [];
+      for (const entry of headerValue.split(" ")) {
+        if (entry === "") continue;
+        const comma = entry.indexOf(",");
+        if (comma === -1) continue;
+        if (entry.slice(0, comma) === format.sigTag) signatures.push(entry.slice(comma + 1));
+      }
+      if (signatures.length === 0) return { error: `no ${format.sigTag} signatures` };
+      return { signatures, fields: {} };
+    }
+  }
+}
+
+/** Resolve the signed timestamp. `null` = the scheme has none; string = MALFORMED detail. */
+function resolveTimestamp(
+  source: TimestampSource,
+  input: VerifyInput,
+  fields: Record<string, string>,
+): { tsRaw: string; tsNum: number } | null | { error: string } {
+  if (source.kind === "none") return null;
+  const raw =
+    source.kind === "header" ? findHeader(input.headers, source.header) : fields[source.field];
+  if (raw === undefined) {
+    return {
+      error: source.kind === "header" ? `missing ${source.header}` : `missing ${source.field}=`,
+    };
+  }
+  const label = source.kind === "header" ? source.header : source.field;
+  const n = Number.parseInt(raw, 10);
+  // Require a canonical integer (Number.parseInt is lenient); a non-canonical/garbage timestamp is
+  // MALFORMED, never a silently-skipped replay check.
+  if (!Number.isFinite(n) || String(n) !== raw) return { error: `non-integer ${label}` };
+  return { tsRaw: raw, tsNum: n };
+}
+
 export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
   const scheme = config.slug;
   const header = config.signatureHeader;
   const parts = config.message ?? RAW_BODY_MESSAGE;
-  const prefix = config.signatureValuePrefix;
+  const format = config.signatureFormat ?? { kind: "plain" };
+  const tsSource: TimestampSource = config.timestamp ?? { kind: "none" };
+  const keyMode = config.keyDerivation ?? "utf8";
 
   async function verify(input: VerifyInput): Promise<VerificationResult> {
     const headerValue = findHeader(input.headers, header);
@@ -48,35 +120,83 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
     const oversize = oversizeBodyFailure(scheme, input.rawBody);
     if (oversize !== null) return oversize;
 
-    let signature = headerValue;
-    if (prefix !== undefined) {
-      if (!headerValue.startsWith(prefix)) {
-        return verificationFailed({
-          code: "MALFORMED_SIGNATURE",
-          detail: `expected "${prefix}" prefix`,
-          scheme,
-        });
-      }
-      signature = headerValue.slice(prefix.length);
+    const parsed = parseSignatureHeader(headerValue, format, config.signatureValuePrefix);
+    if ("error" in parsed) {
+      return verificationFailed({ code: "MALFORMED_SIGNATURE", detail: parsed.error, scheme });
     }
 
-    const candidates = toCandidates(input.secrets);
-    const buildMsg = (body: Uint8Array) => buildMessage(parts, body);
+    // Resolve (and format-validate) the timestamp, but DON'T enforce the window yet.
+    const ts = resolveTimestamp(tsSource, input, parsed.fields);
+    if (ts !== null && "error" in ts) {
+      return verificationFailed({ code: "MALFORMED_SIGNATURE", detail: ts.error, scheme });
+    }
+
+    // Resolve every non-body message part to bytes (a referenced header that's absent is MALFORMED).
+    // `null` marks the body placeholder, substituted per-call so the engine's mutation probes work.
+    const resolved: (Uint8Array | null)[] = [];
+    for (const part of parts) {
+      if (part.kind === "body") {
+        resolved.push(null);
+        continue;
+      }
+      let value: string;
+      if (part.kind === "literal") {
+        value = part.value;
+      } else if (part.kind === "timestamp") {
+        if (ts === null) {
+          // A `timestamp` part with no timestamp source is a config bug; fail closed, never throw.
+          return verificationFailed({
+            code: "MALFORMED_SIGNATURE",
+            detail: "missing timestamp",
+            scheme,
+          });
+        }
+        value = ts.tsRaw;
+      } else {
+        const headerVal = findHeader(input.headers, part.header);
+        if (headerVal === undefined) {
+          return verificationFailed({
+            code: "MALFORMED_SIGNATURE",
+            detail: `missing ${part.header}`,
+            scheme,
+          });
+        }
+        value = headerVal;
+      }
+      resolved.push(utf8Encoder.encode(value));
+    }
+
+    // Enforce the replay window AFTER all structural checks, BEFORE spending HMAC cycles.
+    if (ts !== null) {
+      const skewFailure = enforceSkew(scheme, ts.tsNum, input.now);
+      if (skewFailure !== null) return skewFailure;
+    }
+
+    const buildMessage = (body: Uint8Array): Uint8Array => {
+      if (resolved.length === 1 && resolved[0] === null) return body; // raw-body fast path, no copy
+      return concatBytes(...resolved.map((r) => (r === null ? body : r)));
+    };
+
+    const candidates =
+      keyMode === "whsec-base64"
+        ? toStandardWebhooksCandidates(input.secrets)
+        : toCandidates(input.secrets);
+
     if (config.encoding === "hex") {
       return verifyHmacHex({
         scheme,
         rawBody: input.rawBody,
-        expectedHexes: [signature],
+        expectedHexes: parsed.signatures,
         candidates,
-        buildMessage: buildMsg,
+        buildMessage,
       });
     }
     return verifyHmacBase64({
       scheme,
       rawBody: input.rawBody,
-      expectedBase64s: [signature],
+      expectedBase64s: parsed.signatures,
       candidates,
-      buildMessage: buildMsg,
+      buildMessage,
     });
   }
 
