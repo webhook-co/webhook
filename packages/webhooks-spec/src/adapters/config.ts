@@ -71,6 +71,11 @@ export const PROVIDERS = [
   "recurly",
   // W1 final framework-needs — numbered multi-header signatures (docusign).
   "docusign",
+  // W2 — raw-body HMAC behind the F2 digest knobs: sha1 (vercel/intercom), sha512 (paystack).
+  // (authorize_net + sanity land in the same wave once their exact schemes are doc-confirmed.)
+  "vercel",
+  "intercom",
+  "paystack",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -283,21 +288,24 @@ function standardWebhooksConfig(slug: Provider, prefix: "webhook" | "svix"): Hma
 }
 
 /**
- * Build a raw-body HMAC-SHA256 config: the signature is computed over the EXACT request body verbatim
+ * Build a raw-body HMAC config: the signature is computed over the EXACT request body verbatim
  * (no timestamp, no header framing) — the most common provider scheme. `encoding` is hex or base64;
- * `prefix` is an optional fixed prefix on the header value to strip + require (e.g. `sha256=`).
+ * `prefix` is an optional fixed prefix on the header value to strip + require (e.g. `sha256=`);
+ * `digest` defaults to sha256 but can be sha1 / sha512 for the providers that sign with those.
  */
 function rawBodyHmacConfig(
   slug: Provider,
   signatureHeader: string,
-  encoding: "hex" | "base64",
+  encoding: SignatureEncoding,
   prefix?: string,
+  digest?: HmacDigest,
 ): HmacProviderConfig {
   return {
     slug,
     signatureHeader,
     ...(prefix !== undefined ? { signatureValuePrefix: prefix } : {}),
     encoding,
+    ...(digest !== undefined ? { digest } : {}),
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS[slug],
   };
 }
@@ -528,6 +536,13 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
     encoding: "base64",
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.docusign,
   },
+  // W2 — raw-body HMAC over a non-SHA256 digest (F2). Headers/digest verified per provider vs docs.
+  // vercel: `x-vercel-signature: <hex>` — bare HMAC-SHA1 over the raw body (utf8 key, no prefix).
+  vercel: rawBodyHmacConfig("vercel", "x-vercel-signature", "hex", undefined, "sha1"),
+  // intercom: `X-Hub-Signature: sha1=<hex>` (GitHub-style) — HMAC-SHA1 over the raw body (utf8 key).
+  intercom: rawBodyHmacConfig("intercom", "x-hub-signature", "hex", "sha1=", "sha1"),
+  // paystack: `x-paystack-signature: <hex>` — bare HMAC-SHA512 over the raw body (utf8 key, no prefix).
+  paystack: rawBodyHmacConfig("paystack", "x-paystack-signature", "hex", undefined, "sha512"),
 };
 
 /**
