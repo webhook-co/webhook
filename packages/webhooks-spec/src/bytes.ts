@@ -59,6 +59,22 @@ export function b64ToBytes(b64: string): Uint8Array | null {
   return out;
 }
 
+/**
+ * Decode a base64url string (`-`/`_` alphabet, optional `=` padding) to bytes. Returns null on
+ * invalid input — NEVER throws — the base64url sibling of {@link b64ToBytes} (same null-on-malformed
+ * contract, NOT packages/shared's throwing decoder). Some providers carry their MAC as base64url
+ * (e.g. Sanity). Translates `-`→`+`, `_`→`/`, re-pads to a multiple of 4, then reuses the strict
+ * standard-base64 decode — so the alphabet/length guards live in exactly one place.
+ */
+export function b64urlToBytes(b64url: string): Uint8Array | null {
+  if (!/^[A-Za-z0-9_-]*={0,2}$/.test(b64url)) return null;
+  let s = b64url.replace(/=+$/, "").replace(/-/g, "+").replace(/_/g, "/");
+  const rem = s.length % 4;
+  if (rem === 1) return null; // a length ≡ 1 mod 4 can never be valid base64
+  if (rem !== 0) s += "=".repeat(4 - rem);
+  return b64ToBytes(s);
+}
+
 /** Length-independent comparison so MAC/hash checks can't be timed. */
 export function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   if (a.length !== b.length) return false;
@@ -87,6 +103,19 @@ export function importHmacKey(raw: Uint8Array): Promise<CryptoKey> {
     "sign",
     "verify",
   ]);
+}
+
+/** The SubtleCrypto digests the verify engine supports (most providers use SHA-256). */
+export type HmacHash = "SHA-1" | "SHA-256" | "SHA-512";
+
+/**
+ * Import raw key bytes as a non-extractable HMAC CryptoKey for a chosen digest — the
+ * digest-parameterized sibling of {@link importHmacKey}, for the providers that sign with SHA-1 or
+ * SHA-512 rather than SHA-256. Kept SEPARATE (not a generalization of importHmacKey) so importHmacKey
+ * stays byte-for-byte identical to packages/shared's mirror (enforced by bytes-parity.test.ts).
+ */
+export function importHmacKeyForHash(raw: Uint8Array, hash: HmacHash): Promise<CryptoKey> {
+  return crypto.subtle.importKey("raw", raw, { name: "HMAC", hash }, false, ["sign", "verify"]);
 }
 
 /** Compute HMAC-SHA256(key, message) and return the raw MAC bytes. */

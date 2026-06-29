@@ -4,22 +4,26 @@
 // non-revoked secret (rotation), and — crucially — NEVER throws to block an ACK. A
 // verification problem is always returned as a typed `VerificationResult` diagnostic.
 //
-// Encoding seam: schemes carry their MAC as hex (Stripe/GitHub/Slack) or base64
-// (Shopify/Standard Webhooks). `verifyHmacCore` is the single audited rotation +
-// mutation-probe engine and is MULTI-SIGNATURE aware (it takes the full list of expected
-// signatures from the header). `verifyHmacHex` / `verifyHmacBase64` are thin wrappers that
-// differ only in how each expected signature string is decoded to MAC bytes.
+// Encoding + digest seam: schemes carry their MAC as hex / base64 / base64url, under HMAC with
+// SHA-256 (most), SHA-1, or SHA-512. `verifyHmacCore` is the single audited rotation +
+// mutation-probe engine — MULTI-SIGNATURE aware (it takes the full list of expected signatures
+// from the header) and digest-parameterized. `verifyHmac` is the general entry (it picks the
+// decoder by encoding and the hash/MAC-length by digest); `verifyHmacHex` / `verifyHmacBase64`
+// are thin SHA-256 specializations kept for their direct unit tests.
 
 import {
   b64ToBytes,
+  b64urlToBytes,
   bytesToHex,
   hexToBytes,
-  importHmacKey,
+  type HmacHash,
+  importHmacKeyForHash,
   timingSafeEqual,
   utf8Encoder,
 } from "../bytes";
 import { CLOCK_SKEW_TOLERANCE_SECONDS, type WebhookScheme } from "../scheme";
 import { verificationFailed, verificationOk, type VerificationResult } from "../verification";
+import type { HmacDigest, SignatureEncoding } from "./config";
 
 /**
  * Upper bound on the raw body we'll verify, in bytes. Past this we don't attempt the
@@ -28,8 +32,16 @@ import { verificationFailed, verificationOk, type VerificationResult } from "../
  */
 export const MAX_VERIFIABLE_BODY_BYTES = 1024 * 1024;
 
-/** A SHA-256 MAC is exactly 32 bytes; a signature that decodes to anything else can't match. */
-const SHA256_MAC_BYTES = 32;
+/**
+ * Per-digest engine parameters: the SubtleCrypto hash to import the key under, and the EXACT MAC
+ * byte length (a decoded signature of any other length can't possibly match, so it's filtered out
+ * before any crypto). SHA-1 = 20 bytes, SHA-256 = 32, SHA-512 = 64.
+ */
+const DIGEST_PARAMS: Readonly<Record<HmacDigest, { hash: HmacHash; macBytes: number }>> = {
+  sha1: { hash: "SHA-1", macBytes: 20 },
+  sha256: { hash: "SHA-256", macBytes: 32 },
+  sha512: { hash: "SHA-512", macBytes: 64 },
+};
 
 /** The Standard Webhooks secret prefix; the remainder is base64-decoded to the raw key. */
 const WHSEC_PREFIX = "whsec_";
@@ -214,37 +226,50 @@ interface HmacCoreParams {
   readonly decode: SignatureDecoder;
   /** Diagnostic detail when a signature is un-decodable (encoding-specific). */
   readonly malformedDetail: string;
+  /** The HMAC digest (selects the key-import hash + the matchable MAC length). */
+  readonly digest: HmacDigest;
   readonly candidates: readonly SecretCandidate[];
   readonly buildMessage: MessageBuilder;
 }
 
 /**
- * The single audited HMAC-SHA256 verification engine, multi-signature aware. Decodes every
- * expected signature once and keeps the matchable (32-byte) ones; imports each candidate key
- * once; computes each candidate's MAC once and compares it against ALL expected signatures
- * (O(candidates), not O(candidates × signatures)). On a miss, runs honest body-mutation probes
- * (trailing whitespace, re-encoded JSON) before falling back to WRONG_SECRET (a 32-byte
- * signature was present but unmatched) or SIGNATURE_MISMATCH / MALFORMED_SIGNATURE. Never throws.
+ * The single audited HMAC verification engine, digest- and multi-signature-aware. Decodes every
+ * expected signature once and keeps the matchable (correct-length-for-the-digest) ones; imports each
+ * candidate key once under the digest's hash; computes each candidate's MAC once and compares it
+ * against ALL expected signatures (O(candidates), not O(candidates × signatures)). On a miss, runs
+ * honest body-mutation probes (trailing whitespace, re-encoded JSON) before falling back to
+ * WRONG_SECRET (a correct-length signature was present but unmatched) or SIGNATURE_MISMATCH /
+ * MALFORMED_SIGNATURE. Never throws.
  */
 async function verifyHmacCore(params: HmacCoreParams): Promise<VerificationResult> {
-  const { scheme, rawBody, expectedSigs, decode, malformedDetail, candidates, buildMessage } =
-    params;
+  const {
+    scheme,
+    rawBody,
+    expectedSigs,
+    decode,
+    malformedDetail,
+    digest,
+    candidates,
+    buildMessage,
+  } = params;
+  const { hash, macBytes } = DIGEST_PARAMS[digest];
 
-  // Decode every expected signature once. A SHA-256 MAC is exactly 32 bytes, so only 32-byte
-  // decodes are matchable; track whether ANY signature decoded at all (vs all un-decodable/empty).
+  // Decode every expected signature once. A MAC is exactly `macBytes` for this digest, so only
+  // correct-length decodes are matchable; track whether ANY signature decoded at all (vs all
+  // un-decodable/empty).
   const expected: Uint8Array[] = [];
   let sawDecodable = false;
   for (const sig of expectedSigs) {
     const bytes = decode(sig);
     if (bytes === null || bytes.length === 0) continue;
     sawDecodable = true;
-    if (bytes.length === SHA256_MAC_BYTES) expected.push(bytes);
+    if (bytes.length === macBytes) expected.push(bytes);
   }
 
   // Diagnosis precedence mirrors the per-signature pipeline these adapters had before the engine
   // became multi-sig aware: (a) nothing decodable at all → MALFORMED; (b) no usable key →
-  // NO_MATCHING_KEY (before any crypto verdict); (c) decodable but no 32-byte signature → can't
-  // possibly match → SIGNATURE_MISMATCH.
+  // NO_MATCHING_KEY (before any crypto verdict); (c) decodable but no correct-length (for the digest)
+  // signature → can't possibly match → SIGNATURE_MISMATCH.
   if (!sawDecodable) {
     return verificationFailed({ code: "MALFORMED_SIGNATURE", detail: malformedDetail, scheme });
   }
@@ -255,10 +280,13 @@ async function verifyHmacCore(params: HmacCoreParams): Promise<VerificationResul
     return verificationFailed({ code: "SIGNATURE_MISMATCH" });
   }
 
-  // Import each candidate key once (reused across the happy message + every probe + every
-  // expected signature) — bytes.ts documents not re-importing per request.
+  // Import each candidate key once under the digest's hash (reused across the happy message + every
+  // probe + every expected signature) — bytes.ts documents not re-importing per request.
   const keyed = await Promise.all(
-    candidates.map(async (c) => ({ keyId: c.keyId, key: await importHmacKey(c.bytes) })),
+    candidates.map(async (c) => ({
+      keyId: c.keyId,
+      key: await importHmacKeyForHash(c.bytes, hash),
+    })),
   );
 
   // 1) The happy path: does any secret's MAC over the exact raw bytes match any expected sig?
@@ -295,6 +323,56 @@ async function verifyHmacCore(params: HmacCoreParams): Promise<VerificationResul
   return verificationFailed({ code: "WRONG_SECRET", confidence: "low" });
 }
 
+/** Per-encoding decode: the strict null-on-malformed decoder, its diagnostic, and any normalization. */
+const ENCODING_PARAMS: Readonly<
+  Record<
+    SignatureEncoding,
+    { decode: SignatureDecoder; detail: string; normalize?: (s: string) => string }
+  >
+> = {
+  // Hex is case-insensitive — lowercase before decode so an upper-case provider sig still matches.
+  hex: {
+    decode: hexToBytes,
+    detail: "signature is not valid hex",
+    normalize: (s) => s.toLowerCase(),
+  },
+  base64: { decode: b64ToBytes, detail: "signature is not valid base64" },
+  base64url: { decode: b64urlToBytes, detail: "signature is not valid base64url" },
+};
+
+export interface HmacVerifyGeneralParams {
+  readonly scheme: WebhookScheme;
+  readonly rawBody: Uint8Array;
+  /** One or more signatures from the header (single-sig schemes pass a one-element array). */
+  readonly signatures: readonly string[];
+  /** How those signatures are encoded (hex / base64 / base64url). */
+  readonly encoding: SignatureEncoding;
+  /** The HMAC digest (sha256 / sha1 / sha512). */
+  readonly digest: HmacDigest;
+  readonly candidates: readonly SecretCandidate[];
+  readonly buildMessage: MessageBuilder;
+}
+
+/**
+ * The general HMAC verify entry: pick the decoder for `encoding` and the hash/MAC-length for `digest`,
+ * then run the single audited engine. Every provider goes through here (via the factory). The `*Hex` /
+ * `*Base64` helpers below are thin SHA-256 specializations kept for their direct unit tests.
+ */
+export function verifyHmac(params: HmacVerifyGeneralParams): Promise<VerificationResult> {
+  const enc = ENCODING_PARAMS[params.encoding];
+  const expectedSigs = enc.normalize ? params.signatures.map(enc.normalize) : params.signatures;
+  return verifyHmacCore({
+    scheme: params.scheme,
+    rawBody: params.rawBody,
+    expectedSigs,
+    decode: enc.decode,
+    malformedDetail: enc.detail,
+    digest: params.digest,
+    candidates: params.candidates,
+    buildMessage: params.buildMessage,
+  });
+}
+
 export interface HmacVerifyParams {
   readonly scheme: WebhookScheme;
   readonly rawBody: Uint8Array;
@@ -306,12 +384,12 @@ export interface HmacVerifyParams {
 
 /** HMAC-SHA256 verification where the expected signatures are hex (Stripe/GitHub/Slack). */
 export function verifyHmacHex(params: HmacVerifyParams): Promise<VerificationResult> {
-  return verifyHmacCore({
+  return verifyHmac({
     scheme: params.scheme,
     rawBody: params.rawBody,
-    expectedSigs: params.expectedHexes.map((h) => h.toLowerCase()),
-    decode: hexToBytes,
-    malformedDetail: "signature is not valid hex",
+    signatures: params.expectedHexes,
+    encoding: "hex",
+    digest: "sha256",
     candidates: params.candidates,
     buildMessage: params.buildMessage,
   });
@@ -328,12 +406,12 @@ export interface HmacVerifyBase64Params {
 
 /** HMAC-SHA256 verification where the expected signatures are base64 (Shopify/Standard Webhooks). */
 export function verifyHmacBase64(params: HmacVerifyBase64Params): Promise<VerificationResult> {
-  return verifyHmacCore({
+  return verifyHmac({
     scheme: params.scheme,
     rawBody: params.rawBody,
-    expectedSigs: params.expectedBase64s,
-    decode: b64ToBytes,
-    malformedDetail: "signature is not valid base64",
+    signatures: params.expectedBase64s,
+    encoding: "base64",
+    digest: "sha256",
     candidates: params.candidates,
     buildMessage: params.buildMessage,
   });

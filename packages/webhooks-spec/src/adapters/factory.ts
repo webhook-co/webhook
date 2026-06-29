@@ -1,6 +1,6 @@
 // The config-driven adapter factory. `makeHmacAdapter` turns one declarative HmacProviderConfig
 // (./config) into a VerifyAdapter, routing every provider through the SAME audited engine
-// (`verifyHmacCore`, via verifyHmacHex/Base64 in ./shared). This is the seam that lets a new
+// (`verifyHmacCore`, via `verifyHmac` in ./shared). This is the seam that lets a new
 // provider be one config row instead of a hand-written adapter — there is no per-provider crypto.
 //
 // Diagnosis order: MISSING_HEADER → oversize → signature-parse / timestamp-format /
@@ -27,8 +27,7 @@ import {
   oversizeBodyFailure,
   toCandidates,
   toStandardWebhooksCandidates,
-  verifyHmacBase64,
-  verifyHmacHex,
+  verifyHmac,
 } from "./shared";
 
 interface ParsedSignatureHeader {
@@ -152,6 +151,7 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
   const format = config.signatureFormat ?? { kind: "plain" };
   const tsSource: TimestampSource = config.timestamp ?? { kind: "none" };
   const keyMode = config.keyDerivation ?? "utf8";
+  const digest = config.digest ?? "sha256";
 
   async function verify(input: VerifyInput): Promise<VerificationResult> {
     // Collect the signature(s) (presence = MISSING_HEADER). Numbered schemes (DocuSign) gather one
@@ -238,19 +238,12 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
         ? toStandardWebhooksCandidates(input.secrets)
         : toCandidates(input.secrets);
 
-    if (config.encoding === "hex") {
-      return verifyHmacHex({
-        scheme,
-        rawBody: input.rawBody,
-        expectedHexes: signatures,
-        candidates,
-        buildMessage,
-      });
-    }
-    return verifyHmacBase64({
+    return verifyHmac({
       scheme,
       rawBody: input.rawBody,
-      expectedBase64s: signatures,
+      signatures,
+      encoding: config.encoding,
+      digest,
       candidates,
       buildMessage,
     });
