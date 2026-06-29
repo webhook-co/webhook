@@ -88,6 +88,8 @@ export const PROVIDERS = [
   // W3b — sig-in-body JSON: Adyen (colon-joined item fields + hex key), Mailgun (JSON webhooks 2.0).
   "adyen",
   "mailgun",
+  // W3b — Mercado Pago: a query/header manifest with a lowercased data.id + conditional segments.
+  "mercado_pago",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -177,7 +179,22 @@ export type MessagePart =
    * ABSENT field resolves to the EMPTY string in position (Adyen signs absent fields as `""` between
    * its colons). Use for providers that sign over body fields rather than the raw body.
    */
-  | { readonly kind: "jsonField"; readonly path: string };
+  | { readonly kind: "jsonField"; readonly path: string }
+  /**
+   * A conditional labeled segment: if `source` (a query param or header) is PRESENT, emit
+   * `prefix` + the value (optionally lower-cased) + `suffix`; if ABSENT, emit NOTHING (the whole segment
+   * is removed). Mercado Pago's manifest: `id:<lower(data.id)>;` is dropped entirely when `data.id` is
+   * absent rather than rendered as `id:;`.
+   */
+  | {
+      readonly kind: "conditionalField";
+      readonly source:
+        | { readonly kind: "queryParam"; readonly name: string }
+        | { readonly kind: "header"; readonly header: string };
+      readonly prefix: string;
+      readonly suffix: string;
+      readonly lowercase?: boolean;
+    };
 
 /** The signed message is the raw body verbatim unless a config says otherwise. */
 export const RAW_BODY_MESSAGE: readonly MessagePart[] = [{ kind: "body" }];
@@ -726,6 +743,40 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
       { kind: "jsonField", path: "signature.token" },
     ],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.mailgun,
+  },
+  // mercado_pago: `x-signature: ts=<ts>,v1=<hex>` (+ `x-request-id`). Manifest =
+  // `id:<lower(data.id)>;request-id:<x-request-id>;ts:<ts>;` — `data.id` from the URL query (lowercased
+  // unconditionally), each segment removed entirely when its source is absent. HMAC-SHA256/hex, key =
+  // the dashboard secret as utf8 (NOT hex-decoded), no enforced replay window (ts spliced verbatim;
+  // units vary seconds/ms by product).
+  mercado_pago: {
+    slug: "mercado_pago",
+    signatureHeader: "x-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "hex",
+    // `ts` is spliced verbatim, so its `format` is inert while the window is disabled; if a window is
+    // ever enabled, set format per the product's unit (MP emits seconds OR 13-digit milliseconds).
+    timestamp: { kind: "sigField", field: "ts" },
+    enforceReplayWindow: false,
+    message: [
+      {
+        kind: "conditionalField",
+        source: { kind: "queryParam", name: "data.id" },
+        prefix: "id:",
+        suffix: ";",
+        lowercase: true,
+      },
+      {
+        kind: "conditionalField",
+        source: { kind: "header", header: "x-request-id" },
+        prefix: "request-id:",
+        suffix: ";",
+      },
+      { kind: "literal", value: "ts:" },
+      { kind: "timestamp" },
+      { kind: "literal", value: ";" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.mercado_pago,
   },
 };
 

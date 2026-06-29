@@ -317,6 +317,22 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
           value = body === undefined ? "" : (jsonPathValue(body, part.path) ?? "");
           break;
         }
+        case "conditionalField": {
+          // Present → `prefix` + (optionally lowercased) value + `suffix`; absent → the whole segment is
+          // removed (empty), never MALFORMED (Mercado Pago drops `id:<…>;` entirely when data.id is absent).
+          let raw: string | undefined;
+          if (part.source.kind === "queryParam") {
+            const url = requestUrlObj();
+            raw = url === null ? undefined : (url.searchParams.get(part.source.name) ?? undefined);
+          } else {
+            raw = findHeader(input.headers, part.source.header);
+          }
+          value =
+            raw === undefined
+              ? ""
+              : `${part.prefix}${part.lowercase ? raw.toLowerCase() : raw}${part.suffix}`;
+          break;
+        }
       }
       resolved.push(utf8Encoder.encode(value));
     }
