@@ -33,6 +33,7 @@ export {
 export {
   PROVIDERS,
   ProviderSchema,
+  SW_SECRET_PROVIDERS,
   type Provider,
   type HmacProviderConfig,
   type MessagePart,

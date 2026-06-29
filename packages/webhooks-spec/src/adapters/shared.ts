@@ -85,16 +85,26 @@ export function toCandidates(secrets: readonly string[]): SecretCandidate[] {
 }
 
 /**
- * Map Standard Webhooks secrets onto keyed candidates. Unlike the UTF-8 schemes, an SW secret
- * is `whsec_`-prefixed and the remainder is base64-decoded to the RAW key bytes. Non-base64 or
- * zero-length keys are skipped (never throws); positional keyIds keep their original index so
- * `secret_0` still maps to the newest provided secret.
+ * Normalize a Standard-Webhooks secret to its base64 key material: strip an optional leading version
+ * tag — Supabase displays its secret as `v1,whsec_<base64>` — and the optional `whsec_` prefix. A real
+ * base64 secret contains no comma, so a leading `v<n>,` is unambiguously a version tag, not key bytes;
+ * a bare-base64 secret (e.g. Brex, no prefix at all) passes through unchanged.
+ */
+function standardWebhooksSecretB64(secret: string): string {
+  const untagged = secret.replace(/^v\d+,/, "");
+  return untagged.startsWith(WHSEC_PREFIX) ? untagged.slice(WHSEC_PREFIX.length) : untagged;
+}
+
+/**
+ * Map Standard Webhooks secrets onto keyed candidates. Unlike the UTF-8 schemes, an SW secret is a
+ * (optionally `whsec_`-prefixed, optionally `v1,`-tagged) base64 string, decoded to the RAW key bytes.
+ * Non-base64 or zero-length keys are skipped (never throws); positional keyIds keep their original
+ * index so `secret_0` still maps to the newest provided secret.
  */
 export function toStandardWebhooksCandidates(secrets: readonly string[]): SecretCandidate[] {
   const out: SecretCandidate[] = [];
   secrets.forEach((s, i) => {
-    const raw = s.startsWith(WHSEC_PREFIX) ? s.slice(WHSEC_PREFIX.length) : s;
-    const bytes = b64ToBytes(raw);
+    const bytes = b64ToBytes(standardWebhooksSecretB64(s));
     if (bytes !== null && bytes.length > 0) out.push({ keyId: `secret_${i}`, bytes });
   });
   return out;
@@ -111,8 +121,7 @@ export function toStandardWebhooksCandidates(secrets: readonly string[]): Secret
  * front with a real error. Pure (no I/O); the single source of "is this SW secret decodable".
  */
 export function isUsableStandardWebhooksSecret(secret: string): boolean {
-  const raw = secret.startsWith(WHSEC_PREFIX) ? secret.slice(WHSEC_PREFIX.length) : secret;
-  const bytes = b64ToBytes(raw);
+  const bytes = b64ToBytes(standardWebhooksSecretB64(secret));
   return bytes !== null && bytes.length > 0;
 }
 

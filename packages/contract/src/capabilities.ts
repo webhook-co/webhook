@@ -6,6 +6,7 @@ import {
   isUsableStandardWebhooksSecret,
   LagSchema,
   ProviderSchema,
+  SW_SECRET_PROVIDERS,
   WATERMARK_DELTA_MS,
 } from "@webhook-co/shared";
 import { z } from "zod";
@@ -278,18 +279,20 @@ export const endpointsAddProviderSecret = defineCapability({
       label: z.string().trim().min(1).max(200).optional(),
       secret: z.string().min(1).max(4096),
     })
-    // A Standard Webhooks secret is `whsec_`+base64; the verify path strips the prefix and base64-
-    // decodes the remainder to the raw key. Validate at the schema boundary with the SAME decoder
-    // (isUsableStandardWebhooksSecret) so a value that matches the base64 alphabet but is not valid
-    // base64 (e.g. a length ≡ 1 mod 4 paste, hex, or raw) is rejected up front — otherwise it would
-    // store fine yet decode to nothing and verify as NO_MATCHING_KEY forever (indistinguishable from
-    // "no secret"). Single-sourced here so every surface (api/mcp) enforces it identically.
+    // A Standard-Webhooks-family secret is base64 key material (optionally `whsec_`-prefixed, and a
+    // `v1,` version tag for Supabase). The verify path strips those and base64-decodes the remainder.
+    // Validate at the schema boundary with the SAME decoder (isUsableStandardWebhooksSecret) for every
+    // SW-family provider (SW_SECRET_PROVIDERS, derived from the configs) so a value that matches the
+    // base64 alphabet but isn't valid base64 (a length ≡ 1 mod 4 paste, hex, or raw) is rejected up
+    // front — otherwise it would store fine yet decode to nothing and verify as NO_MATCHING_KEY forever
+    // (indistinguishable from "no secret"). Single-sourced here so every surface (api/mcp) matches.
     .superRefine((val, ctx) => {
-      if (val.provider === "standard_webhooks" && !isUsableStandardWebhooksSecret(val.secret)) {
+      if (SW_SECRET_PROVIDERS.has(val.provider) && !isUsableStandardWebhooksSecret(val.secret)) {
         ctx.addIssue({
           code: "custom",
           path: ["secret"],
-          message: "a standard_webhooks secret must be whsec_ followed by standard base64",
+          message:
+            "a Standard Webhooks secret must be base64 key material (optionally whsec_-prefixed)",
         });
       }
     }),
