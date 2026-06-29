@@ -16,7 +16,20 @@ import { z } from "zod";
  * ingest). This tuple is THE source of truth for the provider/scheme vocabulary — keep it
  * in detection-precedence order (it becomes ADAPTER_SCHEMES). packages/shared re-exports it.
  */
-export const PROVIDERS = ["stripe", "github", "shopify", "slack", "standard_webhooks"] as const;
+export const PROVIDERS = [
+  "stripe",
+  "github",
+  "shopify",
+  "slack",
+  "standard_webhooks",
+  // Standard Webhooks (Svix) aliases — same scheme, their own header trio + slug (W0).
+  "clerk",
+  "resend",
+  "stytch",
+  "supabase",
+  "render",
+  "brex",
+] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
 
@@ -32,6 +45,12 @@ export const PROVIDER_TOLERANCE_SECONDS: Readonly<Record<Provider, number>> = {
   shopify: 300,
   slack: 300,
   standard_webhooks: 300,
+  clerk: 300,
+  resend: 300,
+  stytch: 300,
+  supabase: 300,
+  render: 300,
+  brex: 300,
 };
 
 /**
@@ -162,26 +181,45 @@ export const SLACK_CONFIG: HmacProviderConfig = {
 };
 
 /**
- * Standard Webhooks (ADR-0008): headers `webhook-id` / `webhook-timestamp` / `webhook-signature`
- * (space-delimited `v1,<base64>` entries; `v1a` asymmetric entries skipped); message
- * `{id}.{ts}.{body}`; key = `whsec_`+base64-decoded; HMAC-SHA256/base64.
+ * Build a Standard Webhooks (Svix-compatible, ADR-0008) config for a provider that signs with the
+ * SW construction: headers `{prefix}-id` / `{prefix}-timestamp` / `{prefix}-signature` (the
+ * signature is a space-delimited list of `v1,<base64>` entries; `v1a` asymmetric entries skipped),
+ * message `{id}.{ts}.{body}`, key = a (optionally `whsec_`-prefixed) base64-decoded secret,
+ * HMAC-SHA256/base64, 300s window. `prefix` is `webhook` for the standardized header names (and
+ * Svix's newer headers) or `svix` for providers still emitting Svix's original `svix-*` trio.
  */
-export const STANDARD_WEBHOOKS_CONFIG: HmacProviderConfig = {
-  slug: "standard_webhooks",
-  signatureHeader: "webhook-signature",
-  signatureFormat: { kind: "spaceList", sigTag: "v1" },
-  encoding: "base64",
-  keyDerivation: "whsec-base64",
-  timestamp: { kind: "header", header: "webhook-timestamp" },
-  message: [
-    { kind: "header", header: "webhook-id" },
-    { kind: "literal", value: "." },
-    { kind: "timestamp" },
-    { kind: "literal", value: "." },
-    { kind: "body" },
-  ],
-  toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.standard_webhooks,
-};
+function standardWebhooksConfig(slug: Provider, prefix: "webhook" | "svix"): HmacProviderConfig {
+  return {
+    slug,
+    signatureHeader: `${prefix}-signature`,
+    signatureFormat: { kind: "spaceList", sigTag: "v1" },
+    encoding: "base64",
+    keyDerivation: "whsec-base64",
+    timestamp: { kind: "header", header: `${prefix}-timestamp` },
+    message: [
+      { kind: "header", header: `${prefix}-id` },
+      { kind: "literal", value: "." },
+      { kind: "timestamp" },
+      { kind: "literal", value: "." },
+      { kind: "body" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS[slug],
+  };
+}
+
+/** Standard Webhooks (ADR-0008): the canonical `webhook-*` header trio. */
+export const STANDARD_WEBHOOKS_CONFIG = standardWebhooksConfig("standard_webhooks", "webhook");
+
+// Standard-Webhooks (Svix) aliases (W0) — same scheme, only the header trio + slug differ. clerk/
+// resend/stytch still emit Svix's original `svix-*` headers; supabase/render/brex use the
+// standardized `webhook-*` names. (brex's secret isn't `whsec_`-prefixed; whsec-base64 strips the
+// prefix only if present, so a raw-base64 secret decodes the same.)
+export const CLERK_CONFIG = standardWebhooksConfig("clerk", "svix");
+export const RESEND_CONFIG = standardWebhooksConfig("resend", "svix");
+export const STYTCH_CONFIG = standardWebhooksConfig("stytch", "svix");
+export const SUPABASE_CONFIG = standardWebhooksConfig("supabase", "webhook");
+export const RENDER_CONFIG = standardWebhooksConfig("render", "webhook");
+export const BREX_CONFIG = standardWebhooksConfig("brex", "webhook");
 
 /**
  * The complete provider→config map. `registry.ts` maps every entry through `makeHmacAdapter` to
@@ -193,4 +231,20 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
   shopify: SHOPIFY_CONFIG,
   slack: SLACK_CONFIG,
   standard_webhooks: STANDARD_WEBHOOKS_CONFIG,
+  clerk: CLERK_CONFIG,
+  resend: RESEND_CONFIG,
+  stytch: STYTCH_CONFIG,
+  supabase: SUPABASE_CONFIG,
+  render: RENDER_CONFIG,
+  brex: BREX_CONFIG,
 };
+
+/**
+ * Providers whose secret is a Standard-Webhooks key (the `whsec-base64` derivation). Registration
+ * validates the secret is actually decodable for these (via isUsableStandardWebhooksSecret) so a
+ * mis-pasted secret is rejected up front rather than verifying as NO_MATCHING_KEY forever. Derived
+ * from the configs, so a new SW-family provider is covered automatically.
+ */
+export const SW_SECRET_PROVIDERS: ReadonlySet<Provider> = new Set(
+  PROVIDERS.filter((p) => PROVIDER_CONFIGS[p].keyDerivation === "whsec-base64"),
+);
