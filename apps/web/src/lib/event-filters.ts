@@ -13,11 +13,16 @@
 // include June 2, set `to=2026-06-03`.) Keeping this exclusive holds the cross-surface parity that an
 // inclusive-of-the-to-day shortcut would break.
 
+import type { VerificationState } from "@webhook-co/shared";
+
+import { VERIFICATION_STATES } from "./verification-state";
+
 /** The coerced, SQL-ready filter (instant bounds). Mirrors the db `ListEventsOptions` filter fields. */
 export interface EventFilters {
   readonly provider?: string;
   readonly receivedAfter?: Date;
   readonly receivedBefore?: Date;
+  readonly verificationState?: VerificationState;
 }
 
 /** The raw, human-facing filter values as they ride in the URL query + across the load-more boundary. */
@@ -26,6 +31,8 @@ export interface EventFilterParams {
   /** A `YYYY-MM-DD` calendar day (from a date input) or a full ISO instant. */
   readonly from?: string | null;
   readonly to?: string | null;
+  /** Verification tri-state (`?status=`): verified | failed | unattempted. */
+  readonly status?: string | null;
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -62,7 +69,12 @@ export function parseEventFilters(
   params: EventFilterParams,
   validProviders?: readonly string[],
 ): EventFilters {
-  const filters: { provider?: string; receivedAfter?: Date; receivedBefore?: Date } = {};
+  const filters: {
+    provider?: string;
+    receivedAfter?: Date;
+    receivedBefore?: Date;
+    verificationState?: VerificationState;
+  } = {};
   const provider = cleanString(params.provider);
   if (
     provider !== undefined &&
@@ -74,6 +86,11 @@ export function parseEventFilters(
   if (receivedAfter !== undefined) filters.receivedAfter = receivedAfter;
   const receivedBefore = toInstant(params.to);
   if (receivedBefore !== undefined) filters.receivedBefore = receivedBefore;
+  const status = cleanString(params.status);
+  // Validate against the closed enum (a hand-edited `?status=foo` is dropped, not passed to SQL).
+  if (status !== undefined && (VERIFICATION_STATES as readonly string[]).includes(status)) {
+    filters.verificationState = status as VerificationState;
+  }
   return filters;
 }
 
@@ -86,6 +103,7 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
   return (
     filters.provider !== undefined ||
     filters.receivedAfter !== undefined ||
-    filters.receivedBefore !== undefined
+    filters.receivedBefore !== undefined ||
+    filters.verificationState !== undefined
   );
 }

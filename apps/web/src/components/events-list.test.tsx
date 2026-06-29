@@ -18,12 +18,14 @@ function ev(id: string, over: Partial<EventSummaryItem> = {}): EventSummaryItem 
     dedupKey: "evt",
     dedupStrategy: "sw_webhook_id",
     verified: true,
+    verificationState: "verified",
     ...over,
   };
 }
 
 const A = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
 const B = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5062";
+const C = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5063";
 
 describe("EventsList", () => {
   it("renders an empty state when there are no events", () => {
@@ -78,11 +80,15 @@ describe("EventsList", () => {
     });
   });
 
-  it("shows a verified pill for verified events and a neutral 'Not verified' for unsigned (no alarm)", () => {
+  it("renders the tri-state verification pill: verified (ok) / failed (red) / unattempted (neutral)", () => {
     render(
       <EventsList
         endpointId={ENDPOINT_ID}
-        initialItems={[ev(A, { verified: true }), ev(B, { verified: false, provider: null })]}
+        initialItems={[
+          ev(A, { verificationState: "verified" }),
+          ev(B, { verified: false, verificationState: "failed" }),
+          ev(C, { verified: false, verificationState: "unattempted", provider: null }),
+        ]}
         initialCursor={null}
         filterParams={{}}
         isFiltered={false}
@@ -90,14 +96,15 @@ describe("EventsList", () => {
       />,
     );
     // Scope to each row (the table HEADER cell is also "Verified", so a bare getByText collides).
-    const verifiedRow = screen.getByText(A).closest("tr")!;
-    expect(within(verifiedRow).getByText("Verified")).toBeInTheDocument();
-    const unsignedRow = screen.getByText(B).closest("tr")!;
-    expect(within(unsignedRow).getByText("Not verified")).toBeInTheDocument();
-    // unsigned event shows the provider placeholder, not a crash
-    expect(within(unsignedRow).getByText("—")).toBeInTheDocument();
+    expect(within(screen.getByText(A).closest("tr")!).getByText("Verified")).toBeInTheDocument();
+    // A genuine signature failure now shows red "Failed" on the list (ADR-0077 amendment).
+    expect(within(screen.getByText(B).closest("tr")!).getByText("Failed")).toBeInTheDocument();
+    // Unattempted stays neutral "Not verified" (never alarms) + the null-provider placeholder.
+    const unattemptedRow = screen.getByText(C).closest("tr")!;
+    expect(within(unattemptedRow).getByText("Not verified")).toBeInTheDocument();
+    expect(within(unattemptedRow).getByText("—")).toBeInTheDocument();
     // links to the event detail
-    expect(within(verifiedRow).getByRole("link")).toHaveAttribute(
+    expect(within(screen.getByText(A).closest("tr")!).getByRole("link")).toHaveAttribute(
       "href",
       `/endpoints/${ENDPOINT_ID}/events/${A}`,
     );

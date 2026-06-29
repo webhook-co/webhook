@@ -177,3 +177,26 @@ The **events provider filter** (the brief's v1 list filter; the backend already 
 was deferred to the founder-requested **dashboard search + filtering** fast-follow (provider / verified-status /
 date-range / text-search on events, name search on endpoints — most need a contract `filter` + db-query
 extension), tracked in the internal backlog.
+
+## amendment — search + filtering slice (2026-06-29)
+
+The dashboard search + filtering fast-follow shipped as its own 3-PR slice (provider/date/name → tri-state
+verified-status → substring search). Two refinements to the `truthful UX` above:
+
+- **The events-list verified pill is now TRI-STATE — `failed` shows RED on the list** (PR 1b), SUPERSEDING the
+  "neutral for unsigned" decision recorded under the as-built amendment. That decision was forced only because
+  the lossy `verified` boolean couldn't distinguish a verification *failure* from *never-attempted*. PR 1b adds
+  a **derived `verificationState`** (`verified` | `failed` | `unattempted`) — projected in SQL by the summary
+  reads (`case when verified then 'verified' when verification is not null then 'failed' else 'unattempted'
+  end`) and derived in `getEvent` — so the list CAN now tell them apart. The pill renders `verified` ok/green,
+  `failed` (an adapter ran and REJECTED the signature) danger/red, and **`unattempted` stays neutral**:
+  `verification IS NULL` collapses no-secret / signature-header-absent / a rare KMS-or-internal error into one
+  bucket the row cannot disambiguate, so it must never be presented as a failure (only engine logs can tell
+  those apart). The same tri-state is a contract `events.list.filter.verificationState` enum at CLI/API/web/MCP
+  parity. `verificationState` is an **OPTIONAL** `EventSummary` field (a required one would throw in `getEvent`
+  and silently drop `wbhk listen` frames under version skew).
+- **Date-range filter is half-open `[from, to)` — `to` is EXCLUSIVE** (PR 1a), to hold byte-for-byte
+  cross-surface parity with `wbhk events list --before` / the API / the DB predicate (`received_at < bound`).
+  The web "To" input is labeled "To (exclusive)"; a single-day view sets To to the next day. Filter date INPUTS
+  in the contract are plain RFC3339 **strings** (not `z.coerce.date()`, whose `ZodDate` breaks the MCP tool
+  `inputSchema` JSON-Schema conversion); the shared read-handler validates + coerces them to `Date`.

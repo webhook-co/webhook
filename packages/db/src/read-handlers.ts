@@ -120,7 +120,12 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       endpointId: string;
       cursor?: string;
       limit?: number;
-      filter?: { provider?: string; receivedAfter?: string; receivedBefore?: string };
+      filter?: {
+        provider?: string;
+        receivedAfter?: string;
+        receivedBefore?: string;
+        verificationState?: "verified" | "failed" | "unattempted";
+      };
     };
     // The range bounds arrive as RFC3339 strings (the contract input is a plain string so the MCP tool
     // inputSchema stays JSON-Schema-clean); validate + coerce them to Dates HERE — a malformed bound is
@@ -141,6 +146,7 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         provider: filter?.provider,
         receivedAfter,
         receivedBefore,
+        verificationState: filter?.verificationState,
       });
       // events.list is a newest-first browse; surface the watermark-bounded head as a resumable
       // checkpoint (caughtUp/lag are forward-tail concepts and don't apply to a DESC browse).

@@ -186,6 +186,19 @@ describe("events.list filter (provider + received-at range)", () => {
     expect(parsed.filter?.receivedAfter).toBe("2026-06-01T00:00:00Z");
   });
 
+  it("accepts a verificationState enum and rejects an unknown one (closed enum)", () => {
+    const ok = eventsList.input.safeParse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { verificationState: "failed" },
+    });
+    expect(ok.success).toBe(true);
+    const bad = eventsList.input.safeParse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { verificationState: "bogus" },
+    });
+    expect(bad.success).toBe(false);
+  });
+
   it("produces a JSON-Schema-serializable input (no ZodDate) — MCP tools/list must not throw", () => {
     // Regression for the z.coerce.date() bug: the MCP surface converts this input to a JSON Schema, which
     // a ZodDate (from z.coerce.date()) can't represent. z.toJSONSchema must not throw on the filter.

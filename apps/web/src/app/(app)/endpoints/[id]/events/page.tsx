@@ -27,6 +27,7 @@ export default async function EventsPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{
     provider?: string | string[];
+    status?: string | string[];
     from?: string | string[];
     to?: string | string[];
   }>;
@@ -39,6 +40,7 @@ export default async function EventsPage({
   // firstParam guards a repeated query param (`?provider=a&provider=b` → string[]) — first-wins.
   const filterParams: EventFilterParams = {
     provider: firstParam(sp.provider),
+    status: firstParam(sp.status),
     from: firstParam(sp.from),
     to: firstParam(sp.to),
   };
@@ -81,7 +83,7 @@ export default async function EventsPage({
           <EventsList
             // Re-key on the endpoint AND the active filters so the list's once-seeded useState
             // (items/cursor) is replaced with the freshly-filtered first page on any filter change.
-            key={`${id}:${filterParams.provider ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}`}
+            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}`}
             endpointId={id}
             initialItems={result.items}
             initialCursor={result.nextCursor}

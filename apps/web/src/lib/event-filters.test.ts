@@ -52,6 +52,13 @@ describe("parseEventFilters", () => {
     // A hand-edited ?provider=foobar is dropped → "no filter" rather than a confusing empty result.
     expect(parseEventFilters({ provider: "foobar" }, PROVIDERS)).toEqual({});
   });
+
+  it("parses a valid verification status and drops an unknown one (closed enum)", () => {
+    expect(parseEventFilters({ status: "failed" })).toEqual({ verificationState: "failed" });
+    expect(parseEventFilters({ status: "verified" })).toEqual({ verificationState: "verified" });
+    expect(parseEventFilters({ status: "bogus" })).toEqual({}); // hand-edited junk dropped
+    expect(parseEventFilters({ status: "  " })).toEqual({});
+  });
 });
 
 describe("hasAppliedFilters", () => {
@@ -60,5 +67,6 @@ describe("hasAppliedFilters", () => {
     expect(hasAppliedFilters(parseEventFilters({ from: "oops" }))).toBe(false); // bad date dropped
     expect(hasAppliedFilters(parseEventFilters({ provider: "stripe" }, PROVIDERS))).toBe(true);
     expect(hasAppliedFilters(parseEventFilters({ from: "2026-06-01" }))).toBe(true);
+    expect(hasAppliedFilters(parseEventFilters({ status: "failed" }))).toBe(true);
   });
 });

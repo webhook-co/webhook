@@ -18,6 +18,7 @@ import * as React from "react";
 
 import type { EventFilterParams } from "@/lib/event-filters";
 import { formatDateTime } from "@/lib/format";
+import { verificationStatePill } from "@/lib/verification-state";
 import type { LoadMoreEventsResult } from "@/server/event-actions";
 import type { EventSummaryItem } from "@/server/events";
 
@@ -106,11 +107,13 @@ export function EventsList({
                 </TableCell>
                 <TableCell className="text-fg-secondary">{event.provider ?? "—"}</TableCell>
                 <TableCell>
-                  {/* Neutral (not red) for unsigned: the list can't tell "verification failed" from
-                      "never attempted" (that's only on the detail), so an unsigned event must not alarm. */}
-                  <StatusPill tone={event.verified ? "ok" : "neutral"}>
-                    {event.verified ? "Verified" : "Not verified"}
-                  </StatusPill>
+                  {/* Tri-state (ADR-0077 amendment): the list now projects the verification state, so a
+                      genuine signature FAILURE shows red. "Not verified" (unattempted) stays neutral —
+                      it collapses no-secret / header-absent / KMS-error, none of which is a failure. */}
+                  {(() => {
+                    const pill = verificationStatePill(event.verificationState, event.verified);
+                    return <StatusPill tone={pill.tone}>{pill.label}</StatusPill>;
+                  })()}
                 </TableCell>
                 <TableCell>
                   <code className="font-mono text-xs text-fg-secondary">{event.id}</code>

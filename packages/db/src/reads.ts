@@ -5,6 +5,7 @@
 // shared camelCase entity schemas, which also validate the row shape.
 
 import {
+  deriveVerificationState,
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
@@ -15,6 +16,7 @@ import {
   type Event,
   type EventSummary,
   type Since,
+  type VerificationState,
 } from "@webhook-co/shared";
 
 import type { TenantTx } from "./client";
@@ -174,6 +176,26 @@ interface EventRow {
   provider_event_id: string | null;
   external_id: string | null;
   verification: unknown;
+  /** Projected by the summary reads (listEvents/tailEvents) via the SQL CASE; absent on getEvent. */
+  verification_state?: string;
+}
+
+// The truthful verification tri-state, projected in SQL so the lean summary carries it WITHOUT shipping
+// the `verification` jsonb. Mirrors deriveVerificationState(). Used by listEvents + tailEvents.
+function verificationStateColumn(tx: TenantTx) {
+  return tx`case when verified then 'verified' when verification is not null then 'failed' else 'unattempted' end as verification_state`;
+}
+
+// The events.list verification-state filter, translated to the §truthful-partition predicates. Each
+// predicate MIRRORS its verificationStateColumn() CASE bucket EXACTLY (incl. the `not verified` guard
+// on `unattempted`) so a filtered row's pill can never contradict the filter — even if a future row
+// ever had verified=true with a null verification (which the CASE would label 'verified', not
+// 'unattempted'). `failed` is backed by events_failed_idx (migration 0022).
+function verificationStateFilter(tx: TenantTx, state: VerificationState | undefined) {
+  if (state === "verified") return tx`and verified`;
+  if (state === "failed") return tx`and not verified and verification is not null`;
+  if (state === "unattempted") return tx`and not verified and verification is null`;
+  return tx``;
 }
 
 function toEventSummary(r: EventRow): EventSummary {
@@ -186,6 +208,7 @@ function toEventSummary(r: EventRow): EventSummary {
     dedupKey: r.dedup_key,
     dedupStrategy: r.dedup_strategy,
     verified: r.verified,
+    verificationState: r.verification_state,
   });
 }
 
@@ -196,6 +219,8 @@ export interface ListEventsOptions extends ListOptions {
   readonly receivedAfter?: Date;
   /** Exclusive upper bound on received_at (events strictly before this instant). */
   readonly receivedBefore?: Date;
+  /** Verification tri-state filter (verified | failed | unattempted). */
+  readonly verificationState?: VerificationState;
 }
 
 export async function listEvents(
@@ -203,17 +228,20 @@ export async function listEvents(
   opts: ListEventsOptions,
 ): Promise<Page<EventSummary>> {
   const limit = clampLimit(opts.limit);
-  const { cursor, endpointId, provider, receivedAfter, receivedBefore } = opts;
+  const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState } = opts;
   // The received-at range is bound on the RAW received_at (sargable against events_tunnel_idx /
   // events_provider_idx, which lead with endpoint_id then received_at) — it only narrows the per-endpoint
-  // scan. The keyset still compares date_trunc('ms', …) to match the cursor resolution.
+  // scan. The keyset still compares date_trunc('ms', …) to match the cursor resolution. The sparse
+  // `failed` verification filter is backed by the events_failed_idx partial index (migration 0022).
   const rows = await tx<EventRow[]>`
-    select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified
+    select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
+           ${verificationStateColumn(tx)}
     from events
     where endpoint_id = ${endpointId}
     ${provider ? tx`and provider = ${provider}` : tx``}
     ${receivedAfter ? tx`and received_at >= ${receivedAfter}` : tx``}
     ${receivedBefore ? tx`and received_at < ${receivedBefore}` : tx``}
+    ${verificationStateFilter(tx, verificationState)}
     ${cursor ? keysetBefore(tx, cursor) : tx``}
     order by date_trunc('milliseconds', received_at) desc, id desc
     limit ${limit + 1}`;
@@ -248,7 +276,8 @@ export async function tailEvents(
   const limit = clampLimit(opts.limit);
   const { endpointId, sinceCursor } = opts;
   const rows = await tx<EventRow[]>`
-    select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified
+    select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
+           ${verificationStateColumn(tx)}
     from events
     where endpoint_id = ${endpointId}
       and ${belowWatermark(tx)}
@@ -355,6 +384,9 @@ export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> 
     dedupKey: r.dedup_key,
     dedupStrategy: r.dedup_strategy,
     verified: r.verified,
+    // Derived in JS here (getEvent selects the `verification` jsonb, unlike the lean summary reads
+    // that project the SQL CASE) so events.get reports the same tri-state as the list.
+    verificationState: deriveVerificationState(r.verified, r.verification),
     payloadR2Key: r.payload_r2_key,
     payloadBytes: Number(r.payload_bytes),
     contentType: r.content_type,

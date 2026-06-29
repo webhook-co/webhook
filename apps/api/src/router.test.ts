@@ -94,7 +94,7 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     // The router maps raw query strings into filter; the events.list Zod schema coerces them downstream.
     await handleRequest(
       get(
-        `/v1/endpoints/${EP}/events?provider=github&receivedAfter=2026-06-01T00:00:00Z&receivedBefore=2026-06-02T00:00:00Z`,
+        `/v1/endpoints/${EP}/events?provider=github&verificationState=failed&receivedAfter=2026-06-01T00:00:00Z&receivedBefore=2026-06-02T00:00:00Z`,
       ),
       deps,
     );
@@ -102,6 +102,7 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
       endpointId: EP,
       filter: {
         provider: "github",
+        verificationState: "failed",
         receivedAfter: "2026-06-01T00:00:00Z",
         receivedBefore: "2026-06-02T00:00:00Z",
       },
