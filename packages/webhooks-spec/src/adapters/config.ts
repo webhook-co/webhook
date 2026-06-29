@@ -85,8 +85,9 @@ export const PROVIDERS = [
   "twilio",
   "mandrill",
   "hubspot",
-  // W3b — sig-in-body JSON: Adyen (colon-joined item fields + hex key).
+  // W3b — sig-in-body JSON: Adyen (colon-joined item fields + hex key), Mailgun (JSON webhooks 2.0).
   "adyen",
+  "mailgun",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -711,6 +712,21 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
       toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.adyen,
     };
   })(),
+  // mailgun (Webhooks 2.0 / JSON): the signature is in the body's nested `signature` object —
+  // `$.signature.signature` (lowercase hex). The signed message is `{signature.timestamp}{signature.token}`
+  // (no separator), HMAC-SHA256, key = the HTTP webhook signing key (utf8). No header, no replay window.
+  // (The legacy form-POST mode — signature as a top-level form field — is a deprecated shape, not covered.)
+  mailgun: {
+    slug: "mailgun",
+    signatureHeader: "", // no header — the signature comes from the JSON body
+    signatureSource: { kind: "jsonField", path: "signature.signature" },
+    encoding: "hex",
+    message: [
+      { kind: "jsonField", path: "signature.timestamp" },
+      { kind: "jsonField", path: "signature.token" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.mailgun,
+  },
 };
 
 /**
