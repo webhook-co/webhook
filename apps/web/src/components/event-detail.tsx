@@ -21,6 +21,9 @@ import * as React from "react";
 import { formatDateTime } from "@/lib/format";
 import { verificationCopy } from "@/lib/verification-copy";
 import type { DetailHeader, EventDetailItem, RevealHeaderResult } from "@/server/events";
+import type { PayloadResult } from "@/server/payloads";
+
+import { PayloadViewer } from "./payload-viewer";
 
 /** Reveal one sensitive header value (server action; re-reads under RLS). Injected by the gated page. */
 type RevealHeaderFn = (input: {
@@ -33,9 +36,11 @@ export interface EventDetailProps {
   event: EventDetailItem;
   endpointId: string;
   revealHeader: RevealHeaderFn;
+  /** Load the event body for the inline preview (server action). Injected by the gated page. */
+  loadPayload: (input: { endpointId: string; eventId: string }) => Promise<PayloadResult>;
 }
 
-export function EventDetail({ event, endpointId, revealHeader }: EventDetailProps) {
+export function EventDetail({ event, endpointId, revealHeader, loadPayload }: EventDetailProps) {
   const verification = verificationCopy(event.verification);
 
   return (
@@ -79,6 +84,22 @@ export function EventDetail({ event, endpointId, revealHeader }: EventDetailProp
             ) : null}
           </dl>
           <p className="leading-snug text-fg-secondary">{verification.detail}</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Payload</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PayloadViewer
+            endpointId={endpointId}
+            eventId={event.id}
+            payloadBytes={event.payloadBytes}
+            contentType={event.contentType}
+            loadPayload={loadPayload}
+            downloadHref={`/endpoints/${endpointId}/events/${event.id}/payload`}
+          />
         </CardContent>
       </Card>
 

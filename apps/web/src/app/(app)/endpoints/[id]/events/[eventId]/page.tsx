@@ -4,7 +4,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { EventDetail } from "@/components/event-detail";
-import { revealHeaderAction } from "@/server/event-actions";
+import { loadEventPayloadAction, revealHeaderAction } from "@/server/event-actions";
 import { loadEvent } from "@/server/events";
 import { verifySession } from "@/server/session";
 
@@ -38,7 +38,12 @@ export default async function EventDetailPage({
       {result.status === "error" ? (
         <Banner tone="danger">We couldn&apos;t load this event. Refresh to try again.</Banner>
       ) : (
-        <EventDetail event={result.event} endpointId={id} revealHeader={revealHeaderAction} />
+        <EventDetail
+          event={result.event}
+          endpointId={id}
+          revealHeader={revealHeaderAction}
+          loadPayload={loadEventPayloadAction}
+        />
       )}
     </div>
   );

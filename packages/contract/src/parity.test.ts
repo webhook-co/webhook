@@ -92,9 +92,9 @@ describe("capability parity — current GA surfaces conformance", () => {
     "events.tail",
     "audit.verify",
   ];
-  // The dashboard surface: endpoints.* (slice 2) + events.list/get (slice 3a — the events list + detail,
-  // DB-direct server reads). events.getPayload follows with slice 3b (the R2 payload read); events.tail /
-  // events.replay / audit.verify stay web-deferred.
+  // The dashboard surface: endpoints.* (slice 2) + events.list/get (slice 3a) + events.getPayload (slice 3b —
+  // the R2 payload viewer + download), all DB-direct server reads. events.tail / events.replay / audit.verify
+  // stay web-deferred.
   const WEB_BOUND = [
     "endpoints.list",
     "endpoints.get",
@@ -103,6 +103,7 @@ describe("capability parity — current GA surfaces conformance", () => {
     "endpoints.rotate",
     "events.list",
     "events.get",
+    "events.getPayload",
   ];
   function liveBindings() {
     const b = emptyBindings();
@@ -132,7 +133,7 @@ describe("capability parity — current GA surfaces conformance", () => {
     );
   });
 
-  it("keeps exemptions tight: endpoints.* + events.list/get require web; tail/replay/getPayload + audit web-deferred", () => {
+  it("keeps exemptions tight: endpoints.* + events.list/get/getPayload require web; tail/replay + audit web-deferred", () => {
     const tail = CAPABILITIES.find((c) => c.name === "events.tail");
     const replay = CAPABILITIES.find((c) => c.name === "events.replay");
     const getPayload = CAPABILITIES.find((c) => c.name === "events.getPayload");
@@ -140,10 +141,10 @@ describe("capability parity — current GA surfaces conformance", () => {
     // (recording-server-side), mcp still exempt (localhost-tunnel is CLI-intrinsic).
     expect(requiredSurfaces(tail!)).toEqual(["api", "cli", "mcp"]);
     expect(requiredSurfaces(replay!)).toEqual(["api", "cli"]);
-    // getPayload is bound on api + cli; mcp is exempt (no R2 binding); web lands with slice 3b.
-    expect(requiredSurfaces(getPayload!)).toEqual(["api", "cli"]);
-    // The endpoints.* + events.list/get capabilities are un-deferred on web; every other capability —
-    // events.getPayload/tail/replay + audit.verify — stays web-deferred until its slice.
+    // getPayload is bound on api + cli + web (slice 3b); mcp stays exempt (the McpAgent has no R2 binding).
+    expect(requiredSurfaces(getPayload!)).toEqual(["api", "cli", "web"]);
+    // The endpoints.* + events.list/get/getPayload capabilities are un-deferred on web; every other
+    // capability — events.tail/replay + audit.verify — stays web-deferred until its slice.
     for (const cap of CAPABILITIES) {
       if (WEB_BOUND.includes(cap.name)) {
         expect(requiredSurfaces(cap), `${cap.name} must require web`).toContain("web");

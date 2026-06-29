@@ -161,8 +161,8 @@ export const eventsGetPayload = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "RATE_LIMITED"],
   auth: { scope: "events:read" },
   semantics: {},
-  // Bound on api + cli; web stays deferred with the dashboard epic; mcp is exempt (see above).
-  surfaceExempt: { web: WEB_DEFERRED, mcp: PAYLOAD_MCP_EXEMPT },
+  // Bound on api + cli + web (the dashboard payload viewer + download, slice 3b); mcp is exempt (no R2 binding).
+  surfaceExempt: { mcp: PAYLOAD_MCP_EXEMPT },
 });
 
 export const eventsTail = defineCapability({
