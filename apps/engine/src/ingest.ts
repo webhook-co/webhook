@@ -41,6 +41,13 @@ export interface VerifyIngestInput {
   readonly headers: ReadonlyArray<readonly [string, string]>;
   /** The detected provider (null = unrecognized sender -> no adapter -> unverified). */
   readonly provider: Provider | null;
+  /**
+   * The full request URL + HTTP method as received. A few Tier-2 providers sign over them (the URL:
+   * Square/Twilio/Trello; the method: HubSpot). Forwarded verbatim to each adapter; schemes that don't
+   * reference a url/method message part ignore them.
+   */
+  readonly requestUrl: string;
+  readonly method: string;
   /** Authoritative org/endpoint (the AAD is rebuilt from these, not the cached secret context). */
   readonly orgId: string;
   readonly endpointId: string;
@@ -247,6 +254,8 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       rawBody: raw,
       headers,
       provider: derived.provider,
+      requestUrl: request.url,
+      method: request.method,
       orgId: endpoint.orgId,
       endpointId: endpoint.endpointId,
       sealedSecrets: endpoint.sealedSecrets,

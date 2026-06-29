@@ -14,6 +14,14 @@ export interface VerifyInput {
   readonly headers: ReadonlyArray<readonly [string, string]>;
   /** Non-revoked registered secrets for the source, newest first (rotation). */
   readonly secrets: readonly string[];
+  /**
+   * The full request URL as received (scheme+host+path+query). Some Tier-2 providers sign over it
+   * (Square/Twilio/Trello) or a component of it (Contentful path, Mercado Pago query). Optional: only
+   * schemes whose config references a `url`/`queryParam` message part need it (absent ⇒ MALFORMED).
+   */
+  readonly requestUrl?: string;
+  /** The request HTTP method (e.g. "POST"). Signed by a few Tier-2 providers (HubSpot, Contentful). */
+  readonly method?: string;
   /** Verification time; defaults to now. Injected for deterministic tests. */
   readonly now?: Date;
 }

@@ -12,7 +12,7 @@
 // TIMESTAMP_TOO_OLD — both reject; the structural reason is the more actionable one. (A not-valid
 // hex/base64 signature is diagnosed inside verifyHmacCore, i.e. after the skew check.)
 
-import { concatBytes, utf8Encoder } from "../bytes";
+import { concatBytes, utf8Decoder, utf8Encoder } from "../bytes";
 import { verificationFailed, type VerificationResult } from "../verification";
 import type { VerifyAdapter, VerifyInput } from "../adapter";
 import {
@@ -189,7 +189,28 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
       return verificationFailed({ code: "MALFORMED_SIGNATURE", detail: ts.error, scheme });
     }
 
-    // Resolve every non-body message part to bytes (a referenced header that's absent is MALFORMED).
+    // Lazily parse the request URL / form body — only when a part actually references them (the vast
+    // majority of schemes don't), and never throwing: an unparseable URL becomes `null` → MALFORMED.
+    let parsedUrl: URL | null | undefined;
+    const requestUrlObj = (): URL | null => {
+      if (parsedUrl === undefined) {
+        try {
+          parsedUrl = input.requestUrl !== undefined ? new URL(input.requestUrl) : null;
+        } catch {
+          parsedUrl = null;
+        }
+      }
+      return parsedUrl;
+    };
+    let formBody: URLSearchParams | undefined;
+    const formFields = (): URLSearchParams => {
+      if (formBody === undefined) formBody = new URLSearchParams(utf8Decoder.decode(input.rawBody));
+      return formBody;
+    };
+    const malformed = (detail: string): VerificationResult =>
+      verificationFailed({ code: "MALFORMED_SIGNATURE", detail, scheme });
+
+    // Resolve every non-body message part to bytes (a referenced source that's absent is MALFORMED).
     // `null` marks the body placeholder, substituted per-call so the engine's mutation probes work.
     const resolved: (Uint8Array | null)[] = [];
     for (const part of parts) {
@@ -198,28 +219,59 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
         continue;
       }
       let value: string;
-      if (part.kind === "literal") {
-        value = part.value;
-      } else if (part.kind === "timestamp") {
-        if (ts === null) {
+      switch (part.kind) {
+        case "literal":
+          value = part.value;
+          break;
+        case "timestamp":
           // A `timestamp` part with no timestamp source is a config bug; fail closed, never throw.
-          return verificationFailed({
-            code: "MALFORMED_SIGNATURE",
-            detail: "missing timestamp",
-            scheme,
-          });
+          if (ts === null) return malformed("missing timestamp");
+          value = ts.tsRaw;
+          break;
+        case "header": {
+          const headerVal = findHeader(input.headers, part.header);
+          if (headerVal === undefined) return malformed(`missing ${part.header}`);
+          value = headerVal;
+          break;
         }
-        value = ts.tsRaw;
-      } else {
-        const headerVal = findHeader(input.headers, part.header);
-        if (headerVal === undefined) {
-          return verificationFailed({
-            code: "MALFORMED_SIGNATURE",
-            detail: `missing ${part.header}`,
-            scheme,
-          });
+        case "method":
+          if (input.method === undefined) return malformed("missing request method");
+          value = input.method;
+          break;
+        case "url": {
+          if (input.requestUrl === undefined) return malformed("missing request url");
+          if (part.component === "full") {
+            value = input.requestUrl; // verbatim — the exact URL the provider signed
+            break;
+          }
+          const url = requestUrlObj();
+          if (url === null) return malformed("unparseable request url");
+          value = url.pathname;
+          break;
         }
-        value = headerVal;
+        case "queryParam": {
+          const url = requestUrlObj();
+          if (url === null) return malformed("missing request url");
+          const param = url.searchParams.get(part.name);
+          if (param === null) return malformed(`missing query param ${part.name}`);
+          value = param;
+          break;
+        }
+        case "formField": {
+          const field = formFields().get(part.name);
+          if (field === null) return malformed(`missing form field ${part.name}`);
+          value = field;
+          break;
+        }
+        case "sortedFormFields": {
+          const form = formFields();
+          // Dedups repeated keys (Set) and takes the first value per key — correct for Twilio/Mandrill
+          // (unique keys). A provider that signs a duplicate-key form over ALL values would fail closed
+          // (a reject, never a forge); revisit this if such a provider is added.
+          const keys = [...new Set(form.keys())].sort();
+          value = keys.map((k) => `${k}${form.get(k)}`).join("");
+          break;
+        }
       }
       resolved.push(utf8Encoder.encode(value));
     }

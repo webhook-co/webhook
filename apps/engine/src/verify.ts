@@ -124,6 +124,8 @@ export function makeVerifyIngest(
           rawBody: input.rawBody,
           headers: input.headers,
           secrets,
+          requestUrl: input.requestUrl,
+          method: input.method,
           now: at,
         });
         if (result.ok) return { verified: true, verification: result, provider };
