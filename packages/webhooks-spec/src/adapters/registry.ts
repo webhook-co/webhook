@@ -4,6 +4,7 @@
 
 import type { VerifyAdapter } from "../adapter";
 import type { WebhookScheme } from "../scheme";
+import { PROVIDERS } from "./config";
 import { githubAdapter } from "./github";
 import { shopifyAdapter } from "./shopify";
 import { slackAdapter } from "./slack";
@@ -21,14 +22,8 @@ const REGISTRY: Readonly<Record<AdapterScheme, VerifyAdapter>> = {
   standard_webhooks: standardWebhooksAdapter,
 };
 
-/** The schemes for which an adapter exists, in detection-precedence order. */
-export const ADAPTER_SCHEMES: readonly AdapterScheme[] = [
-  "stripe",
-  "github",
-  "shopify",
-  "slack",
-  "standard_webhooks",
-];
+/** The schemes for which an adapter exists, in detection-precedence order (= PROVIDERS). */
+export const ADAPTER_SCHEMES: readonly AdapterScheme[] = PROVIDERS;
 
 /** Resolve the adapter for a scheme. `unknown` (or any non-adapter scheme) → undefined. */
 export function getAdapterForScheme(scheme: WebhookScheme): VerifyAdapter | undefined {

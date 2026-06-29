@@ -1,12 +1,7 @@
-import { VerificationResultSchema } from "@webhook-co/webhooks-spec";
+import { ProviderSchema, VerificationResultSchema } from "@webhook-co/webhooks-spec";
 import { z } from "zod";
 
-import {
-  DedupStrategySchema,
-  MembershipRoleSchema,
-  PausePolicySchema,
-  ProviderSchema,
-} from "./enums";
+import { DedupStrategySchema, MembershipRoleSchema, PausePolicySchema } from "./enums";
 
 // Cross-surface entity schemas + inferred types. One definition consumed by
 // CLI/API/web/MCP and mapped to/from the DB by packages/db repositories. snake_case
