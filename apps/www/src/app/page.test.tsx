@@ -106,10 +106,10 @@ describe("HomePage", () => {
     expect(within(developers).getByRole("link", { name: /api reference/i })).toBeInTheDocument();
   });
 
+  // The providers wall adds ~85 nodes; the full-page axe pass is legitimately slower on CI (no
+  // violations — just more DOM to walk), so this single semantics scan gets a generous timeout.
   it("composes without axe violations (semantics — contrast is the real-browser job's)", async () => {
     const { container } = render(<HomePage />);
     expect(await axeComponent(container)).toHaveNoViolations();
-  }, // The providers wall adds ~85 nodes; the full-page axe pass is legitimately slower on CI (no
-  // violations — just more DOM to walk), so this single semantics scan gets a generous timeout.
-  20000);
+  }, 20000);
 });
