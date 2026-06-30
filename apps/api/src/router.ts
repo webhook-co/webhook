@@ -128,14 +128,21 @@ function matchRoute(
     // An EMPTY param (`?provider=`, `?receivedAfter=`) means "filter cleared", not a literal "" — skip
     // it (truthiness drops null + "") so a cleared filter doesn't 400 on the enum / date coercion.
     const filter: Record<string, unknown> = {};
-    const provider = query.get("provider");
-    if (provider) filter.provider = provider;
+    // provider + verificationState are MULTI-value: repeated params (`?provider=stripe&provider=github`)
+    // → an array (the contract validates the enum members). Drop empty values; omit the field entirely
+    // when nothing's selected (an empty array would 400 the contract's `.min(1)`).
+    const providers = query.getAll("provider").filter((p) => p !== "");
+    if (providers.length > 0) filter.provider = providers;
     const receivedAfter = query.get("receivedAfter");
     if (receivedAfter) filter.receivedAfter = receivedAfter;
     const receivedBefore = query.get("receivedBefore");
     if (receivedBefore) filter.receivedBefore = receivedBefore;
-    const verificationState = query.get("verificationState");
-    if (verificationState) filter.verificationState = verificationState;
+    const verificationStates = query.getAll("verificationState").filter((s) => s !== "");
+    if (verificationStates.length > 0) filter.verificationState = verificationStates;
+    // A whitespace-only / empty `?search=` means "no search" (the contract trims + min(1)s it, so passing
+    // it would 400 the whole request) — skip it, matching the lenient web surface.
+    const search = query.get("search");
+    if (search && search.trim() !== "") filter.search = search;
     if (Object.keys(filter).length > 0) input.filter = filter;
     return { capability: "events.list", input };
   }

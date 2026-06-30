@@ -17,9 +17,14 @@ describe("firstParam", () => {
 });
 
 describe("parseEventFilters", () => {
-  it("passes a provider through and drops blank/whitespace + missing values", () => {
-    expect(parseEventFilters({ provider: "stripe" })).toEqual({ provider: "stripe" });
+  it("passes provider(s) through as an array and drops blank/whitespace + missing values", () => {
+    expect(parseEventFilters({ provider: "stripe" })).toEqual({ provider: ["stripe"] });
+    // Multi-select: a repeated param arrives as a string[] → de-duped array.
+    expect(parseEventFilters({ provider: ["stripe", "github", "stripe"] })).toEqual({
+      provider: ["stripe", "github"],
+    });
     expect(parseEventFilters({ provider: "  " })).toEqual({});
+    expect(parseEventFilters({ provider: [] })).toEqual({});
     expect(parseEventFilters({})).toEqual({});
   });
 
@@ -47,17 +52,80 @@ describe("parseEventFilters", () => {
     expect(parseEventFilters({ from: "not-a-date", to: "garbage" })).toEqual({});
   });
 
-  it("drops an unknown provider when validProviders is supplied (keeps a known one)", () => {
-    expect(parseEventFilters({ provider: "github" }, PROVIDERS)).toEqual({ provider: "github" });
-    // A hand-edited ?provider=foobar is dropped → "no filter" rather than a confusing empty result.
+  it("drops unknown provider members when validProviders is supplied (keeps the known ones)", () => {
+    expect(parseEventFilters({ provider: ["github"] }, PROVIDERS)).toEqual({
+      provider: ["github"],
+    });
+    // A hand-edited ?provider=foobar member is dropped; a known one alongside it survives.
+    expect(parseEventFilters({ provider: ["foobar", "stripe"] }, PROVIDERS)).toEqual({
+      provider: ["stripe"],
+    });
+    // All-unknown → no filter (not a confusing empty result).
     expect(parseEventFilters({ provider: "foobar" }, PROVIDERS)).toEqual({});
   });
 
-  it("parses a valid verification status and drops an unknown one (closed enum)", () => {
-    expect(parseEventFilters({ status: "failed" })).toEqual({ verificationState: "failed" });
-    expect(parseEventFilters({ status: "verified" })).toEqual({ verificationState: "verified" });
-    expect(parseEventFilters({ status: "bogus" })).toEqual({}); // hand-edited junk dropped
+  it("parses valid verification status(es) as an array and drops unknown members (closed enum)", () => {
+    expect(parseEventFilters({ status: "failed" })).toEqual({ verificationState: ["failed"] });
+    expect(parseEventFilters({ status: ["verified", "failed"] })).toEqual({
+      verificationState: ["verified", "failed"],
+    });
+    expect(parseEventFilters({ status: ["bogus", "verified"] })).toEqual({
+      verificationState: ["verified"],
+    }); // junk member dropped
+    expect(parseEventFilters({ status: "bogus" })).toEqual({}); // all junk → no filter
     expect(parseEventFilters({ status: "  " })).toEqual({});
+  });
+
+  it("passes a trimmed search term through and drops blank", () => {
+    expect(parseEventFilters({ search: "  evt_123  " })).toEqual({ search: "evt_123" });
+    expect(parseEventFilters({ search: "   " })).toEqual({});
+    expect(parseEventFilters({ search: null })).toEqual({});
+  });
+
+  it("caps search at 256 chars (parity with the contract .max(256)) — over-long is dropped", () => {
+    // A hand-edited `?search=` longer than the contract ceiling is dropped rather than run, so the web
+    // surface never accepts a longer term than API/CLI/MCP would (the contract `.trim().min(1).max(256)`).
+    expect(parseEventFilters({ search: "a".repeat(256) })).toEqual({ search: "a".repeat(256) });
+    expect(parseEventFilters({ search: "a".repeat(257) })).toEqual({});
+    // Trim happens BEFORE the length check, so trailing whitespace doesn't push a 256-char term over.
+    expect(parseEventFilters({ search: `${"a".repeat(256)}   ` })).toEqual({
+      search: "a".repeat(256),
+    });
+  });
+});
+
+describe("parseEventFilters — date range presets (?range=)", () => {
+  const NOW = new Date("2026-06-29T12:00:00.000Z");
+
+  it("resolves a valid preset to a receivedAfter bound (now − window), no upper bound", () => {
+    const f = parseEventFilters({ range: "7d" }, undefined, NOW);
+    expect(f.receivedAfter?.toISOString()).toBe("2026-06-22T12:00:00.000Z");
+    expect(f.receivedBefore).toBeUndefined();
+  });
+
+  it("lets a valid preset OWN the range — custom from/to are ignored", () => {
+    const f = parseEventFilters(
+      { range: "24h", from: "2026-01-01", to: "2026-01-02" },
+      undefined,
+      NOW,
+    );
+    expect(f.receivedAfter?.toISOString()).toBe("2026-06-28T12:00:00.000Z");
+    expect(f.receivedBefore).toBeUndefined();
+  });
+
+  it("falls through to from/to when the preset id is unknown (hand-edited ?range=foo)", () => {
+    const f = parseEventFilters(
+      { range: "foo", from: "2026-06-01", to: "2026-06-02" },
+      undefined,
+      NOW,
+    );
+    expect(f.receivedAfter?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
+    expect(f.receivedBefore?.toISOString()).toBe("2026-06-02T00:00:00.000Z");
+  });
+
+  it("applies plain from/to when no range is present", () => {
+    const f = parseEventFilters({ from: "2026-06-01" }, undefined, NOW);
+    expect(f.receivedAfter?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
   });
 });
 

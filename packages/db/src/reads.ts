@@ -99,6 +99,31 @@ export function likeContains(term: string): string {
   return `%${term.replace(/[\\%_]/g, "\\$&")}%`;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// The events.list free-text search. A FULL-uuid term is an exact event-id lookup (the user pasted an
+// event id to jump to it) — resolved by the PK alone, NOT OR'd into the substring scans (which would run
+// three wasted trigram scans alongside the PK probe; and a non-uuid term must never reach `id =`, which
+// would raise 22P02). Any other term is a case-insensitive substring across the ID fields
+// (provider_event_id, external_id, dedup_key), backed by trigram GIN indexes (migration 0023). All inputs
+// are bound params.
+function eventSearchFilter(tx: TenantTx, search: string | undefined) {
+  if (!search) return tx``;
+  if (UUID_RE.test(search)) return tx`and id = ${search}`;
+  const pattern = likeContains(search);
+  // The three ID columns are trigram-GIN-indexed (migration 0023). `headers::text` is a RESIDUAL scan
+  // (no GIN — indexing the large headers jsonb on the hot ingest path isn't worth the write-amp), and it
+  // serializes the whole jsonb so a term matches a header NAME or VALUE.
+  //   ⚠️ PERF: Postgres can only bitmap-OR an indexed disjunction when EVERY branch is index-backed, so
+  //   adding the unindexed headers branch forgoes the 0023 trigram path for the WHOLE search — it becomes
+  //   a per-endpoint seq scan. This is bounded (endpoint_id leads every index; the browse stops at
+  //   limit+1 matches) and only bites at very large per-endpoint volumes (where the trigram was the win);
+  //   at typical volumes the planner seq-scanned anyway. Revisit with a trigram GIN on (headers::text) if
+  //   header-inclusive search becomes hot. Header values aren't EXPOSED by a match — they stay redacted in
+  //   the UI; matching only LOCATES the event within the caller's own RLS-scoped org.
+  return tx`and (provider_event_id ilike ${pattern} or external_id ilike ${pattern} or dedup_key ilike ${pattern} or headers::text ilike ${pattern})`;
+}
+
 interface EndpointRow {
   id: string;
   org_id: string;
@@ -186,16 +211,27 @@ function verificationStateColumn(tx: TenantTx) {
   return tx`case when verified then 'verified' when verification is not null then 'failed' else 'unattempted' end as verification_state`;
 }
 
-// The events.list verification-state filter, translated to the §truthful-partition predicates. Each
-// predicate MIRRORS its verificationStateColumn() CASE bucket EXACTLY (incl. the `not verified` guard
-// on `unattempted`) so a filtered row's pill can never contradict the filter — even if a future row
-// ever had verified=true with a null verification (which the CASE would label 'verified', not
-// 'unattempted'). `failed` is backed by events_failed_idx (migration 0022).
-function verificationStateFilter(tx: TenantTx, state: VerificationState | undefined) {
-  if (state === "verified") return tx`and verified`;
-  if (state === "failed") return tx`and not verified and verification is not null`;
-  if (state === "unattempted") return tx`and not verified and verification is null`;
-  return tx``;
+// One verification-state bucket's predicate. MIRRORS its verificationStateColumn() CASE bucket EXACTLY
+// (incl. the `not verified` guard on `unattempted`) so a filtered row's pill can never contradict the
+// filter — even if a future row ever had verified=true with a null verification (which the CASE would
+// label 'verified', not 'unattempted').
+function verificationStatePredicate(tx: TenantTx, state: VerificationState) {
+  if (state === "verified") return tx`verified`;
+  if (state === "failed") return tx`(not verified and verification is not null)`;
+  return tx`(not verified and verification is null)`; // unattempted
+}
+
+// The events.list verification-state filter — multi-select, so the selected buckets are OR'd
+// (`and (verified or (not verified and verification is not null))`). Empty/undefined = no filter; the
+// `failed` bucket alone is backed by events_failed_idx (migration 0022), a mixed selection rides the
+// per-endpoint scan as a residual filter (the verified/unattempted buckets are intentionally unindexed).
+function verificationStateFilter(tx: TenantTx, states: readonly VerificationState[] | undefined) {
+  const unique = states ? [...new Set(states)] : [];
+  if (unique.length === 0) return tx``;
+  const joined = unique
+    .map((state) => verificationStatePredicate(tx, state))
+    .reduce((acc, predicate) => tx`${acc} or ${predicate}`);
+  return tx`and (${joined})`;
 }
 
 function toEventSummary(r: EventRow): EventSummary {
@@ -214,13 +250,16 @@ function toEventSummary(r: EventRow): EventSummary {
 
 export interface ListEventsOptions extends ListOptions {
   readonly endpointId: string;
-  readonly provider?: string;
+  /** Multi-select provider filter — OR'd (`provider = ANY`). Empty/undefined = no filter. */
+  readonly provider?: readonly string[];
   /** Inclusive lower bound on received_at (events at or after this instant). */
   readonly receivedAfter?: Date;
   /** Exclusive upper bound on received_at (events strictly before this instant). */
   readonly receivedBefore?: Date;
-  /** Verification tri-state filter (verified | failed | unattempted). */
-  readonly verificationState?: VerificationState;
+  /** Multi-select verification tri-state filter (verified | failed | unattempted) — OR'd. */
+  readonly verificationState?: readonly VerificationState[];
+  /** Case-insensitive substring across the event ID fields + headers (+ exact id match when a uuid). */
+  readonly search?: string;
 }
 
 export async function listEvents(
@@ -228,7 +267,8 @@ export async function listEvents(
   opts: ListEventsOptions,
 ): Promise<Page<EventSummary>> {
   const limit = clampLimit(opts.limit);
-  const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState } = opts;
+  const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState, search } =
+    opts;
   // The received-at range is bound on the RAW received_at (sargable against events_tunnel_idx /
   // events_provider_idx, which lead with endpoint_id then received_at) — it only narrows the per-endpoint
   // scan. The keyset still compares date_trunc('ms', …) to match the cursor resolution. The sparse
@@ -238,10 +278,11 @@ export async function listEvents(
            ${verificationStateColumn(tx)}
     from events
     where endpoint_id = ${endpointId}
-    ${provider ? tx`and provider = ${provider}` : tx``}
+    ${provider && provider.length > 0 ? tx`and provider in ${tx([...provider])}` : tx``}
     ${receivedAfter ? tx`and received_at >= ${receivedAfter}` : tx``}
     ${receivedBefore ? tx`and received_at < ${receivedBefore}` : tx``}
     ${verificationStateFilter(tx, verificationState)}
+    ${eventSearchFilter(tx, search)}
     ${cursor ? keysetBefore(tx, cursor) : tx``}
     order by date_trunc('milliseconds', received_at) desc, id desc
     limit ${limit + 1}`;

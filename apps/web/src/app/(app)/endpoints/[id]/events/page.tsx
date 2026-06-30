@@ -30,6 +30,8 @@ export default async function EventsPage({
     status?: string | string[];
     from?: string | string[];
     to?: string | string[];
+    search?: string | string[];
+    range?: string | string[];
   }>;
 }) {
   const session = await verifySession();
@@ -37,15 +39,33 @@ export default async function EventsPage({
   const sp = await searchParams;
   // The raw URL filter values ride to the client list (and back into the load-more action); the page
   // coerces them to instant bounds for the first DB read. Both paths use the same parseEventFilters.
-  // firstParam guards a repeated query param (`?provider=a&provider=b` → string[]) — first-wins.
-  const filterParams: EventFilterParams = {
-    provider: firstParam(sp.provider),
-    status: firstParam(sp.status),
+  // provider/status are MULTI-select (repeated params → string[]); firstParam keeps the single-value
+  // params first-wins.
+  const rawParams: EventFilterParams = {
+    provider: sp.provider,
+    status: sp.status,
     from: firstParam(sp.from),
     to: firstParam(sp.to),
+    search: firstParam(sp.search),
+    range: firstParam(sp.range),
   };
-  const filters = parseEventFilters(filterParams, PROVIDERS);
+  const filters = parseEventFilters(rawParams, PROVIDERS);
   const result = await loadEvents(session.orgId, id, filters);
+
+  // The list + the "Load older" action consume the FROZEN, fully-resolved bounds — exactly what
+  // `parseEventFilters` produced here at this render's `now` — NOT the raw `?range`/`?from`/`?to`. This
+  // keeps page 1 and every load-more on the identical window: a relative preset is frozen to its absolute
+  // receivedAfter instant (so paging can't re-resolve `now` and drift), and because a preset OWNS the
+  // range (the parser ignores from/to under a preset), we carry only `filters.receivedBefore` — never a
+  // stray `?to` that the range-less load-more parse would otherwise honor and desync against page 1. The
+  // filter bar reads `?range` from the URL directly for its own label/state; only the data path is frozen.
+  const filterParams: EventFilterParams = {
+    provider: rawParams.provider,
+    status: rawParams.status,
+    search: rawParams.search,
+    from: filters.receivedAfter?.toISOString(),
+    to: filters.receivedBefore?.toISOString(),
+  };
 
   if (result.status === "not_found") notFound();
 
@@ -81,9 +101,11 @@ export default async function EventsPage({
         <div className="flex flex-col gap-5">
           <EventsFilterBar providers={PROVIDERS} />
           <EventsList
-            // Re-key on the endpoint AND the active filters so the list's once-seeded useState
-            // (items/cursor) is replaced with the freshly-filtered first page on any filter change.
-            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}`}
+            // Re-key on the endpoint + the (frozen) active filters so a filter change replaces the list's
+            // once-seeded state with the freshly-filtered first page. `from` carries the resolved preset
+            // bound, so changing the preset re-keys without a separate `range` term; a multi-select array
+            // stringifies to a comma-join (distinct per selection).
+            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}:${filterParams.search ?? ""}`}
             endpointId={id}
             initialItems={result.items}
             initialCursor={result.nextCursor}

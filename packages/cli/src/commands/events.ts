@@ -17,10 +17,11 @@ interface ListFlags extends GlobalFlags {
   limit?: number;
   cursor?: string;
   all: boolean;
-  provider?: (typeof PROVIDERS)[number];
+  provider?: (typeof PROVIDERS)[number][];
   after?: string;
   before?: string;
-  status?: (typeof VERIFICATION_STATES)[number];
+  status?: (typeof VERIFICATION_STATES)[number][];
+  search?: string;
 }
 
 type GetFlags = GlobalFlags;
@@ -39,6 +40,7 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
           receivedAfter: flags.after,
           receivedBefore: flags.before,
           verificationState: flags.status,
+          search: flags.search,
         }),
       { cursor: flags.cursor, all: flags.all },
     );
@@ -73,7 +75,8 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
       provider: {
         kind: "enum",
         values: PROVIDERS,
-        brief: "filter by provider",
+        brief: "filter by provider (repeatable, or comma-separated, for multi-select)",
+        variadic: ",",
         optional: true,
       },
       after: {
@@ -91,7 +94,16 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
       status: {
         kind: "enum",
         values: VERIFICATION_STATES,
-        brief: "filter by verification state (verified | failed | unattempted)",
+        brief:
+          "filter by verification state (verified | failed | unattempted; repeatable / comma-separated)",
+        variadic: ",",
+        optional: true,
+      },
+      search: {
+        kind: "parsed",
+        parse: (value: string) => value,
+        brief:
+          "substring search over event/provider/external ids + request header names/values (+ exact event id)",
         optional: true,
       },
     },

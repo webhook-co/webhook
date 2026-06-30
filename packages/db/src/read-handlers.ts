@@ -23,6 +23,7 @@ import {
   verifyAuditChain,
   type Cursor,
   type Since,
+  type VerificationState,
 } from "@webhook-co/shared";
 
 import { readAuditChain } from "./audit-append";
@@ -37,6 +38,13 @@ import {
   tailEvents,
   tailMeta,
 } from "./reads";
+
+// Normalize a multiEnum filter value (scalar | array | undefined) to an array | undefined — the contract
+// accepts a scalar for backward-compat but can't transform-normalize it (JSON-Schema constraint).
+function asArray<T>(value: T | T[] | undefined): T[] | undefined {
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? value : [value];
+}
 
 export interface ReadHandlerDeps {
   /** webhook_app over the cache-disabled tenant binding — tenant reads run here. */
@@ -121,12 +129,17 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       cursor?: string;
       limit?: number;
       filter?: {
-        provider?: string;
+        // multiEnum accepts a scalar OR an array (the contract can't transform-normalize without breaking
+        // the MCP inputSchema), so normalize to an array here.
+        provider?: string | string[];
         receivedAfter?: string;
         receivedBefore?: string;
-        verificationState?: "verified" | "failed" | "unattempted";
+        verificationState?: VerificationState | VerificationState[];
+        search?: string;
       };
     };
+    const provider = asArray(filter?.provider);
+    const verificationState = asArray(filter?.verificationState);
     // The range bounds arrive as RFC3339 strings (the contract input is a plain string so the MCP tool
     // inputSchema stays JSON-Schema-clean); validate + coerce them to Dates HERE — a malformed bound is
     // a VALIDATION_ERROR, never a raw string handed to SQL.
@@ -143,10 +156,11 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
         endpointId,
         cursor: decoded,
         limit,
-        provider: filter?.provider,
+        provider,
         receivedAfter,
         receivedBefore,
-        verificationState: filter?.verificationState,
+        verificationState,
+        search: filter?.search,
       });
       // events.list is a newest-first browse; surface the watermark-bounded head as a resumable
       // checkpoint (caughtUp/lag are forward-tail concepts and don't apply to a DESC browse).

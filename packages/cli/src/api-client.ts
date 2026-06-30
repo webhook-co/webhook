@@ -131,12 +131,15 @@ export interface EndpointsListParams extends ListParams {
   readonly name?: string;
 }
 
-/** events.list adds optional provider + received-at range + verification-state filters. */
+/** events.list adds optional provider + received-at range + verification-state + search filters. */
 export interface EventsListParams extends ListParams {
-  readonly provider?: string;
+  /** Multi-select — each value rides as a repeated `?provider=` query param. */
+  readonly provider?: readonly string[];
   readonly receivedAfter?: string;
   readonly receivedBefore?: string;
-  readonly verificationState?: string;
+  /** Multi-select — each value rides as a repeated `?verificationState=` query param. */
+  readonly verificationState?: readonly string[];
+  readonly search?: string;
 }
 
 /** The audit-chain verification result (the shared `audit.verify` output: ok + rowsVerified, or a break). */
@@ -225,11 +228,20 @@ export interface ApiClientDeps {
   readonly refreshAuth?: () => Promise<string | null>;
 }
 
-/** Append a query string from the defined params only (absent keys are omitted, never sent as empty). */
-function withQuery(path: string, params: Record<string, string | number | undefined>): string {
+/**
+ * Append a query string from the defined params only (absent keys are omitted, never sent as empty). An
+ * array value rides as a REPEATED param (`?provider=a&provider=b`) — the multi-select shape the router
+ * reads back with `getAll`; an empty array contributes nothing.
+ */
+function withQuery(
+  path: string,
+  params: Record<string, string | number | readonly string[] | undefined>,
+): string {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) query.set(key, String(value));
+    if (value === undefined) continue;
+    if (Array.isArray(value)) for (const v of value) query.append(key, v);
+    else query.set(key, String(value));
   }
   const qs = query.toString();
   return qs.length > 0 ? `${path}?${qs}` : path;
@@ -390,6 +402,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         receivedAfter: params.receivedAfter,
         receivedBefore: params.receivedBefore,
         verificationState: params.verificationState,
+        search: params.search,
       });
       return parseOrThrow(eventsListCap.output, await getJson(path), "events");
     },
