@@ -11,9 +11,11 @@ import {
   createReplayHandler,
   makeApiKeyAuthDeps,
   makeIngestHashEvictor,
+  type ReplayHandler,
 } from "@webhook-co/db";
 import {
   b64ToBytes,
+  type DeliveryDispatcherRpc,
   importAuditKey,
   importCursorKey,
   readSecretBinding,
@@ -22,6 +24,7 @@ import {
 } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
+import { createRemoteReplayHandler } from "./remote-replay.js";
 import { handleRequest, type ApiDeps } from "./router.js";
 import { handleGithubSecretScanning } from "./secret-scanning.js";
 
@@ -72,6 +75,14 @@ export interface Env {
    * entrypoint is live from B0 #246) — NOT in the committed wrangler.jsonc, exactly like mcp's AUTH_ISSUER.
    */
   PROVIDER_SECRET_SEALER: SecretSealer;
+  /**
+   * RPC to the engine's DeliveryDispatcher WorkerEntrypoint (ADR-0081, S3 1b): a server-side remote replay
+   * (events.replay {kind:"destination"}) delivers via `env.DELIVERY_DISPATCHER.deliver(...)` — the engine
+   * is the SINGLE SSRF egress chokepoint, so api never makes the user-controlled outbound POST itself. The
+   * binding's RPC stub satisfies the DeliveryDispatcherRpc interface. Deploy-injected by the overlay
+   * generator (the engine entrypoint is live from 1b PR1 #288) — NOT in the committed wrangler.jsonc.
+   */
+  DELIVERY_DISPATCHER: DeliveryDispatcherRpc;
   // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
   // below is ONE account secret each, shared byte-identically with engine + mcp. Never DB columns.
   /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */
@@ -155,7 +166,20 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
       secretSealer: env.PROVIDER_SECRET_SEALER,
     }),
     payloads: env.R2_PAYLOADS,
-    replay: createReplayHandler({ tenant }),
+    // events.replay routes by target kind: a `localhost-tunnel` target RECORDS a forwarded attempt (the CLI
+    // did the POST); a `destination` target is a SERVER-side remote delivery (ADR-0081) — resolve + claim +
+    // deliver via the engine + finalize. Both sub-handlers re-validate; the peek only picks the route.
+    replay: ((): ReplayHandler => {
+      const localhostReplay = createReplayHandler({ tenant });
+      const remoteReplay = createRemoteReplayHandler({
+        tenant,
+        dispatcher: env.DELIVERY_DISPATCHER,
+      });
+      return (ctx, input) => {
+        const kind = (input as { target?: { kind?: unknown } } | null)?.target?.kind;
+        return kind === "destination" ? remoteReplay(ctx, input) : localhostReplay(ctx, input);
+      };
+    })(),
     // replayDestinations.* (ADR-0081): the SSRF-egress allowlist, bound ONLY here (a DEDICATED map, not
     // the shared one mcp builds — so the mcp exemption can't drift). Mutates under RLS with an in-tx
     // audit row; the engine-side connect-time guard (1b) is the authoritative private-range defense.

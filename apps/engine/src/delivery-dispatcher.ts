@@ -14,28 +14,15 @@ import {
   filterDeliveryHeaders,
   isBlockedIp,
   payloadR2Key,
+  type DeliverArgs,
+  type DeliveryOutcome,
+  type DeliverResult,
 } from "@webhook-co/shared";
 
-export interface DeliverArgs {
-  readonly orgId: string;
-  readonly endpointId: string;
-  readonly dedupKey: string;
-  /** The destination URL (already structurally validated + canonical at registration; re-checked here). */
-  readonly url: string;
-  /** The event's captured headers ([name,value] pairs); filtered (hop-by-hop dropped) before the POST. */
-  readonly headers: readonly (readonly [string, string])[];
-}
-
-/** delivered = a 2xx response · failed = a non-2xx/3xx response or a connection error · blocked = the
- *  guard refused (no request was made). The api maps this 1:1 to the delivery_attempts status. */
-export type DeliveryOutcome = "delivered" | "failed" | "blocked";
-
-export interface DeliverResult {
-  readonly outcome: DeliveryOutcome;
-  readonly status: number | null;
-  readonly error: string | null;
-  readonly latencyMs: number;
-}
+// The RPC contract types (DeliverArgs/DeliverResult/DeliveryOutcome) are single-sourced in
+// @webhook-co/shared so the api consumer can't drift from this producer; re-exported for the local
+// tests + the index.ts WorkerEntrypoint wiring.
+export type { DeliverArgs, DeliveryOutcome, DeliverResult };
 
 export interface DeliverDeps {
   /** Read the payload object's bytes by key (the engine's R2_PAYLOADS.get → arrayBuffer), or null. */

@@ -150,9 +150,20 @@ describe("AuthContextSchema", () => {
 });
 
 describe("closed replay target", () => {
-  it("accepts the localhost tunnel and rejects anything else", () => {
+  it("accepts the localhost tunnel + the pre-registered destination, rejects a free-form URL", () => {
     expect(TargetSchema.safeParse({ kind: "localhost-tunnel", sessionId: "s1" }).success).toBe(
       true,
+    );
+    // the remote kind references a registered destination BY ID (ADR-0081) — never a raw URL.
+    expect(
+      TargetSchema.safeParse({
+        kind: "destination",
+        destinationId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
+      }).success,
+    ).toBe(true);
+    // a non-uuid destinationId is rejected, and a free-form `{kind:"https", url}` stays rejected.
+    expect(TargetSchema.safeParse({ kind: "destination", destinationId: "nope" }).success).toBe(
+      false,
     );
     expect(TargetSchema.safeParse({ kind: "https", url: "https://evil.example" }).success).toBe(
       false,

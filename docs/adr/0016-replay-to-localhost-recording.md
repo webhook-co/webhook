@@ -52,5 +52,9 @@ records a `delivery_attempts` row under the org's RLS and returns the `DeliveryA
 
 - The persisted `delivery_attempts` row is an audit/idempotency record, not the full HTTP outcome — a
   known limitation of the frozen input, revisited when a server-delivered `Target` kind lands.
+  **Update (ADR-0081): that server-delivered kind has now shipped** — the remote `{kind:"destination"}`
+  arm where the SERVER delivers and observes the response, recording the real `status_code`. This
+  localhost decision is UNCHANGED (the api still can't reach a user's localhost; the CLI owns that path);
+  the remote kind is exactly the case this consequence reserved.
 - `wbhk listen --forward` (continuous, cursor-gated at-least-once forwarding) is a fast-follow (PR4); it
   reuses this forwarder + recording, adding only the per-event ack-on-2xx loop over the tunnel.

@@ -9,7 +9,14 @@ import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
 import { createEndpoint } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
-import { createReplayHandler, recordDeliveryAttempt, type ReplayHandler } from "../src/replay";
+import {
+  claimDeliveryAttempt,
+  createReplayHandler,
+  finalizeDeliveryAttempt,
+  recordDeliveryAttempt,
+  type ReplayHandler,
+} from "../src/replay";
+import { createReplayDestination, getReplayDestination } from "../src/replay-destinations";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
@@ -190,5 +197,86 @@ describe("createReplayHandler (events.replay)", () => {
     });
     const again = await handler(ctxA, { eventId: evA, target: TARGET, idempotencyKey: "k-go" });
     expect((again as { id: string }).id).toBe((a as { id: string }).id); // idempotent
+  });
+});
+
+describe("claim/finalize + getReplayDestination (server-side remote delivery, ADR-0081)", () => {
+  let destId: string;
+  beforeAll(async () => {
+    destId = (
+      await createReplayDestination(app, {
+        orgId: orgA,
+        url: `https://hooks-${randomUUID().slice(0, 6)}.example.com/in`,
+      })
+    ).id;
+  });
+
+  const claim = (key: string, dest = destId) =>
+    withTenant(app, orgA, (tx) =>
+      claimDeliveryAttempt(tx, {
+        orgId: orgA,
+        eventId: evA,
+        destinationId: dest,
+        target: '{"kind":"destination"}',
+        idempotencyKey: key,
+      }),
+    );
+
+  it("claims a pending row (won), then finalizes it with the real HTTP outcome", async () => {
+    const { attempt, won } = await claim(randomUUID());
+    expect(won).toBe(true);
+    expect(attempt.status).toBe("pending");
+    const final = await withTenant(app, orgA, (tx) =>
+      finalizeDeliveryAttempt(tx, { id: attempt.id, status: "delivered", statusCode: 200 }),
+    );
+    expect(final?.status).toBe("delivered");
+    expect(final?.statusCode).toBe(200);
+  });
+
+  it("a re-claim with the same key returns the existing row (won=false), no duplicate", async () => {
+    const key = randomUUID();
+    const first = await claim(key);
+    const again = await claim(key);
+    expect(first.won).toBe(true);
+    expect(again.won).toBe(false);
+    expect(again.attempt.id).toBe(first.attempt.id);
+  });
+
+  it("finalize is status-guarded — only a 'pending' row transitions; a second finalize is null", async () => {
+    const { attempt } = await claim(randomUUID());
+    const first = await withTenant(app, orgA, (tx) =>
+      finalizeDeliveryAttempt(tx, {
+        id: attempt.id,
+        status: "failed",
+        statusCode: 502,
+        error: "http 502",
+      }),
+    );
+    expect(first?.status).toBe("failed");
+    const second = await withTenant(app, orgA, (tx) =>
+      finalizeDeliveryAttempt(tx, { id: attempt.id, status: "delivered", statusCode: 200 }),
+    );
+    expect(second).toBeNull();
+  });
+
+  it("the status CHECK (migration 0025) rejects an out-of-vocabulary status", async () => {
+    await expect(
+      withTenant(
+        app,
+        orgA,
+        (tx) =>
+          tx`insert into delivery_attempts (id, org_id, event_id, target, status)
+             values (${newId()}, ${orgA}, ${evA}, ${"{}"}, ${"bogus"})`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it("getReplayDestination resolves a live destination (RLS); null for soft-deleted + cross-org", async () => {
+    const got = await withTenant(app, orgA, (tx) => getReplayDestination(tx, destId));
+    expect(got?.id).toBe(destId);
+    // cross-org → null (org B can't see org A's destination)
+    expect(await withTenant(app, orgB, (tx) => getReplayDestination(tx, destId))).toBeNull();
+    // a non-existent id → null
+    expect(await withTenant(app, orgA, (tx) => getReplayDestination(tx, randomUUID()))).toBeNull();
   });
 });

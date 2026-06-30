@@ -92,13 +92,28 @@ export const EventSchema = EventSummarySchema.extend({
 });
 export type Event = z.infer<typeof EventSchema>;
 
+/**
+ * The closed delivery-attempt lifecycle vocabulary (matches the delivery_attempts status CHECK,
+ * migration 0025). `forwarded` = the legacy localhost-replay record (the CLI did the POST). The
+ * server-delivery (ADR-0081) states: `pending` (claimed, in flight) → `delivered` (a 2xx) / `failed`
+ * (non-2xx / connection / transient-resolver failure — retryable) / `blocked` (the SSRF guard refused).
+ */
+export const DeliveryStatusSchema = z.enum([
+  "forwarded",
+  "pending",
+  "delivered",
+  "failed",
+  "blocked",
+]);
+export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
+
 export const DeliveryAttemptSchema = z.object({
   id: uuid,
   orgId: uuid,
   eventId: uuid,
   target: z.string(),
   idempotencyKey: z.string().nullable(),
-  status: z.string(),
+  status: DeliveryStatusSchema,
   statusCode: z.number().int().nullable(),
   attempt: z.number().int().positive(),
   error: z.string().nullable(),
