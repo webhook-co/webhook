@@ -2,7 +2,14 @@ import { type CachedSealedSecret } from "@webhook-co/db";
 import { serializeVerifyTokenSecret } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
-import { dispatchGetHandshake, ebayChallengeResponse, xCrcResponse } from "../src/handshake";
+import {
+  dispatchGetHandshake,
+  dispatchPostHandshake,
+  ebayChallengeResponse,
+  xCrcResponse,
+} from "../src/handshake";
+
+const enc = new TextEncoder();
 
 // The GET verification-handshake dispatcher. PR1 = the NO-SECRET protocols (Dropbox + Adobe I/O
 // `?challenge=` bare echo; Adobe Sign `X-AdobeSign-ClientId` header echo). PR2a adds X/Twitter CRC
@@ -216,6 +223,98 @@ describe("dispatchGetHandshake — Meta hub.challenge verification (verify-token
       unsealVerifyToken, // asserts cached.provider === "meta" — never invoked for the x secret
     );
     expect(res!.status).toBe(200);
+  });
+});
+
+describe("dispatchGetHandshake — Okta Event Hooks verification (no-secret header echo)", () => {
+  it('echoes X-Okta-Verification-Challenge as {"verification":...} JSON', async () => {
+    const res = await dispatchGetHandshake(
+      url(""),
+      hdrs({ "X-Okta-Verification-Challenge": "okta-challenge-abc" }),
+      NO_SECRETS,
+      unsealNever,
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get("content-type")).toMatch(/application\/json/);
+    expect(res!.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res!.json()).toEqual({ verification: "okta-challenge-abc" });
+  });
+
+  it("returns null without the Okta header (falls through)", async () => {
+    expect(await dispatchGetHandshake(url(""), hdrs(), NO_SECRETS, unsealNever)).toBeNull();
+  });
+});
+
+describe("dispatchPostHandshake — no-secret POST subscription handshakes", () => {
+  const postUrl = (qs = "") => new URL(`https://wbhk.my/whep_tok${qs}`);
+
+  it("Microsoft Graph: echoes ?validationToken= as text/plain (URL-decoded)", async () => {
+    const res = dispatchPostHandshake(
+      postUrl("?validationToken=ABC%20123"),
+      hdrs(),
+      enc.encode(""),
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(res!.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res!.text()).toBe("ABC 123");
+  });
+
+  it("Twitch: webhook_callback_verification header + body.challenge → echo challenge as text/plain", async () => {
+    const res = dispatchPostHandshake(
+      postUrl(),
+      hdrs({ "Twitch-Eventsub-Message-Type": "webhook_callback_verification" }),
+      enc.encode(JSON.stringify({ challenge: "pogchamp-kappa-360noscope-vohiyo" })),
+    );
+    expect(res).not.toBeNull();
+    expect(await res!.text()).toBe("pogchamp-kappa-360noscope-vohiyo");
+  });
+
+  it("Twitch: a real notification message (not verification) → null", () => {
+    expect(
+      dispatchPostHandshake(
+        postUrl(),
+        hdrs({ "Twitch-Eventsub-Message-Type": "notification" }),
+        enc.encode(JSON.stringify({ subscription: { type: "x" }, event: { id: "1" } })),
+      ),
+    ).toBeNull();
+  });
+
+  it("monday: body {challenge} → {challenge} JSON", async () => {
+    const res = dispatchPostHandshake(
+      postUrl(),
+      hdrs(),
+      enc.encode(JSON.stringify({ challenge: "mon-123" })),
+    );
+    expect(res).not.toBeNull();
+    expect(res!.headers.get("content-type")).toMatch(/application\/json/);
+    expect(await res!.json()).toEqual({ challenge: "mon-123" });
+  });
+
+  it("does NOT catch a Slack url_verification body (has `type`) — left to the Slack path", () => {
+    expect(
+      dispatchPostHandshake(
+        postUrl(),
+        hdrs(),
+        enc.encode(JSON.stringify({ type: "url_verification", challenge: "slack-c" })),
+      ),
+    ).toBeNull();
+  });
+
+  it("does NOT catch a real event body (has `event`) or a non-JSON / non-handshake POST", () => {
+    expect(
+      dispatchPostHandshake(
+        postUrl(),
+        hdrs(),
+        enc.encode(JSON.stringify({ event: { type: "x" }, challenge: "c" })),
+      ),
+    ).toBeNull();
+    expect(dispatchPostHandshake(postUrl(), hdrs(), enc.encode("not json"))).toBeNull();
+    expect(
+      dispatchPostHandshake(postUrl(), hdrs(), enc.encode(JSON.stringify({ foo: "bar" }))),
+    ).toBeNull();
   });
 });
 
