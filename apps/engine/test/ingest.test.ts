@@ -29,6 +29,7 @@ function makeDeps(over: Partial<IngestDeps> = {}): { deps: IngestDeps; calls: Ca
       calls.verify.push(input);
       return { verified: false, verification: null };
     },
+    unsealSecret: async () => "fake-unsealed-secret",
     putPayload: async (key, body, contentType) => {
       calls.order.push("put");
       calls.put.push({ key, body, contentType });
@@ -518,5 +519,70 @@ describe("handleIngest — GET verification-handshake dispatch (no-secret protoc
     expect(res.status).toBe(200);
     expect(res.headers.get("x-adobesign-clientid")).toBe("client-xyz");
     expect(calls.ingest).toHaveLength(0);
+  });
+});
+
+describe("handleIngest — GET verification-handshake dispatch (X/Twitter CRC, PR2a)", () => {
+  // A `crc_token` GET on an endpoint with an `x` secret unseals it (pre-capture) and HMACs the token.
+  const X_ENDPOINT = {
+    orgId: ORG,
+    endpointId: EP,
+    paused: false,
+    sealedSecrets: [{ provider: "x" }],
+  };
+  const CONSUMER_SECRET = "z3ZX4v7mAAUGykl3EcmkqbartmuW8VFOOzCloLx9Q45P0hLrFu"; // gitleaks:allow — fake test fixture
+
+  it("a crc_token GET unseals the `x` secret, returns the HMAC response_token (gold vector), captures NOTHING", async () => {
+    const unsealed: unknown[] = [];
+    const { deps, calls } = makeDeps({
+      resolve: async () => X_ENDPOINT as never,
+      unsealSecret: async (cached, orgId, endpointId) => {
+        unsealed.push({ provider: (cached as { provider: string }).provider, orgId, endpointId });
+        return CONSUMER_SECRET;
+      },
+    });
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?crc_token=9b4507b3-9040-4669-9ca3-6b94edb50553`, {
+        method: "GET",
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      response_token: "sha256=Cytd4Sq+NvEcV3MMrXxWJGJx5A+y/lXzzU2Maartkx8=",
+    });
+    // unsealed the right endpoint's `x` secret with the AUTHORITATIVE org/endpoint as AAD
+    expect(unsealed).toEqual([{ provider: "x", orgId: ORG, endpointId: EP }]);
+    expect(calls.put).toHaveLength(0); // nothing stored
+    expect(calls.ingest).toHaveLength(0); // nothing metered
+  });
+
+  it("a crc_token GET on an endpoint with NO `x` secret falls through to capture (not a resolvable handshake)", async () => {
+    const { deps, calls } = makeDeps(); // default endpoint has sealedSecrets: []
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?crc_token=abc`, { method: "GET" }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/live/i); // generic liveness, not a CRC response
+    expect(calls.ingest).toHaveLength(1); // captured (bill-all)
+  });
+
+  it("a thrown unseal does NOT block the floor — it is caught and the GET falls through to capture", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => X_ENDPOINT as never,
+      unsealSecret: async () => {
+        throw new Error("KMS unavailable");
+      },
+    });
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?crc_token=9b4507b3`, { method: "GET" }),
+      deps,
+    );
+    expect(res.status).toBe(200); // never a 500 — the no-drop floor is preserved
+    expect(await res.text()).toMatch(/live/i); // fell through to liveness
+    expect(calls.ingest).toHaveLength(1); // still captured
+    // and it logged the failure (not silently swallowed)
+    expect(calls.logs.some((l) => l.event === "ingest.handshake_failed")).toBe(true);
   });
 });

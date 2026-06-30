@@ -4,10 +4,14 @@
 // url_verification handshake (ADR-0079): each responder is PURE + TOTAL (never throws), dispatched
 // PRE-capture, and captures NOTHING (a control message, not an event).
 //
-// PR1 (this file) = the NO-SECRET protocols: Dropbox + Adobe I/O Events bare `?challenge=` echo, and
-// Adobe Acrobat Sign's `X-AdobeSign-ClientId` header echo. The secret-based protocols (Meta verify-token
-// compare, X CRC HMAC, eBay hash) land in PR2/PR3 and extend dispatchGetHandshake with the unsealed
-// per-endpoint secret.
+// PR1 = the NO-SECRET protocols: Dropbox + Adobe I/O Events bare `?challenge=` echo, and Adobe Acrobat
+// Sign's `X-AdobeSign-ClientId` header echo (the echoed value is the caller's own — no secret).
+// PR2a (this change) adds X/Twitter CRC: a `crc_token` GET is answered by HMAC-ing the token under the
+// endpoint's registered `x` consumer secret, which the dispatcher unseals via an injected pre-capture
+// `unseal` (the engine remains the sole unsealer). Meta verify-token compare + eBay hash land in PR2b/PR3.
+
+import { type CachedSealedSecret } from "@webhook-co/db";
+import { bytesToB64, importHmacKey, utf8Encoder } from "@webhook-co/shared";
 
 // Browser-safety headers shared by every (browser-reachable) handshake response: nosniff makes a
 // reflected echo inert (required by Dropbox), and no-referrer + noindex keep the token-bearing URL out of
@@ -18,6 +22,24 @@ const BROWSER_SAFE_HEADERS = {
   "referrer-policy": "no-referrer",
   "x-robots-tag": "noindex",
 } as const;
+
+/**
+ * X/Twitter Account Activity API CRC: respond with `{"response_token":"sha256="+base64(HMAC-SHA256(key,
+ * crc_token))}` as `application/json`. The key is the app's **consumer secret** (NOT a bearer/access token);
+ * base64 is **standard** (`+`/`/`); the `sha256=` prefix is literal. PURE: it takes the already-unsealed
+ * consumer secret (the dispatcher resolves + unseals the endpoint's `x` provider secret). A wrong byte here
+ * silently fails the subscription, so it is pinned to a gold vector.
+ */
+export async function xCrcResponse(crcToken: string, consumerSecret: string): Promise<Response> {
+  const key = await importHmacKey(utf8Encoder.encode(consumerSecret));
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, utf8Encoder.encode(crcToken)));
+  // Same browser-safety headers as the echoes: a CRC GET is equally pasteable into a browser, so keep the
+  // token-bearing URL out of referers/indexes; nosniff makes the JSON inert. Response.json sets the JSON CT.
+  return Response.json(
+    { response_token: `sha256=${bytesToB64(sig)}` },
+    { headers: BROWSER_SAFE_HEADERS },
+  );
+}
 
 /**
  * Dropbox + Adobe I/O Events: a bare `?challenge=<v>` GET — echo `<v>` as `text/plain`. With nosniff the
@@ -49,12 +71,31 @@ function adobeSignEcho(headers: Headers): Response | null {
 
 /**
  * Route a GET to the matching verification-handshake responder, or `null` if it is not a recognized
- * handshake (the caller then falls through to the normal capture/liveness flow). Detection is by the
- * request's own distinctive params/headers and is mutually exclusive, so one protocol's request can never
- * trigger another's path (`hub.challenge` / `crc_token` / `challenge_code` are distinct param names from
- * the bare `challenge`, so they are NOT echoed here — they need a per-endpoint secret, added in PR2/PR3).
- * PURE + TOTAL — never throws, so the no-drop capture floor is never at risk.
+ * (resolvable) handshake — the caller then falls through to the normal capture/liveness flow. Detection is
+ * by the request's own distinctive params/headers and is mutually exclusive, so one protocol's request can
+ * never trigger another's path. Secret-based protocols resolve the endpoint's sealed provider secret and
+ * `unseal` it (the engine remains the sole unsealer); if the endpoint has no matching secret the request is
+ * NOT a resolvable handshake → `null`. The no-secret echoes never touch `sealedSecrets`/`unseal`.
  */
-export function dispatchGetHandshake(url: URL, headers: Headers): Response | null {
-  return adobeSignEcho(headers) ?? challengeEcho(url);
+export async function dispatchGetHandshake(
+  url: URL,
+  headers: Headers,
+  sealedSecrets: readonly CachedSealedSecret[],
+  unseal: (cached: CachedSealedSecret) => Promise<string>,
+): Promise<Response | null> {
+  // No-secret echoes first (Dropbox/Adobe `?challenge=`, Adobe Sign header) — sync, never touch secrets.
+  const echo = adobeSignEcho(headers) ?? challengeEcho(url);
+  if (echo !== null) return echo;
+
+  // X/Twitter CRC: `crc_token` → HMAC under the endpoint's registered `x` consumer secret (the SAME secret
+  // used for X POST-signature verification). No `x` secret on the endpoint → not resolvable → null.
+  const crcToken = url.searchParams.get("crc_token");
+  if (crcToken !== null && crcToken.length > 0) {
+    const xSecret = sealedSecrets.find((s) => s.provider === "x");
+    if (xSecret !== undefined) {
+      return xCrcResponse(crcToken, await unseal(xSecret));
+    }
+  }
+
+  return null;
 }

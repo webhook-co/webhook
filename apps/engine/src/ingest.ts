@@ -101,6 +101,13 @@ export interface IngestDeps {
    * capture (events are still stored, verified=false).
    */
   verify(input: VerifyIngestInput): Promise<VerificationOutcome>;
+  /**
+   * Unseal a sealed provider secret to plaintext (KMS unwrap), PRE-capture, for the GET-handshake
+   * dispatcher (e.g. the X CRC consumer secret). The AAD is rebuilt from the AUTHORITATIVE orgId/endpointId
+   * (not the cached secret's own context). The engine is the sole unsealer. handleIngest GUARDS the call so
+   * a thrown unseal (KMS down / corrupt secret) never drops the request — it falls through to normal capture.
+   */
+  unsealSecret(cached: CachedSealedSecret, orgId: string, endpointId: string): Promise<string>;
   /** Durably PUT the raw body to R2 BEFORE the metadata insert (durable-before-ACK, ADR-0013). */
   putPayload(key: string, body: Uint8Array, contentType: string | null): Promise<void>;
   /** Insert event metadata via ingest_event (variant B). inserted=false on a dedup no-op. */
@@ -251,12 +258,23 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   if (endpoint === null) return plain(404, "not found"); // unknown token — no hints, no breadcrumbs
 
   // GET verification-handshake (ADR-0086): if a GET carries a known challenge protocol (Dropbox/Adobe
-  // `?challenge=`, Adobe Sign `X-AdobeSign-ClientId`; Meta/X/eBay in a follow-up PR), answer the challenge
-  // so the sender's subscription verification passes. A PRE-capture control message — captures NOTHING and
-  // never meters (mirrors the Slack divert) — and runs even on a paused endpoint (subscription setup is not
-  // an event). A non-handshake GET returns null and falls through to the normal capture/liveness flow.
+  // `?challenge=`, Adobe Sign `X-AdobeSign-ClientId`, X CRC `crc_token`; Meta/eBay in a follow-up PR),
+  // answer the challenge so the sender's subscription verification passes. A PRE-capture control message —
+  // captures NOTHING and never meters (mirrors the Slack divert) — and runs even on a paused endpoint
+  // (subscription setup is not an event). GUARDED: a thrown handshake (e.g. an X CRC unseal with KMS down)
+  // must never drop a request — fall through to normal capture. A non-handshake GET also falls through.
   if (request.method === "GET") {
-    const handshake = dispatchGetHandshake(url, request.headers);
+    let handshake: Response | null = null;
+    try {
+      handshake = await dispatchGetHandshake(
+        url,
+        request.headers,
+        endpoint.sealedSecrets,
+        (cached) => deps.unsealSecret(cached, endpoint.orgId, endpoint.endpointId),
+      );
+    } catch (err) {
+      deps.log("ingest.handshake_failed", { endpointId: endpoint.endpointId, error: String(err) });
+    }
     if (handshake !== null) {
       deps.log("ingest.get_handshake", { endpointId: endpoint.endpointId });
       return handshake;
