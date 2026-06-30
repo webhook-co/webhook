@@ -1,3 +1,4 @@
+import { serializeVerifyTokenSecret } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -584,5 +585,54 @@ describe("handleIngest — GET verification-handshake dispatch (X/Twitter CRC, P
     expect(calls.ingest).toHaveLength(1); // still captured
     // and it logged the failure (not silently swallowed)
     expect(calls.logs.some((l) => l.event === "ingest.handshake_failed")).toBe(true);
+  });
+});
+
+describe("handleIngest — GET verification-handshake dispatch (Meta hub.challenge, PR2b)", () => {
+  const META_ENDPOINT = {
+    orgId: ORG,
+    endpointId: EP,
+    paused: false,
+    sealedSecrets: [{ provider: "meta" }],
+  };
+  const VERIFY_TOKEN = "my-meta-hub-verify-token";
+  const metaReq = (challenge: string, verifyToken: string) =>
+    new Request(
+      `https://wbhk.my/${GOOD}?hub.mode=subscribe&hub.challenge=${challenge}&hub.verify_token=${verifyToken}`,
+      { method: "GET" },
+    );
+
+  it("a matching verify-token echoes hub.challenge (200) and captures NOTHING", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => META_ENDPOINT as never,
+      unsealSecret: async () => serializeVerifyTokenSecret(VERIFY_TOKEN),
+    });
+    const res = await handleIngest(metaReq("CHALLENGE_42", VERIFY_TOKEN), deps);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("CHALLENGE_42");
+    expect(calls.put).toHaveLength(0);
+    expect(calls.ingest).toHaveLength(0); // a control message, never metered
+  });
+
+  it("a MISMATCHED verify-token returns 403 and captures NOTHING (no echo)", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => META_ENDPOINT as never,
+      unsealSecret: async () => serializeVerifyTokenSecret(VERIFY_TOKEN),
+    });
+    const res = await handleIngest(metaReq("CHALLENGE_42", "wrong-token"), deps);
+    expect(res.status).toBe(403);
+    expect(await res.text()).not.toContain("CHALLENGE_42");
+    expect(calls.ingest).toHaveLength(0); // 403 is pre-capture too
+  });
+
+  it("an endpoint with NO meta verify-token falls through to capture (only an app-secret configured)", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => META_ENDPOINT as never,
+      unsealSecret: async () => "raw-meta-app-secret-not-a-blob",
+    });
+    const res = await handleIngest(metaReq("CHALLENGE_42", VERIFY_TOKEN), deps);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/live/i); // generic liveness, not the challenge echo
+    expect(calls.ingest).toHaveLength(1); // captured (bill-all)
   });
 });

@@ -22,6 +22,7 @@ import { type CachedSealedSecret, fromCachedSealedSecret } from "@webhook-co/db"
 import {
   getAdapterForScheme,
   type KeyFetcher,
+  parseVerifyTokenSecret,
   PROVIDERS,
   type Provider,
   type SecretStore,
@@ -93,6 +94,12 @@ export function makeVerifyIngest(
           endpointId: input.endpointId,
           keyId: cached.id, // the secret's row id IS the seal keyId (addProviderSecret binds it)
         });
+        // A GET-handshake verify-token (Meta hub.verify_token, ADR-0086) is sealed as a typed blob under the
+        // SAME provider slug as the payload-signing secret (e.g. Meta's app secret). It is NOT a signing key
+        // — its blob wrapper is deterministic + public, so using it as an HMAC key would let anyone who knows
+        // the (lower-assurance, cleartext-in-URL) verify-token forge a `verified` webhook. Skip it here; the
+        // GET dispatcher is the only consumer (symmetric with handshake.ts's discrimination).
+        if (parseVerifyTokenSecret(plaintext) !== null) continue;
         secrets.push(plaintext);
       } catch (err) {
         // Skip this secret; never let one bad secret abort verification of the rest. Surface it so a

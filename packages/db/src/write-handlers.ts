@@ -20,7 +20,7 @@ import {
   type AnyCapability,
   type AuthContext,
 } from "@webhook-co/contract";
-import type { SecretSealer } from "@webhook-co/shared";
+import { serializeVerifyTokenSecret, type SecretSealer } from "@webhook-co/shared";
 
 import type { Sql } from "./client";
 import type { CredentialHasher } from "./credential";
@@ -223,7 +223,13 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
         endpointId: parsed.data.endpointId,
         provider: parsed.data.provider,
         label: parsed.data.label,
-        plaintext: parsed.data.secret, // sealed by the sealer; never persisted/returned as plaintext
+        // A verify-token (Meta hub.verify_token, ADR-0086) is sealed as a TYPED blob so the engine can
+        // tell it, at unseal, from a signing secret under the same provider slug; a signing secret is
+        // sealed as-is. Both are opaque ciphertext at rest — never persisted/returned as plaintext.
+        plaintext:
+          parsed.data.kind === "verify_token"
+            ? serializeVerifyTokenSecret(parsed.data.secret)
+            : parsed.data.secret,
       },
       sealer,
       { auditKey: deps.auditKey, actor: ctx.userId ?? null }, // wha1 provider_secret.added, in-tx

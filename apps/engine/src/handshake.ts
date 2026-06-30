@@ -6,12 +6,20 @@
 //
 // PR1 = the NO-SECRET protocols: Dropbox + Adobe I/O Events bare `?challenge=` echo, and Adobe Acrobat
 // Sign's `X-AdobeSign-ClientId` header echo (the echoed value is the caller's own — no secret).
-// PR2a (this change) adds X/Twitter CRC: a `crc_token` GET is answered by HMAC-ing the token under the
-// endpoint's registered `x` consumer secret, which the dispatcher unseals via an injected pre-capture
-// `unseal` (the engine remains the sole unsealer). Meta verify-token compare + eBay hash land in PR2b/PR3.
+// PR2a added X/Twitter CRC: a `crc_token` GET is answered by HMAC-ing the token under the endpoint's
+// registered `x` consumer secret, unsealed via an injected pre-capture `unseal` (the engine remains the
+// sole unsealer). PR2b (this change) adds Meta (FB/IG/WhatsApp/Messenger): a `hub.mode=subscribe` GET
+// echoes `hub.challenge` IFF the presented `hub.verify_token` matches a configured verify-token (sealed as
+// a typed blob, constant-time compared), else 403. eBay's challenge hash lands in PR3.
 
 import { type CachedSealedSecret } from "@webhook-co/db";
-import { bytesToB64, importHmacKey, utf8Encoder } from "@webhook-co/shared";
+import {
+  bytesToB64,
+  importHmacKey,
+  parseVerifyTokenSecret,
+  utf8Encoder,
+  verifyTokenEqual,
+} from "@webhook-co/shared";
 
 // Browser-safety headers shared by every (browser-reachable) handshake response: nosniff makes a
 // reflected echo inert (required by Dropbox), and no-referrer + noindex keep the token-bearing URL out of
@@ -41,6 +49,14 @@ export async function xCrcResponse(crcToken: string, consumerSecret: string): Pr
   );
 }
 
+/** Echo a value as an inert `text/plain` 200 — the response shape every bare-challenge handshake wants. */
+function plainTextEcho(value: string): Response {
+  return new Response(value, {
+    status: 200,
+    headers: { "content-type": "text/plain; charset=utf-8", ...BROWSER_SAFE_HEADERS },
+  });
+}
+
 /**
  * Dropbox + Adobe I/O Events: a bare `?challenge=<v>` GET — echo `<v>` as `text/plain`. With nosniff the
  * echoed value is inert text regardless of content (Dropbox requires it). Absent/empty `challenge` is not a
@@ -49,10 +65,22 @@ export async function xCrcResponse(crcToken: string, consumerSecret: string): Pr
 function challengeEcho(url: URL): Response | null {
   const challenge = url.searchParams.get("challenge");
   if (challenge === null || challenge.length === 0) return null;
-  return new Response(challenge, {
-    status: 200,
-    headers: { "content-type": "text/plain; charset=utf-8", ...BROWSER_SAFE_HEADERS },
-  });
+  return plainTextEcho(challenge);
+}
+
+/**
+ * Meta (FB/IG/WhatsApp/Messenger) subscription verification: a `?hub.mode=subscribe&hub.challenge=<v>&
+ * hub.verify_token=<t>` GET. Parse the three params; absent mode≠subscribe / empty challenge / empty
+ * verify-token is not a (resolvable) handshake. The compare against the configured verify-token happens in
+ * the dispatcher (it needs the unsealed secret).
+ */
+function metaHubChallenge(url: URL): { challenge: string; verifyToken: string } | null {
+  if (url.searchParams.get("hub.mode") !== "subscribe") return null;
+  const challenge = url.searchParams.get("hub.challenge");
+  const verifyToken = url.searchParams.get("hub.verify_token");
+  if (challenge === null || challenge.length === 0) return null;
+  if (verifyToken === null || verifyToken.length === 0) return null;
+  return { challenge, verifyToken };
 }
 
 /**
@@ -94,6 +122,29 @@ export async function dispatchGetHandshake(
     const xSecret = sealedSecrets.find((s) => s.provider === "x");
     if (xSecret !== undefined) {
       return xCrcResponse(crcToken, await unseal(xSecret));
+    }
+  }
+
+  // Meta subscription verify: echo `hub.challenge` IFF the presented `hub.verify_token` equals a configured
+  // verify-token (constant-time). The verify-token is sealed as a TYPED blob, so we unseal each `meta`
+  // secret and skip the ones that aren't a verify-token (Meta's app-secret coexists under the same slug).
+  // Configured-but-no-match → 403 (Meta's expected failure); none configured → null → falls through to
+  // capture (no oracle beyond what an unknown token already exposes).
+  const meta = metaHubChallenge(url);
+  if (meta !== null) {
+    let configured = false;
+    for (const secret of sealedSecrets) {
+      if (secret.provider !== "meta") continue;
+      const verifyToken = parseVerifyTokenSecret(await unseal(secret));
+      if (verifyToken === null) continue; // a signing secret, not a verify-token blob
+      configured = true;
+      if (verifyTokenEqual(meta.verifyToken, verifyToken)) return plainTextEcho(meta.challenge);
+    }
+    if (configured) {
+      return new Response("forbidden", {
+        status: 403,
+        headers: { "content-type": "text/plain; charset=utf-8", ...BROWSER_SAFE_HEADERS },
+      });
     }
   }
 

@@ -244,6 +244,7 @@ export const endpointsRotateCommand = buildCommand<DestructiveFlags, [string], A
 interface AddProviderSecretFlags extends GlobalFlags {
   provider: Provider;
   label?: string;
+  kind: "signing_secret" | "verify_token";
 }
 
 export const endpointsAddProviderSecretCommand = buildCommand<
@@ -257,14 +258,15 @@ export const endpointsAddProviderSecretCommand = buildCommand<
     const { format, color } = resolveGlobals(this, flags);
     // NEVER take the secret as an argv flag. Interactive: a hidden (no-echo) prompt on stderr.
     // Non-interactive (scripts/CI): read it from piped stdin.
+    const what = flags.kind === "verify_token" ? "verify token" : "signing secret";
     const secret = (
       this.io.isInteractive
-        ? await this.io.promptSecret(`${flags.provider} signing secret: `)
+        ? await this.io.promptSecret(`${flags.provider} ${what}: `)
         : await this.io.readStdin()
     ).trim();
     if (secret.length === 0) {
       return new MissingInputError(
-        "no secret provided — type it at the prompt, or pipe it on stdin.",
+        `no ${what} provided — type it at the prompt, or pipe it on stdin.`,
       );
     }
     const added = await client.addProviderSecret({
@@ -272,6 +274,7 @@ export const endpointsAddProviderSecretCommand = buildCommand<
       provider: flags.provider,
       secret,
       label: flags.label,
+      kind: flags.kind,
     });
     this.process.stdout.write(
       format === "json" ? `${renderJson(added)}\n` : `${renderAddedProviderSecret(added, color)}\n`,
@@ -298,10 +301,18 @@ export const endpointsAddProviderSecretCommand = buildCommand<
         brief: "an optional display label",
         optional: true,
       },
+      kind: {
+        kind: "enum",
+        values: ["signing_secret", "verify_token"],
+        brief:
+          "signing_secret (default) or verify_token (a Meta hub.verify_token GET-handshake token)",
+        default: "signing_secret",
+      },
     },
   },
   docs: {
-    brief: "register a provider signing secret on an endpoint (read via prompt or piped stdin)",
+    brief:
+      "register a provider signing secret or verify token on an endpoint (read via prompt or stdin)",
   },
 });
 

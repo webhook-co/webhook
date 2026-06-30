@@ -62,7 +62,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     "Tail an endpoint's events forward, oldest-first, up to the safety watermark. Start from `since` (now | beginning | a duration like 30m/2h | an RFC 3339 timestamp) or resume from a prior cursor; pass the returned nextCursor back to continue. The response also reports headCursor + caughtUp so you can tell when you've reached the head.",
   "audit.verify": "Verify the org's tamper-evident audit chain; reports the first break, if any.",
   "endpoints.addProviderSecret":
-    "Register an inbound-verification signing secret on an endpoint so received webhooks from that provider are cryptographically verified. Provide `provider` (stripe|github|shopify|slack|standard_webhooks) and the plaintext `secret`; it is sealed server-side and NEVER returned. Treat the secret as sensitive — confirm with the user before storing one on their behalf.",
+    "Register an inbound-verification secret on an endpoint. `kind` is `signing_secret` (default — the provider's signing/auth secret, so received webhooks are cryptographically verified) or `verify_token` (a user-chosen GET-handshake compare-token, e.g. Meta's hub.verify_token, used to complete a subscription verification). Provide `provider`, the plaintext `secret`, and optional `kind`/`label`; it is sealed server-side and NEVER returned. Treat the secret as sensitive — confirm with the user before storing one on their behalf.",
   "endpoints.listProviderSecrets":
     "List an endpoint's provider signing secrets as metadata (id, provider, status, label, created) — never the secret values.",
   "endpoints.revokeProviderSecret":

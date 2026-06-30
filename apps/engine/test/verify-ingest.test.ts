@@ -1,5 +1,10 @@
 import { toCachedSealedSecret, type CachedSealedSecret } from "@webhook-co/db";
-import { LocalKmsProvider, SecretStore, type EncryptionContext } from "@webhook-co/shared";
+import {
+  LocalKmsProvider,
+  SecretStore,
+  serializeVerifyTokenSecret,
+  type EncryptionContext,
+} from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { makeVerifyIngest } from "../src/verify";
@@ -185,6 +190,51 @@ describe("makeVerifyIngest", () => {
       sealedSecrets: [corrupt, good], // the corrupt one must not abort verification
     });
     expect(outcome.verified).toBe(true);
+  });
+
+  it("does NOT accept a meta verify-token blob as a POST signing key (verification-downgrade guard, ADR-0086)", async () => {
+    // A Meta endpoint holds TWO secrets under `meta`: the app secret (POST signer) + a GET-handshake
+    // verify-token, sealed as a typed blob. The verify-token is lower-assurance (user-chosen, sent by Meta
+    // in cleartext in the hub.verify_token URL during setup). An attacker who learns it must NOT be able to
+    // forge a `verified` meta webhook by HMAC-ing the body with the (public-wrapper) blob string. The verify
+    // path MUST skip verify-token blobs as candidate keys.
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const blob = serializeVerifyTokenSecret("weak-hub-verify-token");
+    const vt = await sealAs(store, blob, "sec-vt", "meta");
+    const body = `{"object":"page","entry":[]}`;
+    const forged = await githubSignature(blob, body); // sha256=<hex>, Meta's x-hub-signature-256 format
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [["x-hub-signature-256", forged]],
+      provider: "meta",
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [vt],
+    });
+    expect(outcome.verified).toBe(false); // a verify-token blob is NEVER a signing key
+  });
+
+  it("still verifies a real meta webhook when a verify-token coexists under `meta` (skips only the blob)", async () => {
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const appSecret = "real-meta-app-secret";
+    const app = await sealAs(store, appSecret, "sec-app", "meta");
+    const vt = await sealAs(store, serializeVerifyTokenSecret("vt"), "sec-vt", "meta");
+    const body = `{"object":"page","entry":[1]}`;
+    const sig = await githubSignature(appSecret, body); // signed with the REAL app secret
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [["x-hub-signature-256", sig]],
+      provider: "meta",
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [vt, app], // the verify-token is present but skipped; the app secret matches
+    });
+    expect(outcome.verified).toBe(true);
+    expect(outcome.provider).toBe("meta");
   });
 
   it("verifies against the REGISTERED provider even when header detection picked the wrong one", async () => {
