@@ -5,6 +5,7 @@ import {
   Input,
   MultiSelect,
   type MultiSelectOption,
+  ProviderLogo,
   providerDisplayName,
 } from "@webhook-co/ui";
 import { Search } from "lucide-react";
@@ -63,7 +64,12 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
     range !== "";
 
   const providerOptions = React.useMemo<MultiSelectOption[]>(
-    () => providers.map((p) => ({ value: p, label: providerDisplayName(p) })),
+    () =>
+      providers.map((p) => ({
+        value: p,
+        label: providerDisplayName(p),
+        icon: <ProviderLogo slug={p} size={16} />,
+      })),
     [providers],
   );
   const statusOptions = React.useMemo<MultiSelectOption[]>(

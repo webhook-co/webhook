@@ -3,6 +3,7 @@
 import {
   Banner,
   Button,
+  ProviderLogo,
   providerDisplayName,
   StatusPill,
   Table,
@@ -107,7 +108,10 @@ export function EventsList({
                   </Link>
                 </TableCell>
                 <TableCell className="text-fg-secondary">
-                  {providerDisplayName(event.provider)}
+                  <span className="flex items-center gap-2">
+                    <ProviderLogo slug={event.provider} size={16} />
+                    {providerDisplayName(event.provider)}
+                  </span>
                 </TableCell>
                 <TableCell>
                   {/* Tri-state (ADR-0077 amendment): the list now projects the verification state, so a
