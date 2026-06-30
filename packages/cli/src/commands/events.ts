@@ -102,7 +102,8 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
       search: {
         kind: "parsed",
         parse: (value: string) => value,
-        brief: "substring search over event/provider/external ids (+ exact event id)",
+        brief:
+          "substring search over event/provider/external ids + request header names/values (+ exact event id)",
         optional: true,
       },
     },

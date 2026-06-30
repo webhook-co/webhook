@@ -1,8 +1,12 @@
-import { render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DateRangeFilter, type DateRangeValue } from "./date-range-filter";
+
+// Unmount each render between tests so a prior test's Radix popover portal doesn't linger in the jsdom
+// body and pollute the next test's body-wide `getAllByRole("gridcell")` queries.
+afterEach(cleanup);
 
 function open(value: DateRangeValue, onApply = vi.fn()) {
   render(<DateRangeFilter value={value} onApply={onApply} />);
@@ -64,5 +68,38 @@ describe("DateRangeFilter", () => {
     await userEvent.click(screen.getByRole("button", { name: /Filter by received date/ }));
     await userEvent.click(screen.getByRole("gridcell", { name: "2026-06-20" }));
     expect(onApply).toHaveBeenCalledWith({ from: "2026-06-10", to: "2026-06-21", range: "" });
+  });
+
+  it("reads a seeded wire range back inclusively (exclusive ?to= → calendar end = to − 1)", async () => {
+    // Wire from=Jun 10 / to=Jun 21 (exclusive) means "Jun 10 through Jun 20 inclusive" → the calendar
+    // highlights Jun 10 and Jun 20 as the endpoints.
+    open({ range: "", from: "2026-06-10", to: "2026-06-21" });
+    await userEvent.click(screen.getByRole("button", { name: /Filter by received date/ }));
+    expect(screen.getByRole("gridcell", { name: "2026-06-10" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("gridcell", { name: "2026-06-20" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("gridcell", { name: "2026-06-21" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  });
+
+  it("a valid preset OWNS the range — the calendar shows no custom selection even with stray from/to", async () => {
+    open({ range: "7d", from: "2026-06-01", to: "2026-06-10" });
+    await userEvent.click(screen.getByRole("button", { name: /Filter by received date/ }));
+    // Mirrors the parser (preset wins): no gridcell is pressed.
+    const pressed = screen
+      .getAllByRole("gridcell")
+      .filter((c) => c.getAttribute("aria-pressed") === "true");
+    expect(pressed).toHaveLength(0);
+    // The trigger still labels the active preset (unambiguous — the popover also has a "Last 7 days" item).
+    expect(
+      screen.getByRole("button", { name: "Filter by received date: Last 7 days" }),
+    ).toBeInTheDocument();
   });
 });

@@ -10,7 +10,9 @@ import {
 import { Calendar as CalendarIcon, Check, ChevronDown } from "lucide-react";
 import * as React from "react";
 
-import { activeDateLabel, DATE_PRESETS, hasDateRange } from "@/lib/date-range";
+import { activeDateLabel, DATE_PRESETS, hasDateRange, isDatePreset } from "@/lib/date-range";
+
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface DateRangeValue {
   readonly range: string;
@@ -31,7 +33,8 @@ export interface DateRangeFilterProps {
 // parity. On a calendar, though, clicking the end day means "INCLUDE that day" — so the picked end maps
 // to the exclusive wire bound `day + 1`, and a wire bound reads back as the calendar end `to − 1`. `from`
 // is an inclusive lower bound, so it maps straight through. Day math is UTC (`YYYY-MM-DD`, no tz lib).
-function shiftUtcDay(ymd: string, delta: number): string {
+function shiftUtcDay(ymd: string, delta: number): string | undefined {
+  if (!YMD_RE.test(ymd)) return undefined; // a hand-edited non-calendar `?to=` (e.g. an ISO instant) → ignore
   const [y, m, d] = ymd.split("-").map(Number);
   const date = new Date(Date.UTC(y!, m! - 1, d! + delta));
   const p = (n: number) => String(n).padStart(2, "0");
@@ -53,16 +56,22 @@ export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
     // The picked end day is inclusive → shift it to the exclusive wire bound (day + 1).
     onApply({
       from: range.from ?? "",
-      to: range.to ? shiftUtcDay(range.to, 1) : "",
+      to: range.to ? (shiftUtcDay(range.to, 1) ?? "") : "",
       range: "",
     });
   }
 
-  // The calendar shows an inclusive range, so read the exclusive wire `to` back as `to − 1`.
-  const calendarValue: CalendarRange = {
-    from: value.from || undefined,
-    to: value.to ? shiftUtcDay(value.to, -1) : undefined,
-  };
+  // What the calendar shows. A valid preset OWNS the range (mirrors the parser, which ignores from/to
+  // under a preset), so the calendar shows nothing then. Otherwise the inclusive calendar end reads the
+  // exclusive wire `to` back as `to − 1`; a malformed (non-YYYY-MM-DD, e.g. hand-edited ISO) bound is
+  // dropped rather than rendered as NaN.
+  const presetActive = isDatePreset(value.range);
+  const calendarValue: CalendarRange = presetActive
+    ? {}
+    : {
+        from: YMD_RE.test(value.from) ? value.from : undefined,
+        to: value.to ? shiftUtcDay(value.to, -1) : undefined,
+      };
 
   return (
     <Popover>

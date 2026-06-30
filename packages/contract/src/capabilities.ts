@@ -15,6 +15,15 @@ import { z } from "zod";
 import { defineCapability, type AnyCapability } from "./capability";
 import { TargetSchema } from "./target";
 
+// A multi-select filter field: accepts a single enum value OR a non-empty array. Accepting the scalar
+// keeps the events.list input backward-compatible for a direct consumer that passed the pre-multi-select
+// single value; the array is the canonical form every surface now sends. NB no `.transform` to normalize
+// here — a transform can't be represented in JSON Schema and would break the MCP tool inputSchema (the
+// same constraint as z.coerce.date); the shared read-handler normalizes a scalar to an array instead.
+function multiEnum<T extends z.ZodTypeAny>(schema: T) {
+  return z.union([schema, z.array(schema).min(1)]);
+}
+
 // The six wedge capabilities. Inputs are small Zod objects; outputs
 // reuse the shared entity schemas (one definition). The cursor is the opaque string
 // from packages/shared (HMAC-signed); pagination wraps items + nextCursor.
@@ -136,14 +145,14 @@ export const eventsList = defineCapability({
     // string handed to SQL → a Postgres 22P02), so the check lives in exactly one place.
     filter: z
       .object({
-        // provider + verificationState are MULTI-select (arrays, OR'd within each, AND'd across fields):
-        // `provider=[stripe,github]` → `provider = ANY(...)`. A non-empty array of the closed enum stays
-        // JSON-Schema-clean for the MCP tool inputSchema. Omit (or an empty selection) = no filter.
-        provider: z.array(ProviderSchema).min(1).optional(),
+        // provider + verificationState are MULTI-select (OR'd within each, AND'd across fields):
+        // `provider=[stripe,github]` → `provider in (...)`. multiEnum accepts a scalar or a non-empty
+        // array (normalized to an array) — JSON-Schema-clean for the MCP inputSchema. Omit = no filter.
+        provider: multiEnum(ProviderSchema).optional(),
         receivedAfter: z.string().optional(),
         receivedBefore: z.string().optional(),
         // The truthful verification tri-state (verified | failed | unattempted), multi-select.
-        verificationState: z.array(VerificationStateSchema).min(1).optional(),
+        verificationState: multiEnum(VerificationStateSchema).optional(),
         // Case-insensitive substring search across the event's ID fields (provider_event_id, external_id,
         // dedup_key) + the request HEADER names/values, plus an exact match on the event id when the term
         // is a uuid. A plain string (no coerce) → JSON-Schema-clean. The ID fields are backed by trigram

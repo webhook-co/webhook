@@ -29,9 +29,21 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
   const searchParams = useSearchParams();
   const committedQuery = searchParams.toString();
 
-  // provider + status are MULTI-select (repeated params).
-  const providerSel = searchParams.getAll("provider");
-  const statusSel = searchParams.getAll("status");
+  // provider + status are MULTI-select (repeated params). An optimistic override reflects a just-pushed
+  // selection BEFORE the RSC navigation commits, so rapid multi-toggling (faster than the round-trip)
+  // computes each toggle against the live selection instead of a stale committed URL (which would drop
+  // earlier picks). Cleared once the URL commits. The displayed selection is also filtered to the known
+  // vocabulary, so a hand-edited invalid `?provider=`/`?status=` member isn't counted as active.
+  const [pendingSel, setPendingSel] = React.useState<{
+    provider?: string[];
+    status?: string[];
+  }>({});
+  const providerSel = (pendingSel.provider ?? searchParams.getAll("provider")).filter((p) =>
+    providers.includes(p),
+  );
+  const statusSel = (pendingSel.status ?? searchParams.getAll("status")).filter((s) =>
+    (VERIFICATION_STATES as readonly string[]).includes(s),
+  );
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
   const search = searchParams.get("search") ?? "";
@@ -59,6 +71,7 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
   const lastPushedRef = React.useRef<string | null>(null);
   React.useEffect(() => {
     lastPushedRef.current = null;
+    setPendingSel({});
   }, [committedQuery]);
 
   function apply(next: URLSearchParams) {
@@ -81,7 +94,8 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
 
   // Set a multi-value key to the given list (repeated params), merged against the last-pushed value so a
   // concurrent single-key change isn't clobbered. An empty list deletes the key (no filter).
-  function setMulti(key: (typeof FILTER_KEYS)[number], values: readonly string[]) {
+  function setMulti(key: "provider" | "status", values: readonly string[]) {
+    setPendingSel((prev) => ({ ...prev, [key]: [...values] }));
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     next.delete(key);
     for (const value of values) next.append(key, value);
@@ -144,7 +158,7 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
             // doesn't re-sync over the typing; the debounce clears it after pushing.
             searchPendingRef.current = e.target.value.trim() !== search;
           }}
-          placeholder="Search by event id, external id, or provider event id"
+          placeholder="Search by event id, external id, provider event id, or header"
           aria-label="Search events"
           className="pl-9"
         />

@@ -112,10 +112,15 @@ function eventSearchFilter(tx: TenantTx, search: string | undefined) {
   if (UUID_RE.test(search)) return tx`and id = ${search}`;
   const pattern = likeContains(search);
   // The three ID columns are trigram-GIN-indexed (migration 0023). `headers::text` is a RESIDUAL scan
-  // (no index — adding GIN to the large headers jsonb on the hot ingest path isn't worth the write-amp),
-  // and it serializes the whole jsonb, so a term matches a header NAME or VALUE (the per-endpoint scan is
-  // already bounded by endpoint_id, so the residual cost is contained). Header values aren't EXPOSED by a
-  // match — they stay redacted in the UI; matching only locates the event within the caller's own org.
+  // (no GIN — indexing the large headers jsonb on the hot ingest path isn't worth the write-amp), and it
+  // serializes the whole jsonb so a term matches a header NAME or VALUE.
+  //   ⚠️ PERF: Postgres can only bitmap-OR an indexed disjunction when EVERY branch is index-backed, so
+  //   adding the unindexed headers branch forgoes the 0023 trigram path for the WHOLE search — it becomes
+  //   a per-endpoint seq scan. This is bounded (endpoint_id leads every index; the browse stops at
+  //   limit+1 matches) and only bites at very large per-endpoint volumes (where the trigram was the win);
+  //   at typical volumes the planner seq-scanned anyway. Revisit with a trigram GIN on (headers::text) if
+  //   header-inclusive search becomes hot. Header values aren't EXPOSED by a match — they stay redacted in
+  //   the UI; matching only LOCATES the event within the caller's own RLS-scoped org.
   return tx`and (provider_event_id ilike ${pattern} or external_id ilike ${pattern} or dedup_key ilike ${pattern} or headers::text ilike ${pattern})`;
 }
 

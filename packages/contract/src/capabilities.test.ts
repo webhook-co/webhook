@@ -186,6 +186,16 @@ describe("events.list filter (provider + received-at range)", () => {
     expect(parsed.filter?.receivedAfter).toBe("2026-06-01T00:00:00Z");
   });
 
+  it("accepts a scalar provider/verificationState for backward-compat (not just an array)", () => {
+    const parsed = eventsList.input.parse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { provider: "stripe", verificationState: "failed" },
+    });
+    // The contract accepts the pre-multi-select single value; the read-handler normalizes it to an array.
+    expect(parsed.filter?.provider).toBe("stripe");
+    expect(parsed.filter?.verificationState).toBe("failed");
+  });
+
   it("accepts a verificationState array and rejects an unknown member (closed enum)", () => {
     const ok = eventsList.input.safeParse({
       endpointId: "11111111-1111-4111-8111-111111111111",

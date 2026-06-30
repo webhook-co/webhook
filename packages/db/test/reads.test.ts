@@ -516,6 +516,17 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
     expect(failed.items).toEqual([]);
   });
 
+  it("events.list normalizes a SCALAR provider/verificationState to an array (backward-compat)", async () => {
+    // The contract accepts a scalar (the pre-multi-select shape); the read-handler asArray-normalizes it,
+    // so a single-string filter still reaches listEvents as a one-element array and filters correctly.
+    const verified = (await handlers.get("events.list")!(ctxA, {
+      endpointId: epTail,
+      filter: { verificationState: "verified", provider: "stripe" },
+    })) as { items: { id: string }[] };
+    // epTail's stripe events are eTail1 + eTail3 (eTail2 is github); all are verified.
+    expect(new Set(verified.items.map((e) => e.id))).toEqual(new Set([eTail1, eTail3]));
+  });
+
   it("events.list rejects an unknown verificationState with VALIDATION_ERROR (closed enum)", async () => {
     await expectFault(
       handlers.get("events.list")!(ctxA, {

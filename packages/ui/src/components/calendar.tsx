@@ -65,6 +65,14 @@ export function Calendar({ value, onChange, defaultMonth, today, className }: Ca
     parseYmd(defaultMonth) ?? parseYmd(value.to) ?? parseYmd(value.from) ?? parseYmd(todayStr)!;
   const [view, setView] = React.useState({ y: anchor.y, m: anchor.m });
 
+  // The in-progress start day, tracked LOCALLY so completing a range never depends on the first click's
+  // `value` change having committed (the prop is URL-derived and lags an RSC navigation). Reset when the
+  // controlled range is cleared/replaced externally.
+  const [pendingStart, setPendingStart] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!value.from && !value.to) setPendingStart(null);
+  }, [value.from, value.to]);
+
   function shiftMonth(delta: number) {
     setView((v) => {
       const next = v.m + delta;
@@ -73,17 +81,24 @@ export function Calendar({ value, onChange, defaultMonth, today, className }: Ca
   }
 
   function pick(day: string) {
-    const { from, to } = value;
-    // Start fresh when nothing is pending or a full range already exists; otherwise complete it (or
-    // restart if the click lands before the pending start).
-    if (!from || to) {
-      onChange({ from: day });
-    } else if (day < from) {
+    // The pending start is the locally-tracked first click, else a partial range carried in by the prop
+    // (from set, to unset — e.g. reopening after one click), else none.
+    const start = pendingStart ?? (value.from && !value.to ? value.from : null);
+    if (start === null || day < start) {
+      // Begin (or restart, if the click lands before the pending start) the range.
+      setPendingStart(day);
       onChange({ from: day });
     } else {
-      onChange({ from, to: day });
+      // Complete the range from the pending start (not the lagging prop).
+      setPendingStart(null);
+      onChange({ from: start, to: day });
     }
   }
+
+  // What to highlight: while a start is pending (awaiting the second click), show only that day; once a
+  // range is complete, show the prop's from/to span.
+  const hiFrom = pendingStart ?? value.from;
+  const hiTo = pendingStart ? undefined : value.to;
 
   const firstWeekday = new Date(Date.UTC(view.y, view.m, 1)).getUTCDay();
   const daysInMonth = new Date(Date.UTC(view.y, view.m + 1, 0)).getUTCDate();
@@ -142,9 +157,9 @@ export function Calendar({ value, onChange, defaultMonth, today, className }: Ca
         ))}
         {cells.map((day, i) => {
           if (day === null) return <div key={`b${i}`} />;
-          const isFrom = day === value.from;
-          const isTo = day === value.to;
-          const inRange = value.from && value.to ? day > value.from && day < value.to : false;
+          const isFrom = day === hiFrom;
+          const isTo = day === hiTo;
+          const inRange = hiFrom && hiTo ? day > hiFrom && day < hiTo : false;
           const isToday = day === todayStr;
           return (
             <button
