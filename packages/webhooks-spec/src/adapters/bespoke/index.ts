@@ -16,6 +16,7 @@ import { makeMessagebirdAdapter } from "./messagebird";
 import { makeMondayAdapter } from "./monday";
 import { makeNetlifyAdapter } from "./netlify";
 import { makePaypalAdapter } from "./paypal";
+import { makePlaidAdapter } from "./plaid";
 import { makePlivoAdapter } from "./plivo";
 import { makeSendgridAdapter } from "./sendgrid";
 import { makeTelnyxAdapter } from "./telnyx";
@@ -44,4 +45,5 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   kinde: makeKindeAdapter(),
   paypal: makePaypalAdapter(),
   aws_sns: makeAwsSnsAdapter(),
+  plaid: makePlaidAdapter(),
 };

@@ -132,6 +132,9 @@ export const PROVIDERS = [
   // SubscriptionConfirmation is surface-only).
   "paypal",
   "aws_sns",
+  // Plaid: ES256 JWT (Plaid-Verification), key fetched by kid from an AUTHENTICATED endpoint — the
+  // registered secret is a JSON blob `{environment, client_id, secret}`; request_body_sha256 body binding.
+  "plaid",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);

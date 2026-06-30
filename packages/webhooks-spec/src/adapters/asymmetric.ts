@@ -121,6 +121,36 @@ export async function verifyEcdsaP256Sha256(
 }
 
 /**
+ * Verify an ECDSA P-256 + SHA-256 signature with an EC public key in JWK form (`{kty:"EC", crv:"P-256",
+ * x, y}`, as a JWKS exposes — Plaid). `signatureRaw` is the IEEE-P1363 raw `r||s` (64 bytes) — a JWS ES256
+ * signature is already raw (no DER conversion needed). Returns false on any error / wrong length.
+ */
+export async function verifyEcdsaP256Sha256Jwk(
+  jwk: JsonWebKey,
+  message: Uint8Array,
+  signatureRaw: Uint8Array,
+): Promise<boolean> {
+  if (signatureRaw.length !== 64) return false;
+  try {
+    const key = await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    return await crypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      key,
+      signatureRaw,
+      message,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Convert a DER ECDSA signature (`SEQUENCE { INTEGER r, INTEGER s }`, as OpenSSL/SendGrid emit) to the
  * IEEE-P1363 raw `r||s` form WebCrypto's verify() wants, with `coordSize` bytes per coordinate (32 for
  * P-256). A minimal, bounds-checked DER walk — returns null on ANY malformation (never throws), so a junk
