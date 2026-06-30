@@ -4,6 +4,7 @@ import { type AuthContext } from "@webhook-co/contract";
 import {
   importAuditKey,
   LocalKmsProvider,
+  parseVerifyTokenSecret,
   SecretStore,
   verifyAuditChain,
 } from "@webhook-co/shared";
@@ -15,6 +16,7 @@ import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
 import { createEndpoint, getEndpointIngestTokenHash } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
+import { getEndpointProviderSecrets } from "../src/provider-secrets";
 import { createWriteHandlers } from "../src/write-handlers";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -29,6 +31,7 @@ const hasher = createCredentialHasher({ current: Buffer.alloc(CREDENTIAL_PEPPER_
 
 let pg: EphemeralPostgres;
 let app: Sql;
+let authn: Sql; // webhook_authn — the by-endpoint sealed-secret cold read (to unseal + assert seal-shape)
 let auditKey: CryptoKey;
 let sealer: SecretStore;
 let orgA: string;
@@ -58,6 +61,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+  authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
   auditKey = await importAuditKey(new Uint8Array(32).fill(7));
   sealer = new SecretStore(await LocalKmsProvider.generate());
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "A" })).id;
@@ -68,6 +72,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await app?.end();
+  await authn?.end();
   await pg?.stop();
 });
 
@@ -95,6 +100,36 @@ describe("endpoints.addProviderSecret handler", () => {
     expect(last.target).toBe(out.id);
     expect(last.actor).toBeNull();
     expect((await verifyAuditChain(auditKey, orgA, rows)).ok).toBe(true);
+  });
+
+  it("kind=verify_token seals the token as a typed BLOB (distinguishable from a coexisting app-secret)", async () => {
+    const h = handlers().get("endpoints.addProviderSecret")!;
+    const out = (await h(rw(orgA), {
+      endpointId: epA,
+      provider: "meta",
+      secret: "raw-hub-verify-token",
+      kind: "verify_token",
+    })) as Record<string, unknown>;
+    const stored = (await getEndpointProviderSecrets(authn, epA)).find((s) => s.id === out.id)!;
+    const unsealed = await sealer.openString(stored.sealed, stored.context);
+    // the sealed plaintext is the blob, not the bare token — so the engine handshake can tell it apart
+    // from a signing secret stored under the SAME `meta` slug
+    expect(parseVerifyTokenSecret(unsealed)).toBe("raw-hub-verify-token");
+    expect(unsealed).not.toBe("raw-hub-verify-token");
+    expect(JSON.stringify(out)).not.toContain("raw-hub-verify-token"); // never echoed
+  });
+
+  it("kind=signing_secret (default) seals the RAW secret unchanged — no blob wrapping", async () => {
+    const h = handlers().get("endpoints.addProviderSecret")!;
+    const out = (await h(rw(orgA), {
+      endpointId: epA,
+      provider: "meta",
+      secret: "raw-meta-app-secret",
+    })) as Record<string, unknown>;
+    const stored = (await getEndpointProviderSecrets(authn, epA)).find((s) => s.id === out.id)!;
+    const unsealed = await sealer.openString(stored.sealed, stored.context);
+    expect(unsealed).toBe("raw-meta-app-secret"); // unchanged
+    expect(parseVerifyTokenSecret(unsealed)).toBeNull(); // not a verify-token blob
   });
 
   it("rejects a standard_webhooks secret that matches the base64 alphabet but is not valid base64", async () => {

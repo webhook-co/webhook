@@ -43,6 +43,14 @@ export { makeHmacAdapter } from "./adapters/factory";
 // validator, single-sourced so the contract rejects a malformed `{header, token}` secret at registration.
 export { isUsableConfiguredHeaderSecret } from "./adapters/bespoke/token-auth";
 export { CONFIGURED_HEADER_PROVIDERS } from "./adapters/bespoke/token-auth-providers";
+// GET-handshake verify-token secret shape (Meta hub.verify_token / eBay): the provider set, the typed
+// seal-blob (de)serializer, and a constant-time compare, single-sourced for the contract / db / engine.
+export {
+  parseVerifyTokenSecret,
+  serializeVerifyTokenSecret,
+  VERIFY_TOKEN_PROVIDERS,
+  verifyTokenEqual,
+} from "./adapters/verify-token";
 
 // Send-side signer (the counterpart to standardWebhooksAdapter): produce the Standard Webhooks v1
 // signing headers + mint a signing secret. Used by the outbound delivery path (S3 Slice 2).

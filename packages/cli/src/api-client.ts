@@ -189,6 +189,8 @@ export interface ApiClient {
     provider: Provider;
     secret: string;
     label?: string;
+    /** `verify_token` registers a GET-handshake compare-token (Meta hub.verify_token); default signing. */
+    kind?: "signing_secret" | "verify_token";
   }): Promise<AddedProviderSecret>;
   /**
    * An endpoint's provider secrets as METADATA (`GET /v1/endpoints/:id/provider-secrets`). Not
@@ -404,6 +406,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}/provider-secrets`;
       const body: Record<string, unknown> = { provider: input.provider, secret: input.secret };
       if (input.label !== undefined) body.label = input.label;
+      if (input.kind !== undefined) body.kind = input.kind;
       const json = await postJson(path, body, false);
       return parseOrThrow(endpointsAddProviderSecretCap.output, json, "provider secret");
     },

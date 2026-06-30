@@ -1,11 +1,13 @@
 import { type CachedSealedSecret } from "@webhook-co/db";
+import { serializeVerifyTokenSecret } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { dispatchGetHandshake, xCrcResponse } from "../src/handshake";
 
 // The GET verification-handshake dispatcher. PR1 = the NO-SECRET protocols (Dropbox + Adobe I/O
 // `?challenge=` bare echo; Adobe Sign `X-AdobeSign-ClientId` header echo). PR2a adds X/Twitter CRC
-// (`crc_token` → HMAC under the endpoint's unsealed `x` consumer secret). Meta/eBay are later PRs.
+// (`crc_token` → HMAC under the endpoint's unsealed `x` consumer secret). PR2b adds Meta (`hub.mode=
+// subscribe` → echo `hub.challenge` iff `hub.verify_token` matches the sealed verify-token). eBay is PR3.
 
 const url = (qs: string) => new URL(`https://wbhk.my/whep_tok${qs}`);
 const hdrs = (h: Record<string, string> = {}) => new Headers(h);
@@ -118,6 +120,102 @@ describe("dispatchGetHandshake — X/Twitter CRC (crc_token, secret-based)", () 
   it("crc_token but NO `x` secret on the endpoint → null (not a resolvable handshake, never unseals)", async () => {
     const res = await dispatchGetHandshake(url("?crc_token=abc"), hdrs(), NO_SECRETS, unsealNever);
     expect(res).toBeNull();
+  });
+});
+
+describe("dispatchGetHandshake — Meta hub.challenge verification (verify-token, secret-based)", () => {
+  const metaSealed = { provider: "meta" } as CachedSealedSecret;
+  const VERIFY_TOKEN = "my-meta-hub-verify-token";
+  const metaUrl = (challenge: string, verifyToken: string, mode = "subscribe") =>
+    new URL(
+      `https://wbhk.my/whep_tok?hub.mode=${mode}&hub.challenge=${challenge}&hub.verify_token=${verifyToken}`,
+    );
+  // The endpoint's sealed `meta` secret unseals to the typed verify-token blob (db sealed it that way).
+  const unsealVerifyToken = async (cached: CachedSealedSecret): Promise<string> => {
+    expect(cached.provider).toBe("meta"); // the handshake only unseals meta secrets
+    return serializeVerifyTokenSecret(VERIFY_TOKEN);
+  };
+
+  it("echoes hub.challenge as text/plain (200) when the verify-token matches", async () => {
+    const res = await dispatchGetHandshake(
+      metaUrl("CHALLENGE_1158201444", VERIFY_TOKEN),
+      hdrs(),
+      [metaSealed],
+      unsealVerifyToken,
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(res!.headers.get("x-content-type-options")).toBe("nosniff"); // inert echo
+    expect(res!.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(await res!.text()).toBe("CHALLENGE_1158201444"); // bare challenge, the value Meta expects
+  });
+
+  it("returns 403 (no echo) when a verify-token IS configured but the presented one does NOT match", async () => {
+    const res = await dispatchGetHandshake(
+      metaUrl("CHALLENGE_1158201444", "attacker-guess"),
+      hdrs(),
+      [metaSealed],
+      unsealVerifyToken,
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(403);
+    expect(await res!.text()).not.toContain("CHALLENGE_1158201444"); // never echoes on mismatch
+  });
+
+  it("returns null (falls through to capture) when only a NON-verify-token meta secret exists (the app-secret)", async () => {
+    const res = await dispatchGetHandshake(
+      metaUrl("CHALLENGE_1", "any"),
+      hdrs(),
+      [metaSealed],
+      async () => "raw-meta-app-secret-not-a-blob", // a signing secret, not a verify-token blob
+    );
+    expect(res).toBeNull();
+  });
+
+  it("returns null when the endpoint has no meta secret at all (not a resolvable handshake)", async () => {
+    expect(
+      await dispatchGetHandshake(metaUrl("C", "t"), hdrs(), NO_SECRETS, unsealNever),
+    ).toBeNull();
+  });
+
+  it("ignores a non-subscribe hub.mode (not a verification handshake)", async () => {
+    expect(
+      await dispatchGetHandshake(
+        metaUrl("C", VERIFY_TOKEN, "unsubscribe"),
+        hdrs(),
+        [metaSealed],
+        unsealVerifyToken,
+      ),
+    ).toBeNull();
+  });
+
+  it("supports verify-token ROTATION: echoes if ANY configured verify-token matches", async () => {
+    const oldT = { provider: "meta" } as CachedSealedSecret;
+    const newT = { provider: "meta" } as CachedSealedSecret;
+    const blob = new Map<CachedSealedSecret, string>([
+      [oldT, "old-verify-token"],
+      [newT, "new-verify-token"],
+    ]);
+    const res = await dispatchGetHandshake(
+      metaUrl("C", "new-verify-token"),
+      hdrs(),
+      [oldT, newT],
+      async (c) => serializeVerifyTokenSecret(blob.get(c)!),
+    );
+    expect(res!.status).toBe(200);
+    expect(await res!.text()).toBe("C");
+  });
+
+  it("only unseals meta secrets (a co-located non-meta secret is never touched)", async () => {
+    const xSealed = { provider: "x" } as CachedSealedSecret;
+    const res = await dispatchGetHandshake(
+      metaUrl("C", VERIFY_TOKEN),
+      hdrs(),
+      [xSealed, metaSealed],
+      unsealVerifyToken, // asserts cached.provider === "meta" — never invoked for the x secret
+    );
+    expect(res!.status).toBe(200);
   });
 });
 

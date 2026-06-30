@@ -449,3 +449,35 @@ describe("endpoints.addProviderSecret — Tier-4 configured-header secret valida
     expect(parseSecret("gitlab", "a-plain-gitlab-token").success).toBe(true);
   });
 });
+
+describe("endpoints.addProviderSecret — verify-token kind (S8 Slice 2 PR2b, GET handshake)", () => {
+  const endpointId = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
+  const parse = (input: Record<string, unknown>) =>
+    endpointsAddProviderSecret.input.safeParse({ endpointId, ...input });
+
+  it("defaults kind to signing_secret when omitted (back-compat: existing callers unchanged)", () => {
+    const r = parse({ provider: "gitlab", secret: "a-token" });
+    expect(r.success).toBe(true);
+    if (r.success) expect(r.data.kind).toBe("signing_secret");
+  });
+
+  it("accepts kind=verify_token for a handshake provider (meta) with a plain token", () => {
+    expect(
+      parse({ provider: "meta", secret: "my-hub-verify-token", kind: "verify_token" }).success,
+    ).toBe(true);
+  });
+
+  it("rejects kind=verify_token for a provider with no verify-token handshake (stripe)", () => {
+    const r = parse({ provider: "stripe", secret: "x", kind: "verify_token" });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]!.path).toEqual(["provider"]);
+  });
+
+  it("does NOT apply signing-secret shape validation to a verify_token (the token is an opaque user string)", () => {
+    // meta isn't a configured-header/SW provider, but assert the verify_token path skips those refines:
+    // a value that would fail isUsableStandardWebhooksSecret is still fine as a verify-token.
+    expect(
+      parse({ provider: "meta", secret: "not~base64~at~all", kind: "verify_token" }).success,
+    ).toBe(true);
+  });
+});

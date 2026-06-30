@@ -11,6 +11,7 @@ import {
   ProviderSchema,
   ReplayDestinationSchema,
   SW_SECRET_PROVIDERS,
+  VERIFY_TOKEN_PROVIDERS,
   VerificationStateSchema,
   WATERMARK_DELTA_MS,
 } from "@webhook-co/shared";
@@ -326,6 +327,11 @@ export const endpointsAddProviderSecret = defineCapability({
       provider: ProviderSchema,
       label: z.string().trim().min(1).max(200).optional(),
       secret: z.string().min(1).max(4096),
+      // What KIND of secret this is. `signing_secret` (default, back-compat) = the payload-signing/auth
+      // secret the verify path uses. `verify_token` = a user-chosen GET-handshake compare-token (Meta
+      // `hub.verify_token`, ADR-0086) — a SECOND secret that coexists with the signing secret under the
+      // same provider slug, so it is sealed as a typed blob the engine recognizes pre-capture.
+      kind: z.enum(["signing_secret", "verify_token"]).default("signing_secret"),
     })
     // A Standard-Webhooks-family secret is base64 key material (optionally `whsec_`-prefixed, and a
     // `v1,` version tag for Supabase). The verify path strips those and base64-decodes the remainder.
@@ -335,6 +341,19 @@ export const endpointsAddProviderSecret = defineCapability({
     // front — otherwise it would store fine yet decode to nothing and verify as NO_MATCHING_KEY forever
     // (indistinguishable from "no secret"). Single-sourced here so every surface (api/mcp) matches.
     .superRefine((val, ctx) => {
+      // A verify-token is an OPAQUE user-chosen string (no base64/JSON shape), valid only for a provider
+      // that does a verify-token handshake — so it bypasses the signing-secret shape refines below.
+      if (val.kind === "verify_token") {
+        if (!VERIFY_TOKEN_PROVIDERS.has(val.provider)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["provider"],
+            message:
+              "this provider has no verify-token handshake; omit kind (or use signing_secret) to register a signing secret",
+          });
+        }
+        return;
+      }
       if (SW_SECRET_PROVIDERS.has(val.provider) && !isUsableStandardWebhooksSecret(val.secret)) {
         ctx.addIssue({
           code: "custom",
