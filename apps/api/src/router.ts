@@ -34,6 +34,12 @@ export interface ApiDeps {
    * wires it, the routes 5xx if absent.
    */
   readonly replayDestinations?: CapabilityHandlers;
+  /**
+   * The subscriptions.* handlers (S3 Slice 3 auto-delivery routing). A DEDICATED map bound ONLY by apps/api
+   * — like replayDestinations, kept off the shared `handlers` map so the mcp exemption (an agent must not
+   * reconfigure egress routing) is un-driftable. Optional in the bag; production wires it, the routes 5xx if absent.
+   */
+  readonly subscriptions?: CapabilityHandlers;
 }
 
 interface Route {
@@ -220,6 +226,22 @@ function matchRoute(
       input: { destinationId: rest[1] },
     };
   }
+  // subscriptions.* (S3 Slice 3): auto-delivery routing rules. WRITES (create/delete) + a list, bound ONLY
+  // on api (web-deferred, mcp-exempt) and dispatched via the dedicated `subscriptions` map.
+  if (method === "GET" && rest.length === 1 && rest[0] === "subscriptions") {
+    const sourceEndpointId = query.get("sourceEndpointId");
+    return {
+      capability: "subscriptions.list",
+      input: sourceEndpointId ? { sourceEndpointId } : {},
+    };
+  }
+  if (method === "POST" && rest.length === 1 && rest[0] === "subscriptions") {
+    // {sourceEndpointId, destinationId, provider?, eventTypes?, requireVerified?} from the JSON body.
+    return { capability: "subscriptions.create", input: {} };
+  }
+  if (method === "DELETE" && rest.length === 2 && rest[0] === "subscriptions") {
+    return { capability: "subscriptions.delete", input: { subscriptionId: rest[1] } };
+  }
   if (method === "POST" && rest.length === 2 && rest[0] === "audit" && rest[1] === "verify") {
     return { capability: "audit.verify", input: {} };
   }
@@ -300,6 +322,9 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
     }
     if (route.capability.startsWith("replayDestinations.")) {
       return await dispatchReplayDestination(deps, authz.ctx, route, request);
+    }
+    if (route.capability.startsWith("subscriptions.")) {
+      return await dispatchSubscription(deps, authz.ctx, route, request);
     }
     if (route.capability === "endpoints.create") {
       return await dispatchJsonBody(deps, authz.ctx, "endpoints.create", request);
@@ -419,5 +444,26 @@ async function dispatchReplayDestination(
   }
   // list ({}) + delete + rotateSigningSecret + listSigningSecrets ({destinationId}) carry no body; the
   // route input (path segment) is authoritative.
+  return Response.json(await handler(ctx, route.input));
+}
+
+/**
+ * Dispatch a subscriptions.* capability via the DEDICATED `subscriptions` map (never the shared `handlers`
+ * map — keeps the mcp exemption un-driftable, S3 Slice 3). create reads its fields from the JSON body;
+ * list ({} or {sourceEndpointId}) + delete ({subscriptionId} from the path) carry no body.
+ */
+async function dispatchSubscription(
+  deps: ApiDeps,
+  ctx: AuthContext,
+  route: Route,
+  request: Request,
+): Promise<Response> {
+  const handler = deps.subscriptions?.get(route.capability);
+  if (handler === undefined) {
+    throw new Error(`no subscriptions handler bound for: ${route.capability}`);
+  }
+  if (route.capability === "subscriptions.create") {
+    return Response.json(await handler(ctx, await readJsonObjectBody(request)));
+  }
   return Response.json(await handler(ctx, route.input));
 }

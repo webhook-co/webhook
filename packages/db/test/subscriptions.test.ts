@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { CapabilityFault, type AuthContext } from "@webhook-co/contract";
 import { importAuditKey } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -11,9 +12,11 @@ import { createOrg } from "../src/orgs";
 import { createReplayDestination, softDeleteReplayDestination } from "../src/replay-destinations";
 import {
   createSubscription,
+  createSubscriptionHandlers,
   deleteSubscription,
   listMatchingSubscriptions,
   listSubscriptions,
+  SubscriptionTargetNotFoundError,
   type MatchableEvent,
 } from "../src/subscriptions";
 import { setupSchema } from "./migrate";
@@ -152,7 +155,7 @@ describe("createSubscription", () => {
     expect(updated.enabled).toBe(false); // but the pause is NOT clobbered
   });
 
-  it("rejects a binding to a soft-deleted destination, a deleted source endpoint, or a cross-org target", async () => {
+  it("throws SubscriptionTargetNotFoundError for a soft-deleted destination, a deleted source endpoint, or a cross-org target", async () => {
     // soft-deleted destination
     const dead = (
       await createReplayDestination(app, { orgId: orgA, url: "https://cd.example.com/in" })
@@ -160,7 +163,7 @@ describe("createSubscription", () => {
     await softDeleteReplayDestination(app, orgA, dead);
     await expect(
       createSubscription(app, { orgId: orgA, sourceEndpointId: epA, destinationId: dead }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(SubscriptionTargetNotFoundError);
 
     // soft-deleted source endpoint
     const deadEp = (await createEndpoint(app, { orgId: orgA, name: "ep-dead" }, hasher)).id;
@@ -174,16 +177,16 @@ describe("createSubscription", () => {
     ).id;
     await expect(
       createSubscription(app, { orgId: orgA, sourceEndpointId: deadEp, destinationId: liveDest }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(SubscriptionTargetNotFoundError);
 
-    // cross-org: org A can't bind to org B's destination (RLS hides it → resolves as not-found)
+    // cross-org: org A can't bind to org B's destination (RLS hides it → resolves as not-found → throws)
     const orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org Bx" })).id;
     const destB = (
       await createReplayDestination(app, { orgId: orgB, url: "https://cb.example.com/in" })
     ).id;
     await expect(
       createSubscription(app, { orgId: orgA, sourceEndpointId: epA, destinationId: destB }),
-    ).rejects.toThrow();
+    ).rejects.toBeInstanceOf(SubscriptionTargetNotFoundError);
   });
 });
 
@@ -334,5 +337,50 @@ describe("audit", () => {
       "delivery_subscription.created", // first create
       "delivery_subscription.updated", // the re-create updated the existing row
     ]);
+  });
+});
+
+describe("createSubscriptionHandlers (capability handlers)", () => {
+  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
+  const handlers = () => createSubscriptionHandlers({ tenant: app, auditKey: undefined as never });
+
+  it("enforces the capability scope (FORBIDDEN without endpoints:write / endpoints:read)", async () => {
+    const create = handlers().get("subscriptions.create")!;
+    await expect(
+      create(ctx(["endpoints:read"]), { sourceEndpointId: epA, destinationId: destA }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    const list = handlers().get("subscriptions.list")!;
+    await expect(list(ctx([]), {})).rejects.toBeInstanceOf(CapabilityFault);
+  });
+
+  it("create returns the subscription; a dead/cross-org target → NOT_FOUND", async () => {
+    const auditKey = await importAuditKey(new Uint8Array(32).fill(3));
+    const h = createSubscriptionHandlers({ tenant: app, auditKey });
+    const dest = (
+      await createReplayDestination(app, { orgId: orgA, url: "https://h1.example.com/in" })
+    ).id;
+    const out = (await h.get("subscriptions.create")!(ctx(["endpoints:write"]), {
+      sourceEndpointId: epA,
+      destinationId: dest,
+      eventTypes: ["charge.*"],
+    })) as { id: string; eventTypes: string[] };
+    expect(out.id).toBeTruthy();
+    expect(out.eventTypes).toEqual(["charge.*"]);
+
+    // a destination that doesn't exist → NOT_FOUND (not a 500)
+    await expect(
+      h.get("subscriptions.create")!(ctx(["endpoints:write"]), {
+        sourceEndpointId: epA,
+        destinationId: randomUUID(),
+      }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("delete of an unknown id → NOT_FOUND", async () => {
+    const auditKey = await importAuditKey(new Uint8Array(32).fill(3));
+    const h = createSubscriptionHandlers({ tenant: app, auditKey });
+    await expect(
+      h.get("subscriptions.delete")!(ctx(["endpoints:write"]), { subscriptionId: randomUUID() }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
   });
 });

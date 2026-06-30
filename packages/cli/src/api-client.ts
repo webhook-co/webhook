@@ -18,6 +18,9 @@ import {
   replayDestinationsList as replayDestinationsListCap,
   replayDestinationsListSigningSecrets as replayDestinationsListSigningSecretsCap,
   replayDestinationsRotateSigningSecret as replayDestinationsRotateSigningSecretCap,
+  subscriptionsCreate as subscriptionsCreateCap,
+  subscriptionsDelete as subscriptionsDeleteCap,
+  subscriptionsList as subscriptionsListCap,
   type AddedProviderSecret,
   type AuthContext,
   type CapabilityError,
@@ -29,6 +32,7 @@ import {
   type RevokedProviderSecret,
   type RotatedSigningSecret,
   type SigningSecretMetadataView,
+  type SubscriptionDeleted,
   type Target,
 } from "@webhook-co/contract";
 import {
@@ -39,6 +43,7 @@ import {
   type EventSummary,
   type Provider,
   type ReplayDestination,
+  type Subscription,
 } from "@webhook-co/shared";
 import type { z } from "zod";
 
@@ -238,6 +243,22 @@ export interface ApiClient {
   replayDestinationsListSigningSecrets(
     destinationId: string,
   ): Promise<readonly SigningSecretMetadataView[]>;
+  /**
+   * Create/upsert a delivery subscription (`POST /v1/subscriptions`, S3 Slice 3): auto-deliver a source
+   * endpoint's matching events to a destination. Upserts on (endpoint, destination). NOT_FOUND if either is
+   * missing/deleted/cross-org. `eventTypes` omitted → server defaults to `['*']` (match-all).
+   */
+  subscriptionsCreate(input: {
+    sourceEndpointId: string;
+    destinationId: string;
+    provider?: string | null;
+    eventTypes?: readonly string[];
+    requireVerified?: boolean;
+  }): Promise<Subscription>;
+  /** The org's delivery subscriptions (`GET /v1/subscriptions`), optionally filtered by source endpoint. */
+  subscriptionsList(sourceEndpointId?: string): Promise<readonly Subscription[]>;
+  /** Remove a delivery subscription (`DELETE /v1/subscriptions/:id`). */
+  subscriptionsDelete(subscriptionId: string): Promise<SubscriptionDeleted>;
 }
 
 export interface ApiClientDeps {
@@ -498,6 +519,40 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         "signing secrets",
       );
       return items;
+    },
+    async subscriptionsCreate(input): Promise<Subscription> {
+      const body: Record<string, unknown> = {
+        sourceEndpointId: input.sourceEndpointId,
+        destinationId: input.destinationId,
+      };
+      if (input.provider !== undefined) body.provider = input.provider;
+      if (input.eventTypes !== undefined) body.eventTypes = input.eventTypes;
+      if (input.requireVerified !== undefined) body.requireVerified = input.requireVerified;
+      // idempotent=false: create is an UPSERT that appends a tamper-evident audit row on each call (a
+      // `delivery_subscription.updated` on the conflict path), so a blind retry after a lost response would
+      // write a phantom audit entry for a single user action. The caller surfaces the failure instead.
+      const json = await postJson("/v1/subscriptions", body, false);
+      return parseOrThrow(subscriptionsCreateCap.output, json, "subscription");
+    },
+    async subscriptionsList(sourceEndpointId): Promise<readonly Subscription[]> {
+      const path = sourceEndpointId
+        ? `/v1/subscriptions?sourceEndpointId=${encodeURIComponent(sourceEndpointId)}`
+        : "/v1/subscriptions";
+      const { items } = parseOrThrow(
+        subscriptionsListCap.output,
+        await getJson(path),
+        "subscriptions",
+      );
+      return items;
+    },
+    async subscriptionsDelete(subscriptionId): Promise<SubscriptionDeleted> {
+      const path = `/v1/subscriptions/${encodeURIComponent(subscriptionId)}`;
+      // idempotent=false: a server re-delete is NOT_FOUND, so never blind-retry.
+      return parseOrThrow(
+        subscriptionsDeleteCap.output,
+        await deleteJson(path, false),
+        "removed subscription",
+      );
     },
     async eventsGetPayload(eventId): Promise<{ contentType: string | null; body: Uint8Array }> {
       const path = `/v1/events/${encodeURIComponent(eventId)}/payload`;

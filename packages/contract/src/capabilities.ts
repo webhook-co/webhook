@@ -10,6 +10,7 @@ import {
   LagSchema,
   ProviderSchema,
   ReplayDestinationSchema,
+  SubscriptionSchema,
   SW_SECRET_PROVIDERS,
   VERIFY_TOKEN_PROVIDERS,
   VerificationStateSchema,
@@ -59,6 +60,14 @@ const PAYLOAD_MCP_EXEMPT =
  */
 const REPLAY_DEST_MCP_EXEMPT =
   "the replay allowlist gates SSRF egress targets — an agent must not register/mutate it (confused-deputy, ADR-0005)";
+/**
+ * subscriptions.* mcp exemption (S3 Slice 3) — a subscription configures AUTO-DELIVERY routing of an org's
+ * captured events to an egress destination. An MCP agent must not reconfigure where an org's event stream is
+ * delivered (it would let an agent steer the org's data at a destination of its choosing — the same
+ * confused-deputy / egress-control concern as the replay allowlist, ADR-0005).
+ */
+const SUBSCRIPTIONS_MCP_EXEMPT =
+  "subscriptions route an org's events to egress destinations — an agent must not reconfigure event routing (confused-deputy, ADR-0005)";
 
 function paged<T extends z.ZodTypeAny>(item: T) {
   return z.object({ items: z.array(item), nextCursor: cursor.nullable() });
@@ -537,6 +546,59 @@ export const replayDestinationsListSigningSecrets = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
 });
 
+// ── Delivery subscriptions (S3 Slice 3) ───────────────────────────────────────────────────────────
+// The Tier-3 routing rules that bind a source endpoint's captured events to a destination, selected on
+// provider + event_types + require_verified. create/list/delete reuse the endpoints:* scopes (no new
+// grantable scope); web is deferred to the dashboard epic; mcp is exempt (an agent must not reconfigure
+// where an org's events are delivered — see SUBSCRIPTIONS_MCP_EXEMPT).
+
+export const subscriptionsCreate = defineCapability({
+  name: "subscriptions.create",
+  // create UPSERTS the routing for (sourceEndpoint, destination): provider null = any; eventTypes default
+  // ['*'] (match-all) when omitted; requireVerified default false. No z.coerce/.transform here (keeps the
+  // input toJSONSchema-clean even though this cap is mcp-exempt).
+  input: z.object({
+    sourceEndpointId: uuid,
+    destinationId: uuid,
+    provider: z.string().min(1).max(80).nullable().optional(),
+    eventTypes: z.array(z.string().min(1).max(200)).max(100).optional(),
+    requireVerified: z.boolean().optional(),
+  }),
+  output: SubscriptionSchema,
+  // NOT_FOUND: the source endpoint or destination is missing/deleted/cross-org (binding to a target the
+  // ingest resolver would exclude is rejected, not silently created as an undeliverable rule).
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: SUBSCRIPTIONS_MCP_EXEMPT },
+});
+
+export const subscriptionsList = defineCapability({
+  name: "subscriptions.list",
+  // optional source-endpoint filter. NOT paginated — an org's subscriptions are a human-managed handful.
+  input: z.object({ sourceEndpointId: uuid.optional() }),
+  output: z.object({ items: z.array(SubscriptionSchema) }),
+  // VALIDATION_ERROR: a non-uuid sourceEndpointId filter fails input parse (mirrors endpoints.list).
+  errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:read" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: SUBSCRIPTIONS_MCP_EXEMPT },
+});
+
+export const SubscriptionDeletedSchema = z.object({ id: uuid });
+export type SubscriptionDeleted = z.infer<typeof SubscriptionDeletedSchema>;
+
+export const subscriptionsDelete = defineCapability({
+  name: "subscriptions.delete",
+  input: z.object({ subscriptionId: uuid }),
+  output: SubscriptionDeletedSchema,
+  // Hard delete. NOT_FOUND for an unknown / cross-org / already-removed id (don't leak existence).
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: SUBSCRIPTIONS_MCP_EXEMPT },
+});
+
 /**
  * The capability surface every binding implements. The six wedge capabilities
  * plus `audit.verify` — the compliance-by-design audit-chain verifier (ADR-0004),
@@ -562,6 +624,9 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   replayDestinationsDelete,
   replayDestinationsRotateSigningSecret,
   replayDestinationsListSigningSecrets,
+  subscriptionsCreate,
+  subscriptionsList,
+  subscriptionsDelete,
 ];
 
 /** Registry keyed by stable capability name. */

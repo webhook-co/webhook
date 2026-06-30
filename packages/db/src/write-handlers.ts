@@ -17,8 +17,6 @@ import {
   endpointsListProviderSecrets,
   endpointsRevokeProviderSecret,
   endpointsRotate,
-  type AnyCapability,
-  type AuthContext,
 } from "@webhook-co/contract";
 import { serializeVerifyTokenSecret, type SecretSealer } from "@webhook-co/shared";
 
@@ -36,7 +34,12 @@ import {
   listEndpointProviderSecrets,
   revokeProviderSecret,
 } from "./provider-secrets";
-import { createReadHandlers, type CapabilityHandlers, type ReadHandlerDeps } from "./read-handlers";
+import {
+  createReadHandlers,
+  ensureScope,
+  type CapabilityHandlers,
+  type ReadHandlerDeps,
+} from "./read-handlers";
 
 // DEFAULT_MAX_ENDPOINTS_PER_ORG now lives in ./endpoints (the single source of truth, so the DB-direct
 // dashboard imports the same value, not a copy); createWriteHandlers applies it when deps.maxEndpoints is
@@ -96,13 +99,6 @@ export function normalizeIngestApex(raw: string): string {
 
 export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers {
   const maxEndpoints = deps.maxEndpoints ?? DEFAULT_MAX_ENDPOINTS_PER_ORG;
-
-  function ensureScope(ctx: AuthContext, cap: AnyCapability): void {
-    if (!ctx.scopes.includes(cap.auth.scope)) {
-      throw new CapabilityFault("FORBIDDEN", `missing required scope: ${cap.auth.scope}`);
-    }
-  }
-
   const handlers: CapabilityHandlers = new Map();
 
   handlers.set(endpointsCreate.name, async (ctx, input) => {

@@ -15,14 +15,12 @@ import {
   replayDestinationsList,
   replayDestinationsListSigningSecrets,
   replayDestinationsRotateSigningSecret,
-  type AnyCapability,
-  type AuthContext,
 } from "@webhook-co/contract";
 import { canonicalizeAndValidateUrl, newId, type SecretSealer } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
-import type { CapabilityHandlers } from "./read-handlers";
+import { ensureScope, type CapabilityHandlers } from "./read-handlers";
 import { insertActiveSigningSecret, listSigningSecrets, rotateSigningSecret } from "./signing-keys";
 
 export type ReplayDestinationStatus = "active" | "revoked";
@@ -257,11 +255,6 @@ export interface ReplayDestinationHandlerDeps {
 export function createReplayDestinationHandlers(
   deps: ReplayDestinationHandlerDeps,
 ): CapabilityHandlers {
-  function ensureScope(ctx: AuthContext, cap: AnyCapability): void {
-    if (!ctx.scopes.includes(cap.auth.scope)) {
-      throw new CapabilityFault("FORBIDDEN", `missing required scope: ${cap.auth.scope}`);
-    }
-  }
   const handlers: CapabilityHandlers = new Map();
 
   handlers.set(replayDestinationsCreate.name, async (ctx, input) => {
