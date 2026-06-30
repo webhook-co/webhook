@@ -20,6 +20,9 @@ export const VerificationFailureSchema = z.discriminatedUnion("code", [
     scheme: WebhookSchemeSchema,
   }),
   z.object({ code: z.literal("UNSUPPORTED_SCHEME"), observedHeaders: z.array(z.string()) }),
+  // The remote verification key/cert could not be fetched (SSRF refusal, timeout, non-2xx, parse error)
+  // for a Tier-3 remote-fetch provider — fail-soft, the event is captured unverified, never dropped.
+  z.object({ code: z.literal("KEY_FETCH_FAILED"), scheme: WebhookSchemeSchema }),
   // temporal
   z.object({
     code: z.literal("TIMESTAMP_TOO_OLD"),

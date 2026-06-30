@@ -21,6 +21,7 @@
 import { type CachedSealedSecret, fromCachedSealedSecret } from "@webhook-co/db";
 import {
   getAdapterForScheme,
+  type KeyFetcher,
   PROVIDERS,
   type Provider,
   type SecretStore,
@@ -78,6 +79,7 @@ export function makeVerifyIngest(
   store: SecretStore,
   now: () => Date,
   log?: VerifyLog,
+  fetchKey?: KeyFetcher,
 ): (input: VerifyIngestInput) => Promise<VerificationOutcome> {
   /** Unseal the registered secrets for one provider, newest-first; skip+log any that fail to unseal. */
   async function unsealFor(input: VerifyIngestInput, provider: Provider): Promise<string[]> {
@@ -129,6 +131,7 @@ export function makeVerifyIngest(
           secrets,
           requestUrl: input.requestUrl,
           method: input.method,
+          fetchKey, // remote-fetch providers (Kinde/Plaid/PayPal/SNS); undefined elsewhere
           now: at,
         });
         if (result.ok) return { verified: true, verification: result, provider };

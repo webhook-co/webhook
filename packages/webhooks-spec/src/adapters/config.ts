@@ -122,6 +122,10 @@ export const PROVIDERS = [
   // RSA-PKCS1 SHA-256 (Wise: base64 sig over the raw body, published PEM key). Registered secret = the key.
   "sendgrid",
   "wise",
+  // Tier-3 REMOTE-FETCH — the verification key is FETCHED from the provider (engine-injected `fetchKey`,
+  // SSRF host-pinned + cached + fail-soft). Kinde: the body IS an RS256 JWT, key from the issuer's JWKS;
+  // the registered "secret" is the operator's Kinde issuer URL (binds iss + pins the JWKS host).
+  "kinde",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);

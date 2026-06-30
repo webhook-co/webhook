@@ -37,6 +37,7 @@ import {
   type VerificationOutcome,
   type VerifyIngestInput,
 } from "./ingest";
+import { makeKeyFetcher } from "./key-fetch";
 import { makeVerifyIngest } from "./verify";
 
 // The per-session listen-tunnel Durable Object (Slice 11b, ADR-0014); wrangler binds it via
@@ -153,8 +154,11 @@ export async function kmsProviderFromEnv(env: Env): Promise<KmsProvider> {
  */
 export function buildVerifyFn(kms: KmsProvider, now: () => Date = () => new Date()): VerifyFn {
   const store = new SecretStore(kms, DEK_CACHE);
-  return makeVerifyIngest(store, now, (event, fields) =>
-    console.log(JSON.stringify({ message: event, ...fields })),
+  return makeVerifyIngest(
+    store,
+    now,
+    (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+    makeKeyFetcher(), // SSRF-guarded, cached, fail-soft remote key/cert fetch for Tier-3 providers
   );
 }
 

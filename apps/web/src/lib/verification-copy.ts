@@ -107,6 +107,12 @@ export function verificationCopy(verification: VerificationResult | null): Verif
         pill: FAILED,
         detail: "The signature did not match the payload.",
       };
+    case "KEY_FETCH_FAILED":
+      return {
+        tone: "danger",
+        pill: FAILED,
+        detail: `The ${reason.scheme} verification key couldn't be fetched (the provider's key/cert endpoint was unreachable, refused, or returned an unexpected response).`,
+      };
   }
   // Exhaustive switch: every `reason.code` returns above. A new code added to the contract union leaves
   // this path reachable with no return → a compile error (TS2366), forcing a copy entry for it.
