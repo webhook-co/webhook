@@ -58,8 +58,9 @@ describe("verifyTokenEqual (constant-time)", () => {
 });
 
 describe("VERIFY_TOKEN_PROVIDERS", () => {
-  it("includes meta and excludes a non-handshake provider", () => {
+  it("includes meta + ebay (the GET-handshake providers) and excludes a non-handshake provider", () => {
     expect(VERIFY_TOKEN_PROVIDERS.has("meta")).toBe(true);
+    expect(VERIFY_TOKEN_PROVIDERS.has("ebay")).toBe(true);
     expect(VERIFY_TOKEN_PROVIDERS.has("stripe")).toBe(false);
   });
 });

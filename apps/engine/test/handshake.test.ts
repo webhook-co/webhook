@@ -2,7 +2,7 @@ import { type CachedSealedSecret } from "@webhook-co/db";
 import { serializeVerifyTokenSecret } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
-import { dispatchGetHandshake, xCrcResponse } from "../src/handshake";
+import { dispatchGetHandshake, ebayChallengeResponse, xCrcResponse } from "../src/handshake";
 
 // The GET verification-handshake dispatcher. PR1 = the NO-SECRET protocols (Dropbox + Adobe I/O
 // `?challenge=` bare echo; Adobe Sign `X-AdobeSign-ClientId` header echo). PR2a adds X/Twitter CRC
@@ -216,6 +216,62 @@ describe("dispatchGetHandshake — Meta hub.challenge verification (verify-token
       unsealVerifyToken, // asserts cached.provider === "meta" — never invoked for the x secret
     );
     expect(res!.status).toBe(200);
+  });
+});
+
+describe("dispatchGetHandshake — eBay Marketplace Account Deletion (challenge_code, verify-token)", () => {
+  const ebaySealed = { provider: "ebay" } as CachedSealedSecret;
+  const EBAY_TOKEN = "webhook-co-ebay-verify-token-0123456789abcdef";
+  const ebayUrl = (challengeCode: string) =>
+    new URL(`https://wbhk.my/t/ebay-acct-deletion?challenge_code=${challengeCode}`);
+
+  it("responds with hex(SHA256(challengeCode + verifyToken + endpoint)) — the gold vector", async () => {
+    const res = await dispatchGetHandshake(
+      ebayUrl("71745723-9b5e-4f8a-bc11-9f0e2a7d4c63"),
+      hdrs(),
+      [ebaySealed],
+      async (cached) => {
+        expect(cached.provider).toBe("ebay"); // only unseals ebay secrets
+        return serializeVerifyTokenSecret(EBAY_TOKEN);
+      },
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get("content-type")).toMatch(/application\/json/);
+    // endpoint hashed = the request URL minus the query (https://wbhk.my/t/ebay-acct-deletion)
+    expect(await res!.json()).toEqual({
+      challengeResponse: "d24cd543fe79a6b0b79e99e0b27939b4a01fce883ae11a63ca875183a5a07ba4",
+    });
+  });
+
+  it("returns null when no ebay verify-token is configured (only an app-creds secret)", async () => {
+    const res = await dispatchGetHandshake(
+      ebayUrl("abc"),
+      hdrs(),
+      [ebaySealed],
+      async () => JSON.stringify({ clientId: "c", clientSecret: "s" }), // app creds, not a verify-token
+    );
+    expect(res).toBeNull();
+  });
+
+  it("returns null when the endpoint has no ebay secret at all", async () => {
+    expect(await dispatchGetHandshake(ebayUrl("abc"), hdrs(), NO_SECRETS, unsealNever)).toBeNull();
+  });
+});
+
+describe("ebayChallengeResponse — byte-exact gold vector", () => {
+  it("hashes challengeCode + verifyToken + endpoint to lowercase hex (independently verified)", async () => {
+    const res = await ebayChallengeResponse(
+      "71745723-9b5e-4f8a-bc11-9f0e2a7d4c63",
+      "webhook-co-ebay-verify-token-0123456789abcdef",
+      "https://wbhk.my/t/ebay-acct-deletion",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/application\/json/);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res.json()).toEqual({
+      challengeResponse: "d24cd543fe79a6b0b79e99e0b27939b4a01fce883ae11a63ca875183a5a07ba4",
+    });
   });
 });
 

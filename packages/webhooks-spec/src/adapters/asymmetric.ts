@@ -121,6 +121,32 @@ export async function verifyEcdsaP256Sha256(
 }
 
 /**
+ * Verify an ECDSA P-256 + **SHA-1** signature (eBay Event Notifications sign with `SHA1withECDSA`; its
+ * signature header's `digest` field is literally SHA1). Identical to {@link verifyEcdsaP256Sha256} but with
+ * the SHA-1 hash. `spkiDer` is the SubjectPublicKeyInfo DER public key; `signatureRaw` is IEEE-P1363 raw
+ * `r||s` (64 bytes) — convert eBay's DER signature with {@link derEcdsaSigToRaw} first. Never throws.
+ */
+export async function verifyEcdsaP256Sha1(
+  spkiDer: Uint8Array,
+  message: Uint8Array,
+  signatureRaw: Uint8Array,
+): Promise<boolean> {
+  if (signatureRaw.length !== 64) return false;
+  try {
+    const key = await crypto.subtle.importKey(
+      "spki",
+      spkiDer,
+      { name: "ECDSA", namedCurve: "P-256" },
+      false,
+      ["verify"],
+    );
+    return await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-1" }, key, signatureRaw, message);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Verify an ECDSA P-256 + SHA-256 signature with an EC public key in JWK form (`{kty:"EC", crv:"P-256",
  * x, y}`, as a JWKS exposes — Plaid). `signatureRaw` is the IEEE-P1363 raw `r||s` (64 bytes) — a JWS ES256
  * signature is already raw (no DER conversion needed). Returns false on any error / wrong length.

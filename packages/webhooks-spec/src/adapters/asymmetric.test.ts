@@ -4,6 +4,7 @@ import { b64ToBytes, hexToBytes, utf8Encoder } from "../bytes";
 import {
   derEcdsaSigToRaw,
   pemToDer,
+  verifyEcdsaP256Sha1,
   verifyEcdsaP256Sha256,
   verifyEd25519,
   verifyRsaPkcs1Sha256,
@@ -100,6 +101,37 @@ describe("verifyEcdsaP256Sha256 + derEcdsaSigToRaw", () => {
     expect(derEcdsaSigToRaw(new Uint8Array(0))).toBeNull();
     expect(derEcdsaSigToRaw(new Uint8Array([0x01, 0x02, 0x03]))).toBeNull(); // not a SEQUENCE
     expect(derEcdsaSigToRaw(new Uint8Array([0x30, 0x02, 0x02, 0x7f]))).toBeNull(); // truncated INTEGER
+  });
+});
+
+describe("verifyEcdsaP256Sha1 (eBay Event Notification signatures — SHA1withECDSA)", () => {
+  // eBay signs notifications with ECDSA-P256 over SHA-1 (its `digest` field is literally SHA1). No public
+  // gold vector exists, so we self-generate a P-256 keypair, sign with SHA-1, and verify — proving the
+  // SHA-1 hash wiring + SPKI import. (The DER→raw conversion is covered by derEcdsaSigToRaw above; the eBay
+  // adapter chains them.)
+  it("verifies a self-signed ECDSA-P256 + SHA-1 signature against the signer's SPKI key, rejects tampering", async () => {
+    const kp = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+      "sign",
+      "verify",
+    ])) as CryptoKeyPair;
+    const message = utf8Encoder.encode('{"metadata":{"topic":"MARKETPLACE_ACCOUNT_DELETION"}}');
+    const rawSig = new Uint8Array(
+      await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-1" }, kp.privateKey, message),
+    );
+    const spki = new Uint8Array(await crypto.subtle.exportKey("spki", kp.publicKey));
+    expect(await verifyEcdsaP256Sha1(spki, message, rawSig)).toBe(true);
+    expect(await verifyEcdsaP256Sha1(spki, utf8Encoder.encode("tampered body"), rawSig)).toBe(
+      false,
+    );
+  });
+
+  it("returns false (never throws) for a non-64-byte raw signature and for junk SPKI", async () => {
+    expect(
+      await verifyEcdsaP256Sha1(new Uint8Array(91), utf8Encoder.encode("x"), new Uint8Array(10)),
+    ).toBe(false);
+    expect(
+      await verifyEcdsaP256Sha1(new Uint8Array(5), utf8Encoder.encode("x"), new Uint8Array(64)),
+    ).toBe(false);
   });
 });
 

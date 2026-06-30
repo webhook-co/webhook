@@ -10,7 +10,7 @@ import { timingSafeEqual, utf8Encoder } from "../bytes";
 import type { Provider } from "./config";
 
 /** The providers whose subscription verification compares a user-chosen verify-token in a GET handshake. */
-export const VERIFY_TOKEN_PROVIDERS: ReadonlySet<Provider> = new Set<Provider>(["meta"]);
+export const VERIFY_TOKEN_PROVIDERS: ReadonlySet<Provider> = new Set<Provider>(["meta", "ebay"]);
 
 const VERIFY_TOKEN_KIND = "verify_token";
 

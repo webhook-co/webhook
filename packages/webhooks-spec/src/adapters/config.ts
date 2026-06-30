@@ -135,6 +135,11 @@ export const PROVIDERS = [
   // Plaid: ES256 JWT (Plaid-Verification), key fetched by kid from an AUTHENTICATED endpoint — the
   // registered secret is a JSON blob `{environment, client_id, secret}`; request_body_sha256 body binding.
   "plaid",
+  // eBay: SHA1withECDSA (X-EBAY-SIGNATURE = base64 JSON {kid, signature}), key fetched by kid from an
+  // AUTHENTICATED endpoint — registered secret is the app creds blob `{clientId, clientSecret, env}`; the
+  // adapter mints a client-credentials token then fetches the key. Also has a credential-free GET challenge
+  // handshake (verify-token) on the ingest path. See ./bespoke/ebay + apps/engine/src/handshake.
+  "ebay",
   // Tier-4 NON-CRYPTOGRAPHIC authenticity (S2.2 A5): these do NOT sign the payload — they prove the
   // source by a shared STATIC token / HTTP Basic credential, surfaced as the weaker "authenticated"
   // status (NOT cryptographic "verified"). All on the `token-auth` factory; see ./bespoke/token-auth.
