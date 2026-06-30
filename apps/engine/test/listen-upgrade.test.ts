@@ -127,7 +127,12 @@ describe("listen upgrade — routing", () => {
   });
 
   it("426s a /listen request without a websocket upgrade (via the router)", async () => {
-    const res = await handleFetch(new Request("https://engine.example/listen"), bindings);
+    // The /listen branch returns before any ingest deps are built, so this no-op ctx is never used.
+    const ctx = {
+      waitUntil: () => undefined,
+      passThroughOnException: () => undefined,
+    } as unknown as ExecutionContext;
+    const res = await handleFetch(new Request("https://engine.example/listen"), bindings, ctx);
     expect(res.status).toBe(426);
   });
 

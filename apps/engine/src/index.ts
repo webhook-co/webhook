@@ -5,6 +5,7 @@ import {
   createCredentialHasherFromBase64,
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
+  enqueueAutoDeliveries,
   fromCachedSealedSecret,
   getEndpoint,
   insertIngestEvent,
@@ -223,8 +224,9 @@ export interface IngestDepsHandle {
   close(): Promise<void>;
 }
 
-/** Build the per-request ingest deps. Injected in tests so routing is exercised without a live DB. */
-export type MakeIngestDeps = (env: Env) => Promise<IngestDepsHandle>;
+/** Build the per-request ingest deps. Injected in tests so routing is exercised without a live DB. `ctx`
+ *  backs the post-ACK deferral (deps.waitUntil) for native auto-delivery. */
+export type MakeIngestDeps = (env: Env, ctx: ExecutionContext) => Promise<IngestDepsHandle>;
 
 /**
  * Sanitize a request Content-Type before it becomes R2 object metadata. The header is fully
@@ -255,7 +257,7 @@ function toResolvedEndpoint(principal: ResolvedPrincipal | null): ResolvedEndpoi
  * request (one per role), torn down by close(). The pepper is decoded in-worker (a Workers secret,
  * never a process env) and createCredentialHasher validates its length.
  */
-export async function buildIngestDeps(env: Env): Promise<IngestDepsHandle> {
+export async function buildIngestDeps(env: Env, ctx: ExecutionContext): Promise<IngestDepsHandle> {
   const hasher = createCredentialHasherFromBase64(await readSecretBinding(env.CREDENTIAL_PEPPER));
   // Distinct roles -> distinct connection strings -> distinct clients. Both bindings are
   // cache-disabled: the cold lookup must reflect live pause/rotate state, and the insert is RLS-gated.
@@ -297,6 +299,41 @@ export async function buildIngestDeps(env: Env): Promise<IngestDepsHandle> {
       );
     },
     ingestEvent: (row) => insertIngestEvent(ingest, row),
+    // Native auto-delivery (S3 Slice 3 PR2c): resolve the source endpoint's matching subscriptions + durably
+    // enqueue a delivery per match (webhook_app under the org's RLS via HYPERDRIVE_TENANT), then WAKE each
+    // destination's DO to drain. The engine fronts its own DOs, so it reaches them directly (env.DELIVERY_DO)
+    // rather than via the DeliveryEnqueuer binding the api uses. handleIngest runs this POST-ACK under
+    // ctx.waitUntil (deps.waitUntil), so capture is never blocked by the delivery subsystem. The tenant
+    // client is RELEASED as soon as the queued rows commit — the subsequent DO wakes touch no DB, so they
+    // must not hold the pooled connection. A failed per-destination wake leaves the queued row durable (the
+    // DO drains it on any later wake; PR3's reconciler re-wakes idle destinations).
+    autoDeliver: async (args) => {
+      const tenant = createClient(env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+      let destinationIds: string[];
+      try {
+        destinationIds = await enqueueAutoDeliveries(tenant, args);
+      } finally {
+        await tenant.end().catch(() => undefined); // release before the (DB-free) wake fan-out
+      }
+      await Promise.all(
+        destinationIds.map((destinationId) =>
+          env.DELIVERY_DO.get(env.DELIVERY_DO.idFromName(destinationId))
+            .wake(args.orgId, destinationId)
+            .catch((err: unknown) =>
+              console.log(
+                JSON.stringify({
+                  message: "delivery.wake_failed",
+                  destinationId,
+                  error: String(err),
+                }),
+              ),
+            ),
+        ),
+      );
+    },
+    // Production: run the best-effort auto-delivery task AFTER the capture ACK (ctx.waitUntil holds the
+    // isolate alive until it settles), so a delivery-subsystem fault never slows or fails capture.
+    waitUntil: (promise) => ctx.waitUntil(promise),
     now: () => new Date(),
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
     maxBodyBytes: MAX_VERIFIABLE_BODY_BYTES,
@@ -451,6 +488,7 @@ export async function handleListenUpgrade(
 export async function handleFetch(
   request: Request,
   env: Env,
+  ctx: ExecutionContext,
   makeDeps: MakeIngestDeps = buildIngestDeps,
 ): Promise<Response> {
   const url = new URL(request.url);
@@ -469,7 +507,8 @@ export async function handleFetch(
     return handleListenUpgrade(request, env);
   }
 
-  const handle = await makeDeps(env);
+  // ctx backs deps.waitUntil — native auto-delivery runs AFTER this response is sent (post-ACK best-effort).
+  const handle = await makeDeps(env, ctx);
   try {
     return await handleIngest(request, handle.deps);
   } catch (err) {
@@ -486,8 +525,8 @@ export async function handleFetch(
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return handleFetch(request, env);
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    return handleFetch(request, env, ctx);
   },
 
   async scheduled(

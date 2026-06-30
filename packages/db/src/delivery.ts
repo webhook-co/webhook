@@ -8,6 +8,47 @@
 // engine binds HYPERDRIVE_TENANT as webhook_app, so the DO writes these directly with no api callback.
 
 import { type TenantTx } from "./client";
+import { serializeTarget } from "./replay";
+
+/** Input to enqueue ONE native auto-delivery (S3 Slice 3 PR2c): the event→destination attempt-chain a
+ *  matching subscription selected. */
+export interface QueuedDeliveryInput {
+  readonly orgId: string;
+  readonly eventId: string;
+  readonly destinationId: string;
+  /** The subscription that matched — recorded so a sub's delete can unlink its deliveries (trigger, mig 0030)
+   *  and PR3's reads can attribute a delivery to its rule. */
+  readonly subscriptionId: string;
+}
+
+/**
+ * Insert a fresh `queued` delivery_attempts row for a native auto-delivery (S3 Slice 3 PR2c): one
+ * event→destination attempt-chain selected by `subscriptionId`. Enqueued immediately-due
+ * (next_retry_at = now(), status 'queued', attempt 1, claimed_at null) so the destination's DO drains it on
+ * its next alarm (listDueDeliveries treats a queued row as due). `target` records the destination link
+ * (round-trippable JSON, mirroring the remote-replay path so PR3's deliveries.list reads one shape);
+ * idempotency_key stays null — auto-deliveries are append-only history, deduped UPSTREAM by the ingest gate
+ * (auto-delivery runs only for a genuinely-new event, so each (event, subscription) yields exactly one row),
+ * not by a key. Returns the new delivery_attempts row id (the STABLE Standard Webhooks `webhook-id`). The
+ * composite FK (event_id, org_id) + RLS pin the event to the caller's org.
+ */
+export async function insertQueuedDelivery(
+  tx: TenantTx,
+  input: QueuedDeliveryInput,
+): Promise<string> {
+  // The destination link, serialized through the SHARED serializeTarget (the same serializer the remote-
+  // replay producer uses) so delivery history has ONE un-driftable target shape across both producers.
+  const target = serializeTarget({ kind: "destination", destinationId: input.destinationId });
+  const [row] = await tx<{ id: string }[]>`
+    insert into delivery_attempts
+      (id, org_id, event_id, destination_id, subscription_id, target, status, attempt, next_retry_at)
+    values
+      (${crypto.randomUUID()}, ${input.orgId}, ${input.eventId}, ${input.destinationId},
+       ${input.subscriptionId}, ${target}, 'queued', 1, now())
+    returning id`;
+  if (!row) throw new Error("insertQueuedDelivery: insert returned no row");
+  return row.id;
+}
 
 /** A delivery that is DUE now (queued, or a retry whose next_retry_at has arrived), with the context the
  *  DO needs to build the outbound POST (the event's R2 key inputs + captured headers + the destination url). */
