@@ -58,6 +58,29 @@ export async function verifyRsaPkcs1Sha256(
 }
 
 /**
+ * Verify an RSASSA-PKCS1-v1_5 + SHA-256 signature with an RSA public key in JWK form (`{kty:"RSA", n, e}`,
+ * as a JWKS exposes — Kinde). Returns false on any error — never throws.
+ */
+export async function verifyRsaPkcs1Sha256Jwk(
+  jwk: JsonWebKey,
+  message: Uint8Array,
+  signature: Uint8Array,
+): Promise<boolean> {
+  try {
+    const key = await crypto.subtle.importKey(
+      "jwk",
+      jwk,
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    return await crypto.subtle.verify("RSASSA-PKCS1-v1_5", key, signature, message);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Verify an ECDSA P-256 + SHA-256 signature. `spkiDer` is the SubjectPublicKeyInfo DER public key;
  * `signatureRaw` MUST be the IEEE-P1363 raw `r||s` (64 bytes for P-256), NOT DER — convert a DER signature
  * with {@link derEcdsaSigToRaw} first. Returns false on any error / wrong length — never throws.

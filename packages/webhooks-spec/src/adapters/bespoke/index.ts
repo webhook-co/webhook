@@ -10,6 +10,7 @@ import type { Provider } from "../config";
 import { makeContentfulAdapter } from "./contentful";
 import { makeDiscordAdapter } from "./discord";
 import { makeJiraConnectAdapter } from "./jira-connect";
+import { makeKindeAdapter } from "./kinde";
 import { makeMessagebirdAdapter } from "./messagebird";
 import { makeMondayAdapter } from "./monday";
 import { makeNetlifyAdapter } from "./netlify";
@@ -37,4 +38,6 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   // Tier-3 ASYMMETRIC ECDSA-P256 (SendGrid) + RSA-PKCS1 (Wise).
   sendgrid: makeSendgridAdapter(),
   wise: makeWiseAdapter(),
+  // Tier-3 REMOTE-FETCH — key fetched from the provider's JWKS/cert (engine-injected fetchKey).
+  kinde: makeKindeAdapter(),
 };
