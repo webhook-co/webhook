@@ -32,6 +32,12 @@ export interface Ed25519AdapterConfig {
   readonly keyEncoding: ByteEncoding;
   /** A literal inserted between timestamp and body in the signed message ("" Discord, "|" Telnyx). */
   readonly separator: string;
+  /**
+   * Replay tolerance (seconds) — ADVISORY metadata only, sourced from the skew table for uniformity. This
+   * adapter does NOT enforce an age window: the signed timestamp is bound into the message (so it can't be
+   * altered without breaking the signature), but its freshness is intentionally not checked — the signature
+   * is the authenticity guarantee and downstream dedupe handles replay.
+   */
   readonly toleranceSeconds: number;
 }
 
