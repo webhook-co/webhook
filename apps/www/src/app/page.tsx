@@ -5,6 +5,7 @@ import { FinalCta } from "@/components/marketing/final-cta";
 import { Footer } from "@/components/marketing/footer";
 import { Hero } from "@/components/marketing/hero";
 import { Nav } from "@/components/marketing/nav";
+import { ProvidersWall } from "@/components/marketing/providers-wall";
 import { Reveal } from "@/components/marketing/reveal";
 import { Showcases } from "@/components/marketing/showcases";
 import { SurfacesTabs } from "@/components/marketing/surfaces/surfaces-tabs";
@@ -32,6 +33,9 @@ export default function HomePage() {
         <SurfacesTabs />
         <Reveal>
           <Showcases />
+        </Reveal>
+        <Reveal>
+          <ProvidersWall />
         </Reveal>
         <Reveal>
           <TrustBand />

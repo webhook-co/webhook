@@ -39,6 +39,7 @@ describe("HomePage", () => {
       /the same event, wherever you work/i,
       /received once, in order, never silently dropped/i,
       /when a signature fails/i,
+      /verification built in for \d+ providers/i,
       /private by default, open at the core/i,
       /point a webhook at it/i,
     ];
