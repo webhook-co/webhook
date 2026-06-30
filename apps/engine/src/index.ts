@@ -31,6 +31,12 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 
 import { runAnchorCron } from "./anchor-cron";
 import {
+  guardedDeliver,
+  resolveViaDoh,
+  type DeliverArgs,
+  type DeliverResult,
+} from "./delivery-dispatcher";
+import {
   handleIngest,
   type IngestDeps,
   type ResolvedEndpoint,
@@ -475,6 +481,34 @@ export class ProviderSecretSealer extends WorkerEntrypoint<Env> {
   async sealString(plaintext: string, context: EncryptionContext): Promise<SealedRecord> {
     const store = await getSealStore(this.env);
     return store.sealString(plaintext, context);
+  }
+}
+
+/**
+ * Server-side remote delivery over a Cloudflare service binding (ADR-0081, S3 slice 1b). apps/api RPCs
+ * `env.DELIVERY_DISPATCHER.deliver(args)` to POST a stored event's bytes to a pre-registered remote
+ * destination — the engine is the SINGLE SSRF egress chokepoint, so the user-controlled outbound call
+ * is made ONLY here, behind the authoritative connect-time guard (DoH-resolve every address → reject any
+ * private/internal one → fail-closed → no-redirect). The engine RE-DERIVES the payload key from the
+ * authenticated org/endpoint/dedup (never a handed key — H1), so a tenant-boundary slip upstream can't
+ * make it read another org's payload. WorkerEntrypoint methods aren't publicly fetchable — the binding is
+ * worker-to-worker, deploy-injected into api via the prod overlay, live once this engine deploys (the
+ * api consumer binding lands in the next PR — mirrors how ProviderSecretSealer shipped before its caller).
+ */
+export class DeliveryDispatcher extends WorkerEntrypoint<Env> {
+  async deliver(args: DeliverArgs): Promise<DeliverResult> {
+    return guardedDeliver(
+      {
+        getPayload: async (key) => {
+          const obj = await this.env.R2_PAYLOADS.get(key);
+          return obj === null ? null : await obj.arrayBuffer();
+        },
+        resolve: (host) => resolveViaDoh((input, init) => fetch(input, init), host),
+        fetch: (input, init) => fetch(input, init),
+        now: () => Date.now(),
+      },
+      args,
+    );
   }
 }
 
