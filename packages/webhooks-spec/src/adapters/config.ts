@@ -96,6 +96,9 @@ export const PROVIDERS = [
   // request with a per-request signed-headers set), Plivo V3 (stateful URL/query/body glue + multi-sig).
   "contentful",
   "plivo",
+  // ── S2.2 coverage expansion (beyond the S2.1 HMAC set). ──
+  // HMAC long-tail: Typeform — a Tier-1 raw-body HMAC-SHA256/base64 drop-in missed in the S2.1 sweep.
+  "typeform",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -809,6 +812,11 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
     message: [{ kind: "formField", name: "bt_payload" }],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.braintree,
   },
+  // ── S2.2 HMAC long-tail ──
+  // typeform: `Typeform-Signature: sha256=<base64>` — HMAC-SHA256/base64 over the EXACT raw body, with a
+  // required `sha256=` value prefix (utf8 key = the webhook's secret). Per Typeform's "Secure your
+  // webhooks" doc the delivered header value is the base64 HMAC prefixed with `sha256=`.
+  typeform: rawBodyHmacConfig("typeform", "typeform-signature", "base64", "sha256="),
 };
 
 /**
