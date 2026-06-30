@@ -1,10 +1,13 @@
-// Adapter registry + header-based scheme detection. Every adapter is produced from its config
-// (./config) by `makeHmacAdapter`, so the REGISTRY is fully DERIVED from PROVIDER_CONFIGS — a new
-// provider is one config row and nothing here changes. `unknown` has no adapter (capture never
-// blocks on a missing adapter). Detection is by the presence of a scheme's signature header.
+// Adapter registry + header-based scheme detection. Almost every adapter is produced from its config
+// (./config) by `makeHmacAdapter`, so the REGISTRY is DERIVED from PROVIDER_CONFIGS — a new provider is
+// one config row. The few schemes whose verification can't be a single HMAC config (./bespoke — e.g.
+// Twilio's runtime-branching form/JSON modes) ship a hand-written adapter that the registry prefers over
+// the config-derived one. `unknown` has no adapter (capture never blocks on a missing adapter).
+// Detection is by the presence of a scheme's signature header.
 
 import type { VerifyAdapter } from "../adapter";
 import type { WebhookScheme } from "../scheme";
+import { BESPOKE_ADAPTERS } from "./bespoke";
 import { PROVIDER_CONFIGS, PROVIDERS } from "./config";
 import { makeHmacAdapter } from "./factory";
 
@@ -12,7 +15,10 @@ import { makeHmacAdapter } from "./factory";
 export type AdapterScheme = Exclude<WebhookScheme, "unknown">;
 
 const REGISTRY: Readonly<Record<AdapterScheme, VerifyAdapter>> = Object.fromEntries(
-  PROVIDERS.map((slug) => [slug, makeHmacAdapter(PROVIDER_CONFIGS[slug])]),
+  PROVIDERS.map((slug) => [
+    slug,
+    BESPOKE_ADAPTERS[slug] ?? makeHmacAdapter(PROVIDER_CONFIGS[slug]),
+  ]),
 ) as Record<AdapterScheme, VerifyAdapter>;
 
 /** The schemes for which an adapter exists, in detection-precedence order (= PROVIDERS). */
