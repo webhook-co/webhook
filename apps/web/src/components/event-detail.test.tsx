@@ -58,7 +58,7 @@ describe("EventDetail", () => {
   it("renders the event metadata", () => {
     renderDetail(detail());
     expect(screen.getByText(EVENT_ID)).toBeInTheDocument();
-    expect(screen.getByText("stripe")).toBeInTheDocument();
+    expect(screen.getByText("Stripe")).toBeInTheDocument(); // provider rendered as its display name
     expect(screen.getByText("application/json")).toBeInTheDocument();
     expect(screen.getByText("42 bytes")).toBeInTheDocument();
   });

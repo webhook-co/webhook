@@ -114,3 +114,12 @@ export {
 
 // ── utilities ───────────────────────────────────────────────────────────────
 export { cn } from "./lib/cn";
+
+// ── provider branding (display name + brand colour; the logo set layers on top) ──────────────
+export {
+  PROVIDER_BRANDING,
+  FALLBACK_BRAND_COLOR,
+  providerDisplayName,
+  providerBrandColor,
+  type ProviderBrand,
+} from "./lib/provider-branding";

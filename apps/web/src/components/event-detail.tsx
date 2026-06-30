@@ -15,6 +15,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  providerDisplayName,
 } from "@webhook-co/ui";
 import * as React from "react";
 
@@ -60,7 +61,7 @@ export function EventDetail({ event, endpointId, revealHeader, loadPayload }: Ev
             <dt className="text-fg-secondary">Received</dt>
             <dd className="text-fg">{formatDateTime(event.receivedAt)}</dd>
             <dt className="text-fg-secondary">Provider</dt>
-            <dd className="text-fg">{event.provider ?? "—"}</dd>
+            <dd className="text-fg">{providerDisplayName(event.provider)}</dd>
             <dt className="text-fg-secondary">Content type</dt>
             <dd className="text-fg">{event.contentType ?? "—"}</dd>
             <dt className="text-fg-secondary">Payload size</dt>
