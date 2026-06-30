@@ -14,6 +14,7 @@ import { newId } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
+import { insertQueuedDelivery } from "./delivery";
 import { ensureScope, type CapabilityHandlers } from "./read-handlers";
 import { getReplayDestination } from "./replay-destinations";
 
@@ -28,7 +29,9 @@ export class SubscriptionTargetNotFoundError extends Error {
 
 /** The event facts the matcher needs (a projection of the events row). */
 export interface MatchableEvent {
-  readonly provider: string;
+  /** The detected provider, or null for an unrecognized sender — a null provider matches ONLY a match-any
+   *  (provider null) subscription, never a provider-pinned one (the `!==` compares below handle null directly). */
+  readonly provider: string | null;
   /** The normalized, per-provider-derived event type; null when we couldn't extract one (routes via `*`). */
   readonly eventType: string | null;
   /** Whether the event's signature was verified (the `verified` flag / verificationState === 'verified'). */
@@ -293,6 +296,47 @@ export async function listMatchingSubscriptions(
       and d.disabled_at is null
     order by s.created_at asc, s.id asc`;
   return rows.map(toRecord).filter((sub) => matchSubscription(args.event, sub));
+}
+
+/** A newly-captured event's facts, for native auto-delivery (S3 Slice 3 PR2c). */
+export interface AutoDeliveryEvent extends MatchableEvent {
+  /** The durable events row id — also each queued delivery's event link + STABLE Standard Webhooks id. */
+  readonly eventId: string;
+}
+
+/**
+ * Native auto-delivery (S3 Slice 3 PR2c): resolve a newly-captured event's matching subscriptions and
+ * durably enqueue ONE `queued` delivery_attempts row per match, all in a SINGLE tenant tx (the org's RLS
+ * context), so the queued intent is committed atomically before the caller wakes any DO. Returns the
+ * DISTINCT destination ids that now have a queued delivery — the caller (the ingest worker) wakes each one's
+ * delivery DO. Invoked ONLY for a genuinely-new event (the ingest gate is inserted=true), so each (event,
+ * subscription) yields exactly one row and no idempotency key is needed; a dedup-no-op re-ingest never
+ * re-enqueues. Dead/disabled destinations are already excluded by {@link listMatchingSubscriptions}. Best-
+ * effort by contract: a throw here is swallowed by the ingest worker (auto-delivery never blocks the capture
+ * ACK — the event is the durable floor), so the DO's drain + the lifecycle reconciler (PR3) are the safety net.
+ */
+export async function enqueueAutoDeliveries(
+  app: Sql,
+  args: { orgId: string; sourceEndpointId: string; event: AutoDeliveryEvent },
+): Promise<string[]> {
+  return withTenant(app, args.orgId, async (tx) => {
+    const matches = await listMatchingSubscriptions(tx, {
+      orgId: args.orgId,
+      sourceEndpointId: args.sourceEndpointId,
+      event: args.event,
+    });
+    const destinations = new Set<string>();
+    for (const sub of matches) {
+      await insertQueuedDelivery(tx, {
+        orgId: args.orgId,
+        eventId: args.event.eventId,
+        destinationId: sub.destinationId,
+        subscriptionId: sub.id,
+      });
+      destinations.add(sub.destinationId);
+    }
+    return [...destinations];
+  });
 }
 
 // ── The subscriptions.* capability handlers (S3 Slice 3) ──────────────────────────────────────────

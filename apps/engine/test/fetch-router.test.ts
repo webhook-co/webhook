@@ -10,6 +10,12 @@ import type { IngestDeps, ResolvedEndpoint } from "../src/ingest";
 // injected here (a fake makeDeps) so routing + lifecycle are tested without a live Postgres — the
 // handleIngest orchestration and insertIngestEvent are covered by their own suites.
 const bindings = env as unknown as Env;
+// A no-op ExecutionContext: the fake ingest deps here carry no autoDeliver, so waitUntil is never invoked;
+// it only satisfies handleFetch's signature (production wires deps.waitUntil to ctx.waitUntil).
+const ctx = {
+  waitUntil: () => undefined,
+  passThroughOnException: () => undefined,
+} as unknown as ExecutionContext;
 
 function fakeHandle(over: Partial<IngestDeps> = {}): {
   handle: IngestDepsHandle;
@@ -55,7 +61,7 @@ function post(path: string, body = `{"hello":"world"}`): Request {
 describe("handleFetch routing + lifecycle", () => {
   it("GET / is the liveness probe (200), and does NOT build ingest deps", async () => {
     let built = 0;
-    const res = await handleFetch(get("/"), bindings, () => {
+    const res = await handleFetch(get("/"), bindings, ctx, () => {
       built += 1;
       return Promise.resolve(fakeHandle().handle);
     });
@@ -66,21 +72,27 @@ describe("handleFetch routing + lifecycle", () => {
 
   it("routes a POST token path to ingest and closes the deps afterward", async () => {
     const f = fakeHandle();
-    const res = await handleFetch(post("/whep_good"), bindings, () => Promise.resolve(f.handle));
+    const res = await handleFetch(post("/whep_good"), bindings, ctx, () =>
+      Promise.resolve(f.handle),
+    );
     expect(res.status).toBe(200);
     expect(f.closed()).toBe(1); // per-request clients torn down
   });
 
   it("an unknown token still routes to ingest (404), and deps are closed", async () => {
     const f = fakeHandle();
-    const res = await handleFetch(post("/whep_nope"), bindings, () => Promise.resolve(f.handle));
+    const res = await handleFetch(post("/whep_nope"), bindings, ctx, () =>
+      Promise.resolve(f.handle),
+    );
     expect(res.status).toBe(404);
     expect(f.closed()).toBe(1);
   });
 
   it("a GET on a token path is NOT the bare-apex health probe — it routes to ingest (per-token liveness 200)", async () => {
     const f = fakeHandle();
-    const res = await handleFetch(get("/whep_good"), bindings, () => Promise.resolve(f.handle));
+    const res = await handleFetch(get("/whep_good"), bindings, ctx, () =>
+      Promise.resolve(f.handle),
+    );
     expect(res.status).toBe(200); // accept-all-verbs: a token-path GET is captured + answered with liveness
     const body = await res.text();
     expect(body).toMatch(/live/i); // the per-token ingest liveness…
@@ -94,7 +106,9 @@ describe("handleFetch routing + lifecycle", () => {
         throw new Error("hyperdrive down");
       },
     });
-    const res = await handleFetch(post("/whep_good"), bindings, () => Promise.resolve(f.handle));
+    const res = await handleFetch(post("/whep_good"), bindings, ctx, () =>
+      Promise.resolve(f.handle),
+    );
     expect(res.status).toBe(500);
     expect(f.closed()).toBe(1); // no leaked DB connections on the error path
   });

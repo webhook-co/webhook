@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   handleIngest,
+  type AutoDeliverArgs,
   type IngestDeps,
   type IngestRow,
   type VerifyIngestInput,
@@ -18,10 +19,11 @@ interface Calls {
   verify: VerifyIngestInput[];
   logs: { event: string; fields: Record<string, unknown> }[];
   order: string[];
+  autoDeliver: AutoDeliverArgs[];
 }
 
 function makeDeps(over: Partial<IngestDeps> = {}): { deps: IngestDeps; calls: Calls } {
-  const calls: Calls = { put: [], ingest: [], verify: [], logs: [], order: [] };
+  const calls: Calls = { put: [], ingest: [], verify: [], logs: [], order: [], autoDeliver: [] };
   const deps: IngestDeps = {
     resolve: async (token) =>
       token === GOOD ? { orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [] } : null,
@@ -39,6 +41,10 @@ function makeDeps(over: Partial<IngestDeps> = {}): { deps: IngestDeps; calls: Ca
       calls.order.push("ingest");
       calls.ingest.push(row);
       return { inserted: true };
+    },
+    autoDeliver: async (args) => {
+      calls.order.push("autoDeliver");
+      calls.autoDeliver.push(args);
     },
     now: () => new Date("2026-06-14T12:00:00Z"),
     log: (event, fields) => calls.logs.push({ event, fields }),
@@ -108,7 +114,7 @@ describe("handleIngest — the wbhk.my write path", () => {
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("ok");
       expect(res.headers.get("x-content-type-options")).toBe("nosniff"); // nosniff rides every response shape
-      expect(calls.order).toEqual(["put", "verify", "ingest"]); // ordering unchanged for bodied verbs
+      expect(calls.order).toEqual(["put", "verify", "ingest", "autoDeliver"]); // capture, then route
       expect(calls.ingest[0]!.method).toBe(method);
       expect(calls.verify[0]!.method).toBe(method); // method forwarded to verify (Tier-2 url/method signers)
     },
@@ -227,7 +233,7 @@ describe("handleIngest — the wbhk.my write path", () => {
       deps,
     );
     expect(res.status).toBe(200);
-    expect(calls.order).toEqual(["put", "verify", "ingest"]); // durable PUT, then verify, then insert
+    expect(calls.order).toEqual(["put", "verify", "ingest", "autoDeliver"]); // PUT, verify, insert, route
     // the insert carries the derived dedup + the captured fields
     const row = calls.ingest[0]!;
     expect(row.orgId).toBe(ORG);
@@ -311,8 +317,8 @@ describe("handleIngest — the wbhk.my write path", () => {
       deps,
     );
     expect(res.status).toBe(200);
-    // durable-before-verify: the body is durable (R2) before we spend verify cycles, then insert.
-    expect(calls.order).toEqual(["put", "verify", "ingest"]);
+    // durable-before-verify: the body is durable (R2) before we spend verify cycles, then insert, then route.
+    expect(calls.order).toEqual(["put", "verify", "ingest", "autoDeliver"]);
     // verify got the raw bytes, the detected provider, the authoritative org/endpoint, and the secrets.
     const vin = calls.verify[0]!;
     expect(vin.provider).toBe("stripe");
@@ -343,6 +349,100 @@ describe("handleIngest — the wbhk.my write path", () => {
     const { deps } = makeDeps({ ingestEvent: async () => ({ inserted: false }) });
     const res = await handleIngest(req(GOOD), deps);
     expect(res.status).toBe(200);
+  });
+
+  // ── Native auto-delivery (S3 Slice 3 PR2c): a genuinely-new event triggers subscription resolution +
+  // durable enqueue, AFTER the event is durable, best-effort (never blocks the capture ACK). ───────────
+  it("invokes autoDeliver AFTER the durable insert, with the new event's id/provider/type/verified", async () => {
+    const { deps, calls } = makeDeps({
+      verify: async () => ({ verified: true, verification: null, provider: "stripe" }),
+    });
+    const res = await handleIngest(
+      req(GOOD, {
+        body: `{"type":"charge.succeeded"}`,
+        headers: { "content-type": "application/json" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    // Auto-delivery is the LAST step and runs strictly AFTER the durable insert (the event is the floor).
+    expect(calls.order.at(-1)).toBe("autoDeliver");
+    expect(calls.order.indexOf("autoDeliver")).toBeGreaterThan(calls.order.indexOf("ingest"));
+    expect(calls.autoDeliver).toHaveLength(1);
+    const args = calls.autoDeliver[0]!;
+    expect(args.orgId).toBe(ORG);
+    expect(args.sourceEndpointId).toBe(EP);
+    // The eventId handed to auto-delivery is the SAME id written to the events row (the new event's id).
+    expect(args.event.eventId).toBe(calls.ingest[0]!.id);
+    expect(args.event.provider).toBe("stripe"); // the AUTHORITATIVE (verify-named) provider
+    expect(args.event.eventType).toBe("charge.succeeded"); // extracted from the stripe body `type`
+    expect(args.event.verified).toBe(true);
+  });
+
+  it("does NOT auto-deliver on a dedup no-op (inserted=false) — the original event already enqueued", async () => {
+    const { deps, calls } = makeDeps({ ingestEvent: async () => ({ inserted: false }) });
+    const res = await handleIngest(req(GOOD), deps);
+    expect(res.status).toBe(200);
+    expect(calls.autoDeliver).toHaveLength(0);
+  });
+
+  it("routes a captured GET like any event (null provider/type so only match-any subs deliver)", async () => {
+    // Accept-all-verbs: a GET is captured AS an event, so it is eligible for delivery — the subscription
+    // matcher (provider / event_type / require_verified) is what decides, not the verb. A browser GET carries
+    // no signature, so it routes with provider null + eventType null (matches only a wide-open `*` sub).
+    const { deps, calls } = makeDeps();
+    await handleIngest(req(GOOD, { method: "GET" }), deps);
+    expect(calls.ingest).toHaveLength(1);
+    expect(calls.autoDeliver).toHaveLength(1);
+    expect(calls.autoDeliver[0]!.event).toMatchObject({
+      provider: null,
+      eventType: null,
+      verified: false,
+    });
+  });
+
+  it("a thrown autoDeliver is swallowed — capture still ACKs 200 (best-effort, never blocks the floor)", async () => {
+    const { deps, calls } = makeDeps({
+      autoDeliver: async () => {
+        throw new Error("delivery DB down");
+      },
+    });
+    const res = await handleIngest(req(GOOD), deps);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+    expect(calls.ingest).toHaveLength(1); // the event is durable regardless
+    expect(calls.logs.some((l) => l.event === "ingest.autodeliver_failed")).toBe(true);
+  });
+
+  it("defers auto-delivery PAST the ACK via waitUntil — capture returns without blocking on delivery", async () => {
+    // Production wires deps.waitUntil to ctx.waitUntil so auto-delivery runs after the response is sent.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let autoDeliverCalled = false;
+    let autoDeliverDone = false;
+    const deferred: Promise<unknown>[] = [];
+    const { deps } = makeDeps({
+      autoDeliver: async () => {
+        autoDeliverCalled = true;
+        await gate; // a slow/stuck delivery subsystem must NOT hold up the capture ACK
+        autoDeliverDone = true;
+      },
+      waitUntil: (p) => {
+        deferred.push(p);
+      },
+    });
+
+    const res = await handleIngest(req(GOOD), deps);
+    expect(res.status).toBe(200);
+    expect(autoDeliverCalled).toBe(true); // scheduled…
+    expect(deferred).toHaveLength(1); // …handed to waitUntil, NOT awaited inline
+    expect(autoDeliverDone).toBe(false); // capture ACKed before delivery finished (decoupled)
+
+    release(); // the runtime keeps the isolate alive until the waitUntil task settles
+    await Promise.all(deferred);
+    expect(autoDeliverDone).toBe(true);
   });
 
   it("if the R2 PUT fails, it does NOT insert metadata and returns 500 (never ACK an undurable event)", async () => {

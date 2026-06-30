@@ -94,6 +94,25 @@ export interface IngestRow {
   readonly verification: VerificationResult | null;
 }
 
+/** What handleIngest hands the auto-delivery dep after a genuinely-new event is durable (S3 Slice 3 PR2c):
+ *  the source endpoint + the captured event's matchable facts. The dep resolves matching subscriptions,
+ *  durably enqueues a delivery per match, and wakes each destination's DO. */
+export interface AutoDeliverArgs {
+  readonly orgId: string;
+  /** The endpoint that captured the event — the subscription matcher resolves against this. */
+  readonly sourceEndpointId: string;
+  readonly event: {
+    /** The durable events row id — each queued delivery's event link + STABLE Standard Webhooks id. */
+    readonly eventId: string;
+    /** The detected/authoritative provider (null = unrecognized → matches only match-any subscriptions). */
+    readonly provider: Provider | null;
+    /** The normalized per-provider event type (null when unextracted → routes via `*` only). */
+    readonly eventType: string | null;
+    /** Whether the event's signature verified (gates require_verified subscriptions). */
+    readonly verified: boolean;
+  };
+}
+
 export interface IngestDeps {
   /** Resolve a path token to its endpoint (KV hot -> cold). null = unknown token (404). */
   resolve(token: string): Promise<ResolvedEndpoint | null>;
@@ -114,6 +133,21 @@ export interface IngestDeps {
   putPayload(key: string, body: Uint8Array, contentType: string | null): Promise<void>;
   /** Insert event metadata via ingest_event (variant B). inserted=false on a dedup no-op. */
   ingestEvent(row: IngestRow): Promise<{ inserted: boolean }>;
+  /**
+   * Native auto-delivery (S3 Slice 3 PR2c): invoked ONLY for a genuinely-new event (inserted=true). Resolves
+   * the source endpoint's matching subscriptions, durably enqueues a delivery per match, and wakes each
+   * destination's DO. OPTIONAL (the dedup-no-op / liveness / handshake paths never route); BEST-EFFORT and
+   * run POST-ACK (handleIngest hands it to {@link IngestDeps.waitUntil}) so capture is never blocked by the
+   * delivery subsystem. handleIngest logs+swallows a throw; the event is the durable floor, and the DO drain
+   * + PR3's reconciler are the recovery net for a fast-path miss.
+   */
+  autoDeliver?(args: AutoDeliverArgs): Promise<void>;
+  /**
+   * Defer a best-effort task PAST the response (production wires this to ctx.waitUntil) so post-capture work
+   * — native auto-delivery — runs AFTER the ACK is sent, decoupling capture latency/availability from the
+   * delivery subsystem. When ABSENT (tests), handleIngest awaits the task inline for deterministic ordering.
+   */
+  waitUntil?(promise: Promise<unknown>): void;
   /** Server-assigned receive time (drives the content-hash bucket). */
   now(): Date;
   /** Structured log sink. Headers passed here MUST already be scrubbed. */
@@ -395,10 +429,20 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
 
   // Metadata insert (the dedup gate). On failure -> 500; the R2 object survives for the orphan sweep,
   // and the provider's retry re-PUTs the same deterministic key and re-attempts the insert.
+  // A successful verify names the provider authoritatively (header detection can mis-pick when providers
+  // collide on a signature header); otherwise fall back to the detected provider. The providerEventId/
+  // dedupStrategy/dedupBucket stay under the DETECTED provider (the dedup basis) — that only diverges from
+  // `provider` if a request carried two providers' signature headers, impossible for the current providers.
+  const eventId = newId();
+  const provider = outcome.provider ?? derived.provider;
+  // The normalized event type for subscription routing (S3 Slice 3), derived from the AUTHORITATIVE provider
+  // (same as the `provider` column). null when unextracted → the matcher routes it via `*` only. Computed
+  // once so the durable row and the auto-delivery routing agree on the event's type.
+  const eventType = extractEventType(provider, raw, headers);
   let inserted: boolean;
   try {
     ({ inserted } = await deps.ingestEvent({
-      id: newId(),
+      id: eventId,
       orgId: endpoint.orgId,
       endpointId: endpoint.endpointId,
       payloadR2Key: key,
@@ -409,23 +453,41 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       contentHash: derived.contentHash,
       headers,
       method: request.method,
-      // A successful verify names the provider authoritatively (header detection can mis-pick when
-      // providers collide on a signature header); otherwise fall back to the detected provider. The
-      // providerEventId/dedupStrategy/dedupBucket below stay under the DETECTED provider (the dedup
-      // basis) — that only diverges from `provider` if a request carried two providers' signature
-      // headers, impossible for the current providers (no shared header); revisit if that changes.
-      provider: outcome.provider ?? derived.provider,
+      provider,
       providerEventId: derived.providerEventId,
       dedupBucket: derived.dedupBucket,
-      // The normalized event type for subscription routing (S3 Slice 3), derived from the AUTHORITATIVE
-      // provider (same as the `provider` column). null when unextracted → the matcher routes it via `*` only.
-      eventType: extractEventType(outcome.provider ?? derived.provider, raw, headers),
+      eventType,
       verified: outcome.verified,
       verification: outcome.verification,
     }));
   } catch (err) {
     deps.log("ingest.insert_failed", { endpointId: endpoint.endpointId, error: String(err) });
     return plain(500, "internal error");
+  }
+
+  // Native auto-delivery (S3 Slice 3 PR2c): a genuinely-new event (inserted=true) routes to its source
+  // endpoint's matching subscriptions. POST-ACK best-effort, NOT the hot path — production hands the task to
+  // ctx.waitUntil (deps.waitUntil) so it runs AFTER the response is sent, decoupling capture latency and
+  // availability from the delivery subsystem (a delivery-DB/DO fault can neither slow nor fail the capture
+  // ACK). The task self-logs+swallows its own errors; the event is the durable floor, and the DO drain +
+  // PR3's reconciler are the recovery net for a fast-path miss. A dedup no-op (inserted=false) never
+  // re-routes (the original capture already enqueued); liveness/handshake verbs never reach here with a real
+  // insert. Tests omit waitUntil → the task is awaited inline for deterministic ordering.
+  if (inserted && deps.autoDeliver) {
+    const task = deps
+      .autoDeliver({
+        orgId: endpoint.orgId,
+        sourceEndpointId: endpoint.endpointId,
+        event: { eventId, provider, eventType, verified: outcome.verified },
+      })
+      .catch((err: unknown) =>
+        deps.log("ingest.autodeliver_failed", {
+          endpointId: endpoint.endpointId,
+          error: String(err),
+        }),
+      );
+    if (deps.waitUntil) deps.waitUntil(task);
+    else await task;
   }
 
   // ACK once both artifacts are durable. A dedup no-op (inserted=false) is still a success.
