@@ -17,9 +17,14 @@ describe("firstParam", () => {
 });
 
 describe("parseEventFilters", () => {
-  it("passes a provider through and drops blank/whitespace + missing values", () => {
-    expect(parseEventFilters({ provider: "stripe" })).toEqual({ provider: "stripe" });
+  it("passes provider(s) through as an array and drops blank/whitespace + missing values", () => {
+    expect(parseEventFilters({ provider: "stripe" })).toEqual({ provider: ["stripe"] });
+    // Multi-select: a repeated param arrives as a string[] → de-duped array.
+    expect(parseEventFilters({ provider: ["stripe", "github", "stripe"] })).toEqual({
+      provider: ["stripe", "github"],
+    });
     expect(parseEventFilters({ provider: "  " })).toEqual({});
+    expect(parseEventFilters({ provider: [] })).toEqual({});
     expect(parseEventFilters({})).toEqual({});
   });
 
@@ -47,16 +52,27 @@ describe("parseEventFilters", () => {
     expect(parseEventFilters({ from: "not-a-date", to: "garbage" })).toEqual({});
   });
 
-  it("drops an unknown provider when validProviders is supplied (keeps a known one)", () => {
-    expect(parseEventFilters({ provider: "github" }, PROVIDERS)).toEqual({ provider: "github" });
-    // A hand-edited ?provider=foobar is dropped → "no filter" rather than a confusing empty result.
+  it("drops unknown provider members when validProviders is supplied (keeps the known ones)", () => {
+    expect(parseEventFilters({ provider: ["github"] }, PROVIDERS)).toEqual({
+      provider: ["github"],
+    });
+    // A hand-edited ?provider=foobar member is dropped; a known one alongside it survives.
+    expect(parseEventFilters({ provider: ["foobar", "stripe"] }, PROVIDERS)).toEqual({
+      provider: ["stripe"],
+    });
+    // All-unknown → no filter (not a confusing empty result).
     expect(parseEventFilters({ provider: "foobar" }, PROVIDERS)).toEqual({});
   });
 
-  it("parses a valid verification status and drops an unknown one (closed enum)", () => {
-    expect(parseEventFilters({ status: "failed" })).toEqual({ verificationState: "failed" });
-    expect(parseEventFilters({ status: "verified" })).toEqual({ verificationState: "verified" });
-    expect(parseEventFilters({ status: "bogus" })).toEqual({}); // hand-edited junk dropped
+  it("parses valid verification status(es) as an array and drops unknown members (closed enum)", () => {
+    expect(parseEventFilters({ status: "failed" })).toEqual({ verificationState: ["failed"] });
+    expect(parseEventFilters({ status: ["verified", "failed"] })).toEqual({
+      verificationState: ["verified", "failed"],
+    });
+    expect(parseEventFilters({ status: ["bogus", "verified"] })).toEqual({
+      verificationState: ["verified"],
+    }); // junk member dropped
+    expect(parseEventFilters({ status: "bogus" })).toEqual({}); // all junk → no filter
     expect(parseEventFilters({ status: "  " })).toEqual({});
   });
 

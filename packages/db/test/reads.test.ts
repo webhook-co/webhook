@@ -70,6 +70,7 @@ async function seedEvent(
     providerEventId?: string | null;
     externalId?: string | null;
     dedupKey?: string;
+    headers?: [string, string][];
   } = {},
 ): Promise<string> {
   const id = newId();
@@ -90,10 +91,12 @@ async function seedEvent(
          dedup_key, dedup_strategy, provider, provider_event_id, external_id, verified, verification)
       values
         (${id}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${id}`}, ${1234},
-         ${"application/json"}, ${tx.json([
-           ["content-type", "application/json"],
-           ["x-test", "1"],
-         ])},
+         ${"application/json"}, ${tx.json(
+           opts.headers ?? [
+             ["content-type", "application/json"],
+             ["x-test", "1"],
+           ],
+         )},
          ${dedupKey}, ${"content_hash"}, ${opts.provider ?? null}, ${providerEventId}, ${externalId},
          ${verified}, ${verification === null ? null : tx.json(verification)})`;
   });
@@ -217,7 +220,7 @@ describe("reads repos (RLS + keyset pagination)", () => {
 
   it("listEvents filters by provider", async () => {
     const page = await withTenant(app, orgA, (tx) =>
-      listEvents(tx, { endpointId: epA, limit: 50, provider: "github" }),
+      listEvents(tx, { endpointId: epA, limit: 50, provider: ["github"] }),
     );
     expect(page.items.length).toBe(1);
     expect(page.items[0]?.provider).toBe("github");
@@ -252,7 +255,7 @@ describe("reads repos (RLS + keyset pagination)", () => {
       listEvents(tx, {
         endpointId: epTail,
         limit: 50,
-        provider: "stripe",
+        provider: ["stripe"],
         receivedAfter: tailAt(2000),
       }),
     );
@@ -284,17 +287,17 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(byId.get(uId)).toBe("unattempted"); // verification IS NULL
 
     const failed = await withTenant(app, orgA, (tx) =>
-      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "failed" }),
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: ["failed"] }),
     );
     expect(failed.items.map((e) => e.id)).toEqual([fId]);
 
     const unattempted = await withTenant(app, orgA, (tx) =>
-      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "unattempted" }),
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: ["unattempted"] }),
     );
     expect(unattempted.items.map((e) => e.id)).toEqual([uId]);
 
     const verified = await withTenant(app, orgA, (tx) =>
-      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "verified" }),
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: ["verified"] }),
     );
     expect(verified.items.map((e) => e.id)).toEqual([vId]);
   });
@@ -311,12 +314,12 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(all.items.find((e) => e.id === pathId)?.verificationState).toBe("verified");
 
     const unattempted = await withTenant(app, orgA, (tx) =>
-      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "unattempted" }),
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: ["unattempted"] }),
     );
     expect(unattempted.items.map((e) => e.id)).not.toContain(pathId);
 
     const verified = await withTenant(app, orgA, (tx) =>
-      listEvents(tx, { endpointId: ep, limit: 50, verificationState: "verified" }),
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: ["verified"] }),
     );
     expect(verified.items.map((e) => e.id)).toContain(pathId);
   });
@@ -354,6 +357,49 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect((await search(b)).items.map((e) => e.id)).toEqual([b]);
     // no match → empty (a non-uuid term never reaches `id =`, so no 22P02)
     expect((await search("no-such-token")).items).toEqual([]);
+  });
+
+  it("listEvents search also matches the request headers (name + value, residual scan)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-hsearch" }, hasher)).id;
+    const withHeader = await seedEvent(orgA, ep, {
+      providerEventId: "evt_h1",
+      headers: [
+        ["content-type", "application/json"],
+        ["x-shopify-topic", "orders/create"],
+      ],
+    });
+    await seedEvent(orgA, ep, { providerEventId: "evt_h2" }); // default headers, no match
+    const search = (term: string) =>
+      withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: ep, limit: 50, search: term }));
+    // a header VALUE
+    expect((await search("orders/create")).items.map((e) => e.id)).toEqual([withHeader]);
+    // a header NAME
+    expect((await search("x-shopify-topic")).items.map((e) => e.id)).toEqual([withHeader]);
+  });
+
+  it("listEvents multi-selects provider (OR) and verificationState (OR)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-multi" }, hasher)).id;
+    const s = await seedEvent(orgA, ep, { provider: "stripe", verified: true });
+    const g = await seedEvent(orgA, ep, { provider: "github", verified: true });
+    const x = await seedEvent(orgA, ep, {
+      provider: "shopify",
+      verified: false,
+      verification: { ok: false, reason: { code: "WRONG_SECRET", confidence: "high" } },
+    });
+    const list = (opts: { provider?: string[]; verificationState?: VerificationState[] }) =>
+      withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: ep, limit: 50, ...opts }));
+    // provider OR: stripe + github (not shopify)
+    expect(
+      new Set((await list({ provider: ["stripe", "github"] })).items.map((e) => e.id)),
+    ).toEqual(new Set([s, g]));
+    // verificationState OR: verified + failed = all three
+    expect(
+      new Set((await list({ verificationState: ["verified", "failed"] })).items.map((e) => e.id)),
+    ).toEqual(new Set([s, g, x]));
+    // compose provider OR + verification OR: github(verified) only (shopify excluded by provider)
+    expect(
+      (await list({ provider: ["github", "stripe"], verificationState: ["failed"] })).items,
+    ).toEqual([]); // stripe+github are verified, not failed
   });
 
   it("listEndpoints filters by a case-insensitive name substring", async () => {
@@ -460,12 +506,12 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
     // failed/unattempted return none — proving the filter reaches listEvents through the handler.
     const verified = (await handlers.get("events.list")!(ctxA, {
       endpointId: epTail,
-      filter: { verificationState: "verified" },
+      filter: { verificationState: ["verified"] },
     })) as { items: { id: string }[] };
     expect(new Set(verified.items.map((e) => e.id))).toEqual(new Set([eTail1, eTail2, eTail3]));
     const failed = (await handlers.get("events.list")!(ctxA, {
       endpointId: epTail,
-      filter: { verificationState: "failed" },
+      filter: { verificationState: ["failed"] },
     })) as { items: unknown[] };
     expect(failed.items).toEqual([]);
   });
@@ -474,7 +520,7 @@ describe("read-handlers (scope, validation, NOT_FOUND, audit.verify)", () => {
     await expectFault(
       handlers.get("events.list")!(ctxA, {
         endpointId: epTail,
-        filter: { verificationState: "bogus" },
+        filter: { verificationState: ["bogus"] },
       }),
       "VALIDATION_ERROR",
     );

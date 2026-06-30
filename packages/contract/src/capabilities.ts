@@ -136,15 +136,18 @@ export const eventsList = defineCapability({
     // string handed to SQL → a Postgres 22P02), so the check lives in exactly one place.
     filter: z
       .object({
-        provider: ProviderSchema.optional(),
+        // provider + verificationState are MULTI-select (arrays, OR'd within each, AND'd across fields):
+        // `provider=[stripe,github]` → `provider = ANY(...)`. A non-empty array of the closed enum stays
+        // JSON-Schema-clean for the MCP tool inputSchema. Omit (or an empty selection) = no filter.
+        provider: z.array(ProviderSchema).min(1).optional(),
         receivedAfter: z.string().optional(),
         receivedBefore: z.string().optional(),
-        // The truthful verification tri-state (verified | failed | unattempted). A plain enum →
-        // JSON-Schema-clean for the MCP tool inputSchema.
-        verificationState: VerificationStateSchema.optional(),
+        // The truthful verification tri-state (verified | failed | unattempted), multi-select.
+        verificationState: z.array(VerificationStateSchema).min(1).optional(),
         // Case-insensitive substring search across the event's ID fields (provider_event_id, external_id,
-        // dedup_key) + an exact match on the event id when the term is a uuid. A plain string (no coerce)
-        // → JSON-Schema-clean. Backed by trigram GIN indexes (migration 0023).
+        // dedup_key) + the request HEADER names/values, plus an exact match on the event id when the term
+        // is a uuid. A plain string (no coerce) → JSON-Schema-clean. The ID fields are backed by trigram
+        // GIN indexes (migration 0023); the headers jsonb is a residual scan.
         search: z.string().trim().min(1).max(256).optional(),
       })
       .optional(),

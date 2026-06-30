@@ -111,7 +111,12 @@ function eventSearchFilter(tx: TenantTx, search: string | undefined) {
   if (!search) return tx``;
   if (UUID_RE.test(search)) return tx`and id = ${search}`;
   const pattern = likeContains(search);
-  return tx`and (provider_event_id ilike ${pattern} or external_id ilike ${pattern} or dedup_key ilike ${pattern})`;
+  // The three ID columns are trigram-GIN-indexed (migration 0023). `headers::text` is a RESIDUAL scan
+  // (no index — adding GIN to the large headers jsonb on the hot ingest path isn't worth the write-amp),
+  // and it serializes the whole jsonb, so a term matches a header NAME or VALUE (the per-endpoint scan is
+  // already bounded by endpoint_id, so the residual cost is contained). Header values aren't EXPOSED by a
+  // match — they stay redacted in the UI; matching only locates the event within the caller's own org.
+  return tx`and (provider_event_id ilike ${pattern} or external_id ilike ${pattern} or dedup_key ilike ${pattern} or headers::text ilike ${pattern})`;
 }
 
 interface EndpointRow {
@@ -201,16 +206,27 @@ function verificationStateColumn(tx: TenantTx) {
   return tx`case when verified then 'verified' when verification is not null then 'failed' else 'unattempted' end as verification_state`;
 }
 
-// The events.list verification-state filter, translated to the §truthful-partition predicates. Each
-// predicate MIRRORS its verificationStateColumn() CASE bucket EXACTLY (incl. the `not verified` guard
-// on `unattempted`) so a filtered row's pill can never contradict the filter — even if a future row
-// ever had verified=true with a null verification (which the CASE would label 'verified', not
-// 'unattempted'). `failed` is backed by events_failed_idx (migration 0022).
-function verificationStateFilter(tx: TenantTx, state: VerificationState | undefined) {
-  if (state === "verified") return tx`and verified`;
-  if (state === "failed") return tx`and not verified and verification is not null`;
-  if (state === "unattempted") return tx`and not verified and verification is null`;
-  return tx``;
+// One verification-state bucket's predicate. MIRRORS its verificationStateColumn() CASE bucket EXACTLY
+// (incl. the `not verified` guard on `unattempted`) so a filtered row's pill can never contradict the
+// filter — even if a future row ever had verified=true with a null verification (which the CASE would
+// label 'verified', not 'unattempted').
+function verificationStatePredicate(tx: TenantTx, state: VerificationState) {
+  if (state === "verified") return tx`verified`;
+  if (state === "failed") return tx`(not verified and verification is not null)`;
+  return tx`(not verified and verification is null)`; // unattempted
+}
+
+// The events.list verification-state filter — multi-select, so the selected buckets are OR'd
+// (`and (verified or (not verified and verification is not null))`). Empty/undefined = no filter; the
+// `failed` bucket alone is backed by events_failed_idx (migration 0022), a mixed selection rides the
+// per-endpoint scan as a residual filter (the verified/unattempted buckets are intentionally unindexed).
+function verificationStateFilter(tx: TenantTx, states: readonly VerificationState[] | undefined) {
+  const unique = states ? [...new Set(states)] : [];
+  if (unique.length === 0) return tx``;
+  const joined = unique
+    .map((state) => verificationStatePredicate(tx, state))
+    .reduce((acc, predicate) => tx`${acc} or ${predicate}`);
+  return tx`and (${joined})`;
 }
 
 function toEventSummary(r: EventRow): EventSummary {
@@ -229,14 +245,15 @@ function toEventSummary(r: EventRow): EventSummary {
 
 export interface ListEventsOptions extends ListOptions {
   readonly endpointId: string;
-  readonly provider?: string;
+  /** Multi-select provider filter — OR'd (`provider = ANY`). Empty/undefined = no filter. */
+  readonly provider?: readonly string[];
   /** Inclusive lower bound on received_at (events at or after this instant). */
   readonly receivedAfter?: Date;
   /** Exclusive upper bound on received_at (events strictly before this instant). */
   readonly receivedBefore?: Date;
-  /** Verification tri-state filter (verified | failed | unattempted). */
-  readonly verificationState?: VerificationState;
-  /** Case-insensitive substring across the event ID fields (+ exact id match when a uuid). */
+  /** Multi-select verification tri-state filter (verified | failed | unattempted) — OR'd. */
+  readonly verificationState?: readonly VerificationState[];
+  /** Case-insensitive substring across the event ID fields + headers (+ exact id match when a uuid). */
   readonly search?: string;
 }
 
@@ -256,7 +273,7 @@ export async function listEvents(
            ${verificationStateColumn(tx)}
     from events
     where endpoint_id = ${endpointId}
-    ${provider ? tx`and provider = ${provider}` : tx``}
+    ${provider && provider.length > 0 ? tx`and provider in ${tx([...provider])}` : tx``}
     ${receivedAfter ? tx`and received_at >= ${receivedAfter}` : tx``}
     ${receivedBefore ? tx`and received_at < ${receivedBefore}` : tx``}
     ${verificationStateFilter(tx, verificationState)}

@@ -20,22 +20,25 @@ import { VERIFICATION_STATES } from "./verification-state";
 
 /** The coerced, SQL-ready filter (instant bounds). Mirrors the db `ListEventsOptions` filter fields. */
 export interface EventFilters {
-  readonly provider?: string;
+  /** Multi-select provider filter — OR'd. Set only when non-empty. */
+  readonly provider?: readonly string[];
   readonly receivedAfter?: Date;
   readonly receivedBefore?: Date;
-  readonly verificationState?: VerificationState;
+  /** Multi-select verification tri-state — OR'd. Set only when non-empty. */
+  readonly verificationState?: readonly VerificationState[];
   readonly search?: string;
 }
 
 /** The raw, human-facing filter values as they ride in the URL query + across the load-more boundary. */
 export interface EventFilterParams {
-  readonly provider?: string | null;
+  /** Multi-select (`?provider=a&provider=b`) — a repeated param arrives as `string[]`. */
+  readonly provider?: string | string[] | null;
   /** A `YYYY-MM-DD` calendar day (from a date input) or a full ISO instant. */
   readonly from?: string | null;
   readonly to?: string | null;
-  /** Verification tri-state (`?status=`): verified | failed | unattempted. */
-  readonly status?: string | null;
-  /** Free-text substring search over the event ID fields (`?search=`). */
+  /** Verification tri-state (`?status=`), multi-select: verified | failed | unattempted. */
+  readonly status?: string | string[] | null;
+  /** Free-text substring search over the event ID fields + headers (`?search=`). */
   readonly search?: string | null;
   /** A relative date preset (`?range=`): 1h | 24h | 7d | 30d — resolves to a receivedAfter bound. */
   readonly range?: string | null;
@@ -50,6 +53,17 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
  */
 export function firstParam(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
+}
+
+/**
+ * Coerce a Next.js search param (string | string[]) into a clean `string[]` for a multi-select filter:
+ * a repeated param (`?provider=a&provider=b`) arrives as an array, a single one as a string. Trims +
+ * drops empties. The order is the URL order (the multi-select preserves the vocabulary order on write).
+ */
+export function paramList(value: string | string[] | null | undefined): string[] {
+  if (value === null || value === undefined) return [];
+  const items = Array.isArray(value) ? value : [value];
+  return items.map((v) => v.trim()).filter((v) => v.length > 0);
 }
 
 function cleanString(value: string | null | undefined): string | undefined {
@@ -77,19 +91,22 @@ export function parseEventFilters(
   now: Date = new Date(),
 ): EventFilters {
   const filters: {
-    provider?: string;
+    provider?: string[];
     receivedAfter?: Date;
     receivedBefore?: Date;
-    verificationState?: VerificationState;
+    verificationState?: VerificationState[];
     search?: string;
   } = {};
-  const provider = cleanString(params.provider);
-  if (
-    provider !== undefined &&
-    (validProviders === undefined || validProviders.includes(provider))
-  ) {
-    filters.provider = provider;
-  }
+  // Multi-select: validate each provider against the vocabulary (a hand-edited `?provider=foo` member
+  // is dropped, not passed to SQL), de-dup, and only set the filter when at least one valid one remains.
+  const providers = [
+    ...new Set(
+      paramList(params.provider).filter(
+        (p) => validProviders === undefined || validProviders.includes(p),
+      ),
+    ),
+  ];
+  if (providers.length > 0) filters.provider = providers;
   // Date range: a valid relative preset (`?range=7d`) OWNS the range — it resolves to a receivedAfter
   // lower bound (`now − window`) and any custom from/to are ignored. Otherwise the explicit from/to
   // bounds apply (half-open: `receivedAfter >=`, `receivedBefore <`). A bad preset id falls through to
@@ -102,11 +119,16 @@ export function parseEventFilters(
     const receivedBefore = toInstant(params.to);
     if (receivedBefore !== undefined) filters.receivedBefore = receivedBefore;
   }
-  const status = cleanString(params.status);
-  // Validate against the closed enum (a hand-edited `?status=foo` is dropped, not passed to SQL).
-  if (status !== undefined && (VERIFICATION_STATES as readonly string[]).includes(status)) {
-    filters.verificationState = status as VerificationState;
-  }
+  // Multi-select verification: validate each against the closed enum (a hand-edited `?status=foo`
+  // member is dropped), de-dup, set only when non-empty.
+  const statuses = [
+    ...new Set(
+      paramList(params.status).filter((s) =>
+        (VERIFICATION_STATES as readonly string[]).includes(s),
+      ),
+    ),
+  ] as VerificationState[];
+  if (statuses.length > 0) filters.verificationState = statuses;
   // Cap at 256 to match the contract's `.max(256)` so the web surface doesn't accept a longer term than
   // API/CLI/MCP (cross-surface parity); a hand-edited over-long `?search=` is dropped rather than run.
   const search = cleanString(params.search);

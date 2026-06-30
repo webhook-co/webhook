@@ -121,10 +121,10 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       cursor?: string;
       limit?: number;
       filter?: {
-        provider?: string;
+        provider?: string[];
         receivedAfter?: string;
         receivedBefore?: string;
-        verificationState?: "verified" | "failed" | "unattempted";
+        verificationState?: ("verified" | "failed" | "unattempted")[];
         search?: string;
       };
     };

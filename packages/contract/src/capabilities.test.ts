@@ -165,12 +165,12 @@ describe("events.list filter (provider + received-at range)", () => {
     const parsed = eventsList.input.parse({
       endpointId: "11111111-1111-4111-8111-111111111111",
       filter: {
-        provider: "stripe",
+        provider: ["stripe", "github"],
         receivedAfter: "2026-06-01T00:00:00Z",
         receivedBefore: "2026-06-02T00:00:00Z",
       },
     });
-    expect(parsed.filter?.provider).toBe("stripe");
+    expect(parsed.filter?.provider).toEqual(["stripe", "github"]);
     // Plain strings (NOT z.coerce.date()) so the MCP tool inputSchema stays JSON-Schema-clean; the
     // shared read-handler validates + coerces them to Dates (see read-handlers/reads tests).
     expect(parsed.filter?.receivedAfter).toBe("2026-06-01T00:00:00Z");
@@ -186,17 +186,23 @@ describe("events.list filter (provider + received-at range)", () => {
     expect(parsed.filter?.receivedAfter).toBe("2026-06-01T00:00:00Z");
   });
 
-  it("accepts a verificationState enum and rejects an unknown one (closed enum)", () => {
+  it("accepts a verificationState array and rejects an unknown member (closed enum)", () => {
     const ok = eventsList.input.safeParse({
       endpointId: "11111111-1111-4111-8111-111111111111",
-      filter: { verificationState: "failed" },
+      filter: { verificationState: ["failed", "verified"] },
     });
     expect(ok.success).toBe(true);
     const bad = eventsList.input.safeParse({
       endpointId: "11111111-1111-4111-8111-111111111111",
-      filter: { verificationState: "bogus" },
+      filter: { verificationState: ["bogus"] },
     });
     expect(bad.success).toBe(false);
+    // An empty array is rejected (min(1)) — the surfaces omit the field entirely for "no filter".
+    const empty = eventsList.input.safeParse({
+      endpointId: "11111111-1111-4111-8111-111111111111",
+      filter: { verificationState: [] },
+    });
+    expect(empty.success).toBe(false);
   });
 
   it("accepts a trimmed search term and rejects a blank one", () => {

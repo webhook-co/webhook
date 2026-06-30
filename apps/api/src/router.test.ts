@@ -76,8 +76,9 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
         },
       }),
     };
-    await handleRequest(get(`/v1/endpoints/${EP}/events?provider=stripe`), deps);
-    expect(seen).toEqual({ endpointId: EP, filter: { provider: "stripe" } });
+    await handleRequest(get(`/v1/endpoints/${EP}/events?provider=stripe&provider=github`), deps);
+    // Repeated params → an array (multi-select).
+    expect(seen).toEqual({ endpointId: EP, filter: { provider: ["stripe", "github"] } });
   });
 
   it("builds events.list filter from provider + received-at range query params (raw strings)", async () => {
@@ -101,8 +102,8 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     expect(seen).toEqual({
       endpointId: EP,
       filter: {
-        provider: "github",
-        verificationState: "failed",
+        provider: ["github"],
+        verificationState: ["failed"],
         receivedAfter: "2026-06-01T00:00:00Z",
         receivedBefore: "2026-06-02T00:00:00Z",
         search: "evt_abc",

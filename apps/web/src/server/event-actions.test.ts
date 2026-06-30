@@ -44,13 +44,13 @@ describe("loadMoreEventsAction", () => {
     await loadMoreEventsAction({
       endpointId: ENDPOINT_ID,
       cursor,
-      filters: { provider: "stripe", from: "2026-06-01" },
+      filters: { provider: ["stripe", "github"], from: "2026-06-01" },
     });
     expect(loadMoreEvents).toHaveBeenCalledWith(
       "o",
       ENDPOINT_ID,
       { receivedAt: cursor.receivedAt, id: CURSOR_ID },
-      { provider: "stripe", receivedAfter: new Date("2026-06-01T00:00:00.000Z") },
+      { provider: ["stripe", "github"], receivedAfter: new Date("2026-06-01T00:00:00.000Z") },
     );
   });
 

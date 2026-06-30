@@ -39,10 +39,11 @@ export default async function EventsPage({
   const sp = await searchParams;
   // The raw URL filter values ride to the client list (and back into the load-more action); the page
   // coerces them to instant bounds for the first DB read. Both paths use the same parseEventFilters.
-  // firstParam guards a repeated query param (`?provider=a&provider=b` → string[]) — first-wins.
+  // provider/status are MULTI-select (repeated params → string[]); firstParam keeps the single-value
+  // params first-wins.
   const rawParams: EventFilterParams = {
-    provider: firstParam(sp.provider),
-    status: firstParam(sp.status),
+    provider: sp.provider,
+    status: sp.status,
     from: firstParam(sp.from),
     to: firstParam(sp.to),
     search: firstParam(sp.search),
@@ -100,11 +101,10 @@ export default async function EventsPage({
         <div className="flex flex-col gap-5">
           <EventsFilterBar providers={PROVIDERS} />
           <EventsList
-            // Re-key on the endpoint AND the active filters so the list's once-seeded useState
-            // (items/cursor) is replaced with the freshly-filtered first page on any filter change.
             // Re-key on the endpoint + the (frozen) active filters so a filter change replaces the list's
-            // seeded state with the freshly-filtered first page. `from` carries the resolved preset bound,
-            // so changing the preset re-keys without a separate `range` term.
+            // once-seeded state with the freshly-filtered first page. `from` carries the resolved preset
+            // bound, so changing the preset re-keys without a separate `range` term; a multi-select array
+            // stringifies to a comma-join (distinct per selection).
             key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}:${filterParams.search ?? ""}`}
             endpointId={id}
             initialItems={result.items}

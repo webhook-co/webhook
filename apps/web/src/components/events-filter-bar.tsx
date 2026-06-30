@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, Input, Select } from "@webhook-co/ui";
+import { Button, Input, MultiSelect, type MultiSelectOption } from "@webhook-co/ui";
 import { Search } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
@@ -29,14 +29,29 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
   const searchParams = useSearchParams();
   const committedQuery = searchParams.toString();
 
-  const provider = searchParams.get("provider") ?? "";
-  const status = searchParams.get("status") ?? "";
+  // provider + status are MULTI-select (repeated params).
+  const providerSel = searchParams.getAll("provider");
+  const statusSel = searchParams.getAll("status");
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
   const search = searchParams.get("search") ?? "";
   const range = searchParams.get("range") ?? "";
   const active =
-    provider !== "" || status !== "" || from !== "" || to !== "" || search !== "" || range !== "";
+    providerSel.length > 0 ||
+    statusSel.length > 0 ||
+    from !== "" ||
+    to !== "" ||
+    search !== "" ||
+    range !== "";
+
+  const providerOptions = React.useMemo<MultiSelectOption[]>(
+    () => providers.map((p) => ({ value: p, label: p })),
+    [providers],
+  );
+  const statusOptions = React.useMemo<MultiSelectOption[]>(
+    () => VERIFICATION_STATES.map((s) => ({ value: s, label: VERIFICATION_STATE_LABELS[s] })),
+    [],
+  );
 
   // The query string WE last pushed. Changing two controls within the RSC-navigation commit window
   // would otherwise both start from the stale `searchParams` snapshot and clobber each other; merging
@@ -64,8 +79,13 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
     apply(next);
   }
 
-  function update(key: (typeof FILTER_KEYS)[number], value: string) {
-    applyPatch({ [key]: value });
+  // Set a multi-value key to the given list (repeated params), merged against the last-pushed value so a
+  // concurrent single-key change isn't clobbered. An empty list deletes the key (no filter).
+  function setMulti(key: (typeof FILTER_KEYS)[number], values: readonly string[]) {
+    const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
+    next.delete(key);
+    for (const value of values) next.append(key, value);
+    apply(next);
   }
 
   // Whether the date control's custom inputs are revealed. Owned here (not in the child) so a "Clear
@@ -138,33 +158,25 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
 
       {/* Tier 2 — narrow: the faceting controls, with Clear right-aligned (disabled when nothing's set). */}
       <div className="flex flex-wrap items-center gap-2">
-        <Select
-          aria-label="Filter by provider"
-          value={provider}
-          onChange={(e) => update("provider", e.target.value)}
+        <MultiSelect
+          label="Filter by provider"
+          placeholder="All providers"
+          options={providerOptions}
+          selected={providerSel}
+          onChange={(values) => setMulti("provider", values)}
+          searchable
+          searchPlaceholder="Search providers…"
           className="w-44"
-        >
-          <option value="">All providers</option>
-          {providers.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </Select>
+        />
 
-        <Select
-          aria-label="Filter by verification status"
-          value={status}
-          onChange={(e) => update("status", e.target.value)}
+        <MultiSelect
+          label="Filter by verification status"
+          placeholder="All statuses"
+          options={statusOptions}
+          selected={statusSel}
+          onChange={(values) => setMulti("status", values)}
           className="w-40"
-        >
-          <option value="">All statuses</option>
-          {VERIFICATION_STATES.map((s) => (
-            <option key={s} value={s}>
-              {VERIFICATION_STATE_LABELS[s]}
-            </option>
-          ))}
-        </Select>
+        />
 
         <DateRangeFilter
           value={{ range, from, to }}
