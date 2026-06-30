@@ -60,6 +60,18 @@ export function b64ToBytes(b64: string): Uint8Array | null {
 }
 
 /**
+ * Encode bytes to standard (padded, `+/` alphabet) base64. The ENCODE sibling of {@link b64ToBytes}:
+ * verification only ever DECODES, but the send-side signer ({@link ./sign}) base64-encodes the MAC for
+ * the `webhook-signature` header. Byte-identical to packages/shared's `bytesToB64`, pinned by
+ * bytes-parity.test.ts (bytesToB64 is in its MIRRORED set) so the two copies cannot drift.
+ */
+export function bytesToB64(bytes: Uint8Array): string {
+  let s = "";
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s);
+}
+
+/**
  * Decode a base64url string (`-`/`_` alphabet, optional `=` padding) to bytes. Returns null on
  * invalid input — NEVER throws — the base64url sibling of {@link b64ToBytes} (same null-on-malformed
  * contract, NOT packages/shared's throwing decoder). Some providers carry their MAC as base64url

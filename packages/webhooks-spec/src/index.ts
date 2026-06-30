@@ -43,3 +43,15 @@ export { makeHmacAdapter } from "./adapters/factory";
 // validator, single-sourced so the contract rejects a malformed `{header, token}` secret at registration.
 export { isUsableConfiguredHeaderSecret } from "./adapters/bespoke/token-auth";
 export { CONFIGURED_HEADER_PROVIDERS } from "./adapters/bespoke/token-auth-providers";
+
+// Send-side signer (the counterpart to standardWebhooksAdapter): produce the Standard Webhooks v1
+// signing headers + mint a signing secret. Used by the outbound delivery path (S3 Slice 2).
+export {
+  signStandardWebhooks,
+  generateSigningSecret,
+  WEBHOOK_ID_HEADER,
+  WEBHOOK_TIMESTAMP_HEADER,
+  WEBHOOK_SIGNATURE_HEADER,
+  type SignStandardWebhooksInput,
+  type StandardWebhooksHeaders,
+} from "./sign";

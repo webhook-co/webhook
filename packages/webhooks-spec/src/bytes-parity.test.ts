@@ -11,7 +11,13 @@ import { describe, expect, it } from "vitest";
 // compare the mirrored functions, not the whole files.)
 
 // Functions kept identical across packages/shared/src/bytes.ts and this package's bytes.ts.
-const MIRRORED = ["bytesToHex", "timingSafeEqual", "concatBytes", "importHmacKey"] as const;
+const MIRRORED = [
+  "bytesToHex",
+  "bytesToB64",
+  "timingSafeEqual",
+  "concatBytes",
+  "importHmacKey",
+] as const;
 
 const localBytes = readFileSync(new URL("./bytes.ts", import.meta.url), "utf8") + "\n";
 const sharedBytes =
