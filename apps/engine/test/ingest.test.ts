@@ -459,3 +459,64 @@ describe("handleIngest — Slack url_verification handshake (Slice C)", () => {
     expect(calls.ingest[0]!.dedupStrategy).toBe("provider_event_id");
   });
 });
+
+describe("handleIngest — GET verification-handshake dispatch (no-secret protocols, PR1)", () => {
+  it("echoes a ?challenge= GET (Dropbox/Adobe) and captures NOTHING (pre-capture control message)", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?challenge=abc123`, { method: "GET" }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("abc123");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(calls.put).toHaveLength(0); // nothing stored
+    expect(calls.ingest).toHaveLength(0); // nothing metered
+    expect(calls.verify).toHaveLength(0);
+  });
+
+  it("completes a ?challenge= handshake even on a PAUSED endpoint (subscription setup, not an event)", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true, sealedSecrets: [] }),
+    });
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?challenge=abc123`, { method: "GET" }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("abc123");
+    expect(calls.ingest).toHaveLength(0);
+  });
+
+  it("a handshake to an UNKNOWN token still 404s (resolve runs before the dispatcher — no oracle change)", async () => {
+    const { deps } = makeDeps();
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/whep_nope?challenge=abc123`, { method: "GET" }),
+      deps,
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("a normal GET (no challenge param) is NOT diverted — it captures + returns liveness (Slice 1 unchanged)", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(new Request(`https://wbhk.my/${GOOD}`, { method: "GET" }), deps);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/live/i);
+    expect(calls.ingest).toHaveLength(1); // captured (bill-all), method recorded
+    expect(calls.ingest[0]!.method).toBe("GET");
+  });
+
+  it("echoes an Adobe Sign X-AdobeSign-ClientId GET and captures nothing", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}`, {
+        method: "GET",
+        headers: { "x-adobesign-clientid": "client-xyz" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-adobesign-clientid")).toBe("client-xyz");
+    expect(calls.ingest).toHaveLength(0);
+  });
+});

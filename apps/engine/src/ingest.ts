@@ -28,6 +28,7 @@ import {
 } from "@webhook-co/shared";
 
 import { deriveDedup } from "./dedup";
+import { dispatchGetHandshake } from "./handshake";
 
 /** A resolved ingest token -> its owning endpoint (the ingest resolver's narrowed result). */
 export interface ResolvedEndpoint {
@@ -237,16 +238,30 @@ export function slackUrlVerificationChallenge(raw: Uint8Array): string | null {
 export async function handleIngest(request: Request, deps: IngestDeps): Promise<Response> {
   // Accept-all-verbs (ADR-0085): capture every standard method (the inspector model). The supported-set
   // gate stays BEFORE token resolution so a rejected (non-standard) verb is answered uniformly and leaks
-  // no token validity. GET verification-handshakes (Meta/X CRC/…) are a follow-up slice.
+  // no token validity.
   if (!SUPPORTED_METHODS.has(request.method))
     return plain(405, "method not allowed", { allow: ALLOW_METHODS });
 
   // Path-token routing: the first path segment is the ingest token.
-  const token = new URL(request.url).pathname.replace(/^\/+/, "").split("/")[0];
+  const url = new URL(request.url);
+  const token = url.pathname.replace(/^\/+/, "").split("/")[0];
   if (!token) return plain(404, "not found");
 
   const endpoint = await deps.resolve(token);
   if (endpoint === null) return plain(404, "not found"); // unknown token — no hints, no breadcrumbs
+
+  // GET verification-handshake (ADR-0086): if a GET carries a known challenge protocol (Dropbox/Adobe
+  // `?challenge=`, Adobe Sign `X-AdobeSign-ClientId`; Meta/X/eBay in a follow-up PR), answer the challenge
+  // so the sender's subscription verification passes. A PRE-capture control message — captures NOTHING and
+  // never meters (mirrors the Slack divert) — and runs even on a paused endpoint (subscription setup is not
+  // an event). A non-handshake GET returns null and falls through to the normal capture/liveness flow.
+  if (request.method === "GET") {
+    const handshake = dispatchGetHandshake(url, request.headers);
+    if (handshake !== null) {
+      deps.log("ingest.get_handshake", { endpointId: endpoint.endpointId });
+      return handshake;
+    }
+  }
 
   // Paused / soft-capped: WRITE verbs are rejected with a retryable 429 (the provider holds the event,
   // less likely to auto-disable than on a 4xx/404 — founder decision). A bodyless liveness verb still
