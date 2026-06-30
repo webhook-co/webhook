@@ -92,7 +92,26 @@ describe("DeliveryDO — fail-safe alarm", () => {
       await expect(s.alarm()).resolves.toBeUndefined(); // fail-safe: a drain error never escapes
       const at = await state.storage.getAlarm();
       expect(at).not.toBeNull();
-      expect(at!).toBeGreaterThan(before); // a near-term fallback, not dark
+      // pinned near the ~30s fallback: NOT dark (10h) and NOT a hot-loop (now) — both would pass a bare `> before`.
+      expect(at!).toBeGreaterThanOrEqual(before + 29_000);
+      expect(at!).toBeLessThan(before + 32_000);
+    });
+  });
+
+  it("the race-guard takes precedence even over a far-future next-due (the raced delivery isn't stranded)", async () => {
+    await runInDurableObject(stubFor("dest-race-far"), async (inst, state) => {
+      const s = inst as unknown as Shell;
+      await state.storage.put("binding", { orgId: ORG, destinationId: "dest-race-far" });
+      const far = Date.now() + 10 * 60 * 60 * 1000;
+      // a wake races mid-drain AND the drain returns a far-future next-due; the race must win → fire ~now.
+      s.drainOnce = async () => {
+        await s.wake(ORG, "dest-race-far");
+        return new Date(far);
+      };
+      const before = Date.now();
+      await s.alarm();
+      const at = await state.storage.getAlarm();
+      expect(at!).toBeLessThan(before + 5_000); // ~now, not 10h out
     });
   });
 

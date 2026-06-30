@@ -16,7 +16,11 @@ import {
   recordDeliveryAttempt,
   type ReplayHandler,
 } from "../src/replay";
-import { createReplayDestination, getReplayDestination } from "../src/replay-destinations";
+import {
+  createReplayDestination,
+  getReplayDestination,
+  softDeleteReplayDestination,
+} from "../src/replay-destinations";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 
@@ -278,5 +282,33 @@ describe("claim/finalize + getReplayDestination (server-side remote delivery, AD
     expect(await withTenant(app, orgB, (tx) => getReplayDestination(tx, destId))).toBeNull();
     // a non-existent id → null
     expect(await withTenant(app, orgA, (tx) => getReplayDestination(tx, randomUUID()))).toBeNull();
+    // SOFT-DELETED → null. This is the authoritative "is this destination still allowed" check on the
+    // claim→deliver path; the `deleted_at is null` filter is the revocation gate, so it MUST resolve to null.
+    const revoked = (
+      await createReplayDestination(app, {
+        orgId: orgA,
+        url: `https://revoked-${randomUUID().slice(0, 6)}.example.com/in`,
+      })
+    ).id;
+    expect(await withTenant(app, orgA, (tx) => getReplayDestination(tx, revoked))).not.toBeNull();
+    await softDeleteReplayDestination(app, orgA, revoked);
+    expect(await withTenant(app, orgA, (tx) => getReplayDestination(tx, revoked))).toBeNull();
+  });
+
+  it("claim/finalize are RLS-scoped — org B cannot finalize or clobber org A's attempt (PK-only, leans on RLS)", async () => {
+    const { attempt } = await claim(randomUUID()); // an org-A pending attempt
+    // org B tries to finalize org A's row by id → the RLS UPDATE matches zero rows → null (no cross-tenant write)
+    const crossFinalize = await withTenant(app, orgB, (tx) =>
+      finalizeDeliveryAttempt(tx, { id: attempt.id, status: "delivered", statusCode: 200 }),
+    );
+    expect(crossFinalize).toBeNull();
+    // org A's row is untouched (still pending) — proves the cross-org finalize wrote nothing
+    const [row] = await withTenant(
+      app,
+      orgA,
+      (tx) =>
+        tx<{ status: string }[]>`select status from delivery_attempts where id = ${attempt.id}`,
+    );
+    expect(row!.status).toBe("pending");
   });
 });

@@ -29,7 +29,7 @@ import type { DeliverResult, SealedSigningSecret } from "@webhook-co/shared";
 import { DurableObject } from "cloudflare:workers";
 
 import { guardedDeliver, makeSignDelivery, resolveViaDoh } from "./delivery-dispatcher";
-import { runDeliveryDrain } from "./delivery-drain";
+import { buildDeliverArgs, makeDrainDeps, runDeliveryDrain } from "./delivery-drain";
 // getSignStore lives in index.ts; the index re-exports this class, so this is a runtime-safe ESM cycle —
 // getSignStore is referenced ONLY inside the drain (long after both modules finish evaluating), never at
 // module-eval time, so the live binding is always populated by the time it's read.
@@ -122,49 +122,20 @@ export class DeliveryDO extends DurableObject<Env> {
         secrets: await getActiveSigningSecrets(tx, destinationId),
         ordered: await isDestinationOrdered(tx, destinationId),
       }));
-      await runDeliveryDrain({
-        listDue: async () => due,
-        signingSecrets: async () => secrets,
-        ordered: async () => ordered,
-        deliver: (d, secs) => this.deliverOne(orgId, d, secs),
-        recordDelivered: (d, statusCode) =>
-          withTenant(tenant, orgId, (tx) =>
-            markDeliveryDelivered(tx, { id: d.id, destinationId, attempt: d.attempt, statusCode }),
-          ),
-        recordRetry: (d, nextRetryAt, statusCode, error) =>
-          withTenant(tenant, orgId, (tx) =>
-            scheduleDeliveryRetry(tx, {
-              id: d.id,
-              nextAttempt: d.attempt + 1,
-              nextRetryAt,
-              statusCode,
-              error,
-            }),
-          ),
-        recordDead: (d, statusCode, error) =>
-          withTenant(tenant, orgId, (tx) =>
-            markDeliveryTerminalFailure(tx, {
-              id: d.id,
-              destinationId,
-              status: "dead",
-              attempt: d.attempt,
-              statusCode,
-              error,
-            }),
-          ),
-        recordBlocked: (d, statusCode, error) =>
-          withTenant(tenant, orgId, (tx) =>
-            markDeliveryTerminalFailure(tx, {
-              id: d.id,
-              destinationId,
-              status: "blocked",
-              attempt: d.attempt,
-              statusCode,
-              error,
-            }),
-          ),
-        now: () => Date.now(),
-      });
+      await runDeliveryDrain(
+        makeDrainDeps({
+          destinationId,
+          listDue: async () => due,
+          signingSecrets: async () => secrets,
+          ordered: async () => ordered,
+          deliver: (d, secs) => this.deliverOne(orgId, d, secs),
+          markDelivered: (a) => withTenant(tenant, orgId, (tx) => markDeliveryDelivered(tx, a)),
+          scheduleRetry: (a) => withTenant(tenant, orgId, (tx) => scheduleDeliveryRetry(tx, a)),
+          markTerminal: (a) =>
+            withTenant(tenant, orgId, (tx) => markDeliveryTerminalFailure(tx, a)),
+          now: () => Date.now(),
+        }),
+      );
       // Re-arm target, read AFTER the drain's writes so it reflects the new pending/terminal states.
       return await withTenant(tenant, orgId, (tx) => nextDueAt(tx, destinationId));
     } finally {
@@ -196,17 +167,7 @@ export class DeliveryDO extends DurableObject<Env> {
             : undefined,
         now: () => Date.now(),
       },
-      {
-        orgId,
-        endpointId: d.endpointId,
-        dedupKey: d.dedupKey,
-        url: d.url,
-        headers: d.headers,
-        signing:
-          secrets.length > 0
-            ? { webhookId: d.id, timestamp: Math.floor(Date.now() / 1000), secrets }
-            : undefined,
-      },
+      buildDeliverArgs(orgId, d, secrets, Date.now()),
     );
   }
 }

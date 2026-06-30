@@ -135,6 +135,29 @@ describe("rotateSigningSecret (zero-downtime overlap)", () => {
     const active = await activeFor(orgA, dest);
     expect(active).toHaveLength(2); // still only {active, retiring} — the oldest was revoked
   });
+
+  it("writes an in-tx audit row (signing_secret.rotated) when an audit key is supplied", async () => {
+    const auditKey = await importAuditKey(new Uint8Array(32).fill(4));
+    const dest = (
+      await createReplayDestination(app, {
+        orgId: orgA,
+        url: "https://rotate-audit.example.com/in",
+      })
+    ).id;
+    await createSigningSecret(app, { orgId: orgA, destinationId: dest }, store);
+    const rotated = await rotateSigningSecret(app, { orgId: orgA, destinationId: dest }, store, {
+      auditKey,
+      actor: null,
+    });
+    const rows = await withTenant(
+      app,
+      orgA,
+      (tx) => tx<{ target: string }[]>`
+        select target from audit_log
+        where org_id = ${orgA} and action = 'signing_secret.rotated' and target = ${rotated.keyId}`,
+    );
+    expect(rows).toHaveLength(1); // a credential mutation must leave a tamper-evident audit entry
+  });
 });
 
 describe("listSigningSecrets (metadata only)", () => {

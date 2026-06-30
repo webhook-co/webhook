@@ -31,15 +31,17 @@ let app: Sql;
 let orgId: string;
 let endpointId: string;
 
-async function seedEvent(): Promise<string> {
+// Seed an event under a tenant. Defaults to the module's org/endpoint; pass explicit ones (e.g. for org B)
+// so the cross-org isolation test reuses this single column-list instead of duplicating the insert inline.
+async function seedEvent(forOrg = orgId, forEndpoint = endpointId): Promise<string> {
   const id = newId();
-  await withTenant(app, orgId, async (tx) => {
+  await withTenant(app, forOrg, async (tx) => {
     await tx`
       insert into events
         (id, org_id, endpoint_id, payload_r2_key, payload_bytes, content_type, headers,
          dedup_key, dedup_strategy, provider, verified)
       values
-        (${id}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${id}`}, ${10},
+        (${id}, ${forOrg}, ${forEndpoint}, ${`org/${forOrg}/ep/${forEndpoint}/${id}`}, ${10},
          ${"application/json"}, ${tx.json([["webhook-id", "in_1"]])}, ${newId()}, ${"content_hash"},
          ${"stripe"}, ${true})`;
   });
@@ -60,13 +62,16 @@ async function seedDelivery(
 ): Promise<string> {
   const id = newId();
   const eventId = over.eventId ?? (await seedEvent());
+  // An EXPLICIT `nextRetryAt: null` must insert a genuine SQL NULL (a never-scheduled queued row) — `??`
+  // would coerce it back to epoch and mask the migration-mandated "null next_retry_at counts as due" path.
+  const nextRetryAt = "nextRetryAt" in over ? over.nextRetryAt : new Date(0);
   await withTenant(app, orgId, async (tx) => {
     await tx`
       insert into delivery_attempts
         (id, org_id, event_id, destination_id, target, status, attempt, next_retry_at, created_at)
       values
         (${id}, ${orgId}, ${eventId}, ${destinationId}, ${"auto"}, ${over.status ?? "queued"},
-         ${over.attempt ?? 1}, ${over.nextRetryAt ?? new Date(0)}, ${over.createdAt ?? new Date()})`;
+         ${over.attempt ?? 1}, ${nextRetryAt}, ${over.createdAt ?? new Date()})`;
   });
   return id;
 }
@@ -282,6 +287,45 @@ describe("transitions", () => {
     expect(row!.status).toBe("delivered"); // unchanged — the terminal row was not re-finalized
     expect((await failures(dest)).n).toBe(0); // tally not bumped by the no-op
   });
+
+  it("the status guard protects an ALREADY-terminal row from a stale success or retry (no resurrection / no tally reset)", async () => {
+    const dest = (await createReplayDestination(app, { orgId, url: "https://dt.example.com/in" }))
+      .id;
+    await withTenant(
+      app,
+      orgId,
+      (tx) => tx`update replay_destinations set consecutive_failures = 5 where id = ${dest}`,
+    );
+    const dead = await seedDelivery(dest, { status: "dead", attempt: 8 });
+    // a stale success must NOT flip dead→delivered NOR reset the auto-disable tally to 0
+    await withTenant(app, orgId, (tx) =>
+      markDeliveryDelivered(tx, { id: dead, destinationId: dest, attempt: 8, statusCode: 200 }),
+    );
+    const blocked = await seedDelivery(dest, { status: "blocked", attempt: 1 });
+    // a stale retry must NOT re-open a terminal (blocked) row back to pending
+    await withTenant(app, orgId, (tx) =>
+      scheduleDeliveryRetry(tx, {
+        id: blocked,
+        nextAttempt: 2,
+        nextRetryAt: new Date(),
+        statusCode: 500,
+        error: "stale",
+      }),
+    );
+    const rows = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ id: string; status: string }[]>`
+        select id, status from delivery_attempts where id in (${dead}, ${blocked})`,
+    );
+    expect(new Map(rows.map((r) => [r.id, r.status]))).toEqual(
+      new Map([
+        [dead, "dead"],
+        [blocked, "blocked"],
+      ]),
+    );
+    expect((await failures(dest)).n).toBe(5); // tally untouched — the stale success did not reset it
+  });
 });
 
 describe("isDestinationOrdered", () => {
@@ -345,5 +389,68 @@ describe("nextDueAt", () => {
     await seedDelivery(dest, { status: "queued", createdAt: new Date(Date.now() - 5_000) });
     const due = await withTenant(app, orgId, (tx) => nextDueAt(tx, dest));
     expect(due!.getTime()).toBeCloseTo(headDue.getTime(), -2); // the head's 60s-out time, not now()
+  });
+});
+
+describe("due predicate — consumer contracts (migration 0027)", () => {
+  it("a genuinely-NULL next_retry_at (a never-scheduled queued row) counts as due now", async () => {
+    // The migration mandates: the due-query MUST treat a null next_retry_at as due. seedDelivery normally
+    // defaults to epoch, so this pins the actual `next_retry_at is null` / coalesce(...,now()) clauses.
+    const dest = (await createReplayDestination(app, { orgId, url: "https://dn.example.com/in" }))
+      .id;
+    const id = await seedDelivery(dest, { status: "queued", nextRetryAt: null });
+    expect(
+      (await withTenant(app, orgId, (tx) => listDueDeliveries(tx, dest))).map((d) => d.id),
+    ).toEqual([id]);
+    const due = await withTenant(app, orgId, (tx) => nextDueAt(tx, dest));
+    expect(due!.getTime()).toBeCloseTo(Date.now(), -3); // ~now
+  });
+
+  it("a SOFT-DELETED destination (deleted_at, distinct from disabled_at) drops from the due-list + next-due", async () => {
+    const dest = (await createReplayDestination(app, { orgId, url: "https://dd.example.com/in" }))
+      .id;
+    await seedDelivery(dest, { status: "queued" });
+    expect(await withTenant(app, orgId, (tx) => listDueDeliveries(tx, dest))).toHaveLength(1);
+    await withTenant(
+      app,
+      orgId,
+      (tx) => tx`update replay_destinations set deleted_at = now() where id = ${dest}`,
+    );
+    expect(await withTenant(app, orgId, (tx) => listDueDeliveries(tx, dest))).toHaveLength(0);
+    expect(await withTenant(app, orgId, (tx) => nextDueAt(tx, dest))).toBeNull();
+  });
+
+  it("tenant isolation: another org's due delivery never surfaces in the due-list or next-due (RLS + join guards)", async () => {
+    // org A's own destination + due delivery (control).
+    const destA = (await createReplayDestination(app, { orgId, url: "https://ta.example.com/in" }))
+      .id;
+    const idA = await seedDelivery(destA, { status: "queued" });
+
+    // a SECOND org with its own endpoint, destination, event, and a due delivery — seeded under org B's RLS.
+    const orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "OrgB" })).id;
+    const endpointB = (await createEndpoint(app, { orgId: orgB, name: "epB" }, hasher)).id;
+    const destB = (
+      await createReplayDestination(app, { orgId: orgB, url: "https://tb.example.com/in" })
+    ).id;
+    const eventB = await seedEvent(orgB, endpointB); // reuse the helper — no duplicated events column-list
+    const deliveryB = newId();
+    await withTenant(app, orgB, async (tx) => {
+      await tx`
+        insert into delivery_attempts
+          (id, org_id, event_id, destination_id, target, status, attempt, next_retry_at, created_at)
+        values
+          (${deliveryB}, ${orgB}, ${eventB}, ${destB}, ${"auto"}, ${"queued"}, ${1}, ${new Date(0)}, ${new Date()})`;
+    });
+
+    // org A querying org B's destination id sees nothing (RLS gates delivery_attempts + the event/dest joins).
+    expect(await withTenant(app, orgId, (tx) => listDueDeliveries(tx, destB))).toHaveLength(0);
+    expect(await withTenant(app, orgId, (tx) => nextDueAt(tx, destB))).toBeNull();
+    // and each org sees only its OWN delivery.
+    expect(
+      (await withTenant(app, orgId, (tx) => listDueDeliveries(tx, destA))).map((d) => d.id),
+    ).toEqual([idA]);
+    expect(
+      (await withTenant(app, orgB, (tx) => listDueDeliveries(tx, destB))).map((d) => d.id),
+    ).toEqual([deliveryB]);
   });
 });

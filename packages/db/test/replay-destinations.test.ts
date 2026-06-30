@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
 
 import type { AuthContext } from "@webhook-co/contract";
-import { importAuditKey, LocalKmsProvider, SecretStore } from "@webhook-co/shared";
+import {
+  importAuditKey,
+  LocalKmsProvider,
+  SecretStore,
+  type SecretSealer,
+} from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
@@ -10,6 +15,7 @@ import { createOrg } from "../src/orgs";
 import {
   createReplayDestination,
   createReplayDestinationHandlers,
+  createReplayDestinationWithSigningSecret,
   listReplayDestinations,
   softDeleteReplayDestination,
 } from "../src/replay-destinations";
@@ -66,6 +72,59 @@ describe("createReplayDestination + listReplayDestinations", () => {
     expect(again.id).toBe(first.id);
     const matches = (await listReplayDestinations(app, orgA)).filter((x) => x.url === url);
     expect(matches).toHaveLength(1);
+  });
+
+  it("createReplayDestinationWithSigningSecret rolls back the destination when sealing fails (no orphan that would deliver UNSIGNED)", async () => {
+    const auditKey = await importAuditKey(new Uint8Array(32).fill(7));
+    const url = `https://sealfail-${randomUUID().slice(0, 6)}.example.com/in`;
+    const throwingSealer: SecretSealer = {
+      sealString: async () => {
+        throw new Error("kms unavailable");
+      },
+    };
+    await expect(
+      createReplayDestinationWithSigningSecret(app, { orgId: orgA, url }, throwingSealer, {
+        auditKey,
+        actor: null,
+      }),
+    ).rejects.toThrow();
+    // the destination insert and the secret mint share one tx — a seal failure must leave NEITHER behind.
+    expect((await listReplayDestinations(app, orgA)).filter((x) => x.url === url)).toHaveLength(0);
+  });
+
+  it("createReplayDestinationWithSigningSecret idempotent re-add reveals NO new secret and mints NO second key", async () => {
+    const auditKey = await importAuditKey(new Uint8Array(32).fill(7));
+    const url = `https://idem-sign-${randomUUID().slice(0, 6)}.example.com/in`;
+    const first = await createReplayDestinationWithSigningSecret(
+      app,
+      { orgId: orgA, url },
+      sealer,
+      {
+        auditKey,
+        actor: null,
+      },
+    );
+    expect(first.signingSecret).toBeDefined(); // first registration reveals the secret once
+    const again = await createReplayDestinationWithSigningSecret(
+      app,
+      { orgId: orgA, url },
+      sealer,
+      {
+        auditKey,
+        actor: null,
+      },
+    );
+    expect(again.signingSecret).toBeUndefined(); // a re-add does NOT re-reveal (anti double-reveal)
+    expect(again.record.id).toBe(first.record.id);
+    const [count] = await withTenant(
+      app,
+      orgA,
+      (tx) =>
+        tx<
+          { n: number }[]
+        >`select count(*)::int as n from signing_keys where destination_id = ${first.record.id}`,
+    );
+    expect(count!.n).toBe(1); // exactly one signing key — no double-mint
   });
 
   it("writes an in-tx audit row when an audit key is supplied", async () => {
