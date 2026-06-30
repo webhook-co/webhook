@@ -33,9 +33,11 @@ function urlVariants(rawUrl: string): string[] {
 }
 
 export function makeTwilioAdapter(): VerifyAdapter {
-  const tolerance = PROVIDER_CONFIGS.twilio.toleranceSeconds;
+  // Twilio keeps its form-mode config row (PROVIDER_CONFIGS is partial; twilio is always present).
+  const formConfig = PROVIDER_CONFIGS.twilio!;
+  const tolerance = formConfig.toleranceSeconds;
   // Form mode delegates to the shipped config-driven recipe (url + sortedFormFields).
-  const formAdapter = makeHmacAdapter(PROVIDER_CONFIGS.twilio);
+  const formAdapter = makeHmacAdapter(formConfig);
   // JSON mode signs the FULL URL only (no form-param tail), HMAC-SHA1/base64.
   const urlOnlyAdapter = makeHmacAdapter({
     slug: "twilio",

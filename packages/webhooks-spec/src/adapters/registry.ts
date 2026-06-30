@@ -15,10 +15,14 @@ import { makeHmacAdapter } from "./factory";
 export type AdapterScheme = Exclude<WebhookScheme, "unknown">;
 
 const REGISTRY: Readonly<Record<AdapterScheme, VerifyAdapter>> = Object.fromEntries(
-  PROVIDERS.map((slug) => [
-    slug,
-    BESPOKE_ADAPTERS[slug] ?? makeHmacAdapter(PROVIDER_CONFIGS[slug]),
-  ]),
+  PROVIDERS.map((slug) => {
+    const bespoke = BESPOKE_ADAPTERS[slug];
+    if (bespoke !== undefined) return [slug, bespoke];
+    const config = PROVIDER_CONFIGS[slug];
+    // Every slug has EITHER a config OR a bespoke adapter; neither is a config bug, caught at load.
+    if (config === undefined) throw new Error(`no adapter for provider "${slug}"`);
+    return [slug, makeHmacAdapter(config)];
+  }),
 ) as Record<AdapterScheme, VerifyAdapter>;
 
 /** The schemes for which an adapter exists, in detection-precedence order (= PROVIDERS). */
