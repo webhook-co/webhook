@@ -8,11 +8,13 @@
 import type { VerifyAdapter } from "../../adapter";
 import type { Provider } from "../config";
 import { makeContentfulAdapter } from "./contentful";
+import { makeDiscordAdapter } from "./discord";
 import { makeJiraConnectAdapter } from "./jira-connect";
 import { makeMessagebirdAdapter } from "./messagebird";
 import { makeMondayAdapter } from "./monday";
 import { makeNetlifyAdapter } from "./netlify";
 import { makePlivoAdapter } from "./plivo";
+import { makeTelnyxAdapter } from "./telnyx";
 import { makeTwilioAdapter } from "./twilio";
 import { makeVonageAdapter } from "./vonage";
 
@@ -27,4 +29,7 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   // Tier-3 HS256-JWT, origin-authenticated (no body-hash claim; Jira binds the request via qsh).
   monday: makeMondayAdapter(),
   jira_connect: makeJiraConnectAdapter(),
+  // Tier-3 ASYMMETRIC Ed25519 (public-key verify over timestamp+body).
+  discord: makeDiscordAdapter(),
+  telnyx: makeTelnyxAdapter(),
 };

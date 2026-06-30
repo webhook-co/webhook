@@ -113,6 +113,11 @@ export const PROVIDERS = [
   // (Jira's mainstream x-hub-signature system webhooks).
   "monday",
   "jira_connect",
+  // Tier-3 ASYMMETRIC — Ed25519 over `timestamp(+sep)+body`, the registered secret is the provider's
+  // PUBLIC key (crypto.subtle public-key verify, ./asymmetric). Discord (hex key+sig, no sep) and Telnyx
+  // (base64 key+sig, `|` sep).
+  "discord",
+  "telnyx",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
