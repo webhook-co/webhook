@@ -126,6 +126,12 @@ export const PROVIDERS = [
   // SSRF host-pinned + cached + fail-soft). Kinde: the body IS an RS256 JWT, key from the issuer's JWKS;
   // the registered "secret" is the operator's Kinde issuer URL (binds iss + pins the JWKS host).
   "kinde",
+  // RSA over an X.509 cert FETCHED from a message-supplied, host-pinned cert URL: PayPal (signs
+  // `id|time|webhookId|crc32(body)`; registered secret = the operator's webhook id) and Amazon SNS (SES +
+  // other AWS notifications; RSA over a Key\nValue\n canonical, SHA-1/256; registered secret = the TopicArn;
+  // SubscriptionConfirmation is surface-only).
+  "paypal",
+  "aws_sns",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);

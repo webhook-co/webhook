@@ -34,20 +34,21 @@ export async function verifyEd25519(
 }
 
 /**
- * Verify an RSASSA-PKCS1-v1_5 + SHA-256 signature. `spkiDer` is the public key as SubjectPublicKeyInfo DER
- * bytes; `signature` is the raw signature bytes (RSA signatures carry no encoding wrapper). Returns false on
- * any error (bad key/sig) — never throws.
+ * Verify an RSASSA-PKCS1-v1_5 signature under a chosen hash (`SHA-256` default, `SHA-1` for the legacy
+ * Amazon SNS SignatureVersion 1). `spkiDer` is the public key as SubjectPublicKeyInfo DER bytes; `signature`
+ * is the raw RSA signature bytes (no encoding wrapper). Returns false on any error — never throws.
  */
-export async function verifyRsaPkcs1Sha256(
+export async function verifyRsaPkcs1(
   spkiDer: Uint8Array,
   message: Uint8Array,
   signature: Uint8Array,
+  hash: "SHA-256" | "SHA-1" = "SHA-256",
 ): Promise<boolean> {
   try {
     const key = await crypto.subtle.importKey(
       "spki",
       spkiDer,
-      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      { name: "RSASSA-PKCS1-v1_5", hash },
       false,
       ["verify"],
     );
@@ -55,6 +56,15 @@ export async function verifyRsaPkcs1Sha256(
   } catch {
     return false;
   }
+}
+
+/** RSASSA-PKCS1-v1_5 + SHA-256 (the common case — Wise, PayPal, SNS v2). */
+export function verifyRsaPkcs1Sha256(
+  spkiDer: Uint8Array,
+  message: Uint8Array,
+  signature: Uint8Array,
+): Promise<boolean> {
+  return verifyRsaPkcs1(spkiDer, message, signature, "SHA-256");
 }
 
 /**
