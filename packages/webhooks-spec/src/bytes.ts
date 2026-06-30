@@ -124,3 +124,8 @@ export async function hmacSha256(secret: Uint8Array, message: Uint8Array): Promi
   const mac = await crypto.subtle.sign("HMAC", key, message);
   return new Uint8Array(mac);
 }
+
+/** Compute the SHA-256 digest of `data` and return the raw 32 hash bytes (e.g. Twilio's bodySHA256). */
+export async function sha256(data: Uint8Array): Promise<Uint8Array> {
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+}
