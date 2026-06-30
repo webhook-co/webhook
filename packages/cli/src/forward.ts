@@ -1,3 +1,5 @@
+import { filterDeliveryHeaders } from "@webhook-co/shared";
+
 import { LOOPBACK_HOSTS } from "./api-client.js";
 import { InvalidForwardUrlError } from "./errors.js";
 
@@ -7,29 +9,12 @@ import { InvalidForwardUrlError } from "./errors.js";
 // fidelity). The target MUST be loopback http(s) — a captured payload + its signature must never be
 // sent off the machine.
 
-// Hop-by-hop + length/host headers the fetch must own; everything else (incl. the webhook-* signature
-// headers) is forwarded verbatim. RFC 7230 §6.1 hop-by-hop set + host/content-length.
-const DROP_HEADERS = new Set([
-  "host",
-  "content-length",
-  "connection",
-  "keep-alive",
-  "transfer-encoding",
-  "te",
-  "trailer",
-  "upgrade",
-  "proxy-authenticate",
-  "proxy-authorization",
-]);
-
-/** Filter captured [name,value] pairs for forwarding: drop hop-by-hop/host/length, keep the rest. */
-export function filterForwardHeaders(captured: readonly (readonly [string, string])[]): Headers {
-  const out = new Headers();
-  for (const [name, value] of captured) {
-    if (!DROP_HEADERS.has(name.toLowerCase())) out.append(name, value);
-  }
-  return out;
-}
+/**
+ * Filter captured [name,value] pairs for forwarding: drop hop-by-hop/host/length, keep the rest. The
+ * policy is single-sourced in @webhook-co/shared (filterDeliveryHeaders) so the loopback forwarder here
+ * and the engine's server-side remote delivery (ADR-0081) can't drift.
+ */
+export const filterForwardHeaders = filterDeliveryHeaders;
 
 /** Validate a --forward target: http(s):// at a loopback host. Throws InvalidForwardUrlError otherwise. */
 export function parseForwardTarget(raw: string): URL {
