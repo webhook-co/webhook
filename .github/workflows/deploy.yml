@@ -74,12 +74,39 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/setup
+      - name: Migration guard (auto-deploy must not outrun a manual migration)
+        id: migguard
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          # Migrations are applied MANUALLY (dbmate up as webhook_owner), decoupled from this CD. If a push
+          # changes a migration, the new code may depend on a prod schema that isn't applied yet (e.g. the
+          # engine's ingest_event arity, getEvent's columns). Skip the AUTO deploy and require an explicit
+          # workflow_dispatch AFTER the migration is applied — so new code never runs against an un-migrated
+          # prod schema. (Prevents the S8 Slice 1 #300 / S3 #299 gap, where code deployed before its migration.)
+          # FAIL CLOSED: if the compare API can't be reached, block — recovery is the same workflow_dispatch,
+          # so a transient API error can never let a migration-bearing change auto-deploy past the guard.
+          if ! changed=$(gh api "repos/${REPO}/compare/${BEFORE_SHA}...${AFTER_SHA}" --jq '.files[].filename'); then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Auto-deploy skipped (migration check failed)::Could not query the compare API to check for migration changes — blocking fail-safe. Confirm prod migrations are applied, then deploy via Run workflow (workflow_dispatch)."
+          elif printf '%s\n' "$changed" | grep -qE '^packages/db/db/migrations/.+\.sql$'; then
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            echo "::warning title=Auto-deploy skipped (migration change)::Apply the new migration to prod FIRST (dbmate up as webhook_owner), then deploy via Run workflow (workflow_dispatch). Skipped so new code never runs against an un-migrated prod schema."
+          else
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Generate prod wrangler configs (overlay)
         run: node scripts/gen-wrangler-prod.mjs
       - name: Deploy production (engine / api / mcp)
         # main-only: a push to main, or a workflow_dispatch with main selected. Without the ref guard a
         # dispatch from a feature branch would ship unreviewed code straight to prod — keep the gate real.
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        # The migration guard blocks a PUSH that changed a migration (workflow_dispatch bypasses it, since
+        # the operator runs that explicitly after applying the migration).
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.migguard.outputs.blocked != 'true'
         run: |
           for app in engine api mcp; do
             echo "::group::deploy $app"
