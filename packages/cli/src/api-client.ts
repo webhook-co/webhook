@@ -16,14 +16,19 @@ import {
   replayDestinationsCreate as replayDestinationsCreateCap,
   replayDestinationsDelete as replayDestinationsDeleteCap,
   replayDestinationsList as replayDestinationsListCap,
+  replayDestinationsListSigningSecrets as replayDestinationsListSigningSecretsCap,
+  replayDestinationsRotateSigningSecret as replayDestinationsRotateSigningSecretCap,
   type AddedProviderSecret,
   type AuthContext,
   type CapabilityError,
   type CreatedEndpoint,
+  type CreatedReplayDestination,
   type DeletedEndpoint,
   type ProviderSecretSummary,
   type ReplayDestinationDeleted,
   type RevokedProviderSecret,
+  type RotatedSigningSecret,
+  type SigningSecretMetadataView,
   type Target,
 } from "@webhook-co/contract";
 import {
@@ -214,11 +219,23 @@ export interface ApiClient {
    * structurally validated; the canonical stored form is returned. A re-add of a live URL returns the
    * existing entry (idempotent server-side).
    */
-  replayDestinationsCreate(input: { url: string; label?: string }): Promise<ReplayDestination>;
+  replayDestinationsCreate(input: {
+    url: string;
+    label?: string;
+  }): Promise<CreatedReplayDestination>;
   /** The org's live replay-destination allowlist (`GET /v1/replay-destinations`). Not paginated. */
   replayDestinationsList(): Promise<readonly ReplayDestination[]>;
   /** Remove (soft-delete) a replay destination (`DELETE /v1/replay-destinations/:id`). */
   replayDestinationsDelete(destinationId: string): Promise<ReplayDestinationDeleted>;
+  /**
+   * Rotate a destination's Standard Webhooks signing secret (S3 Slice 2), revealing a fresh `whsec_` once
+   * (`POST /v1/replay-destinations/:id/signing-secret`). The prior key enters a bounded grace overlap.
+   */
+  replayDestinationsRotateSigningSecret(destinationId: string): Promise<RotatedSigningSecret>;
+  /** A destination's signing-secret metadata (`GET /v1/replay-destinations/:id/signing-secrets`). */
+  replayDestinationsListSigningSecrets(
+    destinationId: string,
+  ): Promise<readonly SigningSecretMetadataView[]>;
 }
 
 export interface ApiClientDeps {
@@ -434,11 +451,12 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       );
       return parseOrThrow(eventsReplayCap.output, json, "replay");
     },
-    async replayDestinationsCreate(input): Promise<ReplayDestination> {
+    async replayDestinationsCreate(input): Promise<CreatedReplayDestination> {
       const body: Record<string, unknown> = { url: input.url };
       if (input.label !== undefined) body.label = input.label;
       // idempotent=true: a re-add of a live URL returns the SAME existing row server-side, so retrying a
-      // transient failure is harmless (no duplicate).
+      // transient failure is harmless (no duplicate). On a re-add the signingSecret is omitted (the secret
+      // was revealed at first create) — use rotate-secret for a fresh one.
       const json = await postJson("/v1/replay-destinations", body, true);
       return parseOrThrow(replayDestinationsCreateCap.output, json, "replay destination");
     },
@@ -459,6 +477,24 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         await deleteJson(path, false),
         "removed destination",
       );
+    },
+    async replayDestinationsRotateSigningSecret(destinationId): Promise<RotatedSigningSecret> {
+      const path = `/v1/replay-destinations/${encodeURIComponent(destinationId)}/signing-secret`;
+      // idempotent=false: each call MINTS a new secret (retiring the prior), so a blind retry after a lost
+      // response would rotate twice. The caller surfaces the failure rather than re-sending.
+      const json = await postJson(path, {}, false);
+      return parseOrThrow(replayDestinationsRotateSigningSecretCap.output, json, "signing secret");
+    },
+    async replayDestinationsListSigningSecrets(
+      destinationId,
+    ): Promise<readonly SigningSecretMetadataView[]> {
+      const path = `/v1/replay-destinations/${encodeURIComponent(destinationId)}/signing-secrets`;
+      const { items } = parseOrThrow(
+        replayDestinationsListSigningSecretsCap.output,
+        await getJson(path),
+        "signing secrets",
+      );
+      return items;
     },
     async eventsGetPayload(eventId): Promise<{ contentType: string | null; body: Uint8Array }> {
       const path = `/v1/events/${encodeURIComponent(eventId)}/payload`;

@@ -1,8 +1,15 @@
-import { payloadR2Key } from "@webhook-co/shared";
+import {
+  generateSigningSecret,
+  LocalKmsProvider,
+  payloadR2Key,
+  SecretStore,
+  standardWebhooksAdapter,
+} from "@webhook-co/shared";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   guardedDeliver,
+  makeSignDelivery,
   resolveViaDoh,
   type DeliverArgs,
   type DeliverDeps,
@@ -136,6 +143,93 @@ describe("guardedDeliver — connect-time SSRF guard", () => {
     const r = await guardedDeliver(d, ARGS);
     expect(r.outcome).toBe("failed");
     expect((d as ReturnType<typeof deps>).fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("guardedDeliver — Standard Webhooks signing (S3 Slice 2)", () => {
+  const SIGNING = { webhookId: "att_1", timestamp: 1700000000, secrets: [] as never[] };
+  // A fake sign dep: returns a fixed (multi-sig) header set; the unseal+sign byte-correctness is proven
+  // separately by makeSignDelivery + the PR1 signer KATs. Here we test the header injection + strip wiring.
+  function signingDeps(over: Partial<DeliverDeps> = {}) {
+    const signMock = vi.fn(async () => ({
+      "webhook-id": "msg_signed",
+      "webhook-timestamp": "1700000000",
+      "webhook-signature": "v1,AAA v1,BBB",
+    }));
+    const base = deps(over);
+    return { ...base, sign: signMock as unknown as DeliverDeps["sign"], signMock };
+  }
+  const sentHeaders = (d: { fetchMock: ReturnType<typeof vi.fn> }): Headers =>
+    (d.fetchMock.mock.calls[0]![1] as { headers: Headers }).headers;
+
+  it("re-signs: strips inbound signature headers + sets ours, signing over the exact payload bytes", async () => {
+    const d = signingDeps();
+    const args: DeliverArgs = {
+      ...ARGS,
+      headers: [
+        ["Webhook-Id", "inbound_msg"],
+        ["Webhook-Signature", "v1,INBOUND"],
+        ["Stripe-Signature", "t=1,v1=x"],
+        ["Content-Type", "application/json"],
+      ],
+      signing: SIGNING,
+    };
+    const r = await guardedDeliver(d, args);
+    expect(r.outcome).toBe("delivered");
+    // signed over the R2 payload bytes (not a re-encode)
+    expect(new TextDecoder().decode(d.signMock.mock.calls[0]![0]!.body)).toBe('{"hello":"world"}');
+    const sent = sentHeaders(d);
+    expect(sent.get("webhook-id")).toBe("msg_signed");
+    expect(sent.get("webhook-timestamp")).toBe("1700000000");
+    expect(sent.get("webhook-signature")).toBe("v1,AAA v1,BBB");
+    expect(sent.get("stripe-signature")).toBeNull(); // inbound provider signature stripped
+    expect(sent.get("content-type")).toBe("application/json"); // non-signature headers preserved
+  });
+
+  it("NEVER delivers unsigned when signing was requested but fails — records 'failed', no POST", async () => {
+    const d = signingDeps();
+    d.signMock.mockRejectedValueOnce(new Error("unseal failed"));
+    const r = await guardedDeliver(d, { ...ARGS, signing: SIGNING });
+    expect(r.outcome).toBe("failed");
+    expect(d.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("delivers verbatim (no sign call) when signing is absent — the 1b behavior is preserved", async () => {
+    const d = signingDeps();
+    await guardedDeliver(d, ARGS);
+    expect(d.signMock).not.toHaveBeenCalled();
+    expect(sentHeaders(d).get("webhook-id")).toBe("msg_1"); // inbound header passes through unchanged
+  });
+});
+
+describe("makeSignDelivery — real unseal + sign round-trips through the verifier", () => {
+  it("unseals each sealed secret and emits a webhook-signature the standardWebhooksAdapter accepts", async () => {
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const secret = generateSigningSecret();
+    const context = { orgId: "o", endpointId: "dest", keyId: "k" };
+    const sealed = await store.sealString(secret, context);
+    const sign = makeSignDelivery(store);
+
+    const body = new TextEncoder().encode('{"x":1}');
+    const ts = Math.floor(new Date("2026-06-30T00:00:00Z").getTime() / 1000);
+    const headers = await sign({
+      webhookId: "att_1",
+      timestamp: ts,
+      body,
+      secrets: [{ sealed, context }],
+    });
+
+    const res = await standardWebhooksAdapter.verify({
+      rawBody: body,
+      headers: [
+        ["webhook-id", headers["webhook-id"]],
+        ["webhook-timestamp", headers["webhook-timestamp"]],
+        ["webhook-signature", headers["webhook-signature"]],
+      ],
+      secrets: [secret],
+      now: new Date(ts * 1000),
+    });
+    expect(res).toEqual({ ok: true, keyId: "secret_0", scheme: "standard_webhooks" });
   });
 });
 

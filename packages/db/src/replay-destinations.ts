@@ -13,14 +13,17 @@ import {
   replayDestinationsCreate,
   replayDestinationsDelete,
   replayDestinationsList,
+  replayDestinationsListSigningSecrets,
+  replayDestinationsRotateSigningSecret,
   type AnyCapability,
   type AuthContext,
 } from "@webhook-co/contract";
-import { canonicalizeAndValidateUrl, newId } from "@webhook-co/shared";
+import { canonicalizeAndValidateUrl, newId, type SecretSealer } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
 import type { CapabilityHandlers } from "./read-handlers";
+import { insertActiveSigningSecret, listSigningSecrets, rotateSigningSecret } from "./signing-keys";
 
 export type ReplayDestinationStatus = "active" | "revoked";
 
@@ -135,6 +138,56 @@ export async function createReplayDestination(
   });
 }
 
+/**
+ * Register a replay destination AND mint its one-time Standard Webhooks signing secret ATOMICALLY (S3
+ * Slice 2). The destination insert + the signing-secret insert commit in ONE tx, and the mint is gated
+ * on WINNING the on-conflict-do-nothing insert — so:
+ *   - a seal/mint failure rolls back the destination too (never an orphan destination with no secret,
+ *     which would silently deliver every replay UNSIGNED), and
+ *   - a concurrent create of the same new URL can't double-mint/double-reveal (only the inserter mints;
+ *     the loser resolves to the existing row with no secret).
+ * On an idempotent re-add of a live URL, `signingSecret` is undefined (the secret was revealed at first
+ * create — use rotateSigningSecret for a fresh one). The seal RPC runs inside the tx; acceptable for a
+ * low-frequency management op (NOT the delivery hot path, which never holds a tx across an effect).
+ */
+export async function createReplayDestinationWithSigningSecret(
+  app: Sql,
+  input: CreateReplayDestinationInput,
+  sealer: SecretSealer,
+  audit: ReplayDestinationAudit,
+): Promise<{ readonly record: ReplayDestinationRecord; readonly signingSecret?: string }> {
+  const id = newId();
+  return withTenant(app, input.orgId, async (tx) => {
+    const [inserted] = await tx<ReplayDestinationRow[]>`
+      insert into replay_destinations (id, org_id, url, label, last_validated_at)
+      values (${id}, ${input.orgId}, ${input.url}, ${input.label ?? null}, ${input.lastValidatedAt ?? null})
+      on conflict (org_id, url) where deleted_at is null do nothing
+      returning id, org_id, url, label, created_at, last_validated_at, deleted_at`;
+    if (inserted) {
+      await appendAuditEntry(tx, audit.auditKey, {
+        orgId: input.orgId,
+        actor: audit.actor,
+        action: "replay_destination.added",
+        target: id,
+      });
+      const minted = await insertActiveSigningSecret(tx, input.orgId, id, sealer);
+      await appendAuditEntry(tx, audit.auditKey, {
+        orgId: input.orgId,
+        actor: audit.actor,
+        action: "signing_secret.created",
+        target: minted.keyId,
+      });
+      return { record: toRecord(inserted), signingSecret: minted.secret };
+    }
+    const [existing] = await tx<ReplayDestinationRow[]>`
+      select id, org_id, url, label, created_at, last_validated_at, deleted_at
+      from replay_destinations
+      where org_id = ${input.orgId} and url = ${input.url} and deleted_at is null`;
+    if (!existing) throw new Error("replay_destinations conflict without an existing row");
+    return { record: toRecord(existing), signingSecret: undefined };
+  });
+}
+
 /** List an org's LIVE replay destinations (newest first) under its RLS context. */
 export async function listReplayDestinations(
   app: Sql,
@@ -193,6 +246,12 @@ export interface ReplayDestinationHandlerDeps {
   readonly tenant: Sql;
   /** Audit-chain HMAC key (AUDIT_CHAIN_HMAC_KEY) — signs the in-tx wha1/audit_log row. */
   readonly auditKey: CryptoKey;
+  /**
+   * The write-only seal seam (the engine's ProviderSecretSealer over the service binding in prod; a local
+   * SecretStore in tests). Used to seal a destination's minted Standard Webhooks signing secret at
+   * create/rotate (S3 Slice 2). api never holds the KEK — it can seal, never unseal.
+   */
+  readonly sealer: SecretSealer;
 }
 
 export function createReplayDestinationHandlers(
@@ -219,7 +278,11 @@ export function createReplayDestinationHandlers(
     // AUTHORITATIVE private-range check runs at DELIVERY time (the engine connect-time guard, 1b).
     const validated = canonicalizeAndValidateUrl(parsed.data.url);
     if (!validated.ok) throw new CapabilityFault("VALIDATION_ERROR", "invalid url");
-    return createReplayDestination(
+    // Create the destination AND mint its one-time signing secret atomically (S3 Slice 2): the secret
+    // mint commits in the same tx as the destination + is gated on winning the insert, so we can never
+    // leave a destination without a secret (silent-unsigned) nor double-mint on a concurrent create.
+    // signingSecret is omitted on an idempotent re-add (the secret was revealed at first create).
+    const { record, signingSecret } = await createReplayDestinationWithSigningSecret(
       deps.tenant,
       {
         orgId: ctx.orgId,
@@ -227,8 +290,10 @@ export function createReplayDestinationHandlers(
         label: parsed.data.label ?? null,
         lastValidatedAt: new Date(), // the structural check passed now (advisory)
       },
+      deps.sealer,
       { auditKey: deps.auditKey, actor: ctx.userId ?? null },
     );
+    return { ...record, signingSecret };
   });
 
   handlers.set(replayDestinationsList.name, async (ctx, input) => {
@@ -251,6 +316,41 @@ export function createReplayDestinationHandlers(
     );
     if (removed === null) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
     return removed;
+  });
+
+  handlers.set(replayDestinationsRotateSigningSecret.name, async (ctx, input) => {
+    ensureScope(ctx, replayDestinationsRotateSigningSecret);
+    const parsed = replayDestinationsRotateSigningSecret.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    // Resolve the destination FIRST so an unknown / cross-org / soft-deleted id is NOT_FOUND (not a 500
+    // from the signing_keys composite FK), and we never leak existence cross-org.
+    const dest = await withTenant(deps.tenant, ctx.orgId, (tx) =>
+      getReplayDestination(tx, parsed.data.destinationId),
+    );
+    if (!dest) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
+    const minted = await rotateSigningSecret(
+      deps.tenant,
+      { orgId: ctx.orgId, destinationId: parsed.data.destinationId },
+      deps.sealer,
+      { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+    );
+    return {
+      destinationId: parsed.data.destinationId,
+      keyId: minted.keyId,
+      signingSecret: minted.secret,
+    };
+  });
+
+  handlers.set(replayDestinationsListSigningSecrets.name, async (ctx, input) => {
+    ensureScope(ctx, replayDestinationsListSigningSecrets);
+    const parsed = replayDestinationsListSigningSecrets.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const dest = await withTenant(deps.tenant, ctx.orgId, (tx) =>
+      getReplayDestination(tx, parsed.data.destinationId),
+    );
+    if (!dest) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
+    const items = await listSigningSecrets(deps.tenant, ctx.orgId, parsed.data.destinationId);
+    return { items };
   });
 
   return handlers;

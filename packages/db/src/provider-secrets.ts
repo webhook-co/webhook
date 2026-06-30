@@ -20,6 +20,7 @@ import { type EncryptionContext, type SealedRecord, type SecretSealer } from "@w
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import { type CachedSealedSecret } from "./credential-cache";
+import { toSealedRecord } from "./sealed-secret";
 
 /** Usable rotation states for an endpoint's provider secret (revoked is excluded from reads). */
 export type ProviderSecretStatus = "active" | "retiring" | "revoked";
@@ -134,12 +135,9 @@ function toSealed(row: ProviderSecretRow): SealedProviderSecret {
     id: row.id,
     provider: row.provider,
     status: row.status,
-    sealed: {
-      ciphertext: row.secret_ciphertext,
-      nonce: row.enc_nonce,
-      wrapped: { wrappedDek: row.wrapped_dek, kekRef: row.kek_ref },
-      envelopeVersion: row.envelope_version,
-    },
+    // The envelope row→SealedRecord shape is single-sourced (toSealedRecord), shared with signing_keys
+    // so the inbound + outbound sealed-secret readers can't drift on the on-disk envelope encoding.
+    sealed: toSealedRecord(row),
     // The AAD context is rebuilt from the AUTHORITATIVE row columns, not the stored enc_context
     // jsonb: keyId === id (addProviderSecret binds it so), endpointId/orgId are columns. This keeps
     // the unseal AAD tied to the row's identity (a tampered/stale enc_context can't mis-bind it) and

@@ -121,6 +121,10 @@ describe("capability parity — current GA surfaces conformance", () => {
     b.api.add("replayDestinations.create");
     b.api.add("replayDestinations.list");
     b.api.add("replayDestinations.delete");
+    // The destination signing-secret management (ADR-0084, S3 Slice 2): same surface posture (api + cli;
+    // web-deferred; mcp-exempt — an agent must not mint/exfiltrate a signing secret).
+    b.api.add("replayDestinations.rotateSigningSecret");
+    b.api.add("replayDestinations.listSigningSecrets");
     // the dashboard surface (DB-direct server actions/reads): endpoints.* (slice 2) + events.list/get (slice 3a).
     for (const name of WEB_BOUND) b.web.add(name);
     return b;

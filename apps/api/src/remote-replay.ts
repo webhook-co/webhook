@@ -2,6 +2,7 @@ import { CapabilityFault, eventsReplay } from "@webhook-co/contract";
 import {
   claimDeliveryAttempt,
   finalizeDeliveryAttempt,
+  getActiveSigningSecrets,
   getEvent,
   getReplayDestination,
   serializeTarget,
@@ -9,7 +10,7 @@ import {
   type ReplayHandler,
   type Sql,
 } from "@webhook-co/db";
-import type { DeliverResult, DeliveryDispatcherRpc } from "@webhook-co/shared";
+import type { DeliverResult, DeliveryDispatcherRpc, DeliverySigning } from "@webhook-co/shared";
 
 // The api-side orchestration for the REMOTE replay arm (events.replay with {kind:"destination"}, ADR-0081).
 // The server delivers (unlike the localhost-tunnel arm, where the CLI POSTs and the api only records). This
@@ -53,6 +54,10 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
       const destination = await getReplayDestination(tx, target.destinationId);
       // NOT_FOUND (not a distinct code) so we don't leak whether the destination id exists cross-org.
       if (!destination) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
+      // The destination's active (+ retiring) signing secrets — SEALED; the api only ever relays
+      // ciphertext, the engine alone unseals to sign (S3 Slice 2). Read in the same tenant tx as the
+      // destination resolve. A destination with no secret (legacy/pre-Slice-2) yields [] → unsigned.
+      const signingSecrets = await getActiveSigningSecrets(tx, destination.id);
       const { attempt, won } = await claimDeliveryAttempt(tx, {
         orgId: ctx.orgId,
         eventId,
@@ -60,7 +65,7 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
         target: serializeTarget(target),
         idempotencyKey,
       });
-      return { event, destinationUrl: destination.url, attempt, won };
+      return { event, destinationUrl: destination.url, signingSecrets, attempt, won };
     });
 
     if (!claimed.won) {
@@ -88,6 +93,18 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
     // leaving the claim stuck 'pending'. Delivery is AT-LEAST-ONCE here: a fresh-key retry may re-send
     // (Standard Webhooks receivers dedup by webhook-id). Exactly-once + automatic reconciliation of an
     // in-doubt attempt is the delivery DO + DLQ (Slice 3/4); 1b is a deliberate one-shot replay.
+    // Re-sign with the destination's secret(s) so the receiver can verify webhook.co (S3 Slice 2). The
+    // webhook-id is THIS attempt's id (a fresh idempotency key per delivery). No secret on the destination
+    // ⇒ no `signing` ⇒ delivered unsigned (the 1b verbatim behavior). The engine unseals + signs.
+    const signing: DeliverySigning | undefined =
+      claimed.signingSecrets.length > 0
+        ? {
+            webhookId: claimed.attempt.id,
+            timestamp: Math.floor(Date.now() / 1000),
+            secrets: claimed.signingSecrets.map((s) => ({ sealed: s.sealed, context: s.context })),
+          }
+        : undefined;
+
     let result: DeliverResult;
     try {
       result = await deps.dispatcher.deliver({
@@ -96,6 +113,7 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
         dedupKey: claimed.event.dedupKey,
         url: claimed.destinationUrl,
         headers: claimed.event.headers,
+        signing,
       });
     } catch (err: unknown) {
       console.log(JSON.stringify({ message: "remote_replay.dispatch_failed", error: String(err) }));
