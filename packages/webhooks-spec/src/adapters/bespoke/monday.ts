@@ -28,13 +28,22 @@ export function makeMondayAdapter(): VerifyAdapter {
     if (!jws.ok) return jwsFailureToResult(jws.reason, "monday");
     const { payload, secretIndex } = jws;
 
-    // aud binds the token to OUR endpoint — a token minted for a different destination is rejected. We hold
-    // only the live request URL, so this is the same best-effort URL match as the other Tier-2 adapters: a
-    // non-canonical configured URL fails CLOSED (the ADR-0080 trade-off).
-    if (typeof payload.aud === "string") {
-      if (input.requestUrl === undefined || payload.aud !== input.requestUrl) {
-        return verificationFailed({ code: "SIGNATURE_MISMATCH" });
-      }
+    // aud is REQUIRED — it binds the token to OUR endpoint, so a token minted for a different destination
+    // (or one with no aud at all) is rejected, fail CLOSED. We hold only the live request URL, so this is
+    // the same best-effort URL match as the other Tier-2 adapters (a non-canonical configured URL fails
+    // closed — the ADR-0080 trade-off).
+    if (typeof payload.aud !== "string") {
+      return verificationFailed({ code: "SIGNATURE_MISMATCH" });
+    }
+    if (input.requestUrl === undefined) {
+      return verificationFailed({
+        code: "MALFORMED_SIGNATURE",
+        detail: "missing request url for aud",
+        scheme: "monday",
+      });
+    }
+    if (payload.aud !== input.requestUrl) {
+      return verificationFailed({ code: "SIGNATURE_MISMATCH" });
     }
 
     const stale = enforceJwtWindow(payload, toleranceSeconds, input.now);

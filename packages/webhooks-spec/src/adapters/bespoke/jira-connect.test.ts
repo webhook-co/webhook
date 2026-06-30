@@ -31,6 +31,12 @@ describe("jira qsh canonicalization (Atlassian published gold values)", () => {
   it("drops a jwt query param and canonicalizes an empty path to /", () => {
     expect(jiraCanonicalRequest("POST", "https://x.atlassian.net?jwt=abc&a=1")).toBe("POST&/&a=1");
   });
+
+  it("sorts repeated values RAW then encodes (Atlassian order), not encode-then-sort", () => {
+    // raw-sort ["/", "."] = [".", "/"] → encode → [".", "%2F"] → ".,%2F"; encode-then-sort would give
+    // "%2F,." (percent-encoding is not order-preserving). This is the F4 false-reject fix.
+    expect(jiraCanonicalRequest("GET", "https://x.atlassian.net/p?r=/&r=.")).toBe("GET&/p&r=.,%2F");
+  });
 });
 
 // Adapter end-to-end — mint a JWT whose qsh matches the request and verify through the registry.
@@ -86,10 +92,14 @@ describe("jira_connect bespoke adapter (Authorization: JWT, qsh-bound)", () => {
     });
   });
 
-  it("accepts a context token (qsh = 'context-qsh') without a request-hash compare", async () => {
+  it("rejects a context-qsh token on the webhook path (frontend tokens are not honored)", async () => {
+    // `context-qsh` marks browser-exposed frontend context tokens, never a webhook delivery — accepting
+    // one would broaden acceptance to more-exposed tokens with an unbound body (F1). It must NOT match the
+    // recomputed request qsh, so it is rejected.
     const token = await jiraJwt(SECRET, "context-qsh");
     const result = await getAdapterForScheme("jira_connect")!.verify(input(token));
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason.code).toBe("SIGNATURE_MISMATCH");
   });
 
   it("rejects a wrong sharedSecret with WRONG_SECRET", async () => {

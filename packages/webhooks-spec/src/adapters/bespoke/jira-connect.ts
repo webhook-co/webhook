@@ -33,14 +33,16 @@ function rfc3986Encode(s: string): string {
 }
 
 /**
- * Atlassian's canonical query string: RFC3986-encode each name + value, drop a `jwt` param, sort by name,
- * and for a repeated name join its (encoded, sorted) values with a LITERAL comma. Joined by `&`.
+ * Atlassian's canonical query string: drop a `jwt` param, sort names, and for a repeated name SORT ITS RAW
+ * VALUES then RFC3986-encode each and join with a LITERAL comma — atlassian-jwt sorts raw-then-encodes, and
+ * percent-encoding is not order-preserving, so encode-then-sort would diverge for some repeated values.
+ * Names sorted raw too. Pairs joined by `&`.
  */
 function canonicalQuery(params: URLSearchParams): string {
   const names = [...new Set(params.keys())].filter((n) => n !== "jwt").sort();
   return names
     .map((name) => {
-      const values = params.getAll(name).map(rfc3986Encode).sort();
+      const values = params.getAll(name).sort().map(rfc3986Encode);
       return `${rfc3986Encode(name)}=${values.join(",")}`;
     })
     .join("&");
@@ -92,32 +94,32 @@ export function makeJiraConnectAdapter(): VerifyAdapter {
     const stale = enforceJwtWindow(payload, toleranceSeconds, input.now);
     if (stale !== null) return stale;
 
-    // Request binding via qsh. A context token's literal "context-qsh" skips the request-hash compare; any
-    // other qsh must equal the recomputed hash of THIS request (method + path + sorted query). An absent
-    // qsh leaves the request unbound → reject. Body is not covered by qsh (documented above).
+    // Request binding via qsh — REQUIRED. The qsh must equal the recomputed hash of THIS request (method +
+    // path + sorted query). We deliberately do NOT honor a literal `context-qsh` here: that value marks
+    // browser-exposed FRONTEND context tokens (iframe / AP.context.getToken), never a webhook delivery —
+    // honoring it would broaden "verified Jira" to those more-exposed tokens with an unbound body. An
+    // absent qsh leaves the request unbound → reject. (qsh covers the request line, not the body.)
     const qsh = payload.qsh;
-    if (qsh !== "context-qsh") {
-      if (typeof qsh !== "string") {
-        return verificationFailed({ code: "SIGNATURE_MISMATCH" });
-      }
-      if (input.requestUrl === undefined) {
-        return verificationFailed({
-          code: "MALFORMED_SIGNATURE",
-          detail: "missing request url for qsh",
-          scheme: "jira_connect",
-        });
-      }
-      const computed = await jiraQsh(input.method ?? "POST", input.requestUrl);
-      if (computed === null) {
-        return verificationFailed({
-          code: "MALFORMED_SIGNATURE",
-          detail: "unparseable request url",
-          scheme: "jira_connect",
-        });
-      }
-      if (computed !== qsh.toLowerCase()) {
-        return verificationFailed({ code: "SIGNATURE_MISMATCH" });
-      }
+    if (typeof qsh !== "string") {
+      return verificationFailed({ code: "SIGNATURE_MISMATCH" });
+    }
+    if (input.requestUrl === undefined) {
+      return verificationFailed({
+        code: "MALFORMED_SIGNATURE",
+        detail: "missing request url for qsh",
+        scheme: "jira_connect",
+      });
+    }
+    const computed = await jiraQsh(input.method ?? "POST", input.requestUrl);
+    if (computed === null) {
+      return verificationFailed({
+        code: "MALFORMED_SIGNATURE",
+        detail: "unparseable request url",
+        scheme: "jira_connect",
+      });
+    }
+    if (computed !== qsh.toLowerCase()) {
+      return verificationFailed({ code: "SIGNATURE_MISMATCH" });
     }
 
     return verificationOk(`secret_${secretIndex}`, "jira_connect");

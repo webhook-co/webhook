@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCompactJws, verifyCompactHs } from "./jws";
+import { enforceJwtWindow, parseCompactJws, verifyCompactHs } from "./jws";
 
 // A0b — the compact-JWS primitive shared by the HS256 JWT providers (MessageBird-JWT, Netlify, Vonage,
 // Monday, Jira-Connect). It only does the JOSE mechanics: structural parse, alg gate (reject none /
@@ -95,5 +95,37 @@ describe("verifyCompactHs", () => {
   it("rejects malformed (non-JWS) input with malformed", async () => {
     const out = await verifyCompactHs("not-a-jws", [MB_SECRET]);
     expect(out).toEqual({ ok: false, reason: "malformed" });
+  });
+});
+
+describe("enforceJwtWindow", () => {
+  const NOW = new Date(1790000000 * 1000); // 1790000000 unix seconds
+
+  it("enforces a max-age ceiling from iat when exp is absent (no unbounded window) — F2 fix", () => {
+    const old = enforceJwtWindow({ iat: 1790000000 - 1000 }, 300, NOW); // 1000s old, no exp
+    expect(old?.ok).toBe(false);
+    if (old && !old.ok) expect(old.reason.code).toBe("TIMESTAMP_TOO_OLD");
+    expect(enforceJwtWindow({ iat: 1790000000 - 10 }, 300, NOW)).toBeNull(); // fresh iat-only → ok
+  });
+
+  it("prefers exp as the upper bound when present (an old iat with a valid exp passes)", () => {
+    expect(enforceJwtWindow({ iat: 1790000000 - 1000, exp: 1790000000 + 60 }, 300, NOW)).toBeNull();
+  });
+
+  it("rejects a not-yet-valid token (nbf in the future) as TIMESTAMP_IN_FUTURE", () => {
+    const future = enforceJwtWindow({ nbf: 1790000000 + 1000 }, 300, NOW);
+    expect(future?.ok).toBe(false);
+    if (future && !future.ok) expect(future.reason.code).toBe("TIMESTAMP_IN_FUTURE");
+  });
+
+  it("does not age-check a token carrying no temporal claims", () => {
+    expect(enforceJwtWindow({ foo: "bar" }, 300, NOW)).toBeNull();
+  });
+
+  it("falls back to real time on an Invalid-Date now (a NaN clock can't disable the window)", () => {
+    // exp far in the past + Invalid Date → must still reject (uses Date.now(), which is ~2026 >> exp).
+    const out = enforceJwtWindow({ exp: 1625479260 }, 300, new Date(NaN));
+    expect(out?.ok).toBe(false);
+    if (out && !out.ok) expect(out.reason.code).toBe("TIMESTAMP_TOO_OLD");
   });
 });

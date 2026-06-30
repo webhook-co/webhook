@@ -128,11 +128,13 @@ export async function verifyCompactHs(
 }
 
 /**
- * Enforce a JWT's freshness window against `toleranceSeconds`: reject if `now` is past `exp` (upper) or
- * before `nbf`/`iat` (lower) by more than the tolerance. The claims are OPTIONAL — providers vary (some
- * send nbf+exp, others only iat), and a missing/non-numeric claim is simply not enforced rather than
- * false-rejecting. An Invalid-Date `now` falls back to real time so a NaN clock can't silently DISABLE the
- * window (mirrors shared.ts enforceSkew). Returns a typed failure, or null if within the window.
+ * Enforce a JWT's freshness window against `toleranceSeconds`. The MAX-AGE (upper) anchor is `exp` if
+ * present, else `iat` — so an iat-only token (no exp) still has a replay CEILING (`now - iat > tolerance`
+ * → too old) instead of being accepted forever. The NOT-BEFORE (lower) anchor is `nbf` if present, else
+ * `iat`. All claims are OPTIONAL (a token carrying NO temporal claim is not age-checked here — its
+ * signature + body binding is the guarantee), but wherever an anchor exists it IS enforced. An Invalid-Date
+ * `now` falls back to real time so a NaN clock can't silently DISABLE the window (mirrors shared.ts
+ * enforceSkew). Returns a typed failure, or null if within the window.
  */
 export function enforceJwtWindow(
   payload: Readonly<Record<string, unknown>>,
@@ -141,23 +143,27 @@ export function enforceJwtWindow(
 ): VerificationResult | null {
   const nowMs = now?.getTime() ?? Date.now();
   const nowSec = Math.floor((Number.isFinite(nowMs) ? nowMs : Date.now()) / 1000);
-  const exp = payload.exp;
-  if (typeof exp === "number" && Number.isFinite(exp)) {
-    const skew = nowSec - exp;
-    if (skew > toleranceSeconds) {
-      return verificationFailed({ code: "TIMESTAMP_TOO_OLD", skewSeconds: skew, toleranceSeconds });
-    }
+  const finite = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) ? v : undefined;
+  const exp = finite(payload.exp);
+  const iat = finite(payload.iat);
+  const nbf = finite(payload.nbf);
+
+  const upper = exp ?? iat; // max-age anchor: explicit expiry, else issue time (never an unbounded ceiling)
+  if (upper !== undefined && nowSec - upper > toleranceSeconds) {
+    return verificationFailed({
+      code: "TIMESTAMP_TOO_OLD",
+      skewSeconds: nowSec - upper,
+      toleranceSeconds,
+    });
   }
-  const lower = typeof payload.nbf === "number" ? payload.nbf : payload.iat;
-  if (typeof lower === "number" && Number.isFinite(lower)) {
-    const skew = nowSec - lower;
-    if (skew < -toleranceSeconds) {
-      return verificationFailed({
-        code: "TIMESTAMP_IN_FUTURE",
-        skewSeconds: skew,
-        toleranceSeconds,
-      });
-    }
+  const lower = nbf ?? iat; // not-before anchor
+  if (lower !== undefined && nowSec - lower < -toleranceSeconds) {
+    return verificationFailed({
+      code: "TIMESTAMP_IN_FUTURE",
+      skewSeconds: nowSec - lower,
+      toleranceSeconds,
+    });
   }
   return null;
 }

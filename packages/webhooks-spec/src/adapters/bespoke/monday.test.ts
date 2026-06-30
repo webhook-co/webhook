@@ -78,6 +78,13 @@ describe("monday bespoke (bare HS256 JWT, aud-bound, origin-auth)", () => {
     if (!result.ok) expect(result.reason.code).toBe("SIGNATURE_MISMATCH");
   });
 
+  it("rejects a token with no aud claim (aud required) as SIGNATURE_MISMATCH", async () => {
+    const token = await mintHs256(SECRET, { accountId: 1, iat: 1789999900, exp: 1790000200 }); // no aud
+    const result = await getAdapterForScheme("monday")!.verify(input(token));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason.code).toBe("SIGNATURE_MISMATCH");
+  });
+
   it("rejects an expired token (now past exp + tolerance) as TIMESTAMP_TOO_OLD", async () => {
     const result = await getAdapterForScheme("monday")!.verify(
       input(await mondayToken(SECRET), { now: new Date(1790001000 * 1000) }),
