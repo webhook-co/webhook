@@ -32,10 +32,13 @@ These are durable and rarely change. They are not bolt-ons — design for them f
   both send and receive. Do not hand-roll signature schemes.
 - **Open-core boundary.** The open core is **Apache-2.0**; proprietary code is fenced into `ee/`.
   Open-core code must not depend on `ee/` code; self-host builds simply exclude `ee/`.
-- **Transparent pricing (qualitative).** Pricing stays transparent and predictable — no metering
-  bill-shock, with a soft-cap that pauses rather than surprises. This shapes engineering: keep
-  event metering accurate and single-dimension; never build hidden per-step counters. (Specific
-  prices, tiers, and cost figures are intentionally **not** in this public repo.)
+- **Transparent pricing (qualitative).** Pricing stays transparent and predictable —
+  **single-dimension (events), disclosed up front** (the billable unit — every captured request to an
+  endpoint — is stated at endpoint creation and on the pricing page), with a **soft-cap that pauses
+  rather than surprises**. No *surprise* billing: predictability comes from disclosure + alerts + pause,
+  not hidden counters. This shapes engineering: keep event metering accurate and single-dimension;
+  never build hidden per-step counters. (Specific prices, tiers, and cost figures are intentionally
+  **not** in this public repo.)
 
 ## Engineering guardrails (non-negotiable, for humans and agents)
 
