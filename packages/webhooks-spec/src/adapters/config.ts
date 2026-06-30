@@ -99,6 +99,14 @@ export const PROVIDERS = [
   // ── S2.2 coverage expansion (beyond the S2.1 HMAC set). ──
   // HMAC long-tail: Typeform — a Tier-1 raw-body HMAC-SHA256/base64 drop-in missed in the S2.1 sweep.
   "typeform",
+  // Tier-3 JWT (HS256 compact-JWS, bespoke ./bespoke on the jws primitive): MessageBird's current
+  // "Signature-JWT" scheme (signed claims + payload_hash/url_hash body+URL binding). Its legacy
+  // raw-HMAC scheme is deprecated in every SDK.
+  "messagebird",
+  // Tier-3 JWT, body bound by a single hex-SHA256 claim: Netlify (`X-Webhook-Signature`, `sha256` claim)
+  // and Vonage/Nexmo (`Authorization: Bearer`, `payload_hash` claim). Both HS256, secret verbatim utf8.
+  "netlify",
+  "vonage",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
