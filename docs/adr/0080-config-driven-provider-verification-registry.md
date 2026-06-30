@@ -1,7 +1,8 @@
-# ADR 0080 — Config-driven HMAC verification registry: 5 → 56 inbound providers
+# ADR 0080 — Config-driven HMAC verification registry: 5 → 62 inbound providers
 
 - status: accepted.
-- date: 2026-06-29
+- date: 2026-06-29 (amended 2026-06-30: the deferred Tier-2 long-tail was subsequently built/resolved —
+  56 → 62, see "status / outcome" + "the bespoke Tier-2 long-tail" below).
 - scope: `packages/webhooks-spec` (the verify engine + the provider registry) + `apps/engine` (the
   registered-provider selection + the request-context threading on the ingest hot path). No migration
   (the `provider` columns are free-form text; new slugs need no schema change). No new API/contract
@@ -73,8 +74,15 @@ would have rejected 100% of real webhooks).
 
 ## status / outcome
 
-**56 verifiable providers** (5 → 56). The config-driven registry is the durable home for inbound
-verification; a new HMAC provider is one config row.
+**62 verifiable providers** (5 → 62). The config-driven registry is the durable home for inbound
+verification; a new HMAC provider is one config row. The config model's clean sweet spot reached **56**;
+the remaining Tier-2 providers were then built — five more as **config rows on small engine extensions**
+(adyen/mailgun via a JSON-body signature source, mercado_pago via a `conditionalField` part, braintree
+via a `formField` source + `pipePairs` format + `sha1-secret` key derivation), and four/five via a
+**bespoke-adapter seam** (`adapters/bespoke/`) the registry prefers over the config-derived adapter for
+schemes a single HMAC config can't express (Twilio's runtime form/JSON modes, Contentful's dynamic
+canonical request, Plivo V3's stateful URL/query/body glue). `PROVIDER_CONFIGS` is now PARTIAL — a
+bespoke provider has no config row and the registry throws at load if a slug has neither.
 
 ## the URL-signing trade-off (W3a)
 
@@ -85,25 +93,33 @@ request URL) — the only value held (no per-secret stored notification URL). Fo
 which is the right posture for a best-effort Tier-2 adapter. A future hardening option is to thread the
 endpoint's configured URL rather than the reconstructed request URL.
 
-## deferred — the bespoke Tier-2 long-tail (8 providers)
+## the bespoke Tier-2 long-tail (resolved 56 → 62)
 
-The config-driven model's clean sweet spot ends at 56. The remaining Tier-2 providers each need a NEW
-engine primitive or a hand-written adapter, so they are tracked as a separate follow-up rather than
-forced into the declarative model:
+The config model's clean sweet spot ended at 56. The remaining Tier-2 providers each needed a new engine
+primitive or a hand-written adapter; all were subsequently built (or dropped), each doc-confirmed against
+the provider's official SDK/docs, often reproducing a published gold vector:
 
-- **mailgun** — the signature is a FORM FIELD (`signature`), not a header (needs a signature-from-body
-  source); Webhooks-2.0 nests it under `$.signature.*` (needs a JSON-path field).
-- **mercado_pago** — a per-field `lowercase(data.id)` transform + conditional segment omission.
-- **plivo V3** — fully bespoke: stateful `.`/`?` glue, URL re-normalization, multi-sig match-any, an
-  `-Ma-V3` main-account alt-key.
-- **twilio JSON mode** — a `bodySHA256` query-param-vs-`SHA256(body)` compare alongside the URL HMAC.
-- **contentful** — a canonical `[method, path, signed-headers, body]` string.
-- **adyen** — the signature is carried INSIDE the JSON body (`additionalData.hmacSignature`), a
-  hex-decoded key, and a colon-delimited field join.
-- **braintree** — `public_key|signature` pairs and a key derived as `SHA1(secret)`.
-- **messagebird** — a newline-joined message including `SHA256(body)`.
+- **adyen** — signature INSIDE the JSON body (`…additionalData.hmacSignature`), hex-decoded key,
+  colon-joined item fields. Built via a `signatureSource: jsonField` + `jsonField` message part. ✅
+- **mailgun** (JSON / Webhooks-2.0) — `$.signature.{timestamp,token,signature}`. A pure config row on the
+  Adyen JSON foundation. ✅ (legacy form-field mode deferred — modern Mailgun is JSON.)
+- **mercado_pago** — `id:<lower(data.id)>;request-id:<x-request-id>;ts:<ts>;` manifest with a `data.id`
+  lowercase + whole-segment omission. Built via a `conditionalField` message part. ✅
+- **braintree** — `public_key|signature` pairs in the `bt_signature` form field, key = `SHA1(secret)`
+  raw bytes. Built via a `formField` signature source + `pipePairs` format + `sha1-secret` derivation. ✅
+- **twilio JSON mode** — `base64(HMAC-SHA1(url incl. bodySHA256))` + a `SHA256(body)`-vs-`bodySHA256`
+  compare. A hand-written adapter (the bespoke seam) that delegates form mode to the config recipe. ✅
+- **contentful** — a canonical `METHOD\nPATH\nHEADERS\nBODY` with a DYNAMIC signed-headers set. A
+  hand-written adapter. ✅
+- **plivo V3** — stateful `?`/`.` URL+query+body glue, multi-sig match-any, an `-Ma-V3` main-account
+  alt-key. A hand-written adapter. ✅
+- **messagebird** — DROPPED: its current scheme is JWT (`MessageBird-Signature-JWT`, HS256), out of the
+  HMAC-message model (Tier-3); the legacy raw-HMAC scheme is deprecated in every SDK. ⛔
 
-Per-provider schemes are doc-confirmed and recorded for the follow-up.
+The bespoke seam: `adapters/bespoke/` ships hand-written `VerifyAdapter`s the registry prefers over the
+config-derived one (`BESPOKE_ADAPTERS[slug] ?? makeHmacAdapter(PROVIDER_CONFIGS[slug])`). The
+config-driven model still carries every provider it can; only the three runtime-branching / dynamic /
+stateful schemes (twilio JSON, contentful, plivo) are hand-written.
 
 ## relates
 
