@@ -39,3 +39,4 @@ export * from "./replay";
 export * from "./delivery";
 export * from "./replay-destinations";
 export * from "./signing-keys";
+export * from "./subscriptions";
