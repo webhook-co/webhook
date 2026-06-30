@@ -53,6 +53,7 @@ const fullEvent = {
   payloadR2Key: "r2/k",
   payloadBytes: 321,
   contentType: "application/json",
+  method: "POST",
   headers: [["content-type", "application/json"]],
   providerEventId: null,
   externalId: null,

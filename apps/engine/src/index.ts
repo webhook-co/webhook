@@ -415,10 +415,12 @@ export async function handleListenUpgrade(
 }
 
 /**
- * The wbhk.my router. GET / is the ONLY liveness probe; the /listen WebSocket upgrade is the CLI
- * tunnel; every other request is the ingest write path (handleIngest enforces POST + the rest). Owns
- * per-request DB-client lifecycle: build deps, delegate, and close() in a finally so a thrown handler
- * error never leaks a connection.
+ * The wbhk.my router. GET / is the SERVICE liveness probe (the bare apex, no token); the /listen
+ * WebSocket upgrade is the CLI tunnel; every other request is the ingest write path. handleIngest now
+ * accepts ALL standard verbs (accept-all-verbs, ADR-0085) — it captures each (recording the method) and
+ * answers a per-token GET/HEAD/OPTIONS with its own browser liveness response, distinct from this
+ * bare-apex GET /. Owns per-request DB-client lifecycle: build deps, delegate, and close() in a finally
+ * so a thrown handler error never leaks a connection.
  */
 export async function handleFetch(
   request: Request,

@@ -127,6 +127,8 @@ function toDetailItem(e: Event): EventDetailItem {
     verified: e.verified,
     payloadBytes: e.payloadBytes,
     contentType: e.contentType,
+    // Flows through to the client props; the dashboard renders it in S1 (recording it is this slice).
+    method: e.method,
     // Redact sensitive header values at the boundary — they never reach the client props (the UI reveals
     // them on demand via revealHeader). Non-sensitive values pass through inline. MUST stay order- and
     // length-preserving (a plain .map): the client reveals by array index, which revealHeader resolves

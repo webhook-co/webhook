@@ -89,12 +89,14 @@ describe("entity schemas", () => {
       payloadR2Key: "org/x/ep/y/abc",
       payloadBytes: 128,
       contentType: "application/json",
+      method: "POST",
       headers: [["content-type", "application/json"]],
       providerEventId: "evt_1",
       externalId: null,
       verification: { ok: true, keyId: "k1", scheme: "stripe" },
     });
     expect(event.verification).toEqual({ ok: true, keyId: "k1", scheme: "stripe" });
+    expect(event.method).toBe("POST");
   });
 
   it("accepts an EventSummary with a null provider", () => {

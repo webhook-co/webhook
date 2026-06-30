@@ -78,10 +78,13 @@ describe("handleFetch routing + lifecycle", () => {
     expect(f.closed()).toBe(1);
   });
 
-  it("a GET on a token path is NOT the health probe — it routes to ingest (405)", async () => {
+  it("a GET on a token path is NOT the bare-apex health probe — it routes to ingest (per-token liveness 200)", async () => {
     const f = fakeHandle();
     const res = await handleFetch(get("/whep_good"), bindings, () => Promise.resolve(f.handle));
-    expect(res.status).toBe(405); // ingest rejects non-POST; only GET / is health
+    expect(res.status).toBe(200); // accept-all-verbs: a token-path GET is captured + answered with liveness
+    const body = await res.text();
+    expect(body).toMatch(/live/i); // the per-token ingest liveness…
+    expect(body).not.toBe("webhook:engine ok"); // …NOT the bare-apex GET / health probe
     expect(f.closed()).toBe(1);
   });
 

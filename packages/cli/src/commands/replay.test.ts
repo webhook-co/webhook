@@ -39,6 +39,7 @@ const EVENT = {
   payloadR2Key: "org/x/ep/y/z",
   payloadBytes: BODY.byteLength,
   contentType: "application/json",
+  method: "POST",
   headers: [
     ["content-type", "application/json"],
     ["webhook-id", "msg_1"],
