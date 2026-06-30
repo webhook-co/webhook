@@ -37,6 +37,7 @@ const event: Event = {
   payloadR2Key: "r2/k",
   payloadBytes: 321,
   contentType: "application/json",
+  method: "POST",
   headers: [
     ["content-type", "application/json"],
     ["x-sig", "abc"],

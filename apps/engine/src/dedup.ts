@@ -3,7 +3,7 @@
 // not an SW-only column. First match wins:
 //   1. sw_webhook_id      — the Standard-Webhooks `webhook-id` header.
 //   2. provider_event_id  — a recognized provider's stable id (namespaced `<scheme>:<id>`).
-//   3. content_hash       — sha256(body) folded with a coarse time bucket (bounds the window).
+//   3. content_hash       — `<method>:sha256(body):bucket` (method-scoped, coarse time bucket).
 //
 // CRITICAL: id extraction reads a PARSED COPY and must NEVER mutate the raw bytes — verification
 // (a later slice) owns the exact captured bytes, and a single re-encoded byte breaks the provider
@@ -87,6 +87,7 @@ function extractProviderEventId(
 export async function deriveDedup(
   rawBody: Uint8Array,
   headers: Headers,
+  method: string,
   now: Date,
   bucketWidthMs: number,
 ): Promise<DerivedDedup> {
@@ -120,11 +121,15 @@ export async function deriveDedup(
     };
   }
 
-  // 3. content_hash + a coarse time bucket, folded into the key so a legitimately-identical body
-  //    sent in a later bucket isn't collapsed.
+  // 3. content_hash + a coarse time bucket + the HTTP method, all folded into the key. The bucket keeps
+  //    a legitimately-identical body in a LATER window distinct; the method keeps DIFFERENT verbs with
+  //    the same (often empty) body distinct — under accept-all-verbs a bodyless liveness GET, or an
+  //    empty-body PUT/DELETE, must not collide with a real empty-body POST and dedup-suppress it. Same
+  //    (method, body, bucket) is still a retry and collapses; a different verb is a distinct request and
+  //    is captured. (The id-based strategies above are verb-independent — a provider retries same-verb.)
   const dedupBucket = Math.floor(now.getTime() / bucketWidthMs);
   return {
-    dedupKey: `${bytesToHex(contentHash)}:${dedupBucket}`,
+    dedupKey: `${method}:${bytesToHex(contentHash)}:${dedupBucket}`,
     dedupStrategy: "content_hash",
     provider,
     providerEventId: null,

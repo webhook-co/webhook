@@ -65,6 +65,7 @@ function row(over: Partial<IngestEventInput> = {}): IngestEventInput {
     dedupBucket: null,
     verified: false,
     verification: null,
+    method: "POST",
     ...over,
   };
 }
@@ -225,5 +226,28 @@ describe("insertIngestEvent (webhook_ingest, full capture row)", () => {
       return tx<{ v: unknown }[]>`select verification as v from events where id = ${r.id}`;
     });
     expect(stored?.v).toBeNull();
+  });
+
+  it("records the captured method and round-trips it through getEvent (accept-all-verbs)", async () => {
+    const r = row({ method: "PUT" });
+    await insertIngestEvent(ingest, r);
+    const ev = await withTenant(app, orgId, (tx) => getEvent(tx, r.id));
+    expect(ev?.method).toBe("PUT");
+  });
+
+  it("a legacy-shape insert (no p_method) stores NULL and getEvent reads method:null without throwing", async () => {
+    // The 7-arg ingest_event call (the pre-accept-all-verbs / benchmark shape) leaves p_method at its
+    // default — so legacy rows have method NULL. EventSchema.method is nullable, so getEvent must parse
+    // them and never throw (the old-row read-safety the migration's nullable column guarantees).
+    const id = randomUUID();
+    await ingest`
+      select * from ingest_event(
+        ${id}::uuid, ${orgId}::uuid, ${endpointId}::uuid,
+        ${`org/${orgId}/ep/${endpointId}/${id}`}, ${0}::bigint,
+        ${`content_hash:${randomUUID()}`}, ${"content_hash"}
+      )`;
+    const ev = await withTenant(app, orgId, (tx) => getEvent(tx, id));
+    expect(ev).not.toBeNull();
+    expect(ev?.method).toBeNull();
   });
 });

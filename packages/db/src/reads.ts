@@ -201,6 +201,8 @@ interface EventRow {
   provider_event_id: string | null;
   external_id: string | null;
   verification: unknown;
+  /** The captured request's HTTP method; NULL on legacy rows captured before accept-all-verbs. */
+  method: string | null;
   /** Projected by the summary reads (listEvents/tailEvents) via the SQL CASE; absent on getEvent. */
   verification_state?: string;
 }
@@ -417,7 +419,7 @@ export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> 
   const [r] = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
            payload_r2_key, payload_bytes, content_type, headers, provider_event_id, external_id,
-           verification
+           verification, method
     from events where id = ${id}`;
   if (!r) return null;
   return EventSchema.parse({
@@ -439,5 +441,6 @@ export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> 
     providerEventId: r.provider_event_id,
     externalId: r.external_id,
     verification: r.verification,
+    method: r.method,
   });
 }

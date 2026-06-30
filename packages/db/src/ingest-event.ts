@@ -30,6 +30,8 @@ export interface IngestEventInput {
   readonly contentHash: Uint8Array | null;
   /** Captured headers as ordered name/value pairs (stored jsonb). */
   readonly headers: ReadonlyArray<readonly [string, string]>;
+  /** The captured request's HTTP method (accept-all-verbs). Always set on a new insert. */
+  readonly method: string;
   readonly provider: string | null;
   readonly providerEventId: string | null;
   readonly dedupBucket: number | null;
@@ -73,7 +75,8 @@ export async function insertIngestEvent(
       ${row.dedupBucket}::bigint,
       null::text,
       ${row.verified},
-      ${sql.json((row.verification ?? null) as Parameters<typeof sql.json>[0])}::jsonb
+      ${sql.json((row.verification ?? null) as Parameters<typeof sql.json>[0])}::jsonb,
+      ${row.method}
     )`;
   // ingest_event ALWAYS returns exactly one (event_id, inserted) row. Anything else (an empty or
   // multi-row result) means a broken contract — fail loud so the caller 500s and the provider

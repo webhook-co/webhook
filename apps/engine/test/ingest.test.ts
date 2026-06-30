@@ -52,19 +52,106 @@ function req(
   opts: { method?: string; body?: string; headers?: Record<string, string> } = {},
 ) {
   const method = opts.method ?? "POST";
+  const bodiless = method === "GET" || method === "HEAD" || method === "OPTIONS";
   return new Request(`https://wbhk.my/${token}`, {
     method,
-    body: method === "GET" || method === "HEAD" ? undefined : (opts.body ?? `{"hello":"world"}`),
+    body: bodiless ? undefined : (opts.body ?? `{"hello":"world"}`),
     headers: opts.headers ?? { "content-type": "application/json" },
   });
 }
 
 describe("handleIngest — the wbhk.my write path", () => {
-  it("rejects a non-POST method with 405 (Allow: POST) and writes nothing", async () => {
+  it("GET captures the request (method=GET) and returns a friendly liveness 200 + security headers", async () => {
     const { deps, calls } = makeDeps();
     const res = await handleIngest(req(GOOD, { method: "GET" }), deps);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/live/i); // friendly browser liveness, not a scary 405
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(res.headers.get("x-robots-tag")).toBe("noindex");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    // accept-all-verbs (the inspector model): a GET IS captured + the method recorded
+    expect(calls.put).toHaveLength(1);
+    expect(calls.ingest).toHaveLength(1);
+    expect(calls.ingest[0]!.method).toBe("GET");
+    // still cookieless + no-CORS on the now-browser-facing response
+    expect(res.headers.get("set-cookie")).toBeNull();
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("HEAD returns 200 with a NULL body + security headers, captured with method=HEAD", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(req(GOOD, { method: "HEAD" }), deps);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(""); // explicit null body (Workers does not auto-strip)
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(calls.ingest[0]!.method).toBe("HEAD");
+  });
+
+  it("OPTIONS returns 204 (no CORS) + security headers, captured with method=OPTIONS", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(req(GOOD, { method: "OPTIONS" }), deps);
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull(); // no preflight; no-CORS
+    expect(res.headers.get("access-control-allow-methods")).toBeNull();
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(calls.ingest[0]!.method).toBe("OPTIONS");
+  });
+
+  it.each(["PUT", "PATCH", "DELETE"])(
+    "%s with a body captures (durable-before-ACK), records the method, and ACKs 200 ok",
+    async (method) => {
+      const { deps, calls } = makeDeps();
+      const res = await handleIngest(req(GOOD, { method, body: `{"v":1}` }), deps);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("ok");
+      expect(calls.order).toEqual(["put", "verify", "ingest"]); // ordering unchanged for bodied verbs
+      expect(calls.ingest[0]!.method).toBe(method);
+      expect(calls.verify[0]!.method).toBe(method); // method forwarded to verify (Tier-2 url/method signers)
+    },
+  );
+
+  it("rejects an UNSUPPORTED verb with 405 + the Allow list, even for an UNKNOWN token (pre-resolve, no oracle)", async () => {
+    const { deps, calls } = makeDeps();
+    // PURGE is a valid-but-unsupported verb; whep_nope is an unknown token. A pre-resolve gate returns a
+    // uniform 405 regardless of token validity (a post-resolve gate would 404 here and leak existence).
+    const res = await handleIngest(
+      new Request("https://wbhk.my/whep_nope", { method: "PURGE" }),
+      deps,
+    );
     expect(res.status).toBe(405);
-    expect(res.headers.get("allow")).toMatch(/POST/i);
+    expect(res.headers.get("allow")).toMatch(/GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE/);
+    expect(calls.put).toHaveLength(0); // never resolved, never captured
+    expect(calls.ingest).toHaveLength(0);
+  });
+
+  it("GET liveness is byte-identical across two different resolved endpoints (constant — leaks nothing resolved)", async () => {
+    const epA = makeDeps({
+      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [] }),
+    });
+    const epB = makeDeps({
+      resolve: async () => ({
+        orgId: "be000000-0000-4000-8000-0000000000aa",
+        endpointId: "be000000-0000-4000-8000-0000000000bb",
+        paused: false,
+        sealedSecrets: [],
+      }),
+    });
+    const resA = await handleIngest(req(GOOD, { method: "GET" }), epA.deps);
+    const resB = await handleIngest(req("whep_other", { method: "GET" }), epB.deps);
+    expect(await resA.text()).toBe(await resB.text());
+    expect([...resA.headers].sort()).toEqual([...resB.headers].sort());
+  });
+
+  it("a GET to a PAUSED endpoint returns the constant liveness 200 and captures nothing (paused not observable via GET)", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true, sealedSecrets: [] }),
+    });
+    const res = await handleIngest(req(GOOD, { method: "GET" }), deps);
+    // identical to an active endpoint's GET — a browser GET never reveals the paused/active distinction
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/live/i);
+    // paused: a liveness verb captures + bills NOTHING (write verbs still get a retryable 429)
     expect(calls.put).toHaveLength(0);
     expect(calls.ingest).toHaveLength(0);
   });
@@ -141,6 +228,7 @@ describe("handleIngest — the wbhk.my write path", () => {
     const row = calls.ingest[0]!;
     expect(row.orgId).toBe(ORG);
     expect(row.endpointId).toBe(EP);
+    expect(row.method).toBe("POST");
     expect(row.dedupStrategy).toBe("provider_event_id");
     expect(row.dedupKey).toBe("stripe:evt_abc");
     expect(row.provider).toBe("stripe");

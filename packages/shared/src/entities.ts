@@ -102,6 +102,14 @@ export const EventSchema = EventSummarySchema.extend({
   payloadR2Key: z.string(),
   payloadBytes: z.number().int().nonnegative(),
   contentType: z.string().nullable(),
+  // The captured request's HTTP method (accept-all-verbs). nullable: legacy rows captured under the old
+  // POST-only gate have no recorded method (NULL = unrecorded, not an inferred 'POST'). optional: an
+  // OLDER api (deployed before this field) omits the key entirely, and the CLI/MCP parse the api
+  // response against this schema — optional keeps that cross-version response valid instead of throwing
+  // (same forward-compat reasoning as EventSummarySchema.verificationState). Detail-view ONLY —
+  // deliberately NOT on EventSummarySchema, whose `wbhk listen` frame is safeParse'd (a required new
+  // field there would silently DROP frames under producer/consumer skew).
+  method: z.string().nullable().optional(),
   headers: z.array(HeaderPair),
   providerEventId: z.string().nullable(),
   externalId: z.string().nullable(),

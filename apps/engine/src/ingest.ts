@@ -1,6 +1,9 @@
-// The wbhk.my write path. Cookieless, no CORS, path-token routed. Durable-before-ACK:
-//   POST /<token> -> resolve (KV hot -> cold; 404 unknown) -> paused? 429 -> body cap? 413
-//   -> capture raw bytes + headers -> derive dedup -> R2 PUT -> ingest_event insert -> ACK 200.
+// The wbhk.my write path. Cookieless, no CORS, path-token routed. Accept-all-verbs (ADR-0085, the
+// inspector model): every standard method is captured + the method recorded; GET/HEAD/OPTIONS also get
+// a friendly browser liveness response. Durable-before-ACK:
+//   <verb> /<token> -> resolve (KV hot -> cold; 404 unknown) -> paused? 429 -> body cap? 413
+//   -> capture raw bytes + headers + method -> derive dedup -> R2 PUT -> ingest_event insert
+//   -> ACK (200 "ok" for write verbs; liveness for GET/HEAD/OPTIONS).
 //
 // Dependency-injected so the orchestration (the security-critical ordering + status codes) is
 // unit-testable with fakes; the real resolver/R2/ingest_event integrations are validated against
@@ -79,6 +82,8 @@ export interface IngestRow {
   readonly contentType: string | null;
   readonly contentHash: Uint8Array;
   readonly headers: ReadonlyArray<readonly [string, string]>;
+  /** The captured request's HTTP method (accept-all-verbs); recorded on every capture. */
+  readonly method: string;
   readonly provider: Provider | null;
   readonly providerEventId: string | null;
   readonly dedupBucket: number | null;
@@ -145,11 +150,60 @@ export async function readCappedBody(
 }
 
 function plain(status: number, body: string, headers: Record<string, string> = {}): Response {
-  // No Set-Cookie, no Access-Control-* — wbhk.my is cookieless + no-CORS by construction.
+  // No Set-Cookie, no Access-Control-* — wbhk.my is cookieless + no-CORS by construction. nosniff:
+  // wbhk.my now answers browser-facing GET/HEAD/OPTIONS (accept-all-verbs), so pin the declared
+  // content-type against MIME sniffing on every text response.
   return new Response(body, {
     status,
-    headers: { "content-type": "text/plain; charset=utf-8", ...headers },
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "x-content-type-options": "nosniff",
+      ...headers,
+    },
   });
+}
+
+/** The standard verbs wbhk.my accepts. A non-standard verb (TRACE/CONNECT/…) is rejected uniformly,
+ *  BEFORE token resolution, so the rejection still leaks no token validity (the original no-oracle
+ *  property, now scoped to the verbs we reject rather than to all-but-POST). */
+const SUPPORTED_METHODS = new Set(["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]);
+const ALLOW_METHODS = "GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE";
+
+// Browser-facing liveness for the non-bodied verbs: a paste-in-browser GET should say the endpoint is
+// live, not throw a scary 405. no-referrer + noindex keep the token URL out of referer logs + search
+// indexes. The body is a CONSTANT — it reflects NOTHING resolved (no endpoint id/org/name, no paused
+// flag, no count, no captured payload), so a GET leaks only the same token-existence signal the capture
+// path already does (a known token -> 2xx vs an unknown token -> 404), never a finer oracle.
+const LIVENESS_HEADERS = { "referrer-policy": "no-referrer", "x-robots-tag": "noindex" } as const;
+const LIVENESS_BODY = "this webhook endpoint is live. POST your events here.\n";
+
+/** The non-bodied verbs that get a browser liveness response (the others are write verbs → "ok"). Single
+ *  source of truth so the routing decision and livenessAck() can't drift. */
+const LIVENESS_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+function isLivenessVerb(method: string): boolean {
+  return LIVENESS_METHODS.has(method);
+}
+
+function livenessAck(method: string): Response {
+  if (method === "HEAD") {
+    // Same headers as GET but no body (Workers does not auto-strip a HEAD body — return null ourselves).
+    return new Response(null, {
+      status: 200,
+      headers: {
+        "content-type": "text/plain; charset=utf-8",
+        "x-content-type-options": "nosniff",
+        ...LIVENESS_HEADERS,
+      },
+    });
+  }
+  if (method === "OPTIONS") {
+    // 204 No Content. Deliberately NO Access-Control-* — wbhk.my is no-CORS, so we don't answer preflight.
+    return new Response(null, {
+      status: 204,
+      headers: { "x-content-type-options": "nosniff", ...LIVENESS_HEADERS },
+    });
+  }
+  return plain(200, LIVENESS_BODY, LIVENESS_HEADERS); // GET (nosniff comes from plain())
 }
 
 /**
@@ -181,9 +235,11 @@ export function slackUrlVerificationChallenge(raw: Uint8Array): string | null {
 }
 
 export async function handleIngest(request: Request, deps: IngestDeps): Promise<Response> {
-  // Webhooks are POST. (GET verification-handshakes are a follow-up.) Method-checked first so the
-  // rejection is uniform and leaks no token validity.
-  if (request.method !== "POST") return plain(405, "method not allowed", { allow: "POST" });
+  // Accept-all-verbs (ADR-0085): capture every standard method (the inspector model). The supported-set
+  // gate stays BEFORE token resolution so a rejected (non-standard) verb is answered uniformly and leaks
+  // no token validity. GET verification-handshakes (Meta/X CRC/…) are a follow-up slice.
+  if (!SUPPORTED_METHODS.has(request.method))
+    return plain(405, "method not allowed", { allow: ALLOW_METHODS });
 
   // Path-token routing: the first path segment is the ingest token.
   const token = new URL(request.url).pathname.replace(/^\/+/, "").split("/")[0];
@@ -192,9 +248,12 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   const endpoint = await deps.resolve(token);
   if (endpoint === null) return plain(404, "not found"); // unknown token — no hints, no breadcrumbs
 
-  // Paused / soft-capped -> reject (don't silently drop). 429 + Retry-After is retryable, so the
-  // provider holds the event and is less likely to auto-disable than on a 4xx/404 (founder decision).
+  // Paused / soft-capped: WRITE verbs are rejected with a retryable 429 (the provider holds the event,
+  // less likely to auto-disable than on a 4xx/404 — founder decision). A bodyless liveness verb still
+  // answers a CONSTANT liveness (so a browser GET never reveals paused state — the response is identical
+  // to an active endpoint's) but captures NOTHING: a paused endpoint stores and bills nothing.
   if (endpoint.paused) {
+    if (isLivenessVerb(request.method)) return livenessAck(request.method);
     return plain(429, "endpoint paused", { "retry-after": String(PAUSED_RETRY_AFTER_SECONDS) });
   }
 
@@ -210,7 +269,13 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // Capture: exact body bytes + normalized headers (see the header-fidelity note above).
   const headers: [string, string][] = [...request.headers];
   const contentType = request.headers.get("content-type");
-  const derived = await deriveDedup(raw, headers, deps.now(), deps.dedupBucketWidthMs);
+  const derived = await deriveDedup(
+    raw,
+    headers,
+    request.method,
+    deps.now(),
+    deps.dedupBucketWidthMs,
+  );
 
   // Slack Request URL verification handshake (ADR-0011 / Slice C). During Request URL setup Slack POSTs
   // a signed `{ type: "url_verification", challenge }` and expects the challenge echoed — BEFORE any
@@ -230,7 +295,11 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       deps.log("ingest.slack_url_verification", { endpointId: endpoint.endpointId });
       // Response.json: application/json, no Set-Cookie / no Access-Control-* — the cookieless, no-CORS
       // wbhk.my posture (same guarantee plain() documents for the text responses), by construction.
-      return Response.json({ challenge }, { status: 200 });
+      // nosniff: the challenge is attacker-influenced bytes echoed into a (browser-reachable) body.
+      return Response.json(
+        { challenge },
+        { status: 200, headers: { "x-content-type-options": "nosniff" } },
+      );
     }
   }
 
@@ -279,6 +348,7 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       contentType,
       contentHash: derived.contentHash,
       headers,
+      method: request.method,
       // A successful verify names the provider authoritatively (header detection can mis-pick when
       // providers collide on a signature header); otherwise fall back to the detected provider. The
       // providerEventId/dedupStrategy/dedupBucket below stay under the DETECTED provider (the dedup
@@ -302,8 +372,12 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     dedupStrategy: derived.dedupStrategy,
     provider: derived.provider,
     verified: outcome.verified,
+    method: request.method,
     bytes: raw.byteLength,
     headers: redactHeadersForLog(headers), // signature/auth headers never logged verbatim
   });
-  return plain(200, "ok");
+  // ACK. Capture already happened above for every verb; this only varies the success body: write verbs
+  // get the terse "ok", while GET/HEAD/OPTIONS get a browser-facing liveness response (constant, nothing
+  // resolved reflected). A paused endpoint / unknown token never reaches here (liveness / 429 / 404 above).
+  return isLivenessVerb(request.method) ? livenessAck(request.method) : plain(200, "ok");
 }
