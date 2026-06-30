@@ -113,6 +113,20 @@ describe("kinde bespoke (body-is-JWT RS256, JWKS fetch)", () => {
     if (!result.ok) expect(result.reason.code).toBe("SIGNATURE_MISMATCH");
   });
 
+  it("enforces freshness when the token carries exp (expired → TIMESTAMP_TOO_OLD)", async () => {
+    const { jwksBytes, mint } = await setup();
+    const token = await mint({ ...payload, iat: 1600000000, exp: 1600000060 });
+    const result = await getAdapterForScheme("kinde")!.verify({
+      rawBody: utf8Encoder.encode(token),
+      headers: [],
+      secrets: [ISSUER],
+      fetchKey: async () => jwksBytes,
+      now: new Date(1700000000 * 1000), // far past exp + tolerance
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason.code).toBe("TIMESTAMP_TOO_OLD");
+  });
+
   it("fails soft to KEY_FETCH_FAILED when the JWKS can't be fetched", async () => {
     const { mint } = await setup();
     const token = await mint(payload);

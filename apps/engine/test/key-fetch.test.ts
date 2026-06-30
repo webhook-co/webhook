@@ -119,6 +119,20 @@ describe("makeKeyFetcher", () => {
     expect(await makeKeyFetcher(() => 1, f as unknown as typeof fetch)(spec())).toBeNull();
   });
 
+  it("short-circuits an oversize Content-Length before reading the body", async () => {
+    const arrayBuffer = vi.fn(async () => new ArrayBuffer(0));
+    const f = vi.fn(
+      async () =>
+        ({
+          ok: true,
+          headers: new Headers({ "content-length": String(64 * 1024 + 1) }),
+          arrayBuffer,
+        }) as unknown as Response,
+    );
+    expect(await makeKeyFetcher(() => 1, f as unknown as typeof fetch)(spec())).toBeNull();
+    expect(arrayBuffer).not.toHaveBeenCalled();
+  });
+
   it("passes POST + body + headers through (Plaid's authenticated key fetch)", async () => {
     const f = okFetch("{}");
     await makeKeyFetcher(

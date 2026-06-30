@@ -15,6 +15,9 @@ import type { KeyFetcher, KeyFetchSpec } from "@webhook-co/shared";
 
 const DEFAULT_TIMEOUT_MS = 3000;
 const MAX_RESPONSE_BYTES = 64 * 1024; // X.509 certs and JWKS are well under this
+// Cap the per-isolate cache so a provider whose cacheKey varies per message (e.g. SNS/PayPal cert URLs)
+// can't grow it without bound; evict oldest-first on overflow (a Map preserves insertion order).
+const MAX_CACHE_ENTRIES = 256;
 
 interface CacheEntry {
   readonly bytes: Uint8Array;
@@ -24,8 +27,11 @@ interface CacheEntry {
 /** Per-isolate key/cert cache. Keyed by the adapter's cacheKey (cert URL / `<issuer>:jwks` / `<env>:<kid>`). */
 const keyCache = new Map<string, CacheEntry>();
 
-function hostAllowed(host: string, allowed: readonly string[] | RegExp): boolean {
-  return allowed instanceof RegExp ? allowed.test(host) : allowed.includes(host);
+// Match the request host against the allowlist. NB: a RegExp allowlist MUST be fully ANCHORED (`^…$`) — an
+// unanchored pattern like `/sns\..*\.amazonaws\.com/` would also match `sns.x.amazonaws.com.evil.com`.
+// `hostname` (not `host`) drops the port so the comparison isn't port-ambiguous.
+function hostAllowed(hostname: string, allowed: readonly string[] | RegExp): boolean {
+  return allowed instanceof RegExp ? allowed.test(hostname) : allowed.includes(hostname);
 }
 
 /**
@@ -47,7 +53,7 @@ export function makeKeyFetcher(
     } catch {
       return null;
     }
-    if (url.protocol !== "https:" || !hostAllowed(url.host, spec.allowedHosts)) return null;
+    if (url.protocol !== "https:" || !hostAllowed(url.hostname, spec.allowedHosts)) return null;
 
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -60,8 +66,16 @@ export function makeKeyFetcher(
         redirect: "error", // refuse redirects — a 30x from the allowed host could escape the host pin
       });
       if (!response.ok) return null;
+      // Short-circuit an oversize body via Content-Length before buffering it (best-effort — the post-read
+      // length check below is authoritative for chunked responses without the header).
+      const declaredLength = Number(response.headers.get("content-length"));
+      if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) return null;
       const bytes = new Uint8Array(await response.arrayBuffer());
       if (bytes.length === 0 || bytes.length > MAX_RESPONSE_BYTES) return null;
+      if (keyCache.size >= MAX_CACHE_ENTRIES) {
+        const oldest = keyCache.keys().next().value;
+        if (oldest !== undefined) keyCache.delete(oldest);
+      }
       keyCache.set(spec.cacheKey, { bytes, expiresAtMs: nowMs() + spec.ttlSeconds * 1000 });
       return bytes;
     } catch {

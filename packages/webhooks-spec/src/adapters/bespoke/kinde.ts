@@ -10,7 +10,7 @@ import type { VerifyAdapter, VerifyInput } from "../../adapter";
 import { verificationFailed, verificationOk, type VerificationResult } from "../../verification";
 import { verifyRsaPkcs1Sha256Jwk } from "../asymmetric";
 import { PROVIDER_TOLERANCE_SECONDS } from "../config";
-import { parseCompactJws } from "../jws";
+import { enforceJwtWindow, parseCompactJws } from "../jws";
 
 const JWKS_TTL_SECONDS = 3600;
 
@@ -90,7 +90,7 @@ export function makeKindeAdapter(): VerifyAdapter {
     const jwksBytes = await input.fetchKey({
       cacheKey: `kinde:${issuer}:jwks`,
       url: `${issuer}/.well-known/jwks.json`,
-      allowedHosts: [issuerUrl.host],
+      allowedHosts: [issuerUrl.hostname],
       ttlSeconds: JWKS_TTL_SECONDS,
     });
     if (jwksBytes === null) {
@@ -101,10 +101,16 @@ export function makeKindeAdapter(): VerifyAdapter {
     if (jwk === null) {
       return verificationFailed({ code: "SIGNATURE_MISMATCH" }); // kid not in the issuer's JWKS
     }
-    if (await verifyRsaPkcs1Sha256Jwk(jwk, parsed.signingInput, parsed.signature)) {
-      return verificationOk(`secret_${index}`, "kinde");
+    if (!(await verifyRsaPkcs1Sha256Jwk(jwk, parsed.signingInput, parsed.signature))) {
+      return verificationFailed({ code: "SIGNATURE_MISMATCH" });
     }
-    return verificationFailed({ code: "SIGNATURE_MISMATCH" });
+    // Freshness — enforce any numeric exp/nbf/iat the token carries (Kinde's documented anti-replay field
+    // is the ISO `timestamp` claim + downstream event_id dedupe; this still bounds tokens that ship exp/iat,
+    // matching the sibling JWT adapters). Claims are optional, so a token without them isn't false-rejected.
+    const stale = enforceJwtWindow(parsed.payload, toleranceSeconds, input.now);
+    if (stale !== null) return stale;
+
+    return verificationOk(`secret_${index}`, "kinde");
   }
 
   // No signature header — the body IS the JWT; the F0 registered-provider gate runs this adapter for a
