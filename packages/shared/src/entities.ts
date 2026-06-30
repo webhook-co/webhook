@@ -172,6 +172,25 @@ export const ReplayDestinationSchema = z.object({
 });
 export type ReplayDestination = z.infer<typeof ReplayDestinationSchema>;
 
+/**
+ * A delivery subscription (S3 Slice 3): the Tier-3 routing rule binding a source endpoint's captured events
+ * to a destination, selected on provider + event_types + require_verified. `enabled` pauses routing without
+ * deleting. `provider` null = any provider; `eventTypes` patterns are exact / trailing-glob `x.*` / `*`.
+ */
+export const SubscriptionSchema = z.object({
+  id: uuid,
+  orgId: uuid,
+  sourceEndpointId: uuid,
+  destinationId: uuid,
+  provider: z.string().nullable(),
+  eventTypes: z.array(z.string()),
+  requireVerified: z.boolean(),
+  enabled: z.boolean(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type Subscription = z.infer<typeof SubscriptionSchema>;
+
 /** Soft-cap limits view (org_limits). No prices — cap + behavior only. */
 export const OrgLimitsSchema = z.object({
   orgId: uuid,

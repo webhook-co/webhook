@@ -62,6 +62,18 @@ export interface ReadHandlerDeps {
 export type CapabilityHandler = (ctx: AuthContext, input: unknown) => Promise<unknown>;
 export type CapabilityHandlers = Map<string, CapabilityHandler>;
 
+/**
+ * Enforce a capability's required scope FIRST in every handler (read/write/replay-destinations/subscriptions
+ * share this one definition). On the api edge `authorizeBearer` already gates the scope before dispatch, but
+ * on mcp (where the shared read+write map is the SOLE authz gate) this in-handler check is load-bearing —
+ * so it is invoked before any mutation/read in each handler.
+ */
+export function ensureScope(ctx: AuthContext, cap: AnyCapability): void {
+  if (!ctx.scopes.includes(cap.auth.scope)) {
+    throw new CapabilityFault("FORBIDDEN", `missing required scope: ${cap.auth.scope}`);
+  }
+}
+
 /** Coerce an optional RFC3339 received-at bound (string) to a Date; a malformed value → VALIDATION_ERROR. */
 function toInstantBound(value: string | undefined): Date | undefined {
   if (value === undefined) return undefined;
@@ -73,12 +85,6 @@ function toInstantBound(value: string | undefined): Date | undefined {
 }
 
 export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
-  function ensureScope(ctx: AuthContext, cap: AnyCapability): void {
-    if (!ctx.scopes.includes(cap.auth.scope)) {
-      throw new CapabilityFault("FORBIDDEN", `missing required scope: ${cap.auth.scope}`);
-    }
-  }
-
   function parse<C extends AnyCapability>(cap: C, input: unknown): unknown {
     const result = cap.input.safeParse(input);
     if (!result.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");

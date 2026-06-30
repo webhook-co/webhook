@@ -32,6 +32,11 @@ import {
   replayDestinationsRemoveCommand,
   replayDestinationsRotateSecretCommand,
 } from "./commands/replay-destinations.js";
+import {
+  subscriptionsAddCommand,
+  subscriptionsListCommand,
+  subscriptionsRemoveCommand,
+} from "./commands/subscriptions.js";
 import { telemetryRoute } from "./commands/telemetry.js";
 import { upgradeCommand } from "./commands/upgrade.js";
 import { whoamiCommand } from "./commands/whoami.js";
@@ -67,6 +72,9 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "replayDestinations.delete": ["replay-destinations", "remove"],
   "replayDestinations.rotateSigningSecret": ["replay-destinations", "rotate-secret"],
   "replayDestinations.listSigningSecrets": ["replay-destinations", "list-secrets"],
+  "subscriptions.create": ["subscriptions", "add"],
+  "subscriptions.list": ["subscriptions", "list"],
+  "subscriptions.delete": ["subscriptions", "remove"],
 };
 
 const endpointsRoute = buildRouteMap({
@@ -110,6 +118,17 @@ const replayDestinationsRoute = buildRouteMap({
   docs: { brief: "manage the allowlist of remote replay destinations" },
 });
 
+const subscriptionsRoute = buildRouteMap({
+  routes: {
+    add: subscriptionsAddCommand,
+    list: subscriptionsListCommand,
+    remove: subscriptionsRemoveCommand,
+  },
+  docs: {
+    brief: "manage delivery subscriptions (auto-deliver an endpoint's events to a destination)",
+  },
+});
+
 const root = buildRouteMap({
   routes: {
     login: loginCommand,
@@ -121,6 +140,7 @@ const root = buildRouteMap({
     events: eventsRoute,
     audit: auditRoute,
     "replay-destinations": replayDestinationsRoute,
+    subscriptions: subscriptionsRoute,
     listen: listenCommand,
     replay: replayCommand,
     upgrade: upgradeCommand,

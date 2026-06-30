@@ -125,6 +125,11 @@ describe("capability parity — current GA surfaces conformance", () => {
     // web-deferred; mcp-exempt — an agent must not mint/exfiltrate a signing secret).
     b.api.add("replayDestinations.rotateSigningSecret");
     b.api.add("replayDestinations.listSigningSecrets");
+    // subscriptions.* (S3 Slice 3): bound on api (+ cli, above), web-deferred + mcp-exempt (an agent must
+    // not reconfigure where an org's events are routed/delivered). api-only here, like replayDestinations.
+    b.api.add("subscriptions.create");
+    b.api.add("subscriptions.list");
+    b.api.add("subscriptions.delete");
     // the dashboard surface (DB-direct server actions/reads): endpoints.* (slice 2) + events.list/get (slice 3a).
     for (const name of WEB_BOUND) b.web.add(name);
     return b;

@@ -9,6 +9,7 @@ import {
   createCredentialHasherFromBase64,
   createReplayDestinationHandlers,
   createReplayHandler,
+  createSubscriptionHandlers,
   makeApiKeyAuthDeps,
   makeIngestHashEvictor,
   type ReplayHandler,
@@ -190,6 +191,9 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
       // entrypoint — api seals, never holds the KEK (same seam as provider secrets).
       sealer: env.PROVIDER_SECRET_SEALER,
     }),
+    // subscriptions.* (S3 Slice 3): auto-delivery routing, bound ONLY here (dedicated map, mcp-exempt). No
+    // sealer — subscriptions mint no secret. Mutates under RLS with an in-tx audit row.
+    subscriptions: createSubscriptionHandlers({ tenant, auditKey }),
   };
   return {
     deps,

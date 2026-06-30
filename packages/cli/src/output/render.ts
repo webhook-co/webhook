@@ -5,8 +5,15 @@ import type {
   ProviderSecretSummary,
   ReplayDestinationDeleted,
   RevokedProviderSecret,
+  SubscriptionDeleted,
 } from "@webhook-co/contract";
-import type { Endpoint, Event, EventSummary, ReplayDestination } from "@webhook-co/shared";
+import type {
+  Endpoint,
+  Event,
+  EventSummary,
+  ReplayDestination,
+  Subscription,
+} from "@webhook-co/shared";
 
 import type { AuditVerifyResult } from "../api-client.js";
 import { colorize } from "./color.js";
@@ -189,6 +196,44 @@ export function renderRemovedReplayDestination(d: ReplayDestinationDeleted): str
   return block([
     ["id", field(d.id)],
     ["removed", fmtDateTime(d.deletedAt)],
+  ]);
+}
+
+/** The org's delivery subscriptions as a table (S3 Slice 3). */
+export function renderSubscriptionsTable(items: readonly Subscription[]): string {
+  return renderTable(
+    ["SOURCE ENDPOINT", "DESTINATION", "PROVIDER", "EVENT TYPES", "VERIFIED", "ENABLED", "ID"],
+    items.map((s) => [
+      field(s.sourceEndpointId),
+      field(s.destinationId),
+      s.provider === null ? "any" : field(s.provider),
+      field(s.eventTypes.join(", ")),
+      s.requireVerified ? "required" : NONE,
+      s.enabled ? "yes" : "paused",
+      field(s.id),
+    ]),
+  );
+}
+
+/** A created/updated delivery subscription as a block. */
+export function renderSubscription(s: Subscription): string {
+  return block([
+    ["id", field(s.id)],
+    ["source endpoint", field(s.sourceEndpointId)],
+    ["destination", field(s.destinationId)],
+    ["provider", s.provider === null ? "any" : field(s.provider)],
+    ["event types", field(s.eventTypes.join(", "))],
+    ["require verified", s.requireVerified ? "yes" : "no"],
+    ["enabled", s.enabled ? "yes" : "paused"],
+    ["created", fmtDateTime(s.createdAt)],
+  ]);
+}
+
+/** A just-removed subscription: its id. */
+export function renderRemovedSubscription(s: SubscriptionDeleted): string {
+  return block([
+    ["id", field(s.id)],
+    ["removed", "yes"],
   ]);
 }
 

@@ -4,11 +4,27 @@
 // schema CRUD + the per-endpoint ingest resolver. Matching is set/glob math over fields WE derive (provider,
 // the normalized event_type, the verified flag) — never a deep walk of the untrusted payload.
 
+import {
+  CapabilityFault,
+  subscriptionsCreate,
+  subscriptionsDelete,
+  subscriptionsList,
+} from "@webhook-co/contract";
 import { newId } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
+import { ensureScope, type CapabilityHandlers } from "./read-handlers";
 import { getReplayDestination } from "./replay-destinations";
+
+/** Thrown by createSubscription when the source endpoint or destination is missing/deleted/cross-org. The
+ *  cap handler maps it to a NOT_FOUND fault (binding to a dead target would be a silently-undeliverable rule). */
+export class SubscriptionTargetNotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SubscriptionTargetNotFoundError";
+  }
+}
 
 /** The event facts the matcher needs (a projection of the events row). */
 export interface MatchableEvent {
@@ -126,15 +142,16 @@ export interface CreateSubscriptionInput {
 /**
  * Create (or update the selectors of) the subscription for a (org, source endpoint, destination) triple.
  * The source endpoint and destination must both be LIVE (not soft-deleted) and same-org — a dead/cross-org
- * target is rejected up front (instead of binding a subscription that could never deliver, since the ingest
- * resolver excludes dead targets). A binding to a temporarily-DISABLED destination is allowed: it resumes
- * when the destination is re-enabled (mirrors the resolver, which excludes disabled only while disabled).
+ * target throws {@link SubscriptionTargetNotFoundError} (the cap layer maps it to NOT_FOUND) instead of
+ * binding a subscription that could never deliver, since the ingest resolver excludes dead targets. A
+ * binding to a temporarily-DISABLED destination is allowed: it resumes when the destination is re-enabled
+ * (mirrors the resolver, which excludes disabled only while disabled).
  *
  * UPSERTS on the triple via a deterministic two-step (insert-on-conflict-do-nothing, else update) so the
  * insert-vs-update outcome — and thus the audit action (`delivery_subscription.created` vs `.updated`) — is
  * exact under concurrency. An UPDATE overwrites provider/event_types/require_verified but PRESERVES `enabled`
  * (editing a paused subscription's selectors must not silently un-pause it). An empty/omitted event_types
- * defaults to `['*']` (match-all) rather than the degenerate match-nothing; non-string patterns are rejected.
+ * defaults to `['*']` (match-all) rather than the degenerate match-nothing; non-string patterns throw.
  */
 export async function createSubscription(
   app: Sql,
@@ -149,17 +166,18 @@ export async function createSubscription(
   }
   const requireVerified = input.requireVerified ?? false;
   return withTenant(app, input.orgId, async (tx) => {
-    // Reject a dead/cross-org target before binding (RLS hides a cross-org row, so it resolves to null too).
+    // A dead/cross-org target throws (RLS hides a cross-org row, so it resolves to null too). The cap maps
+    // this to NOT_FOUND; binding to a target the ingest resolver excludes would be a silently-dead rule.
     if ((await getReplayDestination(tx, input.destinationId)) === null) {
-      throw new Error(
-        `createSubscription: destination ${input.destinationId} not found, deleted, or cross-org`,
+      throw new SubscriptionTargetNotFoundError(
+        `destination ${input.destinationId} not found, deleted, or cross-org`,
       );
     }
     const [endpoint] = await tx<{ id: string }[]>`
       select id from endpoints where id = ${input.sourceEndpointId} and deleted_at is null`;
     if (endpoint === undefined) {
-      throw new Error(
-        `createSubscription: source endpoint ${input.sourceEndpointId} not found, deleted, or cross-org`,
+      throw new SubscriptionTargetNotFoundError(
+        `source endpoint ${input.sourceEndpointId} not found, deleted, or cross-org`,
       );
     }
 
@@ -271,4 +289,75 @@ export async function listMatchingSubscriptions(
       and d.disabled_at is null
     order by s.created_at asc, s.id asc`;
   return rows.map(toRecord).filter((sub) => matchSubscription(args.event, sub));
+}
+
+// ── The subscriptions.* capability handlers (S3 Slice 3) ──────────────────────────────────────────
+// A dedicated factory wired ONLY by apps/api (like createReplayDestinationHandlers) — kept off the shared
+// buildCapabilityHandlers map so the mcp exemption is un-driftable (an agent must not reconfigure egress
+// routing). Each handler enforces the cap scope FIRST, validates input, then mutates under RLS with an
+// in-tx audit row.
+
+/** Deps for the subscriptions handlers — no `sealer` (subscriptions mint no secret, unlike destinations). */
+export interface SubscriptionHandlerDeps {
+  /** webhook_app over the cache-disabled tenant binding — all mutations run here under RLS. */
+  readonly tenant: Sql;
+  /** Audit-chain HMAC key — signs the in-tx audit_log row on each mutation. */
+  readonly auditKey: CryptoKey;
+}
+
+export function createSubscriptionHandlers(deps: SubscriptionHandlerDeps): CapabilityHandlers {
+  const handlers: CapabilityHandlers = new Map();
+
+  handlers.set(subscriptionsCreate.name, async (ctx, input) => {
+    ensureScope(ctx, subscriptionsCreate);
+    const parsed = subscriptionsCreate.input.safeParse(input);
+    if (!parsed.success) {
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
+    }
+    try {
+      return await createSubscription(
+        deps.tenant,
+        {
+          orgId: ctx.orgId,
+          sourceEndpointId: parsed.data.sourceEndpointId,
+          destinationId: parsed.data.destinationId,
+          provider: parsed.data.provider ?? null,
+          eventTypes: parsed.data.eventTypes,
+          requireVerified: parsed.data.requireVerified,
+        },
+        { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+      );
+    } catch (err) {
+      // A dead/cross-org source endpoint or destination → NOT_FOUND (not a 500); don't leak existence.
+      if (err instanceof SubscriptionTargetNotFoundError) {
+        throw new CapabilityFault("NOT_FOUND", "source endpoint or destination not found");
+      }
+      throw err;
+    }
+  });
+
+  handlers.set(subscriptionsList.name, async (ctx, input) => {
+    ensureScope(ctx, subscriptionsList);
+    const parsed = subscriptionsList.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const items = await listSubscriptions(deps.tenant, ctx.orgId, parsed.data.sourceEndpointId);
+    return { items };
+  });
+
+  handlers.set(subscriptionsDelete.name, async (ctx, input) => {
+    ensureScope(ctx, subscriptionsDelete);
+    const parsed = subscriptionsDelete.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const removed = await deleteSubscription(deps.tenant, ctx.orgId, parsed.data.subscriptionId, {
+      auditKey: deps.auditKey,
+      actor: ctx.userId ?? null,
+    });
+    if (removed === null) throw new CapabilityFault("NOT_FOUND", "subscription not found");
+    return removed;
+  });
+
+  return handlers;
 }
