@@ -88,11 +88,6 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
     apply(next);
   }
 
-  // Whether the date control's custom inputs are revealed. Owned here (not in the child) so a "Clear
-  // filters" can collapse them — the child is value-driven and can't otherwise tell a clear from a
-  // just-opened-empty-custom state.
-  const [dateInputsOpen, setDateInputsOpen] = React.useState(false);
-
   // The free-text search debounces (typing) and re-syncs from an external ?search change (back button).
   // `searchPending` is true while the input is "ahead" of the URL (a debounce in flight); it suppresses
   // the URL→input re-sync so neither our own pending push nor a mid-flight commit clobbers typing. When
@@ -121,12 +116,11 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
   }, [searchInput, search, committedQuery, router, pathname]);
 
   function clear() {
-    // Wipe every filter — including the search box and the revealed custom date inputs. Reset the search
-    // input + pending flag so an in-flight debounce (if the user typed then hit Clear within the window)
-    // no-ops instead of re-pushing the just-cleared term, and collapse the custom date inputs.
+    // Wipe every filter — including the search box. Reset the search input + pending flag so an in-flight
+    // debounce (if the user typed then hit Clear within the window) no-ops instead of re-pushing the
+    // just-cleared term.
     setSearchInput("");
     searchPendingRef.current = false;
-    setDateInputsOpen(false);
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     for (const key of FILTER_KEYS) next.delete(key);
     apply(next);
@@ -178,22 +172,9 @@ export function EventsFilterBar({ providers }: EventsFilterBarProps) {
           className="w-40"
         />
 
-        <DateRangeFilter
-          value={{ range, from, to }}
-          onApply={applyPatch}
-          customOpen={dateInputsOpen}
-          onCustomOpenChange={setDateInputsOpen}
-        />
+        <DateRangeFilter value={{ range, from, to }} onApply={applyPatch} />
 
-        <Button
-          variant="secondary"
-          onClick={clear}
-          // Enabled when any filter is applied OR the custom date inputs are revealed — so Clear is the
-          // escape hatch that collapses empty, just-opened custom inputs (which set no URL param, so
-          // `active` alone would leave Clear disabled with no other way to dismiss them).
-          disabled={!active && !dateInputsOpen}
-          className="ml-auto"
-        >
+        <Button variant="secondary" onClick={clear} disabled={!active} className="ml-auto">
           Clear filters
         </Button>
       </div>

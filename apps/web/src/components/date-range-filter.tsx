@@ -1,17 +1,16 @@
 "use client";
 
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-  Input,
+  Calendar,
+  type CalendarRange,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
 } from "@webhook-co/ui";
-import { ArrowRight, Calendar, Check, ChevronDown } from "lucide-react";
+import { Calendar as CalendarIcon, Check, ChevronDown } from "lucide-react";
 import * as React from "react";
 
-import { activeDateLabel, DATE_PRESETS, hasDateRange, isDatePreset } from "@/lib/date-range";
+import { activeDateLabel, DATE_PRESETS, hasDateRange } from "@/lib/date-range";
 
 export interface DateRangeValue {
   readonly range: string;
@@ -22,129 +21,85 @@ export interface DateRangeValue {
 export interface DateRangeFilterProps {
   readonly value: DateRangeValue;
   /**
-   * Apply a patch of URL params. A preset sends `{ range, from: "", to: "" }`; a custom date sends
-   * `{ from|to, range: "" }` — the two date modes are mutually exclusive, so each clears the other.
+   * Apply a patch of URL params. A preset sends `{ range, from: "", to: "" }`; a calendar selection
+   * sends `{ from, to, range: "" }` — the two date modes are mutually exclusive, so each clears the other.
    */
   readonly onApply: (patch: Record<string, string>) => void;
-  /** Whether the custom date inputs are revealed. Owned by the parent so a "Clear filters" resets it. */
-  readonly customOpen: boolean;
-  readonly onCustomOpenChange: (open: boolean) => void;
 }
 
-// The date-range control: a single trigger whose label reflects the active range (a preset name,
-// "Custom range", or a neutral "Date range"). Presets live in a keyboard-navigable dropdown (the right
-// pattern for picking one of a few). "Custom range…" reveals two native date inputs INLINE (not nested
-// in the menu) so they keep correct keyboard behavior — arrow keys step the date instead of being
-// hijacked by menu navigation — and the native picker icon follows the theme (color-scheme).
-//
-// A valid preset OWNS the date range (it mirrors the parser, which ignores from/to when a preset is
-// set), so an active preset suppresses the custom state even if stray from/to ride in the URL. Entering
-// custom mode does NOT eagerly clear the preset — the preset stays applied (no flash of unfiltered
-// results) until the first custom date is entered, which clears it in the same push.
-export function DateRangeFilter({
-  value,
-  onApply,
-  customOpen,
-  onCustomOpenChange,
-}: DateRangeFilterProps) {
-  const presetActive = isDatePreset(value.range);
-  const customActive = !presetActive && (value.from !== "" || value.to !== "");
-  const showCustom = customActive || customOpen;
+// The wire `?to=` is an EXCLUSIVE upper bound (received_at < to), shared with `--before` on the CLI for
+// parity. On a calendar, though, clicking the end day means "INCLUDE that day" — so the picked end maps
+// to the exclusive wire bound `day + 1`, and a wire bound reads back as the calendar end `to − 1`. `from`
+// is an inclusive lower bound, so it maps straight through. Day math is UTC (`YYYY-MM-DD`, no tz lib).
+function shiftUtcDay(ymd: string, delta: number): string {
+  const [y, m, d] = ymd.split("-").map(Number);
+  const date = new Date(Date.UTC(y!, m! - 1, d! + delta));
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())}`;
+}
+
+// The date-range control: a single trigger opening ONE popover that holds both the relative presets and
+// a graphical range calendar — no separate row. A Popover (not a DropdownMenu) hosts them so the calendar
+// keeps normal keyboard behavior (a menu would hijack arrow keys). A valid preset OWNS the range (mirrors
+// the parser, which ignores from/to under a preset); selecting calendar days clears the preset.
+export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
   const active = hasDateRange(value);
-  const fromRef = React.useRef<HTMLInputElement>(null);
-  // Set when "Custom range…" is chosen so the menu's close handler moves focus to the From input
-  // (instead of Radix's default focus-restore to the trigger, which would otherwise win the race).
-  const focusFromOnClose = React.useRef(false);
 
   function pickPreset(id: string) {
-    onCustomOpenChange(false);
     onApply({ range: id, from: "", to: "" });
   }
 
-  function openCustom() {
-    // Reveal the inputs only — no URL write. The active preset (if any) stays applied until the first
-    // custom date is entered (the date onChange clears it), avoiding both a wasted unfiltered refetch and
-    // a stale-`value.range` read right after a preset pick.
-    focusFromOnClose.current = true;
-    onCustomOpenChange(true);
+  function pickRange(range: CalendarRange) {
+    // The picked end day is inclusive → shift it to the exclusive wire bound (day + 1).
+    onApply({
+      from: range.from ?? "",
+      to: range.to ? shiftUtcDay(range.to, 1) : "",
+      range: "",
+    });
   }
 
-  function setCustom(patch: { from?: string; to?: string }) {
-    onCustomOpenChange(true);
-    onApply({ ...patch, range: "" });
-  }
+  // The calendar shows an inclusive range, so read the exclusive wire `to` back as `to − 1`.
+  const calendarValue: CalendarRange = {
+    from: value.from || undefined,
+    to: value.to ? shiftUtcDay(value.to, -1) : undefined,
+  };
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            aria-label={`Filter by received date: ${activeDateLabel(value)}`}
-            className={[
-              "inline-flex h-[42px] items-center gap-2 rounded-control border bg-surface px-3 text-base",
-              "font-sans transition-[box-shadow,border-color] duration-[var(--wh-dur-fast)] ease-[var(--wh-ease-swift)]",
-              "outline-none focus-visible:border-focus focus-visible:shadow-[var(--wh-focus-ring)]",
-              active ? "border-focus text-fg" : "border-strong text-fg-secondary",
-            ].join(" ")}
-          >
-            <Calendar className="size-4 shrink-0 text-fg-muted" />
-            <span>{activeDateLabel(value)}</span>
-            <ChevronDown className="size-4 shrink-0 text-fg-muted" />
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="start"
-          className="min-w-[12rem]"
-          onCloseAutoFocus={(e) => {
-            // Beat Radix's focus-restore-to-trigger when entering custom mode: focus the From input.
-            if (focusFromOnClose.current) {
-              focusFromOnClose.current = false;
-              e.preventDefault();
-              fromRef.current?.focus();
-            }
-          }}
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Filter by received date: ${activeDateLabel(value)}`}
+          className={[
+            "inline-flex h-[42px] items-center gap-2 rounded-control border bg-surface px-3 text-base",
+            "font-sans transition-[box-shadow,border-color] duration-[var(--wh-dur-fast)] ease-[var(--wh-ease-swift)]",
+            "outline-none focus-visible:border-focus focus-visible:shadow-[var(--wh-focus-ring)]",
+            active ? "border-focus text-fg" : "border-strong text-fg-secondary",
+          ].join(" ")}
         >
+          <CalendarIcon className="size-4 shrink-0 text-fg-muted" />
+          <span>{activeDateLabel(value)}</span>
+          <ChevronDown className="size-4 shrink-0 text-fg-muted" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="flex w-auto gap-0 p-0">
+        <div className="flex w-40 flex-col gap-0.5 border-r border-hairline p-1.5">
           {DATE_PRESETS.map((preset) => (
-            <DropdownMenuItem
+            <button
               key={preset.id}
-              onSelect={() => pickPreset(preset.id)}
-              className="justify-between"
+              type="button"
+              onClick={() => pickPreset(preset.id)}
+              className="flex items-center justify-between rounded-control px-2.5 py-1.5 text-left text-sm text-fg-secondary outline-none hover:bg-surface-sunken hover:text-fg focus-visible:bg-surface-sunken focus-visible:text-fg"
             >
               <span>{preset.label}</span>
               {value.range === preset.id ? <Check className="size-4" /> : null}
-            </DropdownMenuItem>
+            </button>
           ))}
-          <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={openCustom} className="justify-between">
-            <span>Custom range…</span>
-            {customActive ? <Check className="size-4" /> : null}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {showCustom ? (
-        <div className="flex items-center gap-1.5">
-          <Input
-            ref={fromRef}
-            type="date"
-            aria-label="From date"
-            value={value.from}
-            max={value.to || undefined}
-            onChange={(e) => setCustom({ from: e.target.value })}
-            className="w-[150px]"
-          />
-          <ArrowRight aria-hidden className="size-4 shrink-0 text-fg-muted" />
-          <Input
-            type="date"
-            aria-label="To date (exclusive — events before this day)"
-            value={value.to}
-            min={value.from || undefined}
-            onChange={(e) => setCustom({ to: e.target.value })}
-            className="w-[150px]"
-          />
+          <div className="my-1 h-px bg-hairline" />
+          <span className="px-2.5 py-1 text-xs font-medium text-fg-muted">Custom range</span>
         </div>
-      ) : null}
-    </div>
+        <Calendar value={calendarValue} onChange={pickRange} />
+      </PopoverContent>
+    </Popover>
   );
 }
