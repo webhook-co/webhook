@@ -8,7 +8,9 @@
 import type { VerifyAdapter } from "../../adapter";
 import type { Provider } from "../config";
 import { makeContentfulAdapter } from "./contentful";
+import { makeJiraConnectAdapter } from "./jira-connect";
 import { makeMessagebirdAdapter } from "./messagebird";
+import { makeMondayAdapter } from "./monday";
 import { makeNetlifyAdapter } from "./netlify";
 import { makePlivoAdapter } from "./plivo";
 import { makeTwilioAdapter } from "./twilio";
@@ -22,4 +24,7 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   messagebird: makeMessagebirdAdapter(),
   netlify: makeNetlifyAdapter(),
   vonage: makeVonageAdapter(),
+  // Tier-3 HS256-JWT, origin-authenticated (no body-hash claim; Jira binds the request via qsh).
+  monday: makeMondayAdapter(),
+  jira_connect: makeJiraConnectAdapter(),
 };

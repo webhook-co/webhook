@@ -127,6 +127,41 @@ export async function verifyCompactHs(
   return { ok: false, reason: "signature_mismatch" };
 }
 
+/**
+ * Enforce a JWT's freshness window against `toleranceSeconds`: reject if `now` is past `exp` (upper) or
+ * before `nbf`/`iat` (lower) by more than the tolerance. The claims are OPTIONAL — providers vary (some
+ * send nbf+exp, others only iat), and a missing/non-numeric claim is simply not enforced rather than
+ * false-rejecting. An Invalid-Date `now` falls back to real time so a NaN clock can't silently DISABLE the
+ * window (mirrors shared.ts enforceSkew). Returns a typed failure, or null if within the window.
+ */
+export function enforceJwtWindow(
+  payload: Readonly<Record<string, unknown>>,
+  toleranceSeconds: number,
+  now?: Date,
+): VerificationResult | null {
+  const nowMs = now?.getTime() ?? Date.now();
+  const nowSec = Math.floor((Number.isFinite(nowMs) ? nowMs : Date.now()) / 1000);
+  const exp = payload.exp;
+  if (typeof exp === "number" && Number.isFinite(exp)) {
+    const skew = nowSec - exp;
+    if (skew > toleranceSeconds) {
+      return verificationFailed({ code: "TIMESTAMP_TOO_OLD", skewSeconds: skew, toleranceSeconds });
+    }
+  }
+  const lower = typeof payload.nbf === "number" ? payload.nbf : payload.iat;
+  if (typeof lower === "number" && Number.isFinite(lower)) {
+    const skew = nowSec - lower;
+    if (skew < -toleranceSeconds) {
+      return verificationFailed({
+        code: "TIMESTAMP_IN_FUTURE",
+        skewSeconds: skew,
+        toleranceSeconds,
+      });
+    }
+  }
+  return null;
+}
+
 /** A non-ok verifyCompactHs reason. */
 export type JwsFailureReason = Exclude<JwsVerifyOutcome, { readonly ok: true }>["reason"];
 
