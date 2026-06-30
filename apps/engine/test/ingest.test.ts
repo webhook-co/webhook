@@ -700,3 +700,76 @@ describe("handleIngest — GET verification-handshake dispatch (eBay challenge_c
     expect(calls.ingest).toHaveLength(1); // captured (bill-all)
   });
 });
+
+describe("handleIngest — POST subscription-validation handshakes (Graph/Twitch/monday, S8 Slice 3)", () => {
+  it("echoes a Microsoft Graph ?validationToken POST as text/plain and captures NOTHING", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?validationToken=GraphValidate123`, {
+        method: "POST",
+        body: "",
+        headers: { "content-type": "text/plain" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(await res.text()).toBe("GraphValidate123");
+    expect(calls.put).toHaveLength(0); // pre-capture: nothing stored
+    expect(calls.ingest).toHaveLength(0); // nothing metered
+  });
+
+  it("echoes a monday {challenge} POST as JSON and captures NOTHING", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}`, {
+        method: "POST",
+        body: JSON.stringify({ challenge: "monday-xyz" }),
+        headers: { "content-type": "application/json" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ challenge: "monday-xyz" });
+    expect(calls.ingest).toHaveLength(0);
+  });
+
+  it("a normal POST event (no handshake signal) is still captured, not diverted", async () => {
+    const { deps, calls } = makeDeps();
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}`, {
+        method: "POST",
+        body: JSON.stringify({ id: "evt_1", data: { ok: true } }),
+        headers: { "content-type": "application/json" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("ok");
+    expect(calls.ingest).toHaveLength(1); // captured (bill-all)
+  });
+
+  it("a GET carrying ?validationToken= is POST-only-gated: NOT echoed — captured + constant liveness (no oracle)", async () => {
+    const active = makeDeps();
+    const resActive = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?validationToken=probe`, { method: "GET" }),
+      active.deps,
+    );
+    expect(resActive.status).toBe(200);
+    const bodyActive = await resActive.text();
+    expect(bodyActive).not.toContain("probe"); // POST-only: a GET never echoes the Graph validationToken
+    expect(bodyActive).toMatch(/live/i); // normal GET liveness
+    expect(active.calls.ingest).toHaveLength(1); // captured, not diverted
+
+    // a PAUSED endpoint answers the SAME liveness — the validationToken param leaks no paused/active signal
+    const paused = makeDeps({
+      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true, sealedSecrets: [] }),
+    });
+    const resPaused = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?validationToken=probe`, { method: "GET" }),
+      paused.deps,
+    );
+    expect(await resPaused.text()).toBe(bodyActive); // byte-identical -> no oracle
+    expect(paused.calls.ingest).toHaveLength(0);
+  });
+});

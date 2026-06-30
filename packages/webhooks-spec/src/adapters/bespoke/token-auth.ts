@@ -11,7 +11,8 @@
 //                        is a JSON `{ "header": "...", "token": "..." }` so the loop is secret-driven.
 //
 // (The MS-Graph `validationToken` echo + Okta `X-Okta-Verification-Challenge` are one-time subscription
-// handshakes handled on the ingest path, separate from this per-message authenticity check.)
+// handshakes handled PRE-CAPTURE in apps/engine/src/handshake.ts — the GET/POST handshake dispatchers,
+// separate from this per-message authenticity check.)
 
 import { b64ToBytes, timingSafeEqual, utf8Decoder, utf8Encoder } from "../../bytes";
 import type { VerifyAdapter, VerifyInput } from "../../adapter";

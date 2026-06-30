@@ -28,7 +28,7 @@ import {
 } from "@webhook-co/shared";
 
 import { deriveDedup, extractEventType } from "./dedup";
-import { dispatchGetHandshake } from "./handshake";
+import { dispatchGetHandshake, dispatchPostHandshake } from "./handshake";
 
 /** A resolved ingest token -> its owning endpoint (the ingest resolver's narrowed result). */
 export interface ResolvedEndpoint {
@@ -311,6 +311,31 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     deps.now(),
     deps.dedupBucketWidthMs,
   );
+
+  // POST subscription-validation handshakes (Microsoft Graph `?validationToken`, Twitch
+  // `webhook_callback_verification`, monday.com `{challenge}`) — pre-capture echoes that capture NOTHING
+  // (the value is the sender's own nonce, like the Slack handshake below). **POST-only**: the dispatcher's
+  // contract is POST, and the method gate is load-bearing — `?validationToken=` matches on the query param
+  // alone, so without it a GET/HEAD/OPTIONS carrying that param would (a) break the GET-liveness paused/
+  // active equivalence (an active endpoint would echo, a paused one would not) and (b) divert a captured
+  // GET event. The `providerEventId === null` guard skips the body parse for the id-carrying providers
+  // (stripe/slack/github/shopify); other POSTs pay one total `jsonBody` parse. GUARDED like the GET
+  // dispatch so a future throwing (e.g. secret-based) POST handshake can never drop capture.
+  if (request.method === "POST" && derived.providerEventId === null) {
+    let post: Response | null = null;
+    try {
+      post = dispatchPostHandshake(url, request.headers, raw);
+    } catch (err) {
+      deps.log("ingest.post_handshake_failed", {
+        endpointId: endpoint.endpointId,
+        error: String(err),
+      });
+    }
+    if (post !== null) {
+      deps.log("ingest.post_handshake", { endpointId: endpoint.endpointId });
+      return post;
+    }
+  }
 
   // Slack Request URL verification handshake (ADR-0011 / Slice C). During Request URL setup Slack POSTs
   // a signed `{ type: "url_verification", challenge }` and expects the challenge echoed — BEFORE any

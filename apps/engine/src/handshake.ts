@@ -18,6 +18,7 @@ import {
   bytesToB64,
   importHmacKey,
   parseVerifyTokenSecret,
+  utf8Decoder,
   utf8Encoder,
   verifyTokenEqual,
 } from "@webhook-co/shared";
@@ -121,6 +122,81 @@ function adobeSignEcho(headers: Headers): Response | null {
 }
 
 /**
+ * Okta Event Hooks one-time verification: a GET carrying the `X-Okta-Verification-Challenge` header →
+ * respond `{"verification":"<challenge>"}` as JSON. No secret — Okta's own value bounced back 1:1.
+ */
+function oktaVerification(headers: Headers): Response | null {
+  const challenge = headers.get("x-okta-verification-challenge");
+  if (challenge === null || challenge.length === 0) return null;
+  return Response.json({ verification: challenge }, { headers: BROWSER_SAFE_HEADERS });
+}
+
+/** Parse a request body to a top-level JSON object, or `null` (not JSON / not an object / an array). */
+function jsonBody(rawBody: Uint8Array): Record<string, unknown> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(utf8Decoder.decode(rawBody));
+  } catch {
+    return null;
+  }
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * Microsoft Graph change-notification URL validation: a POST with `?validationToken=<v>` (empty body) →
+ * echo `<v>` (already URL-decoded by searchParams) as `text/plain`. No secret.
+ */
+function msGraphValidation(url: URL): Response | null {
+  const validationToken = url.searchParams.get("validationToken");
+  if (validationToken === null || validationToken.length === 0) return null;
+  return plainTextEcho(validationToken);
+}
+
+/**
+ * Twitch EventSub `webhook_callback_verification`: a POST with header `Twitch-Eventsub-Message-Type:
+ * webhook_callback_verification` and a JSON body `{challenge}` → echo the raw challenge as `text/plain`.
+ * No secret (the activation is the echo; the request is separately HMAC-signed).
+ */
+function twitchVerification(headers: Headers, rawBody: Uint8Array): Response | null {
+  if (headers.get("twitch-eventsub-message-type") !== "webhook_callback_verification") return null;
+  const challenge = jsonBody(rawBody)?.challenge;
+  if (typeof challenge !== "string" || challenge.length === 0) return null;
+  return plainTextEcho(challenge);
+}
+
+/**
+ * monday.com webhook verification: a POST whose body is EXACTLY `{"challenge":"<v>"}` → echo
+ * `{"challenge":"<v>"}` as JSON. Detected precisely by the SINGLE `challenge` key (monday's verification
+ * body carries nothing else), so a Slack `url_verification` (`{type, challenge}`), a Twitch verification
+ * (`{challenge, subscription}`), or any real event never triggers it. No secret.
+ */
+function mondayChallenge(rawBody: Uint8Array): Response | null {
+  const body = jsonBody(rawBody);
+  if (body === null) return null;
+  const keys = Object.keys(body);
+  if (keys.length !== 1 || keys[0] !== "challenge") return null;
+  const challenge = body.challenge;
+  if (typeof challenge !== "string" || challenge.length === 0) return null;
+  return Response.json({ challenge }, { headers: BROWSER_SAFE_HEADERS });
+}
+
+/**
+ * Route a POST to a no-secret subscription-validation handshake — Microsoft Graph (`?validationToken`),
+ * Twitch (`webhook_callback_verification`), or monday.com (`{challenge}`) — or `null` if none matches.
+ * Like the GET dispatcher: detection is by the request's own distinctive param/header/body, dispatched
+ * PRE-capture, captures NOTHING. (Slack's `url_verification` POST stays on its existing dedicated path.)
+ */
+export function dispatchPostHandshake(
+  url: URL,
+  headers: Headers,
+  rawBody: Uint8Array,
+): Response | null {
+  return msGraphValidation(url) ?? twitchVerification(headers, rawBody) ?? mondayChallenge(rawBody);
+}
+
+/**
  * Route a GET to the matching verification-handshake responder, or `null` if it is not a recognized
  * (resolvable) handshake — the caller then falls through to the normal capture/liveness flow. Detection is
  * by the request's own distinctive params/headers and is mutually exclusive, so one protocol's request can
@@ -134,8 +210,8 @@ export async function dispatchGetHandshake(
   sealedSecrets: readonly CachedSealedSecret[],
   unseal: (cached: CachedSealedSecret) => Promise<string>,
 ): Promise<Response | null> {
-  // No-secret echoes first (Dropbox/Adobe `?challenge=`, Adobe Sign header) — sync, never touch secrets.
-  const echo = adobeSignEcho(headers) ?? challengeEcho(url);
+  // No-secret echoes first (Dropbox/Adobe `?challenge=`, Adobe Sign + Okta headers) — never touch secrets.
+  const echo = adobeSignEcho(headers) ?? oktaVerification(headers) ?? challengeEcho(url);
   if (echo !== null) return echo;
 
   // X/Twitter CRC: `crc_token` → HMAC under the endpoint's registered `x` consumer secret (the SAME secret
