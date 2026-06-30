@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as React from "react";
 import { describe, expect, it, vi } from "vitest";
@@ -99,5 +99,36 @@ describe("MultiSelect", () => {
     await userEvent.click(screen.getByRole("button", { name: /Filter by status/ }));
     expect(screen.queryByLabelText("Search…")).not.toBeInTheDocument();
     expect(screen.getAllByRole("option")).toHaveLength(3);
+  });
+
+  it("renders an option's `icon` in the list rows and in the single-selection summary", async () => {
+    const withIcons: MultiSelectOption[] = [
+      { value: "stripe", label: "Stripe", icon: <svg data-testid="logo-stripe" /> },
+      { value: "github", label: "GitHub", icon: <svg data-testid="logo-github" /> },
+    ];
+    function Harnessed() {
+      const [selected, setSelected] = React.useState<string[]>([]);
+      return (
+        <MultiSelect
+          options={withIcons}
+          selected={selected}
+          onChange={setSelected}
+          placeholder="All providers"
+          label="Filter by provider"
+        />
+      );
+    }
+    render(<Harnessed />);
+    const trigger = () => screen.getByRole("button", { name: /Filter by provider/ });
+
+    // Each option row renders its icon.
+    await userEvent.click(trigger());
+    expect(screen.getByTestId("logo-stripe")).toBeInTheDocument();
+    expect(screen.getByTestId("logo-github")).toBeInTheDocument();
+
+    // A single selection surfaces its icon in the trigger summary (alongside the label).
+    await userEvent.click(screen.getByRole("option", { name: "Stripe" }));
+    expect(trigger()).toHaveTextContent("Stripe");
+    expect(within(trigger()).getByTestId("logo-stripe")).toBeInTheDocument();
   });
 });
