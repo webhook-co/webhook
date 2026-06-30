@@ -12,6 +12,9 @@ import {
   eventsList,
   eventsReplay,
   eventsTail,
+  replayDestinationsCreate,
+  replayDestinationsDelete,
+  replayDestinationsList,
 } from "./capabilities";
 import {
   CAPABILITY_ERRORS,
@@ -35,6 +38,9 @@ const EXPECTED_NAMES = [
   "events.tail",
   "events.replay",
   "audit.verify",
+  "replayDestinations.create",
+  "replayDestinations.list",
+  "replayDestinations.delete",
 ];
 
 describe("capability registry", () => {
@@ -341,6 +347,61 @@ describe("endpoints.rotate", () => {
       paused: false,
       createdAt: "2026-06-25T00:00:00.000Z",
       ingestUrl: "https://wbhk.my/whep_new",
+    });
+    expect(ok.success).toBe(true);
+  });
+});
+
+describe("replayDestinations.* (ADR-0081)", () => {
+  it("create/list/delete reuse the endpoints:* scopes and are web-deferred + mcp-exempt (api+cli only)", () => {
+    expect(replayDestinationsCreate.auth.scope).toBe("endpoints:write");
+    expect(replayDestinationsDelete.auth.scope).toBe("endpoints:write");
+    expect(replayDestinationsList.auth.scope).toBe("endpoints:read");
+    for (const cap of [
+      replayDestinationsCreate,
+      replayDestinationsList,
+      replayDestinationsDelete,
+    ]) {
+      expect(requiredSurfaces(cap), cap.name).toEqual(["api", "cli"]);
+      expect(Object.keys(cap.surfaceExempt ?? {}).sort()).toEqual(["mcp", "web"]);
+    }
+    expect(replayDestinationsCreate.errors).toContain("FORBIDDEN");
+    expect(replayDestinationsDelete.errors).toContain("NOT_FOUND");
+  });
+
+  it("create accepts a public https URL and rejects the IP/encoding/non-https/bad-port zoo", () => {
+    expect(
+      replayDestinationsCreate.input.safeParse({ url: "https://hooks.example.com/in" }).success,
+    ).toBe(true);
+    expect(
+      replayDestinationsCreate.input.safeParse({
+        url: "https://hooks.example.com/in",
+        label: "prod",
+      }).success,
+    ).toBe(true);
+    for (const url of [
+      "http://hooks.example.com/in", // not https
+      "https://169.254.169.254/in", // metadata IP literal
+      "https://2130706433/in", // decimal-encoded 127.0.0.1
+      "https://user:pass@hooks.example.com/in", // credentials
+      "https://hooks.example.com:6379/in", // disallowed port
+      "https://localhost/in", // single-label
+      "not a url",
+    ]) {
+      expect(replayDestinationsCreate.input.safeParse({ url }).success, url).toBe(false);
+    }
+  });
+
+  it("delete requires a uuid destinationId; output is the id + a coerced deletedAt", () => {
+    expect(
+      replayDestinationsDelete.input.safeParse({
+        destinationId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
+      }).success,
+    ).toBe(true);
+    expect(replayDestinationsDelete.input.safeParse({ destinationId: "nope" }).success).toBe(false);
+    const ok = replayDestinationsDelete.output.safeParse({
+      id: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
+      deletedAt: "2026-06-30T00:00:00.000Z",
     });
     expect(ok.success).toBe(true);
   });

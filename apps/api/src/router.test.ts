@@ -349,6 +349,101 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
   });
 });
 
+describe("handleRequest — replayDestinations.* (ADR-0081, dedicated api-only map)", () => {
+  const DEST = "55555555-5555-7555-8555-555555555555";
+  const writeScoped: AuthContext = { orgId: ORG, scopes: ["endpoints:write", "endpoints:read"] };
+  const readScoped: AuthContext = { orgId: ORG, scopes: ["endpoints:read"] };
+  function rdMap(
+    impl: Record<string, (ctx: AuthContext, input: unknown) => Promise<unknown>>,
+  ): CapabilityHandlers {
+    return new Map(Object.entries(impl));
+  }
+  function del(path: string, token: string | null = "whk_ok"): Request {
+    return new Request(`${RESOURCE}${path}`, {
+      method: "DELETE",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+    });
+  }
+
+  it("dispatches GET /v1/replay-destinations to replayDestinations.list via the DEDICATED map", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(readScoped)),
+      // The shared handlers map deliberately does NOT carry replayDestinations.* (mcp can't reach it).
+      handlers: handlersOf({}),
+      replayDestinations: rdMap({
+        "replayDestinations.list": async (_ctx, input) => {
+          seen = input;
+          return { items: [] };
+        },
+      }),
+    };
+    const res = await handleRequest(get("/v1/replay-destinations"), deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({});
+    expect(await res.json()).toEqual({ items: [] });
+  });
+
+  it("dispatches POST /v1/replay-destinations to replayDestinations.create with the JSON body as input", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({}),
+      replayDestinations: rdMap({
+        "replayDestinations.create": async (_ctx, input) => {
+          seen = input;
+          return { id: DEST, url: "https://hooks.example.com/in", status: "active" };
+        },
+      }),
+    };
+    const res = await handleRequest(
+      post("/v1/replay-destinations", { url: "https://hooks.example.com/in", label: "prod" }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ url: "https://hooks.example.com/in", label: "prod" });
+    expect(await res.json()).toMatchObject({ id: DEST });
+  });
+
+  it("dispatches DELETE /v1/replay-destinations/:id with the path id, mapping NOT_FOUND → 404", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({}),
+      replayDestinations: rdMap({
+        "replayDestinations.delete": async (_ctx, input) => {
+          seen = input;
+          throw new CapabilityFault("NOT_FOUND", "replay destination not found");
+        },
+      }),
+    };
+    const res = await handleRequest(del(`/v1/replay-destinations/${DEST}`), deps);
+    expect(seen).toEqual({ destinationId: DEST });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toMatchObject({ error: "NOT_FOUND" });
+  });
+
+  it("403s create when the bearer lacks endpoints:write (scope enforced before dispatch)", async () => {
+    let called = false;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(readScoped)),
+      handlers: handlersOf({}),
+      replayDestinations: rdMap({
+        "replayDestinations.create": async () => {
+          called = true;
+          return {};
+        },
+      }),
+    };
+    const res = await handleRequest(
+      post("/v1/replay-destinations", { url: "https://hooks.example.com/in" }),
+      deps,
+    );
+    expect(res.status).toBe(403);
+    expect(called).toBe(false);
+  });
+});
+
 describe("handleRequest — GET /v1/whoami (scope-free identity)", () => {
   it("returns the authenticated principal with NO scope required (even a scopeless key)", async () => {
     const deps: ApiDeps = {

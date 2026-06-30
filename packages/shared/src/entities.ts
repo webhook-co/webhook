@@ -106,6 +106,27 @@ export const DeliveryAttemptSchema = z.object({
 });
 export type DeliveryAttempt = z.infer<typeof DeliveryAttemptSchema>;
 
+/**
+ * A replay destination — an org-level allowlist entry naming an HTTPS URL that `events.replay` is
+ * permitted to deliver to (ADR-0081). It is a SAFETY/trust control, distinct from S3's per-endpoint
+ * outbound routing (which lives in its own tables). `status` is a word (active|revoked), not a bool;
+ * `lastValidatedAt` records the last time the URL passed a structural/resolve check (advisory). The
+ * canonical `url` is the stored, normalized form (https, lowercased host, default port stripped).
+ */
+export const ReplayDestinationStatusSchema = z.enum(["active", "revoked"]);
+export type ReplayDestinationStatus = z.infer<typeof ReplayDestinationStatusSchema>;
+
+export const ReplayDestinationSchema = z.object({
+  id: uuid,
+  orgId: uuid,
+  url: z.string(),
+  label: z.string().nullable(),
+  status: ReplayDestinationStatusSchema,
+  createdAt: z.coerce.date(),
+  lastValidatedAt: z.coerce.date().nullable(),
+});
+export type ReplayDestination = z.infer<typeof ReplayDestinationSchema>;
+
 /** Soft-cap limits view (org_limits). No prices — cap + behavior only. */
 export const OrgLimitsSchema = z.object({
   orgId: uuid,

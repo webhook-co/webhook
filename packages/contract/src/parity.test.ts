@@ -116,6 +116,11 @@ describe("capability parity — current GA surfaces conformance", () => {
     b.api.add("events.getPayload");
     // events.replay is bound on api (+ cli, above) but exempt on mcp (localhost-tunnel is CLI-intrinsic) — PR3.
     b.api.add("events.replay");
+    // replayDestinations.* (ADR-0081): bound on api (+ cli, above), web-deferred + mcp-exempt (an agent
+    // must not mutate the SSRF-egress allowlist). api-only here, like events.replay.
+    b.api.add("replayDestinations.create");
+    b.api.add("replayDestinations.list");
+    b.api.add("replayDestinations.delete");
     // the dashboard surface (DB-direct server actions/reads): endpoints.* (slice 2) + events.list/get (slice 3a).
     for (const name of WEB_BOUND) b.web.add(name);
     return b;

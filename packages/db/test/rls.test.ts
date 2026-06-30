@@ -22,6 +22,7 @@ const TENANT_TABLES = [
   { table: "endpoints", col: "org_id" },
   { table: "signing_keys", col: "org_id" },
   { table: "provider_secrets", col: "org_id" },
+  { table: "replay_destinations", col: "org_id" },
   { table: "events", col: "org_id" },
   { table: "delivery_attempts", col: "org_id" },
   { table: "usage", col: "org_id" },
@@ -107,6 +108,8 @@ async function seedOrg(slug: string): Promise<Seeded> {
              values (${randomUUID()}, ${endpointId}, ${orgId}, ${deterministicBuffer(16)}, ${deterministicBuffer(16)}, ${"kek/1"}, ${deterministicBuffer(12)}, ${1}, ${"active"})`;
     await tx`insert into provider_secrets (id, endpoint_id, org_id, provider, secret_ciphertext, wrapped_dek, kek_ref, enc_nonce, envelope_version, status)
              values (${randomUUID()}, ${endpointId}, ${orgId}, ${"stripe"}, ${deterministicBuffer(16)}, ${deterministicBuffer(16)}, ${"kek/1"}, ${deterministicBuffer(12)}, ${1}, ${"active"})`;
+    await tx`insert into replay_destinations (id, org_id, url)
+             values (${randomUUID()}, ${orgId}, ${`https://hooks-${slug}.example.com/in`})`;
     await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
              values (${eventId}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${eventId}`}, ${128}, ${"seed-dedup"}, ${"content_hash"})`;
     await tx`insert into delivery_attempts (id, org_id, event_id, target, status)

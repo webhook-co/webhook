@@ -35,3 +35,11 @@ retried replay is de-duplicated.
   closed union makes that a deliberate, reviewable change rather than a silent capability.
 - Defined in `packages/contract` (`target.ts`, `capabilities.ts`); recorded in
   `docs/threat-model.md` (the replay-target boundary).
+
+## amendment (2026-06-30, ADR-0081)
+
+The "registered allowlist plus an explicit SSRF guard" precondition above is now being built (ADR-0081):
+an org-level `replay_destinations` allowlist (migration 0024) + a fail-closed, connect-time SSRF guard.
+The remote target is the additive `{kind:"destination", destinationId}` arm — it references a registered
+allowlist row by id, so there is **still no free-form URL**. The arm lands with the server-side delivery
+slice; this remains a deliberate, reviewable change, exactly as the closed union intended.

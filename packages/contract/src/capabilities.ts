@@ -1,4 +1,5 @@
 import {
+  canonicalizeAndValidateUrl,
   DeliveryAttemptSchema,
   EndpointSchema,
   EventSchema,
@@ -6,6 +7,7 @@ import {
   isUsableStandardWebhooksSecret,
   LagSchema,
   ProviderSchema,
+  ReplayDestinationSchema,
   SW_SECRET_PROVIDERS,
   VerificationStateSchema,
   WATERMARK_DELTA_MS,
@@ -46,6 +48,14 @@ const REPLAY_MCP_EXEMPT =
  */
 const PAYLOAD_MCP_EXEMPT =
   "raw payload bytes; the McpAgent has no R2 binding (agents use events.get)";
+/**
+ * replayDestinations.* mcp exemption — the allowlist GATES which remote URLs the server may deliver to
+ * (the SSRF-egress control). An MCP agent must not be able to register/mutate it, or it could steer the
+ * server at an attacker-controlled destination — the confused-deputy vector ADR-0005 names explicitly.
+ * (A DIFFERENT rationale than events.replay's "localhost is CLI-intrinsic" — recorded distinctly.)
+ */
+const REPLAY_DEST_MCP_EXEMPT =
+  "the replay allowlist gates SSRF egress targets — an agent must not register/mutate it (confused-deputy, ADR-0005)";
 
 function paged<T extends z.ZodTypeAny>(item: T) {
   return z.object({ items: z.array(item), nextCursor: cursor.nullable() });
@@ -367,6 +377,71 @@ export const endpointsRevokeProviderSecret = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED },
 });
 
+// ── Replay-destination allowlist (ADR-0081) ──────────────────────────────────────────────────────
+// The org-level allowlist of HTTPS URLs that events.replay's `{kind:"destination"}` target may deliver
+// to (the server-side remote-delivery arm lands in 1b). A SAFETY/trust control: keeping the replay
+// target closed (a destinationId reference, never a free-form URL) is what contains the SSRF + confused-
+// deputy surface (ADR-0005). create/list/delete reuse the endpoints:* scopes (no new grantable scope);
+// web is deferred to the dashboard epic; mcp is exempt (an agent must not mutate the egress allowlist).
+
+export const replayDestinationsCreate = defineCapability({
+  name: "replayDestinations.create",
+  // The URL is validated STRUCTURALLY at the contract boundary (canonicalizeAndValidateUrl): https-only,
+  // no credentials, no IP-literal host (every decimal/octal/hex encoding canonicalizes to an IP literal
+  // and is rejected), an allowed port, a multi-label FQDN. This is an early reject for honest mistakes +
+  // UX; the AUTHORITATIVE private-range guard runs at DELIVERY time (the engine connect-time guard, 1b),
+  // because DNS can rebind after registration. A label is an optional non-secret display name.
+  input: z
+    .object({
+      url: z.string().min(1).max(2048),
+      label: z.string().trim().min(1).max(200).optional(),
+    })
+    .superRefine((val, ctx) => {
+      if (!canonicalizeAndValidateUrl(val.url).ok) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["url"],
+          message:
+            "must be a public https URL — no IP-literal host, credentials, disallowed port, or bare name",
+        });
+      }
+    }),
+  output: ReplayDestinationSchema,
+  // FORBIDDEN: a bearer lacking endpoints:write (the api edge 403s before dispatch; on mcp — exempt here —
+  // the handler scope check is the sole gate). VALIDATION_ERROR carries the structural URL rejection.
+  errors: ["UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
+});
+
+export const replayDestinationsList = defineCapability({
+  name: "replayDestinations.list",
+  input: z.object({}),
+  // NOT paginated: an org's replay allowlist is a human-managed handful, returned whole (no cursor/limit
+  // — don't advertise pagination the surface doesn't implement, same as endpoints.listProviderSecrets).
+  output: z.object({ items: z.array(ReplayDestinationSchema) }),
+  errors: ["UNAUTHORIZED", "RATE_LIMITED"],
+  auth: { scope: "endpoints:read" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
+});
+
+export const ReplayDestinationDeletedSchema = z.object({ id: uuid, deletedAt: z.coerce.date() });
+export type ReplayDestinationDeleted = z.infer<typeof ReplayDestinationDeletedSchema>;
+
+export const replayDestinationsDelete = defineCapability({
+  name: "replayDestinations.delete",
+  input: z.object({ destinationId: uuid }),
+  output: ReplayDestinationDeletedSchema,
+  // Revocability matters for a security allowlist. Soft-delete: the entry stops being a valid replay
+  // target. NOT_FOUND for an unknown / cross-org / already-removed id (don't leak existence).
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
+});
+
 /**
  * The capability surface every binding implements. The six wedge capabilities
  * plus `audit.verify` — the compliance-by-design audit-chain verifier (ADR-0004),
@@ -387,6 +462,9 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   eventsTail,
   eventsReplay,
   auditVerify,
+  replayDestinationsCreate,
+  replayDestinationsList,
+  replayDestinationsDelete,
 ];
 
 /** Registry keyed by stable capability name. */

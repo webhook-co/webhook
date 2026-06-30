@@ -7,6 +7,7 @@ import {
   EventSchema,
   EventSummarySchema,
   OrgSchema,
+  ReplayDestinationSchema,
 } from "./entities";
 
 const uuid = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
@@ -127,5 +128,34 @@ describe("entity schemas", () => {
       createdAt: new Date(),
     });
     expect(da.attempt).toBe(1);
+  });
+
+  it("parses a ReplayDestination (active, never-validated) and coerces dates", () => {
+    const d = ReplayDestinationSchema.parse({
+      id: uuid,
+      orgId: uuid,
+      url: "https://hooks.example.com/in",
+      label: "prod receiver",
+      status: "active",
+      createdAt: "2026-06-30T00:00:00.000Z",
+      lastValidatedAt: null,
+    });
+    expect(d.status).toBe("active");
+    expect(d.createdAt).toBeInstanceOf(Date);
+    expect(d.lastValidatedAt).toBeNull();
+  });
+
+  it("rejects a ReplayDestination with an unknown status (closed enum)", () => {
+    expect(
+      ReplayDestinationSchema.safeParse({
+        id: uuid,
+        orgId: uuid,
+        url: "https://hooks.example.com/in",
+        label: null,
+        status: "paused",
+        createdAt: new Date(),
+        lastValidatedAt: new Date(),
+      }).success,
+    ).toBe(false);
   });
 });

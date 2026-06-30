@@ -25,6 +25,11 @@ import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
 import { profileRoute } from "./commands/profile.js";
 import { replayCommand } from "./commands/replay.js";
+import {
+  replayDestinationsAddCommand,
+  replayDestinationsListCommand,
+  replayDestinationsRemoveCommand,
+} from "./commands/replay-destinations.js";
 import { telemetryRoute } from "./commands/telemetry.js";
 import { upgradeCommand } from "./commands/upgrade.js";
 import { whoamiCommand } from "./commands/whoami.js";
@@ -55,6 +60,9 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "events.tail": ["listen"],
   "events.replay": ["replay"],
   "audit.verify": ["audit", "verify"],
+  "replayDestinations.create": ["replay-destinations", "add"],
+  "replayDestinations.list": ["replay-destinations", "list"],
+  "replayDestinations.delete": ["replay-destinations", "remove"],
 };
 
 const endpointsRoute = buildRouteMap({
@@ -87,6 +95,15 @@ const auditRoute = buildRouteMap({
   docs: { brief: "verify the tamper-evident audit chain" },
 });
 
+const replayDestinationsRoute = buildRouteMap({
+  routes: {
+    add: replayDestinationsAddCommand,
+    list: replayDestinationsListCommand,
+    remove: replayDestinationsRemoveCommand,
+  },
+  docs: { brief: "manage the allowlist of remote replay destinations" },
+});
+
 const root = buildRouteMap({
   routes: {
     login: loginCommand,
@@ -97,6 +114,7 @@ const root = buildRouteMap({
     endpoints: endpointsRoute,
     events: eventsRoute,
     audit: auditRoute,
+    "replay-destinations": replayDestinationsRoute,
     listen: listenCommand,
     replay: replayCommand,
     upgrade: upgradeCommand,

@@ -7,6 +7,7 @@ import {
   buildCapabilityHandlers,
   createClient,
   createCredentialHasherFromBase64,
+  createReplayDestinationHandlers,
   createReplayHandler,
   makeApiKeyAuthDeps,
   makeIngestHashEvictor,
@@ -155,6 +156,10 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
     }),
     payloads: env.R2_PAYLOADS,
     replay: createReplayHandler({ tenant }),
+    // replayDestinations.* (ADR-0081): the SSRF-egress allowlist, bound ONLY here (a DEDICATED map, not
+    // the shared one mcp builds — so the mcp exemption can't drift). Mutates under RLS with an in-tx
+    // audit row; the engine-side connect-time guard (1b) is the authoritative private-range defense.
+    replayDestinations: createReplayDestinationHandlers({ tenant, auditKey }),
   };
   return {
     deps,
