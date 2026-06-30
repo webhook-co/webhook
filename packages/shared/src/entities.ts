@@ -111,16 +111,21 @@ export type Event = z.infer<typeof EventSchema>;
 
 /**
  * The closed delivery-attempt lifecycle vocabulary (matches the delivery_attempts status CHECK,
- * migration 0025). `forwarded` = the legacy localhost-replay record (the CLI did the POST). The
- * server-delivery (ADR-0081) states: `pending` (claimed, in flight) → `delivered` (a 2xx) / `failed`
+ * migrations 0025 + 0027). `forwarded` = the legacy localhost-replay record (the CLI did the POST). The
+ * server-delivery (ADR-0081) states: `pending` (claimed/in flight) → `delivered` (a 2xx) / `failed`
  * (non-2xx / connection / transient-resolver failure — retryable) / `blocked` (the SSRF guard refused).
+ * The delivery-engine (S3 Slice 3) adds `queued` (durably accepted, not yet attempted — the
+ * durable-before-ACK intent) and `dead` (retries exhausted → dead-letter / DLQ; retained for history +
+ * manual replay).
  */
 export const DeliveryStatusSchema = z.enum([
+  "queued",
   "forwarded",
   "pending",
   "delivered",
   "failed",
   "blocked",
+  "dead",
 ]);
 export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
 
