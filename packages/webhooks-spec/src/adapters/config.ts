@@ -107,6 +107,12 @@ export const PROVIDERS = [
   // and Vonage/Nexmo (`Authorization: Bearer`, `payload_hash` claim). Both HS256, secret verbatim utf8.
   "netlify",
   "vonage",
+  // Tier-3 JWT, ORIGIN-authenticated (no body-hash claim — cryptographic origin/destination/freshness
+  // proof, body not integrity-bound): Monday (bare `Authorization` JWT, aud-bound) and Jira Connect
+  // (`Authorization: JWT`, request bound by the qsh claim). Both DISTINCT from `atlassian_jira` above
+  // (Jira's mainstream x-hub-signature system webhooks).
+  "monday",
+  "jira_connect",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);

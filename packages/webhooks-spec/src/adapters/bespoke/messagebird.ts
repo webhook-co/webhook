@@ -17,7 +17,7 @@ import { bytesToHex, sha256, utf8Encoder } from "../../bytes";
 import type { VerifyAdapter, VerifyInput } from "../../adapter";
 import { verificationFailed, verificationOk, type VerificationResult } from "../../verification";
 import { PROVIDER_TOLERANCE_SECONDS } from "../config";
-import { jwsFailureToResult, verifyCompactHs } from "../jws";
+import { enforceJwtWindow, jwsFailureToResult, verifyCompactHs } from "../jws";
 import { findHeader } from "../shared";
 
 const SIGNATURE_HEADER = "messagebird-signature-jwt";
@@ -52,35 +52,12 @@ export function makeMessagebirdAdapter(): VerifyAdapter {
       return verificationFailed({ code: "SIGNATURE_MISMATCH" });
     }
 
-    // (3) freshness — exp (upper) + nbf/iat (lower) against the configured replay window. An Invalid-Date
-    // `now` must NOT silently disable the window (mirrors shared.ts enforceSkew) → fall back to real time.
-    // exp/nbf stay OPTIONAL on purpose: MessageBird's Go SDK sends nbf+exp but the Node SDK sends iat, so
-    // requiring exp would false-reject the iat variant — and the body/URL hash binding is the integrity
-    // guarantee regardless. The 300s default tolerance is the engine's consistent skew posture.
-    const nowMs = input.now?.getTime() ?? Date.now();
-    const nowSec = Math.floor((Number.isFinite(nowMs) ? nowMs : Date.now()) / 1000);
-    const exp = payload.exp;
-    if (typeof exp === "number" && Number.isFinite(exp)) {
-      const skew = nowSec - exp;
-      if (skew > toleranceSeconds) {
-        return verificationFailed({
-          code: "TIMESTAMP_TOO_OLD",
-          skewSeconds: skew,
-          toleranceSeconds,
-        });
-      }
-    }
-    const lower = typeof payload.nbf === "number" ? payload.nbf : payload.iat;
-    if (typeof lower === "number" && Number.isFinite(lower)) {
-      const skew = nowSec - lower;
-      if (skew < -toleranceSeconds) {
-        return verificationFailed({
-          code: "TIMESTAMP_IN_FUTURE",
-          skewSeconds: skew,
-          toleranceSeconds,
-        });
-      }
-    }
+    // (3) freshness — exp (upper) + nbf/iat (lower) against the configured window (shared helper, NaN-now
+    // guarded). exp/nbf stay OPTIONAL on purpose: MessageBird's Go SDK sends nbf+exp but the Node SDK sends
+    // iat, so requiring exp would false-reject the iat variant — and the body/URL hash binding is the
+    // integrity guarantee regardless. The 300s default tolerance is the engine's consistent skew posture.
+    const stale = enforceJwtWindow(payload, toleranceSeconds, input.now);
+    if (stale !== null) return stale;
 
     // (4) URL binding — present iff signed. We hash the request URL verbatim (the only URL we hold); a
     // non-canonical configured URL fails CLOSED, the documented Tier-2 URL-binding trade-off (ADR-0080).
