@@ -56,19 +56,23 @@ export function x509SpkiFromDer(certDer: Uint8Array): Uint8Array | null {
   const tbs = readTlv(certDer, cert.valueStart);
   if (tbs === null || tbs.tag !== SEQUENCE) return null;
 
+  // Confine the whole walk to the TBSCertificate region: a cert whose tbs length under-states its content
+  // can't make the field walk wander into signatureAlgorithm/signatureValue (defense-in-depth — the cert is
+  // already host-pinned, and crypto.subtle.verify is the backstop).
+  const tbsEnd = tbs.valueEnd;
   let pos = tbs.valueStart;
   const first = readTlv(certDer, pos);
-  if (first === null) return null;
+  if (first === null || first.valueEnd > tbsEnd) return null;
   if (first.tag === CONTEXT_0) pos = first.valueEnd; // skip the optional version
 
   // Skip serialNumber, signature, issuer, validity, subject.
   for (let i = 0; i < 5; i++) {
     const field = readTlv(certDer, pos);
-    if (field === null) return null;
+    if (field === null || field.valueEnd > tbsEnd) return null;
     pos = field.valueEnd;
   }
 
   const spki = readTlv(certDer, pos);
-  if (spki === null || spki.tag !== SEQUENCE) return null;
+  if (spki === null || spki.tag !== SEQUENCE || spki.valueEnd > tbsEnd) return null;
   return certDer.subarray(pos, spki.valueEnd);
 }
