@@ -173,11 +173,16 @@ export function Calendar({ value, onChange, defaultMonth, today, className }: Ca
                 "flex h-8 items-center justify-center rounded-control text-sm tabular-nums outline-none",
                 "focus-visible:shadow-[var(--wh-focus-ring)]",
                 isFrom || isTo
-                  ? "bg-surface-inverse font-medium text-fg-on-inverse"
+                  ? "bg-surface-inverse font-semibold text-fg-on-inverse"
                   : inRange
-                    ? "bg-surface-sunken text-fg"
-                    : "text-fg-secondary hover:bg-surface-sunken hover:text-fg",
-                isToday && !(isFrom || isTo) && "font-semibold text-fg",
+                    ? // A clear tint of the high-contrast selection colour (visible in BOTH themes —
+                      // surface-sunken alone was nearly invisible against the popover surface).
+                      "bg-surface-inverse/20 font-medium text-fg"
+                    : "text-fg-secondary hover:bg-surface-inverse/10 hover:text-fg",
+                // Today (when not itself a range endpoint) gets a ring so it's findable against the tint.
+                isToday &&
+                  !(isFrom || isTo) &&
+                  "font-semibold text-fg ring-1 ring-inset ring-strong",
               )}
             >
               {Number(day.slice(8))}

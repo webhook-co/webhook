@@ -5,6 +5,7 @@ import {
   DATE_PRESETS,
   hasDateRange,
   isDatePreset,
+  presetCalendarRange,
   presetLabel,
   resolvePresetBound,
 } from "./date-range";
@@ -39,6 +40,21 @@ describe("resolvePresetBound", () => {
   it("returns undefined for an unknown id (a hand-edited ?range=foo is ignored)", () => {
     expect(resolvePresetBound("foo", NOW)).toBeUndefined();
     expect(resolvePresetBound(null, NOW)).toBeUndefined();
+  });
+});
+
+describe("presetCalendarRange", () => {
+  it("resolves a preset to its [day of (now − window), today] calendar span (UTC)", () => {
+    // For highlighting the active preset in the grid.
+    expect(presetCalendarRange("7d", NOW)).toEqual({ from: "2026-06-22", to: "2026-06-29" });
+    expect(presetCalendarRange("30d", NOW)).toEqual({ from: "2026-05-30", to: "2026-06-29" });
+    // Sub-day presets collapse onto the current day(s): 1h stays today, 24h reaches back one calendar day.
+    expect(presetCalendarRange("1h", NOW)).toEqual({ from: "2026-06-29", to: "2026-06-29" });
+    expect(presetCalendarRange("24h", NOW)).toEqual({ from: "2026-06-28", to: "2026-06-29" });
+  });
+
+  it("returns an empty range for an unknown preset id", () => {
+    expect(presetCalendarRange("foo", NOW)).toEqual({});
   });
 });
 

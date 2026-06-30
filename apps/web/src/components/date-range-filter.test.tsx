@@ -89,15 +89,18 @@ describe("DateRangeFilter", () => {
     );
   });
 
-  it("a valid preset OWNS the range — the calendar shows no custom selection even with stray from/to", async () => {
-    open({ range: "7d", from: "2026-06-01", to: "2026-06-10" });
+  it("a valid preset HIGHLIGHTS its own resolved range in the calendar (ignoring stray from/to)", async () => {
+    // The preset OWNS the range: the calendar shows the preset's [now−window, today] span (NOT the stray
+    // from/to). `today` is the preset's `to`, in the opened month, so it's a pressed endpoint.
+    open({ range: "7d", from: "2020-01-01", to: "2020-01-10" });
     await userEvent.click(screen.getByRole("button", { name: /Filter by received date/ }));
-    // Mirrors the parser (preset wins): no gridcell is pressed.
-    const pressed = screen
-      .getAllByRole("gridcell")
-      .filter((c) => c.getAttribute("aria-pressed") === "true");
-    expect(pressed).toHaveLength(0);
-    // The trigger still labels the active preset (unambiguous — the popover also has a "Last 7 days" item).
+    const now = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    const todayYmd = `${now.getUTCFullYear()}-${p(now.getUTCMonth() + 1)}-${p(now.getUTCDate())}`;
+    expect(screen.getByRole("gridcell", { name: todayYmd })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     expect(
       screen.getByRole("button", { name: "Filter by received date: Last 7 days" }),
     ).toBeInTheDocument();

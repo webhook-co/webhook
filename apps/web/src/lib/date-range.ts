@@ -43,6 +43,25 @@ export function presetLabel(id: string | null | undefined): string | undefined {
   return typeof id === "string" ? PRESET_BY_ID.get(id)?.label : undefined;
 }
 
+function toUtcYmd(date: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${p(date.getUTCMonth() + 1)}-${p(date.getUTCDate())}`;
+}
+
+/**
+ * The calendar day range a relative preset covers — `[day of (now − window), today]` (UTC) — so the
+ * grid can HIGHLIGHT the active preset's span. `now` is injected for tests. Sub-day presets (1h/24h)
+ * collapse to one or two calendar days, which is the honest day-granular view of the window.
+ */
+export function presetCalendarRange(
+  id: string | null | undefined,
+  now: Date = new Date(),
+): { from?: string; to?: string } {
+  const start = resolvePresetBound(id, now);
+  if (!start) return {};
+  return { from: toUtcYmd(start), to: toUtcYmd(now) };
+}
+
 function hasText(value: string | null | undefined): boolean {
   return typeof value === "string" && value.trim() !== "";
 }

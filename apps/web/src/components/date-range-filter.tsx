@@ -10,7 +10,13 @@ import {
 import { Calendar as CalendarIcon, Check, ChevronDown } from "lucide-react";
 import * as React from "react";
 
-import { activeDateLabel, DATE_PRESETS, hasDateRange, isDatePreset } from "@/lib/date-range";
+import {
+  activeDateLabel,
+  DATE_PRESETS,
+  hasDateRange,
+  isDatePreset,
+  presetCalendarRange,
+} from "@/lib/date-range";
 
 const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -61,13 +67,13 @@ export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
     });
   }
 
-  // What the calendar shows. A valid preset OWNS the range (mirrors the parser, which ignores from/to
-  // under a preset), so the calendar shows nothing then. Otherwise the inclusive calendar end reads the
-  // exclusive wire `to` back as `to − 1`; a malformed (non-YYYY-MM-DD, e.g. hand-edited ISO) bound is
-  // dropped rather than rendered as NaN.
+  // What the calendar shows. A valid preset OWNS the range (mirrors the parser, which ignores stray
+  // from/to under a preset) — and the calendar HIGHLIGHTS the preset's own resolved span so the grid
+  // reflects the active selection. Otherwise the inclusive calendar end reads the exclusive wire `to`
+  // back as `to − 1`; a malformed (non-YYYY-MM-DD, e.g. hand-edited ISO) bound is dropped, not NaN.
   const presetActive = isDatePreset(value.range);
   const calendarValue: CalendarRange = presetActive
-    ? {}
+    ? presetCalendarRange(value.range)
     : {
         from: YMD_RE.test(value.from) ? value.from : undefined,
         to: value.to ? shiftUtcDay(value.to, -1) : undefined,
