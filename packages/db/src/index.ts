@@ -36,5 +36,6 @@ export * from "./reads";
 export * from "./read-handlers";
 export * from "./write-handlers";
 export * from "./replay";
+export * from "./delivery";
 export * from "./replay-destinations";
 export * from "./signing-keys";
