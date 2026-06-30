@@ -73,6 +73,18 @@ export {
   type DropdownMenuItemProps,
 } from "./components/dropdown-menu";
 export {
+  Popover,
+  PopoverTrigger,
+  PopoverAnchor,
+  PopoverClose,
+  PopoverContent,
+} from "./components/popover";
+export {
+  MultiSelect,
+  type MultiSelectOption,
+  type MultiSelectProps,
+} from "./components/multi-select";
+export {
   Card,
   CardHeader,
   CardTitle,
