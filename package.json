@@ -18,7 +18,7 @@
     "format:check": "prettier --check .",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test --filter=!@webhook-co/db",
-    "test:db": "turbo run test --filter=@webhook-co/db",
+    "test:db": "turbo run test --filter=@webhook-co/db && turbo run test:db --filter=@webhook-co/api",
     "no-skipped-tests": "node scripts/no-skipped-tests.mjs",
     "tsconfig-boundary": "node scripts/tsconfig-boundary.mjs",
     "dal-gate-guard": "node scripts/dal-gate-guard.mjs",
