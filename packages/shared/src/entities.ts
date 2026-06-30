@@ -45,18 +45,35 @@ export type Endpoint = z.infer<typeof EndpointSchema>;
  * KMS/internal error; these collapse to one bucket the row can't tell apart, so `unattempted`
  * must never be presented as a failure).
  */
-export const VerificationStateSchema = z.enum(["verified", "failed", "unattempted"]);
+// "authenticated" is a DISTINCT, weaker state than "verified": the source was proven by a shared static
+// token / HTTP Basic credential (Tier-4 providers), NOT a cryptographic signature over the payload. The
+// stored verification carries `authenticity` (token/basic) for these; everything else that's `verified`
+// is cryptographically signature-verified.
+export const VerificationStateSchema = z.enum([
+  "verified",
+  "authenticated",
+  "failed",
+  "unattempted",
+]);
 export type VerificationState = z.infer<typeof VerificationStateSchema>;
 /** The canonical verification-state vocabulary (single source for CLI/web filter controls). */
 export const VERIFICATION_STATES = VerificationStateSchema.options;
 
-/** Derive the verification state from the stored pair. `verification` non-null with `verified=false`
- *  is the genuine "failed" case; null is "unattempted". */
+/** Derive the verification state from the stored pair. A `verified` result with an `authenticity` of
+ *  token/basic is the weaker "authenticated" (non-crypto); other `verified` is signature-verified.
+ *  `verification` non-null with `verified=false` is the genuine "failed" case; null is "unattempted". */
 export function deriveVerificationState(
   verified: boolean,
   verification: unknown,
 ): VerificationState {
-  if (verified) return "verified";
+  if (verified) {
+    // Mirrors the summary SQL CASE EXACTLY (`verification->>'authenticity' is not null`, reads.ts) so
+    // listEvents (SQL) and getEvent/listen (this) can never disagree on a row. Any authenticity marker
+    // means non-cryptographic → the weaker "authenticated"; default the unknown to the WEAKER state
+    // (never overstate a non-signature as "verified"). Today the field is only ever "token"/"basic".
+    const authenticity = (verification as { authenticity?: unknown } | null)?.authenticity;
+    return authenticity != null ? "authenticated" : "verified";
+  }
   return verification != null ? "failed" : "unattempted";
 }
 

@@ -20,6 +20,7 @@ import { makePlaidAdapter } from "./plaid";
 import { makePlivoAdapter } from "./plivo";
 import { makeSendgridAdapter } from "./sendgrid";
 import { makeTelnyxAdapter } from "./telnyx";
+import { TOKEN_AUTH_ADAPTERS } from "./token-auth-providers";
 import { makeTwilioAdapter } from "./twilio";
 import { makeVonageAdapter } from "./vonage";
 import { makeWiseAdapter } from "./wise";
@@ -46,4 +47,8 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   paypal: makePaypalAdapter(),
   aws_sns: makeAwsSnsAdapter(),
   plaid: makePlaidAdapter(),
+  // Tier-4 NON-CRYPTOGRAPHIC authenticity (A5) — static-token / HTTP-Basic equality, surfaced as the
+  // weaker "authenticated" status (gitlab, microsoft_graph, chargebee, postmark, sparkpost, okta,
+  // bigcommerce, datadog, brevo). Each built from the shared token-auth factory.
+  ...TOKEN_AUTH_ADAPTERS,
 };

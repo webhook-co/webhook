@@ -135,6 +135,22 @@ export const PROVIDERS = [
   // Plaid: ES256 JWT (Plaid-Verification), key fetched by kid from an AUTHENTICATED endpoint — the
   // registered secret is a JSON blob `{environment, client_id, secret}`; request_body_sha256 body binding.
   "plaid",
+  // Tier-4 NON-CRYPTOGRAPHIC authenticity (S2.2 A5): these do NOT sign the payload — they prove the
+  // source by a shared STATIC token / HTTP Basic credential, surfaced as the weaker "authenticated"
+  // status (NOT cryptographic "verified"). All on the `token-auth` factory; see ./bespoke/token-auth.
+  //   - GitLab: fixed `X-Gitlab-Token` header == registered token.
+  //   - Microsoft Graph: body `value[].clientState` == registered subscription token.
+  //   - Chargebee / Postmark / SparkPost: HTTP Basic (`Authorization: Basic …`); secret = "user:pass".
+  //   - Okta / BigCommerce / Datadog / Brevo: operator-CONFIGURED header; secret = JSON {header, token}.
+  "gitlab",
+  "microsoft_graph",
+  "chargebee",
+  "postmark",
+  "sparkpost",
+  "okta",
+  "bigcommerce",
+  "datadog",
+  "brevo",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);

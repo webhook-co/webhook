@@ -302,6 +302,38 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(verified.items.map((e) => e.id)).toEqual([vId]);
   });
 
+  it("projects + filters the weaker 'authenticated' state (Tier-4 token/basic) disjoint from 'verified'", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-authn" }, hasher)).id;
+    // A Tier-4 ok result carries `authenticity` in the stored verification jsonb → "authenticated".
+    const aId = await seedEvent(orgA, ep, {
+      provider: "gitlab",
+      verified: true,
+      verification: { ok: true, keyId: "secret_0", scheme: "gitlab", authenticity: "token" },
+    });
+    // A cryptographic ok (no authenticity) on the same endpoint stays "verified".
+    const vId = await seedEvent(orgA, ep, {
+      provider: "stripe",
+      verified: true,
+      verification: { ok: true, keyId: "k", scheme: "stripe" },
+    });
+
+    const all = await withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: ep, limit: 50 }));
+    const byId = new Map(all.items.map((e) => [e.id, e.verificationState]));
+    expect(byId.get(aId)).toBe("authenticated");
+    expect(byId.get(vId)).toBe("verified");
+
+    // The two buckets are disjoint: 'authenticated' returns ONLY the token row, 'verified' ONLY the crypto row.
+    const authed = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: ["authenticated"] }),
+    );
+    expect(authed.items.map((e) => e.id)).toEqual([aId]);
+
+    const verifiedOnly = await withTenant(app, orgA, (tx) =>
+      listEvents(tx, { endpointId: ep, limit: 50, verificationState: ["verified"] }),
+    );
+    expect(verifiedOnly.items.map((e) => e.id)).toEqual([vId]);
+  });
+
   it("the unattempted filter mirrors the CASE: a verified=true row with null verification stays 'verified'", async () => {
     // The invariant is verified=true ⇒ verification non-null, but nothing in the schema enforces it. A
     // pathological (verified=true, verification=null) row is labeled 'verified' by the CASE, so the

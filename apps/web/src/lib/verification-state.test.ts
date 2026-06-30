@@ -12,6 +12,11 @@ describe("verificationStatePill", () => {
     });
   });
 
+  it("maps the weaker Tier-4 'authenticated' state to a distinct ok-toned 'Authenticated' label", () => {
+    // Positive (not danger) but a DISTINCT label so a non-cryptographic match never reads as "Verified".
+    expect(verificationStatePill("authenticated")).toEqual({ tone: "ok", label: "Authenticated" });
+  });
+
   it("falls back to the `verified` boolean when the state is absent (no silent downgrade)", () => {
     // An absent state on a verified event still reads green (not a neutral downgrade).
     expect(verificationStatePill(undefined, true)).toEqual({ tone: "ok", label: "Verified" });

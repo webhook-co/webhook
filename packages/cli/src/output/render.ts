@@ -37,6 +37,12 @@ function verifiedWord(verified: boolean, color: boolean): string {
   return verified ? colorize("verified", "green", color) : colorize("unverified", "red", color);
 }
 
+// The Tier-4 weaker authenticity word — a DISTINCT yellow "authenticated" (a shared static token / HTTP
+// Basic match, not a payload signature) so it never reads as the green cryptographic "verified".
+function authnWord(color: boolean): string {
+  return colorize("authenticated", "yellow", color);
+}
+
 /** Date only — endpoints' createdAt. */
 function fmtDate(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -65,7 +71,7 @@ export function renderEventsTable(items: readonly EventSummary[], color: boolean
     items.map((e) => [
       fmtDateTime(e.receivedAt),
       e.provider === null ? NONE : field(e.provider),
-      verifiedWord(e.verified, color),
+      e.verificationState === "authenticated" ? authnWord(color) : verifiedWord(e.verified, color),
       field(e.id),
     ]),
   );
@@ -186,12 +192,17 @@ export function renderRemovedReplayDestination(d: ReplayDestinationDeleted): str
   ]);
 }
 
-/** `verified`/`unverified`, annotated with the signing scheme (on pass) or the failure code (on fail). */
+/** `verified`/`authenticated`/`unverified`, annotated with the signing scheme (on pass) or the failure
+ *  code (on fail). A Tier-4 token/basic pass reads `authenticated (<scheme>, non-cryptographic)`. */
 function verifiedDetail(e: Event, color: boolean): string {
-  const word = verifiedWord(e.verified, color);
-  if (e.verification === null) return word;
-  if (e.verification.ok) return `${word} (${field(e.verification.scheme)})`;
-  return `${word} (${field(e.verification.reason.code)})`;
+  if (e.verification === null) return verifiedWord(e.verified, color);
+  if (e.verification.ok) {
+    if (e.verification.authenticity !== undefined) {
+      return `${authnWord(color)} (${field(e.verification.scheme)}, non-cryptographic)`;
+    }
+    return `${verifiedWord(e.verified, color)} (${field(e.verification.scheme)})`;
+  }
+  return `${verifiedWord(e.verified, color)} (${field(e.verification.reason.code)})`;
 }
 
 export function renderEvent(e: Event, color: boolean): string {

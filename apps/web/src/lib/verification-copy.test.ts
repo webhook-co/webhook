@@ -19,6 +19,31 @@ describe("verificationCopy", () => {
     expect(c.detail).toContain("key_1");
   });
 
+  it("ok + authenticity:token → the weaker 'Authenticated' badge, flagged non-cryptographic", () => {
+    const c = verificationCopy({
+      ok: true,
+      keyId: "secret_0",
+      scheme: "gitlab",
+      authenticity: "token",
+    });
+    expect(c.tone).toBe("ok");
+    expect(c.pill).toBe("Authenticated");
+    expect(c.detail).toMatch(/non-cryptographic/i);
+    expect(c.detail).toContain("gitlab");
+  });
+
+  it("ok + authenticity:basic → 'Authenticated' naming HTTP Basic, non-cryptographic", () => {
+    const c = verificationCopy({
+      ok: true,
+      keyId: "secret_0",
+      scheme: "chargebee",
+      authenticity: "basic",
+    });
+    expect(c.pill).toBe("Authenticated");
+    expect(c.detail).toMatch(/basic/i);
+    expect(c.detail).toMatch(/non-cryptographic/i);
+  });
+
   const failures: ReadonlyArray<[string, VerificationResult, RegExp]> = [
     [
       "MISSING_HEADER",
