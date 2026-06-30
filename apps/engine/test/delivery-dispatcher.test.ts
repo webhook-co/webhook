@@ -194,6 +194,13 @@ describe("guardedDeliver — Standard Webhooks signing (S3 Slice 2)", () => {
     expect(d.fetchMock).not.toHaveBeenCalled();
   });
 
+  it("fails closed when signing is requested but NO signer is wired at all (deps.sign undefined) — no POST", async () => {
+    const d = deps(); // the guard helper: resolve/fetch/getPayload but NO `sign` dependency
+    const r = await guardedDeliver(d, { ...ARGS, signing: SIGNING });
+    expect(r.outcome).toBe("failed"); // a misconfigured/missing signer must never let an unsigned POST through
+    expect(d.fetchMock).not.toHaveBeenCalled();
+  });
+
   it("delivers verbatim (no sign call) when signing is absent — the 1b behavior is preserved", async () => {
     const d = signingDeps();
     await guardedDeliver(d, ARGS);
