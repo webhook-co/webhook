@@ -23,6 +23,7 @@ const TENANT_TABLES = [
   { table: "signing_keys", col: "org_id" },
   { table: "provider_secrets", col: "org_id" },
   { table: "replay_destinations", col: "org_id" },
+  { table: "delivery_subscriptions", col: "org_id" },
   { table: "events", col: "org_id" },
   { table: "delivery_attempts", col: "org_id" },
   { table: "usage", col: "org_id" },
@@ -116,6 +117,8 @@ async function seedOrg(slug: string): Promise<Seeded> {
              values (${eventId}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${eventId}`}, ${128}, ${"seed-dedup"}, ${"content_hash"})`;
     await tx`insert into delivery_attempts (id, org_id, event_id, target, status)
              values (${randomUUID()}, ${orgId}, ${eventId}, ${"localhost-tunnel"}, ${"delivered"})`;
+    await tx`insert into delivery_subscriptions (id, org_id, source_endpoint_id, destination_id)
+             values (${randomUUID()}, ${orgId}, ${endpointId}, ${destinationId})`;
     await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, date_trunc('day', now()), ${1})`;
     await tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${1000}, ${"pause"})`;
     await tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${false})`;
