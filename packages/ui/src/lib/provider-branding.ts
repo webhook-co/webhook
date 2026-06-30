@@ -103,6 +103,7 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
   bigcommerce: { displayName: "BigCommerce", brandColor: "#121118" },
   datadog: { displayName: "Datadog", brandColor: "#632CA6" },
   brevo: { displayName: "Brevo", brandColor: "#0B996E" },
+  ebay: { displayName: "eBay", brandColor: "#E53238" },
 };
 
 /** A neutral fill for an unknown/logo-less provider's monogram tile. */

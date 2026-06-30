@@ -6,7 +6,8 @@
   (`packages/contract`/`packages/db`/`packages/webhooks-spec`). S8 Slice 2. This ADR covers the dispatcher
   seam + the **no-secret** protocols (PR1), **X/Twitter CRC** (PR2a, the first secret-based protocol — adds
   the pre-capture unseal dep), and **Meta** verify-token compare (PR2b — adds the typed verify-token seal-
-  blob + `addProviderSecret` `kind`). **eBay** hash (PR3) extends it under this same ADR.
+  blob + `addProviderSecret` `kind`), and **eBay** challenge hash (PR3 — reuses the verify-token kind, adds
+  the `ebay` provider with a SHA1withECDSA notification adapter). All four protocol families now ship.
 - relates: [0085](0085-ingest-accept-all-verbs-method-liveness.md) (accept-all-verbs + the per-token GET
   liveness this sits in front of), [0079](0079-slack-url-verification-handshake.md) (the POST-side Slack
   `url_verification` handshake this mirrors), [0078](0078-inbound-verification-provider-secret-management.md)
@@ -85,8 +86,21 @@ verify_token`-URL) verify-token forge a `verified=true` Meta webhook without Met
 verification downgrade. The discrimination is symmetric: the GET dispatcher uses ONLY verify-token blobs,
 the POST verify path uses ONLY signing secrets.
 
-**eBay (follow-up PR3 under this ADR):** `challenge_code` → `SHA256(code+verifyToken+endpoint)` reuses the
-same verify-token kind + the pre-capture unseal dep.
+**PR3 — eBay Marketplace Account Deletion (this change):** a `?challenge_code=<c>` GET is answered with
+`{"challengeResponse": hex(SHA256(challengeCode + verifyToken + endpoint))}` (`application/json`). The
+concatenation ORDER is load-bearing (eBay recomputes the exact hex), and `endpoint` is the **exact registered
+callback URL** reconstructed query-stripped (`url.origin + url.pathname`) and hashed verbatim. It reuses the
+verify-token kind (eBay added to `VERIFY_TOKEN_PROVIDERS`) + the pre-capture unseal dep. PR3 also adds the
+**`ebay` provider** as a full verifiable provider: its **Event Notification** POST signature is `SHA1withECDSA`
+(`X-EBAY-SIGNATURE` = base64-JSON `{kid, signature}`, a DER ECDSA sig over the raw body), and verifying it
+needs eBay's public key fetched **by `kid` from an authenticated endpoint** — so the registered signing secret
+is the operator's eBay **app creds blob** `{clientId, clientSecret, env}` (extending Plaid's creds-blob
+pattern), and the adapter mints a client-credentials token then fetches the key (both host-pinned + cached +
+fail-soft). A new `verifyEcdsaP256Sha1` primitive backs it. The eBay app-secret and verify-token coexist under
+the `ebay` slug exactly like Meta — the kind-aware verify path (PR2b) keeps them separate. The POST adapter is
+verified against eBay's documented spec + self-generated SHA1withECDSA vectors; **live-eBay POST verification
+is not yet exercised** (needs a real eBay app), but the **challenge handshake IS live-verifiable** and is the
+credential-free subscription unblock.
 
 ## consequences
 

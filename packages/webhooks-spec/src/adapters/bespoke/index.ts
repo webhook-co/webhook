@@ -10,6 +10,7 @@ import type { Provider } from "../config";
 import { makeAwsSnsAdapter } from "./aws-sns";
 import { makeContentfulAdapter } from "./contentful";
 import { makeDiscordAdapter } from "./discord";
+import { makeEbayAdapter } from "./ebay";
 import { makeJiraConnectAdapter } from "./jira-connect";
 import { makeKindeAdapter } from "./kinde";
 import { makeMessagebirdAdapter } from "./messagebird";
@@ -47,6 +48,9 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   paypal: makePaypalAdapter(),
   aws_sns: makeAwsSnsAdapter(),
   plaid: makePlaidAdapter(),
+  // Tier-3 REMOTE-FETCH + APP-AUTH — eBay mints a client-credentials token, then fetches the signing key
+  // by kid; SHA1withECDSA over the raw body. Registered secret = the app creds blob {clientId, clientSecret}.
+  ebay: makeEbayAdapter(),
   // Tier-4 NON-CRYPTOGRAPHIC authenticity (A5) — static-token / HTTP-Basic equality, surfaced as the
   // weaker "authenticated" status (gitlab, microsoft_graph, chargebee, postmark, sparkpost, okta,
   // bigcommerce, datadog, brevo). Each built from the shared token-auth factory.

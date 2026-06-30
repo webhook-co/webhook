@@ -10,7 +10,8 @@
 // registered `x` consumer secret, unsealed via an injected pre-capture `unseal` (the engine remains the
 // sole unsealer). PR2b (this change) adds Meta (FB/IG/WhatsApp/Messenger): a `hub.mode=subscribe` GET
 // echoes `hub.challenge` IFF the presented `hub.verify_token` matches a configured verify-token (sealed as
-// a typed blob, constant-time compared), else 403. eBay's challenge hash lands in PR3.
+// a typed blob, constant-time compared), else 403. PR3 (this change) adds eBay Marketplace Account Deletion:
+// a `challenge_code` GET → `{"challengeResponse": hex(SHA256(challengeCode + verifyToken + endpointURL))}`.
 
 import { type CachedSealedSecret } from "@webhook-co/db";
 import {
@@ -84,6 +85,28 @@ function metaHubChallenge(url: URL): { challenge: string; verifyToken: string } 
 }
 
 /**
+ * eBay Marketplace Account Deletion/Closure endpoint validation: a `?challenge_code=<c>` GET. Respond with
+ * `{"challengeResponse": hex(SHA256(challengeCode + verificationToken + endpoint))}` as `application/json`.
+ * The concatenation ORDER is load-bearing (eBay recomputes + compares the exact hex), and `endpoint` is the
+ * EXACT registered callback URL string (query-stripped, hashed verbatim — a trailing-slash/case mismatch
+ * fails verification). PURE: takes the already-unsealed verify-token (the dispatcher resolves it).
+ */
+export async function ebayChallengeResponse(
+  challengeCode: string,
+  verificationToken: string,
+  endpoint: string,
+): Promise<Response> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest(
+      "SHA-256",
+      utf8Encoder.encode(challengeCode + verificationToken + endpoint),
+    ),
+  );
+  const hex = [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Response.json({ challengeResponse: hex }, { headers: BROWSER_SAFE_HEADERS });
+}
+
+/**
  * Adobe Acrobat Sign: a GET carrying the `X-AdobeSign-ClientId` header — return 2xx and echo the SAME
  * client id back via the response header (one of Adobe's two accepted forms). No secret: the client id is
  * the caller's own value bounced 1:1, proving URL control, like the Slack/Dropbox nonce.
@@ -145,6 +168,20 @@ export async function dispatchGetHandshake(
         status: 403,
         headers: { "content-type": "text/plain; charset=utf-8", ...BROWSER_SAFE_HEADERS },
       });
+    }
+  }
+
+  // eBay Marketplace Account Deletion: a `challenge_code` GET → SHA-256 of challengeCode + the configured
+  // verify-token + the EXACT registered callback URL (query-stripped). Like Meta, the verify-token is a
+  // typed blob coexisting with eBay's app-creds secret under the `ebay` slug, so skip non-verify-token
+  // secrets. No ebay verify-token configured → not resolvable → null → falls through to capture.
+  const challengeCode = url.searchParams.get("challenge_code");
+  if (challengeCode !== null && challengeCode.length > 0) {
+    for (const secret of sealedSecrets) {
+      if (secret.provider !== "ebay") continue;
+      const verifyToken = parseVerifyTokenSecret(await unseal(secret));
+      if (verifyToken === null) continue; // an app-creds blob, not a verify-token
+      return ebayChallengeResponse(challengeCode, verifyToken, `${url.origin}${url.pathname}`);
     }
   }
 

@@ -661,3 +661,42 @@ describe("handleIngest — GET verification-handshake dispatch (Meta hub.challen
     expect(calls.ingest).toHaveLength(1); // captured (bill-all)
   });
 });
+
+describe("handleIngest — GET verification-handshake dispatch (eBay challenge_code, PR3)", () => {
+  const EBAY_ENDPOINT = {
+    orgId: ORG,
+    endpointId: EP,
+    paused: false,
+    sealedSecrets: [{ provider: "ebay" }],
+  };
+
+  it("answers a challenge_code GET with a SHA-256 challengeResponse and captures NOTHING", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => EBAY_ENDPOINT as never,
+      unsealSecret: async () => serializeVerifyTokenSecret("ebay-verify-token-abc"),
+    });
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?challenge_code=71745723`, { method: "GET" }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { challengeResponse: string };
+    expect(body.challengeResponse).toMatch(/^[0-9a-f]{64}$/); // lowercase hex SHA-256
+    expect(calls.put).toHaveLength(0);
+    expect(calls.ingest).toHaveLength(0); // a control message, never metered
+  });
+
+  it("an endpoint with NO ebay verify-token falls through to capture (only app-creds configured)", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => EBAY_ENDPOINT as never,
+      unsealSecret: async () => JSON.stringify({ clientId: "c", clientSecret: "s" }),
+    });
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}?challenge_code=71745723`, { method: "GET" }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/live/i); // generic liveness, not a challengeResponse
+    expect(calls.ingest).toHaveLength(1); // captured (bill-all)
+  });
+});
