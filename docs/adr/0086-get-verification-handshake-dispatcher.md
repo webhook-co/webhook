@@ -3,8 +3,9 @@
 - status: accepted.
 - date: 2026-06-30
 - scope: `apps/engine` (the `wbhk.my` ingest hot path). S8 Slice 2. This ADR covers the dispatcher seam +
-  the **no-secret** protocols (PR1); the secret-based protocols (Meta verify-token, X CRC, eBay) extend it
-  in follow-up PRs under this same ADR.
+  the **no-secret** protocols (PR1) and **X/Twitter CRC** (PR2a, the first secret-based protocol — adds the
+  pre-capture unseal dep). **Meta** verify-token compare (PR2b) and **eBay** hash (PR3) extend it under this
+  same ADR.
 - relates: [0085](0085-ingest-accept-all-verbs-method-liveness.md) (accept-all-verbs + the per-token GET
   liveness this sits in front of), [0079](0079-slack-url-verification-handshake.md) (the POST-side Slack
   `url_verification` handshake this mirrors), [0078](0078-inbound-verification-provider-secret-management.md)
@@ -48,18 +49,30 @@ echo is inert regardless of content — a hostile `?challenge=<script>` is retur
 **Adobe Acrobat Sign** echoes the `X-AdobeSign-ClientId` request header back on a 200. None need a secret —
 the echoed value is the caller's own, proving URL control (like the Slack nonce).
 
-**Secret-based protocols (follow-up PRs under this ADR):** **X/Twitter CRC** (`crc_token` →
-`{"response_token":"sha256="+base64(HMAC-SHA256(consumerSecret, crc_token))}`) reuses the endpoint's existing
-sealed `x` provider secret; **Meta** (`hub.challenge`/`hub.verify_token` → echo iff the per-endpoint
-verify-token matches, else 403) and **eBay** (`challenge_code` → `SHA256(code+verifyToken+endpoint)`) store a
-user-chosen verify-token sealed via the existing `endpoints.addProviderSecret` capability (the Tier-4
-configured-header precedent — no new table, no migration). The unseal reuses the engine's existing
-KMS-backed `SecretStore.openString`, exposed as a pre-capture dep (the engine remains the sole unsealer).
+**PR2a — X/Twitter CRC (this change):** a `crc_token` GET is answered with
+`{"response_token":"sha256="+base64(HMAC-SHA256(consumerSecret, crc_token))}` (`application/json`, standard
+base64, literal `sha256=` prefix). The HMAC key is the endpoint's **existing** sealed `x` provider secret
+(the same consumer secret used for X's POST-signature verification — no new storage). The dispatcher unseals
+it via a new **pre-capture unseal dep** (`IngestDeps.unsealSecret`): the engine's KMS-backed
+`SecretStore.openString` (`getHandshakeUnsealStore`, mirroring the outbound `getSignStore`), with the AAD
+rebuilt from the **authoritative** orgId/endpointId — so the engine remains the sole unsealer. An endpoint
+with no `x` secret is not a resolvable CRC handshake → `null` → falls through. The unseal call is **guarded**
+in `handleIngest` (a thrown unseal — KMS down / corrupt secret — never drops the request; it logs
+`ingest.handshake_failed` and falls through to normal capture), preserving the no-drop floor. Byte-exactness
+is pinned to a gold vector (`crc_token=9b4507b3-…` under `consumer_secret=z3ZX4v7m…` →
+`sha256=Cytd4Sq+NvEcV3MMrXxWJGJx5A+y/lXzzU2Maartkx8=`).
+
+**Remaining secret-based protocols (follow-up PRs under this ADR):** **Meta** (`hub.challenge`/
+`hub.verify_token` → echo iff the per-endpoint verify-token matches **constant-time**, else 403, PR2b) and
+**eBay** (`challenge_code` → `SHA256(code+verifyToken+endpoint)`, PR3) store a user-chosen verify-token
+sealed via the existing `endpoints.addProviderSecret` capability (the Tier-4 configured-header precedent —
+no new table, no migration), unsealed via the same pre-capture dep PR2a introduces.
 
 ## consequences
 
-A `wbhk.my` URL becomes usable as a Dropbox / Adobe verification target immediately (PR1), and as a Meta / X
-/ eBay target once the secret-based PRs land — closing the largest named integration gap. The no-drop floor
+A `wbhk.my` URL becomes usable as a Dropbox / Adobe verification target (PR1) and an **X/Twitter** CRC
+target (PR2a), and as a Meta / eBay target once the remaining secret-based PRs land — closing the largest
+named integration gap. The no-drop floor
 and metering posture are unchanged: handshakes write no row and bill nothing, exactly like the Slack
 control-message divert. The verify-token storage reuses the sealed provider-secret surface, so there is no
 new schema, grant, or KV-resolution path. The dashboard form for the verify-token is web-deferred (S1).

@@ -5,6 +5,7 @@ import {
   createCredentialHasherFromBase64,
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
+  fromCachedSealedSecret,
   getEndpoint,
   insertIngestEvent,
   makeApiKeyAuthDeps,
@@ -205,6 +206,16 @@ export const getSignStore = memoizeIsolate(
   async (env: Env) => new SecretStore(await kmsProviderFromEnv(env), DEK_CACHE),
 );
 
+/**
+ * The per-isolate UNSEAL store for the GET verification-handshake dispatcher (inbound, S8 Slice 2). Like
+ * getSignStore it must UNWRAP DEKs (to recover a per-endpoint secret — e.g. the X CRC consumer secret), so
+ * it carries the isolate DEK cache. Dedicated (not getSignStore) so the inbound handshake unseal stays
+ * decoupled from outbound signing. Memoized + lazy; only awaited when a GET is a secret-based handshake.
+ */
+export const getHandshakeUnsealStore = memoizeIsolate(
+  async (env: Env) => new SecretStore(await kmsProviderFromEnv(env), DEK_CACHE),
+);
+
 /** Per-request ingest deps plus the teardown for the DB clients they hold. */
 export interface IngestDepsHandle {
   readonly deps: IngestDeps;
@@ -267,6 +278,14 @@ export async function buildIngestDeps(env: Env): Promise<IngestDepsHandle> {
     // Synchronous best-effort verification. The verify fn (KMS + DEK cache + adapters) is built once
     // per isolate; a thrown init/unseal is caught by handleIngest's guard (capture is never blocked).
     verify: async (input) => (await getVerifyFn(env))(input),
+    // Pre-capture unseal for the GET-handshake dispatcher (e.g. the X CRC consumer secret). The AAD is
+    // rebuilt from the AUTHORITATIVE orgId/endpointId (not cached.context); keyId = the secret's row id
+    // (addProviderSecret binds it). A thrown unseal is caught by handleIngest's handshake guard.
+    unsealSecret: async (cached, orgId, endpointId) => {
+      const store = await getHandshakeUnsealStore(env);
+      const { sealed } = fromCachedSealedSecret(cached);
+      return store.openString(sealed, { orgId, endpointId, keyId: cached.id });
+    },
     putPayload: async (key, body, contentType) => {
       // The body is the source of truth (HMAC is over these exact bytes); the content-type is only
       // advisory metadata, so a malformed one is dropped rather than allowed to fail the PUT.
