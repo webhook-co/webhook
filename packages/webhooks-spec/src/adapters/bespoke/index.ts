@@ -7,6 +7,7 @@
 
 import type { VerifyAdapter } from "../../adapter";
 import type { Provider } from "../config";
+import { makeAwsSnsAdapter } from "./aws-sns";
 import { makeContentfulAdapter } from "./contentful";
 import { makeDiscordAdapter } from "./discord";
 import { makeJiraConnectAdapter } from "./jira-connect";
@@ -14,6 +15,7 @@ import { makeKindeAdapter } from "./kinde";
 import { makeMessagebirdAdapter } from "./messagebird";
 import { makeMondayAdapter } from "./monday";
 import { makeNetlifyAdapter } from "./netlify";
+import { makePaypalAdapter } from "./paypal";
 import { makePlivoAdapter } from "./plivo";
 import { makeSendgridAdapter } from "./sendgrid";
 import { makeTelnyxAdapter } from "./telnyx";
@@ -40,4 +42,6 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   wise: makeWiseAdapter(),
   // Tier-3 REMOTE-FETCH — key fetched from the provider's JWKS/cert (engine-injected fetchKey).
   kinde: makeKindeAdapter(),
+  paypal: makePaypalAdapter(),
+  aws_sns: makeAwsSnsAdapter(),
 };

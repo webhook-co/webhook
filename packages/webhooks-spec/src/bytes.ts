@@ -129,3 +129,26 @@ export async function hmacSha256(secret: Uint8Array, message: Uint8Array): Promi
 export async function sha256(data: Uint8Array): Promise<Uint8Array> {
   return new Uint8Array(await crypto.subtle.digest("SHA-256", data));
 }
+
+/** Precomputed IEEE 802.3 CRC-32 table (polynomial 0xEDB88320). */
+const CRC32_TABLE: Uint32Array = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+/**
+ * IEEE CRC-32 of `data` as an UNSIGNED 32-bit integer. PayPal's webhook signature signs
+ * `…|crc32(rawBody)` where the CRC is rendered as an unsigned decimal string — `String(crc32(body))`.
+ */
+export function crc32(data: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < data.length; i++) {
+    crc = (CRC32_TABLE[(crc ^ data[i]!) & 0xff]! ^ (crc >>> 8)) >>> 0;
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
