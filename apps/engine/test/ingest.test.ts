@@ -105,6 +105,7 @@ describe("handleIngest — the wbhk.my write path", () => {
       const res = await handleIngest(req(GOOD, { method, body: `{"v":1}` }), deps);
       expect(res.status).toBe(200);
       expect(await res.text()).toBe("ok");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff"); // nosniff rides every response shape
       expect(calls.order).toEqual(["put", "verify", "ingest"]); // ordering unchanged for bodied verbs
       expect(calls.ingest[0]!.method).toBe(method);
       expect(calls.verify[0]!.method).toBe(method); // method forwarded to verify (Tier-2 url/method signers)
@@ -121,6 +122,7 @@ describe("handleIngest — the wbhk.my write path", () => {
     );
     expect(res.status).toBe(405);
     expect(res.headers.get("allow")).toMatch(/GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE/);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff"); // nosniff on the 405 error response too
     expect(calls.put).toHaveLength(0); // never resolved, never captured
     expect(calls.ingest).toHaveLength(0);
   });
