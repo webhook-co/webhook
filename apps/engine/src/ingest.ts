@@ -27,7 +27,7 @@ import {
   type VerificationResult,
 } from "@webhook-co/shared";
 
-import { deriveDedup } from "./dedup";
+import { deriveDedup, extractEventType } from "./dedup";
 import { dispatchGetHandshake } from "./handshake";
 
 /** A resolved ingest token -> its owning endpoint (the ingest resolver's narrowed result). */
@@ -85,6 +85,8 @@ export interface IngestRow {
   readonly headers: ReadonlyArray<readonly [string, string]>;
   /** The captured request's HTTP method (accept-all-verbs); recorded on every capture. */
   readonly method: string;
+  /** The normalized per-provider event type (S3 Slice 3), or null when unextracted (routes via `*`). */
+  readonly eventType: string | null;
   readonly provider: Provider | null;
   readonly providerEventId: string | null;
   readonly dedupBucket: number | null;
@@ -390,6 +392,9 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       provider: outcome.provider ?? derived.provider,
       providerEventId: derived.providerEventId,
       dedupBucket: derived.dedupBucket,
+      // The normalized event type for subscription routing (S3 Slice 3), derived from the AUTHORITATIVE
+      // provider (same as the `provider` column). null when unextracted → the matcher routes it via `*` only.
+      eventType: extractEventType(outcome.provider ?? derived.provider, raw, headers),
       verified: outcome.verified,
       verification: outcome.verification,
     }));

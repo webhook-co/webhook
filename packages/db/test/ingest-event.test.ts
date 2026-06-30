@@ -66,6 +66,7 @@ function row(over: Partial<IngestEventInput> = {}): IngestEventInput {
     verified: false,
     verification: null,
     method: "POST",
+    eventType: "charge.succeeded",
     ...over,
   };
 }

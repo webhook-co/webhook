@@ -238,9 +238,34 @@ describe("handleIngest — the wbhk.my write path", () => {
     expect(row.provider).toBe("stripe");
     expect(row.payloadBytes).toBe(new TextEncoder().encode(`{"id":"evt_abc"}`).byteLength);
     expect(row.payloadR2Key).toBe(calls.put[0]!.key); // same key written to R2 and stored
+    expect(row.eventType).toBeNull(); // this stripe body carries no `.type` → unextracted (routes via `*`)
     // cookieless, no CORS
     expect(res.headers.get("set-cookie")).toBeNull();
     expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("derives + stores the per-provider event_type (S3 Slice 3): stripe body `.type`, github header", async () => {
+    const stripe = makeDeps();
+    await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}`, {
+        method: "POST",
+        body: `{"type":"charge.succeeded","id":"evt_t"}`,
+        headers: { "stripe-signature": "t=1,v1=x", "content-type": "application/json" },
+      }),
+      stripe.deps,
+    );
+    expect(stripe.calls.ingest[0]!.eventType).toBe("charge.succeeded");
+
+    const github = makeDeps();
+    await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}`, {
+        method: "POST",
+        body: `{}`,
+        headers: { "x-github-event": "pull_request", "x-hub-signature-256": "sha256=x" },
+      }),
+      github.deps,
+    );
+    expect(github.calls.ingest[0]!.eventType).toBe("pull_request");
   });
 
   it("forwards the full request URL + method to verify (F3: Tier-2 url/method-signed providers)", async () => {
