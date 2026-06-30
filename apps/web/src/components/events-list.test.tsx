@@ -156,4 +156,24 @@ describe("EventsList", () => {
     await waitFor(() => expect(screen.getByText(/couldn't load more events/i)).toBeInTheDocument());
     expect(screen.getByText(A)).toBeInTheDocument();
   });
+
+  it("renders the provider display name + brand logo in its cell, and a placeholder for a null provider", () => {
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[ev(A, { provider: "stripe" }), ev(B, { provider: null })]}
+        initialCursor={null}
+        filterParams={{}}
+        isFiltered={false}
+        loadMore={vi.fn()}
+      />,
+    );
+    // The provider cell shows the display NAME (not the raw "stripe" slug) + the brand mark (an inline SVG).
+    const stripeCell = screen.getByText("Stripe").closest("td")!;
+    expect(stripeCell.querySelector("svg")).toBeTruthy();
+    // A null provider renders the "—" placeholder with no logo in that cell.
+    const nullRow = screen.getByText(B).closest("tr")!;
+    const placeholder = within(nullRow).getByText("—");
+    expect(placeholder.closest("td")!.querySelector("svg")).toBeNull();
+  });
 });
