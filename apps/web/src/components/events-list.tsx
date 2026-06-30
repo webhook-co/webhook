@@ -3,6 +3,7 @@
 import {
   Banner,
   Button,
+  providerDisplayName,
   StatusPill,
   Table,
   TableBody,
@@ -105,7 +106,9 @@ export function EventsList({
                     {formatDateTime(event.receivedAt)}
                   </Link>
                 </TableCell>
-                <TableCell className="text-fg-secondary">{event.provider ?? "—"}</TableCell>
+                <TableCell className="text-fg-secondary">
+                  {providerDisplayName(event.provider)}
+                </TableCell>
                 <TableCell>
                   {/* Tri-state (ADR-0077 amendment): the list now projects the verification state, so a
                       genuine signature FAILURE shows red. "Not verified" (unattempted) stays neutral —
