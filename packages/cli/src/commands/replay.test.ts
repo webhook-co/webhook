@@ -72,6 +72,7 @@ function fakeApi(opts: {
   onReplay?: (init: RequestInit) => void;
   onForward?: (init: RequestInit) => void;
   payload?: Uint8Array;
+  attempt?: unknown;
 }): typeof fetch {
   return (async (url: string | URL, init?: RequestInit) => {
     const u = String(url);
@@ -96,7 +97,7 @@ function fakeApi(opts: {
     }
     if (method === "POST" && u.endsWith(`/v1/events/${EVENT_ID}/replay`)) {
       opts.onReplay?.(init ?? {});
-      return Response.json(ATTEMPT);
+      return Response.json(opts.attempt ?? ATTEMPT);
     }
     throw new Error(`unexpected fetch: ${method} ${u}`);
   }) as unknown as typeof fetch;
@@ -242,5 +243,57 @@ describe("wbhk replay --edit", () => {
     await run(app, ["replay", EVENT_ID, "--forward", FORWARD, "--edit"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
     expect(t.stderr().toLowerCase()).toContain("text payload");
+  });
+});
+
+describe("wbhk replay --destination (server-side remote delivery)", () => {
+  const DEST = "55555555-5555-4555-8555-555555555555";
+  const delivered = {
+    ...ATTEMPT,
+    target: '{"kind":"destination"}',
+    status: "delivered",
+    statusCode: 200,
+  };
+  const blocked = { ...ATTEMPT, status: "blocked", statusCode: null };
+
+  it("delivers via the server (eventsReplay with a destination target) and exits 0", async () => {
+    let replayInit: RequestInit | undefined;
+    const t = makeTestContext({
+      store: loggedInStore(),
+      // local:"throw" proves the CLI NEVER touches localhost on the --destination path (the server delivers).
+      fetch: fakeApi({ local: "throw", attempt: delivered, onReplay: (i) => (replayInit = i) }),
+    });
+    await run(app, ["replay", EVENT_ID, "--destination", DEST], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout().toLowerCase()).toContain("delivered");
+    expect(t.stdout()).toContain("200");
+    const body = JSON.parse(String(replayInit?.body)) as {
+      target: { kind: string; destinationId: string };
+    };
+    expect(body.target).toEqual({ kind: "destination", destinationId: DEST });
+  });
+
+  it("a non-delivered outcome (blocked) exits non-zero", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: fakeApi({ local: "throw", attempt: blocked }),
+    });
+    await run(app, ["replay", EVENT_ID, "--destination", DEST], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.UNEXPECTED);
+    expect(t.stdout().toLowerCase()).toContain("blocked");
+  });
+
+  it("rejects --destination together with --forward (usage)", async () => {
+    const t = makeTestContext({ store: loggedInStore() });
+    await run(app, ["replay", EVENT_ID, "--destination", DEST, "--forward", FORWARD], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("not both");
+  });
+
+  it("rejects --destination together with --edit (usage)", async () => {
+    const t = makeTestContext({ store: loggedInStore() });
+    await run(app, ["replay", EVENT_ID, "--destination", DEST, "--edit"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("--edit");
   });
 });

@@ -6,7 +6,7 @@
 // exempt (the localhost-tunnel target is CLI-intrinsic); only apps/api binds this.
 
 import { CapabilityFault, eventsReplay, type AuthContext, type Target } from "@webhook-co/contract";
-import type { DeliveryAttempt } from "@webhook-co/shared";
+import type { DeliveryAttempt, DeliveryStatus } from "@webhook-co/shared";
 
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { getEndpoint, getEvent } from "./reads";
@@ -17,7 +17,9 @@ interface DeliveryAttemptRow {
   event_id: string;
   target: string;
   idempotency_key: string | null;
-  status: string;
+  // Typed to the closed vocabulary: the delivery_attempts status CHECK (migration 0025) guarantees the
+  // DB can only return one of these, so reading it as DeliveryStatus is sound.
+  status: DeliveryStatus;
   status_code: number | null;
   attempt: number;
   error: string | null;
@@ -44,7 +46,7 @@ export interface RecordDeliveryAttemptInput {
   readonly eventId: string;
   readonly target: string;
   readonly idempotencyKey: string | null;
-  readonly status: string;
+  readonly status: DeliveryStatus;
   readonly statusCode?: number | null;
   readonly error?: string | null;
 }
@@ -76,8 +78,72 @@ export async function recordDeliveryAttempt(
   return toDeliveryAttempt(existing);
 }
 
+export interface ClaimDeliveryAttemptInput {
+  readonly orgId: string;
+  readonly eventId: string;
+  readonly destinationId: string;
+  readonly target: string;
+  readonly idempotencyKey: string;
+}
+
+/**
+ * Claim a delivery_attempts row for a SERVER-side remote delivery (ADR-0081): insert a 'pending' row,
+ * idempotent on (org_id, idempotency_key). Returns { attempt, won }: won=true if THIS call inserted the
+ * claim → proceed to deliver, then finalizeDeliveryAttempt. won=false if the key was already claimed → the
+ * caller inspects attempt.status: a TERMINAL state (delivered/failed/blocked) is an idempotent re-return; a
+ * still-'pending' row is a concurrent/crashed sibling → surface as in-progress, do NOT re-deliver (a fresh
+ * invocation mints a new key to retry — full lease re-drive is Slice 4). claimed_at anchors that future lease.
+ */
+export async function claimDeliveryAttempt(
+  tx: TenantTx,
+  input: ClaimDeliveryAttemptInput,
+): Promise<{ readonly attempt: DeliveryAttempt; readonly won: boolean }> {
+  const [inserted] = await tx<DeliveryAttemptRow[]>`
+    insert into delivery_attempts
+      (id, org_id, event_id, destination_id, target, idempotency_key, status, claimed_at)
+    values
+      (${crypto.randomUUID()}, ${input.orgId}, ${input.eventId}, ${input.destinationId},
+       ${input.target}, ${input.idempotencyKey}, 'pending', now())
+    on conflict (org_id, idempotency_key) where idempotency_key is not null do nothing
+    returning id, org_id, event_id, target, idempotency_key, status, status_code, attempt, error, created_at`;
+  if (inserted) return { attempt: toDeliveryAttempt(inserted), won: true };
+  // Already claimed (a concurrent same-key caller won, or a prior attempt recorded this key).
+  const [existing] = await tx<DeliveryAttemptRow[]>`
+    select id, org_id, event_id, target, idempotency_key, status, status_code, attempt, error, created_at
+    from delivery_attempts
+    where org_id = ${input.orgId} and idempotency_key = ${input.idempotencyKey}`;
+  if (!existing) throw new Error("delivery_attempts claim conflict without an existing row");
+  return { attempt: toDeliveryAttempt(existing), won: false };
+}
+
+export interface FinalizeDeliveryAttemptInput {
+  readonly id: string;
+  /** A terminal outcome — delivered | failed | blocked. */
+  readonly status: DeliveryStatus;
+  readonly statusCode?: number | null;
+  readonly error?: string | null;
+}
+
+/**
+ * Finalize a claimed ('pending') delivery with its real HTTP outcome. PK-targeted + status-guarded
+ * (WHERE id=$id AND status='pending'), so it transitions exactly the row this call claimed, exactly once —
+ * a concurrent finalize can't clobber it, and the update is itself idempotent. Returns the finalized row,
+ * or null if it was no longer 'pending' (already finalized / gone).
+ */
+export async function finalizeDeliveryAttempt(
+  tx: TenantTx,
+  input: FinalizeDeliveryAttemptInput,
+): Promise<DeliveryAttempt | null> {
+  const [row] = await tx<DeliveryAttemptRow[]>`
+    update delivery_attempts
+       set status = ${input.status}, status_code = ${input.statusCode ?? null}, error = ${input.error ?? null}
+     where id = ${input.id} and status = 'pending'
+    returning id, org_id, event_id, target, idempotency_key, status, status_code, attempt, error, created_at`;
+  return row ? toDeliveryAttempt(row) : null;
+}
+
 /** Serialize a replay Target to the delivery_attempts.target text column (round-trippable JSON). */
-function serializeTarget(target: Target): string {
+export function serializeTarget(target: Target): string {
   return JSON.stringify(target);
 }
 

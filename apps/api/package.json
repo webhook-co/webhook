@@ -7,7 +7,8 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "test:db": "vitest run --config vitest.pg.config.ts"
   },
   "dependencies": {
     "@webhook-co/contract": "workspace:*",

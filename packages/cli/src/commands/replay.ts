@@ -27,6 +27,7 @@ import { renderJson } from "../output/format.js";
 
 interface ReplayFlags extends GlobalFlags {
   forward?: string;
+  destination?: string;
   edit: boolean;
 }
 
@@ -36,14 +37,31 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
     announceActiveProfile(this, profile);
     const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
-    if (flags.forward === undefined) {
+    const usingDestination = flags.destination !== undefined;
+    const usingForward = flags.forward !== undefined;
+    if (usingDestination && usingForward) {
       this.process.stderr.write(
-        "replay requires --forward <localhost-url> — it re-delivers the event to your local server.\n",
+        "use --destination OR --forward, not both — they pick different delivery targets.\n",
       );
       this.process.exitCode = EXIT.USAGE;
       return;
     }
-    parseForwardTarget(flags.forward); // throws InvalidForwardUrlError (usage) on a non-loopback target
+    if (!usingDestination && !usingForward) {
+      this.process.stderr.write(
+        "replay needs a target: --forward <localhost-url> (the CLI delivers to your machine) or " +
+          "--destination <id> (the server delivers to a registered destination).\n",
+      );
+      this.process.exitCode = EXIT.USAGE;
+      return;
+    }
+    if (usingDestination && flags.edit) {
+      this.process.stderr.write(
+        "--edit isn't supported with --destination (the server delivers the stored bytes verbatim).\n",
+      );
+      this.process.exitCode = EXIT.USAGE;
+      return;
+    }
+    if (usingForward) parseForwardTarget(flags.forward!); // throws InvalidForwardUrlError (usage)
 
     const apiBaseUrl = resolveApiBaseUrl({
       flag: flags.apiUrl,
@@ -63,7 +81,35 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
       fetch: this.io.fetch,
       refreshAuth,
     });
+    const { format, color } = resolveGlobals(this, flags);
 
+    // --destination: the SERVER delivers to a pre-registered destination (ADR-0081). It resolves the
+    // destination + the event under RLS, runs the connect-time SSRF guard, POSTs the stored bytes, and
+    // records the real HTTP outcome. A one-shot replay mints a fresh idempotency key per invocation.
+    if (usingDestination) {
+      const attempt = await client.eventsReplay({
+        eventId,
+        target: { kind: "destination", destinationId: flags.destination! },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (format === "json") {
+        this.process.stdout.write(`${renderJson(attempt)}\n`);
+      } else {
+        const word =
+          attempt.status === "delivered"
+            ? colorize("delivered", "green", color)
+            : colorize(attempt.status, "red", color);
+        const code = attempt.statusCode === null ? "" : ` · ${attempt.statusCode}`;
+        this.process.stdout.write(
+          `${word} event ${eventId} → destination ${flags.destination}${code} · recorded ${attempt.id}\n`,
+        );
+      }
+      // a non-delivered outcome (failed / blocked) exits non-zero so a script can detect it.
+      if (attempt.status !== "delivered") this.process.exitCode = EXIT.UNEXPECTED;
+      return;
+    }
+
+    // --forward: the CLI delivers to localhost (the api can't reach the user's machine), then records.
     // Captured headers (signature fidelity) + exact body bytes. A bad/cross-org id surfaces as the
     // api's NOT_FOUND (mapped to the exit code) before we ever touch localhost.
     const event = await client.eventsGet(eventId);
@@ -101,20 +147,20 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
       }
     }
 
+    const forwardUrl = flags.forward!; // guaranteed by the usingForward branch above
     const outcome = await forwardToLocalhost(
       { fetch: this.io.fetch, now: () => Date.now() },
-      { targetUrl: flags.forward, headers: event.headers, body: forwardBody },
+      { targetUrl: forwardUrl, headers: event.headers, body: forwardBody },
     );
-    const { format, color } = resolveGlobals(this, flags);
 
     if (!outcome.ok) {
-      this.process.stderr.write(`could not reach ${flags.forward}: ${outcome.reason}\n`);
+      this.process.stderr.write(`could not reach ${forwardUrl}: ${outcome.reason}\n`);
       this.process.exitCode = CAPABILITY_EXIT.TARGET_UNREACHABLE;
       return;
     }
     if (!isDelivered(outcome)) {
       this.process.stderr.write(
-        `${flags.forward} returned ${outcome.status} — recording skipped (replay records only a local 2xx).\n`,
+        `${forwardUrl} returned ${outcome.status} — recording skipped (replay records only a local 2xx).\n`,
       );
       this.process.exitCode = EXIT.UNEXPECTED;
       return;
@@ -135,7 +181,7 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
     } else {
       const ok = colorize("delivered", "green", color);
       this.process.stdout.write(
-        `${ok} event ${eventId} → ${flags.forward} · ${outcome.status} · ${outcome.latencyMs}ms · recorded ${attempt.id}\n`,
+        `${ok} event ${eventId} → ${forwardUrl} · ${outcome.status} · ${outcome.latencyMs}ms · recorded ${attempt.id}\n`,
       );
     }
   },
@@ -149,18 +195,26 @@ export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
       forward: {
         kind: "parsed",
         parse: (v: string) => v,
-        brief: "local URL to deliver to, e.g. http://localhost:3000/webhooks",
+        brief: "local URL to deliver to, e.g. http://localhost:3000/webhooks (the CLI delivers)",
+        optional: true,
+      },
+      destination: {
+        kind: "parsed",
+        parse: (v: string) => v,
+        brief:
+          "a registered replay-destination id — the SERVER delivers to it (mutually exclusive with --forward)",
         optional: true,
       },
       edit: {
         kind: "boolean",
         brief:
-          "open the payload in $EDITOR before forwarding (the original signature won't re-verify)",
+          "open the payload in $EDITOR before forwarding (--forward only; the original signature won't re-verify)",
         default: false,
       },
     },
   },
   docs: {
-    brief: "replay a captured event to your local server (--forward; --edit to tweak the payload)",
+    brief:
+      "replay a captured event — to your localhost (--forward) or to a registered destination (--destination)",
   },
 });

@@ -38,8 +38,11 @@ retried replay is de-duplicated.
 
 ## amendment (2026-06-30, ADR-0081)
 
-The "registered allowlist plus an explicit SSRF guard" precondition above is now being built (ADR-0081):
-an org-level `replay_destinations` allowlist (migration 0024) + a fail-closed, connect-time SSRF guard.
-The remote target is the additive `{kind:"destination", destinationId}` arm — it references a registered
-allowlist row by id, so there is **still no free-form URL**. The arm lands with the server-side delivery
-slice; this remains a deliberate, reviewable change, exactly as the closed union intended.
+The "registered allowlist plus an explicit SSRF guard" precondition above is now built (ADR-0081): an
+org-level `replay_destinations` allowlist (migration 0024) + a fail-closed, connect-time SSRF guard in the
+engine. The replay `TargetSchema` is now a **two-variant** closed union — `{kind:"localhost-tunnel",
+sessionId}` and the remote `{kind:"destination", destinationId}` arm. The remote arm references a
+registered allowlist row BY ID, so there is **still no free-form URL**; this was the deliberate, ADR-
+reviewed addition the closed union was designed to make safe. The server-delivered remote kind also
+populates the previously-null `delivery_attempts.status_code` (a SEMANTIC evolution within the row's
+existing nullable shape — no schema break), so the capability's output now carries the real HTTP outcome.

@@ -82,15 +82,23 @@ const APPS = {
       "<KV_CONFIG_ID>",
       "webhook-payloads-dev",
     ],
-    // PROVIDER_SECRET_SEALER (ADR-0078/B0) — the service binding to the engine's ProviderSecretSealer
-    // WorkerEntrypoint, so endpoints.addProviderSecret seals via the engine (api never holds the KEK).
-    // Deploy-injected (NOT committed), exactly like mcp's AUTH_ISSUER: the engine entrypoint is LIVE
-    // (B0 #246), so CF late-binds it fine; committing it would block a cold deploy.
+    // Service bindings to the engine's WorkerEntrypoints — deploy-injected (NOT committed), exactly like
+    // mcp's AUTH_ISSUER: the engine entrypoints are already LIVE, so CF late-binds them fine; committing
+    // them would block a cold deploy.
+    //   * PROVIDER_SECRET_SEALER (ADR-0078/B0 #246) — endpoints.addProviderSecret seals via the engine
+    //     (api never holds the KEK).
+    //   * DELIVERY_DISPATCHER (ADR-0081, 1b PR1 #288) — events.replay {kind:"destination"} delivers via
+    //     the engine (the single SSRF egress chokepoint; api never makes the outbound POST itself).
     services: [
       {
         binding: "PROVIDER_SECRET_SEALER",
         service: "webhook-engine",
         entrypoint: "ProviderSecretSealer",
+      },
+      {
+        binding: "DELIVERY_DISPATCHER",
+        service: "webhook-engine",
+        entrypoint: "DeliveryDispatcher",
       },
     ],
   },

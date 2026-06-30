@@ -19,10 +19,27 @@ import {
 import { canonicalizeAndValidateUrl, newId } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
-import { withTenant, type Sql } from "./client";
+import { withTenant, type Sql, type TenantTx } from "./client";
 import type { CapabilityHandlers } from "./read-handlers";
 
 export type ReplayDestinationStatus = "active" | "revoked";
+
+/**
+ * Resolve a LIVE replay destination's delivery URL by id, within an EXISTING tenant tx (so it composes
+ * with the event/endpoint resolution + the delivery-attempt claim in one transaction). Returns the
+ * canonical url, or null if the destination is missing / cross-org / soft-deleted (RLS + the deleted_at
+ * filter). The caller maps null → NOT_FOUND (don't leak existence). The connect-time SSRF guard re-runs
+ * on this url at delivery — registration-time validation is never trusted as a "safe" flag.
+ */
+export async function getReplayDestination(
+  tx: TenantTx,
+  id: string,
+): Promise<{ readonly id: string; readonly url: string } | null> {
+  const [row] = await tx<{ id: string; url: string }[]>`
+    select id, url from replay_destinations
+    where id = ${id} and deleted_at is null`;
+  return row ? { id: row.id, url: row.url } : null;
+}
 
 /** A replay destination as the management surface sees it (no internal columns). */
 export interface ReplayDestinationRecord {
