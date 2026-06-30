@@ -35,3 +35,4 @@ export * from "./reads";
 export * from "./read-handlers";
 export * from "./write-handlers";
 export * from "./replay";
+export * from "./replay-destinations";

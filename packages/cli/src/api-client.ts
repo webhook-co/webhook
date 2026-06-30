@@ -13,12 +13,16 @@ import {
   eventsGetPayload as eventsGetPayloadCap,
   eventsList as eventsListCap,
   eventsReplay as eventsReplayCap,
+  replayDestinationsCreate as replayDestinationsCreateCap,
+  replayDestinationsDelete as replayDestinationsDeleteCap,
+  replayDestinationsList as replayDestinationsListCap,
   type AddedProviderSecret,
   type AuthContext,
   type CapabilityError,
   type CreatedEndpoint,
   type DeletedEndpoint,
   type ProviderSecretSummary,
+  type ReplayDestinationDeleted,
   type RevokedProviderSecret,
   type Target,
 } from "@webhook-co/contract";
@@ -29,6 +33,7 @@ import {
   type Event,
   type EventSummary,
   type Provider,
+  type ReplayDestination,
 } from "@webhook-co/shared";
 import type { z } from "zod";
 
@@ -204,6 +209,16 @@ export interface ApiClient {
     target: Target;
     idempotencyKey: string;
   }): Promise<DeliveryAttempt>;
+  /**
+   * Register an allowed replay destination (`POST /v1/replay-destinations`, ADR-0081). The URL is
+   * structurally validated; the canonical stored form is returned. A re-add of a live URL returns the
+   * existing entry (idempotent server-side).
+   */
+  replayDestinationsCreate(input: { url: string; label?: string }): Promise<ReplayDestination>;
+  /** The org's live replay-destination allowlist (`GET /v1/replay-destinations`). Not paginated. */
+  replayDestinationsList(): Promise<readonly ReplayDestination[]>;
+  /** Remove (soft-delete) a replay destination (`DELETE /v1/replay-destinations/:id`). */
+  replayDestinationsDelete(destinationId: string): Promise<ReplayDestinationDeleted>;
 }
 
 export interface ApiClientDeps {
@@ -418,6 +433,32 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         true, // idempotency-keyed → safe to retry a transient failure
       );
       return parseOrThrow(eventsReplayCap.output, json, "replay");
+    },
+    async replayDestinationsCreate(input): Promise<ReplayDestination> {
+      const body: Record<string, unknown> = { url: input.url };
+      if (input.label !== undefined) body.label = input.label;
+      // idempotent=true: a re-add of a live URL returns the SAME existing row server-side, so retrying a
+      // transient failure is harmless (no duplicate).
+      const json = await postJson("/v1/replay-destinations", body, true);
+      return parseOrThrow(replayDestinationsCreateCap.output, json, "replay destination");
+    },
+    async replayDestinationsList(): Promise<readonly ReplayDestination[]> {
+      const { items } = parseOrThrow(
+        replayDestinationsListCap.output,
+        await getJson("/v1/replay-destinations"),
+        "replay destinations",
+      );
+      return items;
+    },
+    async replayDestinationsDelete(destinationId): Promise<ReplayDestinationDeleted> {
+      const path = `/v1/replay-destinations/${encodeURIComponent(destinationId)}`;
+      // idempotent=false: a server re-delete is NOT_FOUND, so never blind-retry (a retry after a lost
+      // response would report a false "not found" for a committed removal).
+      return parseOrThrow(
+        replayDestinationsDeleteCap.output,
+        await deleteJson(path, false),
+        "removed destination",
+      );
     },
     async eventsGetPayload(eventId): Promise<{ contentType: string | null; body: Uint8Array }> {
       const path = `/v1/events/${encodeURIComponent(eventId)}/payload`;

@@ -3,9 +3,10 @@ import type {
   CreatedEndpoint,
   DeletedEndpoint,
   ProviderSecretSummary,
+  ReplayDestinationDeleted,
   RevokedProviderSecret,
 } from "@webhook-co/contract";
-import type { Endpoint, Event, EventSummary } from "@webhook-co/shared";
+import type { Endpoint, Event, EventSummary, ReplayDestination } from "@webhook-co/shared";
 
 import type { AuditVerifyResult } from "../api-client.js";
 import { colorize } from "./color.js";
@@ -146,6 +147,42 @@ export function renderRevokedProviderSecret(r: RevokedProviderSecret): string {
   return block([
     ["id", field(r.id)],
     ["revoked", fmtDateTime(r.revokedAt)],
+  ]);
+}
+
+// The list + add surfaces only ever show LIVE (active) destinations — list filters `deleted_at is null`
+// server-side and add returns a freshly-inserted row — so a STATUS column would be a constant "active".
+// It is omitted from the human views (the full record, status included, is still in `--output json`); a
+// future revoked-history view would reintroduce it.
+
+/** The org's replay-destination allowlist as a table (ADR-0081). */
+export function renderReplayDestinationsTable(items: readonly ReplayDestination[]): string {
+  return renderTable(
+    ["URL", "LABEL", "CREATED", "ID"],
+    items.map((d) => [
+      field(d.url),
+      d.label === null ? NONE : field(d.label),
+      fmtDate(d.createdAt),
+      field(d.id),
+    ]),
+  );
+}
+
+/** A just-registered replay destination — the canonical stored url + id. */
+export function renderReplayDestination(d: ReplayDestination): string {
+  return block([
+    ["id", field(d.id)],
+    ["url", field(d.url)],
+    ["label", d.label === null ? NONE : field(d.label)],
+    ["created", fmtDateTime(d.createdAt)],
+  ]);
+}
+
+/** A just-removed replay destination: its id + when it was removed. */
+export function renderRemovedReplayDestination(d: ReplayDestinationDeleted): string {
+  return block([
+    ["id", field(d.id)],
+    ["removed", fmtDateTime(d.deletedAt)],
   ]);
 }
 

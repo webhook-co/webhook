@@ -27,6 +27,13 @@ export interface ApiDeps {
    * tunnel target is CLI-intrinsic). Optional in the bag; production wires it, the route 5xxs if absent.
    */
   readonly replay?: ReplayHandler;
+  /**
+   * The replayDestinations.* handlers (the SSRF-egress allowlist, ADR-0081). A DEDICATED map bound ONLY
+   * by apps/api — deliberately NOT in the shared `handlers` map that mcp also builds, so the mcp
+   * exemption (an agent must not mutate the allowlist) is un-driftable. Optional in the bag; production
+   * wires it, the routes 5xx if absent.
+   */
+  readonly replayDestinations?: CapabilityHandlers;
 }
 
 interface Route {
@@ -177,6 +184,19 @@ function matchRoute(
     // in handleReplay). A WRITE — records a delivery_attempt; dispatched specially, not via `handlers`.
     return { capability: "events.replay", input: { eventId: rest[1] } };
   }
+  // replayDestinations.* (ADR-0081): the SSRF-egress allowlist. WRITES (create/delete) + a list, bound
+  // ONLY on api (web-deferred, mcp-exempt) and dispatched via the dedicated `replayDestinations` map.
+  if (method === "GET" && rest.length === 1 && rest[0] === "replay-destinations") {
+    return { capability: "replayDestinations.list", input: {} };
+  }
+  if (method === "POST" && rest.length === 1 && rest[0] === "replay-destinations") {
+    // {url, label?} come from the JSON body (read in dispatchReplayDestinationBody).
+    return { capability: "replayDestinations.create", input: {} };
+  }
+  if (method === "DELETE" && rest.length === 2 && rest[0] === "replay-destinations") {
+    // Soft-delete: the destinationId is the path segment; no body.
+    return { capability: "replayDestinations.delete", input: { destinationId: rest[1] } };
+  }
   if (method === "POST" && rest.length === 2 && rest[0] === "audit" && rest[1] === "verify") {
     return { capability: "audit.verify", input: {} };
   }
@@ -185,6 +205,22 @@ function matchRoute(
 
 function jsonError(code: string, message: string, status: number): Response {
   return Response.json({ error: code, message }, { status });
+}
+
+/**
+ * Parse a JSON request body to a plain object, or throw VALIDATION_ERROR on invalid JSON. A non-object
+ * body (array/string/null) yields `{}` so path-derived fields still drive the input. Single-sourced so
+ * the body-bearing WRITE routes (endpoints.create / addProviderSecret via dispatchJsonBody, events.replay,
+ * replayDestinations.create) parse + reject malformed bodies identically.
+ */
+async function readJsonObjectBody(request: Request): Promise<Record<string, unknown>> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
+  }
+  return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
 }
 
 export async function handleRequest(request: Request, deps: ApiDeps): Promise<Response> {
@@ -238,6 +274,9 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
     }
     if (route.capability === "events.replay") {
       return await handleReplay(deps, authz.ctx, String(route.input.eventId), request);
+    }
+    if (route.capability.startsWith("replayDestinations.")) {
+      return await dispatchReplayDestination(deps, authz.ctx, route, request);
     }
     if (route.capability === "endpoints.create") {
       return await dispatchJsonBody(deps, authz.ctx, "endpoints.create", request);
@@ -308,13 +347,7 @@ async function handleReplay(
   if (deps.replay === undefined) {
     throw new Error("no replay handler bound"); // wiring bug -> 5xx
   }
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
-  }
-  const input = { ...(typeof body === "object" && body !== null ? body : {}), eventId };
+  const input = { ...(await readJsonObjectBody(request)), eventId };
   return Response.json(await deps.replay(ctx, input));
 }
 
@@ -337,12 +370,30 @@ async function dispatchJsonBody(
   if (handler === undefined) {
     throw new Error(`no handler bound for capability: ${capability}`);
   }
-  let body: unknown;
-  try {
-    body = await request.json();
-  } catch {
-    throw new CapabilityFault("VALIDATION_ERROR", "invalid JSON body");
-  }
-  const input = { ...(typeof body === "object" && body !== null ? body : {}), ...extra };
+  const input = { ...(await readJsonObjectBody(request)), ...extra };
   return Response.json(await handler(ctx, input));
+}
+
+/**
+ * Dispatch a replayDestinations.* capability via the DEDICATED `replayDestinations` map (never the
+ * shared `handlers` map — that keeps the mcp exemption un-driftable, ADR-0081). create reads {url,label?}
+ * from the JSON body; list/delete carry no body (delete's destinationId is the authoritative path
+ * segment). A missing map binding is a wiring bug (→ 5xx), not a client error.
+ */
+async function dispatchReplayDestination(
+  deps: ApiDeps,
+  ctx: AuthContext,
+  route: Route,
+  request: Request,
+): Promise<Response> {
+  const handler = deps.replayDestinations?.get(route.capability);
+  if (handler === undefined) {
+    throw new Error(`no replayDestinations handler bound for: ${route.capability}`);
+  }
+  if (route.capability === "replayDestinations.create") {
+    // {url, label?} from the JSON body.
+    return Response.json(await handler(ctx, await readJsonObjectBody(request)));
+  }
+  // list ({}) + delete ({destinationId}) carry no body; the route input is authoritative.
+  return Response.json(await handler(ctx, route.input));
 }
