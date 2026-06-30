@@ -208,7 +208,7 @@ interface EventRow {
 // The truthful verification tri-state, projected in SQL so the lean summary carries it WITHOUT shipping
 // the `verification` jsonb. Mirrors deriveVerificationState(). Used by listEvents + tailEvents.
 function verificationStateColumn(tx: TenantTx) {
-  return tx`case when verified then 'verified' when verification is not null then 'failed' else 'unattempted' end as verification_state`;
+  return tx`case when verified and verification->>'authenticity' is not null then 'authenticated' when verified then 'verified' when verification is not null then 'failed' else 'unattempted' end as verification_state`;
 }
 
 // One verification-state bucket's predicate. MIRRORS its verificationStateColumn() CASE bucket EXACTLY
@@ -216,7 +216,11 @@ function verificationStateColumn(tx: TenantTx) {
 // filter — even if a future row ever had verified=true with a null verification (which the CASE would
 // label 'verified', not 'unattempted').
 function verificationStatePredicate(tx: TenantTx, state: VerificationState) {
-  if (state === "verified") return tx`verified`;
+  // `verified` now EXCLUDES the weaker `authenticated` (token/basic) bucket so a filtered row's pill can't
+  // contradict the filter — they're disjoint on `verification->>'authenticity'`.
+  if (state === "authenticated")
+    return tx`(verified and verification->>'authenticity' is not null)`;
+  if (state === "verified") return tx`(verified and verification->>'authenticity' is null)`;
   if (state === "failed") return tx`(not verified and verification is not null)`;
   return tx`(not verified and verification is null)`; // unattempted
 }

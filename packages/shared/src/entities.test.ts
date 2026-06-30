@@ -24,6 +24,18 @@ describe("deriveVerificationState", () => {
     expect(deriveVerificationState(false, undefined)).toBe("unattempted");
   });
 
+  it("maps a Tier-4 token/basic ok result to the weaker 'authenticated' state", () => {
+    // A non-cryptographic authenticity (shared static token / HTTP Basic) is distinct from a signature.
+    expect(deriveVerificationState(true, { ok: true, authenticity: "token" })).toBe(
+      "authenticated",
+    );
+    expect(deriveVerificationState(true, { ok: true, authenticity: "basic" })).toBe(
+      "authenticated",
+    );
+    // A cryptographic ok (no authenticity field) stays "verified".
+    expect(deriveVerificationState(true, { ok: true, scheme: "stripe" })).toBe("verified");
+  });
+
   it("is OPTIONAL on EventSummary — a row without it still parses (version-skew safe)", () => {
     const parsed = EventSummarySchema.parse({
       id: uuid,

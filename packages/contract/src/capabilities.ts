@@ -1,9 +1,11 @@
 import {
   canonicalizeAndValidateUrl,
+  CONFIGURED_HEADER_PROVIDERS,
   DeliveryAttemptSchema,
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
+  isUsableConfiguredHeaderSecret,
   isUsableStandardWebhooksSecret,
   LagSchema,
   ProviderSchema,
@@ -339,6 +341,20 @@ export const endpointsAddProviderSecret = defineCapability({
           path: ["secret"],
           message:
             "a Standard Webhooks secret must be base64 key material (optionally whsec_-prefixed)",
+        });
+      }
+      // A Tier-4 operator-configured-header provider's secret is a JSON `{header, token}` (the operator
+      // chose the header name). Reject a malformed/empty one up front (same rationale as the SW refine):
+      // otherwise it stores fine yet can never match, verifying as NO_MATCHING_KEY forever.
+      if (
+        CONFIGURED_HEADER_PROVIDERS.has(val.provider) &&
+        !isUsableConfiguredHeaderSecret(val.secret)
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["secret"],
+          message:
+            'this provider expects a JSON secret {"header":"...","token":"..."} with a non-empty header name and token',
         });
       }
     }),

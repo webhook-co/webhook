@@ -39,3 +39,7 @@ export {
   type MessagePart,
 } from "./adapters/config";
 export { makeHmacAdapter } from "./adapters/factory";
+// Tier-4 non-cryptographic authenticity: the operator-configured-header provider set + its secret
+// validator, single-sourced so the contract rejects a malformed `{header, token}` secret at registration.
+export { isUsableConfiguredHeaderSecret } from "./adapters/bespoke/token-auth";
+export { CONFIGURED_HEADER_PROVIDERS } from "./adapters/bespoke/token-auth-providers";

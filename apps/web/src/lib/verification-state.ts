@@ -9,17 +9,19 @@ import type { VerificationState } from "@webhook-co/shared";
 // `@webhook-co/shared`'s VERIFICATION_STATES — kept local so this client-bundled module doesn't pull the
 // shared barrel into the browser bundle. The contract enum (VerificationStateSchema) is the source of
 // truth; the contract + filter tests catch any drift.
-export const VERIFICATION_STATES = ["verified", "failed", "unattempted"] as const;
+export const VERIFICATION_STATES = ["verified", "authenticated", "failed", "unattempted"] as const;
 
 /** Human label for a verification state (the single source for both the filter dropdown + the pill). */
 export const VERIFICATION_STATE_LABELS: Record<VerificationState, string> = {
   verified: "Verified",
+  authenticated: "Authenticated", // weaker than verified: a shared static token / Basic auth, not a signature
   failed: "Failed",
   unattempted: "Not verified",
 };
 
 const PILL_TONE: Record<VerificationState, "ok" | "danger" | "neutral"> = {
   verified: "ok",
+  authenticated: "ok", // positive but non-cryptographic; the distinct "Authenticated" label carries the nuance
   failed: "danger", // ONLY a genuine signature failure goes red
   unattempted: "neutral",
 };

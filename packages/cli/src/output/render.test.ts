@@ -80,6 +80,15 @@ describe("renderEventsTable", () => {
     expect(out).toContain("unverified");
     expect(out).toContain("ev_1");
   });
+
+  it("renders the distinct 'authenticated' word for a Tier-4 token/basic event (not 'verified')", () => {
+    const out = renderEventsTable(
+      [{ ...eventSummary, verified: true, verificationState: "authenticated" }],
+      false,
+    );
+    expect(out).toContain("authenticated");
+    expect(out).not.toMatch(/\bverified\b/); // the green crypto word must NOT be used
+  });
 });
 
 describe("renderEndpoint (single record)", () => {
@@ -104,6 +113,16 @@ describe("renderEvent (single record)", () => {
       verification: { ok: false, reason: { code: "SIGNATURE_MISMATCH" } },
     };
     expect(renderEvent(failed, false)).toContain("unverified (SIGNATURE_MISMATCH)");
+  });
+
+  it("summarizes a Tier-4 token/basic result as 'authenticated' + non-cryptographic", () => {
+    const authed: Event = {
+      ...event,
+      verification: { ok: true, keyId: "secret_0", scheme: "gitlab", authenticity: "token" },
+    };
+    const out = renderEvent(authed, false);
+    expect(out).toContain("authenticated (gitlab");
+    expect(out).toContain("non-cryptographic");
   });
 
   it("falls back to the bare verified word when no verification detail is stored", () => {

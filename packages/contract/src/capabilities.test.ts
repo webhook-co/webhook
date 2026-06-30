@@ -5,6 +5,7 @@ import {
   auditVerify,
   CAPABILITIES,
   CAPABILITY_REGISTRY,
+  endpointsAddProviderSecret,
   endpointsCreate,
   endpointsDelete,
   endpointsList,
@@ -417,5 +418,32 @@ describe("RESERVED_SCOPES", () => {
     for (const reserved of RESERVED_SCOPES) {
       expect(grantable.has(reserved)).toBe(false);
     }
+  });
+});
+
+describe("endpoints.addProviderSecret — Tier-4 configured-header secret validation", () => {
+  const endpointId = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
+  const parseSecret = (provider: string, secret: string) =>
+    endpointsAddProviderSecret.input.safeParse({ endpointId, provider, secret });
+
+  it("accepts a well-formed {header, token} JSON for a configured-header provider (okta)", () => {
+    expect(
+      parseSecret("okta", JSON.stringify({ header: "x-okta-secret", token: "shh" })).success,
+    ).toBe(true);
+  });
+
+  it("rejects a malformed/empty configured-header secret up front (not a silent NO_MATCHING_KEY)", () => {
+    for (const bad of [
+      "not-json",
+      JSON.stringify({ header: "x-h", token: "" }), // empty token
+      JSON.stringify({ header: "", token: "t" }), // empty header name
+      JSON.stringify({ token: "t" }), // missing header
+    ]) {
+      expect(parseSecret("brevo", bad).success).toBe(false);
+    }
+  });
+
+  it("does NOT impose the JSON shape on a non-configured-header provider (gitlab takes a plain token)", () => {
+    expect(parseSecret("gitlab", "a-plain-gitlab-token").success).toBe(true);
   });
 });

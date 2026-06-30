@@ -32,6 +32,18 @@ export function verificationCopy(verification: VerificationResult | null): Verif
   }
 
   if (verification.ok) {
+    // Tier-4 providers prove the source by a shared static token / HTTP Basic credential, not a signature
+    // over the payload — a weaker, non-cryptographic guarantee shown as a distinct "Authenticated" badge.
+    if (verification.authenticity !== undefined) {
+      return {
+        tone: "ok",
+        pill: "Authenticated",
+        detail:
+          verification.authenticity === "basic"
+            ? `Authenticated by HTTP Basic credentials (${verification.scheme}) — non-cryptographic: the payload itself isn't signature-verified.`
+            : `Authenticated by a shared ${verification.scheme} token — non-cryptographic: the payload itself isn't signature-verified.`,
+      };
+    }
     return {
       tone: "ok",
       pill: "Verified",

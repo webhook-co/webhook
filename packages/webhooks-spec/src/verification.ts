@@ -50,16 +50,39 @@ export const VerificationFailureSchema = z.discriminatedUnion("code", [
 ]);
 export type VerificationFailure = z.infer<typeof VerificationFailureSchema>;
 
+/**
+ * The STRENGTH of an authentic result. The vast majority of providers cryptographically sign — that's the
+ * absent default ("signature"). The Tier-4 providers (GitLab token, HTTP Basic auth, etc.) only prove the
+ * source by a shared STATIC token / credential — a weaker, non-cryptographic guarantee surfaced as a
+ * distinct "authenticated" (not "verified") badge. Optional so every existing crypto result is unchanged
+ * (absent ⇒ "signature"); only token/basic carry it.
+ */
+export const Authenticity = z.enum(["token", "basic"]);
+export type Authenticity = z.infer<typeof Authenticity>;
+
 export const VerificationResultSchema = z.discriminatedUnion("ok", [
-  z.object({ ok: z.literal(true), keyId: z.string(), scheme: WebhookSchemeSchema }),
+  z.object({
+    ok: z.literal(true),
+    keyId: z.string(),
+    scheme: WebhookSchemeSchema,
+    authenticity: Authenticity.optional(),
+  }),
   z.object({ ok: z.literal(false), reason: VerificationFailureSchema }),
 ]);
 export type VerificationResult = z.infer<typeof VerificationResultSchema>;
 
 // Convenience constructors so adapters and surfaces build results without restating
 // the shape (and so a refactor of the union is caught at every call site).
-export function verificationOk(keyId: string, scheme: WebhookScheme): VerificationResult {
-  return { ok: true, keyId, scheme };
+export function verificationOk(
+  keyId: string,
+  scheme: WebhookScheme,
+  authenticity: "signature" | Authenticity = "signature",
+): VerificationResult {
+  // Omit the field for cryptographic results so every existing ok result stays byte-identical; only the
+  // weaker Tier-4 (token/basic) results carry an explicit authenticity.
+  return authenticity === "signature"
+    ? { ok: true, keyId, scheme }
+    : { ok: true, keyId, scheme, authenticity };
 }
 export function verificationFailed(reason: VerificationFailure): VerificationResult {
   return { ok: false, reason };
