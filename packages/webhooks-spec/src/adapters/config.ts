@@ -92,6 +92,9 @@ export const PROVIDERS = [
   "mercado_pago",
   // W3b — Braintree: bt_signature pairs in a form field + SHA1(private_key) HMAC key.
   "braintree",
+  // W3c — bespoke hand-written adapters (./bespoke), NO config row: Contentful (dynamic canonical
+  // request with a per-request signed-headers set).
+  "contentful",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
@@ -401,10 +404,12 @@ export const RENDER_CONFIG = standardWebhooksConfig("render", "webhook");
 export const BREX_CONFIG = standardWebhooksConfig("brex", "webhook");
 
 /**
- * The complete provider→config map. `registry.ts` maps every entry through `makeHmacAdapter` to
- * build the REGISTRY, so this is the single place a provider's verification is defined.
+ * The provider→config map. `registry.ts` maps each entry through `makeHmacAdapter` to build the
+ * REGISTRY, so this is the single place a config-driven provider's verification is defined. It is
+ * PARTIAL: a few providers whose verification can't be one HMAC config (./bespoke) have NO entry here
+ * and ship a hand-written adapter instead — the registry uses the bespoke adapter for those slugs.
  */
-export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = {
+export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderConfig>>> = {
   stripe: STRIPE_CONFIG,
   github: GITHUB_CONFIG,
   shopify: SHOPIFY_CONFIG,
@@ -812,5 +817,5 @@ export const PROVIDER_CONFIGS: Readonly<Record<Provider, HmacProviderConfig>> = 
  * from the configs, so a new SW-family provider is covered automatically.
  */
 export const SW_SECRET_PROVIDERS: ReadonlySet<Provider> = new Set(
-  PROVIDERS.filter((p) => PROVIDER_CONFIGS[p].keyDerivation === "whsec-base64"),
+  PROVIDERS.filter((p) => PROVIDER_CONFIGS[p]?.keyDerivation === "whsec-base64"),
 );
