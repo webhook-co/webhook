@@ -118,6 +118,10 @@ export const PROVIDERS = [
   // (base64 key+sig, `|` sep).
   "discord",
   "telnyx",
+  // Tier-3 ASYMMETRIC — ECDSA P-256 (SendGrid: base64 DER sig over `timestamp+body`, base64 SPKI key) and
+  // RSA-PKCS1 SHA-256 (Wise: base64 sig over the raw body, published PEM key). Registered secret = the key.
+  "sendgrid",
+  "wise",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);

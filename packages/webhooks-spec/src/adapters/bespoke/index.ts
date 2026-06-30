@@ -14,9 +14,11 @@ import { makeMessagebirdAdapter } from "./messagebird";
 import { makeMondayAdapter } from "./monday";
 import { makeNetlifyAdapter } from "./netlify";
 import { makePlivoAdapter } from "./plivo";
+import { makeSendgridAdapter } from "./sendgrid";
 import { makeTelnyxAdapter } from "./telnyx";
 import { makeTwilioAdapter } from "./twilio";
 import { makeVonageAdapter } from "./vonage";
+import { makeWiseAdapter } from "./wise";
 
 export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   twilio: makeTwilioAdapter(),
@@ -32,4 +34,7 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   // Tier-3 ASYMMETRIC Ed25519 (public-key verify over timestamp+body).
   discord: makeDiscordAdapter(),
   telnyx: makeTelnyxAdapter(),
+  // Tier-3 ASYMMETRIC ECDSA-P256 (SendGrid) + RSA-PKCS1 (Wise).
+  sendgrid: makeSendgridAdapter(),
+  wise: makeWiseAdapter(),
 };
