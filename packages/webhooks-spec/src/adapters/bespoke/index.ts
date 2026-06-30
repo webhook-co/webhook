@@ -6,9 +6,11 @@
 import type { VerifyAdapter } from "../../adapter";
 import type { Provider } from "../config";
 import { makeContentfulAdapter } from "./contentful";
+import { makePlivoAdapter } from "./plivo";
 import { makeTwilioAdapter } from "./twilio";
 
 export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   twilio: makeTwilioAdapter(),
   contentful: makeContentfulAdapter(),
+  plivo: makePlivoAdapter(),
 };

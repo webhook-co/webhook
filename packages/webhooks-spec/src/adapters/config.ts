@@ -93,8 +93,9 @@ export const PROVIDERS = [
   // W3b — Braintree: bt_signature pairs in a form field + SHA1(private_key) HMAC key.
   "braintree",
   // W3c — bespoke hand-written adapters (./bespoke), NO config row: Contentful (dynamic canonical
-  // request with a per-request signed-headers set).
+  // request with a per-request signed-headers set), Plivo V3 (stateful URL/query/body glue + multi-sig).
   "contentful",
+  "plivo",
 ] as const;
 export type Provider = (typeof PROVIDERS)[number];
 export const ProviderSchema = z.enum(PROVIDERS);
