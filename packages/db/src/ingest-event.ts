@@ -32,6 +32,8 @@ export interface IngestEventInput {
   readonly headers: ReadonlyArray<readonly [string, string]>;
   /** The captured request's HTTP method (accept-all-verbs). Always set on a new insert. */
   readonly method: string;
+  /** The normalized per-provider event type (S3 Slice 3), or null when unextracted (routes via `*`). */
+  readonly eventType: string | null;
   readonly provider: string | null;
   readonly providerEventId: string | null;
   readonly dedupBucket: number | null;
@@ -76,7 +78,8 @@ export async function insertIngestEvent(
       null::text,
       ${row.verified},
       ${sql.json((row.verification ?? null) as Parameters<typeof sql.json>[0])}::jsonb,
-      ${row.method}
+      ${row.method},
+      ${row.eventType}
     )`;
   // ingest_event ALWAYS returns exactly one (event_id, inserted) row. Anything else (an empty or
   // multi-row result) means a broken contract — fail loud so the caller 500s and the provider

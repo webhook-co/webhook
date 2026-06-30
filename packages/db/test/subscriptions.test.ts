@@ -231,6 +231,41 @@ describe("deleteSubscription", () => {
     });
     expect(await deleteSubscription(app, orgB, sub2.id)).toBeNull(); // cross-org can't delete
   });
+
+  it("deleting a subscription with a LINKED delivery unlinks it (subscription_id→null), never aborts on the NOT NULL org_id", async () => {
+    const dest = (
+      await createReplayDestination(app, { orgId: orgA, url: "https://fk.example.com/in" })
+    ).id;
+    const sub = await createSubscription(app, {
+      orgId: orgA,
+      sourceEndpointId: epA,
+      destinationId: dest,
+    });
+    // seed an event + a delivery_attempts row LINKED to the subscription (PR2c-2's ingest will do this).
+    const eventId = randomUUID();
+    const deliveryId = randomUUID();
+    await withTenant(app, orgA, async (tx) => {
+      await tx`
+        insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, content_type, headers,
+          dedup_key, dedup_strategy, provider, verified)
+        values (${eventId}, ${orgA}, ${epA}, ${`org/${orgA}/ep/${epA}/${eventId}`}, ${10},
+          ${"application/json"}, ${tx.json([])}, ${randomUUID()}, ${"content_hash"}, ${"stripe"}, ${true})`;
+      await tx`
+        insert into delivery_attempts (id, org_id, event_id, destination_id, subscription_id, target, status, attempt)
+        values (${deliveryId}, ${orgA}, ${eventId}, ${dest}, ${sub.id}, ${"auto"}, ${"queued"}, ${1})`;
+    });
+    // the delete must SUCCEED (a bare composite SET NULL would have nulled org_id and aborted here).
+    expect(await deleteSubscription(app, orgA, sub.id)).toEqual({ id: sub.id });
+    // the delivery survives, unlinked: subscription_id null, org_id intact.
+    const [row] = await withTenant(
+      app,
+      orgA,
+      (tx) => tx<{ subscription_id: string | null; org_id: string }[]>`
+        select subscription_id, org_id from delivery_attempts where id = ${deliveryId}`,
+    );
+    expect(row!.subscription_id).toBeNull();
+    expect(row!.org_id).toBe(orgA);
+  });
 });
 
 describe("listMatchingSubscriptions (the ingest resolver)", () => {

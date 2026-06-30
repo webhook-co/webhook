@@ -247,6 +247,10 @@ export async function deleteSubscription(
   audit?: SubscriptionAudit,
 ): Promise<{ readonly id: string } | null> {
   return withTenant(app, orgId, async (tx) => {
+    // A delivery outlives its subscription (it finishes on its own) and only records which sub produced it.
+    // The migration-0030 BEFORE DELETE trigger unlinks any linked delivery_attempts (subscription_id → null)
+    // automatically — here AND on a transitive cascade — so the composite FK never blocks the delete and the
+    // delivery rows survive. No app-level unlink needed.
     const removed = await tx<{ id: string }[]>`
       delete from delivery_subscriptions where id = ${id} returning id`;
     if (removed.length === 0) return null;

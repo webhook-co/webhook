@@ -80,6 +80,30 @@ function extractProviderEventId(
 }
 
 /**
+ * The normalized per-provider event type (S3 Slice 3), for subscription routing. Header-borne (GitHub
+ * `x-github-event`, Shopify `x-shopify-topic`) or body-borne (Stripe `.type`). null when unextracted —
+ * the subscription matcher routes a null event_type via `*` only, so this never hard-fails ingest. Keyed by
+ * the resolved provider SLUG (not the dedup scheme), since that is what the matcher and the event row use.
+ * Start with the high-traffic providers; the rest degrade gracefully to `*`-only routing.
+ */
+export function extractEventType(
+  provider: string | null,
+  raw: Uint8Array,
+  headers: Headers,
+): string | null {
+  switch (provider) {
+    case "stripe":
+      return jsonStringField(raw, "type"); // e.g. charge.succeeded
+    case "github":
+      return findHeader(headers, "x-github-event") ?? null; // e.g. push, pull_request
+    case "shopify":
+      return findHeader(headers, "x-shopify-topic") ?? null; // e.g. orders/create
+    default:
+      return null; // unextracted → routes via `*`
+  }
+}
+
+/**
  * Derive `{dedup_key, dedup_strategy, provider, provider_event_id, dedup_bucket}` (+ the content
  * hash) from the raw body + ordered headers. `now` is the server-assigned receive time and
  * `bucketWidthMs` the content-hash window (≥ the provider retry window where known).
