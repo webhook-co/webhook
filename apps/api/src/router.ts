@@ -197,6 +197,29 @@ function matchRoute(
     // Soft-delete: the destinationId is the path segment; no body.
     return { capability: "replayDestinations.delete", input: { destinationId: rest[1] } };
   }
+  if (
+    method === "POST" &&
+    rest.length === 3 &&
+    rest[0] === "replay-destinations" &&
+    rest[2] === "signing-secret"
+  ) {
+    // Rotate the destination's signing secret (S3 Slice 2): destinationId from the path, no body.
+    return {
+      capability: "replayDestinations.rotateSigningSecret",
+      input: { destinationId: rest[1] },
+    };
+  }
+  if (
+    method === "GET" &&
+    rest.length === 3 &&
+    rest[0] === "replay-destinations" &&
+    rest[2] === "signing-secrets"
+  ) {
+    return {
+      capability: "replayDestinations.listSigningSecrets",
+      input: { destinationId: rest[1] },
+    };
+  }
   if (method === "POST" && rest.length === 2 && rest[0] === "audit" && rest[1] === "verify") {
     return { capability: "audit.verify", input: {} };
   }
@@ -394,6 +417,7 @@ async function dispatchReplayDestination(
     // {url, label?} from the JSON body.
     return Response.json(await handler(ctx, await readJsonObjectBody(request)));
   }
-  // list ({}) + delete ({destinationId}) carry no body; the route input is authoritative.
+  // list ({}) + delete + rotateSigningSecret + listSigningSecrets ({destinationId}) carry no body; the
+  // route input (path segment) is authoritative.
   return Response.json(await handler(ctx, route.input));
 }

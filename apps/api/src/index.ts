@@ -183,7 +183,13 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
     // replayDestinations.* (ADR-0081): the SSRF-egress allowlist, bound ONLY here (a DEDICATED map, not
     // the shared one mcp builds — so the mcp exemption can't drift). Mutates under RLS with an in-tx
     // audit row; the engine-side connect-time guard (1b) is the authoritative private-range defense.
-    replayDestinations: createReplayDestinationHandlers({ tenant, auditKey }),
+    replayDestinations: createReplayDestinationHandlers({
+      tenant,
+      auditKey,
+      // The signing secret minted at create/rotate (S3 Slice 2) is sealed via the engine's seal-only
+      // entrypoint — api seals, never holds the KEK (same seam as provider secrets).
+      sealer: env.PROVIDER_SECRET_SEALER,
+    }),
   };
   return {
     deps,

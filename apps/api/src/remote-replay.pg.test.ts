@@ -7,13 +7,16 @@ import {
   createEndpoint,
   createOrg,
   createReplayDestination,
+  createSigningSecret,
   CREDENTIAL_PEPPER_MIN_BYTES,
   DB_ROLES,
   withTenant,
   type Sql,
 } from "@webhook-co/db";
 import {
+  LocalKmsProvider,
   newId,
+  SecretStore,
   type DeliverArgs,
   type DeliverResult,
   type DeliveryDispatcherRpc,
@@ -200,5 +203,45 @@ describe("createRemoteReplayHandler", () => {
         (tx) => tx`update endpoints set paused = false where id = ${endpointId}`,
       );
     }
+  });
+
+  it("passes the destination's sealed signing secret(s) to the dispatcher (S3 Slice 2)", async () => {
+    // A destination WITH a signing secret → the api relays the sealed envelope + a fresh webhook-id (the
+    // attempt id). The engine (tested separately) unseals + signs; here we assert the api built `signing`.
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const signedDest = (
+      await createReplayDestination(app, { orgId, url: "https://signed.example.com/in" })
+    ).id;
+    await createSigningSecret(app, { orgId, destinationId: signedDest }, store);
+
+    const d = dispatcherReturning({ outcome: "delivered", status: 200, error: null, latencyMs: 1 });
+    const h = createRemoteReplayHandler({ tenant: app, dispatcher: d.rpc });
+    const out = await h(ctx(), {
+      eventId,
+      target: { kind: "destination", destinationId: signedDest },
+      idempotencyKey: randomUUID(),
+    });
+    expect(out.status).toBe("delivered");
+    const signing = d.calls[0]!.signing;
+    expect(signing).toBeDefined();
+    expect(signing!.secrets).toHaveLength(1);
+    // the relayed payload is SEALED (ciphertext + AAD context) — never the plaintext whsec_
+    expect(signing!.secrets[0]!.sealed.ciphertext.byteLength).toBeGreaterThan(0);
+    expect(signing!.secrets[0]!.context.orgId).toBe(orgId);
+    expect(signing!.webhookId).toBe(out.id); // fresh idempotency key = the attempt id
+    expect(typeof signing!.timestamp).toBe("number");
+    // and the unsealed secret round-trips (proves the api relayed a real, openable envelope)
+    expect(
+      (
+        await store.openString(signing!.secrets[0]!.sealed, signing!.secrets[0]!.context)
+      ).startsWith("whsec_"),
+    ).toBe(true);
+  });
+
+  it("delivers UNSIGNED (no signing) when the destination has no signing secret — 1b behavior", async () => {
+    const d = dispatcherReturning({ outcome: "delivered", status: 200, error: null, latencyMs: 1 });
+    const h = createRemoteReplayHandler({ tenant: app, dispatcher: d.rpc });
+    await h(ctx(), input()); // destId has no signing secret
+    expect(d.calls[0]!.signing).toBeUndefined();
   });
 });

@@ -32,6 +32,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import { runAnchorCron } from "./anchor-cron";
 import {
   guardedDeliver,
+  makeSignDelivery,
   resolveViaDoh,
   type DeliverArgs,
   type DeliverResult,
@@ -184,6 +185,17 @@ export const getVerifyFn = memoizeIsolate(async (env: Env) =>
  */
 export const getSealStore = memoizeIsolate(
   async (env: Env) => new SecretStore(await kmsProviderFromEnv(env)),
+);
+
+/**
+ * The per-isolate UNSEAL store for outbound signing (S3 Slice 2). Unlike getSealStore it must UNWRAP
+ * DEKs (to recover the signing secret), so it carries the isolate DEK cache (DEK_CACHE) — the same
+ * amortization the verify store uses — so a burst of signed deliveries doesn't issue one KMS Decrypt
+ * per delivery. Built lazily + memoized; only awaited on the SIGNED delivery path (the unsigned/legacy
+ * path never touches KMS, preserving the ADR-0081 behavior even if KMS config is absent).
+ */
+export const getSignStore = memoizeIsolate(
+  async (env: Env) => new SecretStore(await kmsProviderFromEnv(env), DEK_CACHE),
 );
 
 /** Per-request ingest deps plus the teardown for the DB clients they hold. */
@@ -505,6 +517,12 @@ export class DeliveryDispatcher extends WorkerEntrypoint<Env> {
         },
         resolve: (host) => resolveViaDoh((input, init) => fetch(input, init), host),
         fetch: (input, init) => fetch(input, init),
+        // S3 Slice 2: unseal the destination's signing secret(s) with the engine's KMS-backed store (the
+        // engine alone holds the KEK) + Standard Webhooks-sign. LAZY on purpose — getSignStore is awaited
+        // only when guardedDeliver actually invokes `sign` (i.e. a signed delivery), so an unsigned/legacy
+        // delivery never touches KMS (preserving the ADR-0081 path even under KMS misconfig). The store is
+        // DEK-cached so a burst of signed deliveries amortizes the KMS Decrypt (mirrors the verify store).
+        sign: async (signArgs) => makeSignDelivery(await getSignStore(this.env))(signArgs),
         now: () => Date.now(),
       },
       args,

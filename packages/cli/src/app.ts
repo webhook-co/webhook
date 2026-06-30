@@ -28,7 +28,9 @@ import { replayCommand } from "./commands/replay.js";
 import {
   replayDestinationsAddCommand,
   replayDestinationsListCommand,
+  replayDestinationsListSecretsCommand,
   replayDestinationsRemoveCommand,
+  replayDestinationsRotateSecretCommand,
 } from "./commands/replay-destinations.js";
 import { telemetryRoute } from "./commands/telemetry.js";
 import { upgradeCommand } from "./commands/upgrade.js";
@@ -63,6 +65,8 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "replayDestinations.create": ["replay-destinations", "add"],
   "replayDestinations.list": ["replay-destinations", "list"],
   "replayDestinations.delete": ["replay-destinations", "remove"],
+  "replayDestinations.rotateSigningSecret": ["replay-destinations", "rotate-secret"],
+  "replayDestinations.listSigningSecrets": ["replay-destinations", "list-secrets"],
 };
 
 const endpointsRoute = buildRouteMap({
@@ -100,6 +104,8 @@ const replayDestinationsRoute = buildRouteMap({
     add: replayDestinationsAddCommand,
     list: replayDestinationsListCommand,
     remove: replayDestinationsRemoveCommand,
+    "rotate-secret": replayDestinationsRotateSecretCommand,
+    "list-secrets": replayDestinationsListSecretsCommand,
   },
   docs: { brief: "manage the allowlist of remote replay destinations" },
 });

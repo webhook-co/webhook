@@ -400,6 +400,19 @@ export const endpointsRevokeProviderSecret = defineCapability({
 // deputy surface (ADR-0005). create/list/delete reuse the endpoints:* scopes (no new grantable scope);
 // web is deferred to the dashboard epic; mcp is exempt (an agent must not mutate the egress allowlist).
 
+/**
+ * A newly-created replay destination PLUS its one-time Standard Webhooks signing secret (S3 Slice 2,
+ * ADR-0084). A destination is born with a signing secret so the server can sign its deliveries; the
+ * `whsec_` plaintext is revealed EXACTLY ONCE on first creation (configure it in your receiver's verifier)
+ * and is never returned again — only the seal is kept. Mirrors the endpoints.create one-time ingestUrl
+ * reveal. `signingSecret` is OPTIONAL because create is idempotent: re-registering an existing URL returns
+ * the destination WITHOUT re-revealing (the secret was shown once) — use rotateSigningSecret for a fresh one.
+ */
+export const CreatedReplayDestinationSchema = ReplayDestinationSchema.extend({
+  signingSecret: z.string().optional(),
+});
+export type CreatedReplayDestination = z.infer<typeof CreatedReplayDestinationSchema>;
+
 export const replayDestinationsCreate = defineCapability({
   name: "replayDestinations.create",
   // The URL is validated STRUCTURALLY at the contract boundary (canonicalizeAndValidateUrl): https-only,
@@ -422,7 +435,8 @@ export const replayDestinationsCreate = defineCapability({
         });
       }
     }),
-  output: ReplayDestinationSchema,
+  // Output now carries the one-time signing secret (S3 Slice 2) alongside the destination.
+  output: CreatedReplayDestinationSchema,
   // FORBIDDEN: a bearer lacking endpoints:write (the api edge 403s before dispatch; on mcp — exempt here —
   // the handler scope check is the sole gate). VALIDATION_ERROR carries the structural URL rejection.
   errors: ["UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
@@ -458,6 +472,52 @@ export const replayDestinationsDelete = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
 });
 
+// ── Replay-destination signing secrets (ADR-0084, S3 Slice 2) ─────────────────────────────────────
+// Each destination's outbound Standard Webhooks signing secret. create reveals the first one; rotate
+// mints a fresh one (with a bounded active+retiring overlap for zero-downtime verifier reconfiguration);
+// list shows non-secret metadata. Same surface posture as the rest of replayDestinations.* (CLI+API;
+// web-deferred; mcp-exempt — an agent must not mint/exfiltrate a signing secret). Reuse endpoints:* scopes.
+
+/** A freshly-minted signing secret revealed ONCE (rotate). The whsec_ value is never returned again. */
+export const RotatedSigningSecretSchema = z.object({
+  destinationId: uuid,
+  keyId: uuid,
+  signingSecret: z.string(),
+});
+export type RotatedSigningSecret = z.infer<typeof RotatedSigningSecretSchema>;
+
+/** A destination signing secret as NON-secret metadata — never the sealed bytes or the plaintext. */
+export const SigningSecretMetadataSchema = z.object({
+  id: uuid,
+  status: z.enum(["active", "retiring", "revoked"]),
+  createdAt: z.coerce.date(),
+});
+export type SigningSecretMetadataView = z.infer<typeof SigningSecretMetadataSchema>;
+
+export const replayDestinationsRotateSigningSecret = defineCapability({
+  name: "replayDestinations.rotateSigningSecret",
+  input: z.object({ destinationId: uuid }),
+  output: RotatedSigningSecretSchema,
+  // NOT_FOUND for an unknown / cross-org / soft-deleted destination (don't leak existence). The new secret
+  // is revealed once; the prior key enters a bounded 'retiring' grace so receivers can reconfigure with no
+  // downtime (both signatures are sent, space-delimited, until the next rotation).
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
+});
+
+export const replayDestinationsListSigningSecrets = defineCapability({
+  name: "replayDestinations.listSigningSecrets",
+  input: z.object({ destinationId: uuid }),
+  // NOT paginated (a destination has a tiny handful of keys). Metadata only — never the sealed bytes.
+  output: z.object({ items: z.array(SigningSecretMetadataSchema) }),
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "RATE_LIMITED"],
+  auth: { scope: "endpoints:read" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
+});
+
 /**
  * The capability surface every binding implements. The six wedge capabilities
  * plus `audit.verify` — the compliance-by-design audit-chain verifier (ADR-0004),
@@ -481,6 +541,8 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   replayDestinationsCreate,
   replayDestinationsList,
   replayDestinationsDelete,
+  replayDestinationsRotateSigningSecret,
+  replayDestinationsListSigningSecrets,
 ];
 
 /** Registry keyed by stable capability name. */

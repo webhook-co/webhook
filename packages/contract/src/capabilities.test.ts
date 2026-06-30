@@ -42,6 +42,8 @@ const EXPECTED_NAMES = [
   "replayDestinations.create",
   "replayDestinations.list",
   "replayDestinations.delete",
+  "replayDestinations.rotateSigningSecret",
+  "replayDestinations.listSigningSecrets",
 ];
 
 describe("capability registry", () => {

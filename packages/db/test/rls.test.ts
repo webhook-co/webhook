@@ -104,12 +104,14 @@ async function seedOrg(slug: string): Promise<Seeded> {
     await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${"owner"})`;
     await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
              values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep-" + slug})`;
-    await tx`insert into signing_keys (id, endpoint_id, org_id, secret_ciphertext, wrapped_dek, kek_ref, enc_nonce, envelope_version, status)
-             values (${randomUUID()}, ${endpointId}, ${orgId}, ${deterministicBuffer(16)}, ${deterministicBuffer(16)}, ${"kek/1"}, ${deterministicBuffer(12)}, ${1}, ${"active"})`;
     await tx`insert into provider_secrets (id, endpoint_id, org_id, provider, secret_ciphertext, wrapped_dek, kek_ref, enc_nonce, envelope_version, status)
              values (${randomUUID()}, ${endpointId}, ${orgId}, ${"stripe"}, ${deterministicBuffer(16)}, ${deterministicBuffer(16)}, ${"kek/1"}, ${deterministicBuffer(12)}, ${1}, ${"active"})`;
+    const destinationId = randomUUID();
     await tx`insert into replay_destinations (id, org_id, url)
-             values (${randomUUID()}, ${orgId}, ${`https://hooks-${slug}.example.com/in`})`;
+             values (${destinationId}, ${orgId}, ${`https://hooks-${slug}.example.com/in`})`;
+    // signing_keys hangs off the receiving destination (migration 0026), not the source endpoint.
+    await tx`insert into signing_keys (id, destination_id, org_id, secret_ciphertext, wrapped_dek, kek_ref, enc_nonce, envelope_version, status)
+             values (${randomUUID()}, ${destinationId}, ${orgId}, ${deterministicBuffer(16)}, ${deterministicBuffer(16)}, ${"kek/1"}, ${deterministicBuffer(12)}, ${1}, ${"active"})`;
     await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
              values (${eventId}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${eventId}`}, ${128}, ${"seed-dedup"}, ${"content_hash"})`;
     await tx`insert into delivery_attempts (id, org_id, event_id, target, status)
