@@ -111,9 +111,19 @@
   // in storage, survives hibernation). One DO per `wbhk listen` session, keyed by the server-minted
   // sessionId. The ONLY Durable Object in the wedge — ingest stays stateless (no DO on the hot path).
   "durable_objects": {
-    "bindings": [{ "name": "LISTEN_SESSION", "class_name": "ListenSession" }],
+    "bindings": [
+      { "name": "LISTEN_SESSION", "class_name": "ListenSession" },
+      // Per-destination outbound delivery DO (S3 Slice 3): one per replay destination, owns its FIFO
+      // queue + alarm-driven retry/backoff/dead-letter. SQLite-backed (stores only its binding + alarm;
+      // the durable queue is the delivery_attempts table in Neon).
+      { "name": "DELIVERY_DO", "class_name": "DeliveryDO" },
+    ],
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ListenSession"] }],
+  // A new migration TAG per added DO class (NEVER edit a shipped tag): v2 introduces DeliveryDO.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ListenSession"] },
+    { "tag": "v2", "new_sqlite_classes": ["DeliveryDO"] },
+  ],
   // Hourly head-anchor cron (ADR-0004). The interval IS the tamper-detection window.
   "triggers": {
     "crons": ["0 * * * *"],

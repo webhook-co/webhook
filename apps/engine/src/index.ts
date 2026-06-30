@@ -50,6 +50,7 @@ import { makeVerifyIngest } from "./verify";
 // The per-session listen-tunnel Durable Object (Slice 11b, ADR-0014); wrangler binds it via
 // LISTEN_SESSION. Re-exported here so the class is registered on the engine Worker entrypoint.
 export { ListenSession, POLL_INTERVAL_MS } from "./listen-session";
+export { DeliveryDO } from "./delivery-do";
 
 // The webhook engine Worker. `fetch` is the wbhk.my write path (cookieless, path-token ingest);
 // `scheduled` runs the WORM head-anchor cron (ADR-0004). Handlers stay thin: validate -> delegate
@@ -93,6 +94,12 @@ export interface Env {
   AUDIT_CHAIN_HMAC_KEY: SecretsStoreSecret;
   /** Per-session hibernatable listen-tunnel Durable Objects (Slice 11b, ADR-0014). */
   LISTEN_SESSION: DurableObjectNamespace;
+  /**
+   * The per-destination outbound delivery DOs (S3 Slice 3). One instance per replay destination
+   * (idFromName(destinationId)) owns that destination's FIFO queue + alarm-driven retry/backoff/dead-letter.
+   * Reached only from within the engine (the DeliveryEnqueuer entrypoint fronts it for the api/ingest).
+   */
+  DELIVERY_DO: DurableObjectNamespace<import("./delivery-do").DeliveryDO>;
   /** KV caching resolved principals for the tunnel bearer chain (mirrors apps/api KV_AUTHZ). */
   KV_AUTHZ: KVNamespace;
   /** Base64 HMAC key for opaque pagination cursors — must equal apps/api CURSOR_KEY (shared secret). */
@@ -529,6 +536,20 @@ export class DeliveryDispatcher extends WorkerEntrypoint<Env> {
       },
       args,
     );
+  }
+}
+
+/**
+ * The enqueue seam for native auto-delivery (S3 Slice 3): a WorkerEntrypoint the api + the ingest worker
+ * call to hand a durably-enqueued delivery to its destination's DO. The engine FRONTS its DOs (a
+ * DurableObjectNamespace isn't service-bound across workers), so callers reach the DO only through this
+ * RPC — they never address `idFromName` directly. The producer has already written the durable `queued`
+ * delivery_attempts row; this just wakes the DO to drain. Idempotent (a redundant wake is a no-op).
+ */
+export class DeliveryEnqueuer extends WorkerEntrypoint<Env> {
+  async enqueue(orgId: string, destinationId: string): Promise<void> {
+    const stub = this.env.DELIVERY_DO.get(this.env.DELIVERY_DO.idFromName(destinationId));
+    await stub.wake(orgId, destinationId);
   }
 }
 
