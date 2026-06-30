@@ -115,7 +115,7 @@ export {
 // ── utilities ───────────────────────────────────────────────────────────────
 export { cn } from "./lib/cn";
 
-// ── provider branding (display name + brand colour; the logo set layers on top) ──────────────
+// ── provider branding (display name + brand colour) + brand-mark logos ───────────────────────
 export {
   PROVIDER_BRANDING,
   FALLBACK_BRAND_COLOR,
@@ -123,3 +123,5 @@ export {
   providerBrandColor,
   type ProviderBrand,
 } from "./lib/provider-branding";
+export { PROVIDER_LOGO_PATHS, type ProviderLogoPath } from "./lib/provider-logos-data";
+export { ProviderLogo, type ProviderLogoProps } from "./components/provider-logo";

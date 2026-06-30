@@ -7,6 +7,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "./popover";
 export interface MultiSelectOption {
   readonly value: string;
   readonly label: string;
+  /** Optional leading visual (e.g. a provider logo) shown before the label in the list + single summary. */
+  readonly icon?: React.ReactNode;
 }
 
 export interface MultiSelectProps {
@@ -110,12 +112,16 @@ export function MultiSelect({
     onChange(options.filter((o) => next.has(o.value)).map((o) => o.value));
   }
 
+  const soleSelected =
+    selected.length === 1 ? options.find((o) => o.value === selected[0]) : undefined;
   const summary =
     selected.length === 0
       ? placeholder
       : selected.length === 1
-        ? (options.find((o) => o.value === selected[0])?.label ?? selected[0])
+        ? (soleSelected?.label ?? selected[0]!)
         : `${selected.length} selected`;
+  // The icon for a single selection is shown alongside the label in the trigger (aria-label stays text).
+  const summaryIcon = soleSelected?.icon;
 
   return (
     <Popover
@@ -135,7 +141,10 @@ export function MultiSelect({
             className,
           )}
         >
-          <span className="truncate">{summary}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            {summaryIcon ? <span className="flex shrink-0 items-center">{summaryIcon}</span> : null}
+            <span className="truncate">{summary}</span>
+          </span>
           <ChevronIcon />
         </button>
       </PopoverTrigger>
@@ -175,6 +184,9 @@ export function MultiSelect({
                   className="flex w-full cursor-pointer items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left text-sm text-fg-secondary outline-none hover:bg-surface-sunken hover:text-fg focus-visible:bg-surface-sunken focus-visible:text-fg"
                 >
                   <CheckIndicator checked={checked} />
+                  {option.icon ? (
+                    <span className="flex shrink-0 items-center">{option.icon}</span>
+                  ) : null}
                   <span className="truncate">{option.label}</span>
                 </button>
               );
