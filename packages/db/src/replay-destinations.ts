@@ -12,14 +12,17 @@ import {
   CapabilityFault,
   replayDestinationsCreate,
   replayDestinationsDelete,
+  replayDestinationsEnable,
   replayDestinationsList,
   replayDestinationsListSigningSecrets,
   replayDestinationsRotateSigningSecret,
+  replayDestinationsSetOrdered,
 } from "@webhook-co/contract";
 import { canonicalizeAndValidateUrl, newId, type SecretSealer } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
+import { cancelOpenDeliveries } from "./delivery";
 import { ensureScope, type CapabilityHandlers } from "./read-handlers";
 import { insertActiveSigningSecret, listSigningSecrets, rotateSigningSecret } from "./signing-keys";
 
@@ -51,6 +54,10 @@ export interface ReplayDestinationRecord {
   readonly status: ReplayDestinationStatus;
   readonly createdAt: Date;
   readonly lastValidatedAt: Date | null;
+  /** Strict-FIFO toggle (default false = best-effort). */
+  readonly ordered: boolean;
+  /** Auto-disable marker: non-null = persistent-failure disable tripped; cleared by enable. */
+  readonly disabledAt: Date | null;
 }
 
 /**
@@ -73,6 +80,8 @@ interface ReplayDestinationRow {
   created_at: Date;
   last_validated_at: Date | null;
   deleted_at: Date | null;
+  ordered: boolean;
+  disabled_at: Date | null;
 }
 
 function toRecord(r: ReplayDestinationRow): ReplayDestinationRecord {
@@ -85,6 +94,8 @@ function toRecord(r: ReplayDestinationRow): ReplayDestinationRecord {
     status: r.deleted_at === null ? "active" : "revoked",
     createdAt: r.created_at,
     lastValidatedAt: r.last_validated_at,
+    ordered: r.ordered,
+    disabledAt: r.disabled_at,
   };
 }
 
@@ -114,7 +125,7 @@ export async function createReplayDestination(
       insert into replay_destinations (id, org_id, url, label, last_validated_at)
       values (${id}, ${input.orgId}, ${input.url}, ${input.label ?? null}, ${input.lastValidatedAt ?? null})
       on conflict (org_id, url) where deleted_at is null do nothing
-      returning id, org_id, url, label, created_at, last_validated_at, deleted_at`;
+      returning id, org_id, url, label, created_at, last_validated_at, deleted_at, ordered, disabled_at`;
     if (inserted) {
       if (audit) {
         await appendAuditEntry(tx, audit.auditKey, {
@@ -128,7 +139,7 @@ export async function createReplayDestination(
     }
     // Conflict: this URL is already a live allowlist entry — return it (no duplicate, no audit).
     const [existing] = await tx<ReplayDestinationRow[]>`
-      select id, org_id, url, label, created_at, last_validated_at, deleted_at
+      select id, org_id, url, label, created_at, last_validated_at, deleted_at, ordered, disabled_at
       from replay_destinations
       where org_id = ${input.orgId} and url = ${input.url} and deleted_at is null`;
     if (!existing) throw new Error("replay_destinations conflict without an existing row");
@@ -160,7 +171,7 @@ export async function createReplayDestinationWithSigningSecret(
       insert into replay_destinations (id, org_id, url, label, last_validated_at)
       values (${id}, ${input.orgId}, ${input.url}, ${input.label ?? null}, ${input.lastValidatedAt ?? null})
       on conflict (org_id, url) where deleted_at is null do nothing
-      returning id, org_id, url, label, created_at, last_validated_at, deleted_at`;
+      returning id, org_id, url, label, created_at, last_validated_at, deleted_at, ordered, disabled_at`;
     if (inserted) {
       await appendAuditEntry(tx, audit.auditKey, {
         orgId: input.orgId,
@@ -178,7 +189,7 @@ export async function createReplayDestinationWithSigningSecret(
       return { record: toRecord(inserted), signingSecret: minted.secret };
     }
     const [existing] = await tx<ReplayDestinationRow[]>`
-      select id, org_id, url, label, created_at, last_validated_at, deleted_at
+      select id, org_id, url, label, created_at, last_validated_at, deleted_at, ordered, disabled_at
       from replay_destinations
       where org_id = ${input.orgId} and url = ${input.url} and deleted_at is null`;
     if (!existing) throw new Error("replay_destinations conflict without an existing row");
@@ -193,7 +204,7 @@ export async function listReplayDestinations(
 ): Promise<ReplayDestinationRecord[]> {
   const rows = await withTenant(app, orgId, async (tx) => {
     return tx<ReplayDestinationRow[]>`
-      select id, org_id, url, label, created_at, last_validated_at, deleted_at
+      select id, org_id, url, label, created_at, last_validated_at, deleted_at, ordered, disabled_at
       from replay_destinations
       where deleted_at is null
       order by created_at desc, id desc`;
@@ -218,18 +229,108 @@ export async function softDeleteReplayDestination(
       update replay_destinations set deleted_at = now()
       where id = ${id} and deleted_at is null
       returning deleted_at`;
-    if (updated.length > 0 && audit) {
-      await appendAuditEntry(tx, audit.auditKey, {
-        orgId,
-        actor: audit.actor,
-        action: "replay_destination.removed",
-        target: id,
-      });
+    if (updated.length > 0) {
+      // A deleted destination stops being a delivery target, so the DO idles on it — terminally CANCEL its
+      // still-open deliveries in the SAME tx so they aren't left owed forever (PR1b carry-over #1b).
+      await cancelOpenDeliveries(tx, id);
+      if (audit) {
+        await appendAuditEntry(tx, audit.auditKey, {
+          orgId,
+          actor: audit.actor,
+          action: "replay_destination.removed",
+          target: id,
+        });
+      }
     }
     return updated;
   });
   const row = rows[0];
   return row ? { id, deletedAt: row.deleted_at } : null;
+}
+
+/** The management-record column projection — kept in ONE place so the lifecycle helper's RETURNING can't
+ *  drift from toRecord/ReplayDestinationRow (it's a hardcoded constant, so tx.unsafe carries no injection). */
+const RD_COLUMNS =
+  "id, org_id, url, label, created_at, last_validated_at, deleted_at, ordered, disabled_at";
+
+/**
+ * Shared single-row lifecycle UPDATE for a LIVE replay destination (enable / setOrdered): apply the `set`
+ * columns to the row identified by (org via RLS, id, not soft-deleted), append `auditAction` when audited,
+ * and return the updated record — or null (unknown / cross-org / soft-deleted → the cap maps to NOT_FOUND).
+ * Collapses the two near-identical lifecycle ops so the null-vs-NOT_FOUND contract + the column list live in
+ * ONE code path. `tx(set)` is postgres.js's parameterized object-SET (each value is a bound param).
+ */
+async function updateLiveDestination(
+  app: Sql,
+  orgId: string,
+  id: string,
+  auditAction: string,
+  set: Record<string, unknown>,
+  audit?: ReplayDestinationAudit,
+): Promise<ReplayDestinationRecord | null> {
+  return withTenant(app, orgId, async (tx) => {
+    const [row] = await tx<ReplayDestinationRow[]>`
+      update replay_destinations set ${tx(set)}
+      where id = ${id} and deleted_at is null
+      returning ${tx.unsafe(RD_COLUMNS)}`;
+    if (!row) return null;
+    if (audit) {
+      await appendAuditEntry(tx, audit.auditKey, {
+        orgId,
+        actor: audit.actor,
+        action: auditAction,
+        target: id,
+      });
+    }
+    return toRecord(row);
+  });
+}
+
+/**
+ * Re-enable a persistent-failure auto-disabled destination (S3 Slice 3 PR3b): clear `disabled_at` and reset
+ * `consecutive_failures` to 0 so it becomes an enqueue target again, appending a `replay_destination.enabled`
+ * audit row in the same tx. Returns the updated record, or null (unknown / cross-org / soft-deleted → the cap
+ * maps to NOT_FOUND). ⚠️ This primitive only LIFTS the disable flag — it does NOT wake the destination's
+ * DeliveryDO, so the still-owed backlog resumes on the DO's next wake (a later event to that destination) or
+ * the reconciler; wiring an immediate wake-on-enable is PR3c's job (the DO-wake binding lives engine-side).
+ */
+export function enableReplayDestination(
+  app: Sql,
+  orgId: string,
+  id: string,
+  audit?: ReplayDestinationAudit,
+): Promise<ReplayDestinationRecord | null> {
+  return updateLiveDestination(
+    app,
+    orgId,
+    id,
+    "replay_destination.enabled",
+    { disabled_at: null, consecutive_failures: 0 },
+    audit,
+  );
+}
+
+/**
+ * Set a destination's strict-FIFO (`ordered`) mode (S3 Slice 3 PR3b): true = deliver in-order with
+ * head-of-line blocking; false (default) = best-effort ordered-dispatch with independent retries. Appends a
+ * `replay_destination.ordered_set` audit row. Returns the updated record, or null (unknown / cross-org /
+ * soft-deleted → NOT_FOUND).
+ */
+export function setDestinationOrdered(
+  app: Sql,
+  orgId: string,
+  id: string,
+  ordered: boolean,
+  audit?: ReplayDestinationAudit,
+): Promise<ReplayDestinationRecord | null> {
+  return updateLiveDestination(
+    app,
+    orgId,
+    id,
+    "replay_destination.ordered_set",
+    { ordered },
+    audit,
+  );
 }
 
 // ── The replayDestinations.* capability handlers (ADR-0081) ───────────────────────────────────────
@@ -309,6 +410,38 @@ export function createReplayDestinationHandlers(
     );
     if (removed === null) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
     return removed;
+  });
+
+  handlers.set(replayDestinationsEnable.name, async (ctx, input) => {
+    ensureScope(ctx, replayDestinationsEnable);
+    const parsed = replayDestinationsEnable.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const record = await enableReplayDestination(
+      deps.tenant,
+      ctx.orgId,
+      parsed.data.destinationId,
+      {
+        auditKey: deps.auditKey,
+        actor: ctx.userId ?? null,
+      },
+    );
+    if (record === null) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
+    return record;
+  });
+
+  handlers.set(replayDestinationsSetOrdered.name, async (ctx, input) => {
+    ensureScope(ctx, replayDestinationsSetOrdered);
+    const parsed = replayDestinationsSetOrdered.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const record = await setDestinationOrdered(
+      deps.tenant,
+      ctx.orgId,
+      parsed.data.destinationId,
+      parsed.data.ordered,
+      { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+    );
+    if (record === null) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
+    return record;
   });
 
   handlers.set(replayDestinationsRotateSigningSecret.name, async (ctx, input) => {

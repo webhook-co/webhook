@@ -205,6 +205,21 @@ export async function scheduleDeliveryRetry(
      where id = ${input.id} and status in ('queued', 'pending')`;
 }
 
+/**
+ * Terminally CANCEL a destination's still-open (queued/pending) deliveries (S3 Slice 3 PR3b): status →
+ * `cancelled`, next_retry_at cleared. Called when the destination is deleted while deliveries are still owed
+ * — otherwise the DO idles on a deleted destination and those rows sit owed forever (PR1b carry-over #1b).
+ * Terminal rows (delivered/dead/blocked/failed) are untouched, so delivery HISTORY is preserved. Runs in the
+ * caller's tenant tx (composes with the soft-delete in one transaction). Returns the number cancelled.
+ */
+export async function cancelOpenDeliveries(tx: TenantTx, destinationId: string): Promise<number> {
+  const res = await tx`
+    update delivery_attempts
+       set status = 'cancelled', next_retry_at = null
+     where destination_id = ${destinationId} and status in ('queued', 'pending')`;
+  return res.count;
+}
+
 /** Terminal non-delivery: status → `dead` (retries exhausted) or `blocked` (a real SSRF refusal). Bumps the
  *  destination's consecutive-failure tally (the auto-disable signal, acted on in a later PR). */
 export async function markDeliveryTerminalFailure(

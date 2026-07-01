@@ -42,6 +42,8 @@ const EXPECTED_NAMES = [
   "replayDestinations.create",
   "replayDestinations.list",
   "replayDestinations.delete",
+  "replayDestinations.enable",
+  "replayDestinations.setOrdered",
   "replayDestinations.rotateSigningSecret",
   "replayDestinations.listSigningSecrets",
   "subscriptions.create",

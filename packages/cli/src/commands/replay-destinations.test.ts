@@ -56,6 +56,8 @@ const dest = (over: Record<string, unknown> = {}) => ({
   status: "active",
   createdAt: "2026-06-30T00:00:00.000Z",
   lastValidatedAt: "2026-06-30T00:00:00.000Z",
+  ordered: false,
+  disabledAt: null,
   ...over,
 });
 
@@ -136,5 +138,62 @@ describe("wbhk replay-destinations remove", () => {
     const t = makeTestContext({ store: emptyStore() });
     await run(app, ["replay-destinations", "remove", DEST], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.UNAUTHORIZED);
+  });
+});
+
+describe("wbhk replay-destinations enable", () => {
+  it("re-enables a destination and prints the record showing it enabled", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch(dest({ disabledAt: null })),
+    });
+    await run(app, ["replay-destinations", "enable", DEST], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain(DEST);
+    expect(t.stdout()).toContain("enabled");
+  });
+
+  it("maps a 404 to the NOT_FOUND exit code", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: statusFetch(404) });
+    await run(app, ["replay-destinations", "enable", DEST], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.NOT_FOUND);
+  });
+});
+
+describe("wbhk replay-destinations set-ordered", () => {
+  it("sets strict FIFO with the `on` mode and prints the record showing the mode", async () => {
+    const cap = capturingFetch(dest({ ordered: true }));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["replay-destinations", "set-ordered", DEST, "on"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(cap.urls[0]).toContain(`/v1/replay-destinations/${DEST}/ordered`);
+    expect(JSON.parse(cap.bodies[0]!)).toEqual({ ordered: true }); // the mode rides the JSON body
+    expect(t.stdout()).toContain("strict FIFO");
+  });
+
+  it("restores best-effort with the `off` mode", async () => {
+    const cap = capturingFetch(dest({ ordered: false }));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["replay-destinations", "set-ordered", DEST, "off"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(JSON.parse(cap.bodies[0]!)).toEqual({ ordered: false });
+    expect(t.stdout()).toContain("best-effort");
+  });
+
+  it("REQUIRES an explicit mode — a bare set-ordered <id> errors, never silently forces best-effort", async () => {
+    const cap = capturingFetch(dest());
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["replay-destinations", "set-ordered", DEST], t.ctx);
+    // No on/off → a usage error, and crucially NO request is sent (nothing silently toggled).
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.bodies).toHaveLength(0);
+  });
+
+  it("rejects an invalid mode (not on/off) as a usage error", async () => {
+    const cap = capturingFetch(dest());
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["replay-destinations", "set-ordered", DEST, "maybe"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.bodies).toHaveLength(0);
   });
 });

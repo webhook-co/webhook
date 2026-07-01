@@ -225,6 +225,25 @@ function matchRoute(
     method === "POST" &&
     rest.length === 3 &&
     rest[0] === "replay-destinations" &&
+    rest[2] === "enable"
+  ) {
+    // Clear a persistent-failure auto-disable (S3 Slice 3 PR3b): destinationId from the path, no body.
+    return { capability: "replayDestinations.enable", input: { destinationId: rest[1] } };
+  }
+  if (
+    method === "POST" &&
+    rest.length === 3 &&
+    rest[0] === "replay-destinations" &&
+    rest[2] === "ordered"
+  ) {
+    // Toggle strict-FIFO (S3 Slice 3 PR3b): destinationId from the path; {ordered} from the JSON body
+    // (merged in dispatchReplayDestination, with the path destinationId authoritative).
+    return { capability: "replayDestinations.setOrdered", input: { destinationId: rest[1] } };
+  }
+  if (
+    method === "POST" &&
+    rest.length === 3 &&
+    rest[0] === "replay-destinations" &&
     rest[2] === "signing-secret"
   ) {
     // Rotate the destination's signing secret (S3 Slice 2): destinationId from the path, no body.
@@ -460,8 +479,14 @@ async function dispatchReplayDestination(
     // {url, label?} from the JSON body.
     return Response.json(await handler(ctx, await readJsonObjectBody(request)));
   }
-  // list ({}) + delete + rotateSigningSecret + listSigningSecrets ({destinationId}) carry no body; the
-  // route input (path segment) is authoritative.
+  if (route.capability === "replayDestinations.setOrdered") {
+    // {ordered} from the JSON body + destinationId from the path — spread route.input LAST so the path
+    // segment is authoritative (a body destinationId can never override it).
+    const body = await readJsonObjectBody(request);
+    return Response.json(await handler(ctx, { ...body, ...route.input }));
+  }
+  // list ({}) + delete + enable + rotateSigningSecret + listSigningSecrets ({destinationId}) carry no body;
+  // the route input (path segment) is authoritative.
   return Response.json(await handler(ctx, route.input));
 }
 

@@ -172,22 +172,26 @@ export function renderRevokedProviderSecret(r: RevokedProviderSecret): string {
 /** The org's replay-destination allowlist as a table (ADR-0081). */
 export function renderReplayDestinationsTable(items: readonly ReplayDestination[]): string {
   return renderTable(
-    ["URL", "LABEL", "CREATED", "ID"],
+    ["URL", "LABEL", "ORDERED", "STATE", "CREATED", "ID"],
     items.map((d) => [
       field(d.url),
       d.label === null ? NONE : field(d.label),
+      d.ordered ? "strict" : "best-effort",
+      d.disabledAt === null ? "enabled" : "disabled",
       fmtDate(d.createdAt),
       field(d.id),
     ]),
   );
 }
 
-/** A just-registered replay destination — the canonical stored url + id. */
+/** A single replay destination as a block — url + delivery mode + enable state. */
 export function renderReplayDestination(d: ReplayDestination): string {
   return block([
     ["id", field(d.id)],
     ["url", field(d.url)],
     ["label", d.label === null ? NONE : field(d.label)],
+    ["ordering", d.ordered ? "strict FIFO" : "best-effort"],
+    ["state", d.disabledAt === null ? "enabled" : `disabled (${fmtDateTime(d.disabledAt)})`],
     ["created", fmtDateTime(d.createdAt)],
   ]);
 }

@@ -502,6 +502,34 @@ export const replayDestinationsDelete = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
 });
 
+// ── Destination lifecycle (S3 Slice 3 PR3b) ───────────────────────────────────────────────────────
+// enable: clear a persistent-failure auto-disable (the destination resumes being an enqueue target).
+// setOrdered: toggle strict-FIFO (in-order + head-of-line blocking) vs the best-effort default. Same surface
+// posture as the rest of replayDestinations.* (CLI+API; web-deferred; mcp-exempt — an agent must not
+// reconfigure the SSRF-egress allowlist or its delivery mode). Both return the updated destination record.
+
+export const replayDestinationsEnable = defineCapability({
+  name: "replayDestinations.enable",
+  input: z.object({ destinationId: uuid }),
+  output: ReplayDestinationSchema,
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
+});
+
+export const replayDestinationsSetOrdered = defineCapability({
+  name: "replayDestinations.setOrdered",
+  // `ordered` true = strict FIFO (head-of-line blocking + throughput cost, disclosed at the CLI); false = the
+  // best-effort default (independent retries, no HOL block).
+  input: z.object({ destinationId: uuid, ordered: z.boolean() }),
+  output: ReplayDestinationSchema,
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_DEST_MCP_EXEMPT },
+});
+
 // ── Replay-destination signing secrets (ADR-0084, S3 Slice 2) ─────────────────────────────────────
 // Each destination's outbound Standard Webhooks signing secret. create reveals the first one; rotate
 // mints a fresh one (with a bounded active+retiring overlap for zero-downtime verifier reconfiguration);
@@ -663,6 +691,8 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   replayDestinationsCreate,
   replayDestinationsList,
   replayDestinationsDelete,
+  replayDestinationsEnable,
+  replayDestinationsSetOrdered,
   replayDestinationsRotateSigningSecret,
   replayDestinationsListSigningSecrets,
   subscriptionsCreate,
