@@ -72,10 +72,12 @@ export const PROVIDERS = [
   "primer",
   "airwallex", // {ts}{body} no separator
   "affirm", // csvKv t=,v0=, sha512
-  // S8 coverage PR6 — bespoke asymmetric. Keygen: Ed25519 over an HTTP-Signatures (draft-cavage) signing
-  // string; the registered secret is the account's Ed25519 public key (hex). No PROVIDER_CONFIGS entry —
-  // it ships a hand-written adapter (bespoke/keygen.ts) picked up via BESPOKE_ADAPTERS.
+  // S8 coverage PR6/PR7 — bespoke asymmetric (hand-written adapters via BESPOKE_ADAPTERS, no config row).
+  // Keygen: Ed25519 over an HTTP-Signatures (draft-cavage) signing string; secret = the account's Ed25519
+  // public key (hex). Constant Contact: a detached RFC-7797 RS256 JWS verified against CC's public JWKS
+  // (no per-endpoint secret — a registered secret is only an enable-marker).
   "keygen",
+  "constant_contact",
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
