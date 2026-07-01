@@ -303,6 +303,32 @@ describe("makeVerifyIngest", () => {
     expect(outcome.verified).toBe(true);
   });
 
+  it("REJECTS a bt_payload in the bt_challenge oracle domain (handshake-replay forgery guard)", async () => {
+    // The REAL attack (needs NO stolen secret): the bt_challenge handshake HMACs a hex nonce under
+    // SHA1(private_key) — the SAME key that verifies bt_payload. An attacker GETs a handshake response
+    // `pubkey|HMAC(nonce)` and replays it as `bt_signature=pubkey|HMAC(nonce)` over `bt_payload=nonce`. The
+    // HMAC is genuine (Braintree's own key), so constraining only the challenge shape is NOT enough — the
+    // verify path MUST reject any bt_payload in the nonce domain (^[a-f0-9]{20,40}$). Real bt_payloads are
+    // long base64 XML, never a short hex string, so this never rejects a genuine event.
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const privateKey = "integration_private_key"; // gitleaks:allow — fake fixture
+    const priv = await sealAs(store, privateKey, "sec-btpriv", "braintree");
+    const nonce = "20f9f8ed05f77439fe955c977e4c8a53"; // a valid bt_challenge value (hex, ≤40 chars)
+    const oracleSig = await braintreeSigHex(privateKey, nonce); // == the handshake response HMAC (genuine)
+    const body = `bt_signature=${encodeURIComponent(`integration_public_key|${oracleSig}`)}&bt_payload=${nonce}`;
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [["content-type", "application/x-www-form-urlencoded"]],
+      provider: "braintree",
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [priv],
+    });
+    expect(outcome.verified).toBe(false); // a genuinely-HMAC'd oracle-domain payload is STILL rejected
+  });
+
   it("verifies against the REGISTERED provider even when header detection picked the wrong one", async () => {
     // The collision case: a GitHub event (x-hub-signature-256) can be mis-detected as another scheme
     // that shares that header. Selection by the endpoint's registered provider fixes it — a wrong

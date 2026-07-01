@@ -14,6 +14,18 @@ export const BRAINTREE_PUBLIC_KEY_PROVIDERS: ReadonlySet<Provider> = new Set<Pro
   "braintree",
 ]);
 
+/**
+ * The exact `bt_challenge` shape the GET handshake will HMAC (a short lowercase-hex nonce). SINGLE-SOURCED
+ * so the handshake's oracle domain and the verify-side rejection domain CANNOT drift: the handshake HMACs a
+ * challenge matching this pattern under `SHA1(private_key)` — the SAME key that verifies `bt_payload` — so
+ * the verify path (via `HmacProviderConfig.rejectSignedMessageMatching`) must reject any `bt_payload` in this
+ * SAME domain, else a handshake response `pubkey|HMAC(nonce)` replays as a valid `bt_signature` over
+ * `bt_payload=nonce`. Real bt_payloads are long base64 XML — never a ≤40-char hex string — so this domain
+ * separation never rejects a genuine event. Exported as a shared RegExp — `.test()` on a flagless pattern is
+ * stateless, so both call sites reuse this one instance safely (and neither builds a RegExp from a variable).
+ */
+export const BRAINTREE_CHALLENGE_PATTERN = /^[a-f0-9]{20,40}$/;
+
 const BRAINTREE_PUBLIC_KEY_KIND = "braintree_public_key";
 
 /** Seal-shape: wrap a raw integration public key into the typed blob the engine recognizes at unseal. */

@@ -112,11 +112,20 @@ the integration **public key**, which POST verification never uses — so it is 
 private-key secret under the `braintree` slug (the same two-secrets-one-slug shape as Meta/eBay). The verify
 path **skips** the public-key blob as a candidate signing key — a required **verification-downgrade guard**:
 the integration public key is *public*, so its deterministic blob string is attacker-derivable, and treating it
-as an HMAC key would let anyone who knows the public key forge a `verified` braintree event. Because the
-handshake HMACs `bt_challenge` under the SAME key that signs the POST `bt_payload`, the dispatcher accepts
-**only a short lowercase-hex nonce** (`^[a-f0-9]{20,40}$`) as a challenge — a base64 `bt_payload` can never be
-coaxed through the handshake to obtain a forged signature (anti-oracle). Verified byte-exact against Braintree's
-documented public vector.
+as an HMAC key would let anyone who knows the public key forge a `verified` braintree event.
+
+The deeper hazard is a **signing oracle**: the handshake HMACs `bt_challenge` under the SAME `SHA1(private_key)`
+that verifies the POST `bt_payload`, so a handshake response `<pk>|HMAC(nonce)` is a syntactically valid
+`bt_signature` and could be replayed as a POST with `bt_payload=nonce` (the HMAC is Braintree's own — no stolen
+secret needed). **Constraining only the challenge shape is insufficient**, because the POST verify signs
+`bt_payload` verbatim: the challenge domain would be a *subset* of accepted payloads. The fix is
+**domain separation on BOTH sides, single-sourced** (`BRAINTREE_CHALLENGE_PATTERN = ^[a-f0-9]{20,40}$`): the
+dispatcher HMACs only a challenge matching it, AND the braintree verify config carries
+`rejectSignedMessageMatching` = the SAME pattern, so any `bt_payload` in the oracle's output domain fails
+closed even with a valid HMAC. Real bt_payloads are long base64 XML — never a ≤40-char hex string — so a genuine
+event is never rejected. The two uses share one constant so the sets can never drift. Verified byte-exact
+against Braintree's documented public vector, and the replay forgery is proven refuted at both the engine
+verify path and the adapter KAT.
 
 ## consequences
 

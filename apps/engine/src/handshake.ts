@@ -17,6 +17,7 @@
 
 import { type CachedSealedSecret } from "@webhook-co/db";
 import {
+  BRAINTREE_CHALLENGE_PATTERN,
   bytesToB64,
   bytesToHex,
   hexToBytes,
@@ -121,8 +122,10 @@ export async function ebayChallengeResponse(
   return Response.json({ challengeResponse: hex }, { headers: BROWSER_SAFE_HEADERS });
 }
 
-/** A short lowercase-hex nonce — the shape of a Braintree `bt_challenge` (see the anti-oracle note below). */
-const BT_CHALLENGE_HEX = /^[a-f0-9]{20,40}$/;
+// The `bt_challenge` shape this handshake will HMAC. SINGLE-SOURCED with the verify-side rejection domain
+// (config.ts braintree `rejectSignedMessageMatching` is the SAME constant) so the oracle domain and the
+// payloads verify refuses can NEVER drift — the anti-oracle guarantee depends on the two being one set.
+const BT_CHALLENGE_HEX = BRAINTREE_CHALLENGE_PATTERN;
 
 /**
  * Braintree webhook-subscription verification: the `bt_challenge` GET expects the body

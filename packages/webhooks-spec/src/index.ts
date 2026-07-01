@@ -57,6 +57,7 @@ export {
 // Braintree `?bt_challenge=` handshake needs the integration PUBLIC key (separate from the private-key
 // signing secret) sealed as a typed blob under the `braintree` slug — single-sourced for db / engine.
 export {
+  BRAINTREE_CHALLENGE_PATTERN,
   BRAINTREE_PUBLIC_KEY_PROVIDERS,
   parseBraintreePublicKey,
   serializeBraintreePublicKey,

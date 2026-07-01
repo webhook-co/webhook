@@ -11,6 +11,9 @@
 
 import { z } from "zod";
 
+// Value import only; braintree-public-key.ts imports just `type Provider` back (erased) — no runtime cycle.
+import { BRAINTREE_CHALLENGE_PATTERN } from "./braintree-public-key";
+
 /**
  * The recognized inbound providers (best-effort detection; verification never blocks
  * ingest). This tuple is THE source of truth for the provider/scheme vocabulary — keep it
@@ -438,6 +441,18 @@ export interface HmacProviderConfig {
    * signature merely for being old — matching the provider avoids false-rejecting a delayed delivery.
    */
   readonly enforceReplayWindow?: boolean;
+  /**
+   * Optional anti-oracle DOMAIN-SEPARATION guard (regex SOURCE): if the fully-assembled signed message
+   * matches, verification FAILS CLOSED even with a valid HMAC. Set ONLY for a provider whose subscription
+   * handshake HMACs an attacker-chosen value under the SAME key that signs the payload (Braintree's
+   * `bt_challenge` → `SHA1(private_key)`, the key that also verifies `bt_payload`): reject any payload in the
+   * handshake's oracle domain so a handshake response can't be replayed as a payload signature. The pattern
+   * MUST be a strict subset of impossible-real-payloads (Braintree: `BRAINTREE_CHALLENGE_PATTERN`, a short
+   * hex nonce — real bt_payloads are long base64, never matching). Applied only when the message has no
+   * raw-body part (fully resolved), so it can't be dodged by shape. Absent → no guard. A flagless RegExp so
+   * `.test()` is stateless and the constant can be shared with the handshake dispatcher.
+   */
+  readonly rejectSignedMessageMatching?: RegExp;
   /** Replay tolerance (seconds); sourced from PROVIDER_TOLERANCE_SECONDS for one definition. */
   readonly toleranceSeconds: number;
 }
@@ -1249,6 +1264,9 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
     digest: "sha1",
     keyDerivation: "sha1-secret",
     message: [{ kind: "formField", name: "bt_payload" }],
+    // Anti-oracle: the `bt_challenge` GET handshake HMACs a hex nonce under this SAME SHA1(private_key), so
+    // reject any bt_payload in that nonce domain — a handshake response can't be replayed as a bt_signature.
+    rejectSignedMessageMatching: BRAINTREE_CHALLENGE_PATTERN,
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.braintree,
   },
   // ── S2.2 HMAC long-tail ──
