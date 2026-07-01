@@ -21,6 +21,7 @@ import {
 import {
   decodeCursor,
   encodeCursor,
+  orderKeyLagMs,
   parseSince,
   verifyAuditChain,
   type Cursor,
@@ -220,11 +221,9 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       return { page: tailed, meta: await tailMeta(tx, { endpointId, sinceCursor: from }) };
     });
     // headLagMs is advisory (Worker clock vs the DB-stamped head; floored by the 5s watermark anyway).
-    // The head order key is UTC ISO-µs; `new Date` parses it (ms is ample for a coarse lag metric).
+    // Shared with the tunnel status frame via orderKeyLagMs so the two surfaces can't drift on the math.
     const headLagMs =
-      meta.headCursor === null
-        ? undefined
-        : Math.max(0, Date.now() - new Date(meta.headCursor.orderKey).getTime());
+      meta.headCursor === null ? undefined : orderKeyLagMs(meta.headCursor.orderKey, Date.now());
     return {
       items: page.items,
       nextCursor: await encode(page.nextCursor),

@@ -330,6 +330,27 @@ describe("ListenSession — cursor + at-least-once", () => {
     expect(last?.resume).toEqual(c);
   });
 
+  it("UPGRADES a pre-deploy {receivedAtMs} durable cursor in place on reconnect (no backlog re-flood)", async () => {
+    // A session whose durable cursor was written by the pre-µs build reconnects after this deploy. The old
+    // {receivedAtMs} ms position must be upgraded to the EQUIVALENT µs order key (`.sss000Z`) and used as the
+    // resume — NOT treated as unset, which would resume oldest-inclusive and re-flood the whole backlog as
+    // duplicates. The old cursor was already ms-precision, so this resumes from the exact same instant.
+    const b = newBinding();
+    const calls: (Cursor | undefined)[] = [];
+    const { stub } = await openSession(b, async (_binding, resume) => {
+      calls.push(resume);
+      return { events: [], caughtUp: true };
+    });
+    const legacyId = crypto.randomUUID();
+    await runInDurableObject(stub, (_i, s) =>
+      s.storage.put("cursor", { receivedAtMs: Date.UTC(2026, 5, 10, 12, 0, 5, 123), id: legacyId }),
+    );
+    await connect(stub, b); // reconnect → resets in-memory lastSent, so resume comes from durable storage
+    await runDurableObjectAlarm(stub);
+
+    expect(calls.at(-1)).toEqual({ orderKey: "2026-06-10T12:00:05.123000Z", id: legacyId });
+  });
+
   it("rejects a tampered ack cursor without advancing the durable cursor", async () => {
     const b = newBinding();
     const { stub } = await openSession(b);

@@ -11,6 +11,7 @@ import {
   EventSchema,
   EventSummarySchema,
   LISTEN_LAG_CAP,
+  msToOrderKey,
   WATERMARK_DELTA_MS,
   type Cursor,
   type Delivery,
@@ -128,10 +129,10 @@ function orderKeyCol(tx: TenantTx, col: "received_at" | "created_at") {
     : tx`to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as order_key`;
 }
 
-/** A JS `Date` (ms) → the cursor's 6-digit UTC ISO-µs order key. `toISOString()` is always `…sssZ` (3 frac
- *  digits, UTC), so the trailing-Z swap yields `…sss000Z`. Used for `--since <RFC3339>` boundaries. */
+/** A JS `Date` (ms) → the cursor's 6-digit UTC ISO-µs order key, for `--since <RFC3339>` boundaries. Delegates
+ *  to the shared {@link msToOrderKey} so the ms→order-key formatting has ONE definition across surfaces. */
 function msDateToOrderKey(d: Date): string {
-  return `${d.toISOString().slice(0, -1)}000Z`;
+  return msToOrderKey(d.getTime());
 }
 
 // Wrap a user search term as a case-insensitive CONTAINS pattern for `ILIKE`, escaping the LIKE

@@ -99,9 +99,10 @@ export type ListenSince =
 /**
  * Resolve where a `listen` run starts, folding in cross-run resume. `--reset` first forgets any saved
  * cursor. With resume on (`--resume` or `--since from-last-ack`), load the persisted OPAQUE cursor and
- * resume from it (`?sinceCursor=`); a miss or a corrupt file cold-starts from "now" (warning on corrupt)
- * so a damaged state file never wedges the tail. Otherwise the existing now|beginning|<cursor> mapping.
- * fs is injected (loadCursor/clearCursor bound to the state dir) so this is unit-tested without disk.
+ * resume from it (`?sinceCursor=`); an OUTDATED file (a known format upgrade) re-pages from the beginning
+ * (no event loss); a miss or a corrupt file cold-starts from "now" (warning on each) so a damaged state
+ * file never wedges the tail. Otherwise the existing now|beginning|<cursor> mapping. fs is injected
+ * (loadCursor/clearCursor bound to the state dir) so this is unit-tested without disk.
  */
 export async function resolveResumeStart(opts: {
   readonly resume: boolean;
@@ -115,6 +116,15 @@ export async function resolveResumeStart(opts: {
   if (opts.resume || opts.since === "from-last-ack") {
     const loaded = await opts.loadCursor();
     if (loaded.kind === "hit") return { kind: "cursor", cursor: loaded.cursor };
+    if (loaded.kind === "outdated") {
+      // A known format upgrade (e.g. a v1 file after the µs-cursor change): the old opaque token can't be
+      // presented to the server, but the position must NOT be silently skipped. Re-page from the beginning
+      // — a one-time re-list (client dedups by cursor/id), never a gap. This is the no-data-loss path.
+      opts.note(
+        `saved resume cursor is from an older format (${loaded.detail}) — re-paging from the beginning\n`,
+      );
+      return { kind: "beginning" };
+    }
     if (loaded.kind === "corrupt") {
       opts.note(`saved resume cursor unusable (${loaded.detail}) — starting from now\n`);
     }

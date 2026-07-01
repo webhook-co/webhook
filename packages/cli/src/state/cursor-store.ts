@@ -16,12 +16,22 @@ const DIR_NAME = "listen";
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
 // Bumped 1→2 with the full-µs opaque cursor (the stored `cursor` is a v2 signed token; a v1 token the server
-// now rejects). A pre-deploy v1 file fails this literal → `{kind:"corrupt"}` → a deterministic cold start
-// ("tail from now"), instead of the CLI presenting a doomed v1 token that the server 400s mid-resume.
+// now rejects). A pre-deploy v1 file no longer matches this literal, so loadCursor reports it as `outdated`
+// (a KNOWN format upgrade) rather than `corrupt` — the caller re-pages from the beginning (no event loss),
+// instead of the CLI presenting a doomed v1 token that the server 400s mid-resume.
 export const CURSOR_VERSION = 2 as const;
 
 const CursorRecordSchema = z.object({
   version: z.literal(CURSOR_VERSION),
+  endpointId: z.string().min(1),
+  cursor: z.string().min(1),
+});
+
+// A well-formed resume record of ANY version — used to tell a genuine older-format file (a known upgrade →
+// `outdated`) apart from unparseable garbage (→ `corrupt`). Same outer shape; only `version` and the opaque
+// token inside `cursor` changed across versions.
+const AnyVersionRecordSchema = z.object({
+  version: z.number().int(),
   endpointId: z.string().min(1),
   cursor: z.string().min(1),
 });
@@ -33,16 +43,18 @@ export function cursorFilePath(stateDir: string, profile: string, endpointId: st
   return join(stateDir, DIR_NAME, name);
 }
 
-/** The outcome of loading a persisted cursor: a hit, no stored cursor, or an unusable file. */
+/** The outcome of loading a persisted cursor: a hit, no stored cursor, a known older format, or garbage. */
 export type CursorLoad =
   | { readonly kind: "hit"; readonly cursor: string }
   | { readonly kind: "miss" }
+  | { readonly kind: "outdated"; readonly detail: string }
   | { readonly kind: "corrupt"; readonly detail: string };
 
 /**
- * Load the persisted cursor for a (profile, endpoint). `miss` when none is stored; `corrupt` (with a
- * reason) for unreadable JSON, a schema/version mismatch, or a stored endpointId that doesn't match the
- * request (defense-in-depth — the filename already keys on it). The caller cold-starts on miss/corrupt.
+ * Load the persisted cursor for a (profile, endpoint). `miss` when none is stored; `outdated` for a
+ * well-formed record of a PRIOR version for THIS endpoint (a known format upgrade — the caller re-pages
+ * rather than skipping); `corrupt` (with a reason) for unreadable JSON, an unrecognizable shape, or a
+ * stored endpointId that doesn't match the request (defense-in-depth — the filename already keys on it).
  */
 export async function loadCursor(
   stateDir: string,
@@ -65,11 +77,27 @@ export async function loadCursor(
     return { kind: "corrupt", detail: (err as Error).message };
   }
   const result = CursorRecordSchema.safeParse(parsed);
-  if (!result.success) return { kind: "corrupt", detail: result.error.message };
-  if (result.data.endpointId !== endpointId) {
-    return { kind: "corrupt", detail: "stored cursor belongs to a different endpoint" };
+  if (result.success) {
+    if (result.data.endpointId !== endpointId) {
+      return { kind: "corrupt", detail: "stored cursor belongs to a different endpoint" };
+    }
+    return { kind: "hit", cursor: result.data.cursor };
   }
-  return { kind: "hit", cursor: result.data.cursor };
+  // Not the current version. If it's otherwise a valid resume record of an OLDER version for THIS endpoint,
+  // it's a known format upgrade, not garbage: signal `outdated` so the caller re-pages from the beginning
+  // (no event loss) instead of skipping to now. A mismatched endpoint or an unrecognizable shape is corrupt.
+  const prior = AnyVersionRecordSchema.safeParse(parsed);
+  if (
+    prior.success &&
+    prior.data.version !== CURSOR_VERSION &&
+    prior.data.endpointId === endpointId
+  ) {
+    return {
+      kind: "outdated",
+      detail: `resume file is format v${prior.data.version}; current is v${CURSOR_VERSION}`,
+    };
+  }
+  return { kind: "corrupt", detail: result.error.message };
 }
 
 /**

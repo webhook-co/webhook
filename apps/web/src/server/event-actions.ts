@@ -1,6 +1,6 @@
 "use server";
 
-import { ORDER_KEY_RE, type Cursor } from "@webhook-co/shared";
+import { msToOrderKey, ORDER_KEY_RE, type Cursor } from "@webhook-co/shared";
 import { PROVIDERS } from "@webhook-co/webhooks-spec";
 
 import { parseEventFilters, type EventFilterParams } from "@/lib/event-filters";
@@ -43,13 +43,13 @@ export async function loadMoreEventsAction(input: {
   if (typeof endpointId !== "string" || !isUuid(endpointId)) return { ok: false };
 
   // The cursor is a structured {orderKey, id} round-tripped through the client (this action is
-  // independently callable). Validate both fields — a bad orderKey is also RLS-bounded + caught below, but
-  // reject fast. `orderKey` is the UTC ISO-µs order key (see cursor.ts).
-  const cursor = input?.cursor as { orderKey?: unknown; id?: unknown } | undefined;
+  // independently callable). Validate the id (uuid) and resolve the order key — a bad value is also
+  // RLS-bounded + caught below, but reject fast. `orderKey` is the UTC ISO-µs order key (see cursor.ts).
+  const cursor = input?.cursor as
+    { orderKey?: unknown; id?: unknown; receivedAt?: unknown } | undefined;
   if (!cursor || typeof cursor.id !== "string" || !isUuid(cursor.id)) return { ok: false };
-  if (typeof cursor.orderKey !== "string" || !ORDER_KEY_RE.test(cursor.orderKey)) {
-    return { ok: false };
-  }
+  const orderKey = normalizeOrderKey(cursor);
+  if (orderKey === null) return { ok: false };
 
   // Re-parse the active filters server-side (the action is independently callable): the SAME coercion +
   // provider validation the page used, so paging stays within the active filter set and a tampered or
@@ -60,7 +60,7 @@ export async function loadMoreEventsAction(input: {
     const page = await loadMoreEvents(
       session.orgId,
       endpointId,
-      { orderKey: cursor.orderKey, id: cursor.id },
+      { orderKey, id: cursor.id },
       filters,
     );
     return { ok: true, items: page.items, nextCursor: page.nextCursor };
@@ -68,6 +68,22 @@ export async function loadMoreEventsAction(input: {
     logActionError("events.load_more_failed", error);
     return { ok: false };
   }
+}
+
+/**
+ * Resolve the cursor's order key. Normally the v2 `orderKey` (a UTC ISO-µs string, validated by ORDER_KEY_RE).
+ * During a deploy window a tab rendered by the pre-µs build holds the old `{receivedAt}` shape (a Date,
+ * serialized to an ISO string across the server-action boundary); upgrade it in place to the equivalent
+ * ms-boundary order key so "Load more" keeps paging without a reload. Returns null for a value that is neither
+ * — the caller maps that to `{ok:false}` (RLS-bounded + parameterized downstream regardless).
+ */
+function normalizeOrderKey(c: { orderKey?: unknown; receivedAt?: unknown }): string | null {
+  if (typeof c.orderKey === "string" && ORDER_KEY_RE.test(c.orderKey)) return c.orderKey;
+  if (typeof c.receivedAt === "string" || c.receivedAt instanceof Date) {
+    const ms = new Date(c.receivedAt).getTime();
+    if (Number.isFinite(ms)) return msToOrderKey(ms);
+  }
+  return null;
 }
 
 /**

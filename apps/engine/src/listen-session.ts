@@ -15,6 +15,8 @@ import {
   encodeCursor,
   encodeServerFrame,
   importCursorKey,
+  msToOrderKey,
+  orderKeyLagMs,
   parseClientFrame,
   parseSince,
   readSecretBinding,
@@ -96,6 +98,15 @@ interface StoredCursor {
   readonly orderKey: string;
   readonly id: string;
 }
+
+/** The PRE-µs durable shape (ms epoch), still on disk for sessions that acked before this deploy. `toCursor`
+ *  upgrades it in place rather than discarding it — see the comment there. */
+interface LegacyStoredCursor {
+  readonly receivedAtMs: number;
+  readonly id: string;
+}
+
+type AnyStoredCursor = StoredCursor | LegacyStoredCursor;
 
 /**
  * One hibernatable WebSocket Durable Object per `wbhk listen` session (Slice 11b, ADR-0014).
@@ -214,13 +225,13 @@ export class ListenSession extends DurableObject<ListenEnv> {
       // poll's fail-safe posture). On error we skip the status frame and let the steady-state poll catch
       // the consumer up; the caught-up transition still fires later.
       try {
-        const resume = this.toCursor(await this.ctx.storage.get<StoredCursor>("cursor"));
+        const resume = this.toCursor(await this.ctx.storage.get<AnyStoredCursor>("cursor"));
         const meta = await this.backlogMeta(orgId, endpointId, resume);
         const caughtUp = meta.backlogCount === 0;
         const headLagMs =
           meta.headCursor === null
             ? undefined
-            : Math.max(0, Date.now() - new Date(meta.headCursor.orderKey).getTime());
+            : orderKeyLagMs(meta.headCursor.orderKey, Date.now());
         server.send(
           encodeServerFrame({
             type: "status",
@@ -275,7 +286,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
 
     try {
       const resume =
-        this.lastSent ?? this.toCursor(await this.ctx.storage.get<StoredCursor>("cursor"));
+        this.lastSent ?? this.toCursor(await this.ctx.storage.get<AnyStoredCursor>("cursor"));
       const { events, caughtUp } = await this.pollEvents(binding, resume);
       for (const { item: summary, cursor: cur } of events) {
         // `cur` is the event's EXACT-µs cursor from the read — NOT rebuilt from summary.receivedAt (a ms Date).
@@ -417,12 +428,20 @@ export class ListenSession extends DurableObject<ListenEnv> {
     await this.ctx.storage.put<StoredCursor>("cursor", { orderKey: cur.orderKey, id: cur.id });
   }
 
-  private toCursor(stored: StoredCursor | undefined): Cursor | undefined {
-    // A pre-deploy record with the old {receivedAtMs} shape lacks `orderKey` → treated as unset, so the
-    // session reseeds from `--since` (cold start). Acceptable: no gapless-critical durable cursors at baseline.
-    return stored && typeof stored.orderKey === "string"
-      ? { orderKey: stored.orderKey, id: stored.id }
-      : undefined;
+  private toCursor(stored: AnyStoredCursor | undefined): Cursor | undefined {
+    if (!stored) return undefined;
+    // Current shape: the v2 order key, used verbatim.
+    if ("orderKey" in stored && typeof stored.orderKey === "string") {
+      return { orderKey: stored.orderKey, id: stored.id };
+    }
+    // Pre-deploy shape {receivedAtMs}: UPGRADE it in place to the equivalent ms-boundary order key. The old
+    // cursor was already ms-precision, so `.sss000Z` resumes from the SAME position — no gap, at most a few
+    // same-ms duplicates (at-least-once already tolerates those). This avoids resuming with an unset cursor,
+    // which would be oldest-inclusive and re-flood the whole backlog as duplicate frames.
+    if ("receivedAtMs" in stored && typeof stored.receivedAtMs === "number") {
+      return { orderKey: msToOrderKey(stored.receivedAtMs), id: stored.id };
+    }
+    return undefined;
   }
 
   /** Send without letting a dead socket abort the broadcast or throw out of an event handler. */

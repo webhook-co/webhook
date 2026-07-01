@@ -59,6 +59,26 @@ export function importCursorKey(raw: Uint8Array): Promise<CryptoKey> {
   return importHmacKey(raw);
 }
 
+/**
+ * Epoch milliseconds → the cursor's 6-digit UTC ISO-µs order key (`…sss000Z`). The inverse of reading an
+ * order key as a `Date`. Used to UPGRADE a pre-µs millisecond position (a legacy DO/web cursor from before
+ * this change) to a v2 order key IN PLACE: the old value was already ms-precision, so `…sss000Z` resumes
+ * from the exact same millisecond boundary — no gap, at most a few same-ms duplicates (which at-least-once
+ * already tolerates), never a full-backlog re-flood. `toISOString()` is always `…sssZ` (3 frac digits, UTC).
+ */
+export function msToOrderKey(ms: number): string {
+  return `${new Date(ms).toISOString().slice(0, -1)}000Z`;
+}
+
+/**
+ * Advisory head-lag in milliseconds: `now - orderKey`, floored at 0. The µs order key is intentionally
+ * coarsened to ms here (a `Date` is ms-only) — this is a display/backpressure hint, never a keyset boundary.
+ * Shared by the API status read and the tunnel status frame so the two surfaces can't drift on the math.
+ */
+export function orderKeyLagMs(orderKey: string, nowMs: number): number {
+  return Math.max(0, nowMs - new Date(orderKey).getTime());
+}
+
 function payloadBytes(c: Cursor): Uint8Array {
   return utf8Encoder.encode(`${CURSOR_VERSION}|${c.orderKey}|${c.id}`);
 }

@@ -1,7 +1,15 @@
 import { beforeAll, describe, expect, it } from "vitest";
 
 import { bytesToB64url, utf8Encoder } from "./bytes";
-import { decodeCursor, encodeCursor, importCursorKey, InvalidCursorError } from "./cursor";
+import {
+  decodeCursor,
+  encodeCursor,
+  importCursorKey,
+  InvalidCursorError,
+  msToOrderKey,
+  ORDER_KEY_RE,
+  orderKeyLagMs,
+} from "./cursor";
 
 let key: CryptoKey;
 let otherKey: CryptoKey;
@@ -84,5 +92,37 @@ describe("cursor codec (v2 — full-µs order key)", () => {
       const token = await signToken(p, key);
       await expect(decodeCursor(token, key)).rejects.toBeInstanceOf(InvalidCursorError);
     }
+  });
+});
+
+describe("msToOrderKey (upgrade a pre-µs ms position → a v2 order key)", () => {
+  it("produces a valid 6-digit UTC ISO-µs order key with .sss000Z (ms zero-padded to µs)", () => {
+    const ms = Date.UTC(2026, 5, 12, 20, 0, 0, 123); // 2026-06-12T20:00:00.123Z
+    const key = msToOrderKey(ms);
+    expect(key).toBe("2026-06-12T20:00:00.123000Z");
+    expect(ORDER_KEY_RE.test(key)).toBe(true); // decodeCursor/ORDER_KEY_RE accept it
+  });
+
+  it("round-trips back to the SAME millisecond (upgrade is position-preserving, no gap)", () => {
+    const ms = Date.UTC(2026, 0, 1, 0, 0, 0, 7);
+    expect(new Date(msToOrderKey(ms)).getTime()).toBe(ms); // .007000Z parses back to exactly ms
+  });
+});
+
+describe("orderKeyLagMs (advisory head-lag, shared by api status + tunnel status)", () => {
+  it("is the ms delta from the order key to now, floored at 0", () => {
+    const now = Date.UTC(2026, 5, 12, 20, 0, 5, 0);
+    expect(orderKeyLagMs("2026-06-12T20:00:00.000000Z", now)).toBe(5000);
+  });
+
+  it("never returns a negative lag (a head in the future clamps to 0)", () => {
+    const now = Date.UTC(2026, 5, 12, 20, 0, 0, 0);
+    expect(orderKeyLagMs("2026-06-12T20:00:10.000000Z", now)).toBe(0);
+  });
+
+  it("coarsens the µs order key to ms (advisory, not µs-exact)", () => {
+    const now = Date.UTC(2026, 5, 12, 20, 0, 1, 0);
+    // .000900Z (900µs) coarsens to the same ms as .000000Z → both report 1000ms of lag.
+    expect(orderKeyLagMs("2026-06-12T20:00:00.000900Z", now)).toBe(1000);
   });
 });
