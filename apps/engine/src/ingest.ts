@@ -358,7 +358,13 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   if (request.method === "POST" && derived.providerEventId === null) {
     let post: Response | null = null;
     try {
-      post = dispatchPostHandshake(url, request.headers, raw);
+      post = await dispatchPostHandshake(
+        url,
+        request.headers,
+        raw,
+        endpoint.sealedSecrets,
+        (cached) => deps.unsealSecret(cached, endpoint.orgId, endpoint.endpointId),
+      );
     } catch (err) {
       deps.log("ingest.post_handshake_failed", {
         endpointId: endpoint.endpointId,
