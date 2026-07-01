@@ -94,6 +94,14 @@ export const PROVIDERS = [
   // S8 coverage PR10 — the rotation "any-of-N candidate signatures" knob.
   "box", // dual primary/secondary header
   "configcat", // comma-joined bare digests
+  // S8 coverage PR11 — HMAC long-tail (doc-verified 2026-07-01).
+  "ashby", // raw-body hex, sha256= prefix
+  "merge_dev", // raw-body base64url
+  "cronofy", // comma delimitedList (rotation)
+  "increase", // Standard Webhooks webhook-*
+  "finch", // SW-shaped, Finch-* headers, bare base64
+  "knock", // csvKv t=,s=, {ts}.{body}, ms
+  "deel", // "POST" + body
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
@@ -567,6 +575,8 @@ export const ETSY_CONFIG = standardWebhooksConfig("etsy", "webhook");
 export const VANTA_CONFIG = standardWebhooksConfig("vanta", "svix");
 // S8 coverage PR9 — Loops is a Standard Webhooks adopter (`webhook-*` trio).
 export const LOOPS_CONFIG = standardWebhooksConfig("loops", "webhook");
+// S8 coverage PR11 — Increase is a canonical Standard Webhooks adopter (`webhook-*` trio).
+export const INCREASE_CONFIG = standardWebhooksConfig("increase", "webhook");
 
 /**
  * The provider→config map. `registry.ts` maps each entry through `makeHmacAdapter` to build the
@@ -747,6 +757,55 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
     encoding: "base64",
     message: [{ kind: "body" }, { kind: "header", header: "box-delivery-timestamp" }],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.box,
+  },
+  // S8 coverage PR11 — HMAC long-tail (doc-verified 2026-07-01).
+  // Ashby: raw-body sha256/hex, `sha256=` prefix. Merge: raw-body sha256/BASE64URL. Cronofy: raw-body
+  // sha256/base64 but the header is a COMMA-list of digests (one per active client secret, rotation) →
+  // reuses the delimitedList any-of-N knob. Deel prepends the literal `POST` to the body before hashing.
+  ashby: rawBodyHmacConfig("ashby", "ashby-signature", "hex", "sha256="),
+  merge_dev: rawBodyHmacConfig("merge_dev", "x-merge-webhook-signature", "base64url"),
+  cronofy: {
+    slug: "cronofy",
+    signatureHeader: "cronofy-hmac-sha256",
+    signatureFormat: { kind: "delimitedList", delimiter: "," },
+    encoding: "base64",
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.cronofy,
+  },
+  increase: INCREASE_CONFIG,
+  // Finch: Standard-Webhooks crypto but its OWN header names (`Finch-Event-Id`/`Finch-Timestamp`/
+  // `Finch-Signature`) and a BARE base64 secret (no `whsec_` prefix — whsec-base64 decodes it the same).
+  finch: {
+    slug: "finch",
+    signatureHeader: "finch-signature",
+    signatureFormat: { kind: "spaceList", sigTag: "v1" },
+    encoding: "base64",
+    keyDerivation: "whsec-base64",
+    timestamp: { kind: "header", header: "finch-timestamp" },
+    message: [
+      { kind: "header", header: "finch-event-id" },
+      { kind: "literal", value: "." },
+      { kind: "timestamp" },
+      { kind: "literal", value: "." },
+      { kind: "body" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.finch,
+  },
+  // Knock: Stripe-shaped csvKv `t=..,s=..` over `{ts}.{body}`, base64 — but the timestamp is MILLISECONDS.
+  knock: {
+    slug: "knock",
+    signatureHeader: "x-knock-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "s" },
+    encoding: "base64",
+    timestamp: { kind: "sigField", field: "t", format: "milliseconds" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.knock,
+  },
+  deel: {
+    slug: "deel",
+    signatureHeader: "x-deel-signature",
+    encoding: "hex",
+    message: [{ kind: "literal", value: "POST" }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.deel,
   },
   // ConfigCat: HMAC-SHA256/base64 over `{id}{timestamp}{body}` (no separators, all from headers); during
   // rotation the `x-configcat-webhook-signature-v1` header carries COMMA-joined bare digests → any-of-N.
