@@ -195,6 +195,25 @@ function mondayChallenge(rawBody: Uint8Array): Response | null {
 }
 
 /**
+ * Asana webhook-creation handshake: the FIRST POST to a brand-new webhook carries a random
+ * `X-Hook-Secret` header (and an empty/minimal body). Echo that header back verbatim on a 200 to activate
+ * the webhook — otherwise Asana marks it failed and never delivers. No secret of our own: we bounce
+ * Asana's own value 1:1 (like Adobe Sign / the Slack nonce). Detected purely by the header's presence; a
+ * real Asana EVENT carries `X-Hook-Signature` (an HMAC over the body) — never `X-Hook-Secret` — so it is
+ * never diverted and always captured. NOTE: this activates delivery (the wedge: receive/inspect/replay);
+ * verifying Asana events needs that same `X-Hook-Secret` registered as the `asana` secret — surfacing it
+ * (auto-capture / operator display) is a follow-up, since the echo is pre-capture.
+ */
+function asanaHookSecretEcho(headers: Headers): Response | null {
+  const hookSecret = headers.get("x-hook-secret");
+  if (hookSecret === null || hookSecret.length === 0) return null;
+  return new Response(null, {
+    status: 200,
+    headers: { "x-hook-secret": hookSecret, ...BROWSER_SAFE_HEADERS },
+  });
+}
+
+/**
  * Zoom webhook endpoint URL validation: a POST body `{"event":"endpoint.url_validation","payload":
  * {"plainToken":"<t>"}}` → `{"plainToken":"<t>","encryptedToken":hex(HMAC-SHA256(zoomSecret, plainToken))}`.
  * The key is the endpoint's registered `zoom` Secret Token — the SAME secret Zoom's POST `x-zm-signature`
@@ -284,7 +303,10 @@ export async function dispatchPostHandshake(
   unseal: (cached: CachedSealedSecret) => Promise<string>,
 ): Promise<Response | null> {
   const echo =
-    msGraphValidation(url) ?? twitchVerification(headers, rawBody) ?? mondayChallenge(rawBody);
+    msGraphValidation(url) ??
+    twitchVerification(headers, rawBody) ??
+    mondayChallenge(rawBody) ??
+    asanaHookSecretEcho(headers);
   if (echo !== null) return echo;
   return (
     (await zoomUrlValidation(rawBody, sealedSecrets, unseal)) ??
