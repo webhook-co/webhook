@@ -57,6 +57,16 @@ export const PROVIDERS = [
   "mux", // csvKv t=,v1=
   "shippo", // csvKv t=,v1=
   "buildkite", // csvKv timestamp=,signature=
+  // S8 coverage PR4 — more Bucket B quirk-HMAC (doc-verified 2026-07-01).
+  "ms_teams", // authorization: HMAC <b64>, base64-decoded key
+  "ably",
+  "squarespace", // hex-decoded key
+  "nylas",
+  "linkedin", // signs "hmacsha256=" + body
+  "tiktok", // csvKv t=,s=
+  "airship", // {ts}:{body}
+  "lob", // {ts}.{body}
+  "persona", // csvKv t=,v1=
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
@@ -605,6 +615,67 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
     timestamp: { kind: "sigField", field: "timestamp" },
     message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.buildkite,
+  },
+  // S8 coverage PR4 — more Bucket B quirk-HMAC (doc-verified 2026-07-01).
+  // MS Teams: `authorization: HMAC <base64>` over the raw body; the token is base64 → DECODED to the key
+  // (whsec-base64 strips no prefix from a bare-base64 secret, so it decodes the same). Ably: base64 sig,
+  // raw-utf8 key (the API key's post-`:` keyValue). Squarespace: HEX-decoded key. Nylas: plain raw-utf8.
+  ms_teams: {
+    ...rawBodyHmacConfig("ms_teams", "authorization", "base64", "HMAC "),
+    keyDerivation: "whsec-base64",
+  },
+  ably: rawBodyHmacConfig("ably", "x-ably-signature", "base64"),
+  squarespace: {
+    ...rawBodyHmacConfig("squarespace", "squarespace-signature", "hex"),
+    keyDerivation: "hex",
+  },
+  nylas: rawBodyHmacConfig("nylas", "x-nylas-signature", "hex"),
+  // LinkedIn signs `"hmacsha256=" + body` — the literal is on the MESSAGE, not the header value.
+  linkedin: {
+    slug: "linkedin",
+    signatureHeader: "x-li-signature",
+    encoding: "hex",
+    message: [{ kind: "literal", value: "hmacsha256=" }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.linkedin,
+  },
+  // Timestamp-framed. TikTok/Persona are Stripe-shaped csvKv over `{ts}.{body}` (TikTok's sig key is `s`,
+  // not `v1`). Airship signs `{ts}:{body}` and Lob `{ts}.{body}` with the ts in a companion header.
+  // TikTok/Airship/Persona document Unix-seconds windows → enforced; Lob's ts unit is unspecified in the
+  // docs, so enforceReplayWindow=false there (the HMAC is the protection; never false-reject a real event).
+  tiktok: {
+    slug: "tiktok",
+    signatureHeader: "tiktok-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "s" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "t" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.tiktok,
+  },
+  airship: {
+    slug: "airship",
+    signatureHeader: "x-ua-signature",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "x-ua-timestamp" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: ":" }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.airship,
+  },
+  lob: {
+    slug: "lob",
+    signatureHeader: "lob-signature",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "lob-signature-timestamp" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    enforceReplayWindow: false,
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.lob,
+  },
+  persona: {
+    slug: "persona",
+    signatureHeader: "persona-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "t" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.persona,
   },
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256 (utf8 key, no timestamp). Headers + encoding
   // verified per provider against the S2.1 research matrix / official signing docs.
