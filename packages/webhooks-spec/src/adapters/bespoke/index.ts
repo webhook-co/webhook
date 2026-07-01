@@ -12,6 +12,7 @@ import { makeContentfulAdapter } from "./contentful";
 import { makeDiscordAdapter } from "./discord";
 import { makeEbayAdapter } from "./ebay";
 import { makeJiraConnectAdapter } from "./jira-connect";
+import { makeKeygenAdapter } from "./keygen";
 import { makeKindeAdapter } from "./kinde";
 import { makeMessagebirdAdapter } from "./messagebird";
 import { makeMondayAdapter } from "./monday";
@@ -40,6 +41,8 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   // Tier-3 ASYMMETRIC Ed25519 (public-key verify over timestamp+body).
   discord: makeDiscordAdapter(),
   telnyx: makeTelnyxAdapter(),
+  // Tier-3 ASYMMETRIC Ed25519 over an HTTP Message Signatures (draft-cavage) signing string.
+  keygen: makeKeygenAdapter(),
   // Tier-3 ASYMMETRIC ECDSA-P256 (SendGrid) + RSA-PKCS1 (Wise).
   sendgrid: makeSendgridAdapter(),
   wise: makeWiseAdapter(),

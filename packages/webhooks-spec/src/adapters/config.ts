@@ -72,6 +72,10 @@ export const PROVIDERS = [
   "primer",
   "airwallex", // {ts}{body} no separator
   "affirm", // csvKv t=,v0=, sha512
+  // S8 coverage PR6 — bespoke asymmetric. Keygen: Ed25519 over an HTTP-Signatures (draft-cavage) signing
+  // string; the registered secret is the account's Ed25519 public key (hex). No PROVIDER_CONFIGS entry —
+  // it ships a hand-written adapter (bespoke/keygen.ts) picked up via BESPOKE_ADAPTERS.
+  "keygen",
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
