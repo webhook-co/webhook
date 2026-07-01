@@ -115,6 +115,7 @@ export async function applyRolePasswords(pg: EphemeralPostgres): Promise<void> {
       DB_ROLES.auth,
       DB_ROLES.sweeper,
       DB_ROLES.reconciler,
+      DB_ROLES.notifier,
     ]) {
       await sql.unsafe(`alter role ${quoteIdent(role)}${passwordClause(pg, role)}`);
     }

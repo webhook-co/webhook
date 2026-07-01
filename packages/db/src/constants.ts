@@ -66,4 +66,16 @@ export const DB_ROLES = {
    * (FORCE RLS defeats an owner/SECURITY-DEFINER bypass; BYPASSRLS is forbidden). Password injected out of band.
    */
   reconciler: "webhook_reconciler",
+  /**
+   * Cross-org notification-delivery cron role (S3 Slice 3 / migration 0034). Non-owner, no BYPASSRLS; the
+   * auth. worker's daily cron drains pending `notification_intents` (written by the engine when a destination
+   * auto-disables — the engine can't send mail, so it queues an intent) → emails the org owner → marks the
+   * intent sent. Holds cross-org SELECT on notification_intents + memberships (via role-targeted
+   * `FOR SELECT TO webhook_notifier USING (true)` policies + column grants) and a table grant on the GLOBAL,
+   * RLS-exempt `user` identity table for the owner's email; plus a role-targeted `FOR UPDATE` policy on
+   * notification_intents (status='pending' only) with a column grant on (status, sent_at) to flip an intent to
+   * sent exactly once. No other write, and it never reads the destination URL / delivery content (the email
+   * links to the dashboard by destination id). Password injected out of band.
+   */
+  notifier: "webhook_notifier",
 } as const;

@@ -86,6 +86,7 @@ let owner: Sql; // webhook_owner — schema owner (non-superuser)
 let anchor: Sql; // webhook_anchor — WORM head-anchor cross-org chain-head reader
 let sweeper: Sql; // webhook_sweeper — cross-org expiry cron-sweep (DELETE-only on the two token tables)
 let reconciler: Sql; // webhook_reconciler — cross-org delivery-reconciliation reader (re-wake cron)
+let notifier: Sql; // webhook_notifier — cross-org notification-drain (read intents+owner email, mark sent)
 let root: Sql; // cluster superuser — used only to prove trigger-level immutability
 let orgA: Seeded;
 let orgB: Seeded;
@@ -151,6 +152,7 @@ beforeAll(async () => {
   anchor = createClient(pg.urlFor({ role: DB_ROLES.anchor }));
   sweeper = createClient(pg.urlFor({ role: DB_ROLES.sweeper }));
   reconciler = createClient(pg.urlFor({ role: DB_ROLES.reconciler }));
+  notifier = createClient(pg.urlFor({ role: DB_ROLES.notifier }));
   root = createClient(pg.ownerUrl);
   orgA = await seedOrg("aaa");
   orgB = await seedOrg("bbb");
@@ -163,6 +165,7 @@ afterAll(async () => {
   await anchor?.end();
   await sweeper?.end();
   await reconciler?.end();
+  await notifier?.end();
   await root?.end();
   await pg?.stop();
 });
@@ -720,6 +723,62 @@ describe("catalog-driven RLS coverage", () => {
         select (has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'DELETE')) as any`;
+      expect(p.any).toBe(false);
+    }
+  });
+
+  it("the notifier role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
+    // webhook_notifier is the cross-org notification-drain role (migration 0034): it reads pending intents +
+    // the org owner's email across all orgs and flips intents to sent, and like every other job-path role
+    // must never be a superuser, never BYPASSRLS, never own a table.
+    const [role] = await owner<{ rolname: string; super: boolean; bypass: boolean }[]>`
+      select rolname, rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.notifier}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+
+    const ownedByNotifier = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.notifier}`;
+    expect(ownedByNotifier[0]?.n).toBe(0);
+  });
+
+  it("the notifier role holds ONLY the intent/owner-email columns it needs, writes ONLY the sent-marking columns", async () => {
+    // SELECT: the intent routing keys + status, the membership owner-lookup keys, and the owner's email only.
+    const selects: Array<[string, string]> = [
+      ["notification_intents", "kind"],
+      ["notification_intents", "destination_id"],
+      ["memberships", "role"],
+      ["user", "email"],
+    ];
+    for (const [t, c] of selects) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.notifier}, ${t}, ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    // It must NOT read the owner's name, nor any destination config (it links to the dashboard by id).
+    for (const [t, c] of [
+      ["user", "name"],
+      ["replay_destinations", "url"],
+    ] as Array<[string, string]>) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.notifier}, ${t}, ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // UPDATE: only (status, sent_at) on notification_intents, and no write on memberships / user.
+    const [upStatus] = await owner<{ ok: boolean }[]>`
+      select has_column_privilege(${DB_ROLES.notifier}, 'notification_intents', 'status', 'UPDATE') as ok`;
+    expect(upStatus.ok).toBe(true);
+    const [upKind] = await owner<{ ok: boolean }[]>`
+      select has_column_privilege(${DB_ROLES.notifier}, 'notification_intents', 'kind', 'UPDATE') as ok`;
+    expect(upKind.ok).toBe(false);
+    for (const t of ["memberships", "user"] as const) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.notifier}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.notifier}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.notifier}, ${t}, 'DELETE')) as any`;
       expect(p.any).toBe(false);
     }
   });
