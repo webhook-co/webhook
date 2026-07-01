@@ -190,6 +190,24 @@ function matchRoute(
     // in handleReplay). A WRITE — records a delivery_attempt; dispatched specially, not via `handlers`.
     return { capability: "events.replay", input: { eventId: rest[1] } };
   }
+  // deliveries.* (S3 Slice 3 PR3): the auto-delivery observability READS. Full parity (api + cli + mcp);
+  // dispatched via the GENERIC shared `handlers` map (events:read scope), so no special block below.
+  if (method === "GET" && rest.length === 1 && rest[0] === "deliveries") {
+    const input = listInput(query, {});
+    // Optional filters (truthiness skips both null and "" — an empty ?destinationId= clears the filter).
+    const destinationId = query.get("destinationId");
+    if (destinationId) input.destinationId = destinationId;
+    const subscriptionId = query.get("subscriptionId");
+    if (subscriptionId) input.subscriptionId = subscriptionId;
+    // Repeatable ?status= → multi-select; drop empty values (a cleared-filter `?status=` sends "") so an
+    // empty element never reaches multiEnum → a 400 (mirrors the events.list provider/verificationState strip).
+    const status = query.getAll("status").filter((s) => s !== "");
+    if (status.length > 0) input.status = status;
+    return { capability: "deliveries.list", input };
+  }
+  if (method === "GET" && rest.length === 2 && rest[0] === "deliveries") {
+    return { capability: "deliveries.get", input: { deliveryId: rest[1] } };
+  }
   // replayDestinations.* (ADR-0081): the SSRF-egress allowlist. WRITES (create/delete) + a list, bound
   // ONLY on api (web-deferred, mcp-exempt) and dispatched via the dedicated `replayDestinations` map.
   if (method === "GET" && rest.length === 1 && rest[0] === "replay-destinations") {

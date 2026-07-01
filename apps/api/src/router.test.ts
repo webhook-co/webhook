@@ -81,6 +81,69 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     expect(seen).toEqual({ endpointId: EP, filter: { provider: ["stripe", "github"] } });
   });
 
+  it("builds deliveries.list input from destination/subscription/status + pagination query params", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "deliveries.list": async (_ctx, input) => {
+          seen = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    const DEST = "55555555-5555-7555-8555-555555555555";
+    const SUB = "66666666-6666-7666-8666-666666666666";
+    const res = await handleRequest(
+      get(
+        `/v1/deliveries?destinationId=${DEST}&subscriptionId=${SUB}&status=delivered&status=dead&limit=5`,
+      ),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    // Repeated ?status= → an array (multi-select); empty filters omitted.
+    expect(seen).toEqual({
+      limit: 5,
+      destinationId: DEST,
+      subscriptionId: SUB,
+      status: ["delivered", "dead"],
+    });
+  });
+
+  it("treats an EMPTY ?status= / ?destinationId= as no filter (a cleared filter, not a 400)", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "deliveries.list": async (_ctx, input) => {
+          seen = input;
+          return { items: [], nextCursor: null };
+        },
+      }),
+    };
+    // ?status= sends "" — it must be dropped, not passed as [""] (which multiEnum would reject → 400).
+    const res = await handleRequest(get("/v1/deliveries?status=&destinationId="), deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({}); // no filter keys
+  });
+
+  it("dispatches GET /v1/deliveries/:id to deliveries.get", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "deliveries.get": async (_ctx, input) => {
+          seen = input;
+          return { id: "d" };
+        },
+      }),
+    };
+    const DID = "77777777-7777-7777-8777-777777777777";
+    const res = await handleRequest(get(`/v1/deliveries/${DID}`), deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ deliveryId: DID });
+  });
+
   it("builds events.list filter from provider + received-at range query params (raw strings)", async () => {
     let seen: unknown;
     const deps: ApiDeps = {

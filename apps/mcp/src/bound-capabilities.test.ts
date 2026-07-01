@@ -13,6 +13,8 @@ describe("MCP bound capabilities", () => {
     expect(names).toEqual(
       [
         "audit.verify",
+        "deliveries.get",
+        "deliveries.list",
         "endpoints.create",
         "endpoints.delete",
         "endpoints.rotate",

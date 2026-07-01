@@ -47,6 +47,8 @@ const EXPECTED_NAMES = [
   "subscriptions.create",
   "subscriptions.list",
   "subscriptions.delete",
+  "deliveries.get",
+  "deliveries.list",
 ];
 
 describe("capability registry", () => {
