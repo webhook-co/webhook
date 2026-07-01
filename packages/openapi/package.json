@@ -7,14 +7,15 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./routes": "./src/routes.ts"
+    "./routes": "./src/routes.ts",
+    "./openapi.json": "./src/openapi.json"
   },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "generate": "WEBHOOK_OPENAPI_WRITE=1 vitest run src/generate.test.ts",
     "validate": "redocly lint src/openapi.json",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage && pnpm run validate"
   },
   "dependencies": {
     "@webhook-co/contract": "workspace:*",
