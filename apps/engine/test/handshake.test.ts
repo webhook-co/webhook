@@ -334,6 +334,39 @@ describe("dispatchPostHandshake — no-secret POST subscription handshakes", () 
   });
 });
 
+describe("dispatchPostHandshake — Asana X-Hook-Secret echo + Notion verification-token capture", () => {
+  const postUrl = () => new URL("https://wbhk.my/whep_tok");
+  const post = (h: Headers, b: Uint8Array) =>
+    dispatchPostHandshake(postUrl(), h, b, NO_SECRETS, unsealNever);
+  const HOOK_SECRET = "asana-hook-secret-abc123"; // gitleaks:allow — fake test fixture
+
+  it("Asana: echoes the X-Hook-Secret header back on a 200 (activates the webhook), body empty", async () => {
+    const res = await post(hdrs({ "X-Hook-Secret": HOOK_SECRET }), enc.encode(""));
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get("x-hook-secret")).toBe(HOOK_SECRET);
+    expect(res!.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res!.text()).toBe("");
+  });
+
+  it("Asana: a real event (X-Hook-Signature, no X-Hook-Secret) is NOT diverted → null → captured", async () => {
+    expect(
+      await post(
+        hdrs({ "X-Hook-Signature": "deadbeef" }),
+        enc.encode(JSON.stringify({ events: [{ action: "changed" }] })),
+      ),
+    ).toBeNull();
+  });
+
+  it("Notion: a `{verification_token}` POST is NOT diverted → null → captured (operator reads the token from the event body)", async () => {
+    // Notion's subscription verification needs no specific RESPONSE — it delivers the token and the operator
+    // pastes it into Notion. accept-all-verbs already captures it (body viewable), so it must fall through.
+    expect(
+      await post(hdrs(), enc.encode(JSON.stringify({ verification_token: "v-tok-xyz" }))), // gitleaks:allow — fake test fixture
+    ).toBeNull();
+  });
+});
+
 describe("dispatchPostHandshake — Zoom endpoint.url_validation (secret-based HMAC-SHA256)", () => {
   const zoomSealed = { provider: "zoom" } as CachedSealedSecret;
   const ZOOM_SECRET = "zoom-secret-token-xyz"; // gitleaks:allow — fake test fixture
