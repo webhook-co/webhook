@@ -15,7 +15,10 @@ import { z } from "zod";
 const DIR_NAME = "listen";
 const DIR_MODE = 0o700;
 const FILE_MODE = 0o600;
-export const CURSOR_VERSION = 1 as const;
+// Bumped 1→2 with the full-µs opaque cursor (the stored `cursor` is a v2 signed token; a v1 token the server
+// now rejects). A pre-deploy v1 file fails this literal → `{kind:"corrupt"}` → a deterministic cold start
+// ("tail from now"), instead of the CLI presenting a doomed v1 token that the server 400s mid-resume.
+export const CURSOR_VERSION = 2 as const;
 
 const CursorRecordSchema = z.object({
   version: z.literal(CURSOR_VERSION),

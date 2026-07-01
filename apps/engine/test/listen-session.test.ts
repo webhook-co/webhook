@@ -9,6 +9,8 @@ import {
 } from "@webhook-co/shared";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+import type { ItemWithCursor } from "@webhook-co/db";
+
 import type { Env } from "../src/index";
 import { drainPages, type ListenSession } from "../src/listen-session";
 
@@ -37,7 +39,7 @@ interface Binding {
 type PollFn = (
   binding: Binding,
   resume: Cursor | undefined,
-) => Promise<{ events: EventSummary[]; caughtUp: boolean }>;
+) => Promise<{ events: ItemWithCursor<EventSummary>[]; caughtUp: boolean }>;
 type MetaFn = (
   orgId: string,
   endpointId: string,
@@ -67,6 +69,15 @@ function summaryAt(receivedAt: Date): EventSummary {
     dedupStrategy: "content_hash",
     verified: true,
   };
+}
+
+/** The UTC ISO-µs order key SQL would project for a given instant (ms Date → `.mmm000Z` at µs precision). */
+const orderKeyOf = (d: Date): string => `${d.toISOString().slice(0, -1)}000Z`;
+
+/** A poll item as the read returns it: the summary paired with its EXACT-µs keyset cursor. */
+function itemAt(receivedAt: Date): ItemWithCursor<EventSummary> {
+  const item = summaryAt(receivedAt);
+  return { item, cursor: { orderKey: orderKeyOf(receivedAt), id: item.id } };
 }
 
 function stubFor(sessionId: string): DurableObjectStub {
@@ -129,9 +140,9 @@ async function openSession(
 describe("ListenSession — connect + stream", () => {
   it("accepts the WebSocket and streams a ready frame then event frames", async () => {
     const b = newBinding();
-    const s1 = summaryAt(new Date("2026-06-10T12:00:00.000Z"));
-    const s2 = summaryAt(new Date("2026-06-10T12:00:01.000Z"));
-    const { stub, res } = await openSession(b, async () => ({ events: [s1, s2], caughtUp: true }));
+    const i1 = itemAt(new Date("2026-06-10T12:00:00.000Z"));
+    const i2 = itemAt(new Date("2026-06-10T12:00:01.000Z"));
+    const { stub, res } = await openSession(b, async () => ({ events: [i1, i2], caughtUp: true }));
 
     expect(res.status).toBe(101);
     const ws = res.webSocket as WebSocket;
@@ -152,8 +163,8 @@ describe("ListenSession — connect + stream", () => {
     });
     // The connect-time cursor-contract status precedes the event frames (ADR-0017).
     expect(msgs[1]).toMatchObject({ type: "status" });
-    expect(msgs[2]).toMatchObject({ type: "event", summary: { id: s1.id } });
-    expect(msgs[3]).toMatchObject({ type: "event", summary: { id: s2.id } });
+    expect(msgs[2]).toMatchObject({ type: "event", summary: { id: i1.item.id } });
+    expect(msgs[3]).toMatchObject({ type: "event", summary: { id: i2.item.id } });
     expect(typeof msgs[2].cursor).toBe("string");
 
     const count = await runInDurableObject(stub, (_i, state) => state.getWebSockets().length);
@@ -165,7 +176,7 @@ describe("ListenSession — ?since=<grammar> seed (first bind, server-resolved)"
   it("seeds the durable cursor from the resolved boundary, re-parsing the trusted spec", async () => {
     const b = newBinding();
     const resolved: Cursor = {
-      receivedAt: new Date("2026-06-10T12:00:09.000Z"),
+      orderKey: orderKeyOf(new Date("2026-06-10T12:00:09.000Z")),
       id: crypto.randomUUID(),
     };
     const seen: { kind: string }[] = [];
@@ -185,7 +196,7 @@ describe("ListenSession — ?since=<grammar> seed (first bind, server-resolved)"
     // cursor, so the first poll tails only from there.
     expect(seen).toEqual([{ kind: "relative", ms: 7_200_000 }]);
     expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toEqual({
-      receivedAtMs: resolved.receivedAt.getTime(),
+      orderKey: resolved.orderKey,
       id: resolved.id,
     });
   });
@@ -234,7 +245,10 @@ describe("ListenSession — ?since=<grammar> seed (first bind, server-resolved)"
   it("ignores --since on RECONNECT — resumes from the acked cursor (first-bind only, R12)", async () => {
     const b = newBinding();
     const { stub } = await openSession(b); // first bind, no --since
-    const c: Cursor = { receivedAt: new Date("2026-06-10T12:00:05.000Z"), id: crypto.randomUUID() };
+    const c: Cursor = {
+      orderKey: orderKeyOf(new Date("2026-06-10T12:00:05.000Z")),
+      id: crypto.randomUUID(),
+    };
     await runInDurableObject(stub, async (inst, state) => {
       await (inst as ListenSession).webSocketMessage(state.getWebSockets()[0], await ackCursor(c));
     });
@@ -248,7 +262,7 @@ describe("ListenSession — ?since=<grammar> seed (first bind, server-resolved)"
 
     expect(res.status).toBe(101); // reconnect succeeds; the spec is ignored
     expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toEqual({
-      receivedAtMs: c.receivedAt.getTime(),
+      orderKey: c.orderKey,
       id: c.id,
     });
   });
@@ -261,13 +275,33 @@ describe("ListenSession — cursor + at-least-once", () => {
 
     expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toBeUndefined();
 
-    const c: Cursor = { receivedAt: new Date("2026-06-10T12:00:02.000Z"), id: crypto.randomUUID() };
+    const c: Cursor = {
+      orderKey: orderKeyOf(new Date("2026-06-10T12:00:02.000Z")),
+      id: crypto.randomUUID(),
+    };
     await runInDurableObject(stub, async (inst, state) => {
       await (inst as ListenSession).webSocketMessage(state.getWebSockets()[0], await ackCursor(c));
     });
 
     expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toEqual({
-      receivedAtMs: c.receivedAt.getTime(),
+      orderKey: c.orderKey,
+      id: c.id,
+    });
+  });
+
+  it("round-trips the acked cursor at EXACT microsecond precision (no ms truncation through the DO)", async () => {
+    // The whole point of the µs cursor: a sub-millisecond order key must survive ack → durable store →
+    // restore byte-for-byte. The old {receivedAtMs} store (a ms Date) silently dropped the µs; storing the
+    // ISO-µs orderKey verbatim keeps it. `.005200Z` (not a whole ms) is the exact case that used to be lost.
+    const b = newBinding();
+    const { stub } = await openSession(b);
+    const c: Cursor = { orderKey: "2026-06-10T12:00:02.005200Z", id: crypto.randomUUID() };
+    await runInDurableObject(stub, async (inst, state) => {
+      await (inst as ListenSession).webSocketMessage(state.getWebSockets()[0], await ackCursor(c));
+    });
+    // Verbatim orderKey — the trailing `200µs` is preserved, and toCursor restores the same Cursor shape.
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.get("cursor"))).toEqual({
+      orderKey: "2026-06-10T12:00:02.005200Z",
       id: c.id,
     });
   });
@@ -280,7 +314,10 @@ describe("ListenSession — cursor + at-least-once", () => {
       return { events: [], caughtUp: true };
     });
 
-    const c: Cursor = { receivedAt: new Date("2026-06-10T12:00:05.000Z"), id: crypto.randomUUID() };
+    const c: Cursor = {
+      orderKey: orderKeyOf(new Date("2026-06-10T12:00:05.000Z")),
+      id: crypto.randomUUID(),
+    };
     await runInDurableObject(stub, async (inst, state) => {
       await (inst as ListenSession).webSocketMessage(state.getWebSockets()[0], await ackCursor(c));
     });
@@ -344,7 +381,7 @@ describe("ListenSession — session pinning", () => {
 
 describe("drainPages — bounded multi-page catch-up", () => {
   const at = (s: string): Date => new Date(`2026-06-10T12:00:0${s}.000Z`);
-  const cur = (id: string): Cursor => ({ receivedAt: at("0"), id });
+  const cur = (id: string): Cursor => ({ orderKey: orderKeyOf(at("0")), id });
 
   it("drains across pages, threading each nextCursor as the next resume, until exhausted", async () => {
     const pages = [
@@ -399,7 +436,7 @@ describe("ListenSession — cursor-contract status frame (B1b, ADR-0017)", () =>
   it("emits a connect status with the initial caughtUp:false + the capped backlog lag (first bind)", async () => {
     const b = newBinding();
     const head: Cursor = {
-      receivedAt: new Date("2026-06-10T12:00:00.000Z"),
+      orderKey: orderKeyOf(new Date("2026-06-10T12:00:00.000Z")),
       id: crypto.randomUUID(),
     };
     const { res } = await openSession(b, EMPTY_POLL, async () => ({

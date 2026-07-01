@@ -220,10 +220,11 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
       return { page: tailed, meta: await tailMeta(tx, { endpointId, sinceCursor: from }) };
     });
     // headLagMs is advisory (Worker clock vs the DB-stamped head; floored by the 5s watermark anyway).
+    // The head order key is UTC ISO-µs; `new Date` parses it (ms is ample for a coarse lag metric).
     const headLagMs =
       meta.headCursor === null
         ? undefined
-        : Math.max(0, Date.now() - meta.headCursor.receivedAt.getTime());
+        : Math.max(0, Date.now() - new Date(meta.headCursor.orderKey).getTime());
     return {
       items: page.items,
       nextCursor: await encode(page.nextCursor),

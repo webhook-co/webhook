@@ -1,6 +1,6 @@
 "use server";
 
-import type { Cursor } from "@webhook-co/shared";
+import { ORDER_KEY_RE, type Cursor } from "@webhook-co/shared";
 import { PROVIDERS } from "@webhook-co/webhooks-spec";
 
 import { parseEventFilters, type EventFilterParams } from "@/lib/event-filters";
@@ -28,7 +28,7 @@ export type LoadMoreEventsResult =
  * Fetch the next page of an endpoint's events (the list's "Load more"). Session + RLS-org-pinning is the
  * authz (any org member may read the org's events). The keyset cursor crosses the client boundary
  * unsigned — that is safe because RLS, not a MAC, is the boundary: a tampered cursor can only re-page the
- * caller's OWN org's events. We still guard the cursor shape (uuid id + a valid Date) so a crafted payload
+ * caller's OWN org's events. We still guard the cursor shape (uuid id + a valid ISO-µs orderKey) so a crafted payload
  * can't reach the db as a malformed value (→ PG 22P02). A db fault returns `{ok:false}` (the list keeps
  * what it has) rather than throwing.
  */
@@ -42,11 +42,14 @@ export async function loadMoreEventsAction(input: {
   const endpointId = input?.endpointId;
   if (typeof endpointId !== "string" || !isUuid(endpointId)) return { ok: false };
 
-  const cursor = input?.cursor as { receivedAt?: unknown; id?: unknown } | undefined;
+  // The cursor is a structured {orderKey, id} round-tripped through the client (this action is
+  // independently callable). Validate both fields — a bad orderKey is also RLS-bounded + caught below, but
+  // reject fast. `orderKey` is the UTC ISO-µs order key (see cursor.ts).
+  const cursor = input?.cursor as { orderKey?: unknown; id?: unknown } | undefined;
   if (!cursor || typeof cursor.id !== "string" || !isUuid(cursor.id)) return { ok: false };
-  const receivedAt =
-    cursor.receivedAt instanceof Date ? cursor.receivedAt : new Date(cursor.receivedAt as string);
-  if (Number.isNaN(receivedAt.getTime())) return { ok: false };
+  if (typeof cursor.orderKey !== "string" || !ORDER_KEY_RE.test(cursor.orderKey)) {
+    return { ok: false };
+  }
 
   // Re-parse the active filters server-side (the action is independently callable): the SAME coercion +
   // provider validation the page used, so paging stays within the active filter set and a tampered or
@@ -57,7 +60,7 @@ export async function loadMoreEventsAction(input: {
     const page = await loadMoreEvents(
       session.orgId,
       endpointId,
-      { receivedAt, id: cursor.id },
+      { orderKey: cursor.orderKey, id: cursor.id },
       filters,
     );
     return { ok: true, items: page.items, nextCursor: page.nextCursor };

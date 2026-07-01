@@ -3,9 +3,10 @@ import { DurableObject } from "cloudflare:workers";
 import {
   createClient,
   resolveSince,
-  tailEvents,
+  tailEventsWithCursors,
   tailMeta,
   withTenant,
+  type ItemWithCursor,
   type Page,
 } from "@webhook-co/db";
 import {
@@ -44,12 +45,12 @@ const MAX_PAGES_PER_POLL = 10;
  * backlog catches up over a few pages without an unbounded scan). Pure over the page reader, so the
  * multi-page catch-up is unit-tested without a live Postgres.
  */
-export async function drainPages(
-  readPage: (resume: Cursor | undefined) => Promise<Page<EventSummary>>,
+export async function drainPages<T>(
+  readPage: (resume: Cursor | undefined) => Promise<Page<T>>,
   resume: Cursor | undefined,
   maxPages: number = MAX_PAGES_PER_POLL,
-): Promise<{ events: EventSummary[]; caughtUp: boolean }> {
-  const events: EventSummary[] = [];
+): Promise<{ events: T[]; caughtUp: boolean }> {
+  const events: T[] = [];
   let cursor = resume;
   // caughtUp = the drain reached the END of the watermark-bounded tail (a page returned a null
   // nextCursor) rather than stopping at maxPages with a backlog still pending. Derived from the
@@ -88,9 +89,11 @@ interface Binding {
   readonly sessionId: string;
 }
 
-/** The durable resume position (last ACKed cursor). Epoch-ms keeps it JSON/structured-clone clean. */
+/** The durable resume position (last ACKed cursor). Stores the cursor's UTC ISO-µs `orderKey` verbatim (a
+ *  plain string is JSON/structured-clone clean) so the resume keeps FULL microsecond precision — storing a
+ *  ms epoch here would re-truncate the cursor and re-deliver same-ms events on resume. */
 interface StoredCursor {
-  readonly receivedAtMs: number;
+  readonly orderKey: string;
   readonly id: string;
 }
 
@@ -217,7 +220,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
         const headLagMs =
           meta.headCursor === null
             ? undefined
-            : Math.max(0, Date.now() - meta.headCursor.receivedAt.getTime());
+            : Math.max(0, Date.now() - new Date(meta.headCursor.orderKey).getTime());
         server.send(
           encodeServerFrame({
             type: "status",
@@ -274,8 +277,8 @@ export class ListenSession extends DurableObject<ListenEnv> {
       const resume =
         this.lastSent ?? this.toCursor(await this.ctx.storage.get<StoredCursor>("cursor"));
       const { events, caughtUp } = await this.pollEvents(binding, resume);
-      for (const summary of events) {
-        const cur: Cursor = { receivedAt: summary.receivedAt, id: summary.id };
+      for (const { item: summary, cursor: cur } of events) {
+        // `cur` is the event's EXACT-µs cursor from the read — NOT rebuilt from summary.receivedAt (a ms Date).
         const frame = encodeServerFrame({
           type: "event",
           summary,
@@ -345,13 +348,15 @@ export class ListenSession extends DurableObject<ListenEnv> {
   protected async pollEvents(
     binding: Binding,
     resume: Cursor | undefined,
-  ): Promise<{ events: EventSummary[]; caughtUp: boolean }> {
+  ): Promise<{ events: ItemWithCursor<EventSummary>[]; caughtUp: boolean }> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
+      // tailEventsWithCursors pairs each event with its EXACT-µs cursor — the tunnel emits a cursor per event
+      // frame, so a client can ack any single event; the cursor must NOT be re-derived from the display Date.
       return await drainPages(
         (cursor) =>
           withTenant(tenant, binding.orgId, (tx) =>
-            tailEvents(tx, { endpointId: binding.endpointId, sinceCursor: cursor }),
+            tailEventsWithCursors(tx, { endpointId: binding.endpointId, sinceCursor: cursor }),
           ),
         resume,
       );
@@ -409,14 +414,15 @@ export class ListenSession extends DurableObject<ListenEnv> {
   }
 
   private async persistCursor(cur: Cursor): Promise<void> {
-    await this.ctx.storage.put<StoredCursor>("cursor", {
-      receivedAtMs: cur.receivedAt.getTime(),
-      id: cur.id,
-    });
+    await this.ctx.storage.put<StoredCursor>("cursor", { orderKey: cur.orderKey, id: cur.id });
   }
 
   private toCursor(stored: StoredCursor | undefined): Cursor | undefined {
-    return stored ? { receivedAt: new Date(stored.receivedAtMs), id: stored.id } : undefined;
+    // A pre-deploy record with the old {receivedAtMs} shape lacks `orderKey` → treated as unset, so the
+    // session reseeds from `--since` (cold start). Acceptable: no gapless-critical durable cursors at baseline.
+    return stored && typeof stored.orderKey === "string"
+      ? { orderKey: stored.orderKey, id: stored.id }
+      : undefined;
   }
 
   /** Send without letting a dead socket abort the broadcast or throw out of an event handler. */
