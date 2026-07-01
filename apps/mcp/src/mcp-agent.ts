@@ -60,6 +60,10 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   "events.get": "Get a received event by id — headers, verification result, and payload pointer.",
   "events.tail":
     "Tail an endpoint's events forward, oldest-first, up to the safety watermark. Start from `since` (now | beginning | a duration like 30m/2h | an RFC 3339 timestamp) or resume from a prior cursor; pass the returned nextCursor back to continue. The response also reports headCursor + caughtUp so you can tell when you've reached the head.",
+  "deliveries.list":
+    "List the org's outbound deliveries, paginated, newest-first. Covers auto-deliveries (to subscribed destinations) AND manual replay attempts (localhost-forward rows carry no destination/subscription). Optional filters (AND'd): `destinationId`, `subscriptionId`, and `status`, an ARRAY of queued | pending | delivered | failed | dead | blocked | forwarded (OR'd). Each delivery reports its status, attempt number, retry clock (nextRetryAt), HTTP statusCode, and the event (+ destination/subscription, when set) it belongs to.",
+  "deliveries.get":
+    "Get a single outbound delivery by id — its status, attempt, retry clock, HTTP statusCode/error, and the event (+ destination/subscription, when set) it links.",
   "audit.verify": "Verify the org's tamper-evident audit chain; reports the first break, if any.",
   "endpoints.addProviderSecret":
     "Register an inbound-verification secret on an endpoint. `kind` is `signing_secret` (default — the provider's signing/auth secret, so received webhooks are cryptographically verified) or `verify_token` (a user-chosen GET-handshake compare-token, e.g. Meta's hub.verify_token, used to complete a subscription verification). Provide `provider`, the plaintext `secret`, and optional `kind`/`label`; it is sealed server-side and NEVER returned. Treat the secret as sensitive — confirm with the user before storing one on their behalf.",

@@ -136,6 +136,8 @@ export const DeliveryStatusSchema = z.enum([
   "dead",
 ]);
 export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
+/** The delivery-status vocabulary as a tuple — the CLI `--status` multi-select enum + parity checks. */
+export const DELIVERY_STATUSES = DeliveryStatusSchema.options;
 
 export const DeliveryAttemptSchema = z.object({
   id: uuid,
@@ -150,6 +152,30 @@ export const DeliveryAttemptSchema = z.object({
   createdAt: z.coerce.date(),
 });
 export type DeliveryAttempt = z.infer<typeof DeliveryAttemptSchema>;
+
+/**
+ * A delivery — the tenant-facing read view of a `delivery_attempts` row for the deliveries.get/list surface
+ * (S3 Slice 3 PR3). Purpose-built for auto-delivery OBSERVABILITY: it surfaces the routing link
+ * (`destinationId`, `subscriptionId`) and the retry clock (`attempt`, `nextRetryAt`) — the fields the
+ * DeliveryAttempt (remote-replay) view omits — and drops the internal `target`/`idempotencyKey`. Both are
+ * nullable: `destinationId` is null on a legacy localhost-forward row, `subscriptionId` is null on a manual
+ * replay (only auto-delivery links a subscription). `nextRetryAt` is when the delivery is next DUE — now()
+ * on a freshly-queued row, the scheduled retry time while pending, and null once terminal (delivered/dead/
+ * blocked) or on a legacy localhost-forward row.
+ */
+export const DeliverySchema = z.object({
+  id: uuid,
+  eventId: uuid,
+  destinationId: uuid.nullable(),
+  subscriptionId: uuid.nullable(),
+  status: DeliveryStatusSchema,
+  statusCode: z.number().int().nullable(),
+  attempt: z.number().int().positive(),
+  error: z.string().nullable(),
+  nextRetryAt: z.coerce.date().nullable(),
+  createdAt: z.coerce.date(),
+});
+export type Delivery = z.infer<typeof DeliverySchema>;
 
 /**
  * A replay destination — an org-level allowlist entry naming an HTTPS URL that `events.replay` is

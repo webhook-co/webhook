@@ -1,6 +1,8 @@
 import {
   AuthContextSchema,
   auditVerify as auditVerifyCap,
+  deliveriesGet as deliveriesGetCap,
+  deliveriesList as deliveriesListCap,
   endpointsAddProviderSecret as endpointsAddProviderSecretCap,
   endpointsCreate as endpointsCreateCap,
   endpointsDelete as endpointsDeleteCap,
@@ -37,6 +39,7 @@ import {
 } from "@webhook-co/contract";
 import {
   b64ToBytes,
+  type Delivery,
   type DeliveryAttempt,
   type Endpoint,
   type Event,
@@ -157,6 +160,14 @@ export interface EventsListParams extends ListParams {
   readonly search?: string;
 }
 
+/** deliveries.list adds optional destination / subscription / status (multi-select) filters. */
+export interface DeliveriesListParams extends ListParams {
+  readonly destinationId?: string;
+  readonly subscriptionId?: string;
+  /** Multi-select — each value rides as a repeated `?status=` query param. */
+  readonly status?: readonly string[];
+}
+
 /** The audit-chain verification result (the shared `audit.verify` output: ok + rowsVerified, or a break). */
 export type AuditVerifyResult = z.infer<typeof auditVerifyCap.output>;
 
@@ -213,6 +224,10 @@ export interface ApiClient {
   eventsGet(eventId: string): Promise<Event>;
   /** The captured event's raw body bytes (`GET /v1/events/:id/payload` → base64 envelope, decoded). */
   eventsGetPayload(eventId: string): Promise<{ contentType: string | null; body: Uint8Array }>;
+  /** A page of the org's outbound deliveries (`GET /v1/deliveries`), filterable by destination/subscription/status. */
+  deliveriesList(params?: DeliveriesListParams): Promise<Page<Delivery>>;
+  /** A single outbound delivery by id (`GET /v1/deliveries/:id`). */
+  deliveriesGet(deliveryId: string): Promise<Delivery>;
   /** Verify the org's tamper-evident audit chain (`POST /v1/audit/verify`). */
   auditVerify(): Promise<AuditVerifyResult>;
   /** Record a replay-to-localhost delivery attempt (`POST /v1/events/:id/replay`) — idempotent. */
@@ -465,6 +480,20 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     async eventsGet(eventId): Promise<Event> {
       const path = `/v1/events/${encodeURIComponent(eventId)}`;
       return parseOrThrow(eventsGetCap.output, await getJson(path), "event");
+    },
+    async deliveriesList(params = {}): Promise<Page<Delivery>> {
+      const path = withQuery("/v1/deliveries", {
+        cursor: params.cursor,
+        limit: params.limit,
+        destinationId: params.destinationId,
+        subscriptionId: params.subscriptionId,
+        status: params.status,
+      });
+      return parseOrThrow(deliveriesListCap.output, await getJson(path), "deliveries");
+    },
+    async deliveriesGet(deliveryId): Promise<Delivery> {
+      const path = `/v1/deliveries/${encodeURIComponent(deliveryId)}`;
+      return parseOrThrow(deliveriesGetCap.output, await getJson(path), "delivery");
     },
     async eventsReplay(input): Promise<DeliveryAttempt> {
       const path = `/v1/events/${encodeURIComponent(input.eventId)}/replay`;

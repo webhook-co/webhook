@@ -8,6 +8,7 @@ import type {
   SubscriptionDeleted,
 } from "@webhook-co/contract";
 import type {
+  Delivery,
   Endpoint,
   Event,
   EventSummary,
@@ -234,6 +235,37 @@ export function renderRemovedSubscription(s: SubscriptionDeleted): string {
   return block([
     ["id", field(s.id)],
     ["removed", "yes"],
+  ]);
+}
+
+/** The org's outbound deliveries as a newest-first table. */
+export function renderDeliveriesTable(items: readonly Delivery[]): string {
+  return renderTable(
+    ["CREATED", "STATUS", "ATTEMPT", "CODE", "DESTINATION", "ID"],
+    items.map((d) => [
+      fmtDateTime(d.createdAt),
+      field(d.status),
+      String(d.attempt),
+      d.statusCode === null ? NONE : String(d.statusCode),
+      d.destinationId === null ? NONE : field(d.destinationId),
+      field(d.id),
+    ]),
+  );
+}
+
+/** A single outbound delivery as a block — status, retry clock, and the event/destination it links. */
+export function renderDelivery(d: Delivery): string {
+  return block([
+    ["id", field(d.id)],
+    ["event", field(d.eventId)],
+    ["destination", d.destinationId === null ? NONE : field(d.destinationId)],
+    ["subscription", d.subscriptionId === null ? NONE : field(d.subscriptionId)],
+    ["status", field(d.status)],
+    ["attempt", String(d.attempt)],
+    ["status code", d.statusCode === null ? NONE : String(d.statusCode)],
+    ["error", d.error === null ? NONE : field(d.error)],
+    ["next retry", d.nextRetryAt === null ? NONE : fmtDateTime(d.nextRetryAt)],
+    ["created", fmtDateTime(d.createdAt)],
   ]);
 }
 

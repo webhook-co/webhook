@@ -90,6 +90,10 @@ describe("capability parity — current GA surfaces conformance", () => {
     "events.list",
     "events.get",
     "events.tail",
+    // Deliveries reads (S3 Slice 3 PR3): full api+mcp+cli parity (reading delivery status steers nothing —
+    // unlike the subscriptions/destinations WRITE caps, which are mcp-exempt). Web-deferred.
+    "deliveries.get",
+    "deliveries.list",
     "audit.verify",
   ];
   // The dashboard surface: endpoints.* (slice 2) + events.list/get (slice 3a) + events.getPayload (slice 3b —

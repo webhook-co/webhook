@@ -8,6 +8,8 @@
 import {
   CapabilityFault,
   auditVerify,
+  deliveriesGet,
+  deliveriesList,
   endpointsGet,
   endpointsList,
   eventsGet,
@@ -29,9 +31,11 @@ import {
 import { readAuditChain } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import {
+  getDelivery,
   getEndpoint,
   getEvent,
   latestTailCursor,
+  listDeliveries,
   listEndpoints,
   listEvents,
   resolveSince,
@@ -239,6 +243,41 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
     const event = await withTenant(deps.tenant, ctx.orgId, (tx) => getEvent(tx, eventId));
     if (!event) throw new CapabilityFault("NOT_FOUND", "event not found");
     return event;
+  });
+
+  // Deliveries — the auto-delivery observability reads (S3 Slice 3 PR3). Shared map ⇒ api + mcp parity.
+  handlers.set(deliveriesList.name, async (ctx, input) => {
+    ensureScope(ctx, deliveriesList);
+    const { destinationId, subscriptionId, status, cursor, limit } = parse(
+      deliveriesList,
+      input,
+    ) as {
+      destinationId?: string;
+      subscriptionId?: string;
+      // multiEnum: a scalar OR an array (the contract can't transform-normalize) → normalized here.
+      status?: string | string[];
+      cursor?: string;
+      limit?: number;
+    };
+    const decoded = await decode(cursor);
+    const page = await withTenant(deps.tenant, ctx.orgId, (tx) =>
+      listDeliveries(tx, {
+        destinationId,
+        subscriptionId,
+        status: asArray(status),
+        cursor: decoded,
+        limit,
+      }),
+    );
+    return { items: page.items, nextCursor: await encode(page.nextCursor) };
+  });
+
+  handlers.set(deliveriesGet.name, async (ctx, input) => {
+    ensureScope(ctx, deliveriesGet);
+    const { deliveryId } = parse(deliveriesGet, input) as { deliveryId: string };
+    const delivery = await withTenant(deps.tenant, ctx.orgId, (tx) => getDelivery(tx, deliveryId));
+    if (!delivery) throw new CapabilityFault("NOT_FOUND", "delivery not found");
+    return delivery;
   });
 
   handlers.set(auditVerify.name, async (ctx, input) => {

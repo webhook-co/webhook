@@ -2,6 +2,8 @@ import {
   canonicalizeAndValidateUrl,
   CONFIGURED_HEADER_PROVIDERS,
   DeliveryAttemptSchema,
+  DeliverySchema,
+  DeliveryStatusSchema,
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
@@ -599,6 +601,45 @@ export const subscriptionsDelete = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED, mcp: SUBSCRIPTIONS_MCP_EXEMPT },
 });
 
+// ── Deliveries (S3 Slice 3 PR3) — the outbound-delivery OBSERVABILITY reads ─────────────────────────
+// Read a delivery's status/attempt/retry-clock, and browse the org's delivery history filtered by
+// destination/subscription/status. The history spans auto-deliveries (to subscribed destinations) AND manual
+// replay attempts (a localhost-forward row carries no destination/subscription). READS reuse events:read (are
+// event history) and are FULL-PARITY incl. mcp — unlike the subscriptions/destinations WRITE caps (which
+// reconfigure egress and are mcp-exempt), reading delivery status steers nothing. Web is deferred to the
+// dashboard epic. Handlers live in the SHARED read-handler map, so mcp binds them automatically.
+
+export const deliveriesGet = defineCapability({
+  name: "deliveries.get",
+  input: z.object({ deliveryId: uuid }),
+  output: DeliverySchema,
+  // NOT_FOUND: unknown / cross-org / not-yet-created id (RLS hides cross-org — don't leak existence).
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "RATE_LIMITED"],
+  auth: { scope: "events:read" },
+  semantics: {},
+  surfaceExempt: { web: WEB_DEFERRED },
+});
+
+export const deliveriesList = defineCapability({
+  name: "deliveries.list",
+  // Newest-first browse of the org's deliveries; all filters optional + AND together. `status` is
+  // MULTI-select (scalar or non-empty array → `status in (...)`); a cross-org/unknown destinationId or
+  // subscriptionId filter simply yields an empty page under RLS (no existence oracle). No z.coerce here —
+  // keeps the mcp tool inputSchema JSON-Schema-clean.
+  input: z.object({
+    destinationId: uuid.optional(),
+    subscriptionId: uuid.optional(),
+    status: multiEnum(DeliveryStatusSchema).optional(),
+    cursor: cursor.optional(),
+    limit: z.number().int().positive().max(200).optional(),
+  }),
+  output: paged(DeliverySchema),
+  errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "events:read" },
+  semantics: { paginated: true },
+  surfaceExempt: { web: WEB_DEFERRED },
+});
+
 /**
  * The capability surface every binding implements. The six wedge capabilities
  * plus `audit.verify` — the compliance-by-design audit-chain verifier (ADR-0004),
@@ -627,6 +668,8 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   subscriptionsCreate,
   subscriptionsList,
   subscriptionsDelete,
+  deliveriesGet,
+  deliveriesList,
 ];
 
 /** Registry keyed by stable capability name. */

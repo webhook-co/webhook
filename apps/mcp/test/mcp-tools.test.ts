@@ -22,6 +22,8 @@ const TOKEN_BODY = "testintegrationkey".padEnd(43, "0");
 const TOKEN = `whk_${TOKEN_BODY}${keyChecksum(TOKEN_BODY)}`;
 const BOUND_TOOLS = [
   "audit.verify",
+  "deliveries.get",
+  "deliveries.list",
   "endpoints.create",
   "endpoints.delete",
   "endpoints.get",

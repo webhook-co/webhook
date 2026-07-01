@@ -6,12 +6,14 @@
 
 import {
   deriveVerificationState,
+  DeliverySchema,
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
   LISTEN_LAG_CAP,
   WATERMARK_DELTA_MS,
   type Cursor,
+  type Delivery,
   type Endpoint,
   type Event,
   type EventSummary,
@@ -443,4 +445,87 @@ export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> 
     verification: r.verification,
     method: r.method,
   });
+}
+
+// ── Deliveries (S3 Slice 3 PR3) — the auto-delivery observability reads over delivery_attempts ────────
+// The tenant-facing view of a delivery_attempts row: the routing link (destination_id, subscription_id) +
+// the retry clock (attempt, next_retry_at) + the outcome (status, status_code, error). Distinct from the
+// DO's claim/finalize seam (packages/db/src/delivery.ts) and the remote-replay writer
+// (packages/db/src/replay.ts) — those mutate; these READ under the caller's RLS tx.
+
+interface DeliveryRow {
+  id: string;
+  event_id: string;
+  destination_id: string | null;
+  subscription_id: string | null;
+  status: string;
+  status_code: number | null;
+  attempt: number;
+  error: string | null;
+  next_retry_at: Date | null;
+  created_at: Date;
+}
+
+const DELIVERY_COLS =
+  "id, event_id, destination_id, subscription_id, status, status_code, attempt, error, next_retry_at, created_at";
+
+function toDelivery(r: DeliveryRow): Delivery {
+  return DeliverySchema.parse({
+    id: r.id,
+    eventId: r.event_id,
+    destinationId: r.destination_id,
+    subscriptionId: r.subscription_id,
+    status: r.status,
+    statusCode: r.status_code,
+    attempt: r.attempt,
+    error: r.error,
+    nextRetryAt: r.next_retry_at,
+    createdAt: r.created_at,
+  });
+}
+
+/** Resolve one delivery by id under RLS (deliveries.get). Cross-org / unknown → null (no existence oracle). */
+export async function getDelivery(tx: TenantTx, id: string): Promise<Delivery | null> {
+  const [r] = await tx<DeliveryRow[]>`
+    select ${tx.unsafe(DELIVERY_COLS)} from delivery_attempts where id = ${id}`;
+  return r ? toDelivery(r) : null;
+}
+
+export interface ListDeliveriesOptions extends ListOptions {
+  /** Filter to one destination's deliveries. */
+  readonly destinationId?: string;
+  /** Filter to one subscription's deliveries (excludes manual-replay rows, which carry no subscription). */
+  readonly subscriptionId?: string;
+  /** Multi-select status filter — OR'd (`status in (...)`). Empty/undefined = no filter. */
+  readonly status?: readonly string[];
+}
+
+/**
+ * The org's deliveries, newest-first, paginated (deliveries.list). All filters are optional and AND together;
+ * a cross-org/unknown destinationId or subscriptionId simply yields an empty page under RLS (no existence
+ * oracle). Keyset on `created_at` (the DO stamps a fresh row per delivery), ms-truncated to match the cursor
+ * resolution with `id` as the tiebreaker — mirrors listEndpoints.
+ *   ⚠️ INDEX: the `destinationId` filter is served by delivery_attempts_destination_idx (migration 0025), but
+ *   NO index yet backs the `created_at` ORDER — an org-wide (no filter) or `subscriptionId`-filtered browse
+ *   scans + sorts the whole RLS-scoped set per page (the limit+1 bounds rows RETURNED, not rows scanned).
+ *   Fine at current volumes (near-empty prod); PR3b's migration adds the covering index for the ordered
+ *   browse (an (org_id, created_at, id) + a (subscription_id, created_at, id) partial). Revisit before scale.
+ */
+export async function listDeliveries(
+  tx: TenantTx,
+  opts: ListDeliveriesOptions = {},
+): Promise<Page<Delivery>> {
+  const limit = clampLimit(opts.limit);
+  const { cursor, destinationId, subscriptionId, status } = opts;
+  const rows = await tx<DeliveryRow[]>`
+    select ${tx.unsafe(DELIVERY_COLS)}
+    from delivery_attempts
+    where true
+    ${destinationId ? tx`and destination_id = ${destinationId}` : tx``}
+    ${subscriptionId ? tx`and subscription_id = ${subscriptionId}` : tx``}
+    ${status && status.length > 0 ? tx`and status in ${tx([...status])}` : tx``}
+    ${cursor ? tx`and (date_trunc('milliseconds', created_at), id) < (${cursor.receivedAt}::timestamptz, ${cursor.id}::uuid)` : tx``}
+    order by date_trunc('milliseconds', created_at) desc, id desc
+    limit ${limit + 1}`;
+  return buildPage(rows, limit, toDelivery, (r) => ({ receivedAt: r.created_at, id: r.id }));
 }

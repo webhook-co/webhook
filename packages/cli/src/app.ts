@@ -19,6 +19,7 @@ import {
   endpointsRevokeProviderSecretCommand,
   endpointsRotateCommand,
 } from "./commands/endpoints.js";
+import { deliveriesGetCommand, deliveriesListCommand } from "./commands/deliveries.js";
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
 import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
@@ -66,6 +67,8 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "events.getPayload": ["events", "payload"],
   "events.tail": ["listen"],
   "events.replay": ["replay"],
+  "deliveries.list": ["deliveries", "list"],
+  "deliveries.get": ["deliveries", "get"],
   "audit.verify": ["audit", "verify"],
   "replayDestinations.create": ["replay-destinations", "add"],
   "replayDestinations.list": ["replay-destinations", "list"],
@@ -98,6 +101,14 @@ const eventsRoute = buildRouteMap({
     payload: eventsPayloadCommand,
   },
   docs: { brief: "inspect captured events" },
+});
+
+const deliveriesRoute = buildRouteMap({
+  routes: {
+    list: deliveriesListCommand,
+    get: deliveriesGetCommand,
+  },
+  docs: { brief: "inspect outbound deliveries" },
 });
 
 const auditRoute = buildRouteMap({
@@ -138,6 +149,7 @@ const root = buildRouteMap({
     doctor: doctorCommand,
     endpoints: endpointsRoute,
     events: eventsRoute,
+    deliveries: deliveriesRoute,
     audit: auditRoute,
     "replay-destinations": replayDestinationsRoute,
     subscriptions: subscriptionsRoute,
