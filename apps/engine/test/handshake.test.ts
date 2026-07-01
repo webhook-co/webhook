@@ -385,6 +385,87 @@ describe("dispatchPostHandshake — Zoom endpoint.url_validation (secret-based H
   });
 });
 
+describe("dispatchPostHandshake — Discord PING (Ed25519; Interactions type:1 + Webhook-Events type:0)", () => {
+  const u = new URL("https://wbhk.my/whep_tok");
+  const discordSealed = { provider: "discord" } as CachedSealedSecret;
+  // One Ed25519 keypair signing `"1700000000" + '{"type":1}'` (Interactions PING) and `+ '{"type":0}'`
+  // (Webhook-Events PING). Static fake vectors — not live credentials.
+  const TS = "1700000000";
+  const PUB = "f5a70d9eee8fdbaa739e1f92cd8a37bb6df8665efafc0c612d7e91969ca415ce"; // gitleaks:allow — fake test key
+  const SIG_INTERACT =
+    "b3508acd42ecb1041c922c6aaec576d36c8dd4168388fcb0aa2d0d5e251658150aaba1f7c082684a03defdee92a7ff1ec6fa26f59dcd0214a9aa554c16aca201"; // gitleaks:allow — fake test sig
+  const SIG_WEBHOOK_PING =
+    "47557badb18567ea44c56c9fdf7550ec09369ae1a146d40983916283aef37cdc68ded6d5f5839fa120faeca32ac1c5fd19846fc838bf8ddaff6747867e18a805"; // gitleaks:allow — fake test sig
+  const INTERACT_PING = enc.encode('{"type":1}');
+  const WEBHOOK_PING = enc.encode('{"type":0}');
+  const sigHdrs = (sig: string) =>
+    hdrs({ "X-Signature-Ed25519": sig, "X-Signature-Timestamp": TS });
+  const pub = async (c: CachedSealedSecret): Promise<string> => {
+    expect(c.provider).toBe("discord");
+    return PUB;
+  };
+
+  it("Interactions PING (type 1, no `event`) → {type:1} PONG (200), captures nothing", async () => {
+    const res = await dispatchPostHandshake(
+      u,
+      sigHdrs(SIG_INTERACT),
+      INTERACT_PING,
+      [discordSealed],
+      pub,
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({ type: 1 });
+  });
+
+  it("Webhook-Events PING (type 0) → 204 empty, captures nothing", async () => {
+    const res = await dispatchPostHandshake(
+      u,
+      sigHdrs(SIG_WEBHOOK_PING),
+      WEBHOOK_PING,
+      [discordSealed],
+      pub,
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(204);
+    expect(await res!.text()).toBe("");
+  });
+
+  it("REGRESSION: a real Webhook-Events EVENT (type 1 WITH `event`) is NOT a handshake → null (captured, never dropped)", async () => {
+    // Discord's Webhook Events post real events as type 1 + an `event` object — the SAME type value as an
+    // Interactions PING. Must fall through to capture (the `event` field is the discriminator), not be PONGed.
+    const event = enc.encode(
+      '{"version":1,"application_id":"123","type":1,"event":{"type":"APPLICATION_AUTHORIZED"}}',
+    );
+    expect(
+      await dispatchPostHandshake(u, sigHdrs(SIG_INTERACT), event, [discordSealed], unsealNever),
+    ).toBeNull();
+  });
+
+  it("returns 401 for a PING with an INVALID / missing signature", async () => {
+    expect(
+      (await dispatchPostHandshake(
+        u,
+        sigHdrs("00".repeat(64)),
+        INTERACT_PING,
+        [discordSealed],
+        pub,
+      ))!.status,
+    ).toBe(401);
+    expect(
+      (await dispatchPostHandshake(u, hdrs(), INTERACT_PING, [discordSealed], pub))!.status,
+    ).toBe(401);
+  });
+
+  it("returns null (→ capture) with no discord secret, or for a real interaction (type 2)", async () => {
+    expect(
+      await dispatchPostHandshake(u, sigHdrs(SIG_INTERACT), INTERACT_PING, NO_SECRETS, unsealNever),
+    ).toBeNull();
+    const cmd = enc.encode('{"type":2,"data":{}}');
+    expect(await dispatchPostHandshake(u, hdrs(), cmd, [discordSealed], unsealNever)).toBeNull();
+  });
+});
+
 describe("dispatchGetHandshake — eBay Marketplace Account Deletion (challenge_code, verify-token)", () => {
   const ebaySealed = { provider: "ebay" } as CachedSealedSecret;
   const EBAY_TOKEN = "webhook-co-ebay-verify-token-0123456789abcdef";

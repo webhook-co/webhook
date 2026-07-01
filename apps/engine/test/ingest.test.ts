@@ -880,6 +880,38 @@ describe("handleIngest — POST subscription-validation handshakes (Graph/Twitch
     expect(calls.ingest).toHaveLength(0); // pre-capture, never metered
   });
 
+  it("Discord {type:1} PING with a valid Ed25519 signature → {type:1} PONG, captures NOTHING", async () => {
+    const TS = "1700000000";
+    const PUB = "f5a70d9eee8fdbaa739e1f92cd8a37bb6df8665efafc0c612d7e91969ca415ce"; // gitleaks:allow — fake test key
+    const SIG =
+      "b3508acd42ecb1041c922c6aaec576d36c8dd4168388fcb0aa2d0d5e251658150aaba1f7c082684a03defdee92a7ff1ec6fa26f59dcd0214a9aa554c16aca201"; // gitleaks:allow — fake test sig
+    const { deps, calls } = makeDeps({
+      resolve: async () =>
+        ({
+          orgId: ORG,
+          endpointId: EP,
+          paused: false,
+          sealedSecrets: [{ provider: "discord" }],
+        }) as never,
+      unsealSecret: async () => PUB,
+    });
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}`, {
+        method: "POST",
+        body: '{"type":1}',
+        headers: {
+          "content-type": "application/json",
+          "X-Signature-Ed25519": SIG,
+          "X-Signature-Timestamp": TS,
+        },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ type: 1 });
+    expect(calls.ingest).toHaveLength(0); // pre-capture PONG, never metered
+  });
+
   it("a GET carrying ?validationToken= is POST-only-gated: NOT echoed — captured + constant liveness (no oracle)", async () => {
     const active = makeDeps();
     const resActive = await handleIngest(

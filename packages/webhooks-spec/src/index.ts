@@ -28,6 +28,9 @@ export {
   findHeader,
   isUsableStandardWebhooksSecret,
 } from "./adapters/shared";
+// Byte + asymmetric primitives the engine's handshake dispatcher reuses (Discord Ed25519 PING verify).
+export { hexToBytes } from "./bytes";
+export { verifyEd25519 } from "./adapters/asymmetric";
 // The provider vocabulary (single source of truth) + the config-driven adapter factory.
 // packages/shared re-exports PROVIDERS/ProviderSchema/Provider as the cross-surface definition.
 export {
