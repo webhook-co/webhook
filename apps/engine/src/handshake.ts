@@ -18,10 +18,12 @@
 import { type CachedSealedSecret } from "@webhook-co/db";
 import {
   bytesToB64,
+  hexToBytes,
   importHmacKey,
   parseVerifyTokenSecret,
   utf8Decoder,
   utf8Encoder,
+  verifyEd25519,
   verifyTokenEqual,
 } from "@webhook-co/shared";
 
@@ -225,11 +227,54 @@ async function zoomUrlValidation(
 }
 
 /**
+ * Discord subscription PING — Discord posts to ONE URL from TWO systems, both Ed25519-signed
+ * (`X-Signature-Ed25519` hex over `timestamp + rawBody`, keyed by the app's hex public key). Only a PING is
+ * a handshake, and the two systems collide on `type: 1`, so the discriminator MUST use the `event` field
+ * (Discord docs): a **Webhook-Events PING** is `type: 0` → **204** empty; an **Interactions PING** is
+ * `type: 1` with NO top-level `event` → `{"type":1}` **PONG** (200). A real **Webhook-Events Event** is
+ * `type: 1` WITH an `event` object, and a real interaction is `type: 2-5` — BOTH fall through (`null`) to
+ * normal capture (the discord adapter then verifies + marks them `verified`); never swallow a real event.
+ * A missing/invalid signature on a PING → **401** (Discord's registration probes with a bad signature). NOT
+ * an oracle: the responses are static and the handshake only VERIFIES the inbound signature (Discord's key).
+ * No `discord` secret → `null` → capture.
+ */
+async function discordPing(
+  headers: Headers,
+  rawBody: Uint8Array,
+  sealedSecrets: readonly CachedSealedSecret[],
+  unseal: (cached: CachedSealedSecret) => Promise<string>,
+): Promise<Response | null> {
+  const body = jsonBody(rawBody);
+  if (body === null) return null;
+  const isWebhookPing = body.type === 0; // Application Webhook Events PING → 204
+  const isInteractionsPing = body.type === 1 && !("event" in body); // Interactions PING → {type:1}
+  if (!isWebhookPing && !isInteractionsPing) return null; // a real Event (type 1 + event) / interaction → capture
+  const discordSecret = sealedSecrets.find((s) => s.provider === "discord");
+  if (discordSecret === undefined) return null;
+  const unauthorized = (): Response =>
+    new Response("invalid request signature", { status: 401, headers: BROWSER_SAFE_HEADERS });
+  const publicKey = hexToBytes(await unseal(discordSecret));
+  const sigHex = headers.get("x-signature-ed25519");
+  const timestamp = headers.get("x-signature-timestamp");
+  const sig = sigHex !== null ? hexToBytes(sigHex) : null;
+  if (publicKey === null || sig === null || timestamp === null) return unauthorized();
+  // Discord signs `timestamp + rawBody` (no separator).
+  const tsBytes = utf8Encoder.encode(timestamp);
+  const message = new Uint8Array(tsBytes.length + rawBody.length);
+  message.set(tsBytes, 0);
+  message.set(rawBody, tsBytes.length);
+  if (!(await verifyEd25519(publicKey, message, sig))) return unauthorized();
+  return isWebhookPing
+    ? new Response(null, { status: 204, headers: BROWSER_SAFE_HEADERS })
+    : Response.json({ type: 1 }, { headers: BROWSER_SAFE_HEADERS });
+}
+
+/**
  * Route a POST to a subscription-validation handshake, or `null` if none matches. NO-SECRET echoes first
  * (Microsoft Graph `?validationToken`, Twitch `webhook_callback_verification`, monday.com `{challenge}`);
- * then the SECRET-based Zoom `endpoint.url_validation` (HMAC under the endpoint's `zoom` secret, unsealed
- * pre-capture like the GET dispatcher). Detection is by the request's own distinctive param/header/body,
- * dispatched PRE-capture, captures NOTHING. (Slack's `url_verification` POST stays on its dedicated path.)
+ * then the SECRET-based Zoom `endpoint.url_validation` (HMAC) and Discord `{type:1}` PING (Ed25519-verified
+ * PONG), unsealed pre-capture like the GET dispatcher. Detection is by the request's own distinctive
+ * param/header/body, dispatched PRE-capture, captures NOTHING. (Slack's `url_verification` stays dedicated.)
  */
 export async function dispatchPostHandshake(
   url: URL,
@@ -241,7 +286,10 @@ export async function dispatchPostHandshake(
   const echo =
     msGraphValidation(url) ?? twitchVerification(headers, rawBody) ?? mondayChallenge(rawBody);
   if (echo !== null) return echo;
-  return zoomUrlValidation(rawBody, sealedSecrets, unseal);
+  return (
+    (await zoomUrlValidation(rawBody, sealedSecrets, unseal)) ??
+    (await discordPing(headers, rawBody, sealedSecrets, unseal))
+  );
 }
 
 /**
