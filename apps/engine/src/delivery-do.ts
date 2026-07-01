@@ -14,6 +14,8 @@
 // (a thrown alarm stops the runtime's retry after ~6 tries and the queue would wedge).
 
 import {
+  autoDisableDestination,
+  AUTO_DISABLE_THRESHOLD,
   createClient,
   getActiveSigningSecrets,
   isDestinationOrdered,
@@ -23,9 +25,16 @@ import {
   nextDueAt,
   scheduleDeliveryRetry,
   withTenant,
+  type AutoDisableContext,
   type DueDelivery,
 } from "@webhook-co/db";
-import type { DeliverResult, SealedSigningSecret } from "@webhook-co/shared";
+import {
+  b64ToBytes,
+  importAuditKey,
+  readSecretBinding,
+  type DeliverResult,
+  type SealedSigningSecret,
+} from "@webhook-co/shared";
 import { DurableObject } from "cloudflare:workers";
 
 import { guardedDeliver, makeSignDelivery, resolveViaDoh } from "./delivery-dispatcher";
@@ -122,6 +131,17 @@ export class DeliveryDO extends DurableObject<Env> {
         secrets: await getActiveSigningSecrets(tx, destinationId),
         ordered: await isDestinationOrdered(tx, destinationId),
       }));
+      // The auto-disable trigger (PR3c) records a tamper-evident `replay_destination.disabled` audit row + an
+      // owner-notification intent when the DEAD tally crosses the threshold. Build the audit key LAZILY (+
+      // FAIL-SOFT): only a dead delivery that crosses the threshold needs it, so an all-success / below-
+      // threshold drain never touches the Secrets Store; a missing/short key → auto-disable is skipped (the
+      // delivery lifecycle still advances), never a wedged drain. Memoized for the drain (null = unavailable).
+      let disableCtx: AutoDisableContext | null | undefined;
+      const disableContext = async (): Promise<AutoDisableContext | null> => {
+        if (disableCtx === undefined)
+          disableCtx = await this.autoDisableContext(orgId, destinationId);
+        return disableCtx ?? null; // undefined can't occur post-assignment; ?? satisfies the narrow return type
+      };
       await runDeliveryDrain(
         makeDrainDeps({
           destinationId,
@@ -131,8 +151,36 @@ export class DeliveryDO extends DurableObject<Env> {
           deliver: (d, secs) => this.deliverOne(orgId, d, secs),
           markDelivered: (a) => withTenant(tenant, orgId, (tx) => markDeliveryDelivered(tx, a)),
           scheduleRetry: (a) => withTenant(tenant, orgId, (tx) => scheduleDeliveryRetry(tx, a)),
-          markTerminal: (a) =>
-            withTenant(tenant, orgId, (tx) => markDeliveryTerminalFailure(tx, a)),
+          markTerminal: async (a) => {
+            // Finalize the delivery FIRST, in its own committed tx — decoupled from the disable so an
+            // audit/notify failure can never roll back the dead-letter (which would re-drive + duplicate it).
+            const { consecutiveFailures } = await withTenant(tenant, orgId, (tx) =>
+              markDeliveryTerminalFailure(tx, a),
+            );
+            if (consecutiveFailures === null || consecutiveFailures < AUTO_DISABLE_THRESHOLD)
+              return;
+            const ctx = await disableContext();
+            if (ctx === null) return; // audit key unavailable → skip (fail-soft)
+            // Best-effort, SEPARATE tx: the delivery is already dead-lettered above, so a failure here just
+            // means the destination isn't disabled THIS drain — the next dead delivery re-crosses + retries.
+            await withTenant(tenant, orgId, (tx) =>
+              autoDisableDestination(tx, {
+                orgId,
+                destinationId,
+                threshold: ctx.threshold,
+                auditKey: ctx.auditKey,
+                actor: ctx.actor,
+              }),
+            ).catch((err: unknown) =>
+              console.log(
+                JSON.stringify({
+                  message: "delivery.auto_disable_failed",
+                  destinationId,
+                  error: String(err),
+                }),
+              ),
+            );
+          },
           now: () => Date.now(),
         }),
       );
@@ -140,6 +188,37 @@ export class DeliveryDO extends DurableObject<Env> {
       return await withTenant(tenant, orgId, (tx) => nextDueAt(tx, destinationId));
     } finally {
       await tenant.end().catch(() => undefined);
+    }
+  }
+
+  /**
+   * Build the auto-disable context for this drain (PR3c): the org + threshold + the imported audit-chain key.
+   * FAIL-SOFT — a missing/short/unreadable AUDIT_CHAIN_HMAC_KEY returns undefined (auto-disable is skipped;
+   * the delivery lifecycle still advances) rather than throwing and wedging the drain. `protected` so the
+   * shell test can override it. Read per-drain; the Secrets Store binding is runtime-cached.
+   */
+  protected async autoDisableContext(
+    orgId: string,
+    destinationId: string,
+  ): Promise<AutoDisableContext | null> {
+    try {
+      const raw = b64ToBytes(await readSecretBinding(this.env.AUDIT_CHAIN_HMAC_KEY));
+      if (raw.length < 32) throw new Error(`AUDIT_CHAIN_HMAC_KEY too short: ${raw.length} bytes`);
+      return {
+        orgId,
+        threshold: AUTO_DISABLE_THRESHOLD,
+        auditKey: await importAuditKey(raw),
+        actor: null,
+      };
+    } catch (err) {
+      console.log(
+        JSON.stringify({
+          message: "delivery.disable_key_unavailable",
+          destinationId,
+          error: String(err),
+        }),
+      );
+      return null;
     }
   }
 

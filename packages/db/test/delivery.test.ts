@@ -220,7 +220,7 @@ describe("transitions", () => {
     expect((await failures(dest)).n).toBe(0); // a retry is not a terminal failure
   });
 
-  it("markDeliveryTerminalFailure(dead/blocked) → terminal + bumps consecutive_failures", async () => {
+  it("markDeliveryTerminalFailure(dead/blocked) → both terminal; only DEAD bumps the failure tally", async () => {
     const dest = (await createReplayDestination(app, { orgId, url: "https://d5.example.com/in" }))
       .id;
     const dead = await seedDelivery(dest, { attempt: 8 });
@@ -257,7 +257,9 @@ describe("transitions", () => {
         [blocked, "blocked"],
       ]),
     );
-    expect((await failures(dest)).n).toBe(2); // both bumped
+    // Only `dead` (retry-exhausted) counts toward the auto-disable tally; `blocked` (an instant SSRF refusal)
+    // finalizes but never bumps it — else a transient block-storm would auto-disable in minutes (PR3c).
+    expect((await failures(dest)).n).toBe(1);
   });
 
   it("the status guard makes a re-finalize a no-op (a concurrent re-drive can't double-count)", async () => {

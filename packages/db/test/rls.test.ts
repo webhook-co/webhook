@@ -36,6 +36,7 @@ const TENANT_TABLES = [
   { table: "auth_session_exchange", col: "org_id" },
   { table: "org_policy", col: "org_id" },
   { table: "auth_audit_event", col: "org_id" },
+  { table: "notification_intents", col: "org_id" },
 ] as const;
 
 // Better Auth identity tables are GLOBAL (text ids, per-user / api-key), intentionally
@@ -119,6 +120,8 @@ async function seedOrg(slug: string): Promise<Seeded> {
              values (${randomUUID()}, ${orgId}, ${eventId}, ${"localhost-tunnel"}, ${"delivered"})`;
     await tx`insert into delivery_subscriptions (id, org_id, source_endpoint_id, destination_id)
              values (${randomUUID()}, ${orgId}, ${endpointId}, ${destinationId})`;
+    await tx`insert into notification_intents (id, org_id, kind, destination_id)
+             values (${randomUUID()}, ${orgId}, ${"destination_disabled"}, ${destinationId})`;
     await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, date_trunc('day', now()), ${1})`;
     await tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${1000}, ${"pause"})`;
     await tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${false})`;
