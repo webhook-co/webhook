@@ -11,6 +11,7 @@ import {
   EventSchema,
   EventSummarySchema,
   LISTEN_LAG_CAP,
+  msToOrderKey,
   WATERMARK_DELTA_MS,
   type Cursor,
   type Delivery,
@@ -42,17 +43,20 @@ function clampLimit(limit?: number): number {
   return Math.min(Math.max(1, Math.trunc(limit)), MAX_LIMIT);
 }
 
-// The opaque Cursor carries a (timestamp, id) keyset position. `receivedAt` is the order
-// timestamp — events order on the column `received_at`, endpoints on `created_at`; the field
-// name is generic to the cursor, not tied to a single column.
+// The opaque Cursor carries a (timestamp, id) keyset position. `orderKey` is the order timestamp as a UTC
+// ISO-8601 MICROSECOND string — events order on `received_at`, endpoints/deliveries on `created_at`; the
+// field is generic to the cursor, not tied to one column.
 //
-// Precision note: the cursor and the postgres driver round timestamps to MILLISECONDS (a JS Date
-// has ms resolution, both on parse and on bind), but the timestamp columns are stored at MICROSECOND
-// precision. So every keyset compares and orders on `date_trunc('milliseconds', <col>)` to match the
-// cursor's resolution. Without it, a boundary row whose sub-ms fraction is non-zero compares strictly
-// greater/less than its own truncated cursor — forward that re-emits the row forever (dup/stall),
-// backward it skips a same-ms neighbour. The `id` tiebreaker then gives a stable total order within a
-// millisecond. (The watermark filter stays on the raw `received_at` so its µs-tight invariant holds.)
+// Precision: the cursor carries FULL microsecond precision (a UTC ISO-µs string projected by `orderKeyCol`
+// via `to_char(<col> at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`), so the keyset compares the RAW
+// `<col>` against `${orderKey}::text::timestamptz` at exact µs — which a plain btree on `(…, <col>, id)` serves.
+// ⚠️ The `::text` is load-bearing: bound directly as `${orderKey}::timestamptz`, postgres.js infers the param
+// type as timestamptz and serializes the string through a MILLISECOND path (dropping the µs) — reintroducing
+// the same-ms dup/stall. Forcing `::text` makes it bind the raw string, so Postgres parses the full µs.
+// (The old design truncated everything to `date_trunc('milliseconds', <col>)` to match a ms-only cursor,
+// but that STABLE expression can't back an index — see ADR-0087 follow-up / migration 0036.) The `id`
+// tiebreaker orders same-instant rows. The cursor key is a STRING, never a JS `Date` (Date is ms-only and
+// would silently truncate the µs the keyset depends on). The watermark filter stays on the raw `received_at`.
 
 // Shared keyset page builder: the repos fetch `limit + 1` rows; if the extra row is present
 // there's a next page, and the next cursor is the last KEPT row's keyset position. One place
@@ -69,6 +73,29 @@ function buildPage<R, T>(
   return { items: page.map(mapItem), nextCursor: hasMore && last ? cursorOf(last) : null };
 }
 
+/** An item paired with its own exact keyset cursor — for the listen tunnel, which emits a cursor PER event
+ *  so a client can ack/resume from any single event (not just the page boundary). */
+export interface ItemWithCursor<T> {
+  readonly item: T;
+  readonly cursor: Cursor;
+}
+
+/** Like {@link buildPage} but each kept item carries its own cursor (built from the SAME `cursorOf`). */
+function buildPageWithCursors<R, T>(
+  rows: readonly R[],
+  limit: number,
+  mapItem: (row: R) => T,
+  cursorOf: (row: R) => Cursor,
+): Page<ItemWithCursor<T>> {
+  const hasMore = rows.length > limit;
+  const page = rows.slice(0, limit);
+  const last = page[page.length - 1];
+  return {
+    items: page.map((r) => ({ item: mapItem(r), cursor: cursorOf(r) })),
+    nextCursor: hasMore && last ? cursorOf(last) : null,
+  };
+}
+
 // The two load-bearing event-read predicates, defined ONCE so the four event reads (listEvents,
 // tailEvents, latestTailCursor, tailMeta) can't drift apart on the ms-on-wire / µs-in-rows seam.
 // These are the silent-gap surface: a stray change here (truncating the watermark, flipping an
@@ -81,15 +108,31 @@ function belowWatermark(tx: TenantTx) {
   return tx`received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')`;
 }
 
-// The ms-resolution keyset on received_at — date_trunc('milliseconds', …) to match the cursor's
-// resolution, with `id` as the stable tiebreaker. Forward tail uses `>` (events strictly after the
-// resume position); the newest-first browse uses `<`. Returns the leading `and …` so the call site
-// stays `${cursor ? keysetAfter(tx, cursor) : tx``}`.
+// The µs-exact keyset on the RAW received_at (indexable by events_tunnel_idx), with `id` as the stable
+// tiebreaker. The cursor's `orderKey` (UTC ISO-µs text) binds as `::timestamptz` — lossless at µs. Forward
+// tail uses `>` (events strictly after the resume position); the newest-first browse uses `<`. Returns the
+// leading `and …` so the call site stays `${cursor ? keysetAfter(tx, cursor) : tx``}`.
 function keysetAfter(tx: TenantTx, c: Cursor) {
-  return tx`and (date_trunc('milliseconds', received_at), id) > (${c.receivedAt}::timestamptz, ${c.id}::uuid)`;
+  return tx`and (received_at, id) > (${c.orderKey}::text::timestamptz, ${c.id}::uuid)`;
 }
 function keysetBefore(tx: TenantTx, c: Cursor) {
-  return tx`and (date_trunc('milliseconds', received_at), id) < (${c.receivedAt}::timestamptz, ${c.id}::uuid)`;
+  return tx`and (received_at, id) < (${c.orderKey}::text::timestamptz, ${c.id}::uuid)`;
+}
+
+// Project a row's order timestamp as the cursor's UTC ISO-8601 microsecond order key, aliased `order_key`
+// (so every keyset read's Row type carries `order_key: string` and `cursorOf` is uniform). UTC-anchored +
+// literal "Z" so the reparse via `::timestamptz` is exact regardless of the session TimeZone; `US` always
+// emits 6 fractional digits. `col` is a fixed internal literal — never user input.
+function orderKeyCol(tx: TenantTx, col: "received_at" | "created_at") {
+  return col === "received_at"
+    ? tx`to_char(received_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as order_key`
+    : tx`to_char(created_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as order_key`;
+}
+
+/** A JS `Date` (ms) → the cursor's 6-digit UTC ISO-µs order key, for `--since <RFC3339>` boundaries. Delegates
+ *  to the shared {@link msToOrderKey} so the ms→order-key formatting has ONE definition across surfaces. */
+function msDateToOrderKey(d: Date): string {
+  return msToOrderKey(d.getTime());
 }
 
 // Wrap a user search term as a case-insensitive CONTAINS pattern for `ILIKE`, escaping the LIKE
@@ -132,6 +175,8 @@ interface EndpointRow {
   name: string;
   paused: boolean;
   created_at: Date;
+  /** Projected by listEndpoints via orderKeyCol — the cursor's UTC ISO-µs order key. Absent on getEndpoint. */
+  order_key?: string;
 }
 
 function toEndpoint(r: EndpointRow): Endpoint {
@@ -157,15 +202,15 @@ export async function listEndpoints(
   const { cursor, name } = opts;
   // `deleted_at is null` hides soft-deleted endpoints (ADR-0076) from endpoints.list.
   const rows = await tx<EndpointRow[]>`
-    select id, org_id, name, paused, created_at
+    select id, org_id, name, paused, created_at, ${orderKeyCol(tx, "created_at")}
     from endpoints
     where deleted_at is null
     ${name ? tx`and name ilike ${likeContains(name)}` : tx``}
-    ${cursor ? tx`and (date_trunc('milliseconds', created_at), id) < (${cursor.receivedAt}::timestamptz, ${cursor.id}::uuid)` : tx``}
-    order by date_trunc('milliseconds', created_at) desc, id desc
+    ${cursor ? tx`and (created_at, id) < (${cursor.orderKey}::text::timestamptz, ${cursor.id}::uuid)` : tx``}
+    order by created_at desc, id desc
     limit ${limit + 1}`;
 
-  return buildPage(rows, limit, toEndpoint, (r) => ({ receivedAt: r.created_at, id: r.id }));
+  return buildPage(rows, limit, toEndpoint, (r) => ({ orderKey: r.order_key!, id: r.id }));
 }
 
 /**
@@ -207,6 +252,8 @@ interface EventRow {
   method: string | null;
   /** Projected by the summary reads (listEvents/tailEvents) via the SQL CASE; absent on getEvent. */
   verification_state?: string;
+  /** Projected by the keyset reads via orderKeyCol — the cursor's UTC ISO-µs order key. Absent on getEvent. */
+  order_key?: string;
 }
 
 // The truthful verification tri-state, projected in SQL so the lean summary carries it WITHOUT shipping
@@ -277,13 +324,13 @@ export async function listEvents(
   const limit = clampLimit(opts.limit);
   const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState, search } =
     opts;
-  // The received-at range is bound on the RAW received_at (sargable against events_tunnel_idx /
-  // events_provider_idx, which lead with endpoint_id then received_at) — it only narrows the per-endpoint
-  // scan. The keyset still compares date_trunc('ms', …) to match the cursor resolution. The sparse
-  // `failed` verification filter is backed by the events_failed_idx partial index (migration 0022).
+  // The received-at range + keyset are bound on the RAW received_at (sargable against events_tunnel_idx,
+  // which leads with endpoint_id then received_at, id) — the range narrows the per-endpoint scan, the keyset
+  // seeks the page and orders it (backward scan for DESC), no Sort node. The sparse `failed` verification
+  // filter is backed by the events_failed_idx partial index (migration 0022).
   const rows = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
-           ${verificationStateColumn(tx)}
+           ${verificationStateColumn(tx)}, ${orderKeyCol(tx, "received_at")}
     from events
     where endpoint_id = ${endpointId}
     ${provider && provider.length > 0 ? tx`and provider in ${tx([...provider])}` : tx``}
@@ -292,10 +339,10 @@ export async function listEvents(
     ${verificationStateFilter(tx, verificationState)}
     ${eventSearchFilter(tx, search)}
     ${cursor ? keysetBefore(tx, cursor) : tx``}
-    order by date_trunc('milliseconds', received_at) desc, id desc
+    order by received_at desc, id desc
     limit ${limit + 1}`;
 
-  return buildPage(rows, limit, toEventSummary, (r) => ({ receivedAt: r.received_at, id: r.id }));
+  return buildPage(rows, limit, toEventSummary, (r) => ({ orderKey: r.order_key!, id: r.id }));
 }
 
 export interface TailEventsOptions {
@@ -315,47 +362,74 @@ export interface TailEventsOptions {
 // The cutoff is computed Postgres-side (`now()`), NOT from a caller-supplied Date: received_at is
 // stamped by the events trigger with the DB clock, so comparing it to the DB's own now() keeps δ
 // exactly the statement_timeout with no Worker↔Postgres clock skew eroding the safety margin. The
-// filter stays on the RAW received_at (µs) — the gapless proof needs δ to be exactly the timeout, so
-// it must NOT be ms-truncated (unlike the keyset comparison, which matches the ms-resolution cursor).
-// Backed by events_tunnel_idx (endpoint_id, received_at, id).
-export async function tailEvents(
-  tx: TenantTx,
-  opts: TailEventsOptions,
-): Promise<Page<EventSummary>> {
+// filter stays on the RAW received_at (µs) — the gapless proof needs δ to be exactly the timeout. The keyset
+// is now ALSO on the raw received_at (the cursor carries exact µs), so both ride events_tunnel_idx
+// (endpoint_id, received_at, id) — a forward scan for this ASC tail.
+async function tailEventRows(tx: TenantTx, opts: TailEventsOptions): Promise<EventRow[]> {
   const limit = clampLimit(opts.limit);
   const { endpointId, sinceCursor } = opts;
-  const rows = await tx<EventRow[]>`
+  return tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
-           ${verificationStateColumn(tx)}
+           ${verificationStateColumn(tx)}, ${orderKeyCol(tx, "received_at")}
     from events
     where endpoint_id = ${endpointId}
       and ${belowWatermark(tx)}
       ${sinceCursor ? keysetAfter(tx, sinceCursor) : tx``}
-    order by date_trunc('milliseconds', received_at) asc, id asc
+    order by received_at asc, id asc
     limit ${limit + 1}`;
+}
 
-  return buildPage(rows, limit, toEventSummary, (r) => ({ receivedAt: r.received_at, id: r.id }));
+const tailCursorOf = (r: EventRow): Cursor => ({ orderKey: r.order_key!, id: r.id });
+
+export async function tailEvents(
+  tx: TenantTx,
+  opts: TailEventsOptions,
+): Promise<Page<EventSummary>> {
+  return buildPage(
+    await tailEventRows(tx, opts),
+    clampLimit(opts.limit),
+    toEventSummary,
+    tailCursorOf,
+  );
+}
+
+/**
+ * The listen tunnel's tail: same rows as {@link tailEvents}, but each item is paired with its own EXACT-µs
+ * cursor. The tunnel encodes a cursor per event frame so a client can ack/resume from any single event — the
+ * per-event cursor MUST be full µs (a ms-truncated ack of an event with a sub-ms fraction would re-deliver it
+ * on resume, since the keyset now compares the raw received_at).
+ */
+export async function tailEventsWithCursors(
+  tx: TenantTx,
+  opts: TailEventsOptions,
+): Promise<Page<ItemWithCursor<EventSummary>>> {
+  return buildPageWithCursors(
+    await tailEventRows(tx, opts),
+    clampLimit(opts.limit),
+    toEventSummary,
+    tailCursorOf,
+  );
 }
 
 /**
  * The cursor of the LATEST event at/below the gapless watermark for an endpoint, or null if there is
  * none — the "current position" a `?since=now` listen session starts from, so it tails only NEW events
  * and skips the backlog. (The cli-only seed can't get this: events.tail returns no cursor when caught
- * up.) Same watermark + ms-resolution keyset as tailEvents, ordered DESC to take the max
- * (received_at, id). Backed by events_tunnel_idx (endpoint_id, received_at, id).
+ * up.) Same watermark as tailEvents, ordered DESC on the raw received_at to take the max (received_at, id)
+ * at exact µs. Backed by events_tunnel_idx (endpoint_id, received_at, id).
  */
 export async function latestTailCursor(
   tx: TenantTx,
   opts: { readonly endpointId: string },
 ): Promise<Cursor | null> {
-  const [r] = await tx<{ received_at: Date; id: string }[]>`
-    select received_at, id
+  const [r] = await tx<{ order_key: string; id: string }[]>`
+    select ${orderKeyCol(tx, "received_at")}, id
     from events
     where endpoint_id = ${opts.endpointId}
       and ${belowWatermark(tx)}
-    order by date_trunc('milliseconds', received_at) desc, id desc
+    order by received_at desc, id desc
     limit 1`;
-  return r ? { receivedAt: r.received_at, id: r.id } : null;
+  return r ? { orderKey: r.order_key, id: r.id } : null;
 }
 
 /**
@@ -364,9 +438,9 @@ export async function latestTailCursor(
  * the gapless watermark; an exclusive resume from a raw MAX would skip late-but-valid events).
  * `backlogCount` is the count of unseen events at/below the watermark strictly after `sinceCursor`
  * (the full visible backlog when omitted), CAPPED at `cap` via `limit cap + 1` in SQL — a returned
- * value of `cap + 1` means "more than cap". The COUNT bounds on the RAW watermark + the lower ms-keyset
- * ONLY, never on the ms-truncated `headCursor` (an upper bound there would drop a same-millisecond µs
- * sibling). Same window + ms-resolution keyset as tailEvents; backed by events_tunnel_idx.
+ * value of `cap + 1` means "more than cap". The COUNT bounds on the RAW watermark + the lower µs-keyset
+ * ONLY, never an upper bound on `headCursor`. Same window + raw-µs keyset as tailEvents; backed by
+ * events_tunnel_idx.
  */
 export async function tailMeta(
   tx: TenantTx,
@@ -394,15 +468,16 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
 /**
  * Resolve a parsed `--since` value to a resume cursor server-side, Kinesis-style total function (clamp,
  * never null/throw). For `<duration>`/`<RFC3339>` there is NO time→cursor table lookup: the synthetic
- * boundary `(date_trunc('ms', T), ZERO_UUID)` rides the existing `tailEvents` keyset, so "T before the
- * earliest" naturally yields everything (= beginning) and "T in the future / past the watermark" yields
- * nothing (= resume live) — the clamp emerges from the keyset + watermark, needing no extra query or
- * index. `<RFC3339>` uses the parsed (ms-precision) instant directly; `<duration>` resolves now() minus
- * the duration against the DB clock (skew-safe, ms-truncated). `beginning` → no cursor (oldest-inclusive).
- * `now` is the ONE mode that must skip the ENTIRE backlog (only NEW events), so it resolves to the actual
- * watermark head (`latestTailCursor`): exclusive of the head excludes every backlog row including a
- * same-millisecond one a synthetic watermark-ms boundary would re-surface, and it's gapless for live
- * tailing (future events get monotonic UUIDv7 ids > head). Resolve once at start, iterate by cursor.
+ * boundary `(T, ZERO_UUID)` rides the existing `tailEvents` keyset, so "T before the earliest" naturally
+ * yields everything (= beginning) and "T in the future / past the watermark" yields nothing (= resume
+ * live) — the clamp emerges from the keyset + watermark, needing no extra query or index. `<RFC3339>` uses
+ * the parsed instant (a ms Date → `.sss000Z` µs order key); `<duration>` resolves now() minus the duration
+ * against the DB clock (skew-safe) as a µs order key. `beginning` → no cursor (oldest-inclusive). `now` is
+ * the ONE mode that must skip the ENTIRE backlog (only NEW events), so it resolves to the actual watermark
+ * head (`latestTailCursor`, µs-exact): exclusive of the head excludes every backlog row (no same-ms
+ * re-surface — the µs head is exact), and it's gapless for live tailing (future events get monotonic
+ * UUIDv7 ids > head). ZERO_UUID sorts below every UUIDv7, so `(T, ZERO_UUID)` with `>` includes every real
+ * event at instant T. Resolve once at start, iterate by cursor.
  */
 export async function resolveSince(
   tx: TenantTx,
@@ -411,10 +486,11 @@ export async function resolveSince(
   const { endpointId, since } = opts;
   if (since.kind === "beginning") return undefined;
   if (since.kind === "now") return (await latestTailCursor(tx, { endpointId })) ?? undefined;
-  if (since.kind === "timestamp") return { receivedAt: since.date, id: ZERO_UUID };
-  const [row] = await tx<{ t: Date }[]>`
-    select date_trunc('milliseconds', now() - (${since.ms} * interval '1 millisecond')) as t`;
-  return { receivedAt: row!.t, id: ZERO_UUID };
+  if (since.kind === "timestamp") return { orderKey: msDateToOrderKey(since.date), id: ZERO_UUID };
+  const [row] = await tx<{ t: string }[]>`
+    select to_char((now() - (${since.ms} * interval '1 millisecond')) at time zone 'UTC',
+                   'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as t`;
+  return { orderKey: row!.t, id: ZERO_UUID };
 }
 
 export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> {
@@ -464,6 +540,8 @@ interface DeliveryRow {
   error: string | null;
   next_retry_at: Date | null;
   created_at: Date;
+  /** Projected by listDeliveries via orderKeyCol — the cursor's UTC ISO-µs order key. Absent on getDelivery. */
+  order_key?: string;
 }
 
 const DELIVERY_COLS =
@@ -503,13 +581,11 @@ export interface ListDeliveriesOptions extends ListOptions {
 /**
  * The org's deliveries, newest-first, paginated (deliveries.list). All filters are optional and AND together;
  * a cross-org/unknown destinationId or subscriptionId simply yields an empty page under RLS (no existence
- * oracle). Keyset on `created_at` (the DO stamps a fresh row per delivery), ms-truncated to match the cursor
- * resolution with `id` as the tiebreaker — mirrors listEndpoints.
- *   ⚠️ INDEX: the `destinationId` filter is served by delivery_attempts_destination_idx (migration 0025), but
- *   NO index yet backs the `created_at` ORDER — an org-wide (no filter) or `subscriptionId`-filtered browse
- *   scans + sorts the whole RLS-scoped set per page (the limit+1 bounds rows RETURNED, not rows scanned).
- *   Fine at current volumes (near-empty prod); PR3b's migration adds the covering index for the ordered
- *   browse (an (org_id, created_at, id) + a (subscription_id, created_at, id) partial). Revisit before scale.
+ * oracle). Keyset on the RAW `created_at` (the DO stamps a fresh row per delivery) at exact µs, with `id` as
+ * the tiebreaker — mirrors listEndpoints. Backed by the migration-0036 covering indexes: org-wide →
+ * delivery_attempts_org_ordered_idx (org_id, created_at, id); `destinationId` filter →
+ * delivery_attempts_destination_ordered_idx (destination_id, created_at, id); `subscriptionId` filter →
+ * delivery_attempts_subscription_ordered_idx (subscription_id, created_at, id) partial.
  */
 export async function listDeliveries(
   tx: TenantTx,
@@ -518,14 +594,14 @@ export async function listDeliveries(
   const limit = clampLimit(opts.limit);
   const { cursor, destinationId, subscriptionId, status } = opts;
   const rows = await tx<DeliveryRow[]>`
-    select ${tx.unsafe(DELIVERY_COLS)}
+    select ${tx.unsafe(DELIVERY_COLS)}, ${orderKeyCol(tx, "created_at")}
     from delivery_attempts
     where true
     ${destinationId ? tx`and destination_id = ${destinationId}` : tx``}
     ${subscriptionId ? tx`and subscription_id = ${subscriptionId}` : tx``}
     ${status && status.length > 0 ? tx`and status in ${tx([...status])}` : tx``}
-    ${cursor ? tx`and (date_trunc('milliseconds', created_at), id) < (${cursor.receivedAt}::timestamptz, ${cursor.id}::uuid)` : tx``}
-    order by date_trunc('milliseconds', created_at) desc, id desc
+    ${cursor ? tx`and (created_at, id) < (${cursor.orderKey}::text::timestamptz, ${cursor.id}::uuid)` : tx``}
+    order by created_at desc, id desc
     limit ${limit + 1}`;
-  return buildPage(rows, limit, toDelivery, (r) => ({ receivedAt: r.created_at, id: r.id }));
+  return buildPage(rows, limit, toDelivery, (r) => ({ orderKey: r.order_key!, id: r.id }));
 }

@@ -3,9 +3,10 @@ import { DurableObject } from "cloudflare:workers";
 import {
   createClient,
   resolveSince,
-  tailEvents,
+  tailEventsWithCursors,
   tailMeta,
   withTenant,
+  type ItemWithCursor,
   type Page,
 } from "@webhook-co/db";
 import {
@@ -14,6 +15,8 @@ import {
   encodeCursor,
   encodeServerFrame,
   importCursorKey,
+  msToOrderKey,
+  orderKeyLagMs,
   parseClientFrame,
   parseSince,
   readSecretBinding,
@@ -44,12 +47,12 @@ const MAX_PAGES_PER_POLL = 10;
  * backlog catches up over a few pages without an unbounded scan). Pure over the page reader, so the
  * multi-page catch-up is unit-tested without a live Postgres.
  */
-export async function drainPages(
-  readPage: (resume: Cursor | undefined) => Promise<Page<EventSummary>>,
+export async function drainPages<T>(
+  readPage: (resume: Cursor | undefined) => Promise<Page<T>>,
   resume: Cursor | undefined,
   maxPages: number = MAX_PAGES_PER_POLL,
-): Promise<{ events: EventSummary[]; caughtUp: boolean }> {
-  const events: EventSummary[] = [];
+): Promise<{ events: T[]; caughtUp: boolean }> {
+  const events: T[] = [];
   let cursor = resume;
   // caughtUp = the drain reached the END of the watermark-bounded tail (a page returned a null
   // nextCursor) rather than stopping at maxPages with a backlog still pending. Derived from the
@@ -88,11 +91,22 @@ interface Binding {
   readonly sessionId: string;
 }
 
-/** The durable resume position (last ACKed cursor). Epoch-ms keeps it JSON/structured-clone clean. */
+/** The durable resume position (last ACKed cursor). Stores the cursor's UTC ISO-µs `orderKey` verbatim (a
+ *  plain string is JSON/structured-clone clean) so the resume keeps FULL microsecond precision — storing a
+ *  ms epoch here would re-truncate the cursor and re-deliver same-ms events on resume. */
 interface StoredCursor {
+  readonly orderKey: string;
+  readonly id: string;
+}
+
+/** The PRE-µs durable shape (ms epoch), still on disk for sessions that acked before this deploy. `toCursor`
+ *  upgrades it in place rather than discarding it — see the comment there. */
+interface LegacyStoredCursor {
   readonly receivedAtMs: number;
   readonly id: string;
 }
+
+type AnyStoredCursor = StoredCursor | LegacyStoredCursor;
 
 /**
  * One hibernatable WebSocket Durable Object per `wbhk listen` session (Slice 11b, ADR-0014).
@@ -211,13 +225,13 @@ export class ListenSession extends DurableObject<ListenEnv> {
       // poll's fail-safe posture). On error we skip the status frame and let the steady-state poll catch
       // the consumer up; the caught-up transition still fires later.
       try {
-        const resume = this.toCursor(await this.ctx.storage.get<StoredCursor>("cursor"));
+        const resume = this.toCursor(await this.ctx.storage.get<AnyStoredCursor>("cursor"));
         const meta = await this.backlogMeta(orgId, endpointId, resume);
         const caughtUp = meta.backlogCount === 0;
         const headLagMs =
           meta.headCursor === null
             ? undefined
-            : Math.max(0, Date.now() - meta.headCursor.receivedAt.getTime());
+            : orderKeyLagMs(meta.headCursor.orderKey, Date.now());
         server.send(
           encodeServerFrame({
             type: "status",
@@ -272,10 +286,10 @@ export class ListenSession extends DurableObject<ListenEnv> {
 
     try {
       const resume =
-        this.lastSent ?? this.toCursor(await this.ctx.storage.get<StoredCursor>("cursor"));
+        this.lastSent ?? this.toCursor(await this.ctx.storage.get<AnyStoredCursor>("cursor"));
       const { events, caughtUp } = await this.pollEvents(binding, resume);
-      for (const summary of events) {
-        const cur: Cursor = { receivedAt: summary.receivedAt, id: summary.id };
+      for (const { item: summary, cursor: cur } of events) {
+        // `cur` is the event's EXACT-µs cursor from the read — NOT rebuilt from summary.receivedAt (a ms Date).
         const frame = encodeServerFrame({
           type: "event",
           summary,
@@ -345,13 +359,15 @@ export class ListenSession extends DurableObject<ListenEnv> {
   protected async pollEvents(
     binding: Binding,
     resume: Cursor | undefined,
-  ): Promise<{ events: EventSummary[]; caughtUp: boolean }> {
+  ): Promise<{ events: ItemWithCursor<EventSummary>[]; caughtUp: boolean }> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
+      // tailEventsWithCursors pairs each event with its EXACT-µs cursor — the tunnel emits a cursor per event
+      // frame, so a client can ack any single event; the cursor must NOT be re-derived from the display Date.
       return await drainPages(
         (cursor) =>
           withTenant(tenant, binding.orgId, (tx) =>
-            tailEvents(tx, { endpointId: binding.endpointId, sinceCursor: cursor }),
+            tailEventsWithCursors(tx, { endpointId: binding.endpointId, sinceCursor: cursor }),
           ),
         resume,
       );
@@ -409,14 +425,23 @@ export class ListenSession extends DurableObject<ListenEnv> {
   }
 
   private async persistCursor(cur: Cursor): Promise<void> {
-    await this.ctx.storage.put<StoredCursor>("cursor", {
-      receivedAtMs: cur.receivedAt.getTime(),
-      id: cur.id,
-    });
+    await this.ctx.storage.put<StoredCursor>("cursor", { orderKey: cur.orderKey, id: cur.id });
   }
 
-  private toCursor(stored: StoredCursor | undefined): Cursor | undefined {
-    return stored ? { receivedAt: new Date(stored.receivedAtMs), id: stored.id } : undefined;
+  private toCursor(stored: AnyStoredCursor | undefined): Cursor | undefined {
+    if (!stored) return undefined;
+    // Current shape: the v2 order key, used verbatim.
+    if ("orderKey" in stored && typeof stored.orderKey === "string") {
+      return { orderKey: stored.orderKey, id: stored.id };
+    }
+    // Pre-deploy shape {receivedAtMs}: UPGRADE it in place to the equivalent ms-boundary order key. The old
+    // cursor was already ms-precision, so `.sss000Z` resumes from the SAME position — no gap, at most a few
+    // same-ms duplicates (at-least-once already tolerates those). This avoids resuming with an unset cursor,
+    // which would be oldest-inclusive and re-flood the whole backlog as duplicate frames.
+    if ("receivedAtMs" in stored && typeof stored.receivedAtMs === "number") {
+      return { orderKey: msToOrderKey(stored.receivedAtMs), id: stored.id };
+    }
+    return undefined;
   }
 
   /** Send without letting a dead socket abort the broadcast or throw out of an event handler. */

@@ -23,7 +23,9 @@ import { loadEventPayloadAction, loadMoreEventsAction, revealHeaderAction } from
 
 const ENDPOINT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const CURSOR_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
-const cursor: Cursor = { receivedAt: new Date("2026-06-28T00:00:00Z"), id: CURSOR_ID };
+// The keyset cursor is now a UTC ISO-µs order key (a string) + uuid id — no Date crosses the boundary.
+const ORDER_KEY = "2026-06-28T00:00:00.000000Z";
+const cursor: Cursor = { orderKey: ORDER_KEY, id: CURSOR_ID };
 
 describe("loadMoreEventsAction", () => {
   it("returns the next page on success", async () => {
@@ -33,7 +35,7 @@ describe("loadMoreEventsAction", () => {
     expect(loadMoreEvents).toHaveBeenCalledWith(
       "o",
       ENDPOINT_ID,
-      { receivedAt: cursor.receivedAt, id: CURSOR_ID },
+      { orderKey: ORDER_KEY, id: CURSOR_ID },
       {},
     );
   });
@@ -49,7 +51,7 @@ describe("loadMoreEventsAction", () => {
     expect(loadMoreEvents).toHaveBeenCalledWith(
       "o",
       ENDPOINT_ID,
-      { receivedAt: cursor.receivedAt, id: CURSOR_ID },
+      { orderKey: ORDER_KEY, id: CURSOR_ID },
       { provider: ["stripe", "github"], receivedAfter: new Date("2026-06-01T00:00:00.000Z") },
     );
   });
@@ -62,34 +64,52 @@ describe("loadMoreEventsAction", () => {
 
   it("rejects a cursor with a non-uuid id without paging", async () => {
     loadMoreEvents.mockReset();
-    const bad = { receivedAt: new Date(), id: "not-a-uuid" } as Cursor;
+    const bad = { orderKey: ORDER_KEY, id: "not-a-uuid" } as Cursor;
     expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: bad })).toEqual({
       ok: false,
     });
     expect(loadMoreEvents).not.toHaveBeenCalled();
   });
 
-  it("rejects a cursor with an invalid date without paging", async () => {
+  it("rejects a cursor with a malformed orderKey without paging (not ISO-µs)", async () => {
     loadMoreEvents.mockReset();
-    const bad = { receivedAt: new Date("not-a-date"), id: CURSOR_ID } as Cursor;
-    expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: bad })).toEqual({
-      ok: false,
-    });
+    // Right length-ish but ms precision (3 digits) + a crafted SQL-ish payload — both fail ORDER_KEY_RE.
+    for (const orderKey of ["2026-06-28T00:00:00.000Z", "not-a-date", "'; drop table events; --"]) {
+      const bad = { orderKey, id: CURSOR_ID } as Cursor;
+      expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: bad })).toEqual({
+        ok: false,
+      });
+    }
     expect(loadMoreEvents).not.toHaveBeenCalled();
   });
 
-  it("coerces a string receivedAt (server-action serialization) back to a Date", async () => {
+  it("threads the EXACT µs order key through verbatim (no truncation at the web boundary)", async () => {
     loadMoreEvents.mockReset();
     loadMoreEvents.mockResolvedValueOnce({ items: [], nextCursor: null });
-    const wire = { receivedAt: "2026-06-28T00:00:00.000Z", id: CURSOR_ID } as unknown as Cursor;
+    // A sub-millisecond order key (`.007300Z`) must reach the db byte-for-byte — the whole point of the
+    // full-µs cursor. orderKey is already a string on the wire, so there is no lossy Date coercion.
+    const wire = { orderKey: "2026-06-28T00:00:00.007300Z", id: CURSOR_ID };
     const result = await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: wire });
     expect(result.ok).toBe(true);
     expect(loadMoreEvents).toHaveBeenCalledWith(
       "o",
       ENDPOINT_ID,
-      { receivedAt: new Date("2026-06-28T00:00:00.000Z"), id: CURSOR_ID },
+      { orderKey: "2026-06-28T00:00:00.007300Z", id: CURSOR_ID },
       {},
     );
+  });
+
+  it("FAILS CLOSED on a legacy {receivedAt} cursor (stale pre-deploy tab) — never a silent same-ms skip", async () => {
+    loadMoreEvents.mockReset();
+    // A dashboard tab rendered by the pre-µs build holds a nextCursor of the old {receivedAt} shape. It CANNOT
+    // be losslessly upgraded to the DESC (`<`) µs keyset: a ms→µs boundary either skips same-ms events (lower
+    // id, non-zero µs) or re-shows them. So we fail closed (consistent with the signed-cursor v1 reject) —
+    // "Load more" simply stops until the user reloads and gets fresh v2 cursors. No data is silently dropped.
+    const legacy = { receivedAt: "2026-06-28T00:00:00.000Z", id: CURSOR_ID } as unknown as Cursor;
+    expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: legacy })).toEqual({
+      ok: false,
+    });
+    expect(loadMoreEvents).not.toHaveBeenCalled();
   });
 
   it("returns ok:false (no throw) when the pager faults", async () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { newId } from "@webhook-co/shared";
+import { newId, type Cursor } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql, type TenantTx } from "../src/client";
@@ -158,6 +158,48 @@ describe("listDeliveries", () => {
     );
     expect(page2.items.map((d) => d.id)).toEqual([ids[0]]);
     expect(page2.nextCursor).toBeNull();
+  });
+
+  it("paginates same-millisecond deliveries without skipping or duplicating (µs precision)", async () => {
+    // Two deliveries in the SAME millisecond, different microseconds — the exact case the old ms-truncated
+    // cursor got wrong. With the full-µs cursor the keyset on the RAW created_at must surface both, once each,
+    // in µs order. Exercised org-wide + destination-filtered + subscription-filtered (each hits a different
+    // covering index in migration 0036).
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-tie" }, hasher)).id;
+    const dest = (
+      await createReplayDestination(app, { orgId: orgA, url: "https://tie.example.com/in" })
+    ).id;
+    const sub = (
+      await createSubscription(app, { orgId: orgA, sourceEndpointId: ep, destinationId: dest })
+    ).id;
+    const d1 = await seedDelivery(orgA, { destinationId: dest, subscriptionId: sub });
+    const d2 = await seedDelivery(orgA, { destinationId: dest, subscriptionId: sub });
+    await withTenant(app, orgA, async (tx) => {
+      await tx.unsafe(
+        `update delivery_attempts set created_at = '2026-06-10T12:00:00.005200+00' where id = '${d1}'`,
+      );
+      await tx.unsafe(
+        `update delivery_attempts set created_at = '2026-06-10T12:00:00.005800+00' where id = '${d2}'`,
+      );
+    });
+
+    for (const filter of [{}, { destinationId: dest }, { subscriptionId: sub }] as const) {
+      const seen: string[] = [];
+      let cursor: Cursor | undefined;
+      let pages = 0;
+      for (;;) {
+        const page = await withTenant(app, orgA, (tx) =>
+          listDeliveries(tx, { ...filter, limit: 1, cursor }),
+        );
+        for (const d of page.items) if (d.id === d1 || d.id === d2) seen.push(d.id);
+        pages += 1;
+        if (page.nextCursor === null) break;
+        cursor = page.nextCursor;
+        expect(pages).toBeLessThan(8); // a precision stall would spin forever
+      }
+      // DESC (newest-first): d2 (005800µs) before d1 (005200µs); both surfaced exactly once.
+      expect(seen).toEqual([d2, d1]);
+    }
   });
 
   it("filters by subscriptionId and by status (multi-select)", async () => {

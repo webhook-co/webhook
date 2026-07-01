@@ -480,6 +480,38 @@ describe("reads repos (RLS + keyset pagination)", () => {
     expect(seen).toEqual(new Set([p1, p2])); // both surfaced — no skip
   });
 
+  it("keyset is timezone-independent (µs cursor round-trips under a non-UTC session)", async () => {
+    // The order key is UTC-anchored (`... at time zone 'UTC' ... "Z"`) and bound via `::text::timestamptz`,
+    // so pagination must be identical regardless of the session TimeZone. Force a non-UTC zone and page two
+    // same-millisecond, different-µs events within ONE tx (so `set local timezone` holds); both must surface.
+    const epTz = (await createEndpoint(app, { orgId: orgA, name: "ep-tz" }, hasher)).id;
+    const t1 = await seedEvent(orgA, epTz, { provider: "stripe" });
+    const t2 = await seedEvent(orgA, epTz, { provider: "stripe" });
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-12T09:00:00.001100+00' where id = ${t1}`,
+    );
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update events set received_at = '2026-06-12T09:00:00.001700+00' where id = ${t2}`,
+    );
+    const seen = await withTenant(app, orgA, async (tx) => {
+      await tx`set local timezone = 'America/New_York'`; // UTC-4/5, definitely not UTC
+      const acc = new Set<string>();
+      let cursor: Cursor | undefined;
+      for (let pages = 0; pages < 6; pages++) {
+        const page = await listEvents(tx, { endpointId: epTz, cursor, limit: 1 });
+        for (const ev of page.items) acc.add(ev.id);
+        if (page.nextCursor === null) break;
+        cursor = page.nextCursor;
+      }
+      return acc;
+    });
+    expect(seen).toEqual(new Set([t1, t2]));
+  });
+
   it("getEvent returns the full-fidelity event (headers + verification + payload ref)", async () => {
     const id = (await withTenant(app, orgA, (tx) => listEvents(tx, { endpointId: epA, limit: 1 })))
       .items[0]!.id;

@@ -627,6 +627,25 @@ describe("resolveResumeStart (D6b — where a run starts)", () => {
     expect(lines.join("").toLowerCase()).toContain("cursor");
   });
 
+  it("resume + an OUTDATED saved cursor → re-pages from the beginning (no event loss), with a note", async () => {
+    // A v1 resume file after the µs-cursor upgrade: the old opaque token can't be presented to the server,
+    // but the position must NOT be silently skipped. Re-page from the beginning (at-least-once, client
+    // dedups) — a one-time re-list, never a gap — unlike a genuinely corrupt file which cold-starts at now.
+    const lines: string[] = [];
+    const since = await resolveResumeStart({
+      ...base,
+      resume: true,
+      since: "now",
+      loadCursor: async () => ({
+        kind: "outdated",
+        detail: "resume file is format v1; current is v2",
+      }),
+      note: (l) => void lines.push(l),
+    });
+    expect(since).toEqual({ kind: "beginning" });
+    expect(lines.join("").toLowerCase()).toContain("beginning");
+  });
+
   it("treats `--since from-last-ack` as resume", async () => {
     let loaded = false;
     const since = await resolveResumeStart({

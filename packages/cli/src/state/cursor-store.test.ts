@@ -102,6 +102,24 @@ describe("cursor-store load edge cases (corruption → cold-start, never a crash
     });
     expect((await loadCursor(dir, "default", EP)).kind).toBe("corrupt");
   });
+
+  it("returns OUTDATED (not corrupt) for a well-formed PRIOR-version file for this endpoint", async () => {
+    // A genuine pre-deploy v1 resume file (right shape, matching endpoint, older version). This must be
+    // distinguishable from garbage so the caller re-pages from the beginning (no event loss) instead of
+    // skipping the backlog — a v1→v2 token can't be presented to the server, but the position isn't lost.
+    const dir = await freshState();
+    const path = cursorFilePath(dir, "default", EP);
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    await writeFile(
+      path,
+      JSON.stringify({ version: 1, endpointId: EP, cursor: "v1-opaque-token" }),
+      {
+        mode: 0o600,
+      },
+    );
+    const res = await loadCursor(dir, "default", EP);
+    expect(res.kind).toBe("outdated");
+  });
 });
 
 describe("clearCursor", () => {
