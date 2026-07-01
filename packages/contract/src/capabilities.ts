@@ -12,6 +12,7 @@ import {
   LagSchema,
   ProviderSchema,
   ReplayDestinationSchema,
+  BRAINTREE_PUBLIC_KEY_PROVIDERS,
   SubscriptionSchema,
   SW_SECRET_PROVIDERS,
   VERIFY_TOKEN_PROVIDERS,
@@ -342,7 +343,12 @@ export const endpointsAddProviderSecret = defineCapability({
       // secret the verify path uses. `verify_token` = a user-chosen GET-handshake compare-token (Meta
       // `hub.verify_token`, ADR-0086) — a SECOND secret that coexists with the signing secret under the
       // same provider slug, so it is sealed as a typed blob the engine recognizes pre-capture.
-      kind: z.enum(["signing_secret", "verify_token"]).default("signing_secret"),
+      // `braintree_public_key` = Braintree's integration PUBLIC key, needed by the `bt_challenge` GET
+      // handshake response — a second secret coexisting with the private-key signing secret under the
+      // `braintree` slug, sealed as its own typed blob (skipped by the verify path).
+      kind: z
+        .enum(["signing_secret", "verify_token", "braintree_public_key"])
+        .default("signing_secret"),
     })
     // A Standard-Webhooks-family secret is base64 key material (optionally `whsec_`-prefixed, and a
     // `v1,` version tag for Supabase). The verify path strips those and base64-decodes the remainder.
@@ -361,6 +367,19 @@ export const endpointsAddProviderSecret = defineCapability({
             path: ["provider"],
             message:
               "this provider has no verify-token handshake; omit kind (or use signing_secret) to register a signing secret",
+          });
+        }
+        return;
+      }
+      // A braintree_public_key is an OPAQUE integration public key (no base64/JSON shape), valid only for a
+      // provider that answers the bt_challenge handshake — so it also bypasses the signing-secret refines.
+      if (val.kind === "braintree_public_key") {
+        if (!BRAINTREE_PUBLIC_KEY_PROVIDERS.has(val.provider)) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["provider"],
+            message:
+              "this provider has no bt_challenge handshake; omit kind (or use signing_secret) to register a signing secret",
           });
         }
         return;

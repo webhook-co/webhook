@@ -406,6 +406,15 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
       return concatBytes(...resolved.map((r) => (r === null ? body : r)));
     };
 
+    // Anti-oracle DOMAIN-SEPARATION guard (Braintree bt_challenge). Fail closed BEFORE spending HMAC cycles
+    // if the assembled signed message is in a forbidden domain — see HmacProviderConfig.rejectSignedMessageMatching.
+    // Only applied when the message is FULLY resolved (no raw-body part) so the assembled string is exact.
+    if (config.rejectSignedMessageMatching !== undefined && !resolved.includes(null)) {
+      const assembled = utf8Decoder.decode(buildMessage(input.rawBody));
+      if (config.rejectSignedMessageMatching.test(assembled))
+        return malformed("signed message in a forbidden (handshake-oracle) domain");
+    }
+
     const candidates =
       keyMode === "whsec-base64"
         ? toStandardWebhooksCandidates(input.secrets)

@@ -90,4 +90,33 @@ describe("W3b braintree (bt_signature pairs + SHA1(private_key) key)", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason.code).toBe("MALFORMED_SIGNATURE");
   });
+
+  it("REJECTS an oracle-domain bt_payload even with a byte-perfect HMAC (bt_challenge handshake-replay guard)", async () => {
+    // The bt_challenge GET handshake HMACs a short hex nonce under this SAME SHA1(private_key). An attacker
+    // who never learns the private key GETs `pubkey|HMAC(nonce)` and replays it here as bt_signature over
+    // bt_payload=nonce — the HMAC is GENUINE, so key-based verify alone would pass. The domain-separation
+    // guard (rejectSignedMessageMatching) fails it closed: a bt_payload matching ^[a-f0-9]{20,40}$ is refused.
+    const nonce = "20f9f8ed05f77439fe955c977e4c8a53";
+    const genuineSig = await btSign(PRIVATE_KEY, nonce); // Braintree's own key over the nonce
+    const result = await getAdapterForScheme("braintree")!.verify({
+      rawBody: formBody(`${PUBLIC_KEY}|${genuineSig}`, nonce),
+      headers: HEADERS,
+      secrets: [PRIVATE_KEY],
+      now: NOW,
+    });
+    expect(result.ok).toBe(false); // rejected despite a valid HMAC — the payload is in the oracle domain
+  });
+
+  it("does NOT reject a real (long base64) bt_payload that merely starts with hex chars", async () => {
+    // Regression: real bt_payloads are long base64 XML and never match ^[a-f0-9]{20,40}$ end-to-end, so the
+    // guard must not touch them. PAYLOAD is base64+`\n` (has uppercase / `<`-free but `=`/newline, and >40).
+    const sig = await btSign(PRIVATE_KEY, PAYLOAD);
+    const result = await getAdapterForScheme("braintree")!.verify({
+      rawBody: formBody(`${PUBLIC_KEY}|${sig}`, PAYLOAD),
+      headers: HEADERS,
+      secrets: [PRIVATE_KEY],
+      now: NOW,
+    });
+    expect(result.ok).toBe(true);
+  });
 });

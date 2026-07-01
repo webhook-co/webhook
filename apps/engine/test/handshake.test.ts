@@ -1,8 +1,9 @@
 import { type CachedSealedSecret } from "@webhook-co/db";
-import { serializeVerifyTokenSecret } from "@webhook-co/shared";
+import { serializeBraintreePublicKey, serializeVerifyTokenSecret } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import {
+  braintreeChallengeResponse,
   dispatchGetHandshake,
   dispatchPostHandshake,
   ebayChallengeResponse,
@@ -568,5 +569,109 @@ describe("xCrcResponse — X/Twitter Account Activity CRC (byte-exact gold vecto
     expect(res.headers.get("referrer-policy")).toBe("no-referrer");
     expect(res.headers.get("x-robots-tag")).toBe("noindex");
     expect(await res.json()).toEqual({ response_token: GOLD.responseToken });
+  });
+});
+
+describe("dispatchGetHandshake — Braintree subscription (bt_challenge, public key + private key)", () => {
+  // Braintree's documented gold vector: pk `integration_public_key`, private key `integration_private_key`,
+  // bt_challenge `20f9f8ed05f77439fe955c977e4c8a53` → response body
+  // `integration_public_key|d9b899556c966b3f06945ec21311865d35df3ce4`
+  // (HMAC key = SHA1(private_key) raw bytes; sig = hex(HMAC-SHA1(key, bt_challenge))).
+  const PUBLIC_KEY = "integration_public_key"; // gitleaks:allow — Braintree's public docs vector
+  const PRIVATE_KEY = "integration_private_key"; // gitleaks:allow — Braintree's public docs vector
+  const CHALLENGE = "20f9f8ed05f77439fe955c977e4c8a53";
+  const EXPECTED_SIG = "d9b899556c966b3f06945ec21311865d35df3ce4";
+
+  const btUrl = (challenge: string) =>
+    new URL(`https://wbhk.my/t/braintree?bt_challenge=${challenge}`);
+  // Two braintree secrets under one slug: the public-key blob + the bare private-key signing secret.
+  const btPublicSealed = { provider: "braintree" } as CachedSealedSecret;
+  const btPrivateSealed = { provider: "braintree" } as CachedSealedSecret;
+  const btBlob = new Map<CachedSealedSecret, string>([
+    [btPublicSealed, serializeBraintreePublicKey(PUBLIC_KEY)],
+    [btPrivateSealed, PRIVATE_KEY],
+  ]);
+  const unsealBt = async (c: CachedSealedSecret): Promise<string> => {
+    expect(c.provider).toBe("braintree"); // only unseals braintree secrets
+    return btBlob.get(c)!;
+  };
+
+  it("responds `<public_key>|<hexHMAC-SHA1(SHA1(private_key), bt_challenge)>` — the gold vector", async () => {
+    const res = await dispatchGetHandshake(
+      btUrl(CHALLENGE),
+      hdrs(),
+      [btPublicSealed, btPrivateSealed],
+      unsealBt,
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    expect(res!.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(res!.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res!.text()).toBe(`${PUBLIC_KEY}|${EXPECTED_SIG}`);
+  });
+
+  it("secret ORDER is irrelevant — the blob is the public key regardless of which is unsealed first", async () => {
+    const res = await dispatchGetHandshake(
+      btUrl(CHALLENGE),
+      hdrs(),
+      [btPrivateSealed, btPublicSealed], // reversed
+      unsealBt,
+    );
+    expect(await res!.text()).toBe(`${PUBLIC_KEY}|${EXPECTED_SIG}`);
+  });
+
+  it("ANTI-ORACLE: a non-hex bt_challenge (e.g. a base64 bt_payload) is NOT signed → null → capture", async () => {
+    // The handshake HMACs bt_challenge under the SAME key that signs the POST bt_payload — refuse anything
+    // but a short hex nonce so it can never be coaxed into signing a forged base64 payload.
+    for (const bad of [
+      "eyJraW5kIjoicGF5bWVudCJ9", // base64-ish (has uppercase + is a plausible bt_payload)
+      "abcABC123", // mixed case
+      "20f9f8ed05f77439fe955c977e4c8a5320f9f8ed05f77439fe", // 50 hex chars — too long
+      "deadbeef", // 8 hex chars — too short
+      "not-hex!!",
+    ]) {
+      expect(
+        await dispatchGetHandshake(btUrl(bad), hdrs(), [btPublicSealed, btPrivateSealed], unsealBt),
+      ).toBeNull();
+    }
+  });
+
+  it("returns null when the public key is missing (only the private-key signing secret is stored)", async () => {
+    const res = await dispatchGetHandshake(
+      btUrl(CHALLENGE),
+      hdrs(),
+      [btPrivateSealed],
+      async () => PRIVATE_KEY,
+    );
+    expect(res).toBeNull();
+  });
+
+  it("returns null when the private key is missing (only the public-key blob is stored)", async () => {
+    const res = await dispatchGetHandshake(btUrl(CHALLENGE), hdrs(), [btPublicSealed], async () =>
+      serializeBraintreePublicKey(PUBLIC_KEY),
+    );
+    expect(res).toBeNull();
+  });
+
+  it("returns null when the endpoint has no braintree secret at all", async () => {
+    expect(
+      await dispatchGetHandshake(btUrl(CHALLENGE), hdrs(), NO_SECRETS, unsealNever),
+    ).toBeNull();
+  });
+});
+
+describe("braintreeChallengeResponse — byte-exact gold vector", () => {
+  it("computes `<public_key>|<hexHMAC-SHA1(SHA1(private_key), challenge)>` (independently verified)", async () => {
+    const res = await braintreeChallengeResponse(
+      "integration_public_key", // gitleaks:allow — Braintree's public docs vector
+      "integration_private_key", // gitleaks:allow — Braintree's public docs vector
+      "20f9f8ed05f77439fe955c977e4c8a53",
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/text\/plain/);
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(await res.text()).toBe(
+      "integration_public_key|d9b899556c966b3f06945ec21311865d35df3ce4",
+    );
   });
 });

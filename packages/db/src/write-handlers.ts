@@ -18,7 +18,11 @@ import {
   endpointsRevokeProviderSecret,
   endpointsRotate,
 } from "@webhook-co/contract";
-import { serializeVerifyTokenSecret, type SecretSealer } from "@webhook-co/shared";
+import {
+  serializeBraintreePublicKey,
+  serializeVerifyTokenSecret,
+  type SecretSealer,
+} from "@webhook-co/shared";
 
 import type { Sql } from "./client";
 import type { CredentialHasher } from "./credential";
@@ -219,13 +223,16 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
         endpointId: parsed.data.endpointId,
         provider: parsed.data.provider,
         label: parsed.data.label,
-        // A verify-token (Meta hub.verify_token, ADR-0086) is sealed as a TYPED blob so the engine can
-        // tell it, at unseal, from a signing secret under the same provider slug; a signing secret is
-        // sealed as-is. Both are opaque ciphertext at rest — never persisted/returned as plaintext.
+        // A verify-token (Meta hub.verify_token, ADR-0086) and a braintree public key (bt_challenge
+        // handshake) are each sealed as a TYPED blob so the engine can tell them, at unseal, from a signing
+        // secret under the same provider slug; a signing secret is sealed as-is. All are opaque ciphertext
+        // at rest — never persisted/returned as plaintext.
         plaintext:
           parsed.data.kind === "verify_token"
             ? serializeVerifyTokenSecret(parsed.data.secret)
-            : parsed.data.secret,
+            : parsed.data.kind === "braintree_public_key"
+              ? serializeBraintreePublicKey(parsed.data.secret)
+              : parsed.data.secret,
       },
       sealer,
       { auditKey: deps.auditKey, actor: ctx.userId ?? null }, // wha1 provider_secret.added, in-tx
