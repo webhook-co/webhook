@@ -80,6 +80,9 @@ importers:
       '@webhook-co/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@webhook-co/openapi':
+        specifier: workspace:*
+        version: link:../../packages/openapi
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared
@@ -437,6 +440,25 @@ importers:
       zod:
         specifier: ^4.4.3
         version: 4.4.3
+
+  packages/openapi:
+    dependencies:
+      '@webhook-co/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@webhook-co/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20260701.1
+        version: 4.20260701.1
+      '@redocly/cli':
+        specifier: ^2.5.0
+        version: 2.36.0
 
   packages/portal-sdk: {}
 
@@ -2139,6 +2161,11 @@ packages:
 
   '@radix-ui/rect@1.1.2':
     resolution: {integrity: sha512-xnXE7wG13PI+cxieVssYXlQJuYVRhH9NBoxt3KNwzghDIA69GMm7d4wXRouHIYjE+KvS6U/MsMO73NdS2MH9ZA==}
+
+  '@redocly/cli@2.36.0':
+    resolution: {integrity: sha512-0ky8u/Zzx4zT35rJZY27KOuzXMI29JLt5FMbfzFV7AtVlK3DLjDmJjqprnhqUMJlt04R+FKSXahBZo1dUF6R5A==}
+    engines: {node: '>=22.12.0 || >=20.19.0 <21.0.0', npm: '>=10'}
+    hasBin: true
 
   '@rolldown/binding-android-arm64@1.0.3':
     resolution: {integrity: sha512-454rs7jHngixp/NMxd5srYD57OnzSlZ/eFTETjORQHLwJG1lRtmNOJcBerZlfu4GjKqeq8aCCIQrMdHyhI51Hw==}
@@ -8117,6 +8144,8 @@ snapshots:
       '@types/react': 19.2.17
 
   '@radix-ui/rect@1.1.2': {}
+
+  '@redocly/cli@2.36.0': {}
 
   '@rolldown/binding-android-arm64@1.0.3':
     optional: true

@@ -1,0 +1,4492 @@
+{
+  "openapi": "3.1.0",
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "info": {
+    "title": "webhook.co API",
+    "version": "1.0.0",
+    "description": "The webhook.co REST API: create ingest endpoints, inspect captured events, manage delivery destinations and subscriptions, and replay events. All requests are authenticated with a bearer `whk_` API key. Responses are JSON; every successful response is HTTP 200. Errors use a JSON `{error, message}` envelope, except 401/403 which are empty-bodied with a WWW-Authenticate header.",
+    "license": {
+      "name": "Apache-2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.webhook.co",
+      "description": "Production"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Endpoints",
+      "description": "Create, inspect, and manage ingest endpoints and their secrets."
+    },
+    {
+      "name": "Events",
+      "description": "Browse, fetch, tail, and replay captured events."
+    },
+    {
+      "name": "Deliveries",
+      "description": "Observe outbound delivery attempts."
+    },
+    {
+      "name": "Replay Destinations",
+      "description": "Manage the allowlist of remote delivery destinations."
+    },
+    {
+      "name": "Subscriptions",
+      "description": "Configure auto-delivery routing rules."
+    },
+    {
+      "name": "Audit",
+      "description": "Verify the tamper-evident audit chain."
+    },
+    {
+      "name": "Identity",
+      "description": "Inspect the authenticated principal."
+    }
+  ],
+  "paths": {
+    "/v1/endpoints": {
+      "get": {
+        "operationId": "endpointsList",
+        "summary": "List endpoints",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndpointsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque keyset cursor from a prior page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Max items to return (1–200, default 50).",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive substring name filter (empty = no filter).",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "endpointsCreate",
+        "summary": "Create an endpoint (returns the one-time ingest URL)",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedEndpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndpointsCreateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/endpoints/{endpointId}": {
+      "get": {
+        "operationId": "endpointsGet",
+        "summary": "Get an endpoint",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "endpointsDelete",
+        "summary": "Soft-delete an endpoint (idempotent)",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedEndpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/endpoints/{endpointId}/rotate": {
+      "post": {
+        "operationId": "endpointsRotate",
+        "summary": "Rotate an endpoint's ingest token (returns a new one-time ingest URL)",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedEndpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/endpoints/{endpointId}/provider-secrets": {
+      "post": {
+        "operationId": "endpointsAddProviderSecret",
+        "summary": "Add a provider signing/verification secret to an endpoint",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddedProviderSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndpointsAddProviderSecretRequest"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "endpointsListProviderSecrets",
+        "summary": "List an endpoint's provider secrets (metadata only)",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EndpointsListProviderSecretsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/endpoints/{endpointId}/provider-secrets/{secretId}": {
+      "delete": {
+        "operationId": "endpointsRevokeProviderSecret",
+        "summary": "Revoke a provider secret",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokedProviderSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "secretId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/endpoints/{endpointId}/events": {
+      "get": {
+        "operationId": "eventsList",
+        "summary": "List captured events for an endpoint",
+        "tags": [
+          "Events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque keyset cursor from a prior page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Max items to return (1–200, default 50).",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "description": "Filter by provider (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "stripe",
+                  "github",
+                  "shopify",
+                  "slack",
+                  "standard_webhooks",
+                  "clerk",
+                  "resend",
+                  "stytch",
+                  "supabase",
+                  "render",
+                  "brex",
+                  "openai",
+                  "replicate",
+                  "polar",
+                  "gemini",
+                  "incident_io",
+                  "etsy",
+                  "vanta",
+                  "pusher",
+                  "quickbooks",
+                  "chargify",
+                  "launchdarkly",
+                  "modern_treasury",
+                  "autodesk_aps",
+                  "mongodb_atlas",
+                  "xero",
+                  "segment",
+                  "aftership",
+                  "onfleet",
+                  "webflow",
+                  "klaviyo",
+                  "mux",
+                  "shippo",
+                  "buildkite",
+                  "ms_teams",
+                  "ably",
+                  "squarespace",
+                  "nylas",
+                  "linkedin",
+                  "tiktok",
+                  "airship",
+                  "lob",
+                  "persona",
+                  "bolt",
+                  "primer",
+                  "airwallex",
+                  "affirm",
+                  "keygen",
+                  "constant_contact",
+                  "telegram",
+                  "mixpanel",
+                  "new_relic",
+                  "fillout",
+                  "zapier",
+                  "tally",
+                  "loops",
+                  "customer_io",
+                  "framer",
+                  "box",
+                  "configcat",
+                  "ashby",
+                  "merge_dev",
+                  "cronofy",
+                  "increase",
+                  "finch",
+                  "knock",
+                  "deel",
+                  "razorpay",
+                  "sentry",
+                  "linear",
+                  "dropbox",
+                  "checkout_com",
+                  "lemon_squeezy",
+                  "coinbase_commerce",
+                  "dwolla",
+                  "gocardless",
+                  "notion",
+                  "meta",
+                  "woocommerce",
+                  "bitbucket",
+                  "atlassian_jira",
+                  "x",
+                  "clickup",
+                  "npm",
+                  "heroku",
+                  "dub",
+                  "cal_com",
+                  "asana",
+                  "circleci",
+                  "pagerduty",
+                  "airtable",
+                  "calendly",
+                  "zoom",
+                  "customerio",
+                  "sinch",
+                  "workos",
+                  "front",
+                  "zendesk",
+                  "twitch",
+                  "paddle",
+                  "recurly",
+                  "docusign",
+                  "vercel",
+                  "intercom",
+                  "paystack",
+                  "authorize_net",
+                  "sanity",
+                  "square",
+                  "trello",
+                  "twilio",
+                  "mandrill",
+                  "hubspot",
+                  "adyen",
+                  "mailgun",
+                  "mercado_pago",
+                  "braintree",
+                  "contentful",
+                  "plivo",
+                  "typeform",
+                  "messagebird",
+                  "netlify",
+                  "vonage",
+                  "monday",
+                  "jira_connect",
+                  "discord",
+                  "telnyx",
+                  "sendgrid",
+                  "wise",
+                  "kinde",
+                  "paypal",
+                  "aws_sns",
+                  "plaid",
+                  "ebay",
+                  "gitlab",
+                  "microsoft_graph",
+                  "chargebee",
+                  "postmark",
+                  "sparkpost",
+                  "okta",
+                  "bigcommerce",
+                  "datadog",
+                  "brevo"
+                ]
+              }
+            }
+          },
+          {
+            "name": "verificationState",
+            "in": "query",
+            "required": false,
+            "description": "Filter by verification state: verified | failed | unattempted (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "verified",
+                  "authenticated",
+                  "failed",
+                  "unattempted"
+                ]
+              }
+            }
+          },
+          {
+            "name": "receivedAfter",
+            "in": "query",
+            "required": false,
+            "description": "Inclusive lower bound (RFC 3339 instant).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "receivedBefore",
+            "in": "query",
+            "required": false,
+            "description": "Exclusive upper bound (RFC 3339 instant).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "required": false,
+            "description": "Case-insensitive substring across id fields + header names/values.",
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        ]
+      }
+    },
+    "/v1/endpoints/{endpointId}/events/tail": {
+      "get": {
+        "operationId": "eventsTail",
+        "summary": "Pull a watermark-bounded forward page of events (cursor-pull tail)",
+        "tags": [
+          "Events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsTailResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "sinceCursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor to resume from (mutually exclusive with since).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "required": false,
+            "description": "Server-resolved grammar: now | beginning | <duration> | <RFC3339>.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/events/{eventId}": {
+      "get": {
+        "operationId": "eventsGet",
+        "summary": "Get a captured event",
+        "tags": [
+          "Events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Event"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/events/{eventId}/payload": {
+      "get": {
+        "operationId": "eventsGetPayload",
+        "summary": "Get a captured event's raw payload (base64 envelope)",
+        "tags": [
+          "Events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventsGetPayloadResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/events/{eventId}/replay": {
+      "post": {
+        "operationId": "eventsReplay",
+        "summary": "Replay an event to a target (records a delivery attempt)",
+        "tags": [
+          "Events"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveryAttempt"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          }
+        },
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventsReplayRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/audit/verify": {
+      "post": {
+        "operationId": "auditVerify",
+        "summary": "Verify the org's tamper-evident audit chain",
+        "tags": [
+          "Audit"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditVerifyResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/v1/deliveries": {
+      "get": {
+        "operationId": "deliveriesList",
+        "summary": "List outbound delivery attempts",
+        "tags": [
+          "Deliveries"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeliveriesListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque keyset cursor from a prior page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Max items to return (1–200, default 50).",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 200
+            }
+          },
+          {
+            "name": "destinationId",
+            "in": "query",
+            "required": false,
+            "description": "Filter by destination (empty = no filter).",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "subscriptionId",
+            "in": "query",
+            "required": false,
+            "description": "Filter by subscription (empty = no filter).",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "Filter by delivery status (repeatable).",
+            "style": "form",
+            "explode": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "queued",
+                  "forwarded",
+                  "pending",
+                  "delivered",
+                  "failed",
+                  "blocked",
+                  "dead",
+                  "cancelled"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "/v1/deliveries/{deliveryId}": {
+      "get": {
+        "operationId": "deliveriesGet",
+        "summary": "Get a delivery attempt",
+        "tags": [
+          "Deliveries"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delivery"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "deliveryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/replay-destinations": {
+      "get": {
+        "operationId": "replayDestinationsList",
+        "summary": "List replay destinations (the SSRF-egress allowlist)",
+        "tags": [
+          "Replay Destinations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDestinationsListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "replayDestinationsCreate",
+        "summary": "Register a replay destination (returns a one-time signing secret)",
+        "tags": [
+          "Replay Destinations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedReplayDestination"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplayDestinationsCreateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/replay-destinations/{destinationId}": {
+      "delete": {
+        "operationId": "replayDestinationsDelete",
+        "summary": "Soft-delete a replay destination",
+        "tags": [
+          "Replay Destinations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDestinationDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "destinationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/replay-destinations/{destinationId}/enable": {
+      "post": {
+        "operationId": "replayDestinationsEnable",
+        "summary": "Re-enable an auto-disabled replay destination",
+        "tags": [
+          "Replay Destinations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDestination"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "destinationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/replay-destinations/{destinationId}/ordered": {
+      "post": {
+        "operationId": "replayDestinationsSetOrdered",
+        "summary": "Toggle strict-FIFO delivery for a destination",
+        "tags": [
+          "Replay Destinations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDestination"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "destinationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplayDestinationsSetOrderedRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/replay-destinations/{destinationId}/signing-secret": {
+      "post": {
+        "operationId": "replayDestinationsRotateSigningSecret",
+        "summary": "Rotate a destination's signing secret (returns the new one-time secret)",
+        "tags": [
+          "Replay Destinations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RotatedSigningSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "destinationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/replay-destinations/{destinationId}/signing-secrets": {
+      "get": {
+        "operationId": "replayDestinationsListSigningSecrets",
+        "summary": "List a destination's signing-secret metadata",
+        "tags": [
+          "Replay Destinations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayDestinationsListSigningSecretsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "destinationId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/subscriptions": {
+      "get": {
+        "operationId": "subscriptionsList",
+        "summary": "List auto-delivery subscriptions",
+        "tags": [
+          "Subscriptions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "sourceEndpointId",
+            "in": "query",
+            "required": false,
+            "description": "Filter by source endpoint (empty = no filter).",
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "subscriptionsCreate",
+        "summary": "Create (upsert) an auto-delivery subscription",
+        "tags": [
+          "Subscriptions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Subscription"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubscriptionsCreateRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/subscriptions/{subscriptionId}": {
+      "delete": {
+        "operationId": "subscriptionsDelete",
+        "summary": "Delete an auto-delivery subscription",
+        "tags": [
+          "Subscriptions"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "subscriptionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ]
+      }
+    },
+    "/v1/whoami": {
+      "get": {
+        "operationId": "whoami",
+        "summary": "Return the authenticated principal (org, scopes, optional user)",
+        "tags": [
+          "Identity"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthContext"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque",
+        "description": "A `whk_`-prefixed API key (opaque; not a JWT)."
+      }
+    },
+    "responses": {
+      "Unauthorized": {
+        "description": "Missing or invalid bearer credential. Empty body; the WWW-Authenticate header carries the challenge.",
+        "headers": {
+          "WWW-Authenticate": {
+            "description": "RFC 6750 Bearer challenge.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "The credential is valid but lacks the required scope. Empty body; WWW-Authenticate carries the challenge.",
+        "headers": {
+          "WWW-Authenticate": {
+            "description": "RFC 6750 Bearer challenge.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BadRequest": {
+        "description": "The request failed validation.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "The referenced resource was not found.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "The request conflicts with the resource's current state.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "A rate limit or soft cap was exceeded.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "BadGateway": {
+        "description": "The delivery target was unreachable.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "InternalError": {
+        "description": "An unexpected server error. The body is a plain-text sentinel.",
+        "content": {
+          "text/plain": {
+            "schema": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Endpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "name",
+          "paused",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "CreatedEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ingestUrl": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "name",
+          "paused",
+          "createdAt",
+          "ingestUrl"
+        ],
+        "additionalProperties": false
+      },
+      "DeletedEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "deletedAt"
+        ],
+        "additionalProperties": false
+      },
+      "EventSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "endpointId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dedupKey": {
+            "type": "string"
+          },
+          "dedupStrategy": {
+            "type": "string",
+            "enum": [
+              "sw_webhook_id",
+              "provider_event_id",
+              "content_hash"
+            ]
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "verificationState": {
+            "$ref": "#/components/schemas/VerificationState"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "endpointId",
+          "receivedAt",
+          "provider",
+          "dedupKey",
+          "dedupStrategy",
+          "verified"
+        ],
+        "additionalProperties": false
+      },
+      "Event": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "endpointId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "receivedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Provider"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "dedupKey": {
+            "type": "string"
+          },
+          "dedupStrategy": {
+            "type": "string",
+            "enum": [
+              "sw_webhook_id",
+              "provider_event_id",
+              "content_hash"
+            ]
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "verificationState": {
+            "$ref": "#/components/schemas/VerificationState"
+          },
+          "payloadR2Key": {
+            "type": "string"
+          },
+          "payloadBytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "contentType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "headers": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "providerEventId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "externalId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verification": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerificationResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "endpointId",
+          "receivedAt",
+          "provider",
+          "dedupKey",
+          "dedupStrategy",
+          "verified",
+          "payloadR2Key",
+          "payloadBytes",
+          "contentType",
+          "headers",
+          "providerEventId",
+          "externalId",
+          "verification"
+        ],
+        "additionalProperties": false
+      },
+      "AddedProviderSecret": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/Provider"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "retiring",
+              "revoked"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "status"
+        ],
+        "additionalProperties": false
+      },
+      "ProviderSecretSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "provider": {
+            "$ref": "#/components/schemas/Provider"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "retiring",
+              "revoked"
+            ]
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "provider",
+          "status",
+          "label",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "RevokedProviderSecret": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "revokedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "revokedAt"
+        ],
+        "additionalProperties": false
+      },
+      "DeliveryAttempt": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "target": {
+            "type": "string"
+          },
+          "idempotencyKey": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeliveryStatus"
+          },
+          "statusCode": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempt": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "eventId",
+          "target",
+          "idempotencyKey",
+          "status",
+          "statusCode",
+          "attempt",
+          "error",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "Delivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "eventId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "destinationId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "subscriptionId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/DeliveryStatus"
+          },
+          "statusCode": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "attempt": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "nextRetryAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "eventId",
+          "destinationId",
+          "subscriptionId",
+          "status",
+          "statusCode",
+          "attempt",
+          "error",
+          "nextRetryAt",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "ReplayDestination": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "url": {
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "revoked"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastValidatedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ordered": {
+            "type": "boolean"
+          },
+          "disabledAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "url",
+          "label",
+          "status",
+          "createdAt",
+          "lastValidatedAt",
+          "ordered",
+          "disabledAt"
+        ],
+        "additionalProperties": false
+      },
+      "CreatedReplayDestination": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "url": {
+            "type": "string"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "revoked"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastValidatedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ordered": {
+            "type": "boolean"
+          },
+          "disabledAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "signingSecret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "url",
+          "label",
+          "status",
+          "createdAt",
+          "lastValidatedAt",
+          "ordered",
+          "disabledAt"
+        ],
+        "additionalProperties": false
+      },
+      "ReplayDestinationDeleted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "deletedAt"
+        ],
+        "additionalProperties": false
+      },
+      "RotatedSigningSecret": {
+        "type": "object",
+        "properties": {
+          "destinationId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "keyId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "signingSecret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "destinationId",
+          "keyId",
+          "signingSecret"
+        ],
+        "additionalProperties": false
+      },
+      "SigningSecretMetadata": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "retiring",
+              "revoked"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "createdAt"
+        ],
+        "additionalProperties": false
+      },
+      "Subscription": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "orgId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "sourceEndpointId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "destinationId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eventTypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requireVerified": {
+            "type": "boolean"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "id",
+          "orgId",
+          "sourceEndpointId",
+          "destinationId",
+          "provider",
+          "eventTypes",
+          "requireVerified",
+          "enabled",
+          "createdAt",
+          "updatedAt"
+        ],
+        "additionalProperties": false
+      },
+      "SubscriptionDeleted": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      },
+      "AuthContext": {
+        "type": "object",
+        "properties": {
+          "orgId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "userId": {
+            "type": "string"
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "orgId",
+          "scopes"
+        ],
+        "additionalProperties": false
+      },
+      "Provider": {
+        "type": "string",
+        "enum": [
+          "stripe",
+          "github",
+          "shopify",
+          "slack",
+          "standard_webhooks",
+          "clerk",
+          "resend",
+          "stytch",
+          "supabase",
+          "render",
+          "brex",
+          "openai",
+          "replicate",
+          "polar",
+          "gemini",
+          "incident_io",
+          "etsy",
+          "vanta",
+          "pusher",
+          "quickbooks",
+          "chargify",
+          "launchdarkly",
+          "modern_treasury",
+          "autodesk_aps",
+          "mongodb_atlas",
+          "xero",
+          "segment",
+          "aftership",
+          "onfleet",
+          "webflow",
+          "klaviyo",
+          "mux",
+          "shippo",
+          "buildkite",
+          "ms_teams",
+          "ably",
+          "squarespace",
+          "nylas",
+          "linkedin",
+          "tiktok",
+          "airship",
+          "lob",
+          "persona",
+          "bolt",
+          "primer",
+          "airwallex",
+          "affirm",
+          "keygen",
+          "constant_contact",
+          "telegram",
+          "mixpanel",
+          "new_relic",
+          "fillout",
+          "zapier",
+          "tally",
+          "loops",
+          "customer_io",
+          "framer",
+          "box",
+          "configcat",
+          "ashby",
+          "merge_dev",
+          "cronofy",
+          "increase",
+          "finch",
+          "knock",
+          "deel",
+          "razorpay",
+          "sentry",
+          "linear",
+          "dropbox",
+          "checkout_com",
+          "lemon_squeezy",
+          "coinbase_commerce",
+          "dwolla",
+          "gocardless",
+          "notion",
+          "meta",
+          "woocommerce",
+          "bitbucket",
+          "atlassian_jira",
+          "x",
+          "clickup",
+          "npm",
+          "heroku",
+          "dub",
+          "cal_com",
+          "asana",
+          "circleci",
+          "pagerduty",
+          "airtable",
+          "calendly",
+          "zoom",
+          "customerio",
+          "sinch",
+          "workos",
+          "front",
+          "zendesk",
+          "twitch",
+          "paddle",
+          "recurly",
+          "docusign",
+          "vercel",
+          "intercom",
+          "paystack",
+          "authorize_net",
+          "sanity",
+          "square",
+          "trello",
+          "twilio",
+          "mandrill",
+          "hubspot",
+          "adyen",
+          "mailgun",
+          "mercado_pago",
+          "braintree",
+          "contentful",
+          "plivo",
+          "typeform",
+          "messagebird",
+          "netlify",
+          "vonage",
+          "monday",
+          "jira_connect",
+          "discord",
+          "telnyx",
+          "sendgrid",
+          "wise",
+          "kinde",
+          "paypal",
+          "aws_sns",
+          "plaid",
+          "ebay",
+          "gitlab",
+          "microsoft_graph",
+          "chargebee",
+          "postmark",
+          "sparkpost",
+          "okta",
+          "bigcommerce",
+          "datadog",
+          "brevo"
+        ]
+      },
+      "VerificationState": {
+        "type": "string",
+        "enum": [
+          "verified",
+          "authenticated",
+          "failed",
+          "unattempted"
+        ]
+      },
+      "DeliveryStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "forwarded",
+          "pending",
+          "delivered",
+          "failed",
+          "blocked",
+          "dead",
+          "cancelled"
+        ]
+      },
+      "VerificationResult": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "keyId": {
+                "type": "string"
+              },
+              "scheme": {
+                "type": "string",
+                "enum": [
+                  "stripe",
+                  "github",
+                  "shopify",
+                  "slack",
+                  "standard_webhooks",
+                  "clerk",
+                  "resend",
+                  "stytch",
+                  "supabase",
+                  "render",
+                  "brex",
+                  "openai",
+                  "replicate",
+                  "polar",
+                  "gemini",
+                  "incident_io",
+                  "etsy",
+                  "vanta",
+                  "pusher",
+                  "quickbooks",
+                  "chargify",
+                  "launchdarkly",
+                  "modern_treasury",
+                  "autodesk_aps",
+                  "mongodb_atlas",
+                  "xero",
+                  "segment",
+                  "aftership",
+                  "onfleet",
+                  "webflow",
+                  "klaviyo",
+                  "mux",
+                  "shippo",
+                  "buildkite",
+                  "ms_teams",
+                  "ably",
+                  "squarespace",
+                  "nylas",
+                  "linkedin",
+                  "tiktok",
+                  "airship",
+                  "lob",
+                  "persona",
+                  "bolt",
+                  "primer",
+                  "airwallex",
+                  "affirm",
+                  "keygen",
+                  "constant_contact",
+                  "telegram",
+                  "mixpanel",
+                  "new_relic",
+                  "fillout",
+                  "zapier",
+                  "tally",
+                  "loops",
+                  "customer_io",
+                  "framer",
+                  "box",
+                  "configcat",
+                  "ashby",
+                  "merge_dev",
+                  "cronofy",
+                  "increase",
+                  "finch",
+                  "knock",
+                  "deel",
+                  "razorpay",
+                  "sentry",
+                  "linear",
+                  "dropbox",
+                  "checkout_com",
+                  "lemon_squeezy",
+                  "coinbase_commerce",
+                  "dwolla",
+                  "gocardless",
+                  "notion",
+                  "meta",
+                  "woocommerce",
+                  "bitbucket",
+                  "atlassian_jira",
+                  "x",
+                  "clickup",
+                  "npm",
+                  "heroku",
+                  "dub",
+                  "cal_com",
+                  "asana",
+                  "circleci",
+                  "pagerduty",
+                  "airtable",
+                  "calendly",
+                  "zoom",
+                  "customerio",
+                  "sinch",
+                  "workos",
+                  "front",
+                  "zendesk",
+                  "twitch",
+                  "paddle",
+                  "recurly",
+                  "docusign",
+                  "vercel",
+                  "intercom",
+                  "paystack",
+                  "authorize_net",
+                  "sanity",
+                  "square",
+                  "trello",
+                  "twilio",
+                  "mandrill",
+                  "hubspot",
+                  "adyen",
+                  "mailgun",
+                  "mercado_pago",
+                  "braintree",
+                  "contentful",
+                  "plivo",
+                  "typeform",
+                  "messagebird",
+                  "netlify",
+                  "vonage",
+                  "monday",
+                  "jira_connect",
+                  "discord",
+                  "telnyx",
+                  "sendgrid",
+                  "wise",
+                  "kinde",
+                  "paypal",
+                  "aws_sns",
+                  "plaid",
+                  "ebay",
+                  "gitlab",
+                  "microsoft_graph",
+                  "chargebee",
+                  "postmark",
+                  "sparkpost",
+                  "okta",
+                  "bigcommerce",
+                  "datadog",
+                  "brevo",
+                  "unknown"
+                ]
+              },
+              "authenticity": {
+                "type": "string",
+                "enum": [
+                  "token",
+                  "basic"
+                ]
+              }
+            },
+            "required": [
+              "ok",
+              "keyId",
+              "scheme"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": false
+              },
+              "reason": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "MISSING_HEADER"
+                      },
+                      "header": {
+                        "type": "string"
+                      },
+                      "scheme": {
+                        "type": "string",
+                        "enum": [
+                          "stripe",
+                          "github",
+                          "shopify",
+                          "slack",
+                          "standard_webhooks",
+                          "clerk",
+                          "resend",
+                          "stytch",
+                          "supabase",
+                          "render",
+                          "brex",
+                          "openai",
+                          "replicate",
+                          "polar",
+                          "gemini",
+                          "incident_io",
+                          "etsy",
+                          "vanta",
+                          "pusher",
+                          "quickbooks",
+                          "chargify",
+                          "launchdarkly",
+                          "modern_treasury",
+                          "autodesk_aps",
+                          "mongodb_atlas",
+                          "xero",
+                          "segment",
+                          "aftership",
+                          "onfleet",
+                          "webflow",
+                          "klaviyo",
+                          "mux",
+                          "shippo",
+                          "buildkite",
+                          "ms_teams",
+                          "ably",
+                          "squarespace",
+                          "nylas",
+                          "linkedin",
+                          "tiktok",
+                          "airship",
+                          "lob",
+                          "persona",
+                          "bolt",
+                          "primer",
+                          "airwallex",
+                          "affirm",
+                          "keygen",
+                          "constant_contact",
+                          "telegram",
+                          "mixpanel",
+                          "new_relic",
+                          "fillout",
+                          "zapier",
+                          "tally",
+                          "loops",
+                          "customer_io",
+                          "framer",
+                          "box",
+                          "configcat",
+                          "ashby",
+                          "merge_dev",
+                          "cronofy",
+                          "increase",
+                          "finch",
+                          "knock",
+                          "deel",
+                          "razorpay",
+                          "sentry",
+                          "linear",
+                          "dropbox",
+                          "checkout_com",
+                          "lemon_squeezy",
+                          "coinbase_commerce",
+                          "dwolla",
+                          "gocardless",
+                          "notion",
+                          "meta",
+                          "woocommerce",
+                          "bitbucket",
+                          "atlassian_jira",
+                          "x",
+                          "clickup",
+                          "npm",
+                          "heroku",
+                          "dub",
+                          "cal_com",
+                          "asana",
+                          "circleci",
+                          "pagerduty",
+                          "airtable",
+                          "calendly",
+                          "zoom",
+                          "customerio",
+                          "sinch",
+                          "workos",
+                          "front",
+                          "zendesk",
+                          "twitch",
+                          "paddle",
+                          "recurly",
+                          "docusign",
+                          "vercel",
+                          "intercom",
+                          "paystack",
+                          "authorize_net",
+                          "sanity",
+                          "square",
+                          "trello",
+                          "twilio",
+                          "mandrill",
+                          "hubspot",
+                          "adyen",
+                          "mailgun",
+                          "mercado_pago",
+                          "braintree",
+                          "contentful",
+                          "plivo",
+                          "typeform",
+                          "messagebird",
+                          "netlify",
+                          "vonage",
+                          "monday",
+                          "jira_connect",
+                          "discord",
+                          "telnyx",
+                          "sendgrid",
+                          "wise",
+                          "kinde",
+                          "paypal",
+                          "aws_sns",
+                          "plaid",
+                          "ebay",
+                          "gitlab",
+                          "microsoft_graph",
+                          "chargebee",
+                          "postmark",
+                          "sparkpost",
+                          "okta",
+                          "bigcommerce",
+                          "datadog",
+                          "brevo",
+                          "unknown"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "header",
+                      "scheme"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "MALFORMED_SIGNATURE"
+                      },
+                      "detail": {
+                        "type": "string"
+                      },
+                      "scheme": {
+                        "type": "string",
+                        "enum": [
+                          "stripe",
+                          "github",
+                          "shopify",
+                          "slack",
+                          "standard_webhooks",
+                          "clerk",
+                          "resend",
+                          "stytch",
+                          "supabase",
+                          "render",
+                          "brex",
+                          "openai",
+                          "replicate",
+                          "polar",
+                          "gemini",
+                          "incident_io",
+                          "etsy",
+                          "vanta",
+                          "pusher",
+                          "quickbooks",
+                          "chargify",
+                          "launchdarkly",
+                          "modern_treasury",
+                          "autodesk_aps",
+                          "mongodb_atlas",
+                          "xero",
+                          "segment",
+                          "aftership",
+                          "onfleet",
+                          "webflow",
+                          "klaviyo",
+                          "mux",
+                          "shippo",
+                          "buildkite",
+                          "ms_teams",
+                          "ably",
+                          "squarespace",
+                          "nylas",
+                          "linkedin",
+                          "tiktok",
+                          "airship",
+                          "lob",
+                          "persona",
+                          "bolt",
+                          "primer",
+                          "airwallex",
+                          "affirm",
+                          "keygen",
+                          "constant_contact",
+                          "telegram",
+                          "mixpanel",
+                          "new_relic",
+                          "fillout",
+                          "zapier",
+                          "tally",
+                          "loops",
+                          "customer_io",
+                          "framer",
+                          "box",
+                          "configcat",
+                          "ashby",
+                          "merge_dev",
+                          "cronofy",
+                          "increase",
+                          "finch",
+                          "knock",
+                          "deel",
+                          "razorpay",
+                          "sentry",
+                          "linear",
+                          "dropbox",
+                          "checkout_com",
+                          "lemon_squeezy",
+                          "coinbase_commerce",
+                          "dwolla",
+                          "gocardless",
+                          "notion",
+                          "meta",
+                          "woocommerce",
+                          "bitbucket",
+                          "atlassian_jira",
+                          "x",
+                          "clickup",
+                          "npm",
+                          "heroku",
+                          "dub",
+                          "cal_com",
+                          "asana",
+                          "circleci",
+                          "pagerduty",
+                          "airtable",
+                          "calendly",
+                          "zoom",
+                          "customerio",
+                          "sinch",
+                          "workos",
+                          "front",
+                          "zendesk",
+                          "twitch",
+                          "paddle",
+                          "recurly",
+                          "docusign",
+                          "vercel",
+                          "intercom",
+                          "paystack",
+                          "authorize_net",
+                          "sanity",
+                          "square",
+                          "trello",
+                          "twilio",
+                          "mandrill",
+                          "hubspot",
+                          "adyen",
+                          "mailgun",
+                          "mercado_pago",
+                          "braintree",
+                          "contentful",
+                          "plivo",
+                          "typeform",
+                          "messagebird",
+                          "netlify",
+                          "vonage",
+                          "monday",
+                          "jira_connect",
+                          "discord",
+                          "telnyx",
+                          "sendgrid",
+                          "wise",
+                          "kinde",
+                          "paypal",
+                          "aws_sns",
+                          "plaid",
+                          "ebay",
+                          "gitlab",
+                          "microsoft_graph",
+                          "chargebee",
+                          "postmark",
+                          "sparkpost",
+                          "okta",
+                          "bigcommerce",
+                          "datadog",
+                          "brevo",
+                          "unknown"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "detail",
+                      "scheme"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "UNSUPPORTED_SCHEME"
+                      },
+                      "observedHeaders": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "observedHeaders"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "KEY_FETCH_FAILED"
+                      },
+                      "scheme": {
+                        "type": "string",
+                        "enum": [
+                          "stripe",
+                          "github",
+                          "shopify",
+                          "slack",
+                          "standard_webhooks",
+                          "clerk",
+                          "resend",
+                          "stytch",
+                          "supabase",
+                          "render",
+                          "brex",
+                          "openai",
+                          "replicate",
+                          "polar",
+                          "gemini",
+                          "incident_io",
+                          "etsy",
+                          "vanta",
+                          "pusher",
+                          "quickbooks",
+                          "chargify",
+                          "launchdarkly",
+                          "modern_treasury",
+                          "autodesk_aps",
+                          "mongodb_atlas",
+                          "xero",
+                          "segment",
+                          "aftership",
+                          "onfleet",
+                          "webflow",
+                          "klaviyo",
+                          "mux",
+                          "shippo",
+                          "buildkite",
+                          "ms_teams",
+                          "ably",
+                          "squarespace",
+                          "nylas",
+                          "linkedin",
+                          "tiktok",
+                          "airship",
+                          "lob",
+                          "persona",
+                          "bolt",
+                          "primer",
+                          "airwallex",
+                          "affirm",
+                          "keygen",
+                          "constant_contact",
+                          "telegram",
+                          "mixpanel",
+                          "new_relic",
+                          "fillout",
+                          "zapier",
+                          "tally",
+                          "loops",
+                          "customer_io",
+                          "framer",
+                          "box",
+                          "configcat",
+                          "ashby",
+                          "merge_dev",
+                          "cronofy",
+                          "increase",
+                          "finch",
+                          "knock",
+                          "deel",
+                          "razorpay",
+                          "sentry",
+                          "linear",
+                          "dropbox",
+                          "checkout_com",
+                          "lemon_squeezy",
+                          "coinbase_commerce",
+                          "dwolla",
+                          "gocardless",
+                          "notion",
+                          "meta",
+                          "woocommerce",
+                          "bitbucket",
+                          "atlassian_jira",
+                          "x",
+                          "clickup",
+                          "npm",
+                          "heroku",
+                          "dub",
+                          "cal_com",
+                          "asana",
+                          "circleci",
+                          "pagerduty",
+                          "airtable",
+                          "calendly",
+                          "zoom",
+                          "customerio",
+                          "sinch",
+                          "workos",
+                          "front",
+                          "zendesk",
+                          "twitch",
+                          "paddle",
+                          "recurly",
+                          "docusign",
+                          "vercel",
+                          "intercom",
+                          "paystack",
+                          "authorize_net",
+                          "sanity",
+                          "square",
+                          "trello",
+                          "twilio",
+                          "mandrill",
+                          "hubspot",
+                          "adyen",
+                          "mailgun",
+                          "mercado_pago",
+                          "braintree",
+                          "contentful",
+                          "plivo",
+                          "typeform",
+                          "messagebird",
+                          "netlify",
+                          "vonage",
+                          "monday",
+                          "jira_connect",
+                          "discord",
+                          "telnyx",
+                          "sendgrid",
+                          "wise",
+                          "kinde",
+                          "paypal",
+                          "aws_sns",
+                          "plaid",
+                          "ebay",
+                          "gitlab",
+                          "microsoft_graph",
+                          "chargebee",
+                          "postmark",
+                          "sparkpost",
+                          "okta",
+                          "bigcommerce",
+                          "datadog",
+                          "brevo",
+                          "unknown"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "scheme"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "TIMESTAMP_TOO_OLD"
+                      },
+                      "skewSeconds": {
+                        "type": "number"
+                      },
+                      "toleranceSeconds": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "skewSeconds",
+                      "toleranceSeconds"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "TIMESTAMP_IN_FUTURE"
+                      },
+                      "skewSeconds": {
+                        "type": "number"
+                      },
+                      "toleranceSeconds": {
+                        "type": "number"
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "skewSeconds",
+                      "toleranceSeconds"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "NO_MATCHING_KEY"
+                      },
+                      "keysTried": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "keysTried"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "WRONG_SECRET"
+                      },
+                      "confidence": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "confidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "RAW_BODY_MODIFIED"
+                      },
+                      "confidence": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium"
+                        ]
+                      },
+                      "evidence": {
+                        "type": "string",
+                        "enum": [
+                          "trailing_whitespace",
+                          "reencoded_json"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "confidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "PROXY_MUTATED_BYTES"
+                      },
+                      "confidence": {
+                        "type": "string",
+                        "enum": [
+                          "low",
+                          "medium"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "code",
+                      "confidence"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "code": {
+                        "type": "string",
+                        "const": "SIGNATURE_MISMATCH"
+                      }
+                    },
+                    "required": [
+                      "code"
+                    ],
+                    "additionalProperties": false
+                  }
+                ]
+              }
+            },
+            "required": [
+              "ok",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "EndpointsListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Endpoint"
+            }
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "EndpointsListProviderSecretsResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderSecretSummary"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "EventsListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventSummary"
+            }
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "headCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "EventsGetPayloadResponse": {
+        "type": "object",
+        "properties": {
+          "contentType": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "bodyBase64": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "contentType",
+          "bytes",
+          "bodyBase64"
+        ],
+        "additionalProperties": false
+      },
+      "EventsTailResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventSummary"
+            }
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "headCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "caughtUp": {
+            "type": "boolean"
+          },
+          "lag": {
+            "type": "object",
+            "properties": {
+              "backlogCount": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "headLagMs": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "backlogCount"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "AuditVerifyResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": true
+              },
+              "rowsVerified": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "ok",
+              "rowsVerified"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean",
+                "const": false
+              },
+              "rowsVerified": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "break": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "wrong_org",
+                      "bad_genesis_seq",
+                      "bad_genesis_prev_hash",
+                      "duplicate_seq",
+                      "seq_gap",
+                      "broken_link",
+                      "hash_mismatch"
+                    ]
+                  },
+                  "seq": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "detail": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "seq",
+                  "detail"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "ok",
+              "rowsVerified",
+              "break"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "ReplayDestinationsListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReplayDestination"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "ReplayDestinationsListSigningSecretsResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SigningSecretMetadata"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "SubscriptionsListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Subscription"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "DeliveriesListResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Delivery"
+            }
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "additionalProperties": false
+      },
+      "EndpointsCreateRequest": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "EndpointsAddProviderSecretRequest": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "stripe",
+              "github",
+              "shopify",
+              "slack",
+              "standard_webhooks",
+              "clerk",
+              "resend",
+              "stytch",
+              "supabase",
+              "render",
+              "brex",
+              "openai",
+              "replicate",
+              "polar",
+              "gemini",
+              "incident_io",
+              "etsy",
+              "vanta",
+              "pusher",
+              "quickbooks",
+              "chargify",
+              "launchdarkly",
+              "modern_treasury",
+              "autodesk_aps",
+              "mongodb_atlas",
+              "xero",
+              "segment",
+              "aftership",
+              "onfleet",
+              "webflow",
+              "klaviyo",
+              "mux",
+              "shippo",
+              "buildkite",
+              "ms_teams",
+              "ably",
+              "squarespace",
+              "nylas",
+              "linkedin",
+              "tiktok",
+              "airship",
+              "lob",
+              "persona",
+              "bolt",
+              "primer",
+              "airwallex",
+              "affirm",
+              "keygen",
+              "constant_contact",
+              "telegram",
+              "mixpanel",
+              "new_relic",
+              "fillout",
+              "zapier",
+              "tally",
+              "loops",
+              "customer_io",
+              "framer",
+              "box",
+              "configcat",
+              "ashby",
+              "merge_dev",
+              "cronofy",
+              "increase",
+              "finch",
+              "knock",
+              "deel",
+              "razorpay",
+              "sentry",
+              "linear",
+              "dropbox",
+              "checkout_com",
+              "lemon_squeezy",
+              "coinbase_commerce",
+              "dwolla",
+              "gocardless",
+              "notion",
+              "meta",
+              "woocommerce",
+              "bitbucket",
+              "atlassian_jira",
+              "x",
+              "clickup",
+              "npm",
+              "heroku",
+              "dub",
+              "cal_com",
+              "asana",
+              "circleci",
+              "pagerduty",
+              "airtable",
+              "calendly",
+              "zoom",
+              "customerio",
+              "sinch",
+              "workos",
+              "front",
+              "zendesk",
+              "twitch",
+              "paddle",
+              "recurly",
+              "docusign",
+              "vercel",
+              "intercom",
+              "paystack",
+              "authorize_net",
+              "sanity",
+              "square",
+              "trello",
+              "twilio",
+              "mandrill",
+              "hubspot",
+              "adyen",
+              "mailgun",
+              "mercado_pago",
+              "braintree",
+              "contentful",
+              "plivo",
+              "typeform",
+              "messagebird",
+              "netlify",
+              "vonage",
+              "monday",
+              "jira_connect",
+              "discord",
+              "telnyx",
+              "sendgrid",
+              "wise",
+              "kinde",
+              "paypal",
+              "aws_sns",
+              "plaid",
+              "ebay",
+              "gitlab",
+              "microsoft_graph",
+              "chargebee",
+              "postmark",
+              "sparkpost",
+              "okta",
+              "bigcommerce",
+              "datadog",
+              "brevo"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "secret": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          },
+          "kind": {
+            "default": "signing_secret",
+            "type": "string",
+            "enum": [
+              "signing_secret",
+              "verify_token",
+              "braintree_public_key"
+            ]
+          }
+        },
+        "required": [
+          "provider",
+          "secret"
+        ],
+        "description": "The server additionally validates the secret shape per provider (e.g. a Standard-Webhooks secret must be base64 key material); a malformed value is rejected with 400 VALIDATION_ERROR."
+      },
+      "EventsReplayRequest": {
+        "type": "object",
+        "properties": {
+          "target": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "localhost-tunnel"
+                  },
+                  "sessionId": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "kind",
+                  "sessionId"
+                ]
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "destination"
+                  },
+                  "destinationId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "destinationId"
+                ]
+              }
+            ]
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "target",
+          "idempotencyKey"
+        ]
+      },
+      "ReplayDestinationsCreateRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "description": "`url` must be a public HTTPS URL (no IP-literal host, credentials, disallowed port, or bare hostname); the server rejects a non-conforming URL with 400 VALIDATION_ERROR."
+      },
+      "ReplayDestinationsSetOrderedRequest": {
+        "type": "object",
+        "properties": {
+          "ordered": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ordered"
+        ]
+      },
+      "SubscriptionsCreateRequest": {
+        "type": "object",
+        "properties": {
+          "sourceEndpointId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "destinationId": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eventTypes": {
+            "maxItems": 100,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          },
+          "requireVerified": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sourceEndpointId",
+          "destinationId"
+        ]
+      },
+      "Error": {
+        "type": "object",
+        "description": "The JSON error envelope for capability faults.",
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "A stable capability-error code."
+          },
+          "message": {
+            "type": "string",
+            "description": "A human-readable description."
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ]
+      }
+    }
+  }
+}

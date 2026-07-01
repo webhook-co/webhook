@@ -15,3 +15,7 @@ pnpm-lock.yaml
 # `packages/ui/src/tokens/theme.ts` and enforced by that package's drift test; Prettier
 # must not reformat it or the two would disagree.
 packages/ui/src/styles/theme.css
+
+# Generated OpenAPI document. Its canonical format is produced by `packages/openapi/src/generate.ts`
+# and enforced by that package's golden drift test; Prettier must not reformat it or the two would disagree.
+packages/openapi/src/openapi.json
