@@ -8,6 +8,7 @@
 import type { VerifyAdapter } from "../../adapter";
 import type { Provider } from "../config";
 import { makeAwsSnsAdapter } from "./aws-sns";
+import { makeConstantContactAdapter } from "./constant-contact";
 import { makeContentfulAdapter } from "./contentful";
 import { makeDiscordAdapter } from "./discord";
 import { makeEbayAdapter } from "./ebay";
@@ -43,6 +44,8 @@ export const BESPOKE_ADAPTERS: Partial<Record<Provider, VerifyAdapter>> = {
   telnyx: makeTelnyxAdapter(),
   // Tier-3 ASYMMETRIC Ed25519 over an HTTP Message Signatures (draft-cavage) signing string.
   keygen: makeKeygenAdapter(),
+  // Tier-3 REMOTE-FETCH + ASYMMETRIC — a detached RFC-7797 RS256 JWS verified against CC's public JWKS.
+  constant_contact: makeConstantContactAdapter(),
   // Tier-3 ASYMMETRIC ECDSA-P256 (SendGrid) + RSA-PKCS1 (Wise).
   sendgrid: makeSendgridAdapter(),
   wise: makeWiseAdapter(),
