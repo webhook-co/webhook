@@ -99,21 +99,17 @@ describe("loadMoreEventsAction", () => {
     );
   });
 
-  it("UPGRADES a legacy {receivedAt} cursor (stale pre-deploy tab) to an order key so Load-more survives", async () => {
+  it("FAILS CLOSED on a legacy {receivedAt} cursor (stale pre-deploy tab) — never a silent same-ms skip", async () => {
     loadMoreEvents.mockReset();
-    loadMoreEvents.mockResolvedValueOnce({ items: [], nextCursor: null });
-    // A dashboard tab rendered by the pre-µs build holds a nextCursor of the old {receivedAt} shape; over the
-    // server-action boundary the Date serialized to an ISO string. It must be upgraded in place (→ the
-    // equivalent ms-boundary order key), not rejected — otherwise "Load more" silently stops until reload.
+    // A dashboard tab rendered by the pre-µs build holds a nextCursor of the old {receivedAt} shape. It CANNOT
+    // be losslessly upgraded to the DESC (`<`) µs keyset: a ms→µs boundary either skips same-ms events (lower
+    // id, non-zero µs) or re-shows them. So we fail closed (consistent with the signed-cursor v1 reject) —
+    // "Load more" simply stops until the user reloads and gets fresh v2 cursors. No data is silently dropped.
     const legacy = { receivedAt: "2026-06-28T00:00:00.000Z", id: CURSOR_ID } as unknown as Cursor;
-    const result = await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: legacy });
-    expect(result.ok).toBe(true);
-    expect(loadMoreEvents).toHaveBeenCalledWith(
-      "o",
-      ENDPOINT_ID,
-      { orderKey: "2026-06-28T00:00:00.000000Z", id: CURSOR_ID },
-      {},
-    );
+    expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: legacy })).toEqual({
+      ok: false,
+    });
+    expect(loadMoreEvents).not.toHaveBeenCalled();
   });
 
   it("returns ok:false (no throw) when the pager faults", async () => {

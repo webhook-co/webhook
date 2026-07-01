@@ -118,10 +118,11 @@ export async function resolveResumeStart(opts: {
     if (loaded.kind === "hit") return { kind: "cursor", cursor: loaded.cursor };
     if (loaded.kind === "outdated") {
       // A known format upgrade (e.g. a v1 file after the µs-cursor change): the old opaque token can't be
-      // presented to the server, but the position must NOT be silently skipped. Re-page from the beginning
-      // — a one-time re-list (client dedups by cursor/id), never a gap. This is the no-data-loss path.
+      // presented to the server, but the position must NOT be silently skipped. Re-page from the beginning —
+      // this replays the endpoint's full RETAINED backlog once (a fresh run's in-session dedup set is empty,
+      // so it all prints), but it's the no-data-loss path: never a gap. The note warns the user before it.
       opts.note(
-        `saved resume cursor is from an older format (${loaded.detail}) — re-paging from the beginning\n`,
+        `saved resume cursor is from an older format (${loaded.detail}) — re-paging from the beginning (replays retained history once)\n`,
       );
       return { kind: "beginning" };
     }
