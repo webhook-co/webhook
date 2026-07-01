@@ -134,6 +134,9 @@ export const DeliveryStatusSchema = z.enum([
   "failed",
   "blocked",
   "dead",
+  // `cancelled` = the destination was deleted while this delivery was still open, so it's terminally
+  // resolved without a further attempt (distinct from `dead`/exhausted and `blocked`/SSRF-refused).
+  "cancelled",
 ]);
 export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
 /** The delivery-status vocabulary as a tuple — the CLI `--status` multi-select enum + parity checks. */
@@ -195,6 +198,11 @@ export const ReplayDestinationSchema = z.object({
   status: ReplayDestinationStatusSchema,
   createdAt: z.coerce.date(),
   lastValidatedAt: z.coerce.date().nullable(),
+  // S3 Slice 3: the per-destination strict-FIFO toggle (default false = best-effort ordered-dispatch),
+  // and the auto-disable marker — `disabledAt` non-null means persistent-failure auto-disable tripped and
+  // the destination stops being an enqueue target until `replayDestinations.enable` clears it.
+  ordered: z.boolean(),
+  disabledAt: z.coerce.date().nullable(),
 });
 export type ReplayDestination = z.infer<typeof ReplayDestinationSchema>;
 

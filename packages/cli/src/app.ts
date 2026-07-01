@@ -28,10 +28,12 @@ import { profileRoute } from "./commands/profile.js";
 import { replayCommand } from "./commands/replay.js";
 import {
   replayDestinationsAddCommand,
+  replayDestinationsEnableCommand,
   replayDestinationsListCommand,
   replayDestinationsListSecretsCommand,
   replayDestinationsRemoveCommand,
   replayDestinationsRotateSecretCommand,
+  replayDestinationsSetOrderedCommand,
 } from "./commands/replay-destinations.js";
 import {
   subscriptionsAddCommand,
@@ -73,6 +75,8 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "replayDestinations.create": ["replay-destinations", "add"],
   "replayDestinations.list": ["replay-destinations", "list"],
   "replayDestinations.delete": ["replay-destinations", "remove"],
+  "replayDestinations.enable": ["replay-destinations", "enable"],
+  "replayDestinations.setOrdered": ["replay-destinations", "set-ordered"],
   "replayDestinations.rotateSigningSecret": ["replay-destinations", "rotate-secret"],
   "replayDestinations.listSigningSecrets": ["replay-destinations", "list-secrets"],
   "subscriptions.create": ["subscriptions", "add"],
@@ -123,6 +127,8 @@ const replayDestinationsRoute = buildRouteMap({
     add: replayDestinationsAddCommand,
     list: replayDestinationsListCommand,
     remove: replayDestinationsRemoveCommand,
+    enable: replayDestinationsEnableCommand,
+    "set-ordered": replayDestinationsSetOrderedCommand,
     "rotate-secret": replayDestinationsRotateSecretCommand,
     "list-secrets": replayDestinationsListSecretsCommand,
   },

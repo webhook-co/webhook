@@ -153,10 +153,14 @@ describe("entity schemas", () => {
       status: "active",
       createdAt: "2026-06-30T00:00:00.000Z",
       lastValidatedAt: null,
+      ordered: false,
+      disabledAt: null,
     });
     expect(d.status).toBe("active");
     expect(d.createdAt).toBeInstanceOf(Date);
     expect(d.lastValidatedAt).toBeNull();
+    expect(d.ordered).toBe(false);
+    expect(d.disabledAt).toBeNull();
   });
 
   it("rejects a ReplayDestination with an unknown status (closed enum)", () => {

@@ -468,6 +468,44 @@ describe("handleRequest — replayDestinations.* (ADR-0081, dedicated api-only m
     expect(await res.json()).toMatchObject({ id: DEST });
   });
 
+  it("dispatches POST /v1/replay-destinations/:id/enable to replayDestinations.enable (id from path, no body)", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({}),
+      replayDestinations: rdMap({
+        "replayDestinations.enable": async (_ctx, input) => {
+          seen = input;
+          return { id: DEST };
+        },
+      }),
+    };
+    const res = await handleRequest(post(`/v1/replay-destinations/${DEST}/enable`, {}), deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ destinationId: DEST });
+  });
+
+  it("dispatches POST /v1/replay-destinations/:id/ordered merging the body {ordered} with the path id (path authoritative)", async () => {
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(writeScoped)),
+      handlers: handlersOf({}),
+      replayDestinations: rdMap({
+        "replayDestinations.setOrdered": async (_ctx, input) => {
+          seen = input;
+          return { id: DEST, ordered: true };
+        },
+      }),
+    };
+    // A forged destinationId in the body must NOT override the path segment.
+    const res = await handleRequest(
+      post(`/v1/replay-destinations/${DEST}/ordered`, { ordered: true, destinationId: "forged" }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ ordered: true, destinationId: DEST });
+  });
+
   it("dispatches DELETE /v1/replay-destinations/:id with the path id, mapping NOT_FOUND → 404", async () => {
     let seen: unknown;
     const deps: ApiDeps = {

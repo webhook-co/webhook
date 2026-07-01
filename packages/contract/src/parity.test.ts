@@ -125,6 +125,9 @@ describe("capability parity — current GA surfaces conformance", () => {
     b.api.add("replayDestinations.create");
     b.api.add("replayDestinations.list");
     b.api.add("replayDestinations.delete");
+    // Destination lifecycle (S3 Slice 3 PR3b): enable + setOrdered — same api-only + mcp-exempt posture.
+    b.api.add("replayDestinations.enable");
+    b.api.add("replayDestinations.setOrdered");
     // The destination signing-secret management (ADR-0084, S3 Slice 2): same surface posture (api + cli;
     // web-deferred; mcp-exempt — an agent must not mint/exfiltrate a signing secret).
     b.api.add("replayDestinations.rotateSigningSecret");

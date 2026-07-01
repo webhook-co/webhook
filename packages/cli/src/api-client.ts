@@ -17,6 +17,8 @@ import {
   eventsReplay as eventsReplayCap,
   replayDestinationsCreate as replayDestinationsCreateCap,
   replayDestinationsDelete as replayDestinationsDeleteCap,
+  replayDestinationsEnable as replayDestinationsEnableCap,
+  replayDestinationsSetOrdered as replayDestinationsSetOrderedCap,
   replayDestinationsList as replayDestinationsListCap,
   replayDestinationsListSigningSecrets as replayDestinationsListSigningSecretsCap,
   replayDestinationsRotateSigningSecret as replayDestinationsRotateSigningSecretCap,
@@ -249,6 +251,10 @@ export interface ApiClient {
   replayDestinationsList(): Promise<readonly ReplayDestination[]>;
   /** Remove (soft-delete) a replay destination (`DELETE /v1/replay-destinations/:id`). */
   replayDestinationsDelete(destinationId: string): Promise<ReplayDestinationDeleted>;
+  /** Clear a persistent-failure auto-disable (`POST /v1/replay-destinations/:id/enable`, S3 Slice 3). */
+  replayDestinationsEnable(destinationId: string): Promise<ReplayDestination>;
+  /** Set strict-FIFO (`ordered`) mode (`POST /v1/replay-destinations/:id/ordered`, S3 Slice 3). */
+  replayDestinationsSetOrdered(destinationId: string, ordered: boolean): Promise<ReplayDestination>;
   /**
    * Rotate a destination's Standard Webhooks signing secret (S3 Slice 2), revealing a fresh `whsec_` once
    * (`POST /v1/replay-destinations/:id/signing-secret`). The prior key enters a bounded grace overlap.
@@ -530,6 +536,21 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         await deleteJson(path, false),
         "removed destination",
       );
+    },
+    async replayDestinationsEnable(destinationId): Promise<ReplayDestination> {
+      const path = `/v1/replay-destinations/${encodeURIComponent(destinationId)}/enable`;
+      // idempotent=FALSE: enable also RESETS consecutive_failures=0 as a side effect, so a blind retry after
+      // a lost response could wipe failures that accrued between the (successful) first call and the retry.
+      // A lost response surfaces to the operator, who re-runs — safer than silently re-zeroing the tally.
+      const json = await postJson(path, {}, false);
+      return parseOrThrow(replayDestinationsEnableCap.output, json, "replay destination");
+    },
+    async replayDestinationsSetOrdered(destinationId, ordered): Promise<ReplayDestination> {
+      const path = `/v1/replay-destinations/${encodeURIComponent(destinationId)}/ordered`;
+      // idempotent=true: sets the flag to a fixed value, so retrying a lost response converges to the same
+      // state (no double-apply).
+      const json = await postJson(path, { ordered }, true);
+      return parseOrThrow(replayDestinationsSetOrderedCap.output, json, "replay destination");
     },
     async replayDestinationsRotateSigningSecret(destinationId): Promise<RotatedSigningSecret> {
       const path = `/v1/replay-destinations/${encodeURIComponent(destinationId)}/signing-secret`;

@@ -188,3 +188,77 @@ export const replayDestinationsListSecretsCommand = buildCommand<GlobalFlags, [s
     docs: { brief: "list a replay destination's signing-secret metadata" },
   },
 );
+
+// `wbhk replay-destinations enable <id>` — clear a persistent-failure auto-disable so the destination
+// resumes being a delivery target (S3 Slice 3). Owed deliveries resume on the DO's next wake.
+export const replayDestinationsEnableCommand = buildCommand<GlobalFlags, [string], AppContext>({
+  async func(this: AppContext, flags, destinationId) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format } = resolveGlobals(this, flags);
+    const record = await client.replayDestinationsEnable(destinationId);
+    this.process.stdout.write(
+      format === "json" ? `${renderJson(record)}\n` : `${renderReplayDestination(record)}\n`,
+    );
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        {
+          parse: (value: string) => value,
+          brief: "the replay destination id",
+          placeholder: "destinationId",
+        },
+      ],
+    },
+    flags: { ...globalFlags },
+  },
+  docs: { brief: "re-enable an auto-disabled replay destination" },
+});
+
+// `wbhk replay-destinations set-ordered <id> <on|off>` — set strict-FIFO delivery. The mode is a REQUIRED
+// positional (not a boolean flag, which stricli treats as optional-defaulting-false — a bare invocation would
+// silently force best-effort). `on` = strict FIFO: deliver in order, but a stuck delivery HEAD-OF-LINE-BLOCKS
+// newer ones until it succeeds or dead-letters. `off` = the best-effort default: each delivery retries
+// independently.
+function parseOrderedMode(value: string): boolean {
+  const v = value.toLowerCase();
+  if (v === "on" || v === "strict" || v === "true") return true;
+  if (v === "off" || v === "best-effort" || v === "false") return false;
+  throw new Error(`expected "on" or "off", got "${value}"`);
+}
+export const replayDestinationsSetOrderedCommand = buildCommand<
+  GlobalFlags,
+  [string, boolean],
+  AppContext
+>({
+  async func(this: AppContext, flags, destinationId, ordered) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format } = resolveGlobals(this, flags);
+    const record = await client.replayDestinationsSetOrdered(destinationId, ordered);
+    this.process.stdout.write(
+      format === "json" ? `${renderJson(record)}\n` : `${renderReplayDestination(record)}\n`,
+    );
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        {
+          parse: (value: string) => value,
+          brief: "the replay destination id",
+          placeholder: "destinationId",
+        },
+        {
+          parse: parseOrderedMode,
+          brief: "on = strict FIFO (head-of-line blocking); off = best-effort (default)",
+          placeholder: "mode",
+        },
+      ],
+    },
+    flags: { ...globalFlags },
+  },
+  docs: { brief: "set strict-FIFO (ordered) delivery on/off for a destination" },
+});
