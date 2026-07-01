@@ -33,11 +33,31 @@ export function upstreamFaviconUrl(domain: string): string {
  */
 export const ICON_CACHE_CONTROL = "public, max-age=31536000, immutable";
 
-/** Injected edge-cache + fetch seam (the route wires `caches.default` + global `fetch`; tests mock them). */
+/** A durable key→bytes store for the favicon (the route wires this to the R2_PROVIDER_ICONS bucket). */
+export interface IconStore {
+  readonly get: (key: string) => Promise<ArrayBuffer | null>;
+  readonly put: (key: string, body: ArrayBuffer) => Promise<void>;
+}
+
+/** Injected edge-cache + fetch + durable-store seam (the route wires the real ones; tests mock them). */
 export interface IconFetchDeps {
   readonly fetch: (url: string) => Promise<Response>;
   readonly cacheMatch?: (key: Request) => Promise<Response | undefined>;
   readonly cachePut?: (key: Request, res: Response) => Promise<void>;
+  /** Durable store (R2). Best-effort: any error falls through to the upstream fetch — never fatal. */
+  readonly store?: IconStore;
+}
+
+/** Build the served image response (forced image/png + nosniff + immutable cache) from raw favicon bytes. */
+function imageResponse(body: ArrayBuffer): Response {
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/png",
+      "Cache-Control": ICON_CACHE_CONTROL,
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 
 /**
@@ -58,6 +78,23 @@ export async function serveProviderIcon(
   const cached = deps.cacheMatch ? await deps.cacheMatch(cacheKey) : undefined;
   if (cached) return cached;
 
+  // Durable store (R2): if the favicon was already fetched once, serve it from here — so Google is hit at
+  // most ONCE per domain, ever, and we survive an upstream outage. Best-effort: a store error is swallowed
+  // and we fall through to the upstream fetch.
+  const storeKey = `${domain}.png`;
+  if (deps.store) {
+    try {
+      const stored = await deps.store.get(storeKey);
+      if (stored) {
+        const res = imageResponse(stored);
+        if (deps.cachePut) await deps.cachePut(cacheKey, res.clone());
+        return res;
+      }
+    } catch {
+      // fall through to upstream
+    }
+  }
+
   let upstream: Response;
   try {
     upstream = await deps.fetch(upstreamFaviconUrl(domain));
@@ -67,14 +104,15 @@ export async function serveProviderIcon(
   if (!upstream.ok) return new Response(null, { status: 404 });
 
   const body = await upstream.arrayBuffer();
-  const res = new Response(body, {
-    status: 200,
-    headers: {
-      "Content-Type": "image/png",
-      "Cache-Control": ICON_CACHE_CONTROL,
-      "X-Content-Type-Options": "nosniff",
-    },
-  });
+  // Persist to the durable store (best-effort — a write failure must never fail the request).
+  if (deps.store) {
+    try {
+      await deps.store.put(storeKey, body);
+    } catch {
+      // serve anyway
+    }
+  }
+  const res = imageResponse(body);
   if (deps.cachePut) await deps.cachePut(cacheKey, res.clone());
   return res;
 }

@@ -71,6 +71,15 @@
       "binding": "R2_PAYLOADS",
       "bucket_name": "webhook-payloads-dev",
     },
+    {
+      // Durable store for the /api/provider-icon favicon proxy (provider logos). PUBLIC, non-tenant,
+      // env-AGNOSTIC brand favicons — so it is ONE shared bucket (no dev/prod split, unlike the tenant
+      // buckets): the deploy overlay leaves this name untouched (it maps only the `*-dev` tenant buckets),
+      // which is correct here. Lets the proxy hit Google at most ONCE per domain, ever, and survive an
+      // upstream outage. `wrangler dev` uses a local miniflare R2; prod binds the real bucket.
+      "binding": "R2_PROVIDER_ICONS",
+      "bucket_name": "webhook-provider-icons",
+    },
   ],
   // AUTH_SESSION_EXCHANGE — the service binding to auth.'s SessionExchange WorkerEntrypoint, so /auth/callback
   // redeems the A-SX handoff ticket over a direct RPC instead of a public `POST /session/exchange` (the public

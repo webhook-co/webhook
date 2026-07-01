@@ -119,4 +119,65 @@ describe("serveProviderIcon", () => {
     });
     expect(notOk.status).toBe(404);
   });
+
+  it("serves from the DURABLE store when present, WITHOUT hitting upstream (Google once ever)", async () => {
+    const fetch = vi.fn();
+    const store = {
+      get: vi.fn(async () => new Uint8Array([1, 2, 3]).buffer),
+      put: vi.fn(async () => {}),
+    };
+    const res = await serveProviderIcon("https://app/api/provider-icon?domain=twilio.com", {
+      fetch,
+      store,
+    });
+    expect(store.get).toHaveBeenCalledWith("twilio.com.png");
+    expect(fetch).not.toHaveBeenCalled(); // durable hit → no upstream
+    expect(store.put).not.toHaveBeenCalled();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("cache-control")).toBe(ICON_CACHE_CONTROL);
+  });
+
+  it("on a store MISS: fetches upstream ONCE and PERSISTS to the durable store", async () => {
+    const fetch = vi.fn(async () => png());
+    const store = { get: vi.fn(async () => null), put: vi.fn(async () => {}) };
+    const res = await serveProviderIcon("https://app/api/provider-icon?domain=slack.com", {
+      fetch,
+      store,
+    });
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(store.put).toHaveBeenCalledTimes(1);
+    expect(store.put.mock.calls[0]![0]).toBe("slack.com.png"); // keyed by domain
+    expect(res.status).toBe(200);
+  });
+
+  it("is BEST-EFFORT about the store: a get() throw falls through to upstream (no crash)", async () => {
+    const fetch = vi.fn(async () => png());
+    const store = {
+      get: vi.fn(async () => {
+        throw new Error("r2 down");
+      }),
+      put: vi.fn(async () => {}),
+    };
+    const res = await serveProviderIcon("https://app/api/provider-icon?domain=slack.com", {
+      fetch,
+      store,
+    });
+    expect(fetch).toHaveBeenCalledTimes(1); // fell through to upstream despite the store error
+    expect(res.status).toBe(200);
+  });
+
+  it("is BEST-EFFORT about the store: a put() throw still returns the fetched image", async () => {
+    const store = {
+      get: vi.fn(async () => null),
+      put: vi.fn(async () => {
+        throw new Error("r2 write failed");
+      }),
+    };
+    const res = await serveProviderIcon("https://app/api/provider-icon?domain=slack.com", {
+      fetch: async () => png(),
+      store,
+    });
+    expect(res.status).toBe(200); // the write failure never surfaces to the caller
+  });
 });
