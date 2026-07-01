@@ -2,6 +2,9 @@ import {
   buildProtectedResourceMetadata,
   type ProtectedResourceMetadata,
 } from "@webhook-co/contract";
+// The committed golden OpenAPI 3.1 document (contract-synced, ADR-0088). Imported as static JSON — NOT the
+// generator — so no zod/generation code enters the Worker bundle; served read-only on the public spec route.
+import openapiSpec from "@webhook-co/openapi/openapi.json";
 import {
   API_RESOURCE,
   buildCapabilityHandlers,
@@ -215,6 +218,18 @@ export default {
       return new Response(`${SERVICE_NAME}:api ok`, {
         status: 200,
         headers: { "content-type": "text/plain; charset=utf-8" },
+      });
+    }
+    // The public, machine-readable OpenAPI 3.1 document. Unauthenticated + CORS-open (the spec is public
+    // and non-secret) so the docs site (Mintlify, per internal ADR-0006), SDK generators, and API clients
+    // can fetch it cross-origin. Human-facing reference docs are rendered by Mintlify on docs.webhook.co
+    // consuming THIS document — the api Worker only serves the machine-readable spec. No tenant deps.
+    if (request.method === "GET" && url.pathname === "/openapi.json") {
+      return Response.json(openapiSpec, {
+        headers: {
+          "access-control-allow-origin": "*",
+          "cache-control": "public, max-age=300",
+        },
       });
     }
     // GitHub Secret Scanning Partner Program webhook (ADR-0074). Unauthenticated — the ECDSA
