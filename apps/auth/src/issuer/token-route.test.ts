@@ -65,13 +65,11 @@ describe("handleTokenRequest — authorization_code", () => {
 
   it("maps an OAuth error result → 400 + {error}, redeem still consulted", async () => {
     const d = deps({
-      redeemAuthCode: vi.fn(
-        async (): Promise<RedeemResult> => ({
-          kind: "error",
-          error: "invalid_grant",
-          description: "nope",
-        }),
-      ),
+      redeemAuthCode: vi.fn(async (): Promise<RedeemResult> => ({
+        kind: "error",
+        error: "invalid_grant",
+        description: "nope",
+      })),
     });
     const res = await handleTokenRequest(d, form(AUTH_CODE_FIELDS));
     expect(res.status).toBe(400);
@@ -81,9 +79,10 @@ describe("handleTokenRequest — authorization_code", () => {
 
   it("maps server_error → 500", async () => {
     const d = deps({
-      redeemAuthCode: vi.fn(
-        async (): Promise<RedeemResult> => ({ kind: "error", error: "server_error" }),
-      ),
+      redeemAuthCode: vi.fn(async (): Promise<RedeemResult> => ({
+        kind: "error",
+        error: "server_error",
+      })),
     });
     const res = await handleTokenRequest(d, form(AUTH_CODE_FIELDS));
     expect(res.status).toBe(500);
@@ -92,9 +91,11 @@ describe("handleTokenRequest — authorization_code", () => {
 
   it("maps pending_approval → 400 authorization_pending (RFC 8628)", async () => {
     const d = deps({
-      redeemAuthCode: vi.fn(
-        async (): Promise<RedeemResult> => ({ kind: "pending", grantId: "g_1", interval: 5 }),
-      ),
+      redeemAuthCode: vi.fn(async (): Promise<RedeemResult> => ({
+        kind: "pending",
+        grantId: "g_1",
+        interval: 5,
+      })),
     });
     const res = await handleTokenRequest(d, form(AUTH_CODE_FIELDS));
     expect(res.status).toBe(400);
@@ -137,9 +138,10 @@ describe("handleTokenRequest — grant_type dispatch", () => {
   });
 
   it("refresh_token WITH a refresh core wired → dispatches to it and returns its result", async () => {
-    const redeemRefresh = vi.fn(
-      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
-    );
+    const redeemRefresh = vi.fn(async (): Promise<RedeemResult> => ({
+      kind: "token",
+      body: FROZEN,
+    }));
     const res = await handleTokenRequest(
       deps({ redeemRefresh }),
       form({ grant_type: "refresh_token", refresh_token: "rtk_x", scope: "events:read" }),
@@ -155,9 +157,10 @@ describe("handleTokenRequest — grant_type dispatch", () => {
   });
 
   it("refresh_token missing refresh_token → invalid_request", async () => {
-    const redeemRefresh = vi.fn(
-      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
-    );
+    const redeemRefresh = vi.fn(async (): Promise<RedeemResult> => ({
+      kind: "token",
+      body: FROZEN,
+    }));
     const res = await handleTokenRequest(
       deps({ redeemRefresh }),
       form({ grant_type: "refresh_token" }),
@@ -179,9 +182,10 @@ describe("handleTokenRequest — grant_type dispatch", () => {
   });
 
   it("device_code WITH a device core wired → dispatches to it and returns its result", async () => {
-    const redeemDevice = vi.fn(
-      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
-    );
+    const redeemDevice = vi.fn(async (): Promise<RedeemResult> => ({
+      kind: "token",
+      body: FROZEN,
+    }));
     const res = await handleTokenRequest(
       deps({ redeemDevice }),
       form({ grant_type: DEVICE_GT, device_code: "dc_x", client_id: "wbhk" }),
@@ -195,9 +199,10 @@ describe("handleTokenRequest — grant_type dispatch", () => {
   });
 
   it("device_code missing device_code → invalid_request (core not called)", async () => {
-    const redeemDevice = vi.fn(
-      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
-    );
+    const redeemDevice = vi.fn(async (): Promise<RedeemResult> => ({
+      kind: "token",
+      body: FROZEN,
+    }));
     const res = await handleTokenRequest(deps({ redeemDevice }), form({ grant_type: DEVICE_GT }));
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ error: "invalid_request" });
@@ -205,9 +210,10 @@ describe("handleTokenRequest — grant_type dispatch", () => {
   });
 
   it("a device authorization_pending result maps to a 400 polling response", async () => {
-    const redeemDevice = vi.fn(
-      async (): Promise<RedeemResult> => ({ kind: "error", error: "authorization_pending" }),
-    );
+    const redeemDevice = vi.fn(async (): Promise<RedeemResult> => ({
+      kind: "error",
+      error: "authorization_pending",
+    }));
     const res = await handleTokenRequest(
       deps({ redeemDevice }),
       form({ grant_type: DEVICE_GT, device_code: "dc_x" }),
@@ -219,9 +225,10 @@ describe("handleTokenRequest — grant_type dispatch", () => {
 
 describe("handleTokenRequest — body cap", () => {
   it("rejects an oversized body with invalid_request before redeeming", async () => {
-    const redeemAuthCode = vi.fn(
-      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
-    );
+    const redeemAuthCode = vi.fn(async (): Promise<RedeemResult> => ({
+      kind: "token",
+      body: FROZEN,
+    }));
     const huge = new Request("https://auth.webhook.co/token", {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -236,9 +243,10 @@ describe("handleTokenRequest — body cap", () => {
     // "𝟙" (U+1D7D9) is 2 UTF-16 code units but 4 UTF-8 bytes. 1600 of them → ~3.2k JS-string
     // length (under 4096) but ~6.4k bytes (over the 4096-byte cap). A `.length` check would
     // wrongly admit this; the byte measurement rejects it.
-    const redeemAuthCode = vi.fn(
-      async (): Promise<RedeemResult> => ({ kind: "token", body: FROZEN }),
-    );
+    const redeemAuthCode = vi.fn(async (): Promise<RedeemResult> => ({
+      kind: "token",
+      body: FROZEN,
+    }));
     // A complete, otherwise-valid auth-code request — only the byte cap should reject it (a missing-field
     // check must not short-circuit first), so both code and code_verifier are present.
     const body = `grant_type=authorization_code&code=code_1&code_verifier=${"𝟙".repeat(1600)}`;

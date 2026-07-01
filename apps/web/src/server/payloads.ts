@@ -64,8 +64,7 @@ export async function getPayloadsBucket(): Promise<{
 }> {
   const { env } = await getCloudflareContext({ async: true });
   const bucket = (env as Record<string, unknown>).R2_PAYLOADS as
-    | { get(key: string): Promise<R2PayloadObject | null> }
-    | undefined;
+    { get(key: string): Promise<R2PayloadObject | null> } | undefined;
   if (!bucket) throw new Error("R2_PAYLOADS binding is not configured");
   return bucket;
 }

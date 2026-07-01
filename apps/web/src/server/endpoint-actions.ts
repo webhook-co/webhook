@@ -29,8 +29,7 @@ export type CreateEndpointResult =
   | { readonly ok: false; readonly error: string };
 
 export type EndpointActionResult =
-  | { readonly ok: true }
-  | { readonly ok: false; readonly error: string };
+  { readonly ok: true } | { readonly ok: false; readonly error: string };
 
 export type RotateEndpointResult =
   | { readonly ok: true; readonly ingestUrl: string }

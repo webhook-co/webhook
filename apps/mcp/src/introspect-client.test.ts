@@ -58,14 +58,12 @@ describe("makeIntrospectVerifyBearer", () => {
   });
 
   it("passes the presented token to the introspector verbatim", async () => {
-    const introspect = vi.fn(
-      async (): Promise<IntrospectionResult> => ({
-        active: true,
-        orgId: "org_1",
-        scopes: [],
-        audience: RESOURCE,
-      }),
-    );
+    const introspect = vi.fn(async (): Promise<IntrospectionResult> => ({
+      active: true,
+      orgId: "org_1",
+      scopes: [],
+      audience: RESOURCE,
+    }));
     await makeIntrospectVerifyBearer({ introspect })("the-opaque-token", RESOURCE);
     expect(introspect).toHaveBeenCalledWith("the-opaque-token");
   });

@@ -96,9 +96,10 @@ describe("EventDetail", () => {
 
   it("a sensitive header value is NOT in the props/DOM; Reveal fetches it via the action", async () => {
     const user = userEvent.setup();
-    const revealHeader = vi.fn(
-      async (): Promise<RevealHeaderResult> => ({ ok: true, value: "Bearer super-secret-token" }),
-    );
+    const revealHeader = vi.fn(async (): Promise<RevealHeaderResult> => ({
+      ok: true,
+      value: "Bearer super-secret-token",
+    }));
     renderDetail(
       // sensitive header: value is REDACTED server-side (null), only the flag ships to the client
       detail({ headers: [{ name: "Authorization", value: null, sensitive: true }] }),
