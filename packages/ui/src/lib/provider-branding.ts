@@ -87,6 +87,14 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
   // S8 coverage PR10 — rotation any-of-N knob.
   box: { displayName: "Box", brandColor: "#0061D5" },
   configcat: { displayName: "ConfigCat", brandColor: "#EC5A2C" },
+  // S8 coverage PR11 — HMAC long-tail.
+  ashby: { displayName: "Ashby", brandColor: "#1A1A1A" },
+  merge_dev: { displayName: "Merge", brandColor: "#2970FF" },
+  cronofy: { displayName: "Cronofy", brandColor: "#0B0C4C" },
+  increase: { displayName: "Increase", brandColor: "#1B1B1B" },
+  finch: { displayName: "Finch", brandColor: "#1A1A1A" },
+  knock: { displayName: "Knock", brandColor: "#3B5AFB" },
+  deel: { displayName: "Deel", brandColor: "#0C6EFA" },
   razorpay: { displayName: "Razorpay", brandColor: "#3395FF" },
   sentry: { displayName: "Sentry", brandColor: "#362D59" },
   linear: { displayName: "Linear", brandColor: "#5E6AD2" },
