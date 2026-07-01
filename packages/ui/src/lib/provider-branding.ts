@@ -70,6 +70,8 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
   primer: { displayName: "Primer", brandColor: "#0A0A23" },
   airwallex: { displayName: "Airwallex", brandColor: "#612FFF" },
   affirm: { displayName: "Affirm", brandColor: "#4A4AF4" },
+  // S8 coverage PR6 — bespoke asymmetric.
+  keygen: { displayName: "Keygen", brandColor: "#5A50E0" },
   razorpay: { displayName: "Razorpay", brandColor: "#3395FF" },
   sentry: { displayName: "Sentry", brandColor: "#362D59" },
   linear: { displayName: "Linear", brandColor: "#5E6AD2" },
