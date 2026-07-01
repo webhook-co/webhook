@@ -13,6 +13,7 @@
   "dependencies": {
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",
+    "@webhook-co/openapi": "workspace:*",
     "@webhook-co/shared": "workspace:*"
   },
   "devDependencies": {

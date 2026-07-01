@@ -1,16 +1,18 @@
 import { AuthContextSchema, CapabilityFault, type AuthContext } from "@webhook-co/contract";
 import type { CapabilityHandlers, ReplayHandler } from "@webhook-co/db";
+import { matchRoute, type RouteDef } from "@webhook-co/openapi/routes";
 import { bytesToB64 } from "@webhook-co/shared";
 
 import { authenticate, authorize, type ApiAuthDeps } from "./auth.js";
 import { httpStatusForCapabilityError } from "./http-status.js";
 
-// The REST router for the read-capabilities surface. It maps an HTTP request to a contract
-// capability + the input built from the path/query, authorizes it via the shared bearer seam,
-// dispatches to the shared read handler, and maps the typed CapabilityFault to an HTTP status.
-// All deps are injected (verifyBearer + the handler map), so routing/auth/mapping are tested in
-// the node pool with no DB; the real deps are wired in index.ts. Operational faults propagate —
-// the caller (the Worker fetch) turns them into a 5xx, never masking them here.
+// The REST router for the contract-capability surface. It matches an HTTP request to a route in the
+// DECLARATIVE manifest (@webhook-co/openapi/routes — the SAME table the OpenAPI generator reads, so the
+// spec and the server can't drift), builds the capability input from the path/query, authorizes it via the
+// shared bearer seam, dispatches to the bound handler, and maps the typed CapabilityFault to an HTTP status.
+// All deps are injected (verifyBearer + the handler maps), so routing/auth/mapping are tested in the node
+// pool with no DB; the real deps are wired in index.ts. Operational faults propagate — the caller (the
+// Worker fetch) turns them into a 5xx, never masking them here.
 
 export interface ApiDeps {
   readonly authDeps: ApiAuthDeps;
@@ -42,249 +44,6 @@ export interface ApiDeps {
   readonly subscriptions?: CapabilityHandlers;
 }
 
-interface Route {
-  readonly capability: string;
-  readonly input: Record<string, unknown>;
-}
-
-function numParam(value: string | null): number | undefined {
-  return value === null ? undefined : Number(value);
-}
-
-/** Build the optional pagination input shared by the list capabilities (omit absent keys). */
-function listInput(query: URLSearchParams, base: Record<string, unknown>): Record<string, unknown> {
-  const input = { ...base };
-  const cursor = query.get("cursor");
-  if (cursor !== null) input.cursor = cursor;
-  const limit = numParam(query.get("limit"));
-  if (limit !== undefined) input.limit = limit;
-  return input;
-}
-
-/** Match a request to a capability route + its input, or null for an unknown path/method. */
-function matchRoute(
-  method: string,
-  segments: readonly string[],
-  query: URLSearchParams,
-): Route | null {
-  if (segments[0] !== "v1") return null;
-  const rest = segments.slice(1);
-
-  if (method === "GET" && rest.length === 1 && rest[0] === "endpoints") {
-    const input = listInput(query, {});
-    // An EMPTY `?name=` means "no name filter" (a cleared filter), not `name: ""` — the contract's
-    // `min(1)` would otherwise 400 a clear-the-filter call. Truthiness skips both null and "".
-    const name = query.get("name");
-    if (name) input.filter = { name };
-    return { capability: "endpoints.list", input };
-  }
-  if (method === "POST" && rest.length === 1 && rest[0] === "endpoints") {
-    // endpoints.create: a WRITE dispatched via the SHARED handlers map (createWriteHandlers merged in
-    // index.ts) — unlike events.replay's dedicated field, so mcp binds the same handler. The `name`
-    // comes from the JSON body (read in handleCreateEndpoint); the handler enforces endpoints:write,
-    // appends the audit row, and returns the one-time ingest URL.
-    return { capability: "endpoints.create", input: {} };
-  }
-  if (method === "GET" && rest.length === 2 && rest[0] === "endpoints") {
-    return { capability: "endpoints.get", input: { endpointId: rest[1] } };
-  }
-  if (method === "DELETE" && rest.length === 2 && rest[0] === "endpoints") {
-    // endpoints.delete (ADR-0076): a WRITE with NO body — the endpointId is the path segment, so it
-    // dispatches via the GENERIC shared-handlers map (unlike create/replay, which read a JSON body).
-    // The handler enforces endpoints:write, soft-deletes + audits, evicts the ingest cache, and is
-    // idempotent (a re-delete returns the recorded deletedAt; an unknown id is NOT_FOUND -> 404).
-    return { capability: "endpoints.delete", input: { endpointId: rest[1] } };
-  }
-  if (method === "POST" && rest.length === 3 && rest[0] === "endpoints" && rest[2] === "rotate") {
-    // endpoints.rotate (ADR-0076): a WRITE with NO body — generic dispatch like delete. Mints a new
-    // ingest token, evicts the old (hard cutover), and returns the new one-time ingest URL.
-    return { capability: "endpoints.rotate", input: { endpointId: rest[1] } };
-  }
-  if (
-    method === "POST" &&
-    rest.length === 3 &&
-    rest[0] === "endpoints" &&
-    rest[2] === "provider-secrets"
-  ) {
-    // endpoints.addProviderSecret (ADR-0078): endpointId from the path; {provider,label?,secret} from
-    // the JSON body (read in handleAddProviderSecret, like create). The handler seals via the engine
-    // ProviderSecretSealer binding + evicts the ingest cache. The secret is never echoed back.
-    return { capability: "endpoints.addProviderSecret", input: { endpointId: rest[1] } };
-  }
-  if (
-    method === "GET" &&
-    rest.length === 3 &&
-    rest[0] === "endpoints" &&
-    rest[2] === "provider-secrets"
-  ) {
-    // endpoints.listProviderSecrets: metadata only (no ciphertext); generic dispatch. NOT paginated —
-    // a human-managed handful per endpoint, so the whole set is returned (no cursor/limit to thread).
-    return { capability: "endpoints.listProviderSecrets", input: { endpointId: rest[1] } };
-  }
-  if (
-    method === "DELETE" &&
-    rest.length === 4 &&
-    rest[0] === "endpoints" &&
-    rest[2] === "provider-secrets"
-  ) {
-    // endpoints.revokeProviderSecret: a WRITE with NO body — endpointId + secretId from the path;
-    // generic dispatch. The handler revokes (endpoint-scoped) + evicts the ingest cache.
-    return {
-      capability: "endpoints.revokeProviderSecret",
-      input: { endpointId: rest[1], secretId: rest[3] },
-    };
-  }
-  if (method === "GET" && rest.length === 3 && rest[0] === "endpoints" && rest[2] === "events") {
-    const input = listInput(query, { endpointId: rest[1] });
-    // Filter fields ride as raw query strings; the events.list Zod schema validates + coerces them
-    // (provider enum, `z.coerce.date()` for the range) → a bad value is a clean VALIDATION_ERROR.
-    // An EMPTY param (`?provider=`, `?receivedAfter=`) means "filter cleared", not a literal "" — skip
-    // it (truthiness drops null + "") so a cleared filter doesn't 400 on the enum / date coercion.
-    const filter: Record<string, unknown> = {};
-    // provider + verificationState are MULTI-value: repeated params (`?provider=stripe&provider=github`)
-    // → an array (the contract validates the enum members). Drop empty values; omit the field entirely
-    // when nothing's selected (an empty array would 400 the contract's `.min(1)`).
-    const providers = query.getAll("provider").filter((p) => p !== "");
-    if (providers.length > 0) filter.provider = providers;
-    const receivedAfter = query.get("receivedAfter");
-    if (receivedAfter) filter.receivedAfter = receivedAfter;
-    const receivedBefore = query.get("receivedBefore");
-    if (receivedBefore) filter.receivedBefore = receivedBefore;
-    const verificationStates = query.getAll("verificationState").filter((s) => s !== "");
-    if (verificationStates.length > 0) filter.verificationState = verificationStates;
-    // A whitespace-only / empty `?search=` means "no search" (the contract trims + min(1)s it, so passing
-    // it would 400 the whole request) — skip it, matching the lenient web surface.
-    const search = query.get("search");
-    if (search && search.trim() !== "") filter.search = search;
-    if (Object.keys(filter).length > 0) input.filter = filter;
-    return { capability: "events.list", input };
-  }
-  if (
-    method === "GET" &&
-    rest.length === 4 &&
-    rest[0] === "endpoints" &&
-    rest[2] === "events" &&
-    rest[3] === "tail"
-  ) {
-    // events.tail is cursor-pull: one watermark-bounded forward page per request. The opaque
-    // sinceCursor resumes; omit it to start from the oldest visible event.
-    const input: Record<string, unknown> = { endpointId: rest[1] };
-    const sinceCursor = query.get("sinceCursor");
-    if (sinceCursor !== null) input.sinceCursor = sinceCursor;
-    // `?since=` is the server-resolved grammar (now|beginning|<duration>|<RFC3339>); the shared
-    // handler validates it and rejects it presented alongside ?sinceCursor=.
-    const since = query.get("since");
-    if (since !== null) input.since = since;
-    return { capability: "events.tail", input };
-  }
-  if (method === "GET" && rest.length === 2 && rest[0] === "events") {
-    return { capability: "events.get", input: { eventId: rest[1] } };
-  }
-  if (method === "GET" && rest.length === 3 && rest[0] === "events" && rest[2] === "payload") {
-    // events.getPayload: the raw stored body (base64 envelope). Not a DB CapabilityHandler — dispatched
-    // specially in handleRequest (it does the RLS metadata read THEN an R2 GET). ADR-0015.
-    return { capability: "events.getPayload", input: { eventId: rest[1] } };
-  }
-  if (method === "POST" && rest.length === 3 && rest[0] === "events" && rest[2] === "replay") {
-    // events.replay: eventId from the path; target + idempotencyKey come from the JSON body (merged
-    // in handleReplay). A WRITE — records a delivery_attempt; dispatched specially, not via `handlers`.
-    return { capability: "events.replay", input: { eventId: rest[1] } };
-  }
-  // deliveries.* (S3 Slice 3 PR3): the auto-delivery observability READS. Full parity (api + cli + mcp);
-  // dispatched via the GENERIC shared `handlers` map (events:read scope), so no special block below.
-  if (method === "GET" && rest.length === 1 && rest[0] === "deliveries") {
-    const input = listInput(query, {});
-    // Optional filters (truthiness skips both null and "" — an empty ?destinationId= clears the filter).
-    const destinationId = query.get("destinationId");
-    if (destinationId) input.destinationId = destinationId;
-    const subscriptionId = query.get("subscriptionId");
-    if (subscriptionId) input.subscriptionId = subscriptionId;
-    // Repeatable ?status= → multi-select; drop empty values (a cleared-filter `?status=` sends "") so an
-    // empty element never reaches multiEnum → a 400 (mirrors the events.list provider/verificationState strip).
-    const status = query.getAll("status").filter((s) => s !== "");
-    if (status.length > 0) input.status = status;
-    return { capability: "deliveries.list", input };
-  }
-  if (method === "GET" && rest.length === 2 && rest[0] === "deliveries") {
-    return { capability: "deliveries.get", input: { deliveryId: rest[1] } };
-  }
-  // replayDestinations.* (ADR-0081): the SSRF-egress allowlist. WRITES (create/delete) + a list, bound
-  // ONLY on api (web-deferred, mcp-exempt) and dispatched via the dedicated `replayDestinations` map.
-  if (method === "GET" && rest.length === 1 && rest[0] === "replay-destinations") {
-    return { capability: "replayDestinations.list", input: {} };
-  }
-  if (method === "POST" && rest.length === 1 && rest[0] === "replay-destinations") {
-    // {url, label?} come from the JSON body (read in dispatchReplayDestinationBody).
-    return { capability: "replayDestinations.create", input: {} };
-  }
-  if (method === "DELETE" && rest.length === 2 && rest[0] === "replay-destinations") {
-    // Soft-delete: the destinationId is the path segment; no body.
-    return { capability: "replayDestinations.delete", input: { destinationId: rest[1] } };
-  }
-  if (
-    method === "POST" &&
-    rest.length === 3 &&
-    rest[0] === "replay-destinations" &&
-    rest[2] === "enable"
-  ) {
-    // Clear a persistent-failure auto-disable (S3 Slice 3 PR3b): destinationId from the path, no body.
-    return { capability: "replayDestinations.enable", input: { destinationId: rest[1] } };
-  }
-  if (
-    method === "POST" &&
-    rest.length === 3 &&
-    rest[0] === "replay-destinations" &&
-    rest[2] === "ordered"
-  ) {
-    // Toggle strict-FIFO (S3 Slice 3 PR3b): destinationId from the path; {ordered} from the JSON body
-    // (merged in dispatchReplayDestination, with the path destinationId authoritative).
-    return { capability: "replayDestinations.setOrdered", input: { destinationId: rest[1] } };
-  }
-  if (
-    method === "POST" &&
-    rest.length === 3 &&
-    rest[0] === "replay-destinations" &&
-    rest[2] === "signing-secret"
-  ) {
-    // Rotate the destination's signing secret (S3 Slice 2): destinationId from the path, no body.
-    return {
-      capability: "replayDestinations.rotateSigningSecret",
-      input: { destinationId: rest[1] },
-    };
-  }
-  if (
-    method === "GET" &&
-    rest.length === 3 &&
-    rest[0] === "replay-destinations" &&
-    rest[2] === "signing-secrets"
-  ) {
-    return {
-      capability: "replayDestinations.listSigningSecrets",
-      input: { destinationId: rest[1] },
-    };
-  }
-  // subscriptions.* (S3 Slice 3): auto-delivery routing rules. WRITES (create/delete) + a list, bound ONLY
-  // on api (web-deferred, mcp-exempt) and dispatched via the dedicated `subscriptions` map.
-  if (method === "GET" && rest.length === 1 && rest[0] === "subscriptions") {
-    const sourceEndpointId = query.get("sourceEndpointId");
-    return {
-      capability: "subscriptions.list",
-      input: sourceEndpointId ? { sourceEndpointId } : {},
-    };
-  }
-  if (method === "POST" && rest.length === 1 && rest[0] === "subscriptions") {
-    // {sourceEndpointId, destinationId, provider?, eventTypes?, requireVerified?} from the JSON body.
-    return { capability: "subscriptions.create", input: {} };
-  }
-  if (method === "DELETE" && rest.length === 2 && rest[0] === "subscriptions") {
-    return { capability: "subscriptions.delete", input: { subscriptionId: rest[1] } };
-  }
-  if (method === "POST" && rest.length === 2 && rest[0] === "audit" && rest[1] === "verify") {
-    return { capability: "audit.verify", input: {} };
-  }
-  return null;
-}
-
 function jsonError(code: string, message: string, status: number): Response {
   return Response.json({ error: code, message }, { status });
 }
@@ -292,8 +51,8 @@ function jsonError(code: string, message: string, status: number): Response {
 /**
  * Parse a JSON request body to a plain object, or throw VALIDATION_ERROR on invalid JSON. A non-object
  * body (array/string/null) yields `{}` so path-derived fields still drive the input. Single-sourced so
- * the body-bearing WRITE routes (endpoints.create / addProviderSecret via dispatchJsonBody, events.replay,
- * replayDestinations.create) parse + reject malformed bodies identically.
+ * the body-bearing WRITE routes (endpoints.create / addProviderSecret / events.replay /
+ * replayDestinations.create / setOrdered / subscriptions.create) parse + reject malformed bodies identically.
  */
 async function readJsonObjectBody(request: Request): Promise<Record<string, unknown>> {
   let body: unknown;
@@ -309,15 +68,20 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
   const url = new URL(request.url);
   const segments = url.pathname.split("/").filter((s) => s.length > 0);
 
-  // The identity endpoint: authenticated but scope-free (NOT a capability — see ADR-0012). Returns
-  // the caller's own resolved principal so the CLI can validate a key + show `whoami`. Handled before
+  const matched = matchRoute(request.method, segments, url.searchParams);
+  // A routing miss is distinct from a capability NOT_FOUND fault (which carries the JSON error shape).
+  if (matched === null) {
+    return new Response("not found", {
+      status: 404,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  const { def } = matched;
+
+  // The identity route: authenticated but scope-free (NOT a capability — see ADR-0012). Returns the
+  // caller's own resolved principal so the CLI can validate a key + show `whoami`. Handled apart from
   // capability routing because it has no scope and binds no read handler.
-  if (
-    request.method === "GET" &&
-    segments.length === 2 &&
-    segments[0] === "v1" &&
-    segments[1] === "whoami"
-  ) {
+  if (def.dispatch === "whoami") {
     const authn = await authenticate(deps.authDeps, request);
     if (!authn.ok) {
       return new Response(null, {
@@ -329,18 +93,10 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
     return Response.json(AuthContextSchema.parse(authn.ctx));
   }
 
-  const route = matchRoute(request.method, segments, url.searchParams);
-  // A routing miss is distinct from a capability NOT_FOUND fault (which carries the JSON error shape).
-  if (route === null) {
-    return new Response("not found", {
-      status: 404,
-      headers: { "content-type": "text/plain; charset=utf-8" },
-    });
-  }
-
   // Authenticate + enforce the capability's scope. Auth rejections return 401/403 with the RFC 6750
-  // challenge; an operational fault (DB/Hyperdrive outage) THROWS and propagates to the 5xx boundary.
-  const authz = await authorize(deps.authDeps, request, route.capability);
+  // challenge (empty body); an operational fault (DB/Hyperdrive outage) THROWS to the 5xx boundary.
+  const capability = def.capability!;
+  const authz = await authorize(deps.authDeps, request, capability);
   if (!authz.ok) {
     return new Response(null, {
       status: authz.status,
@@ -348,40 +104,66 @@ export async function handleRequest(request: Request, deps: ApiDeps): Promise<Re
     });
   }
 
-  // Dispatch inside the fault-mapping try/catch. events.getPayload is special-cased: it is NOT a DB
-  // CapabilityHandler — it does the RLS metadata read (via the events.get handler) then streams the R2 body.
+  // Dispatch inside the fault-mapping try/catch. The JSON-body read is INSIDE it too, so a malformed body
+  // (readJsonObjectBody throws VALIDATION_ERROR) maps to 400, not the 5xx boundary. The path/query-derived
+  // input stays AUTHORITATIVE over the body (a forged body id can never override the path segment).
+  // Everything but events.getPayload is a handler call; the payload route is special (an RLS metadata read
+  // THEN an R2 GET, ADR-0015).
   try {
-    if (route.capability === "events.getPayload") {
-      return await handlePayload(deps, authz.ctx, String(route.input.eventId));
+    const input = def.body
+      ? { ...(await readJsonObjectBody(request)), ...matched.input }
+      : matched.input;
+    if (def.dispatch === "payload") {
+      return await handlePayload(deps, authz.ctx, String(input.eventId));
     }
-    if (route.capability === "events.replay") {
-      return await handleReplay(deps, authz.ctx, String(route.input.eventId), request);
-    }
-    if (route.capability.startsWith("replayDestinations.")) {
-      return await dispatchReplayDestination(deps, authz.ctx, route, request);
-    }
-    if (route.capability.startsWith("subscriptions.")) {
-      return await dispatchSubscription(deps, authz.ctx, route, request);
-    }
-    if (route.capability === "endpoints.create") {
-      return await dispatchJsonBody(deps, authz.ctx, "endpoints.create", request);
-    }
-    if (route.capability === "endpoints.addProviderSecret") {
-      return await dispatchJsonBody(deps, authz.ctx, "endpoints.addProviderSecret", request, {
-        endpointId: String(route.input.endpointId),
-      });
-    }
-    const handler = deps.handlers.get(route.capability);
-    if (handler === undefined) {
-      // A routed capability with no bound handler is a wiring bug, not a client error.
-      throw new Error(`no handler bound for capability: ${route.capability}`);
-    }
-    return Response.json(await handler(authz.ctx, route.input));
+    const handler = resolveHandler(deps, def, capability);
+    return Response.json(await handler(authz.ctx, input));
   } catch (err) {
     if (err instanceof CapabilityFault) {
       return jsonError(err.code, err.message, httpStatusForCapabilityError(err.code));
     }
     throw err; // operational -> the fetch boundary maps it to 5xx
+  }
+}
+
+/**
+ * Resolve the handler for a dispatched route from the right map: `replay` (the dedicated WRITE), the
+ * dedicated `replayDestinations` / `subscriptions` maps (kept OFF the shared map so the mcp exemptions
+ * can't drift), or the shared `handlers` map (everything else — endpoints/events/deliveries/audit, the
+ * same handlers mcp binds). A routed capability with no bound handler is a wiring bug (→ 5xx), not a
+ * client error, and the throw message names the capability so the boundary log points at it.
+ */
+function resolveHandler(
+  deps: ApiDeps,
+  def: RouteDef,
+  capability: string,
+): (ctx: AuthContext, input: Record<string, unknown>) => Promise<unknown> {
+  switch (def.dispatch) {
+    case "replay": {
+      if (deps.replay === undefined) throw new Error("no replay handler bound"); // wiring bug -> 5xx
+      return deps.replay;
+    }
+    case "replayDestinations": {
+      const handler = deps.replayDestinations?.get(capability);
+      if (handler === undefined) {
+        throw new Error(`no replayDestinations handler bound for: ${capability}`);
+      }
+      return handler;
+    }
+    case "subscriptions": {
+      const handler = deps.subscriptions?.get(capability);
+      if (handler === undefined) {
+        throw new Error(`no subscriptions handler bound for: ${capability}`);
+      }
+      return handler;
+    }
+    default: {
+      const handler = deps.handlers.get(capability);
+      if (handler === undefined) {
+        throw new Error(`no handler bound for capability: ${capability}`);
+      }
+      return handler;
+    }
   }
 }
 
@@ -414,99 +196,4 @@ async function handlePayload(deps: ApiDeps, ctx: AuthContext, eventId: string): 
     bytes: bytes.byteLength,
     bodyBase64: bytesToB64(bytes),
   });
-}
-
-/**
- * events.replay: a WRITE. The eventId comes from the path; target + idempotencyKey from the JSON body.
- * We merge them (the path eventId is authoritative) and hand the full input to the bound replay
- * handler, which enforces the events:replay scope, validates the body against the capability schema
- * (bad/missing fields → VALIDATION_ERROR), and records the delivery_attempt. The api NEVER contacts
- * the localhost target — the CLI does that and calls this after a local 2xx.
- */
-async function handleReplay(
-  deps: ApiDeps,
-  ctx: AuthContext,
-  eventId: string,
-  request: Request,
-): Promise<Response> {
-  if (deps.replay === undefined) {
-    throw new Error("no replay handler bound"); // wiring bug -> 5xx
-  }
-  const input = { ...(await readJsonObjectBody(request)), eventId };
-  return Response.json(await deps.replay(ctx, input));
-}
-
-/**
- * Dispatch a body-bearing WRITE through the SHARED handlers map (so mcp binds the same handler). Reads
- * the JSON body (invalid JSON -> VALIDATION_ERROR), merges any path-derived fields (`extra`, e.g. the
- * authoritative endpointId), and returns the handler's contract-shaped output. Used by endpoints.create
- * ({name} from the body) and endpoints.addProviderSecret ({provider,label?,secret} from the body, the
- * endpointId from the path) — the only routes that read a request body. A routed capability with no
- * bound handler is a wiring bug (-> 5xx), not a client error.
- */
-async function dispatchJsonBody(
-  deps: ApiDeps,
-  ctx: AuthContext,
-  capability: string,
-  request: Request,
-  extra?: Record<string, unknown>,
-): Promise<Response> {
-  const handler = deps.handlers.get(capability);
-  if (handler === undefined) {
-    throw new Error(`no handler bound for capability: ${capability}`);
-  }
-  const input = { ...(await readJsonObjectBody(request)), ...extra };
-  return Response.json(await handler(ctx, input));
-}
-
-/**
- * Dispatch a replayDestinations.* capability via the DEDICATED `replayDestinations` map (never the
- * shared `handlers` map — that keeps the mcp exemption un-driftable, ADR-0081). create reads {url,label?}
- * from the JSON body; list/delete carry no body (delete's destinationId is the authoritative path
- * segment). A missing map binding is a wiring bug (→ 5xx), not a client error.
- */
-async function dispatchReplayDestination(
-  deps: ApiDeps,
-  ctx: AuthContext,
-  route: Route,
-  request: Request,
-): Promise<Response> {
-  const handler = deps.replayDestinations?.get(route.capability);
-  if (handler === undefined) {
-    throw new Error(`no replayDestinations handler bound for: ${route.capability}`);
-  }
-  if (route.capability === "replayDestinations.create") {
-    // {url, label?} from the JSON body.
-    return Response.json(await handler(ctx, await readJsonObjectBody(request)));
-  }
-  if (route.capability === "replayDestinations.setOrdered") {
-    // {ordered} from the JSON body + destinationId from the path — spread route.input LAST so the path
-    // segment is authoritative (a body destinationId can never override it).
-    const body = await readJsonObjectBody(request);
-    return Response.json(await handler(ctx, { ...body, ...route.input }));
-  }
-  // list ({}) + delete + enable + rotateSigningSecret + listSigningSecrets ({destinationId}) carry no body;
-  // the route input (path segment) is authoritative.
-  return Response.json(await handler(ctx, route.input));
-}
-
-/**
- * Dispatch a subscriptions.* capability via the DEDICATED `subscriptions` map (never the shared `handlers`
- * map — keeps the mcp exemption un-driftable, S3 Slice 3). create reads its fields from the JSON body;
- * list ({} or {sourceEndpointId}) + delete ({subscriptionId} from the path) carry no body.
- */
-async function dispatchSubscription(
-  deps: ApiDeps,
-  ctx: AuthContext,
-  route: Route,
-  request: Request,
-): Promise<Response> {
-  const handler = deps.subscriptions?.get(route.capability);
-  if (handler === undefined) {
-    throw new Error(`no subscriptions handler bound for: ${route.capability}`);
-  }
-  if (route.capability === "subscriptions.create") {
-    return Response.json(await handler(ctx, await readJsonObjectBody(request)));
-  }
-  return Response.json(await handler(ctx, route.input));
 }
