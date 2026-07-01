@@ -73,6 +73,12 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
   // S8 coverage PR6/PR7 — bespoke asymmetric.
   keygen: { displayName: "Keygen", brandColor: "#5A50E0" },
   constant_contact: { displayName: "Constant Contact", brandColor: "#1985E1" },
+  // S8 coverage PR8 — Tier-4 non-crypto "authenticated" providers.
+  telegram: { displayName: "Telegram", brandColor: "#26A5E4" },
+  mixpanel: { displayName: "Mixpanel", brandColor: "#7856FF" },
+  new_relic: { displayName: "New Relic", brandColor: "#1CE783" },
+  fillout: { displayName: "Fillout", brandColor: "#EA4A2F" },
+  zapier: { displayName: "Zapier", brandColor: "#FF4F00" },
   razorpay: { displayName: "Razorpay", brandColor: "#3395FF" },
   sentry: { displayName: "Sentry", brandColor: "#362D59" },
   linear: { displayName: "Linear", brandColor: "#5E6AD2" },

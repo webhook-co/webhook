@@ -78,6 +78,14 @@ export const PROVIDERS = [
   // (no per-endpoint secret — a registered secret is only an enable-marker).
   "keygen",
   "constant_contact",
+  // S8 coverage PR8 — more Tier-4 NON-CRYPTO "authenticated" providers (shared static token / basic auth /
+  // operator-configured header — no payload signature). telegram = fixed header; mixpanel = HTTP Basic;
+  // new_relic/fillout/zapier = operator-configured {header, token}.
+  "telegram",
+  "mixpanel",
+  "new_relic",
+  "fillout",
+  "zapier",
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
