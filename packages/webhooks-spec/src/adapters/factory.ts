@@ -57,17 +57,38 @@ function parseSignatureHeader(
     case "csvKv": {
       const fields: Record<string, string> = {};
       const signatures: string[] = [];
-      // Comma-delimited by default (Stripe `t=,v1=`); Paddle uses a semicolon (`ts=;h1=`).
-      for (const part of headerValue.split(format.delimiter ?? ",")) {
-        const eq = part.indexOf("=");
-        if (eq === -1) continue;
-        const key = part.slice(0, eq).trim();
-        const val = part.slice(eq + 1).trim();
-        if (key === format.sigKey) signatures.push(val);
-        else fields[key] = val;
+      // `groupDelimiter` (Persona rotation, a space) splits into MULTIPLE `key=value` groups; without it
+      // there is a single group. Every group's `sigKey` is a candidate; non-sig fields (timestamp) are
+      // taken from the FIRST group only (all groups carry the same timestamp).
+      const groups =
+        format.groupDelimiter !== undefined
+          ? headerValue.split(format.groupDelimiter)
+          : [headerValue];
+      let firstGroup = true;
+      for (const group of groups) {
+        if (group.trim() === "") continue;
+        // Comma-delimited by default (Stripe `t=,v1=`); Paddle uses a semicolon (`ts=;h1=`).
+        for (const part of group.split(format.delimiter ?? ",")) {
+          const eq = part.indexOf("=");
+          if (eq === -1) continue;
+          const key = part.slice(0, eq).trim();
+          const val = part.slice(eq + 1).trim();
+          if (key === format.sigKey) signatures.push(val);
+          else if (firstGroup) fields[key] = val;
+        }
+        firstGroup = false;
       }
       if (signatures.length === 0) return { error: `missing ${format.sigKey}=` };
       return { signatures, fields };
+    }
+    case "delimitedList": {
+      // A `delimiter`-separated list of BARE signatures (ConfigCat rotation `<sig>,<sig>`); all candidates.
+      const signatures = headerValue
+        .split(format.delimiter)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (signatures.length === 0) return { error: "no signatures" };
+      return { signatures, fields: {} };
     }
     case "spaceList": {
       const signatures: string[] = [];
@@ -252,6 +273,17 @@ export function makeHmacAdapter(config: HmacProviderConfig): VerifyAdapter {
       }
       signatures = parsed.signatures;
       sigFields = parsed.fields;
+      // Additional FIXED headers (Box primary+secondary rotation): collect their signatures too. A
+      // missing/empty one is skipped (only one may be present mid-rotation); a malformed one is ignored
+      // rather than failing the whole verify (another header may still carry a valid signature).
+      if (config.additionalSignatureHeaders !== undefined) {
+        for (const extraHeader of config.additionalSignatureHeaders) {
+          const extraValue = findHeader(input.headers, extraHeader);
+          if (extraValue === undefined || extraValue.trim() === "") continue;
+          const extra = parseSignatureHeader(extraValue, format, config.signatureValuePrefix);
+          if (!("error" in extra)) signatures = [...signatures, ...extra.signatures];
+        }
+      }
     }
 
     // Resolve (and format-validate) the timestamp, but DON'T enforce the window yet.

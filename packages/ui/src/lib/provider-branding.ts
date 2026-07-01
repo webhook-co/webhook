@@ -84,6 +84,9 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
   loops: { displayName: "Loops", brandColor: "#111827" },
   customer_io: { displayName: "Customer.io", brandColor: "#7131FF" },
   framer: { displayName: "Framer", brandColor: "#0055FF" },
+  // S8 coverage PR10 — rotation any-of-N knob.
+  box: { displayName: "Box", brandColor: "#0061D5" },
+  configcat: { displayName: "ConfigCat", brandColor: "#EC5A2C" },
   razorpay: { displayName: "Razorpay", brandColor: "#3395FF" },
   sentry: { displayName: "Sentry", brandColor: "#362D59" },
   linear: { displayName: "Linear", brandColor: "#5E6AD2" },

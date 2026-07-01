@@ -91,6 +91,9 @@ export const PROVIDERS = [
   "loops", // Standard Webhooks
   "customer_io", // v0:{ts}:{body} Slack-style
   "framer", // {body}{submissionId} + sha256= prefix
+  // S8 coverage PR10 — the rotation "any-of-N candidate signatures" knob.
+  "box", // dual primary/secondary header
+  "configcat", // comma-joined bare digests
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
@@ -263,17 +266,27 @@ export type TimestampSource =
  *   (GitHub `sha256=…`, Shopify `<base64>`, Slack `v0=…`).
  * - `csvKv`: a `delimiter`-separated (default `,`) list of `key=value`; signatures are the values
  *   whose key is `sigKey`, and the other keys are exposed as fields (Stripe `t=…,v1=…`, sigKey `v1`;
- *   Paddle `ts=…;h1=…` with delimiter `;`, sigKey `h1`).
+ *   Paddle `ts=…;h1=…` with delimiter `;`, sigKey `h1`). `groupDelimiter` (e.g. a space) splits the
+ *   header into MULTIPLE `key=value` groups first (Persona's rotation `t=..,v1=.. t=..,v1=..`): every
+ *   group's `sigKey` becomes a candidate; the non-sig fields (timestamp) come from the FIRST group.
  * - `spaceList`: a space-separated list of `tag,value` entries; signatures are the values whose
  *   tag is `sigTag`, others skipped (Standard Webhooks `v1,<b64>` entries, `v1a` skipped).
  * - `positional`: a comma-separated list whose FIRST element is the timestamp and the rest are
  *   signatures (Recurly `<unix>,<sig1>,<sig2>`); the timestamp is exposed as `timestampField`.
+ * - `delimitedList`: a `delimiter`-separated list of BARE signatures, all candidates (ConfigCat's
+ *   rotation `<b64sig>,<b64sig>` — no key/tag, no timestamp in the header).
  */
 export type SignatureFormat =
   | { readonly kind: "plain" }
-  | { readonly kind: "csvKv"; readonly sigKey: string; readonly delimiter?: string }
+  | {
+      readonly kind: "csvKv";
+      readonly sigKey: string;
+      readonly delimiter?: string;
+      readonly groupDelimiter?: string;
+    }
   | { readonly kind: "spaceList"; readonly sigTag: string }
   | { readonly kind: "positional"; readonly timestampField: string }
+  | { readonly kind: "delimitedList"; readonly delimiter: string }
   // `&`-joined `publicKey|signature` pairs (Braintree `bt_signature`); the signatures are the parts
   // after each `|`. We try them all (match-any) — our key only ever reproduces our own pair's sig.
   | { readonly kind: "pipePairs" };
@@ -384,6 +397,14 @@ export interface HmacProviderConfig {
    * `signatureValuePrefix` are not applied (each numbered header IS one raw signature).
    */
   readonly numberedSignatureHeaders?: { readonly prefix: string; readonly max: number };
+  /**
+   * Additional FIXED signature-header names whose values are collected as extra candidate signatures
+   * (parsed by the same `signatureFormat`), on top of `signatureHeader`. For providers that ship two
+   * named headers during key rotation — Box's `box-signature-primary` + `box-signature-secondary`
+   * (each an independent HMAC under a different key). A missing/empty additional header is skipped
+   * (only one may be present mid-rotation); verification accepts if ANY collected signature matches.
+   */
+  readonly additionalSignatureHeaders?: readonly string[];
   /**
    * For `plain` signature formats only: a fixed prefix on the header value that is stripped
    * before decoding and REQUIRED to be present (e.g. GitHub's `sha256=`, Slack's `v0=`). A value
@@ -696,8 +717,10 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
   },
   persona: {
     slug: "persona",
+    // `groupDelimiter: " "` handles key rotation, when Persona ships multiple space-separated
+    // `t=..,v1=..` groups; every group's `v1` becomes a candidate (accept-if-any).
+    signatureFormat: { kind: "csvKv", sigKey: "v1", groupDelimiter: " " },
     signatureHeader: "persona-signature",
-    signatureFormat: { kind: "csvKv", sigKey: "v1" },
     encoding: "hex",
     timestamp: { kind: "sigField", field: "t" },
     message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
@@ -714,6 +737,31 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
   // body concatenated with its `Framer-Webhook-Submission-Id` header (no separator) + a `sha256=` prefix.
   tally: rawBodyHmacConfig("tally", "tally-signature", "base64"),
   loops: LOOPS_CONFIG,
+  // S8 coverage PR10 — the rotation "any-of-N" knob. Box ships TWO fixed headers (primary + secondary),
+  // each a base64 HMAC-SHA256 over `{body}{box-delivery-timestamp}` (body first, then the ISO timestamp
+  // header, no separator); during rotation the two carry signatures under different keys → accept-if-any.
+  box: {
+    slug: "box",
+    signatureHeader: "box-signature-primary",
+    additionalSignatureHeaders: ["box-signature-secondary"],
+    encoding: "base64",
+    message: [{ kind: "body" }, { kind: "header", header: "box-delivery-timestamp" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.box,
+  },
+  // ConfigCat: HMAC-SHA256/base64 over `{id}{timestamp}{body}` (no separators, all from headers); during
+  // rotation the `x-configcat-webhook-signature-v1` header carries COMMA-joined bare digests → any-of-N.
+  configcat: {
+    slug: "configcat",
+    signatureHeader: "x-configcat-webhook-signature-v1",
+    signatureFormat: { kind: "delimitedList", delimiter: "," },
+    encoding: "base64",
+    message: [
+      { kind: "header", header: "x-configcat-webhook-id" },
+      { kind: "header", header: "x-configcat-webhook-timestamp" },
+      { kind: "body" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.configcat,
+  },
   customer_io: {
     slug: "customer_io",
     signatureHeader: "x-cio-signature",
