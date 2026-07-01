@@ -29,8 +29,8 @@ async function publicTables(): Promise<string[]> {
 }
 
 // EVERY non-owner role the migrations create — app/ingest (0002), authn (0008), anchor (0010),
-// auth (0016), sweeper (0020). The list must stay complete: a down() that forgets to drop one is
-// only caught if that role is checked here (else the down-all clean-schema assertion passes blind).
+// auth (0016), sweeper (0020), reconciler (0033). The list must stay complete: a down() that forgets to drop
+// one is only caught if that role is checked here (else the down-all clean-schema assertion passes blind).
 const MIGRATION_ROLES = [
   DB_ROLES.app,
   DB_ROLES.ingest,
@@ -38,6 +38,7 @@ const MIGRATION_ROLES = [
   DB_ROLES.anchor,
   DB_ROLES.auth,
   DB_ROLES.sweeper,
+  DB_ROLES.reconciler,
 ];
 
 async function appRoles(): Promise<string[]> {

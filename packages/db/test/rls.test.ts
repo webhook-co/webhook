@@ -85,6 +85,7 @@ let ingest: Sql; // webhook_ingest — ingest hot-path role (events INSERT+SELEC
 let owner: Sql; // webhook_owner — schema owner (non-superuser)
 let anchor: Sql; // webhook_anchor — WORM head-anchor cross-org chain-head reader
 let sweeper: Sql; // webhook_sweeper — cross-org expiry cron-sweep (DELETE-only on the two token tables)
+let reconciler: Sql; // webhook_reconciler — cross-org delivery-reconciliation reader (re-wake cron)
 let root: Sql; // cluster superuser — used only to prove trigger-level immutability
 let orgA: Seeded;
 let orgB: Seeded;
@@ -149,6 +150,7 @@ beforeAll(async () => {
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
   anchor = createClient(pg.urlFor({ role: DB_ROLES.anchor }));
   sweeper = createClient(pg.urlFor({ role: DB_ROLES.sweeper }));
+  reconciler = createClient(pg.urlFor({ role: DB_ROLES.reconciler }));
   root = createClient(pg.ownerUrl);
   orgA = await seedOrg("aaa");
   orgB = await seedOrg("bbb");
@@ -160,6 +162,7 @@ afterAll(async () => {
   await owner?.end();
   await anchor?.end();
   await sweeper?.end();
+  await reconciler?.end();
   await root?.end();
   await pg?.stop();
 });
@@ -668,6 +671,59 @@ describe("catalog-driven RLS coverage", () => {
     expect(ownedBySweeper[0]?.n).toBe(0);
   });
 
+  it("the reconciler role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
+    // webhook_reconciler is the cross-org delivery-reconciliation cron role (migration 0033): it reads which
+    // destinations have due, unclaimed deliveries across all orgs via role-targeted SELECT policies + column
+    // grants, and like every other job-path role must never be a superuser, never BYPASSRLS, never own a table.
+    const [role] = await owner<{ rolname: string; super: boolean; bypass: boolean }[]>`
+      select rolname, rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.reconciler}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+
+    const ownedByReconciler = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.reconciler}`;
+    expect(ownedByReconciler[0]?.n).toBe(0);
+  });
+
+  it("the reconciler role holds SELECT on ONLY the reconciliation columns, and no write anywhere", async () => {
+    // Column-level least privilege: it can read the keys it needs to decide which DO to wake, but NEVER the
+    // payload pointer / captured headers / target URL / signing config, and holds no INSERT/UPDATE/DELETE.
+    const daGranted = ["org_id", "destination_id", "status", "next_retry_at"] as const;
+    for (const c of daGranted) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.reconciler}, 'delivery_attempts', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    // These columns exist on delivery_attempts but are NOT granted — the reconciler never sees the delivery
+    // target, the upstream response code/body, or the idempotency key.
+    const daForbidden = ["target", "status_code", "error", "idempotency_key"] as const;
+    for (const c of daForbidden) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.reconciler}, 'delivery_attempts', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // The destination's URL + failure counter exist but are NOT granted (signing config lives in a separate
+    // table the role has no privilege on at all).
+    const rdForbidden = ["url", "consecutive_failures"] as const;
+    for (const c of rdForbidden) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.reconciler}, 'replay_destinations', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // No write on either table (INSERT/UPDATE/DELETE) — every mutation stays inside the DO under webhook_app.
+    for (const t of ["delivery_attempts", "replay_destinations"] as const) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.reconciler}, ${t}, 'DELETE')) as any`;
+      expect(p.any).toBe(false);
+    }
+  });
+
   it("the sweeper role holds DELETE — and ONLY delete — on the two token tables, nothing elsewhere", async () => {
     // DELETE-only least privilege: the cron can't read any handle row (no SELECT), can't mint or rotate
     // (no INSERT/UPDATE), and the role-targeted USING (expires_at < now()) policy bounds its bare DELETE to
@@ -743,6 +799,38 @@ describe("webhook_anchor cross-org chain-head read", () => {
     await expect(
       anchor`insert into audit_log (org_id, seq, action, row_hash)
              values (${orgA.orgId}, ${999}, ${"x"}, ${deterministicBuffer(32)})`,
+    ).rejects.toThrow(/permission denied/i);
+  });
+});
+
+describe("webhook_reconciler cross-org delivery read", () => {
+  it("reads delivery_attempts + replay_destinations with NO tenant context (role-targeted policy)", async () => {
+    // The reconciler cron sets no app.current_org. The role-targeted FOR SELECT TO webhook_reconciler
+    // USING(true) policies let it scan both tables across all orgs, while FORCE RLS still denies webhook_app
+    // the same (the deny-by-default tests above). No BYPASSRLS/SECURITY-DEFINER bypass involved.
+    await expect(
+      reconciler`select org_id, destination_id, status, next_retry_at from delivery_attempts limit 1`,
+    ).resolves.toBeDefined();
+    await expect(
+      reconciler`select id, org_id, deleted_at, disabled_at from replay_destinations limit 1`,
+    ).resolves.toBeDefined();
+  });
+
+  it("cannot read the ungranted columns (column grants bound the read)", async () => {
+    await expect(reconciler`select target from delivery_attempts`).rejects.toThrow(
+      /permission denied/i,
+    );
+    await expect(reconciler`select url from replay_destinations`).rejects.toThrow(
+      /permission denied/i,
+    );
+  });
+
+  it("cannot write to either table (no INSERT/UPDATE/DELETE grant)", async () => {
+    await expect(
+      reconciler`update delivery_attempts set status = ${"delivered"} where org_id = ${orgA.orgId}`,
+    ).rejects.toThrow(/permission denied/i);
+    await expect(
+      reconciler`update replay_destinations set disabled_at = now() where org_id = ${orgA.orgId}`,
     ).rejects.toThrow(/permission denied/i);
   });
 });

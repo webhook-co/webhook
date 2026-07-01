@@ -49,6 +49,14 @@
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
+      // HYPERDRIVE_RECONCILER — query caching DISABLED. The delivery reconciler cron's cross-org read of
+      // due destinations, as webhook_reconciler (role-targeted SELECT policies + column grants). Same
+      // posture as HYPERDRIVE_ANCHOR: no cache so a paused/rotated endpoint is reflected on the next pass.
+      "binding": "HYPERDRIVE_RECONCILER",
+      "id": "<HYPERDRIVE_RECONCILER_ID>",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
       "binding": "HYPERDRIVE_AUTHN",
       "id": "<HYPERDRIVE_AUTHN_ID>",
       "localConnectionString": "postgres://webhook_authn:postgres@127.0.0.1:5432/webhook_dev",
