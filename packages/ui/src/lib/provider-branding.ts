@@ -79,6 +79,11 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
   new_relic: { displayName: "New Relic", brandColor: "#1CE783" },
   fillout: { displayName: "Fillout", brandColor: "#EA4A2F" },
   zapier: { displayName: "Zapier", brandColor: "#FF4F00" },
+  // S8 coverage PR9 — crypto providers found via the token-tier research.
+  tally: { displayName: "Tally", brandColor: "#0D0D0D" },
+  loops: { displayName: "Loops", brandColor: "#111827" },
+  customer_io: { displayName: "Customer.io", brandColor: "#7131FF" },
+  framer: { displayName: "Framer", brandColor: "#0055FF" },
   razorpay: { displayName: "Razorpay", brandColor: "#3395FF" },
   sentry: { displayName: "Sentry", brandColor: "#362D59" },
   linear: { displayName: "Linear", brandColor: "#5E6AD2" },
