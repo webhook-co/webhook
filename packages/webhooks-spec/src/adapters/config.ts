@@ -86,6 +86,11 @@ export const PROVIDERS = [
   "new_relic",
   "fillout",
   "zapier",
+  // S8 coverage PR9 — crypto providers found while researching the token-tier (they SIGN). Doc-verified.
+  "tally", // raw-body sha256/base64
+  "loops", // Standard Webhooks
+  "customer_io", // v0:{ts}:{body} Slack-style
+  "framer", // {body}{submissionId} + sha256= prefix
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
@@ -539,6 +544,8 @@ export const GEMINI_CONFIG = standardWebhooksConfig("gemini", "webhook");
 export const INCIDENT_IO_CONFIG = standardWebhooksConfig("incident_io", "webhook");
 export const ETSY_CONFIG = standardWebhooksConfig("etsy", "webhook");
 export const VANTA_CONFIG = standardWebhooksConfig("vanta", "svix");
+// S8 coverage PR9 — Loops is a Standard Webhooks adopter (`webhook-*` trio).
+export const LOOPS_CONFIG = standardWebhooksConfig("loops", "webhook");
 
 /**
  * The provider→config map. `registry.ts` maps each entry through `makeHmacAdapter` to build the
@@ -702,6 +709,32 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
   // verifier, so it waits for a confirmed live delivery.)
   bolt: rawBodyHmacConfig("bolt", "x-bolt-hmac-sha256", "base64"),
   primer: rawBodyHmacConfig("primer", "x-signature-primary", "base64"),
+  // S8 coverage PR9 — crypto providers surfaced by the token-tier research. Tally = raw-body sha256/base64.
+  // Loops = Standard Webhooks (LOOPS_CONFIG). Customer.io = Slack-style `v0:{ts}:{body}`. Framer signs the
+  // body concatenated with its `Framer-Webhook-Submission-Id` header (no separator) + a `sha256=` prefix.
+  tally: rawBodyHmacConfig("tally", "tally-signature", "base64"),
+  loops: LOOPS_CONFIG,
+  customer_io: {
+    slug: "customer_io",
+    signatureHeader: "x-cio-signature",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "x-cio-timestamp" },
+    message: [
+      { kind: "literal", value: "v0:" },
+      { kind: "timestamp" },
+      { kind: "literal", value: ":" },
+      { kind: "body" },
+    ],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.customer_io,
+  },
+  framer: {
+    slug: "framer",
+    signatureHeader: "framer-signature",
+    signatureValuePrefix: "sha256=",
+    encoding: "hex",
+    message: [{ kind: "body" }, { kind: "header", header: "framer-webhook-submission-id" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.framer,
+  },
   // Airwallex signs `{x-timestamp}{body}` with NO separator (ts in a companion header). Its timestamp unit
   // is unspecified in the docs → enforceReplayWindow=false (the HMAC is the protection; never false-reject).
   airwallex: {
