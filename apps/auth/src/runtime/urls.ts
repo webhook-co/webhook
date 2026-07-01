@@ -9,6 +9,8 @@ export const APP_BASE_URL = "https://app.webhook.co";
 export const LOGIN_PATH = "/login";
 /** The verified Resend sender (mail.webhook.co; tracking off — see magic-link.ts). */
 export const MAGIC_LINK_FROM = "login@mail.webhook.co";
+/** The verified Resend sender for service notifications (auto-disable emails etc.), same domain, named. */
+export const NOTIFICATIONS_FROM = "webhook.co <notifications@mail.webhook.co>";
 
 /**
  * Public Cloudflare Turnstile sitekey for the login widget. Sitekeys are designed to be embedded in

@@ -19,9 +19,11 @@
   // Daily cross-org expiry cron-sweep (ADR-0055): the scheduled() handler in src/worker.ts prunes expired
   // refresh + session-exchange rows across all orgs as the least-privilege webhook_sweeper role. 04:00 UTC
   // is a low-traffic window; the on-access per-org sweep handles active orgs, so this only mops up the
-  // churned/abandoned ones — once a day is ample.
+  // churned/abandoned ones — once a day is ample. The cron is HOURLY: the notification drain (S3 PR3c-3b)
+  // runs every hour so an auto-disable email is at most ~1h late, while worker.ts gates the daily sweep to
+  // the 04:00 UTC firing.
   "triggers": {
-    "crons": ["0 4 * * *"],
+    "crons": ["0 * * * *"],
   },
   "assets": {
     "directory": ".open-next/assets",
@@ -88,6 +90,13 @@
     {
       "binding": "HYPERDRIVE_SWEEPER",
       "id": "<HYPERDRIVE_SWEEPER_ID>",
+      "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
+      // HYPERDRIVE_NOTIFIER (webhook_notifier — the S3 notification-drain cron: read pending intents + owner
+      // email cross-org, flip pending→sent). caching irrelevant (an UPDATE is never cached).
+      "binding": "HYPERDRIVE_NOTIFIER",
+      "id": "<HYPERDRIVE_NOTIFIER_ID>",
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
   ],

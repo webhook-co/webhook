@@ -64,6 +64,7 @@ jobs:
       HYPERDRIVE_INGEST_ID: ${{ vars.HYPERDRIVE_INGEST_ID }}
       HYPERDRIVE_AUTH_ID: ${{ vars.HYPERDRIVE_AUTH_ID }}
       HYPERDRIVE_SWEEPER_ID: ${{ vars.HYPERDRIVE_SWEEPER_ID }}
+      HYPERDRIVE_NOTIFIER_ID: ${{ vars.HYPERDRIVE_NOTIFIER_ID }}
       KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}
       KV_AUTHZ_ID: ${{ vars.KV_AUTHZ_ID }}
       # auth.webhook.co ids — the generator emits every app each run + reqEnv()s its ids (web deploys only web).

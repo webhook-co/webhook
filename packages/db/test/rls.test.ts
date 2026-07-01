@@ -750,6 +750,7 @@ describe("catalog-driven RLS coverage", () => {
     const selects: Array<[string, string]> = [
       ["notification_intents", "kind"],
       ["notification_intents", "destination_id"],
+      ["notification_intents", "context"],
       ["memberships", "role"],
       ["user", "email"],
     ];

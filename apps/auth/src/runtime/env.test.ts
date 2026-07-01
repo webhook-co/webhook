@@ -4,6 +4,7 @@ import {
   readAuthEnv,
   readIntrospectEnv,
   readSweepEnv,
+  readNotifyEnv,
   resolveAuthSecrets,
   type AuthEnv,
 } from "./env";
@@ -88,6 +89,30 @@ describe("readSweepEnv", () => {
     expect(() => readSweepEnv({ HYPERDRIVE_SWEEPER: {} })).toThrow(/HYPERDRIVE_SWEEPER/);
     expect(() => readSweepEnv({ HYPERDRIVE_SWEEPER: { connectionString: "" } })).toThrow(
       /HYPERDRIVE_SWEEPER/,
+    );
+  });
+});
+
+describe("readNotifyEnv", () => {
+  const OK = {
+    HYPERDRIVE_NOTIFIER: { connectionString: "postgres://notifier@hd/db" },
+    RESEND_API_KEY: "re_test",
+  };
+
+  it("returns the env when HYPERDRIVE_NOTIFIER + RESEND_API_KEY are present", () => {
+    expect(readNotifyEnv(OK)).toMatchObject(OK);
+  });
+
+  it("throws (fail-closed) when the Hyperdrive binding is absent or malformed", () => {
+    expect(() => readNotifyEnv({ RESEND_API_KEY: "re_test" })).toThrow(/HYPERDRIVE_NOTIFIER/);
+    expect(() => readNotifyEnv({ ...OK, HYPERDRIVE_NOTIFIER: { connectionString: "" } })).toThrow(
+      /HYPERDRIVE_NOTIFIER/,
+    );
+  });
+
+  it("throws (fail-closed) when RESEND_API_KEY is missing", () => {
+    expect(() => readNotifyEnv({ HYPERDRIVE_NOTIFIER: OK.HYPERDRIVE_NOTIFIER })).toThrow(
+      /RESEND_API_KEY/,
     );
   });
 });

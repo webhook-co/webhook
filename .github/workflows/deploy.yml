@@ -69,6 +69,7 @@ jobs:
       # even though this workflow only deploys engine/api/mcp. (deploy-auth.yml deploys auth.)
       HYPERDRIVE_AUTH_ID: ${{ vars.HYPERDRIVE_AUTH_ID }}
       HYPERDRIVE_SWEEPER_ID: ${{ vars.HYPERDRIVE_SWEEPER_ID }}
+      HYPERDRIVE_NOTIFIER_ID: ${{ vars.HYPERDRIVE_NOTIFIER_ID }}
       AUTH_OAUTH_KV_ID: ${{ vars.AUTH_OAUTH_KV_ID }}
       AUTH_DEVICE_KV_ID: ${{ vars.AUTH_DEVICE_KV_ID }}
       AUTH_RATELIMIT_KV_ID: ${{ vars.AUTH_RATELIMIT_KV_ID }}
