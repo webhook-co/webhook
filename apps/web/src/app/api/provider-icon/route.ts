@@ -1,5 +1,9 @@
 import { serveProviderIcon } from "@/server/provider-icon";
 
+// dal-gate-allow: public favicon proxy — serves only public brand favicons for an ALLOWLISTED set of
+// provider domains; owns/reads NO tenant, session, or org-scoped data (ADR-0023), so it is intentionally
+// unauthenticated (an <img>/background-image resource load can't carry auth anyway).
+
 // Fetches an upstream favicon + edge-caches it per request (cache miss); never statically optimized.
 export const dynamic = "force-dynamic";
 
