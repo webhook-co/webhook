@@ -18,8 +18,10 @@
 import { type CachedSealedSecret } from "@webhook-co/db";
 import {
   bytesToB64,
+  bytesToHex,
   hexToBytes,
   importHmacKey,
+  parseBraintreePublicKey,
   parseVerifyTokenSecret,
   utf8Decoder,
   utf8Encoder,
@@ -117,6 +119,41 @@ export async function ebayChallengeResponse(
   );
   const hex = [...digest].map((b) => b.toString(16).padStart(2, "0")).join("");
   return Response.json({ challengeResponse: hex }, { headers: BROWSER_SAFE_HEADERS });
+}
+
+/** A short lowercase-hex nonce — the shape of a Braintree `bt_challenge` (see the anti-oracle note below). */
+const BT_CHALLENGE_HEX = /^[a-f0-9]{20,40}$/;
+
+/**
+ * Braintree webhook-subscription verification: the `bt_challenge` GET expects the body
+ * `<public_key>|<hexHMAC-SHA1(SHA1(private_key), bt_challenge)>`. The HMAC key derivation is IDENTICAL to
+ * Braintree POST verification (`sha1-secret`: the key is the raw SHA-1 digest of the private key), so the
+ * private key is already a `braintree` provider secret; the integration public key rides a separate typed
+ * blob. PURE: takes both already-unsealed values (the dispatcher resolves them). `text/plain` + nosniff so a
+ * browser paste of the URL renders inert, uniform with the other echoes.
+ */
+export async function braintreeChallengeResponse(
+  publicKey: string,
+  privateKey: string,
+  btChallenge: string,
+): Promise<Response> {
+  const sha1Key = new Uint8Array(
+    await crypto.subtle.digest("SHA-1", utf8Encoder.encode(privateKey)),
+  );
+  const hmacKey = await crypto.subtle.importKey(
+    "raw",
+    sha1Key,
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"],
+  );
+  const mac = new Uint8Array(
+    await crypto.subtle.sign("HMAC", hmacKey, utf8Encoder.encode(btChallenge)),
+  );
+  return new Response(`${publicKey}|${bytesToHex(mac)}`, {
+    status: 200,
+    headers: { "content-type": "text/plain; charset=utf-8", ...BROWSER_SAFE_HEADERS },
+  });
 }
 
 /**
@@ -378,6 +415,28 @@ export async function dispatchGetHandshake(
       const verifyToken = parseVerifyTokenSecret(await unseal(secret));
       if (verifyToken === null) continue; // an app-creds blob, not a verify-token
       return ebayChallengeResponse(challengeCode, verifyToken, `${url.origin}${url.pathname}`);
+    }
+  }
+
+  // Braintree subscription verify: a `bt_challenge` GET → `<public_key>|<hexHMAC-SHA1(SHA1(private_key),
+  // bt_challenge)>`. Needs BOTH `braintree` secrets — the private-key signing secret (bare) and the
+  // integration public key (a typed blob under the same slug). ANTI-ORACLE: the HMAC key is the SAME
+  // SHA1(private_key) that signs the POST `bt_payload`, so accept ONLY a short hex nonce — a base64
+  // bt_payload can never be coaxed through as a challenge to forge a `verified` event. Missing either
+  // secret → null → falls through to capture (no oracle beyond what an unknown token already exposes).
+  const btChallenge = url.searchParams.get("bt_challenge");
+  if (btChallenge !== null && BT_CHALLENGE_HEX.test(btChallenge)) {
+    let publicKey: string | null = null;
+    let privateKey: string | null = null;
+    for (const secret of sealedSecrets) {
+      if (secret.provider !== "braintree") continue;
+      const plaintext = await unseal(secret);
+      const pub = parseBraintreePublicKey(plaintext);
+      if (pub !== null) publicKey = pub;
+      else privateKey = plaintext;
+    }
+    if (publicKey !== null && privateKey !== null) {
+      return braintreeChallengeResponse(publicKey, privateKey, btChallenge);
     }
   }
 

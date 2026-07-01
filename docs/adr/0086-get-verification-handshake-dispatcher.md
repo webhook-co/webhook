@@ -6,8 +6,9 @@
   (`packages/contract`/`packages/db`/`packages/webhooks-spec`). S8 Slice 2. This ADR covers the dispatcher
   seam + the **no-secret** protocols (PR1), **X/Twitter CRC** (PR2a, the first secret-based protocol — adds
   the pre-capture unseal dep), and **Meta** verify-token compare (PR2b — adds the typed verify-token seal-
-  blob + `addProviderSecret` `kind`), and **eBay** challenge hash (PR3 — reuses the verify-token kind, adds
-  the `ebay` provider with a SHA1withECDSA notification adapter). All four protocol families now ship.
+  blob + `addProviderSecret` `kind`), **eBay** challenge hash (PR3 — reuses the verify-token kind, adds
+  the `ebay` provider with a SHA1withECDSA notification adapter), and **Braintree** `bt_challenge` (adds a
+  `braintree_public_key` seal-blob kind + a hex-only anti-oracle guard). All these protocol families now ship.
 - relates: [0085](0085-ingest-accept-all-verbs-method-liveness.md) (accept-all-verbs + the per-token GET
   liveness this sits in front of), [0079](0079-slack-url-verification-handshake.md) (the POST-side Slack
   `url_verification` handshake this mirrors), [0078](0078-inbound-verification-provider-secret-management.md)
@@ -102,14 +103,30 @@ verified against eBay's documented spec + self-generated SHA1withECDSA vectors; 
 is not yet exercised** (needs a real eBay app), but the **challenge handshake IS live-verifiable** and is the
 credential-free subscription unblock.
 
+**Braintree subscription verification (this change):** a `?bt_challenge=<hex>` GET is answered with the body
+`<public_key>|<hexHMAC-SHA1(SHA1(private_key), bt_challenge)>` (`text/plain`). The HMAC key derivation is
+IDENTICAL to Braintree's POST verification (`sha1-secret`: the key is the raw SHA-1 digest of the private
+key), so the private key is already the endpoint's `braintree` signing secret. The response additionally needs
+the integration **public key**, which POST verification never uses — so it is stored as its OWN typed seal-blob
+(`{kind:"braintree_public_key",publicKey}`) via a new `addProviderSecret` `kind`, coexisting with the
+private-key secret under the `braintree` slug (the same two-secrets-one-slug shape as Meta/eBay). The verify
+path **skips** the public-key blob as a candidate signing key — a required **verification-downgrade guard**:
+the integration public key is *public*, so its deterministic blob string is attacker-derivable, and treating it
+as an HMAC key would let anyone who knows the public key forge a `verified` braintree event. Because the
+handshake HMACs `bt_challenge` under the SAME key that signs the POST `bt_payload`, the dispatcher accepts
+**only a short lowercase-hex nonce** (`^[a-f0-9]{20,40}$`) as a challenge — a base64 `bt_payload` can never be
+coaxed through the handshake to obtain a forged signature (anti-oracle). Verified byte-exact against Braintree's
+documented public vector.
+
 ## consequences
 
 A `wbhk.my` URL becomes usable as a Dropbox / Adobe verification target (PR1), an **X/Twitter** CRC target
 (PR2a), and a **Meta** (FB/IG/WhatsApp/Messenger) target (PR2b) — closing the largest named integration gap;
-**eBay** follows in PR3. The no-drop floor and metering posture are unchanged: handshakes write no row and
-bill nothing, exactly like the Slack control-message divert. The verify-token storage reuses the sealed
-provider-secret surface (a new `kind` on `addProviderSecret`, a typed seal-blob), so there is no new schema,
-grant, or KV-resolution path. The dashboard form for the verify-token is web-deferred (S1).
+an **eBay** target (PR3), and a **Braintree** target (the `bt_challenge` handshake) — closing the largest
+named integration gap. The no-drop floor and metering posture are unchanged: handshakes write no row and
+bill nothing, exactly like the Slack control-message divert. Both the verify-token and the braintree-public-key
+storage reuse the sealed provider-secret surface (a `kind` on `addProviderSecret`, a typed seal-blob), so there
+is no new schema, grant, or KV-resolution path. The dashboard forms for these secrets are web-deferred (S1).
 
 **Known limitation (kind not in metadata).** Because the kind lives inside the sealed ciphertext (no
 migration), `listProviderSecrets` can't distinguish a verify-token from a signing secret under `meta` — both

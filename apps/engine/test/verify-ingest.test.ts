@@ -2,6 +2,7 @@ import { toCachedSealedSecret, type CachedSealedSecret } from "@webhook-co/db";
 import {
   LocalKmsProvider,
   SecretStore,
+  serializeBraintreePublicKey,
   serializeVerifyTokenSecret,
   type EncryptionContext,
 } from "@webhook-co/shared";
@@ -64,6 +65,20 @@ async function githubSignature(secret: string, body: string): Promise<string> {
   const mac = await crypto.subtle.sign("HMAC", key, enc.encode(body));
   const hex = [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
   return `sha256=${hex}`;
+}
+
+/** A Braintree `bt_signature` hex value: HMAC-SHA1 over the payload, keyed by SHA-1(secret) (sha1-secret). */
+async function braintreeSigHex(secret: string, payload: string): Promise<string> {
+  const sha1Key = new Uint8Array(await crypto.subtle.digest("SHA-1", enc.encode(secret)));
+  const key = await crypto.subtle.importKey(
+    "raw",
+    sha1Key,
+    { name: "HMAC", hash: "SHA-1" },
+    false,
+    ["sign"],
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, enc.encode(payload));
+  return [...new Uint8Array(mac)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 const T = 1_750_000_000; // fixed signing timestamp
@@ -235,6 +250,57 @@ describe("makeVerifyIngest", () => {
     });
     expect(outcome.verified).toBe(true);
     expect(outcome.provider).toBe("meta");
+  });
+
+  it("does NOT accept a braintree public-key blob as a POST signing key (verification-downgrade guard)", async () => {
+    // A braintree endpoint holds TWO secrets under `braintree`: the private-key signing secret + the
+    // integration PUBLIC key (a typed blob, for the `bt_challenge` handshake). The public key is PUBLIC, so
+    // the deterministic blob string is attacker-derivable — if the verify path tried it as a candidate key,
+    // anyone knowing the public key could forge a `verified` braintree event (`bt_signature` = HMAC keyed by
+    // SHA1(blobString)). The verify path MUST skip braintree-public-key blobs as candidate keys.
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const blob = serializeBraintreePublicKey("integration_public_key"); // gitleaks:allow — fake fixture
+    const pk = await sealAs(store, blob, "sec-btpk", "braintree");
+    const payload = "attacker-forged-bt-payload";
+    const forged = await braintreeSigHex(blob, payload); // key = the PUBLIC blob string (derivable)
+    const body = `bt_signature=${encodeURIComponent(`integration_public_key|${forged}`)}&bt_payload=${payload}`;
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [["content-type", "application/x-www-form-urlencoded"]],
+      provider: "braintree",
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [pk],
+    });
+    expect(outcome.verified).toBe(false); // a public-key blob is NEVER a signing key
+  });
+
+  it("still verifies a real braintree webhook when a public-key blob coexists (skips only the blob)", async () => {
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const privateKey = "integration_private_key"; // gitleaks:allow — fake fixture
+    const priv = await sealAs(store, privateKey, "sec-btpriv", "braintree");
+    const pk = await sealAs(
+      store,
+      serializeBraintreePublicKey("integration_public_key"), // gitleaks:allow — fake fixture
+      "sec-btpk",
+      "braintree",
+    );
+    const payload = "real-bt-payload";
+    const sig = await braintreeSigHex(privateKey, payload); // signed with the REAL private key
+    const body = `bt_signature=${encodeURIComponent(`integration_public_key|${sig}`)}&bt_payload=${payload}`;
+    const verify = makeVerifyIngest(store, at);
+
+    const outcome = await verify({
+      rawBody: enc.encode(body),
+      headers: [["content-type", "application/x-www-form-urlencoded"]],
+      provider: "braintree",
+      orgId: ORG,
+      endpointId: EP,
+      sealedSecrets: [pk, priv], // the public-key blob is present but skipped; the private key matches
+    });
+    expect(outcome.verified).toBe(true);
   });
 
   it("verifies against the REGISTERED provider even when header detection picked the wrong one", async () => {

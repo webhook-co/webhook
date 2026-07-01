@@ -4,6 +4,7 @@ import { type AuthContext } from "@webhook-co/contract";
 import {
   importAuditKey,
   LocalKmsProvider,
+  parseBraintreePublicKey,
   parseVerifyTokenSecret,
   SecretStore,
   verifyAuditChain,
@@ -117,6 +118,21 @@ describe("endpoints.addProviderSecret handler", () => {
     expect(parseVerifyTokenSecret(unsealed)).toBe("raw-hub-verify-token");
     expect(unsealed).not.toBe("raw-hub-verify-token");
     expect(JSON.stringify(out)).not.toContain("raw-hub-verify-token"); // never echoed
+  });
+
+  it("kind=braintree_public_key seals the public key as a typed BLOB (distinct from the private-key secret)", async () => {
+    const h = handlers().get("endpoints.addProviderSecret")!;
+    const out = (await h(rw(orgA), {
+      endpointId: epA,
+      provider: "braintree",
+      secret: "integration_public_key",
+      kind: "braintree_public_key",
+    })) as Record<string, unknown>;
+    const stored = (await getEndpointProviderSecrets(authn, epA)).find((s) => s.id === out.id)!;
+    const unsealed = await sealer.openString(stored.sealed, stored.context);
+    expect(parseBraintreePublicKey(unsealed)).toBe("integration_public_key");
+    expect(unsealed).not.toBe("integration_public_key"); // blob-wrapped, so the verify path skips it
+    expect(JSON.stringify(out)).not.toContain("integration_public_key"); // never echoed
   });
 
   it("kind=signing_secret (default) seals the RAW secret unchanged — no blob wrapping", async () => {

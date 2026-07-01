@@ -22,6 +22,7 @@ import { type CachedSealedSecret, fromCachedSealedSecret } from "@webhook-co/db"
 import {
   getAdapterForScheme,
   type KeyFetcher,
+  parseBraintreePublicKey,
   parseVerifyTokenSecret,
   PROVIDERS,
   type Provider,
@@ -100,6 +101,11 @@ export function makeVerifyIngest(
         // the (lower-assurance, cleartext-in-URL) verify-token forge a `verified` webhook. Skip it here; the
         // GET dispatcher is the only consumer (symmetric with handshake.ts's discrimination).
         if (parseVerifyTokenSecret(plaintext) !== null) continue;
+        // A Braintree integration PUBLIC key (sealed as a typed blob for the `bt_challenge` handshake) is
+        // NOT a signing key — the public key is public, so its deterministic blob string is attacker-
+        // derivable; using it as an HMAC key would let anyone who knows the public key forge a `verified`
+        // braintree webhook. Skip it here; the GET dispatcher is the only consumer (symmetric skip).
+        if (parseBraintreePublicKey(plaintext) !== null) continue;
         secrets.push(plaintext);
       } catch (err) {
         // Skip this secret; never let one bad secret abort verification of the rest. Surface it so a

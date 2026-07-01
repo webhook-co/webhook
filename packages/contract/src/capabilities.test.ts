@@ -487,4 +487,27 @@ describe("endpoints.addProviderSecret — verify-token kind (S8 Slice 2 PR2b, GE
       parse({ provider: "meta", secret: "not~base64~at~all", kind: "verify_token" }).success,
     ).toBe(true);
   });
+
+  it("accepts kind=braintree_public_key for braintree with a plain integration public key", () => {
+    expect(
+      parse({
+        provider: "braintree",
+        secret: "integration_public_key",
+        kind: "braintree_public_key",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects kind=braintree_public_key for any provider other than braintree (stripe)", () => {
+    const r = parse({ provider: "stripe", secret: "x", kind: "braintree_public_key" });
+    expect(r.success).toBe(false);
+    if (!r.success) expect(r.error.issues[0]!.path).toEqual(["provider"]);
+  });
+
+  it("does NOT apply signing-secret shape validation to a braintree_public_key (opaque key string)", () => {
+    expect(
+      parse({ provider: "braintree", secret: "not~base64~at~all", kind: "braintree_public_key" })
+        .success,
+    ).toBe(true);
+  });
 });
