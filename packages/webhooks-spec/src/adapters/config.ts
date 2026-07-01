@@ -29,6 +29,16 @@ export const PROVIDERS = [
   "supabase",
   "render",
   "brex",
+  // S8 coverage — more Standard Webhooks adopters (same crypto; `webhook-*` unless noted `svix-*`).
+  // Doc-verified per provider (2026-07-01). openai/replicate/etsy print the recipe; gemini/incident.io
+  // /polar name the spec. gemini is the STATIC mode (its dynamic JWT/RS256 mode is a future adapter).
+  "openai",
+  "replicate",
+  "polar",
+  "gemini",
+  "incident_io",
+  "etsy",
+  "vanta", // svix-* prefix
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
@@ -464,6 +474,25 @@ export const SUPABASE_CONFIG = standardWebhooksConfig("supabase", "webhook");
 export const RENDER_CONFIG = standardWebhooksConfig("render", "webhook");
 export const BREX_CONFIG = standardWebhooksConfig("brex", "webhook");
 
+// S8 coverage — more Standard Webhooks adopters (doc-verified 2026-07-01). Spec-native `webhook-*`
+// trio except Vanta, which still emits Svix's original `svix-*` trio. gemini is the STATIC-secret
+// mode (its dynamic JWT/RS256 mode needs an asymmetric adapter — deferred).
+export const OPENAI_CONFIG = standardWebhooksConfig("openai", "webhook");
+export const REPLICATE_CONFIG = standardWebhooksConfig("replicate", "webhook");
+// Polar: SAME SW message framing + `webhook-*` trio, but a RAW-UTF-8 key — NOT whsec-base64. Polar's
+// dashboard secret is a `polar_whs_…` string and its SDK base64-ENCODES that raw string before handing
+// it to the standardwebhooks signer (which base64-DECODES it), so the effective HMAC key is the
+// untouched secret bytes. Routing it to whsec-base64 would reject the `polar_whs_` secret at
+// registration (underscores aren't base64) and never verify — so it uses `keyDerivation: "utf8"`.
+export const POLAR_CONFIG: HmacProviderConfig = {
+  ...standardWebhooksConfig("polar", "webhook"),
+  keyDerivation: "utf8",
+};
+export const GEMINI_CONFIG = standardWebhooksConfig("gemini", "webhook");
+export const INCIDENT_IO_CONFIG = standardWebhooksConfig("incident_io", "webhook");
+export const ETSY_CONFIG = standardWebhooksConfig("etsy", "webhook");
+export const VANTA_CONFIG = standardWebhooksConfig("vanta", "svix");
+
 /**
  * The provider→config map. `registry.ts` maps each entry through `makeHmacAdapter` to build the
  * REGISTRY, so this is the single place a config-driven provider's verification is defined. It is
@@ -482,6 +511,14 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
   supabase: SUPABASE_CONFIG,
   render: RENDER_CONFIG,
   brex: BREX_CONFIG,
+  // S8 coverage — Standard Webhooks adopters (doc-verified 2026-07-01).
+  openai: OPENAI_CONFIG,
+  replicate: REPLICATE_CONFIG,
+  polar: POLAR_CONFIG,
+  gemini: GEMINI_CONFIG,
+  incident_io: INCIDENT_IO_CONFIG,
+  etsy: ETSY_CONFIG,
+  vanta: VANTA_CONFIG,
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256 (utf8 key, no timestamp). Headers + encoding
   // verified per provider against the S2.1 research matrix / official signing docs.
   razorpay: rawBodyHmacConfig("razorpay", "x-razorpay-signature", "hex"),
