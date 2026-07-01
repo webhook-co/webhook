@@ -7,8 +7,60 @@
 // (that stays the legacy 1b one-shot terminal). All run under the org's RLS context (webhook_app); the
 // engine binds HYPERDRIVE_TENANT as webhook_app, so the DO writes these directly with no api callback.
 
+import { appendAuditEntry } from "./audit-append";
 import { type TenantTx } from "./client";
 import { serializeTarget } from "./replay";
+
+/**
+ * Consecutive dead-letters (with zero interleaving successes) that trip a destination's auto-disable
+ * (S3 Slice 3 PR3c). Each `dead` already exhausted the ~28h retry curve, so a run of this many is
+ * multi-day sustained failure — the destination is definitively broken, not flaking. A single `delivered`
+ * resets the tally, so this never false-trips on transient errors. Tunable; passed explicitly at the call
+ * site so it's a visible decision (and overridable in tests) rather than an inlined magic number.
+ */
+export const AUTO_DISABLE_THRESHOLD = 20;
+
+/** Input to enqueue a durable owner-notification intent (S3 Slice 3 PR3c). */
+export interface NotificationIntentInput {
+  readonly orgId: string;
+  /** The notification kind (v1: `destination_disabled`). */
+  readonly kind: string;
+  /** The destination the notification is about (null for future kinds without one). */
+  readonly destinationId: string | null;
+}
+
+/**
+ * Enqueue a durable `pending` notification intent (S3 Slice 3 PR3c). The engine DO can't send mail (no
+ * identity-email read, no Resend binding), so it records the intent here IN THE SAME tx as the triggering
+ * mutation; a separate notifier (PR3c-3) drains pending intents → emails the org owner → marks them sent.
+ * Returns the new intent id. Runs under the caller's org RLS.
+ */
+export async function insertNotificationIntent(
+  tx: TenantTx,
+  input: NotificationIntentInput,
+): Promise<string> {
+  const [row] = await tx<{ id: string }[]>`
+    insert into notification_intents (id, org_id, kind, destination_id)
+    values (${crypto.randomUUID()}, ${input.orgId}, ${input.kind}, ${input.destinationId})
+    returning id`;
+  if (!row) throw new Error("insertNotificationIntent: insert returned no row");
+  return row.id;
+}
+
+/**
+ * Optional auto-disable context for {@link markDeliveryTerminalFailure} (S3 Slice 3 PR3c). When supplied, a
+ * terminal failure that pushes the destination's consecutive-failure tally to/over `threshold` — while it is
+ * NOT already disabled — trips the disable IN THE SAME tx: set `disabled_at`, append a
+ * `replay_destination.disabled` audit row, and enqueue a `destination_disabled` notification intent. Omitted
+ * (the pre-PR3c path / low-level tests) → only the tally is bumped, never a disable.
+ */
+export interface AutoDisableContext {
+  readonly orgId: string;
+  readonly threshold: number;
+  readonly auditKey: CryptoKey;
+  /** Acting principal for the audit row (null for the system/DO actor). */
+  readonly actor: string | null;
+}
 
 /** Input to enqueue ONE native auto-delivery (S3 Slice 3 PR2c): the event→destination attempt-chain a
  *  matching subscription selected. */
@@ -220,8 +272,21 @@ export async function cancelOpenDeliveries(tx: TenantTx, destinationId: string):
   return res.count;
 }
 
-/** Terminal non-delivery: status → `dead` (retries exhausted) or `blocked` (a real SSRF refusal). Bumps the
- *  destination's consecutive-failure tally (the auto-disable signal, acted on in a later PR). */
+/**
+ * Terminal non-delivery: status → `dead` (retries exhausted) or `blocked` (a real SSRF refusal). Self-
+ * contained — it ONLY finalizes the delivery and, for `dead`, bumps the destination's consecutive-failure
+ * tally; the auto-disable side effects (disable + audit + intent) are a SEPARATE best-effort step
+ * ({@link autoDisableDestination}) the DO runs in its own tx, so an audit/notify failure can never roll back
+ * the dead-letter finalization (which would re-drive + duplicate-POST the delivery).
+ *
+ * Only `dead` counts toward auto-disable: it represents ~28h of exhausted retries, so a run is multi-day
+ * sustained failure. `blocked` is an INSTANT security refusal (the URL resolved to a private/internal IP),
+ * not a "destination is down" signal — counting it would trip the multi-day threshold in minutes on a
+ * transient DNS blip, so a blocked delivery finalizes but leaves the tally untouched (the owner sees the
+ * blocked deliveries and fixes the URL). Returns the post-bump `consecutiveFailures` (null when nothing was
+ * finalized, or on a non-`dead` terminal), which the DO compares to the threshold to decide whether to
+ * attempt the disable.
+ */
 export async function markDeliveryTerminalFailure(
   tx: TenantTx,
   input: {
@@ -232,16 +297,57 @@ export async function markDeliveryTerminalFailure(
     statusCode: number | null;
     error: string | null;
   },
-): Promise<void> {
+): Promise<{ readonly consecutiveFailures: number | null }> {
   const res = await tx`
     update delivery_attempts
        set status = ${input.status}, attempt = ${input.attempt}, status_code = ${input.statusCode},
            error = ${input.error}, next_retry_at = null
      where id = ${input.id} and status in ('queued', 'pending')`;
-  if (res.count > 0) {
-    await tx`
-      update replay_destinations
-         set consecutive_failures = consecutive_failures + 1
-       where id = ${input.destinationId}`;
-  }
+  if (res.count === 0) return { consecutiveFailures: null }; // already finalized — don't double-count
+  if (input.status !== "dead") return { consecutiveFailures: null }; // blocked: finalize only, no tally bump
+  const [bumped] = await tx<{ consecutive_failures: number }[]>`
+    update replay_destinations
+       set consecutive_failures = consecutive_failures + 1
+     where id = ${input.destinationId}
+    returning consecutive_failures`;
+  return { consecutiveFailures: bumped?.consecutive_failures ?? null };
+}
+
+/**
+ * Trip a destination's persistent-failure auto-disable (S3 Slice 3 PR3c), IF its tally is at/over `threshold`
+ * and it is still enabled — in a SINGLE race-safe statement: `set disabled_at = now() where … and disabled_at
+ * is null and consecutive_failures >= threshold returning id`. Only the winner (still-enabled, still-over-
+ * threshold) gets a row back, so concurrent crossers disable + audit + enqueue the intent EXACTLY once. On a
+ * win it appends a `replay_destination.disabled` audit row and a `destination_disabled` notification intent in
+ * the SAME tx as the disable. Runs in its OWN tx (the DO calls it AFTER the delivery finalization commits), so
+ * a failure here never rolls back the dead-letter. Returns `{disabled}`.
+ */
+export async function autoDisableDestination(
+  tx: TenantTx,
+  args: {
+    orgId: string;
+    destinationId: string;
+    threshold: number;
+    auditKey: CryptoKey;
+    actor: string | null;
+  },
+): Promise<{ readonly disabled: boolean }> {
+  const [won] = await tx<{ id: string }[]>`
+    update replay_destinations set disabled_at = now()
+     where id = ${args.destinationId} and disabled_at is null
+       and consecutive_failures >= ${args.threshold}
+    returning id`;
+  if (won === undefined) return { disabled: false };
+  await appendAuditEntry(tx, args.auditKey, {
+    orgId: args.orgId,
+    actor: args.actor,
+    action: "replay_destination.disabled",
+    target: args.destinationId,
+  });
+  await insertNotificationIntent(tx, {
+    orgId: args.orgId,
+    kind: "destination_disabled",
+    destinationId: args.destinationId,
+  });
+  return { disabled: true };
 }
