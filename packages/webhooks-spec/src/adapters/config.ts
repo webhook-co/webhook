@@ -39,6 +39,14 @@ export const PROVIDERS = [
   "incident_io",
   "etsy",
   "vanta", // svix-* prefix
+  // S8 coverage PR2 — raw-body HMAC (doc-verified 2026-07-01). sha256/hex unless noted.
+  "pusher",
+  "quickbooks", // intuit-signature, base64
+  "chargify",
+  "launchdarkly",
+  "modern_treasury",
+  "autodesk_aps", // sha1, `sha1hash=` prefix
+  "mongodb_atlas", // sha1, base64
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
@@ -519,6 +527,15 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
   incident_io: INCIDENT_IO_CONFIG,
   etsy: ETSY_CONFIG,
   vanta: VANTA_CONFIG,
+  // S8 coverage PR2 — raw-body HMAC (doc-verified 2026-07-01). Autodesk = sha1 + `sha1hash=` prefix;
+  // MongoDB Atlas (alerts webhook, x-mms-signature) = sha1 + base64; QuickBooks (intuit-signature) = base64.
+  pusher: rawBodyHmacConfig("pusher", "x-pusher-signature", "hex"),
+  quickbooks: rawBodyHmacConfig("quickbooks", "intuit-signature", "base64"),
+  chargify: rawBodyHmacConfig("chargify", "x-chargify-webhook-signature-hmac-sha-256", "hex"),
+  launchdarkly: rawBodyHmacConfig("launchdarkly", "x-ld-signature", "hex"),
+  modern_treasury: rawBodyHmacConfig("modern_treasury", "x-signature", "hex"),
+  autodesk_aps: rawBodyHmacConfig("autodesk_aps", "x-adsk-signature", "hex", "sha1hash=", "sha1"),
+  mongodb_atlas: rawBodyHmacConfig("mongodb_atlas", "x-mms-signature", "base64", undefined, "sha1"),
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256 (utf8 key, no timestamp). Headers + encoding
   // verified per provider against the S2.1 research matrix / official signing docs.
   razorpay: rawBodyHmacConfig("razorpay", "x-razorpay-signature", "hex"),
