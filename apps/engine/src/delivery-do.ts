@@ -170,6 +170,9 @@ export class DeliveryDO extends DurableObject<Env> {
                 threshold: ctx.threshold,
                 auditKey: ctx.auditKey,
                 actor: ctx.actor,
+                // Snapshot the failure that tripped the threshold onto the notification (for the email).
+                lastError: a.error,
+                lastStatusCode: a.statusCode,
               }),
             ).catch((err: unknown) =>
               console.log(

@@ -26,6 +26,7 @@ import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
 import { oauthIssuerConfig } from "./issuer/oauth-config";
 import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
+import { runNotificationDrain } from "./runtime/notify-cron";
 import { runAuthExpirySweep } from "./runtime/sweep-cron";
 
 // The OAuth issuer instance — @cloudflare/workers-oauth-provider wrapping the OpenNext handler (A2b-1). We
@@ -41,11 +42,16 @@ export default {
   // Delegate every request to the OAuth provider unchanged — same fetch handler as before this PR.
   fetch: (request, env, ctx) => provider.fetch(request, env, ctx),
 
-  // Daily cross-org expiry cron-sweep (ADR-0055). Prunes expired refresh + session-exchange rows across all
-  // orgs as the least-privilege webhook_sweeper role. runAuthExpirySweep is non-throwing (it logs + swallows
-  // its own errors), but we also waitUntil it so the isolate stays alive until the sweep + pool-close finish.
-  scheduled: (_event, env, ctx) => {
-    ctx.waitUntil(runAuthExpirySweep(env));
+  // Hourly cron (crons: "0 * * * *"). Two independent, non-throwing jobs (each logs + swallows its own
+  // errors); both are waitUntil'd so the isolate lives until they + their pool-close finish.
+  scheduled: (event, env, ctx) => {
+    // The notification drain runs EVERY hour, so an auto-disable owner email is at most ~1h late (S3 PR3c-3b).
+    ctx.waitUntil(runNotificationDrain(env));
+    // The cross-org expiry sweep (ADR-0055) is a DAILY job — gate it to the 04:00 UTC firing (a low-traffic
+    // window; the on-access per-org sweep handles active orgs, so this only mops up churned ones).
+    if (new Date(event.scheduledTime).getUTCHours() === 4) {
+      ctx.waitUntil(runAuthExpirySweep(env));
+    }
   },
 };
 

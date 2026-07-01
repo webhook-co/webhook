@@ -51,6 +51,10 @@ const TOKEN = {
   // DELETE-only Neon role. The operator provisions the role + Hyperdrive and sets the HYPERDRIVE_SWEEPER_ID
   // GH repo var; the auth deploy workflow must provide it like every other id here.
   "<HYPERDRIVE_SWEEPER_ID>": reqEnv("HYPERDRIVE_SWEEPER_ID"),
+  // The S3 notification-drain's webhook_notifier Hyperdrive (PR3c-3b) — a least-privilege cross-org Neon role
+  // (read pending intents + owner email, flip pending→sent). Operator provisions the role + Hyperdrive + sets
+  // the HYPERDRIVE_NOTIFIER_ID GH repo var; every workflow that runs this generator must provide it.
+  "<HYPERDRIVE_NOTIFIER_ID>": reqEnv("HYPERDRIVE_NOTIFIER_ID"),
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
 };
@@ -193,6 +197,7 @@ const APPS = {
       "<HYPERDRIVE_AUTH_ID>",
       "<HYPERDRIVE_AUTHN_ID>",
       "<HYPERDRIVE_SWEEPER_ID>",
+      "<HYPERDRIVE_NOTIFIER_ID>",
     ],
   },
 };

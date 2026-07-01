@@ -73,15 +73,39 @@ describe("listPendingNotifications", () => {
     const { orgId } = await seedOrgWithOwner("owner-a@example.test");
     const { intentId, destinationId } = await seedIntent(orgId);
     const rows = await pendingFor(orgId);
-    expect(rows).toEqual([
-      {
-        intentId,
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      intentId,
+      orgId,
+      kind: "destination_disabled",
+      destinationId,
+      context: null, // seedIntent inserts without a context snapshot
+      ownerEmails: ["owner-a@example.test"],
+    });
+    expect(rows[0]!.createdAt).toBeInstanceOf(Date);
+  });
+
+  it("returns the engine's context snapshot (jsonb round-trips as an object, not a string)", async () => {
+    const { orgId } = await seedOrgWithOwner("ctx@example.test");
+    const destinationId = (
+      await createReplayDestination(app, { orgId, url: "https://ctx.example.com/in" })
+    ).id;
+    const context = {
+      destinationUrl: "https://ctx.example.com/in",
+      failureCount: 20,
+      lastError: "Bad Gateway",
+      lastStatusCode: 502,
+    };
+    const intentId = await withTenant(app, orgId, (tx) =>
+      insertNotificationIntent(tx, {
         orgId,
         kind: "destination_disabled",
         destinationId,
-        ownerEmails: ["owner-a@example.test"],
-      },
-    ]);
+        context,
+      }),
+    );
+    const row = (await pendingFor(orgId)).find((n) => n.intentId === intentId);
+    expect(row?.context).toEqual(context);
   });
 
   it("reads across tenants from a context-less notifier connection", async () => {

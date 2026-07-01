@@ -67,6 +67,14 @@ const intents = (destinationId: string) =>
       select id, kind, status from notification_intents where destination_id = ${destinationId}`,
   );
 
+const intentContext = (destinationId: string) =>
+  withTenant(
+    app,
+    orgId,
+    (tx) => tx<{ context: Record<string, unknown> | null }[]>`
+      select context from notification_intents where destination_id = ${destinationId}`,
+  ).then((r) => r[0]?.context ?? null);
+
 // A SMALL threshold keeps these tests fast + decoupled from the prod constant (whose exact value is asserted
 // separately below); the crossing logic is identical at any threshold.
 const TEST_THRESHOLD = 3;
@@ -93,6 +101,8 @@ async function failOnce(destinationId: string): Promise<boolean> {
       threshold: TEST_THRESHOLD,
       auditKey,
       actor: null,
+      lastError: "boom",
+      lastStatusCode: 500,
     }),
   );
   return disabled;
@@ -171,6 +181,19 @@ describe("markDeliveryTerminalFailure — auto-disable", () => {
     expect(pend[0]).toMatchObject({ kind: "destination_disabled", status: "pending" });
   });
 
+  it("snapshots the destination URL + failure count + last error onto the intent (for the email)", async () => {
+    const url = "https://ctx.example.com/in";
+    const dest = (await createReplayDestination(app, { orgId, url })).id;
+    await failNTimes(dest, TEST_THRESHOLD); // failOnce uses lastError "boom" / statusCode 500
+    // The engine writes a self-contained snapshot so the least-privilege notifier never reads the URL/error.
+    expect(await intentContext(dest)).toEqual({
+      destinationUrl: url,
+      failureCount: TEST_THRESHOLD,
+      lastError: "boom",
+      lastStatusCode: 500,
+    });
+  });
+
   it("markDeliveryTerminalFailure only finalizes + bumps (the disable is a SEPARATE step, never coupled)", async () => {
     const dest = (await createReplayDestination(app, { orgId, url: "https://l.example.com/in" }))
       .id;
@@ -238,6 +261,8 @@ describe("markDeliveryTerminalFailure — auto-disable", () => {
         threshold: TEST_THRESHOLD,
         auditKey,
         actor: null,
+        lastError: null,
+        lastStatusCode: null,
       }),
     );
     expect(below.disabled).toBe(false);
@@ -257,6 +282,8 @@ describe("markDeliveryTerminalFailure — auto-disable", () => {
         threshold: TEST_THRESHOLD,
         auditKey,
         actor: null,
+        lastError: null,
+        lastStatusCode: null,
       }),
     );
     const second = await withTenant(app, orgId, (tx) =>
@@ -266,6 +293,8 @@ describe("markDeliveryTerminalFailure — auto-disable", () => {
         threshold: TEST_THRESHOLD,
         auditKey,
         actor: null,
+        lastError: null,
+        lastStatusCode: null,
       }),
     );
     expect(first.disabled).toBe(true);

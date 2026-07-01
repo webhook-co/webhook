@@ -332,6 +332,33 @@ export function readSweepEnv(env: Record<string, unknown>): SweepEnv {
   return env as unknown as SweepEnv;
 }
 
+// --- S3 Slice 3 PR3c-3b: the cross-org notification-drain env slice --------------------------------
+// The scheduled() notification drain connects as the least-privilege webhook_notifier role (read pending
+// intents + owner email, flip pending→sent) over its OWN Hyperdrive binding — DISTINCT from the others — and
+// sends via the shared RESEND_API_KEY (the same secret the magic-link sender uses).
+export interface NotifyEnv {
+  /** webhook_notifier role — the cross-org client the drain reads intents + marks-sent with. */
+  HYPERDRIVE_NOTIFIER: HyperdriveBinding;
+  /** Resend API key (Secrets Store in prod / string in dev) for the notification send. */
+  RESEND_API_KEY: Secret;
+}
+
+/** Validate + narrow the env for the notification drain, fail-closed (naming the missing key, never its value). */
+export function readNotifyEnv(env: Record<string, unknown>): NotifyEnv {
+  const binding = env.HYPERDRIVE_NOTIFIER as HyperdriveBinding | undefined;
+  if (
+    !binding ||
+    typeof binding.connectionString !== "string" ||
+    binding.connectionString.length === 0
+  ) {
+    throw new Error("notify env: missing or malformed Hyperdrive binding HYPERDRIVE_NOTIFIER");
+  }
+  if (env.RESEND_API_KEY === undefined || env.RESEND_API_KEY === null) {
+    throw new Error("notify env: missing RESEND_API_KEY");
+  }
+  return env as unknown as NotifyEnv;
+}
+
 /** Resolve every secret to a plain string (Better Auth + the hasher take strings). */
 export async function resolveAuthSecrets(env: AuthEnv): Promise<ResolvedAuthSecrets> {
   const [

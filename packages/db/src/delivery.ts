@@ -21,12 +21,27 @@ import { serializeTarget } from "./replay";
 export const AUTO_DISABLE_THRESHOLD = 20;
 
 /** Input to enqueue a durable owner-notification intent (S3 Slice 3 PR3c). */
+/**
+ * The self-contained snapshot the engine writes onto a `destination_disabled` intent so the notifier can send
+ * an informative email WITHOUT reading the destination URL or the delivery error itself (least privilege). All
+ * fields are the engine's own view at disable time; `lastError`/`lastStatusCode` describe the failure that
+ * tripped the threshold (a null status code = a connection/transport error, not an HTTP response).
+ */
+export interface NotificationContext {
+  readonly destinationUrl: string;
+  readonly failureCount: number;
+  readonly lastError: string | null;
+  readonly lastStatusCode: number | null;
+}
+
 export interface NotificationIntentInput {
   readonly orgId: string;
   /** The notification kind (v1: `destination_disabled`). */
   readonly kind: string;
   /** The destination the notification is about (null for future kinds without one). */
   readonly destinationId: string | null;
+  /** Optional context snapshot for the email (migration 0035). Null for context-less kinds. */
+  readonly context?: NotificationContext | null;
 }
 
 /**
@@ -40,8 +55,9 @@ export async function insertNotificationIntent(
   input: NotificationIntentInput,
 ): Promise<string> {
   const [row] = await tx<{ id: string }[]>`
-    insert into notification_intents (id, org_id, kind, destination_id)
-    values (${crypto.randomUUID()}, ${input.orgId}, ${input.kind}, ${input.destinationId})
+    insert into notification_intents (id, org_id, kind, destination_id, context)
+    values (${crypto.randomUUID()}, ${input.orgId}, ${input.kind}, ${input.destinationId},
+            ${input.context ? tx.json(input.context as unknown as Record<string, string | number | null>) : null})
     returning id`;
   if (!row) throw new Error("insertNotificationIntent: insert returned no row");
   return row.id;
@@ -330,13 +346,19 @@ export async function autoDisableDestination(
     threshold: number;
     auditKey: CryptoKey;
     actor: string | null;
+    /** The failure that tripped the threshold — snapshotted into the notification for the email. A null
+     *  statusCode means a connection/transport error (no HTTP response). */
+    lastError: string | null;
+    lastStatusCode: number | null;
   },
 ): Promise<{ readonly disabled: boolean }> {
-  const [won] = await tx<{ id: string }[]>`
+  // RETURNING url + consecutive_failures: the winner captures the destination's own state at disable time so
+  // the notification carries an informative snapshot — the notifier role never reads these from the source.
+  const [won] = await tx<{ url: string; consecutive_failures: number }[]>`
     update replay_destinations set disabled_at = now()
      where id = ${args.destinationId} and disabled_at is null
        and consecutive_failures >= ${args.threshold}
-    returning id`;
+    returning url, consecutive_failures`;
   if (won === undefined) return { disabled: false };
   await appendAuditEntry(tx, args.auditKey, {
     orgId: args.orgId,
@@ -348,6 +370,12 @@ export async function autoDisableDestination(
     orgId: args.orgId,
     kind: "destination_disabled",
     destinationId: args.destinationId,
+    context: {
+      destinationUrl: won.url,
+      failureCount: won.consecutive_failures,
+      lastError: args.lastError,
+      lastStatusCode: args.lastStatusCode,
+    },
   });
   return { disabled: true };
 }
