@@ -175,6 +175,87 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
 /** A neutral fill for an unknown/logo-less provider's monogram tile. */
 export const FALLBACK_BRAND_COLOR = "#6B7280";
 
+/**
+ * The registrable domain for a provider whose brand has NO permissively-licensed vector mark in
+ * `PROVIDER_LOGO_PATHS` (Simple Icons has dropped many brands — Slack, Twilio, LinkedIn, OpenAI… — over
+ * trademark policy). `ProviderLogo` renders the brand favicon for these, proxied + edge-cached same-origin
+ * (`/api/provider-icon?domain=…`) so there is NO third-party request at render time and the `img-src 'self'`
+ * CSP is unchanged; an a11y-safe monogram is the load-error fallback. A provider WITH a vector mark needs no
+ * entry (the mark wins). Completeness (every registry slug has a mark OR a domain) is proven in apps/web.
+ */
+export const PROVIDER_DOMAINS: Record<string, string> = {
+  slack: "slack.com",
+  standard_webhooks: "standardwebhooks.com",
+  stytch: "stytch.com",
+  openai: "openai.com",
+  polar: "polar.sh",
+  incident_io: "incident.io",
+  vanta: "vanta.com",
+  chargify: "maxio.com", // Chargify is now Maxio
+  launchdarkly: "launchdarkly.com",
+  modern_treasury: "moderntreasury.com",
+  segment: "segment.com",
+  onfleet: "onfleet.com",
+  klaviyo: "klaviyo.com",
+  mux: "mux.com",
+  shippo: "goshippo.com",
+  ms_teams: "microsoft.com",
+  ably: "ably.com",
+  nylas: "nylas.com",
+  linkedin: "linkedin.com",
+  airship: "airship.com",
+  lob: "lob.com",
+  persona: "withpersona.com",
+  bolt: "bolt.com",
+  primer: "primer.io",
+  airwallex: "airwallex.com",
+  affirm: "affirm.com",
+  keygen: "keygen.sh",
+  constant_contact: "constantcontact.com",
+  tally: "tally.so",
+  customer_io: "customer.io",
+  configcat: "configcat.com",
+  ashby: "ashbyhq.com",
+  merge_dev: "merge.dev",
+  cronofy: "cronofy.com",
+  increase: "increase.com",
+  finch: "tryfinch.com",
+  knock: "knock.app",
+  deel: "deel.com",
+  checkout_com: "checkout.com",
+  dwolla: "dwolla.com",
+  gocardless: "gocardless.com",
+  heroku: "heroku.com",
+  dub: "dub.co",
+  customerio: "customer.io",
+  sinch: "sinch.com",
+  workos: "workos.com",
+  front: "front.com",
+  recurly: "recurly.com",
+  docusign: "docusign.com",
+  paystack: "paystack.com",
+  authorize_net: "authorize.net",
+  twilio: "twilio.com",
+  mandrill: "mailchimp.com", // Mandrill is Mailchimp Transactional
+  plivo: "plivo.com",
+  messagebird: "messagebird.com",
+  monday: "monday.com",
+  telnyx: "telnyx.com",
+  sendgrid: "sendgrid.com",
+  kinde: "kinde.com",
+  aws_sns: "aws.amazon.com",
+  plaid: "plaid.com",
+  microsoft_graph: "microsoft.com",
+  chargebee: "chargebee.com",
+  postmark: "postmarkapp.com",
+};
+
+/** The favicon domain for a provider slug (only for logo-less brands), or null. */
+export function providerIconDomain(slug: string | null): string | null {
+  if (slug === null) return null;
+  return PROVIDER_DOMAINS[slug] ?? null;
+}
+
 /** Title-case a raw slug as a last-resort display name (`mercado_pago` → "Mercado Pago"). */
 function humanizeSlug(slug: string): string {
   return slug

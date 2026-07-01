@@ -38,7 +38,8 @@ export function ProvidersWall() {
                 "text-xs whitespace-nowrap text-fg-secondary",
               )}
             >
-              <ProviderLogo slug={slug} size={16} />
+              {/* Static site: no /api/provider-icon route → monogram for logo-less brands (no 404s). */}
+              <ProviderLogo slug={slug} size={16} faviconFallback={false} />
               {providerDisplayName(slug)}
             </li>
           ))}

@@ -1,16 +1,28 @@
 import { cn } from "../lib/cn";
-import { providerBrandColor, providerDisplayName } from "../lib/provider-branding";
+import {
+  providerBrandColor,
+  providerDisplayName,
+  providerIconDomain,
+} from "../lib/provider-branding";
 import { PROVIDER_LOGO_PATHS } from "../lib/provider-logos-data";
 
-// A provider's brand mark for the events surfaces + the marketing wall. Renders the official single-path
-// CC0 mark (Simple Icons, brand-coloured) where one exists, otherwise a neutral MONOGRAM tile (1–2
-// initials on the surface-sunken token) so every provider — including the ~29 with no clean mark and any
-// future slug — renders consistently. A null provider renders nothing (callers show the "—" placeholder).
-// Decorative by default (`aria-hidden`); pass `title` for an accessible label.
+// A provider's brand mark for the events surfaces + the marketing wall. Three-tier resolution, best first:
+//   1. the official single-path CC0 vector mark (Simple Icons, brand-coloured) where one exists;
+//   2. else the brand FAVICON, for brands Simple Icons has dropped over trademark policy (Slack, Twilio,
+//      LinkedIn, OpenAI…) — proxied + edge-cached SAME-ORIGIN via `/api/provider-icon?domain=…` so there is
+//      NO third-party request at render time and the `img-src 'self'` CSP is unchanged. It is painted as a
+//      background-image OVER the monogram tile, so a failed/blocked load simply leaves the monogram showing
+//      (no broken-image icon, no client-side error handler — this stays a server-renderable component);
+//   3. else (and as the favicon's own fallback) a neutral MONOGRAM tile (1–2 initials).
+// A null provider renders nothing (callers show the "—" placeholder). Decorative by default (`aria-hidden`);
+// pass `title` for an accessible label.
 //
 // The monogram uses the design tokens (fg-secondary on surface-sunken — the same a11y-safe combo as the
 // inspector badge) rather than the brand colour: a solid brand-colour tile can't guarantee the 4.5:1 text
 // contrast for mid-tone hues at this glyph size. The brand colour lives in the official marks instead.
+
+/** Same-origin favicon-proxy route (edge-cached); the app that renders ProviderLogo owns this route. */
+const PROVIDER_ICON_ENDPOINT = "/api/provider-icon";
 
 export interface ProviderLogoProps {
   /** The raw provider slug, or null for an event with no detected provider. */
@@ -20,6 +32,12 @@ export interface ProviderLogoProps {
   readonly className?: string;
   /** When set, the mark is announced with this label; otherwise it is decorative (`aria-hidden`). */
   readonly title?: string;
+  /**
+   * Whether to use the same-origin favicon proxy for a logo-less brand (tier 2). Default `true`. Set `false`
+   * on a host that does NOT serve the `/api/provider-icon` route (e.g. the fully-static marketing site), so
+   * those providers render the monogram directly instead of emitting a request that would 404.
+   */
+  readonly faviconFallback?: boolean;
 }
 
 /** 1–2 uppercase initials from the provider's display name (the monogram glyph). */
@@ -32,7 +50,13 @@ function initialsFor(slug: string): string {
   return (words[0]![0]! + words[1]![0]!).toUpperCase();
 }
 
-export function ProviderLogo({ slug, size = 20, className, title }: ProviderLogoProps) {
+export function ProviderLogo({
+  slug,
+  size = 20,
+  className,
+  title,
+  faviconFallback = true,
+}: ProviderLogoProps) {
   // No detected provider → render nothing; the caller's display name shows the "—" placeholder.
   if (slug === null) return null;
 
@@ -50,8 +74,20 @@ export function ProviderLogo({ slug, size = 20, className, title }: ProviderLogo
     );
   }
 
-  // Neutral monogram fallback (a known/unknown provider with no clean mark) — token colours, a11y-safe.
+  // Monogram tile (token colours, a11y-safe) — always rendered as the base layer. For a brand with no
+  // vector mark but a known domain, the favicon is painted OVER it as a background-image: on success it
+  // covers the initials; on failure/CSP-block it just doesn't paint, leaving the monogram (no broken img).
   const initials = initialsFor(slug);
+  const domain = faviconFallback ? providerIconDomain(slug) : null;
+  const faviconStyle =
+    domain === null
+      ? {}
+      : {
+          backgroundImage: `url(${PROVIDER_ICON_ENDPOINT}?domain=${encodeURIComponent(domain)})`,
+          backgroundSize: "cover",
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+        };
   return (
     <span
       className={cn(
@@ -66,6 +102,7 @@ export function ProviderLogo({ slug, size = 20, className, title }: ProviderLogo
         fontSize: Math.round(size * (initials.length > 1 ? 0.42 : 0.5)),
         lineHeight: 1,
         letterSpacing: "-0.02em",
+        ...faviconStyle,
       }}
     >
       {initials}
