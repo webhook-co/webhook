@@ -11,12 +11,7 @@ export type StatusTone = "ok" | "warn" | "danger" | "info" | "neutral";
  * mapping so every surface (web/CLI/API/MCP) agrees on which color a state earns.
  */
 export type DeliveryStatus =
-  | "delivered"
-  | "pending"
-  | "retrying"
-  | "failed"
-  | "replayed"
-  | "disabled";
+  "delivered" | "pending" | "retrying" | "failed" | "replayed" | "disabled";
 
 const TONE_BY_STATUS: Record<DeliveryStatus, StatusTone> = {
   delivered: "ok",

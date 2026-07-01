@@ -17,8 +17,7 @@ interface HyperdriveBinding {
 export async function getTenantDb(): Promise<Sql> {
   const { env } = await getCloudflareContext({ async: true });
   const hyperdrive = (env as Record<string, unknown>).HYPERDRIVE_TENANT as
-    | HyperdriveBinding
-    | undefined;
+    HyperdriveBinding | undefined;
   if (!hyperdrive?.connectionString) {
     throw new Error("HYPERDRIVE_TENANT binding is not configured");
   }

@@ -203,8 +203,7 @@ export async function runListen(deps: RunListenDeps): Promise<void> {
     if (!fwd) return false;
     for (let n = 1; !deps.signal.aborted; n += 1) {
       let payload:
-        | { headers: readonly (readonly [string, string])[]; body: Uint8Array }
-        | undefined;
+        { headers: readonly (readonly [string, string])[]; body: Uint8Array } | undefined;
       try {
         payload = await fwd.fetchPayload(summary.id);
       } catch (err) {
@@ -488,8 +487,7 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
     // event on demand (`replaySelected`). Both share one api client + validated loopback target.
     let forward: ListenForwardDeps | undefined;
     let replaySelected:
-      | ((e: EventSummary) => Promise<{ ok: boolean; message: string }>)
-      | undefined;
+      ((e: EventSummary) => Promise<{ ok: boolean; message: string }>) | undefined;
     if (flags.forward !== undefined) {
       parseForwardTarget(flags.forward); // throws InvalidForwardUrlError (usage) on a non-loopback target
       const apiBaseUrl = resolveApiBaseUrl({

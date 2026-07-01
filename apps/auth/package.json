@@ -16,25 +16,25 @@
     "auth:generate": "pnpm dlx @better-auth/cli@latest generate --config src/auth.ts --yes --output ../../packages/db/db/migrations/.better-auth.schema.sql"
   },
   "dependencies": {
-    "@better-auth/api-key": "^1.6.19",
-    "@cloudflare/workers-oauth-provider": "^0.8.0",
+    "@better-auth/api-key": "^1.6.23",
+    "@cloudflare/workers-oauth-provider": "^0.8.1",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",
     "@webhook-co/shared": "workspace:*",
     "@webhook-co/ui": "workspace:*",
-    "better-auth": "^1.6.19",
+    "better-auth": "^1.6.23",
     "geist": "^1.7.2",
-    "lucide-react": "^1.20.0",
-    "motion": "^12.40.0",
+    "lucide-react": "^1.22.0",
+    "motion": "^12.42.2",
     "next": "^16.2.9",
-    "pg": "^8.21.0",
+    "pg": "^8.22.0",
     "pg-cloudflare": "^1.4.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
-    "@opennextjs/cloudflare": "1.19.11",
-    "@tailwindcss/postcss": "^4.3.1",
+    "@opennextjs/cloudflare": "1.20.1",
+    "@tailwindcss/postcss": "^4.3.2",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -42,8 +42,8 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.2",
+    "@vitejs/plugin-react": "^6.0.3",
     "jsdom": "^29.1.1",
-    "tailwindcss": "^4.3.1"
+    "tailwindcss": "^4.3.2"
   }
 }

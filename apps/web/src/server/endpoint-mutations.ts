@@ -139,8 +139,7 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
   // unavailable there, silently yielding no cache.
   const { env } = await getCloudflareContext({ async: true });
   const kv = (env as Record<string, unknown>).KV_CONFIG as
-    | Parameters<typeof kvCredentialCache>[0]
-    | undefined;
+    Parameters<typeof kvCredentialCache>[0] | undefined;
   const cache = kv ? kvCredentialCache(kv) : null;
   const app = await getTenantDb();
   // The hasher (CREDENTIAL_PEPPER fetch → key import) is needed ONLY by create/rotate, which mint a token —

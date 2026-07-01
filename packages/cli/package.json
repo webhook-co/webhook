@@ -20,12 +20,12 @@
   "dependencies": {
     "@sigstore/bundle": "^5.0.0",
     "@sigstore/protobuf-specs": "^0.5.1",
-    "@sigstore/verify": "^4.0.0",
-    "@stricli/core": "^1.2.7",
+    "@sigstore/verify": "^4.1.0",
+    "@stricli/core": "^1.2.8",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/shared": "workspace:*",
-    "https-proxy-agent": "^7.0.6",
-    "ws": "^8.20.1",
+    "https-proxy-agent": "^9.1.0",
+    "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

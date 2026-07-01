@@ -41,8 +41,7 @@ export type EventDetailItem = Omit<Event, "orgId" | "payloadR2Key" | "headers"> 
 };
 
 export type RevealHeaderResult =
-  | { readonly ok: true; readonly value: string }
-  | { readonly ok: false };
+  { readonly ok: true; readonly value: string } | { readonly ok: false };
 
 /** Input for revealing one sensitive header value. `endpointId` gives the reveal the same endpoint-scope
  *  guard the page read enforces; `index` addresses the header in the (order-preserving) `headers` array. */
