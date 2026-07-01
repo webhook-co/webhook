@@ -67,6 +67,11 @@ export const PROVIDERS = [
   "airship", // {ts}:{body}
   "lob", // {ts}.{body}
   "persona", // csvKv t=,v1=
+  // S8 coverage PR5 — payment/fintech HMAC (doc-verified 2026-07-01).
+  "bolt",
+  "primer",
+  "airwallex", // {ts}{body} no separator
+  "affirm", // csvKv t=,v0=, sha512
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
@@ -676,6 +681,34 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
     timestamp: { kind: "sigField", field: "t" },
     message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
     toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.persona,
+  },
+  // S8 coverage PR5 — payment/fintech HMAC (doc-verified 2026-07-01). Bolt/Primer: raw-body sha256/base64.
+  // (Klarna deferred: its acquirer `Klarna-Signature` is HMAC-SHA256/raw-body, but the docs don't state the
+  // signature ENCODING (hex vs base64) or the key format — a guess would ship a fail-closed-but-wrong
+  // verifier, so it waits for a confirmed live delivery.)
+  bolt: rawBodyHmacConfig("bolt", "x-bolt-hmac-sha256", "base64"),
+  primer: rawBodyHmacConfig("primer", "x-signature-primary", "base64"),
+  // Airwallex signs `{x-timestamp}{body}` with NO separator (ts in a companion header). Its timestamp unit
+  // is unspecified in the docs → enforceReplayWindow=false (the HMAC is the protection; never false-reject).
+  airwallex: {
+    slug: "airwallex",
+    signatureHeader: "x-signature",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "x-timestamp" },
+    message: [{ kind: "timestamp" }, { kind: "body" }],
+    enforceReplayWindow: false,
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.airwallex,
+  },
+  // Affirm: Stripe-shaped csvKv `t=..,v0=..` over `{t}.{body}`, but the digest is SHA-512 (not 256).
+  affirm: {
+    slug: "affirm",
+    signatureHeader: "x-affirm-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v0" },
+    encoding: "hex",
+    digest: "sha512",
+    timestamp: { kind: "sigField", field: "t" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.affirm,
   },
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256 (utf8 key, no timestamp). Headers + encoding
   // verified per provider against the S2.1 research matrix / official signing docs.

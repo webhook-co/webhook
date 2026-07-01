@@ -65,6 +65,11 @@ export const PROVIDER_BRANDING: Record<string, ProviderBrand> = {
   airship: { displayName: "Airship", brandColor: "#EF4A24" },
   lob: { displayName: "Lob", brandColor: "#0099D7" },
   persona: { displayName: "Persona", brandColor: "#4F46E5" },
+  // S8 coverage PR5 — payment/fintech HMAC providers (2026-07-01).
+  bolt: { displayName: "Bolt", brandColor: "#0011FF" },
+  primer: { displayName: "Primer", brandColor: "#0A0A23" },
+  airwallex: { displayName: "Airwallex", brandColor: "#612FFF" },
+  affirm: { displayName: "Affirm", brandColor: "#4A4AF4" },
   razorpay: { displayName: "Razorpay", brandColor: "#3395FF" },
   sentry: { displayName: "Sentry", brandColor: "#362D59" },
   linear: { displayName: "Linear", brandColor: "#5E6AD2" },
