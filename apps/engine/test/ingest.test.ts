@@ -849,6 +849,37 @@ describe("handleIngest — POST subscription-validation handshakes (Graph/Twitch
     expect(calls.ingest).toHaveLength(1); // captured (bill-all)
   });
 
+  it("Zoom endpoint.url_validation: responds with the HMAC encryptedToken and captures NOTHING", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () =>
+        ({
+          orgId: ORG,
+          endpointId: EP,
+          paused: false,
+          sealedSecrets: [{ provider: "zoom" }],
+        }) as never,
+      unsealSecret: async () => "zoom-secret-token-xyz", // gitleaks:allow — fake test fixture
+    });
+    const res = await handleIngest(
+      new Request(`https://wbhk.my/${GOOD}`, {
+        method: "POST",
+        body: JSON.stringify({
+          event: "endpoint.url_validation",
+          payload: { plainToken: "pv-plainToken-abc123" },
+        }),
+        headers: { "content-type": "application/json" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({
+      plainToken: "pv-plainToken-abc123",
+      encryptedToken: "924c76d973084bbe133c17ff1c1a9b6639c74aef8bb34daa05c70361039e7beb", // gitleaks:allow — HMAC test output
+    });
+    expect(calls.put).toHaveLength(0);
+    expect(calls.ingest).toHaveLength(0); // pre-capture, never metered
+  });
+
   it("a GET carrying ?validationToken= is POST-only-gated: NOT echoed — captured + constant liveness (no oracle)", async () => {
     const active = makeDeps();
     const resActive = await handleIngest(

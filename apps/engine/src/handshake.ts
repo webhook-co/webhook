@@ -10,8 +10,10 @@
 // registered `x` consumer secret, unsealed via an injected pre-capture `unseal` (the engine remains the
 // sole unsealer). PR2b (this change) adds Meta (FB/IG/WhatsApp/Messenger): a `hub.mode=subscribe` GET
 // echoes `hub.challenge` IFF the presented `hub.verify_token` matches a configured verify-token (sealed as
-// a typed blob, constant-time compared), else 403. PR3 (this change) adds eBay Marketplace Account Deletion:
-// a `challenge_code` GET → `{"challengeResponse": hex(SHA256(challengeCode + verifyToken + endpointURL))}`.
+// a typed blob, constant-time compared), else 403. PR3 added eBay (`challenge_code` GET →
+// `{"challengeResponse": hex(SHA256(challengeCode + verifyToken + endpointURL))}`). A POST dispatcher
+// (`dispatchPostHandshake`) then landed the no-secret Graph/Twitch/monday echoes (S8 Slice 3) + Okta on the
+// GET side, and now Zoom `endpoint.url_validation` (HMAC-SHA256 under the endpoint's `zoom` secret).
 
 import { type CachedSealedSecret } from "@webhook-co/db";
 import {
@@ -32,6 +34,14 @@ const BROWSER_SAFE_HEADERS = {
   "referrer-policy": "no-referrer",
   "x-robots-tag": "noindex",
 } as const;
+
+// A URL-safe token charset (alphanumeric + `._~+/=-`) covering UUID / hex / base64 / base64url tokens but
+// EXCLUDING JSON structural bytes (`{ } " : , [ ]`) + whitespace. ANTI-FORGERY-ORACLE gate for X/Twitter CRC
+// (S8 Slice 3): X's `x-twitter-webhooks-signature` signs the RAW BODY under the SAME consumer secret the CRC
+// handshake HMACs, so an unrestricted `crc_token` lets an attacker get `HMAC(secret, <forged JSON body>)` and
+// forge a `verified` event. A real `crc_token` is a plain token (the gold vector is a UUID); refusing a
+// crc_token shaped like a JSON body means the handshake can't sign a realistic forged X event body.
+const SAFE_HANDSHAKE_TOKEN = /^[A-Za-z0-9._~+/=-]+$/;
 
 /**
  * X/Twitter Account Activity API CRC: respond with `{"response_token":"sha256="+base64(HMAC-SHA256(key,
@@ -183,17 +193,55 @@ function mondayChallenge(rawBody: Uint8Array): Response | null {
 }
 
 /**
- * Route a POST to a no-secret subscription-validation handshake — Microsoft Graph (`?validationToken`),
- * Twitch (`webhook_callback_verification`), or monday.com (`{challenge}`) — or `null` if none matches.
- * Like the GET dispatcher: detection is by the request's own distinctive param/header/body, dispatched
- * PRE-capture, captures NOTHING. (Slack's `url_verification` POST stays on its existing dedicated path.)
+ * Zoom webhook endpoint URL validation: a POST body `{"event":"endpoint.url_validation","payload":
+ * {"plainToken":"<t>"}}` → `{"plainToken":"<t>","encryptedToken":hex(HMAC-SHA256(zoomSecret, plainToken))}`.
+ * The key is the endpoint's registered `zoom` Secret Token — the SAME secret Zoom's POST `x-zm-signature`
+ * verification uses (so no new storage). No `zoom` secret on the endpoint → not resolvable → `null`.
  */
-export function dispatchPostHandshake(
+async function zoomUrlValidation(
+  rawBody: Uint8Array,
+  sealedSecrets: readonly CachedSealedSecret[],
+  unseal: (cached: CachedSealedSecret) => Promise<string>,
+): Promise<Response | null> {
+  const body = jsonBody(rawBody);
+  if (body === null || body.event !== "endpoint.url_validation") return null;
+  const payload = body.payload;
+  const plainToken =
+    typeof payload === "object" && payload !== null
+      ? (payload as { plainToken?: unknown }).plainToken
+      : undefined;
+  if (typeof plainToken !== "string" || plainToken.length === 0) return null;
+  // ANTI-FORGERY-ORACLE: this handshake HMACs an attacker-chosen `plainToken` under the SAME secret Zoom's
+  // POST `x-zm-signature` verify uses, whose signed base string is `v0:{ts}:{body}`. Refuse to sign anything
+  // shaped like that base string — a real Zoom plainToken is a colonless token, so rejecting a colon means
+  // the handshake can never be coaxed into producing a valid x-zm-signature to forge a `verified` event.
+  if (plainToken.includes(":")) return null;
+  const zoomSecret = sealedSecrets.find((s) => s.provider === "zoom");
+  if (zoomSecret === undefined) return null;
+  const key = await importHmacKey(utf8Encoder.encode(await unseal(zoomSecret)));
+  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, utf8Encoder.encode(plainToken)));
+  const encryptedToken = [...sig].map((b) => b.toString(16).padStart(2, "0")).join("");
+  return Response.json({ plainToken, encryptedToken }, { headers: BROWSER_SAFE_HEADERS });
+}
+
+/**
+ * Route a POST to a subscription-validation handshake, or `null` if none matches. NO-SECRET echoes first
+ * (Microsoft Graph `?validationToken`, Twitch `webhook_callback_verification`, monday.com `{challenge}`);
+ * then the SECRET-based Zoom `endpoint.url_validation` (HMAC under the endpoint's `zoom` secret, unsealed
+ * pre-capture like the GET dispatcher). Detection is by the request's own distinctive param/header/body,
+ * dispatched PRE-capture, captures NOTHING. (Slack's `url_verification` POST stays on its dedicated path.)
+ */
+export async function dispatchPostHandshake(
   url: URL,
   headers: Headers,
   rawBody: Uint8Array,
-): Response | null {
-  return msGraphValidation(url) ?? twitchVerification(headers, rawBody) ?? mondayChallenge(rawBody);
+  sealedSecrets: readonly CachedSealedSecret[],
+  unseal: (cached: CachedSealedSecret) => Promise<string>,
+): Promise<Response | null> {
+  const echo =
+    msGraphValidation(url) ?? twitchVerification(headers, rawBody) ?? mondayChallenge(rawBody);
+  if (echo !== null) return echo;
+  return zoomUrlValidation(rawBody, sealedSecrets, unseal);
 }
 
 /**
@@ -215,9 +263,11 @@ export async function dispatchGetHandshake(
   if (echo !== null) return echo;
 
   // X/Twitter CRC: `crc_token` → HMAC under the endpoint's registered `x` consumer secret (the SAME secret
-  // used for X POST-signature verification). No `x` secret on the endpoint → not resolvable → null.
+  // used for X POST-signature verification). Gated by SAFE_HANDSHAKE_TOKEN so the handshake can't be used as
+  // a signing oracle to forge a `verified` event (a crc_token shaped like a JSON body → not signed → falls
+  // through to capture). No `x` secret on the endpoint → not resolvable → null.
   const crcToken = url.searchParams.get("crc_token");
-  if (crcToken !== null && crcToken.length > 0) {
+  if (crcToken !== null && crcToken.length > 0 && SAFE_HANDSHAKE_TOKEN.test(crcToken)) {
     const xSecret = sealedSecrets.find((s) => s.provider === "x");
     if (xSecret !== undefined) {
       return xCrcResponse(crcToken, await unseal(xSecret));

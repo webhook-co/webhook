@@ -128,6 +128,29 @@ describe("dispatchGetHandshake — X/Twitter CRC (crc_token, secret-based)", () 
     const res = await dispatchGetHandshake(url("?crc_token=abc"), hdrs(), NO_SECRETS, unsealNever);
     expect(res).toBeNull();
   });
+
+  it("REFUSES a crc_token shaped like a JSON body (anti-forgery-oracle) — null, never signs it", async () => {
+    // X's x-twitter-webhooks-signature signs the RAW BODY under the SAME consumer secret; a crc_token that
+    // could BE a forged JSON event body must not be HMAC'd (else it's a signing oracle). Refused → capture.
+    const forged = `?crc_token=${encodeURIComponent('{"forged":"event"}')}`;
+    const res = await dispatchGetHandshake(
+      url(forged),
+      hdrs(),
+      [xSealed],
+      async () => GOLD.consumerSecret,
+    );
+    expect(res).toBeNull();
+  });
+
+  it("still accepts a normal UUID crc_token (the gold vector is a UUID — real handshakes unaffected)", async () => {
+    const res = await dispatchGetHandshake(
+      url(`?crc_token=${GOLD.crcToken}`),
+      hdrs(),
+      [xSealed],
+      async () => GOLD.consumerSecret,
+    );
+    expect(res).not.toBeNull(); // UUID passes SAFE_HANDSHAKE_TOKEN
+  });
 });
 
 describe("dispatchGetHandshake — Meta hub.challenge verification (verify-token, secret-based)", () => {
@@ -248,13 +271,12 @@ describe("dispatchGetHandshake — Okta Event Hooks verification (no-secret head
 
 describe("dispatchPostHandshake — no-secret POST subscription handshakes", () => {
   const postUrl = (qs = "") => new URL(`https://wbhk.my/whep_tok${qs}`);
+  // The no-secret echoes never touch secrets — supply empty secrets + a never-called unseal.
+  const post = (u: URL, h: Headers, b: Uint8Array) =>
+    dispatchPostHandshake(u, h, b, NO_SECRETS, unsealNever);
 
   it("Microsoft Graph: echoes ?validationToken= as text/plain (URL-decoded)", async () => {
-    const res = dispatchPostHandshake(
-      postUrl("?validationToken=ABC%20123"),
-      hdrs(),
-      enc.encode(""),
-    );
+    const res = await post(postUrl("?validationToken=ABC%20123"), hdrs(), enc.encode(""));
     expect(res).not.toBeNull();
     expect(res!.status).toBe(200);
     expect(res!.headers.get("content-type")).toMatch(/text\/plain/);
@@ -263,7 +285,7 @@ describe("dispatchPostHandshake — no-secret POST subscription handshakes", () 
   });
 
   it("Twitch: webhook_callback_verification header + body.challenge → echo challenge as text/plain", async () => {
-    const res = dispatchPostHandshake(
+    const res = await post(
       postUrl(),
       hdrs({ "Twitch-Eventsub-Message-Type": "webhook_callback_verification" }),
       enc.encode(JSON.stringify({ challenge: "pogchamp-kappa-360noscope-vohiyo" })),
@@ -272,9 +294,9 @@ describe("dispatchPostHandshake — no-secret POST subscription handshakes", () 
     expect(await res!.text()).toBe("pogchamp-kappa-360noscope-vohiyo");
   });
 
-  it("Twitch: a real notification message (not verification) → null", () => {
+  it("Twitch: a real notification message (not verification) → null", async () => {
     expect(
-      dispatchPostHandshake(
+      await post(
         postUrl(),
         hdrs({ "Twitch-Eventsub-Message-Type": "notification" }),
         enc.encode(JSON.stringify({ subscription: { type: "x" }, event: { id: "1" } })),
@@ -283,19 +305,15 @@ describe("dispatchPostHandshake — no-secret POST subscription handshakes", () 
   });
 
   it("monday: body {challenge} → {challenge} JSON", async () => {
-    const res = dispatchPostHandshake(
-      postUrl(),
-      hdrs(),
-      enc.encode(JSON.stringify({ challenge: "mon-123" })),
-    );
+    const res = await post(postUrl(), hdrs(), enc.encode(JSON.stringify({ challenge: "mon-123" })));
     expect(res).not.toBeNull();
     expect(res!.headers.get("content-type")).toMatch(/application\/json/);
     expect(await res!.json()).toEqual({ challenge: "mon-123" });
   });
 
-  it("does NOT catch a Slack url_verification body (has `type`) — left to the Slack path", () => {
+  it("does NOT catch a Slack url_verification body (has `type`) — left to the Slack path", async () => {
     expect(
-      dispatchPostHandshake(
+      await post(
         postUrl(),
         hdrs(),
         enc.encode(JSON.stringify({ type: "url_verification", challenge: "slack-c" })),
@@ -303,18 +321,67 @@ describe("dispatchPostHandshake — no-secret POST subscription handshakes", () 
     ).toBeNull();
   });
 
-  it("does NOT catch a real event body (has `event`) or a non-JSON / non-handshake POST", () => {
+  it("does NOT catch a real event body (has `event`) or a non-JSON / non-handshake POST", async () => {
     expect(
-      dispatchPostHandshake(
+      await post(
         postUrl(),
         hdrs(),
         enc.encode(JSON.stringify({ event: { type: "x" }, challenge: "c" })),
       ),
     ).toBeNull();
-    expect(dispatchPostHandshake(postUrl(), hdrs(), enc.encode("not json"))).toBeNull();
+    expect(await post(postUrl(), hdrs(), enc.encode("not json"))).toBeNull();
+    expect(await post(postUrl(), hdrs(), enc.encode(JSON.stringify({ foo: "bar" })))).toBeNull();
+  });
+});
+
+describe("dispatchPostHandshake — Zoom endpoint.url_validation (secret-based HMAC-SHA256)", () => {
+  const zoomSealed = { provider: "zoom" } as CachedSealedSecret;
+  const ZOOM_SECRET = "zoom-secret-token-xyz"; // gitleaks:allow — fake test fixture
+  const zoomBody = (plainToken: string) =>
+    enc.encode(JSON.stringify({ event: "endpoint.url_validation", payload: { plainToken } }));
+  const u = new URL("https://wbhk.my/whep_tok");
+
+  it("responds {plainToken, encryptedToken: hex(HMAC-SHA256(zoomSecret, plainToken))} — gold vector", async () => {
+    const res = await dispatchPostHandshake(
+      u,
+      hdrs(),
+      zoomBody("pv-plainToken-abc123"),
+      [zoomSealed],
+      async (c) => {
+        expect(c.provider).toBe("zoom"); // unseals the zoom secret, not another provider's
+        return ZOOM_SECRET;
+      },
+    );
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    expect(await res!.json()).toEqual({
+      plainToken: "pv-plainToken-abc123",
+      encryptedToken: "924c76d973084bbe133c17ff1c1a9b6639c74aef8bb34daa05c70361039e7beb", // gitleaks:allow — HMAC test output
+    });
+  });
+
+  it("returns null when no zoom secret is configured (not a resolvable handshake, never unseals)", async () => {
     expect(
-      dispatchPostHandshake(postUrl(), hdrs(), enc.encode(JSON.stringify({ foo: "bar" }))),
+      await dispatchPostHandshake(u, hdrs(), zoomBody("x"), NO_SECRETS, unsealNever),
     ).toBeNull();
+  });
+
+  it("REFUSES a plainToken shaped like Zoom's signed base string `v0:{ts}:{body}` (anti-forgery-oracle)", async () => {
+    // Zoom's x-zm-signature signs `v0:{ts}:{body}` under the SAME secret; a plainToken containing a colon
+    // (which a real one never does) must not be HMAC'd, else the handshake forges a valid x-zm-signature.
+    const res = await dispatchPostHandshake(
+      u,
+      hdrs(),
+      zoomBody('v0:1700000000:{"forged":true}'),
+      [zoomSealed],
+      async () => ZOOM_SECRET,
+    );
+    expect(res).toBeNull(); // refused before unseal → falls through to capture
+  });
+
+  it("returns null for a non-url_validation zoom event (a real event → falls through to capture)", async () => {
+    const body = enc.encode(JSON.stringify({ event: "meeting.started", payload: { object: {} } }));
+    expect(await dispatchPostHandshake(u, hdrs(), body, [zoomSealed], unsealNever)).toBeNull();
   });
 });
 
