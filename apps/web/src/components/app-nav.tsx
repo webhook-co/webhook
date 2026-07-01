@@ -17,6 +17,9 @@ export function AppNav() {
       <AppNavItem href="/endpoints" active={isActive("/endpoints")}>
         Endpoints
       </AppNavItem>
+      <AppNavItem href="/deliveries" active={isActive("/deliveries")}>
+        Deliveries
+      </AppNavItem>
       <AppNavSection>Account</AppNavSection>
       <AppNavItem href="/settings" active={isActive("/settings")}>
         Settings
