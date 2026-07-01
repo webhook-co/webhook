@@ -14,7 +14,7 @@
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",
     "@webhook-co/shared": "workspace:*",
-    "agents": "0.16.1",
+    "agents": "0.17.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {
