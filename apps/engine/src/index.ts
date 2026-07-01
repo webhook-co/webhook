@@ -5,10 +5,12 @@ import {
   createCredentialHasherFromBase64,
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
+  DEFAULT_RECONCILE_LIMIT,
   enqueueAutoDeliveries,
   fromCachedSealedSecret,
   getEndpoint,
   insertIngestEvent,
+  listDestinationsWithDueDeliveries,
   makeApiKeyAuthDeps,
   readAuditChainHeads,
   withTenant,
@@ -32,6 +34,7 @@ import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 import { runAnchorCron } from "./anchor-cron";
+import { runReconcileCron } from "./reconcile-cron";
 import {
   guardedDeliver,
   makeSignDelivery,
@@ -90,6 +93,8 @@ export interface Env {
   AWS_SECRET_ACCESS_KEY: SecretsStoreSecret;
   /** Hyperdrive config for the webhook_anchor cross-org head read (query caching off). */
   HYPERDRIVE_ANCHOR: Hyperdrive;
+  /** Hyperdrive config for the webhook_reconciler cross-org due-delivery read (query caching off). */
+  HYPERDRIVE_RECONCILER: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
   R2_AUDIT_ANCHOR: R2Bucket;
   /** Base64 audit-chain HMAC key — the same key the chain rows are signed with (shared across surfaces). */
@@ -541,6 +546,15 @@ export default {
         console.log(JSON.stringify({ message: "audit anchor cron failed", error: String(err) })),
       ),
     );
+    // The delivery reconciler re-wakes idle DOs that still owe a due delivery (a lost wake, or a re-enabled
+    // destination). Independent of the anchor cron — one failing must not sink the other.
+    ctx.waitUntil(
+      runReconcilerCron(env).catch((err: unknown) =>
+        console.log(
+          JSON.stringify({ message: "delivery reconciler cron failed", error: String(err) }),
+        ),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -636,6 +650,34 @@ async function runAuditAnchorCron(env: Env): Promise<void> {
         })) !== null,
       key,
       now: Date.now(),
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+    });
+  } finally {
+    await sql.end();
+  }
+}
+
+/** Max destinations one reconciler pass re-wakes (the db default — well under the Workers subrequest cap). A
+ *  capped pass is logged; the next hourly pass continues, with fair random ordering so none is starved. */
+const RECONCILE_LIMIT = DEFAULT_RECONCILE_LIMIT;
+
+/** Wire the real deps (a webhook_reconciler cross-org connection + the DO waker) and run the reconciler. */
+async function runReconcilerCron(env: Env): Promise<void> {
+  // A short-lived connection as webhook_reconciler: its role-targeted SELECT policies + column grants scope
+  // the read to the reconciliation keys across all orgs. Caching is off on this Hyperdrive config.
+  const sql = createClient(env.HYPERDRIVE_RECONCILER.connectionString);
+  try {
+    await runReconcileCron({
+      listDue: () => listDestinationsWithDueDeliveries(sql, RECONCILE_LIMIT),
+      // The engine fronts its own DOs, so it wakes them directly. wake() is idempotent — a redundant wake
+      // against an already-draining DO is a no-op.
+      wake: async (orgId, destinationId) => {
+        await env.DELIVERY_DO.get(env.DELIVERY_DO.idFromName(destinationId)).wake(
+          orgId,
+          destinationId,
+        );
+      },
+      limit: RECONCILE_LIMIT,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
   } finally {

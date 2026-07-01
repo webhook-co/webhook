@@ -54,4 +54,16 @@ export const DB_ROLES = {
    * bypass, and BYPASSRLS is forbidden here. Password injected out of band.
    */
   sweeper: "webhook_sweeper",
+  /**
+   * Cross-org delivery-reconciliation cron role (S3 Slice 3 / migration 0033). Non-owner, no BYPASSRLS; the
+   * engine's hourly cron re-wakes destinations whose per-destination DO went idle while a due delivery sits
+   * unclaimed (a lost wake, or a just-re-enabled destination). Holds SELECT-ONLY via role-targeted
+   * `FOR SELECT TO webhook_reconciler USING (true)` policies on delivery_attempts + replay_destinations, with
+   * COLUMN grants scoped to the reconciliation keys only (org_id/destination_id/status/next_retry_at on
+   * delivery_attempts; id/org_id/deleted_at/disabled_at on replay_destinations) — enough to FIND stranded
+   * work across tenants, never the payload/target/header content, and no write. The DO itself does every
+   * mutation under webhook_app RLS; this role only reads which DOs to wake. The cross-org read is RLS-native
+   * (FORCE RLS defeats an owner/SECURITY-DEFINER bypass; BYPASSRLS is forbidden). Password injected out of band.
+   */
+  reconciler: "webhook_reconciler",
 } as const;

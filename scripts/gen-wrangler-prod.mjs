@@ -31,6 +31,10 @@ const TOKEN = {
   "<HYPERDRIVE_TENANT_ID>": reqEnv("HYPERDRIVE_TENANT_ID"),
   "<HYPERDRIVE_CACHED_ID>": reqEnv("HYPERDRIVE_CACHED_ID"),
   "<HYPERDRIVE_ANCHOR_ID>": reqEnv("HYPERDRIVE_ANCHOR_ID"),
+  // The delivery reconciler's webhook_reconciler Hyperdrive (S3 Slice 3 PR3c-2) — bound to a least-privilege,
+  // SELECT-only cross-org Neon role. The operator provisions the role + Hyperdrive and sets the
+  // HYPERDRIVE_RECONCILER_ID GH repo var; the deploy workflow must provide it like every other id here.
+  "<HYPERDRIVE_RECONCILER_ID>": reqEnv("HYPERDRIVE_RECONCILER_ID"),
   "<HYPERDRIVE_AUTHN_ID>": reqEnv("HYPERDRIVE_AUTHN_ID"),
   "<HYPERDRIVE_INGEST_ID>": reqEnv("HYPERDRIVE_INGEST_ID"),
   "<KV_CONFIG_ID>": reqEnv("KV_CONFIG_ID"),
@@ -62,6 +66,7 @@ const APPS = {
       "<HYPERDRIVE_TENANT_ID>",
       "<HYPERDRIVE_CACHED_ID>",
       "<HYPERDRIVE_ANCHOR_ID>",
+      "<HYPERDRIVE_RECONCILER_ID>",
       "<HYPERDRIVE_AUTHN_ID>",
       "<HYPERDRIVE_INGEST_ID>",
       "<KV_CONFIG_ID>",
