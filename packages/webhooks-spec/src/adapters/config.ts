@@ -47,6 +47,16 @@ export const PROVIDERS = [
   "modern_treasury",
   "autodesk_aps", // sha1, `sha1hash=` prefix
   "mongodb_atlas", // sha1, base64
+  // S8 coverage PR3 — Bucket B quirk-HMAC (doc-verified 2026-07-01). Simple raw-body + timestamp-framed.
+  "xero",
+  "segment", // sha1
+  "aftership",
+  "onfleet", // sha512, hex-decoded key
+  "webflow", // {ts}:{body}
+  "klaviyo", // {body}{ts} body-first
+  "mux", // csvKv t=,v1=
+  "shippo", // csvKv t=,v1=
+  "buildkite", // csvKv timestamp=,signature=
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256.
   "razorpay",
   "sentry",
@@ -536,6 +546,66 @@ export const PROVIDER_CONFIGS: Readonly<Partial<Record<Provider, HmacProviderCon
   modern_treasury: rawBodyHmacConfig("modern_treasury", "x-signature", "hex"),
   autodesk_aps: rawBodyHmacConfig("autodesk_aps", "x-adsk-signature", "hex", "sha1hash=", "sha1"),
   mongodb_atlas: rawBodyHmacConfig("mongodb_atlas", "x-mms-signature", "base64", undefined, "sha1"),
+  // S8 coverage PR3 — Bucket B quirk-HMAC (doc-verified 2026-07-01).
+  // Simple raw-body: Xero (sha256/b64), Segment (SHA1/hex), AfterShip (sha256/b64), Onfleet (SHA512/hex,
+  // hex-DECODED key — its secret is a hex string).
+  xero: rawBodyHmacConfig("xero", "x-xero-signature", "base64"),
+  segment: rawBodyHmacConfig("segment", "x-signature", "hex", undefined, "sha1"),
+  aftership: rawBodyHmacConfig("aftership", "aftership-hmac-sha256", "base64"),
+  onfleet: {
+    ...rawBodyHmacConfig("onfleet", "x-onfleet-signature", "hex", undefined, "sha512"),
+    keyDerivation: "hex",
+  },
+  // Timestamp-framed. Webflow signs `{ts}:{body}` (ts from a header); Klaviyo signs `{body}{ts}` — body
+  // FIRST, no separator. Both keep enforceReplayWindow=false: Webflow's ts unit is doc-ambiguous (s vs ms)
+  // and Klaviyo documents no window, so the HMAC is the protection and we never false-reject a real event.
+  webflow: {
+    slug: "webflow",
+    signatureHeader: "x-webflow-signature",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "x-webflow-timestamp" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: ":" }, { kind: "body" }],
+    enforceReplayWindow: false,
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.webflow,
+  },
+  klaviyo: {
+    slug: "klaviyo",
+    signatureHeader: "klaviyo-signature",
+    encoding: "hex",
+    timestamp: { kind: "header", header: "klaviyo-timestamp" },
+    message: [{ kind: "body" }, { kind: "timestamp" }],
+    enforceReplayWindow: false,
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.klaviyo,
+  },
+  // Stripe-shaped csvKv over `{ts}.{body}` (ts from a field in the signature header). Mux/Shippo use
+  // `t=..,v1=..`; Buildkite uses `timestamp=..,signature=..`. All Unix seconds → the 300s window applies.
+  mux: {
+    slug: "mux",
+    signatureHeader: "mux-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "t" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.mux,
+  },
+  shippo: {
+    slug: "shippo",
+    signatureHeader: "shippo-auth-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "v1" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "t" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.shippo,
+  },
+  buildkite: {
+    slug: "buildkite",
+    signatureHeader: "x-buildkite-signature",
+    signatureFormat: { kind: "csvKv", sigKey: "signature" },
+    encoding: "hex",
+    timestamp: { kind: "sigField", field: "timestamp" },
+    message: [{ kind: "timestamp" }, { kind: "literal", value: "." }, { kind: "body" }],
+    toleranceSeconds: PROVIDER_TOLERANCE_SECONDS.buildkite,
+  },
   // W1 Tier-1 drop-ins, batch 1 — raw-body HMAC-SHA256 (utf8 key, no timestamp). Headers + encoding
   // verified per provider against the S2.1 research matrix / official signing docs.
   razorpay: rawBodyHmacConfig("razorpay", "x-razorpay-signature", "hex"),
