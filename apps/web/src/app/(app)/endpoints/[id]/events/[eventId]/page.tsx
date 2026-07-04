@@ -6,6 +6,8 @@ import { notFound } from "next/navigation";
 import { EventDetail } from "@/components/event-detail";
 import { loadEventPayloadAction, revealHeaderAction } from "@/server/event-actions";
 import { loadEvent } from "@/server/events";
+import { replayToDestinationAction } from "@/server/replay-actions";
+import { loadDestinations } from "@/server/replay-destinations";
 import { verifySession } from "@/server/session";
 
 export const metadata: Metadata = {
@@ -19,7 +21,11 @@ export default async function EventDetailPage({
 }) {
   const session = await verifySession();
   const { id, eventId } = await params;
-  const result = await loadEvent(session.orgId, id, eventId);
+  // The event read and the replay-picker's destinations are independent org-scoped reads — run concurrently.
+  const [result, destResult] = await Promise.all([
+    loadEvent(session.orgId, id, eventId),
+    loadDestinations(session.orgId),
+  ]);
 
   if (result.status === "not_found") notFound();
 
@@ -43,6 +49,9 @@ export default async function EventDetailPage({
           endpointId={id}
           revealHeader={revealHeaderAction}
           loadPayload={loadEventPayloadAction}
+          destinations={destResult.status === "ok" ? destResult.items : []}
+          destinationsError={destResult.status === "error"}
+          replay={replayToDestinationAction}
         />
       )}
     </div>

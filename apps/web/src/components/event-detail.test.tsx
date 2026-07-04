@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { EventDetailItem, RevealHeaderResult } from "@/server/events";
 import type { PayloadResult } from "@/server/payloads";
+import type { ReplayResult } from "@/server/replay-actions";
 
 import { EventDetail } from "./event-detail";
 
@@ -35,6 +36,8 @@ const noReveal = vi.fn(async (): Promise<RevealHeaderResult> => ({ ok: false }))
 // Default payload load: never resolves, so the viewer stays in "Loading…" and fires no post-mount state
 // update in the metadata/header tests (the payload viewer has its own test).
 const noLoadPayload = vi.fn(() => new Promise<PayloadResult>(() => {}));
+// Default replay action: never called in these tests (the replay dialog has its own test).
+const noReplay = vi.fn(async (): Promise<ReplayResult> => ({ ok: false, error: "not used" }));
 
 function renderDetail(
   event: EventDetailItem,
@@ -50,6 +53,8 @@ function renderDetail(
       endpointId={ENDPOINT_ID}
       revealHeader={revealHeader}
       loadPayload={noLoadPayload}
+      destinations={[]}
+      replay={noReplay}
     />,
   );
 }

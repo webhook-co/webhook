@@ -3,7 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { getCloudflareContext } = vi.hoisted(() => ({ getCloudflareContext: vi.fn() }));
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext }));
 
-import { getAuthBaseUrl, getProviderSecretSealer, getSessionSecret } from "./env";
+import {
+  getAuthBaseUrl,
+  getDeliveryDispatcher,
+  getProviderSecretSealer,
+  getSessionSecret,
+} from "./env";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -77,5 +82,30 @@ describe("getProviderSecretSealer", () => {
   it("returns undefined for a mis-shaped binding — never masquerades a non-sealer as one", () => {
     getCloudflareContext.mockReturnValue({ env: { PROVIDER_SECRET_SEALER: { nope: 1 } } });
     expect(getProviderSecretSealer()).toBeUndefined();
+  });
+});
+
+describe("getDeliveryDispatcher", () => {
+  it("returns the binding when it structurally exposes a deliver method", () => {
+    const binding = { deliver: async () => ({}) };
+    getCloudflareContext.mockReturnValue({ env: { DELIVERY_DISPATCHER: binding } });
+    expect(getDeliveryDispatcher()).toBe(binding);
+  });
+
+  it("returns undefined when the binding is absent (dev/preview/unprovisioned)", () => {
+    getCloudflareContext.mockReturnValue({ env: {} });
+    expect(getDeliveryDispatcher()).toBeUndefined();
+  });
+
+  it("returns undefined outside a workerd request (no cf context)", () => {
+    getCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
+    expect(getDeliveryDispatcher()).toBeUndefined();
+  });
+
+  it("returns undefined for a mis-shaped binding — never masquerades a non-dispatcher as one", () => {
+    getCloudflareContext.mockReturnValue({ env: { DELIVERY_DISPATCHER: { nope: 1 } } });
+    expect(getDeliveryDispatcher()).toBeUndefined();
   });
 });
