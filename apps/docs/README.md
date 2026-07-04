@@ -26,19 +26,23 @@ npx mint broken-links   # link check
 
 Mintlify deploys via its **GitHub App** on push to `main` (git source: `webhook-co/webhook`, content
 directory `apps/docs`) — there is no CI job or marketplace Action here. Because the API reference is
-generated from a **remote** spec, a spec change doesn't push git and so won't auto-redeploy the playground;
-the CI step that publishes the spec should also `curl -X POST
-https://api.mintlify.com/v1/project/update/{projectId}` (Bearer `mint_` admin key) to re-sync it.
+generated from a **remote** spec, a spec-only change (which lands in `apps/api`, not `apps/docs`) doesn't
+touch this directory and so won't auto-redeploy the playground. The remote spec is re-fetched whenever the
+docs *do* redeploy: any push touching `apps/docs`, or a manual **Redeploy** from the Mintlify dashboard. An
+API-driven resync (`POST https://api.mintlify.com/v1/project/update/{projectId}` with a `mint_` admin key)
+exists but the admin key is a **paid Enterprise** feature, so we don't rely on it — a manual redeploy after
+a spec change is the Hobby-tier path.
 
 ## Setup status
 
 - ✅ **GitHub App installed** on `webhook-co/webhook`, deploy branch `main`.
 - ✅ **Monorepo content directory** set to `apps/docs`.
-- ⏳ **Custom domain** `docs.webhook.co` + Cloudflare DNS (`CNAME docs → cname.mintlify.builders` + the
-  Mintlify-issued `TXT` records).
-- ⏳ **`mint_` admin key** (only needed for the spec-resync `curl` above).
+- ✅ **Custom domain** `docs.webhook.co` — live (Cloudflare `CNAME docs → cname.mintlify.builders`,
+  Mintlify-issued `TXT` verification, TLS via Let's Encrypt).
+- ➖ **`mint_` admin key** — not used; the API-driven spec-resync it gates is Enterprise-only. Redeploy
+  manually from the dashboard after a spec change instead.
 
-All of this is free on Mintlify's Hobby tier (custom domain, playground, git sync, MCP, custom CSS/JS).
+All of the above is free on Mintlify's Hobby tier (custom domain, playground, git sync, MCP, custom CSS/JS).
 
 > **Human verification required.** The rendered site — layout, brand colors, and the API playground — must
 > be eyeballed by a human before it's considered live (per the repo's human-UI-testing rule).
