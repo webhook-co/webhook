@@ -1,0 +1,54 @@
+---
+title: Authentication
+description: "How the whk_ API key works."
+---
+
+The API authenticates with a bearer token — a `whk_`-prefixed API key you create in your
+[dashboard](https://app.webhook.co). Send it in the `Authorization` header:
+
+```sh
+curl https://api.webhook.co/v1/whoami \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+```
+
+The SDKs take the key at construction and attach it for you:
+
+<CodeGroup>
+
+```ts TypeScript
+import { WebhookClient } from "@webhook-co/sdk";
+const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
+```
+
+```python Python
+from webhook_co import WebhookClient
+client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
+```
+
+```go Go
+client, err := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
+```
+
+</CodeGroup>
+
+<Warning>
+  Keep the key server-side. The SDKs never print it (they redact it from errors and debug output),
+  but it's still a credential — treat it like a password.
+</Warning>
+
+## Scopes
+
+Keys are scoped. A key missing a required scope for an action gets a `403 FORBIDDEN` — mint a key with the
+right scopes from the dashboard rather than over-provisioning. Resolve a key's identity and scopes with
+`whoami`:
+
+```ts
+const me = await webhook.whoami();
+console.log(me.orgId, me.scopes);
+```
+
+## Base URL
+
+The default is `https://api.webhook.co`. Point the SDKs at a self-host or dev origin with the base-URL
+option — it must be `https` (loopback `http` is allowed for local dev), so a misconfiguration can't
+downgrade your key onto a plaintext connection.

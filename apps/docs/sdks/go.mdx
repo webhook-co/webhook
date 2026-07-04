@@ -1,0 +1,100 @@
+---
+title: Go SDK
+description: "github.com/webhook-co/webhook-go — the official Go SDK."
+---
+
+The Go SDK is a typed client built on the standard library — **zero external dependencies**.
+
+```sh
+go get github.com/webhook-co/webhook-go
+```
+
+## Quickstart
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"os"
+
+	webhook "github.com/webhook-co/webhook-go"
+)
+
+func main() {
+	client, err := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	ctx := context.Background()
+
+	ep, err := client.Endpoints.Create(ctx, webhook.EndpointsCreateParams{Name: "orders-prod"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(ep.IngestUrl) // returned once — capture it now
+}
+```
+
+## Pagination
+
+List methods return an `*Iterator[T]` (a Scanner-style iterator):
+
+```go
+it := client.Deliveries.List(&webhook.DeliveriesListParams{Status: []string{"failed"}})
+for it.Next(ctx) {
+	d := it.Value()
+	// ...
+}
+if err := it.Err(); err != nil { /* ... */ }
+
+// Collect everything:
+all, err := client.Endpoints.List(nil).All(ctx)
+```
+
+## Errors
+
+Every API failure is a `*webhook.Error` — use `errors.As` or the `Is*` helpers:
+
+```go
+_, err := client.Endpoints.Get(ctx, id)
+switch {
+case webhook.IsNotFound(err):
+	// 404
+case webhook.IsRateLimited(err):
+	var e *webhook.Error
+	errors.As(err, &e)
+	fmt.Println("retry after", e.RetryAfter)
+case err != nil:
+	log.Fatal(err)
+}
+```
+
+`*Error` carries `Code`, `Status`, `RequestID`, and `RetryAfter`. A transport failure is a
+`*webhook.ConnectionError`.
+
+## Retries & idempotency
+
+The client retries idempotent requests on transient failures with capped exponential backoff and jitter,
+honouring `Retry-After`, and never blind-retries a non-idempotent write. Replays carry an idempotency key
+(auto-generated if you pass `""`):
+
+```go
+_, err := client.Events.Replay(ctx, eventID,
+	webhook.ReplayTarget{Kind: "destination", DestinationID: destID}, "")
+```
+
+## Configuration
+
+```go
+client, err := webhook.NewClient(apiKey,
+	webhook.WithMaxRetries(4),          // default 2
+	webhook.WithTimeout(15*time.Second), // default 30s
+)
+```
+
+Every method takes a `context.Context` for cancellation and deadlines.
+
+Full source, changelog, and issues: [github.com/webhook-co/webhook-go](https://github.com/webhook-co/webhook-go).

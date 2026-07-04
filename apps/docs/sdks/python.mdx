@@ -1,0 +1,84 @@
+---
+title: Python SDK
+description: "webhook-co — the official Python SDK."
+---
+
+The Python SDK returns validated pydantic v2 models with typed, snake_cased attributes. Python 3.10+, built
+on `httpx`.
+
+```sh
+pip install webhook-co
+```
+
+## Quickstart
+
+```python
+import os
+from webhook_co import WebhookClient
+
+client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
+
+endpoint = client.endpoints.create(name="orders-prod")
+print(endpoint.ingest_url)  # returned once — capture it now
+```
+
+## Pagination
+
+List methods return a `Paginator` you can iterate directly:
+
+```python
+for endpoint in client.endpoints.list(name="prod"):
+    print(endpoint.id)
+
+# Collect everything (careful with large result sets):
+failed = client.deliveries.list(status=["failed"]).collect()
+
+# One page at a time:
+page = client.endpoints.list_page(limit=50)
+print(page.items, page.next_cursor)
+```
+
+## Errors
+
+Every failure is a `WebhookError` subclass, so you can narrow with `except`:
+
+```python
+from webhook_co import WebhookRateLimitError, WebhookNotFoundError
+
+try:
+    client.endpoints.get(endpoint_id)
+except WebhookNotFoundError:
+    ...  # 404
+except WebhookRateLimitError as err:
+    print(f"retry after {err.retry_after_s}s")
+```
+
+Each error carries `code`, `status`, and `request_id` when present.
+
+## Retries & idempotency
+
+The client retries idempotent requests on transient failures with capped exponential backoff and jitter,
+honouring `Retry-After`, and never blind-retries a non-idempotent write. Replays carry an idempotency key
+(auto-generated if you don't pass one):
+
+```python
+import uuid
+
+client.events.replay(
+    event.id,
+    target={"kind": "destination", "destinationId": destination_id},
+    idempotency_key=str(uuid.uuid4()),
+)
+```
+
+## Configuration
+
+```python
+client = WebhookClient(api_key, max_retries=4, timeout_s=15)  # defaults: 2 retries, 30s
+
+# As a context manager, to close the connection pool:
+with WebhookClient(api_key) as client:
+    client.whoami()
+```
+
+Full source, changelog, and issues: [github.com/webhook-co/webhook](https://github.com/webhook-co/webhook/tree/main/sdks/python).

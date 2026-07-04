@@ -1,0 +1,101 @@
+---
+title: Quickstart
+description: "Create an endpoint and list its events in a few lines."
+---
+
+<Steps>
+
+<Step title="Get an API key">
+  Create a `whk_` API key in your [dashboard](https://app.webhook.co) and export it:
+
+```sh
+export WEBHOOK_API_KEY=whk_your_key_here
+```
+
+</Step>
+
+<Step title="Install an SDK">
+  <CodeGroup>
+
+```sh npm
+npm install @webhook-co/sdk
+```
+
+```sh pip
+pip install webhook-co
+```
+
+```sh go
+go get github.com/webhook-co/webhook-go
+```
+
+  </CodeGroup>
+</Step>
+
+<Step title="Create an endpoint">
+  Each endpoint has a signed ingest URL that's returned **once** at creation — capture it now.
+
+  <CodeGroup>
+
+```ts TypeScript
+import { WebhookClient } from "@webhook-co/sdk";
+
+const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
+const endpoint = await webhook.endpoints.create({ name: "orders-prod" });
+console.log(endpoint.ingestUrl);
+```
+
+```python Python
+import os
+from webhook_co import WebhookClient
+
+client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
+endpoint = client.endpoints.create(name="orders-prod")
+print(endpoint.ingest_url)
+```
+
+```go Go
+client, _ := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
+ep, _ := client.Endpoints.Create(ctx, webhook.EndpointsCreateParams{Name: "orders-prod"})
+fmt.Println(ep.IngestUrl)
+```
+
+  </CodeGroup>
+</Step>
+
+<Step title="List the events it captures">
+  Point a provider at the ingest URL, then iterate the captured events. List methods auto-paginate.
+
+  <CodeGroup>
+
+```ts TypeScript
+for await (const event of webhook.events.list(endpoint.id)) {
+  console.log(event.id, event.provider, event.verificationState);
+}
+```
+
+```python Python
+for event in client.events.list(endpoint.id):
+    print(event.id, event.provider, event.verification_state)
+```
+
+```go Go
+it := client.Events.List(ep.Id, nil)
+for it.Next(ctx) {
+    e := it.Value()
+    fmt.Println(e.Id, e.Verified)
+}
+if err := it.Err(); err != nil {
+    log.Fatal(err)
+}
+```
+
+  </CodeGroup>
+</Step>
+
+</Steps>
+
+## Next
+
+Browse the full **[API reference](/api-reference)** (generated from the live OpenAPI spec, with an
+interactive playground), or dive into your language's SDK guide for retries, errors, replay, and more.
