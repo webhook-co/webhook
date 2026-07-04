@@ -1,0 +1,61 @@
+{
+  "name": "@webhook-co/sdk",
+  "version": "0.0.0",
+  "description": "The official TypeScript SDK for the webhook.co API — a typed client with retries, cursor pagination, idempotency, and secret redaction.",
+  "type": "module",
+  "license": "Apache-2.0",
+  "homepage": "https://webhook.co",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/webhook-co/webhook.git",
+    "directory": "packages/sdk-ts"
+  },
+  "bugs": {
+    "url": "https://github.com/webhook-co/webhook/issues"
+  },
+  "keywords": [
+    "webhook",
+    "webhooks",
+    "sdk",
+    "typescript",
+    "standard-webhooks",
+    "webhook.co",
+    "api-client"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "generate": "node scripts/generate-types.mjs",
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0",
+    "tsup": "^8.5.1"
+  }
+}
