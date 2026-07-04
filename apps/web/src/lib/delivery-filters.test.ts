@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { hasAppliedDeliveryFilters, parseDeliveryFilters } from "./delivery-filters";
+// (destinationId cases added below cover the per-destination embed scoping.)
 
 describe("parseDeliveryFilters", () => {
   it("parses a single valid status into an array", () => {
@@ -25,6 +26,25 @@ describe("parseDeliveryFilters", () => {
     expect(parseDeliveryFilters({ status: [] })).toEqual({});
     expect(parseDeliveryFilters({ status: null })).toEqual({});
     expect(parseDeliveryFilters({})).toEqual({});
+  });
+
+  it("passes a valid uuid destinationId through", () => {
+    const id = "11111111-1111-1111-1111-111111111111";
+    expect(parseDeliveryFilters({ destinationId: id })).toEqual({ destinationId: id });
+  });
+
+  it("drops a non-uuid destinationId (never reaches SQL → no 22P02)", () => {
+    expect(parseDeliveryFilters({ destinationId: "not-a-uuid" })).toEqual({});
+    expect(parseDeliveryFilters({ destinationId: "" })).toEqual({});
+    expect(parseDeliveryFilters({ destinationId: null })).toEqual({});
+  });
+
+  it("combines a valid destinationId with a status filter", () => {
+    const id = "11111111-1111-1111-1111-111111111111";
+    expect(parseDeliveryFilters({ destinationId: id, status: "delivered" })).toEqual({
+      destinationId: id,
+      status: ["delivered"],
+    });
   });
 
   it("accepts every member of the delivery-status vocabulary", () => {

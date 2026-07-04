@@ -24,6 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@webhook-co/ui";
+import Link from "next/link";
 import * as React from "react";
 import { flushSync } from "react-dom";
 
@@ -346,7 +347,13 @@ export function ReplayDestinationsManager({ initial }: ReplayDestinationsManager
                     />
                   </TableCell>
                   <TableCell className="text-right">
-                    <div className="flex flex-wrap justify-end gap-2">
+                    <div className="flex flex-wrap items-center justify-end gap-2">
+                      <Link
+                        href={`/destinations/${dest.id}`}
+                        className="text-sm text-fg-secondary underline-offset-4 hover:underline"
+                      >
+                        View
+                      </Link>
                       {display === "disabled" ? (
                         <Button
                           variant="secondary"
