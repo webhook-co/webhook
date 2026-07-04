@@ -62,10 +62,14 @@ secret redaction on every human-facing string, covered by a redaction regression
 httpx + pydantic v2; Python 3.10+. Built with hatchling (src layout). CI is a dedicated, path-filtered
 workflow (`ci-sdk-python.yml`) since the package lives outside the pnpm/turbo workspace — format checks +
 the full pytest suite (incl. the drift guard). Release (`release-sdk-python.yml`, tag `sdk-python-v*`)
-publishes to PyPI via the **OIDC trusted-publisher mint-token flow** — no stored token, and no marketplace
-action (honouring the org's GitHub-owned-Actions-only policy; the `pypa/gh-action-pypi-publish` action is
-deliberately avoided). The first publish is naturally human-gated: the mint-token exchange 403s until a
-founder configures the Trusted Publisher for `webhook-co` on pypi.org.
+publishes to PyPI with `twine` using the **`PYPI_TOKEN` repo secret** (a PyPI API token) — a plain CLI, no
+marketplace action, honouring the org's GitHub-owned-Actions-only policy (the `pypa/gh-action-pypi-publish`
+action is deliberately avoided). The publish step is gated on the secret being present.
+
+> **Update (2026-07-04):** this ADR originally specified an **OIDC trusted-publisher mint-token flow**
+> (no stored token). In practice the founder provided a PyPI API token rather than configuring a Trusted
+> Publisher, so the release workflow now publishes via `twine` + the `PYPI_TOKEN` secret. The no-marketplace
+> constraint still holds (`twine` is a direct CLI). `webhook-co@0.1.0` shipped this way on 2026-07-04.
 
 ## consequences
 

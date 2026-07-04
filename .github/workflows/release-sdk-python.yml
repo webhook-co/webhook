@@ -1,8 +1,8 @@
 # Release the Python SDK (webhook-co) to PyPI. Triggered by an `sdk-python-vX.Y.Z` tag (or a manual
-# dispatch for testing). Builds + tests, then publishes via PyPI's OIDC "trusted publisher" mint-token
-# flow — NO long-lived token and NO marketplace action (the org restricts Actions to GitHub-owned
-# publishers). The first publish is naturally human-gated: it fails until a founder configures the Trusted
-# Publisher for `webhook-co` on pypi.org (repo webhook-co/webhook, workflow release-sdk-python.yml).
+# dispatch for testing). Builds + tests, then publishes with `twine` using the `PYPI_TOKEN` repo secret
+# (a PyPI API token, username `__token__`). No marketplace action is used — `twine` is a plain CLI, so the
+# org's GitHub-owned-Actions-only policy is honoured. (The earlier design used PyPI's OIDC trusted-publisher
+# mint-token flow, but the founder provided an API token instead of configuring a Trusted Publisher.)
 name: release-sdk-python
 
 on:
@@ -15,8 +15,7 @@ on:
         required: true
 
 permissions:
-  contents: read
-  id-token: write # OIDC for the PyPI trusted-publisher mint-token exchange
+  contents: read # token-based publish; no OIDC id-token needed
 
 concurrency:
   group: release-sdk-python-${{ github.ref }}
@@ -82,16 +81,17 @@ jobs:
           ls "dist/webhook_co-${VERSION}-py3-none-any.whl" "dist/webhook_co-${VERSION}.tar.gz" \
             || { echo "::error::built artifacts don't match version $VERSION"; exit 1; }
 
-      # Publish only on a real tag PUSH (never a dispatch). The mint-token exchange requires a Trusted
-      # Publisher configured on PyPI — until then it 403s, so the first publish is a deliberate human action.
-      - name: Publish to PyPI (OIDC trusted publisher — no stored token)
+      # Publish only on a real tag PUSH (never a dispatch). Uses the PYPI_TOKEN repo secret; the token is
+      # passed via env (never `${{ }}`-interpolated into the script) and twine reads it from the environment.
+      - name: Publish to PyPI
         if: github.event_name == 'push'
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_TOKEN }}
         run: |
-          oidc_resp="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=pypi")"
-          oidc_token="$(printf '%s' "$oidc_resp" | python -c 'import sys,json;print(json.load(sys.stdin)["value"])')"
-          mint_resp="$(curl -sS -X POST https://pypi.org/_/oidc/mint-token \
-            -d "$(python -c 'import json,sys;print(json.dumps({"token": sys.argv[1]}))' "$oidc_token")")"
-          api_token="$(printf '%s' "$mint_resp" | python -c 'import sys,json;print(json.load(sys.stdin)["token"])')"
-          twine upload --non-interactive --username __token__ --password "$api_token" dist/*
-          echo "Published webhook-co ${{ steps.ver.outputs.version }} to PyPI with a trusted-publisher token."
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "::error::PYPI_TOKEN secret is not set — cannot publish. Add it in repo settings."
+            exit 1
+          fi
+          twine upload --non-interactive dist/*
+          echo "Published webhook-co ${{ steps.ver.outputs.version }} to PyPI."
