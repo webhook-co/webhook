@@ -2,6 +2,8 @@ import "server-only";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
+import type { SecretSealer } from "@webhook-co/shared";
+
 import type { SessionExchangeBinding } from "./session-exchange";
 
 /**
@@ -87,6 +89,24 @@ export function getSessionExchangeBinding(): SessionExchangeBinding | undefined 
   const binding = workerEnv().AUTH_SESSION_EXCHANGE;
   if (binding && typeof (binding as { exchange?: unknown }).exchange === "function") {
     return binding as SessionExchangeBinding;
+  }
+  return undefined;
+}
+
+/**
+ * The `PROVIDER_SECRET_SEALER` Cloudflare service binding — the engine's seal-only `ProviderSecretSealer`
+ * WorkerEntrypoint, reachable as a direct RPC (no public HTTP hop). It is **write-only**: it wraps a
+ * plaintext under the KMS envelope and can never decrypt, so binding it into the web worker is strictly
+ * weaker than the secrets the worker already holds. Bound only at deploy (the gen-wrangler-prod overlay,
+ * mirroring api/mcp); `undefined` in dev/preview and before provisioning — the destinations mutations
+ * fail closed (a create/rotate that needs to mint a signing secret errors rather than storing plaintext).
+ * Detected structurally (an object with a `sealString` method) so a mis-shaped binding never masquerades
+ * as a working sealer.
+ */
+export function getProviderSecretSealer(): SecretSealer | undefined {
+  const binding = workerEnv().PROVIDER_SECRET_SEALER;
+  if (binding && typeof (binding as { sealString?: unknown }).sealString === "function") {
+    return binding as SecretSealer;
   }
   return undefined;
 }

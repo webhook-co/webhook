@@ -14,7 +14,9 @@
     "./credential-resolver": "./src/credential-resolver.ts",
     "./auth-audit": "./src/auth-audit.ts",
     "./reads": "./src/reads.ts",
-    "./endpoints": "./src/endpoints.ts"
+    "./endpoints": "./src/endpoints.ts",
+    "./replay-destinations": "./src/replay-destinations.ts",
+    "./signing-keys": "./src/signing-keys.ts"
   },
   "scripts": {
     "build": "tsc",
