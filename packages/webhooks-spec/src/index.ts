@@ -74,3 +74,10 @@ export {
   type SignStandardWebhooksInput,
   type StandardWebhooksHeaders,
 } from "./sign";
+
+export {
+  validateProviderSecretShape,
+  type ProviderSecretKind,
+  type ProviderSecretShapeInput,
+  type ProviderSecretShapeResult,
+} from "./provider-secret-shape";

@@ -1,21 +1,16 @@
 import {
   canonicalizeAndValidateUrl,
-  CONFIGURED_HEADER_PROVIDERS,
   DeliveryAttemptSchema,
   DeliverySchema,
   DeliveryStatusSchema,
   EndpointSchema,
   EventSchema,
   EventSummarySchema,
-  isUsableConfiguredHeaderSecret,
-  isUsableStandardWebhooksSecret,
   LagSchema,
   ProviderSchema,
   ReplayDestinationSchema,
-  BRAINTREE_PUBLIC_KEY_PROVIDERS,
   SubscriptionSchema,
-  SW_SECRET_PROVIDERS,
-  VERIFY_TOKEN_PROVIDERS,
+  validateProviderSecretShape,
   VerificationStateSchema,
   WATERMARK_DELTA_MS,
 } from "@webhook-co/shared";
@@ -357,54 +352,20 @@ export const endpointsAddProviderSecret = defineCapability({
     // base64 alphabet but isn't valid base64 (a length ≡ 1 mod 4 paste, hex, or raw) is rejected up
     // front — otherwise it would store fine yet decode to nothing and verify as NO_MATCHING_KEY forever
     // (indistinguishable from "no secret"). Single-sourced here so every surface (api/mcp) matches.
+    // Delegate the (provider, kind, secret) shape validation to the single-source `validateProviderSecretShape`
+    // (in webhooks-spec, re-exported via shared) so the schema boundary, the mcp handler, and the web
+    // registration core all reject identically — no drift. A verify_token / braintree_public_key is opaque
+    // (only its provider membership is checked); an SW-family or configured-header secret is shape-checked
+    // with the SAME decoder the verify path uses, so a value that can never match is rejected up front rather
+    // than stored to verify as NO_MATCHING_KEY forever.
     .superRefine((val, ctx) => {
-      // A verify-token is an OPAQUE user-chosen string (no base64/JSON shape), valid only for a provider
-      // that does a verify-token handshake — so it bypasses the signing-secret shape refines below.
-      if (val.kind === "verify_token") {
-        if (!VERIFY_TOKEN_PROVIDERS.has(val.provider)) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["provider"],
-            message:
-              "this provider has no verify-token handshake; omit kind (or use signing_secret) to register a signing secret",
-          });
-        }
-        return;
-      }
-      // A braintree_public_key is an OPAQUE integration public key (no base64/JSON shape), valid only for a
-      // provider that answers the bt_challenge handshake — so it also bypasses the signing-secret refines.
-      if (val.kind === "braintree_public_key") {
-        if (!BRAINTREE_PUBLIC_KEY_PROVIDERS.has(val.provider)) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["provider"],
-            message:
-              "this provider has no bt_challenge handshake; omit kind (or use signing_secret) to register a signing secret",
-          });
-        }
-        return;
-      }
-      if (SW_SECRET_PROVIDERS.has(val.provider) && !isUsableStandardWebhooksSecret(val.secret)) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["secret"],
-          message:
-            "a Standard Webhooks secret must be base64 key material (optionally whsec_-prefixed)",
-        });
-      }
-      // A Tier-4 operator-configured-header provider's secret is a JSON `{header, token}` (the operator
-      // chose the header name). Reject a malformed/empty one up front (same rationale as the SW refine):
-      // otherwise it stores fine yet can never match, verifying as NO_MATCHING_KEY forever.
-      if (
-        CONFIGURED_HEADER_PROVIDERS.has(val.provider) &&
-        !isUsableConfiguredHeaderSecret(val.secret)
-      ) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["secret"],
-          message:
-            'this provider expects a JSON secret {"header":"...","token":"..."} with a non-empty header name and token',
-        });
+      const result = validateProviderSecretShape({
+        provider: val.provider,
+        kind: val.kind,
+        secret: val.secret,
+      });
+      if (!result.ok) {
+        ctx.addIssue({ code: "custom", path: [result.path], message: result.message });
       }
     }),
   output: AddedProviderSecretSchema,
