@@ -16,7 +16,14 @@ import type { DeliveryFilters } from "@/server/deliveries";
 export interface DeliveryFilterParams {
   /** Multi-select (`?status=a&status=b`) — a repeated param arrives as `string[]`, a single one as a string. */
   readonly status?: string | string[] | null;
+  /** Scopes the list to one replay destination (the per-destination embed) — a uuid, else dropped. */
+  readonly destinationId?: string | null;
 }
+
+// A destination id is a uuid; a non-uuid (hand-edited route/param) is dropped so it never reaches the
+// `destination_id = $1` predicate as a bad cast (22P02). Inlined (not imported from a server-only module)
+// so this client-importable module stays free of a `server-only` dependency.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Coerce a Next.js search param (string | string[]) into a clean `string[]` for a multi-select filter:
@@ -36,13 +43,15 @@ function paramList(value: string | string[] | null | undefined): string[] {
  * least one valid status remains.
  */
 export function parseDeliveryFilters(params: DeliveryFilterParams): DeliveryFilters {
-  const filters: { status?: DeliveryStatus[] } = {};
+  const filters: { status?: DeliveryStatus[]; destinationId?: string } = {};
   const statuses = [
     ...new Set(
       paramList(params.status).filter((s) => (DELIVERY_STATUSES as readonly string[]).includes(s)),
     ),
   ] as DeliveryStatus[];
   if (statuses.length > 0) filters.status = statuses;
+  const destinationId = typeof params.destinationId === "string" ? params.destinationId.trim() : "";
+  if (UUID_RE.test(destinationId)) filters.destinationId = destinationId;
   return filters;
 }
 

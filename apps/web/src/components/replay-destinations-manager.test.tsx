@@ -128,6 +128,11 @@ describe("ReplayDestinationsManager", () => {
     expect(screen.getByText(/no destinations yet/i)).toBeInTheDocument();
   });
 
+  it("links each row to its destination detail page", () => {
+    render(<ReplayDestinationsManager initial={[dest({ id: "d7" })]} />);
+    expect(screen.getByRole("link", { name: /view/i })).toHaveAttribute("href", "/destinations/d7");
+  });
+
   it("hides Enable on an active row", () => {
     render(<ReplayDestinationsManager initial={[dest()]} />);
     expect(screen.getByText("Active")).toBeInTheDocument();
