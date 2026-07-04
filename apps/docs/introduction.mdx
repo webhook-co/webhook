@@ -1,0 +1,52 @@
+---
+title: Introduction
+description: "Receive, inspect, replay-to-localhost, and reliably deliver webhooks."
+---
+
+webhook.co gives you a free, permanent, signed webhook URL with payload inspection and one-command
+replay-to-localhost — then grows with you into inbound ingestion (verify → dedup → retry → replay) and
+outbound delivery. Every capability is reachable identically across the **CLI, API, web, and MCP**.
+
+Signing and verification follow the [Standard Webhooks](https://www.standardwebhooks.com/) spec, for both
+send and receive.
+
+## The API
+
+The REST API lives at `https://api.webhook.co`. It's a small, predictable surface — every endpoint is
+described by a machine-readable OpenAPI 3.1 document you can browse in the **[API reference](/api-reference)**
+or fetch yourself:
+
+```sh
+curl https://api.webhook.co/openapi.json
+```
+
+That same document is what the SDKs and the API reference on this site are generated from, so they never
+drift from the real API.
+
+## SDKs
+
+Official, typed SDKs in three languages — each with the same hardening built in (bearer auth, bounded
+retries with jitter, cursor pagination, idempotency, and secret redaction):
+
+<CardGroup cols={3}>
+  <Card title="TypeScript" href="/sdks/typescript">
+    `npm install @webhook-co/sdk`
+  </Card>
+  <Card title="Python" href="/sdks/python">
+    `pip install webhook-co`
+  </Card>
+  <Card title="Go" href="/sdks/go">
+    `go get github.com/webhook-co/webhook-go`
+  </Card>
+</CardGroup>
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" href="/quickstart" icon="rocket">
+    Create an endpoint and list its events in a few lines.
+  </Card>
+  <Card title="Authentication" href="/authentication" icon="key">
+    How the `whk_` API key works.
+  </Card>
+</CardGroup>
