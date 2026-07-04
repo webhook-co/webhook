@@ -1,9 +1,12 @@
 import { SW_SECRET_PROVIDERS, type Provider } from "./adapters/config";
 import { isUsableStandardWebhooksSecret } from "./adapters/shared";
-import { BRAINTREE_PUBLIC_KEY_PROVIDERS } from "./adapters/braintree-public-key";
+import {
+  BRAINTREE_PUBLIC_KEY_PROVIDERS,
+  serializeBraintreePublicKey,
+} from "./adapters/braintree-public-key";
 import { CONFIGURED_HEADER_PROVIDERS } from "./adapters/bespoke/token-auth-providers";
 import { isUsableConfiguredHeaderSecret } from "./adapters/bespoke/token-auth";
-import { VERIFY_TOKEN_PROVIDERS } from "./adapters/verify-token";
+import { serializeVerifyTokenSecret, VERIFY_TOKEN_PROVIDERS } from "./adapters/verify-token";
 
 // The single source of provider-secret shape validation, lifted verbatim from the `endpoints.addProviderSecret`
 // contract superRefine so EVERY surface (api/mcp/web) — and the shared db registration core — validates
@@ -84,4 +87,25 @@ export function validateProviderSecretShape(
   }
 
   return { ok: true };
+}
+
+/**
+ * Serialize a validated `secret` into the exact stored `plaintext` blob for its `kind` — the ONE place this
+ * corruption-critical mapping lives (previously inline in the api write-handler). A `verify_token` /
+ * `braintree_public_key` is wrapped as the typed JSON blob the engine's pre-capture handshake recognizes
+ * (`serializeVerifyTokenSecret` / `serializeBraintreePublicKey`); a `signing_secret` (incl. a configured-header
+ * JSON secret the operator already typed) is stored AS-IS. The db `addProviderSecret` seals whatever plaintext
+ * it's given, so this MUST run before it — handing it a raw `{secret,kind}` would store a verify_token /
+ * braintree secret UNwrapped, and the engine's `parseVerifyTokenSecret` / `parseBraintreePublicKey` would then
+ * return null → the handshake skips it → it verifies as NO_MATCHING_KEY forever.
+ */
+export function serializeProviderSecretPlaintext(kind: ProviderSecretKind, secret: string): string {
+  switch (kind) {
+    case "verify_token":
+      return serializeVerifyTokenSecret(secret);
+    case "braintree_public_key":
+      return serializeBraintreePublicKey(secret);
+    case "signing_secret":
+      return secret;
+  }
 }

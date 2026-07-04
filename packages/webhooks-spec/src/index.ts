@@ -76,6 +76,7 @@ export {
 } from "./sign";
 
 export {
+  serializeProviderSecretPlaintext,
   validateProviderSecretShape,
   type ProviderSecretKind,
   type ProviderSecretShapeInput,

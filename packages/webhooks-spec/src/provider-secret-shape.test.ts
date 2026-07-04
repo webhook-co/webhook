@@ -8,7 +8,12 @@ import {
   VERIFY_TOKEN_PROVIDERS,
   type Provider,
 } from "./index";
-import { validateProviderSecretShape } from "./provider-secret-shape";
+import {
+  serializeProviderSecretPlaintext,
+  validateProviderSecretShape,
+} from "./provider-secret-shape";
+import { parseVerifyTokenSecret } from "./adapters/verify-token";
+import { parseBraintreePublicKey } from "./adapters/braintree-public-key";
 
 // Representative members picked from the live sets (robust to config changes) + one provider outside every
 // special set (a plain HMAC/bespoke provider that gets no shape refine).
@@ -144,5 +149,30 @@ describe("validateProviderSecretShape — signing_secret (plain / no refine)", (
         secret: "whsec_c2VjcmV0",
       }),
     ).toEqual({ ok: true });
+  });
+});
+
+describe("serializeProviderSecretPlaintext — round-trips (no corruption)", () => {
+  it("verify_token → a typed blob that parseVerifyTokenSecret recovers to the original token", () => {
+    const blob = serializeProviderSecretPlaintext("verify_token", "my-verify-token-123");
+    expect(blob).not.toBe("my-verify-token-123"); // wrapped, not raw
+    expect(parseVerifyTokenSecret(blob)).toBe("my-verify-token-123");
+    // The corruption case: storing the RAW token would NOT parse.
+    expect(parseVerifyTokenSecret("my-verify-token-123")).toBeNull();
+  });
+
+  it("braintree_public_key → a typed blob that parseBraintreePublicKey recovers", () => {
+    const blob = serializeProviderSecretPlaintext("braintree_public_key", "bt-public-key-abc");
+    expect(blob).not.toBe("bt-public-key-abc");
+    expect(parseBraintreePublicKey(blob)).toBe("bt-public-key-abc");
+    expect(parseBraintreePublicKey("bt-public-key-abc")).toBeNull();
+  });
+
+  it("signing_secret → stored AS-IS (raw passthrough, incl. a configured-header JSON secret)", () => {
+    expect(serializeProviderSecretPlaintext("signing_secret", "whsec_c2VjcmV0")).toBe(
+      "whsec_c2VjcmV0",
+    );
+    const headerJson = JSON.stringify({ header: "X-Api-Key", token: "abc" });
+    expect(serializeProviderSecretPlaintext("signing_secret", headerJson)).toBe(headerJson);
   });
 });
