@@ -37,12 +37,18 @@ against).
 is the ONE write path both the api/mcp capability handler and the web dashboard action call, so the canonical
 order can't drift:
 
-  resolve endpoint (**NOT_FOUND before any seal** — never seal against a bad/cross-org endpoint) →
-  `validateProviderSecretShape` (VALIDATION_ERROR) → **per-endpoint cap** (RATE_LIMITED) →
-  `serializeProviderSecretPlaintext` by kind → `addProviderSecret` (seal + insert + in-tx audit) →
-  best-effort KV evict.
+  **validate the full input FIRST** — base constraints (provider ∈ PROVIDERS, kind ∈ the 3-value enum,
+  secret 1..4096, label ≤200) + the per-kind shape (`validateProviderSecretShape`), all `VALIDATION_ERROR`
+  — then resolve endpoint (**NOT_FOUND before any seal**) → **per-endpoint cap** (`RATE_LIMITED`) →
+  `serializeProviderSecretPlaintext` by kind → `addProviderSecret` (seal + insert + in-tx audit) → best-effort
+  KV evict (**wrapped in a catch** — the secret is already durably committed, so a transient evict failure must
+  never throw and induce a duplicate-storing retry).
 
-It throws typed `CapabilityFault`s (`packages/db` already imports `CapabilityFault` via `write-handlers`).
+Validation runs **before** the endpoint lookup (matching the api/mcp handler's safeParse-first precedence, so
+the same input yields the same error code on every surface and a bad input never reveals endpoint existence
+pre-validation), and the core enforces the SAME base constraints the contract zod does — because it is the
+sole input gate on the zod-less web path, not merely a shape refine. It throws typed `CapabilityFault`s
+(`packages/db` already imports `CapabilityFault` via `write-handlers`).
 The api/mcp `endpoints.addProviderSecret` handler is refactored to just safeParse + delegate; its inline
 NOT_FOUND gate, serialization, and evict move into the core. **api/mcp behavior is unchanged** — their test
 suites (api 134, mcp 92) passing unmodified is the no-drift proof.

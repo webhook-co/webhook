@@ -17,6 +17,7 @@ import { randomUUID } from "node:crypto";
 
 import { CapabilityFault } from "@webhook-co/contract";
 import {
+  PROVIDERS,
   serializeProviderSecretPlaintext,
   validateProviderSecretShape,
   type EncryptionContext,
@@ -184,18 +185,38 @@ export async function registerProviderSecret(
   input: RegisterProviderSecretInput,
   deps: RegisterProviderSecretDeps,
 ): Promise<AddedProviderSecret> {
-  // 1. NOT_FOUND before any seal — and the hash to evict. (The FK would also reject a bad endpoint, but as
-  //    a 500, not a 404.)
-  const tokenHash = await getEndpointIngestTokenHash(app, input.orgId, input.endpointId);
-  if (tokenHash === null) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
-  // 2. Shape validation. Redundant for the api/mcp path (the contract zod already ran the same check), but
-  //    load-bearing for the web path (no contract zod) — single-sourced so all surfaces reject identically.
+  // 1. Validate the FULL input FIRST — before the endpoint lookup, matching the api/mcp handler's
+  //    safeParse-first precedence (so the same input yields the same error CODE on every surface, and a bad
+  //    input never reveals endpoint (non)existence). This is the SOLE input gate on the zod-less web path, so
+  //    it must enforce the SAME base constraints the contract zod does — provider ∈ PROVIDERS, kind ∈ the
+  //    3-value enum, secret 1..4096, label ≤200 — not only the per-kind shape refine. (Redundant but harmless
+  //    for the api/mcp path, whose contract safeParse already ran the identical checks.)
+  if (!(PROVIDERS as readonly string[]).includes(input.provider)) {
+    throw new CapabilityFault("VALIDATION_ERROR", "unknown provider");
+  }
+  if (
+    input.kind !== "signing_secret" &&
+    input.kind !== "verify_token" &&
+    input.kind !== "braintree_public_key"
+  ) {
+    throw new CapabilityFault("VALIDATION_ERROR", "unknown secret kind");
+  }
+  if (typeof input.secret !== "string" || input.secret.length < 1 || input.secret.length > 4096) {
+    throw new CapabilityFault("VALIDATION_ERROR", "a secret must be 1–4096 characters");
+  }
+  if (input.label != null && input.label.length > 200) {
+    throw new CapabilityFault("VALIDATION_ERROR", "a label must be at most 200 characters");
+  }
   const shape = validateProviderSecretShape({
     provider: input.provider,
     kind: input.kind,
     secret: input.secret,
   });
   if (!shape.ok) throw new CapabilityFault("VALIDATION_ERROR", shape.message);
+  // 2. Endpoint existence — NOT_FOUND before any seal, and the hash to evict. (The FK would also reject a bad
+  //    endpoint, but as a 500, not a 404.) RLS-scoped, so a cross-org endpoint is NOT_FOUND, not visible.
+  const tokenHash = await getEndpointIngestTokenHash(app, input.orgId, input.endpointId);
+  if (tokenHash === null) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
   // 3. Per-endpoint cap. A tiny check-then-insert race (like the endpoints-per-org cap) can transiently
   //    yield cap+1 — a benign guardrail, not a security boundary.
   const live = await countLiveProviderSecrets(app, input.orgId, input.endpointId);
@@ -219,8 +240,16 @@ export async function registerProviderSecret(
     deps.sealer,
     { auditKey: deps.auditKey, actor: deps.actor },
   );
-  // 6. Best-effort evict so the new secret is honored on the NEXT ingest, not after the KV TTL.
-  await deps.evict(tokenHash);
+  // 6. Best-effort evict so the new secret is honored on the NEXT ingest, not after the KV TTL. The secret is
+  //    ALREADY durably sealed+inserted+audited, so a transient evict failure must NOT throw (that would make
+  //    the caller retry and store a duplicate) — swallow it, exactly as the revoke path does.
+  try {
+    await deps.evict(tokenHash);
+  } catch (err) {
+    console.log(
+      JSON.stringify({ message: "provider_secret.register_evict_failed", error: String(err) }),
+    );
+  }
   return added;
 }
 

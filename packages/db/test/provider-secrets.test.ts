@@ -370,6 +370,71 @@ describe("registerProviderSecret (the shared api/mcp/web core)", () => {
     expect(evicted).toHaveLength(0);
   });
 
+  it("rejects an empty secret with VALIDATION_ERROR (the zod-less web path's base-constraint gate)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-empty" }, hasher)).id;
+    await expect(
+      registerProviderSecret(
+        app,
+        { orgId: orgA, endpointId: ep, provider: "github", kind: "signing_secret", secret: "" },
+        regDeps([]),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects an out-of-enum kind with VALIDATION_ERROR (never serializes to undefined)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-kind" }, hasher)).id;
+    await expect(
+      registerProviderSecret(
+        app,
+        // A crafted web POST could supply an arbitrary kind string (types are erased) — the core rejects it.
+        { orgId: orgA, endpointId: ep, provider: "github", kind: "bogus" as never, secret: "x" },
+        regDeps([]),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "VALIDATION_ERROR" });
+  });
+
+  it("validates BEFORE the endpoint lookup — a bad secret + unknown endpoint is VALIDATION_ERROR, not NOT_FOUND", async () => {
+    // Parity with the api handler's safeParse-first precedence (and no endpoint-existence leak pre-validation).
+    await expect(
+      registerProviderSecret(
+        app,
+        {
+          orgId: orgA,
+          endpointId: randomUUID(),
+          provider: "standard_webhooks",
+          kind: "signing_secret",
+          secret: "whsec_AAAAA",
+        },
+        regDeps([]),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "VALIDATION_ERROR" });
+  });
+
+  it("does not fail a committed registration when the best-effort evict throws", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-evict-throw" }, hasher)).id;
+    const added = await registerProviderSecret(
+      app,
+      {
+        orgId: orgA,
+        endpointId: ep,
+        provider: "github",
+        kind: "signing_secret",
+        secret: "whsec_ok",
+      },
+      {
+        sealer: store,
+        evict: async () => {
+          throw new Error("KV blip");
+        },
+        auditKey,
+        actor: "user-1",
+      },
+    );
+    // The secret is durably stored despite the evict failure — no throw, no duplicate-inducing retry.
+    expect(added.status).toBe("active");
+    expect((await getEndpointProviderSecrets(authn, ep)).some((s) => s.id === added.id)).toBe(true);
+  });
+
   it("enforces the per-endpoint cap with RATE_LIMITED", async () => {
     const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-cap" }, hasher)).id;
     // Seed the cap via the low-level add (no cap check) so the (MAX+1)th registration is the one that trips it.
