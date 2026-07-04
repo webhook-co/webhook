@@ -4,8 +4,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { EndpointDetail } from "@/components/endpoint-detail";
+import { ProviderSecretsManager } from "@/components/provider-secrets-manager";
 import { deleteEndpointAction, rotateEndpointAction } from "@/server/endpoint-actions";
 import { loadEndpoint } from "@/server/endpoints";
+import {
+  addProviderSecretAction,
+  revokeProviderSecretAction,
+} from "@/server/provider-secret-actions";
+import { loadProviderSecrets } from "@/server/provider-secrets";
 import { verifySession } from "@/server/session";
 
 export const metadata: Metadata = {
@@ -15,7 +21,13 @@ export const metadata: Metadata = {
 export default async function EndpointDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await verifySession();
   const { id } = await params;
-  const result = await loadEndpoint(session.orgId, id);
+  // The endpoint detail and its provider (inbound-verification) secrets are independent org+id reads — run
+  // them concurrently. Secrets are metadata only (the sealed bytes never leave the DB); a loader fault
+  // renders a Banner but must not block the endpoint view.
+  const [result, secrets] = await Promise.all([
+    loadEndpoint(session.orgId, id),
+    loadProviderSecrets(session.orgId, id),
+  ]);
 
   if (result.status === "not_found") notFound();
 
@@ -41,11 +53,25 @@ export default async function EndpointDetailPage({ params }: { params: Promise<{
       {result.status === "error" ? (
         <Banner tone="danger">We couldn&apos;t load this endpoint. Refresh to try again.</Banner>
       ) : (
-        <EndpointDetail
-          endpoint={result.endpoint}
-          rotateEndpoint={rotateEndpointAction}
-          deleteEndpoint={deleteEndpointAction}
-        />
+        <>
+          <EndpointDetail
+            endpoint={result.endpoint}
+            rotateEndpoint={rotateEndpointAction}
+            deleteEndpoint={deleteEndpointAction}
+          />
+          {secrets.status === "error" ? (
+            <Banner tone="danger">
+              We couldn&apos;t load this endpoint&apos;s provider secrets. Refresh to try again.
+            </Banner>
+          ) : (
+            <ProviderSecretsManager
+              endpointId={id}
+              initial={secrets.items}
+              add={addProviderSecretAction}
+              revoke={revokeProviderSecretAction}
+            />
+          )}
+        </>
       )}
     </div>
   );
