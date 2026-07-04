@@ -31,16 +31,19 @@ approach was verified clean.) Not `docs/`, which holds the code ADRs + threat mo
 
 `docs.json` sets `"openapi": "https://api.webhook.co/openapi.json"` on the API-reference tab, so Mintlify
 auto-generates the endpoint pages + interactive playground from the **served** spec (ADR-0090) — there is
-no committed spec copy to drift. A spec change doesn't push git, so the CI step that publishes the spec
-should also POST `api.mintlify.com/v1/project/update/{projectId}` to re-sync the playground.
+no committed spec copy to drift. A spec change doesn't touch `apps/docs`, so it won't auto-redeploy; the
+playground re-fetches the spec on the next docs redeploy — triggered by a push touching `apps/docs` or a
+manual **Redeploy** from the dashboard (the API-driven resync needs an Enterprise `mint_` key we don't use).
 
 ### 3. Deploy is Mintlify's GitHub App; the domain + one-time setup are founder-gated
 
 There is no CI job or marketplace Action for docs (consistent with the org's Actions policy). Deploy is
 Mintlify's GitHub App on push to `main`, with the monorepo path set to `apps/docs`. The one-time steps
 that can't be done from the repo — installing the GitHub App, the monorepo toggle, adding the
-`docs.webhook.co` custom domain (which reveals the DNS verification values), the Cloudflare CNAME/TXT
-records, and minting the `mint_` admin key — are documented in `apps/docs/README.md` for a maintainer.
+`docs.webhook.co` custom domain (which reveals the DNS verification values), and the Cloudflare CNAME/TXT
+records — are documented in `apps/docs/README.md` for a maintainer. (The API-driven spec-resync would need
+a `mint_` admin key, but that's a paid Enterprise feature; on the Hobby tier we redeploy manually after a
+spec change instead.)
 
 ## consequences
 
