@@ -27,13 +27,19 @@
       // imports the shared barrel for its entity schemas, and the barrel's `export *` pulls shared's
       // un-cast WebCrypto modules (audit-anchor/envelope/kms/secrets/webhooks-spec/bytes) into THIS
       // app's DOM-lib typecheck → the node Uint8Array<ArrayBufferLike> vs DOM BufferSource clash. Point
-      // at the real `dist/index.js` (workerd-safe runtime; tsc reads the sibling `.d.ts` for types), same
-      // discipline as the leaves above. The more-specific leaf paths still win for those subpaths.
-      "@webhook-co/shared": ["../../packages/shared/dist/index.js"],
+      // at the real built `dist/index` (workerd-safe runtime; tsc reads the sibling `.d.ts` for types),
+      // same discipline as the leaves above. The more-specific leaf paths still win for those subpaths.
+      // EXTENSIONLESS `dist/index` (not `dist/index.js`) on purpose, mirroring apps/auth: an explicit `.js`
+      // target makes tsc treat the barrel as a JS module and DROP type-only re-exports forwarded from the
+      // nested `@webhook-co/webhooks-spec` package (`export { type Provider } … `), so `Provider` /
+      // `ProviderSecretKind` failed to resolve while their sibling VALUES (`PROVIDERS`) still did. The
+      // extensionless form resolves `dist/index.d.ts` for types AND `dist/index.js` at runtime (Node/bundler
+      // resolution adds `.js`), which is the same mapping apps/auth ships in prod.
+      "@webhook-co/shared": ["../../packages/shared/dist/index"],
       // …and webhooks-spec → dist for the same reason: shared's entity types reference its
       // VerificationResult schema, so resolving shared's types pulls webhooks-spec's WebCrypto src (the
       // same BufferSource clash) unless it too is consumed as built output. (Mirrors apps/auth.)
-      "@webhook-co/webhooks-spec": ["../../packages/webhooks-spec/dist/index.js"]
+      "@webhook-co/webhooks-spec": ["../../packages/webhooks-spec/dist/index"]
     }
   },
   "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],

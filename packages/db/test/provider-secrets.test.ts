@@ -1,18 +1,28 @@
 import { randomUUID } from "node:crypto";
 
-import { LocalKmsProvider, SecretStore, type SecretSealer } from "@webhook-co/shared";
+import {
+  importAuditKey,
+  LocalKmsProvider,
+  parseVerifyTokenSecret,
+  SecretStore,
+  type SecretSealer,
+} from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
-import { createEndpoint } from "../src/endpoints";
+import { createEndpoint, getEndpointIngestTokenHash } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
 import {
   addProviderSecret,
+  countLiveProviderSecrets,
   getEndpointProviderSecrets,
+  MAX_PROVIDER_SECRETS_PER_ENDPOINT,
+  registerProviderSecret,
   retireProviderSecret,
   revokeProviderSecret,
+  type RegisterProviderSecretDeps,
   type SealedProviderSecret,
 } from "../src/provider-secrets";
 import { setupSchema } from "./migrate";
@@ -31,6 +41,7 @@ let pg: EphemeralPostgres;
 let app: Sql; // webhook_app — seed org/endpoint + add/manage secrets under RLS
 let authn: Sql; // webhook_authn — the by-endpoint sealed-secret cold read
 let store: SecretStore;
+let auditKey: CryptoKey;
 let orgA: string;
 let orgB: string;
 let epA: string;
@@ -45,6 +56,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
   store = new SecretStore(await LocalKmsProvider.generate());
+  auditKey = await importAuditKey(new Uint8Array(32).fill(7));
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "stripe-ep" }, hasher)).id;
@@ -267,5 +279,204 @@ describe("revokeProviderSecret + retireProviderSecret (lifecycle, webhook_app un
     ).toBeNull();
     // ...and org B's secret was NOT collaterally revoked.
     expect((await getEndpointProviderSecrets(authn, epB)).map((x) => x.id)).toContain(sB.id);
+  });
+});
+
+describe("registerProviderSecret (the shared api/mcp/web core)", () => {
+  function regDeps(evicted: Buffer[]): RegisterProviderSecretDeps {
+    return {
+      sealer: store,
+      evict: async (h) => {
+        evicted.push(h);
+      },
+      auditKey,
+      actor: "user-1",
+    };
+  }
+
+  it("registers a signing_secret (raw), returns active, round-trips, and evicts the endpoint hash", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-signing" }, hasher)).id;
+    const evicted: Buffer[] = [];
+    const secret = `whsec_${randomUUID()}`;
+    const added = await registerProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", kind: "signing_secret", secret },
+      regDeps(evicted),
+    );
+    expect(added.status).toBe("active");
+    expect(added.provider).toBe("stripe");
+    // signing_secret is stored AS-IS (round-trips to the raw value).
+    const mine = (await getEndpointProviderSecrets(authn, ep)).find((s) => s.id === added.id);
+    expect(await unseal(mine!)).toBe(secret);
+    // The endpoint's ingest-token hash was evicted (best-effort verify-cache bust).
+    const hash = await getEndpointIngestTokenHash(app, orgA, ep);
+    expect(evicted.some((e) => e.equals(hash!))).toBe(true);
+  });
+
+  it("serializes a verify_token to its typed blob (web path parity — parseVerifyTokenSecret recovers it)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-vt" }, hasher)).id;
+    const added = await registerProviderSecret(
+      app,
+      {
+        orgId: orgA,
+        endpointId: ep,
+        provider: "meta",
+        kind: "verify_token",
+        secret: "my-hub-token",
+      },
+      regDeps([]),
+    );
+    const mine = (await getEndpointProviderSecrets(authn, ep)).find((s) => s.id === added.id);
+    const stored = await unseal(mine!);
+    expect(stored).not.toBe("my-hub-token"); // wrapped, not raw
+    expect(parseVerifyTokenSecret(stored)).toBe("my-hub-token"); // the engine recovers the token
+  });
+
+  it("throws NOT_FOUND for an unknown endpoint, BEFORE any seal/evict", async () => {
+    const evicted: Buffer[] = [];
+    await expect(
+      registerProviderSecret(
+        app,
+        {
+          orgId: orgA,
+          endpointId: randomUUID(),
+          provider: "stripe",
+          kind: "signing_secret",
+          secret: "whsec_x",
+        },
+        regDeps(evicted),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "NOT_FOUND" });
+    expect(evicted).toHaveLength(0);
+  });
+
+  it("throws VALIDATION_ERROR for a malformed SW secret, BEFORE any seal/evict", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-bad" }, hasher)).id;
+    const evicted: Buffer[] = [];
+    await expect(
+      registerProviderSecret(
+        app,
+        // standard_webhooks IS in SW_SECRET_PROVIDERS; whsec_AAAAA (body ≡1 mod 4) isn't decodable base64.
+        {
+          orgId: orgA,
+          endpointId: ep,
+          provider: "standard_webhooks",
+          kind: "signing_secret",
+          secret: "whsec_AAAAA",
+        },
+        regDeps(evicted),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "VALIDATION_ERROR" });
+    expect(evicted).toHaveLength(0);
+  });
+
+  it("rejects an empty secret with VALIDATION_ERROR (the zod-less web path's base-constraint gate)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-empty" }, hasher)).id;
+    await expect(
+      registerProviderSecret(
+        app,
+        { orgId: orgA, endpointId: ep, provider: "github", kind: "signing_secret", secret: "" },
+        regDeps([]),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "VALIDATION_ERROR" });
+  });
+
+  it("rejects an out-of-enum kind with VALIDATION_ERROR (never serializes to undefined)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-kind" }, hasher)).id;
+    await expect(
+      registerProviderSecret(
+        app,
+        // A crafted web POST could supply an arbitrary kind string (types are erased) — the core rejects it.
+        { orgId: orgA, endpointId: ep, provider: "github", kind: "bogus" as never, secret: "x" },
+        regDeps([]),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "VALIDATION_ERROR" });
+  });
+
+  it("validates BEFORE the endpoint lookup — a bad secret + unknown endpoint is VALIDATION_ERROR, not NOT_FOUND", async () => {
+    // Parity with the api handler's safeParse-first precedence (and no endpoint-existence leak pre-validation).
+    await expect(
+      registerProviderSecret(
+        app,
+        {
+          orgId: orgA,
+          endpointId: randomUUID(),
+          provider: "standard_webhooks",
+          kind: "signing_secret",
+          secret: "whsec_AAAAA",
+        },
+        regDeps([]),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "VALIDATION_ERROR" });
+  });
+
+  it("does not fail a committed registration when the best-effort evict throws", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-evict-throw" }, hasher)).id;
+    const added = await registerProviderSecret(
+      app,
+      {
+        orgId: orgA,
+        endpointId: ep,
+        provider: "github",
+        kind: "signing_secret",
+        secret: "whsec_ok",
+      },
+      {
+        sealer: store,
+        evict: async () => {
+          throw new Error("KV blip");
+        },
+        auditKey,
+        actor: "user-1",
+      },
+    );
+    // The secret is durably stored despite the evict failure — no throw, no duplicate-inducing retry.
+    expect(added.status).toBe("active");
+    expect((await getEndpointProviderSecrets(authn, ep)).some((s) => s.id === added.id)).toBe(true);
+  });
+
+  it("enforces the per-endpoint cap with RATE_LIMITED", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-cap" }, hasher)).id;
+    // Seed the cap via the low-level add (no cap check) so the (MAX+1)th registration is the one that trips it.
+    for (let i = 0; i < MAX_PROVIDER_SECRETS_PER_ENDPOINT; i++) {
+      await addProviderSecret(
+        app,
+        { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: `whsec_${i}` },
+        store,
+      );
+    }
+    expect(await countLiveProviderSecrets(app, orgA, ep)).toBe(MAX_PROVIDER_SECRETS_PER_ENDPOINT);
+    const evicted: Buffer[] = [];
+    await expect(
+      registerProviderSecret(
+        app,
+        {
+          orgId: orgA,
+          endpointId: ep,
+          provider: "stripe",
+          kind: "signing_secret",
+          secret: "whsec_over",
+        },
+        regDeps(evicted),
+      ),
+    ).rejects.toMatchObject({ name: "CapabilityFault", code: "RATE_LIMITED" });
+    expect(evicted).toHaveLength(0);
+  });
+
+  it("countLiveProviderSecrets counts active + retiring, excludes revoked", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "reg-count" }, hasher)).id;
+    const a = await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_a" },
+      store,
+    );
+    await addProviderSecret(
+      app,
+      { orgId: orgA, endpointId: ep, provider: "stripe", plaintext: "whsec_b" },
+      store,
+    );
+    expect(await countLiveProviderSecrets(app, orgA, ep)).toBe(2);
+    await revokeProviderSecret(app, { orgId: orgA, endpointId: ep, secretId: a.id });
+    expect(await countLiveProviderSecrets(app, orgA, ep)).toBe(1); // revoked excluded
   });
 });

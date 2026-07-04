@@ -18,11 +18,7 @@ import {
   endpointsRevokeProviderSecret,
   endpointsRotate,
 } from "@webhook-co/contract";
-import {
-  serializeBraintreePublicKey,
-  serializeVerifyTokenSecret,
-  type SecretSealer,
-} from "@webhook-co/shared";
+import { type SecretSealer } from "@webhook-co/shared";
 
 import type { Sql } from "./client";
 import type { CredentialHasher } from "./credential";
@@ -34,8 +30,8 @@ import {
   rotateEndpointWithAudit,
 } from "./endpoints";
 import {
-  addProviderSecret,
   listEndpointProviderSecrets,
+  registerProviderSecret,
   revokeProviderSecret,
 } from "./provider-secrets";
 import {
@@ -206,39 +202,27 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
         parsed.error.issues[0]?.message ?? "invalid input",
       );
     }
-    const evict = requireEvictor();
-    const sealer = requireSealer();
-    // The endpoint must exist (this org's) before we seal/insert — a clean NOT_FOUND and the hash to
-    // evict. (The provider_secrets FK would also reject a bad endpoint, but as a 500, not a 404.)
-    const tokenHash = await getEndpointIngestTokenHash(
-      deps.tenant,
-      ctx.orgId,
-      parsed.data.endpointId,
-    );
-    if (tokenHash === null) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
-    const added = await addProviderSecret(
+    // Delegate to the shared registration core — the SINGLE place the NOT_FOUND-before-seal gate, the shape
+    // validation, the per-endpoint cap, and the kind→typed-blob serialization live, so api/mcp and the web
+    // dashboard action can't drift. (safeParse above already ran the same shape validation via the contract
+    // superRefine; the core re-validates for the web path that has no contract zod — a harmless double-check.)
+    const added = await registerProviderSecret(
       deps.tenant,
       {
         orgId: ctx.orgId,
         endpointId: parsed.data.endpointId,
         provider: parsed.data.provider,
+        kind: parsed.data.kind,
+        secret: parsed.data.secret,
         label: parsed.data.label,
-        // A verify-token (Meta hub.verify_token, ADR-0086) and a braintree public key (bt_challenge
-        // handshake) are each sealed as a TYPED blob so the engine can tell them, at unseal, from a signing
-        // secret under the same provider slug; a signing secret is sealed as-is. All are opaque ciphertext
-        // at rest — never persisted/returned as plaintext.
-        plaintext:
-          parsed.data.kind === "verify_token"
-            ? serializeVerifyTokenSecret(parsed.data.secret)
-            : parsed.data.kind === "braintree_public_key"
-              ? serializeBraintreePublicKey(parsed.data.secret)
-              : parsed.data.secret,
       },
-      sealer,
-      { auditKey: deps.auditKey, actor: ctx.userId ?? null }, // wha1 provider_secret.added, in-tx
+      {
+        sealer: requireSealer(),
+        evict: requireEvictor(),
+        auditKey: deps.auditKey,
+        actor: ctx.userId ?? null,
+      },
     );
-    // Evict so the new secret is honored on the NEXT ingest, not after the KV TTL. Best-effort.
-    await evict(tokenHash);
     return { id: added.id, provider: added.provider, status: added.status };
   });
 

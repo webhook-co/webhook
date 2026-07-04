@@ -15,11 +15,22 @@
 
 import { randomUUID } from "node:crypto";
 
-import { type EncryptionContext, type SealedRecord, type SecretSealer } from "@webhook-co/shared";
+import { CapabilityFault } from "@webhook-co/contract";
+import {
+  PROVIDERS,
+  serializeProviderSecretPlaintext,
+  validateProviderSecretShape,
+  type EncryptionContext,
+  type Provider,
+  type ProviderSecretKind,
+  type SealedRecord,
+  type SecretSealer,
+} from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import { type CachedSealedSecret } from "./credential-cache";
+import { getEndpointIngestTokenHash } from "./endpoints";
 import { toSealedRecord } from "./sealed-secret";
 
 /** Usable rotation states for an endpoint's provider secret (revoked is excluded from reads). */
@@ -115,6 +126,131 @@ export async function addProviderSecret(
     }
   });
   return { id, provider: input.provider, status: "active" };
+}
+
+/**
+ * The per-endpoint provider-secret cap. `RATE_LIMITED` is declared on all three capabilities; this is the
+ * value that enforces it (a runaway/abuse guardrail, generous for legit multi-provider × multi-kind × the
+ * rotation overlap). Shared so api/mcp/web can't drift.
+ */
+export const MAX_PROVIDER_SECRETS_PER_ENDPOINT = 25;
+
+/** Count an endpoint's LIVE (active + retiring) provider secrets, under the org's RLS context. */
+export async function countLiveProviderSecrets(
+  app: Sql,
+  orgId: string,
+  endpointId: string,
+): Promise<number> {
+  return withTenant(app, orgId, async (tx) => {
+    const [row] = await tx<{ n: string }[]>`
+      select count(*)::text as n from provider_secrets
+      where endpoint_id = ${endpointId} and status in ('active', 'retiring')`;
+    return row ? Number(row.n) : 0;
+  });
+}
+
+/** The registration input — a raw (un-serialized) secret + its kind; the core serializes by kind. */
+export interface RegisterProviderSecretInput {
+  readonly orgId: string;
+  readonly endpointId: string;
+  readonly provider: Provider;
+  readonly kind: ProviderSecretKind;
+  /** The RAW plaintext secret as the operator typed it — serialized by kind here, sealed by addProviderSecret. */
+  readonly secret: string;
+  readonly label?: string;
+}
+
+/** The runtime boundaries the core needs — the same sealer/evict/audit the api/mcp handlers already hold. */
+export interface RegisterProviderSecretDeps {
+  readonly sealer: SecretSealer;
+  /** Best-effort eviction of the endpoint's ingest-token hash from the KV verify cache. */
+  readonly evict: (tokenHash: Buffer) => Promise<void>;
+  readonly auditKey: CryptoKey;
+  readonly actor: string | null;
+}
+
+/**
+ * Register a provider secret — the SINGLE shared write core called by api/mcp (the capability handler) AND
+ * web (the dashboard action), so the security-critical order can't drift. Canonical order (matches the
+ * proven api handler): resolve the endpoint (NOT_FOUND **before** any seal — never seal against a bad/
+ * cross-org endpoint) → validate the (provider, kind, secret) shape (VALIDATION_ERROR) → enforce the
+ * per-endpoint cap (RATE_LIMITED) → serialize the secret to its typed blob by kind (the corruption-critical
+ * step — verify_token/braintree must be wrapped, never stored raw) → seal + insert + in-tx audit
+ * (addProviderSecret) → best-effort KV evict so the new secret is honored on the NEXT ingest. Throws a
+ * `CapabilityFault` for each failure (the surface maps it to its transport). The plaintext is sealed, never
+ * persisted or returned.
+ */
+export async function registerProviderSecret(
+  app: Sql,
+  input: RegisterProviderSecretInput,
+  deps: RegisterProviderSecretDeps,
+): Promise<AddedProviderSecret> {
+  // 1. Validate the FULL input FIRST — before the endpoint lookup, matching the api/mcp handler's
+  //    safeParse-first precedence (so the same input yields the same error CODE on every surface, and a bad
+  //    input never reveals endpoint (non)existence). This is the SOLE input gate on the zod-less web path, so
+  //    it must enforce the SAME base constraints the contract zod does — provider ∈ PROVIDERS, kind ∈ the
+  //    3-value enum, secret 1..4096, label ≤200 — not only the per-kind shape refine. (Redundant but harmless
+  //    for the api/mcp path, whose contract safeParse already ran the identical checks.)
+  if (!(PROVIDERS as readonly string[]).includes(input.provider)) {
+    throw new CapabilityFault("VALIDATION_ERROR", "unknown provider");
+  }
+  if (
+    input.kind !== "signing_secret" &&
+    input.kind !== "verify_token" &&
+    input.kind !== "braintree_public_key"
+  ) {
+    throw new CapabilityFault("VALIDATION_ERROR", "unknown secret kind");
+  }
+  if (typeof input.secret !== "string" || input.secret.length < 1 || input.secret.length > 4096) {
+    throw new CapabilityFault("VALIDATION_ERROR", "a secret must be 1–4096 characters");
+  }
+  if (input.label != null && input.label.length > 200) {
+    throw new CapabilityFault("VALIDATION_ERROR", "a label must be at most 200 characters");
+  }
+  const shape = validateProviderSecretShape({
+    provider: input.provider,
+    kind: input.kind,
+    secret: input.secret,
+  });
+  if (!shape.ok) throw new CapabilityFault("VALIDATION_ERROR", shape.message);
+  // 2. Endpoint existence — NOT_FOUND before any seal, and the hash to evict. (The FK would also reject a bad
+  //    endpoint, but as a 500, not a 404.) RLS-scoped, so a cross-org endpoint is NOT_FOUND, not visible.
+  const tokenHash = await getEndpointIngestTokenHash(app, input.orgId, input.endpointId);
+  if (tokenHash === null) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
+  // 3. Per-endpoint cap. A tiny check-then-insert race (like the endpoints-per-org cap) can transiently
+  //    yield cap+1 — a benign guardrail, not a security boundary.
+  const live = await countLiveProviderSecrets(app, input.orgId, input.endpointId);
+  if (live >= MAX_PROVIDER_SECRETS_PER_ENDPOINT) {
+    throw new CapabilityFault(
+      "RATE_LIMITED",
+      "this endpoint has reached its provider-secret limit",
+    );
+  }
+  // 4. Serialize by kind (verify_token/braintree → typed blob; signing_secret → raw), then 5. seal + insert
+  //    + in-tx audit (addProviderSecret seals whatever plaintext it's handed).
+  const added = await addProviderSecret(
+    app,
+    {
+      orgId: input.orgId,
+      endpointId: input.endpointId,
+      provider: input.provider,
+      label: input.label,
+      plaintext: serializeProviderSecretPlaintext(input.kind, input.secret),
+    },
+    deps.sealer,
+    { auditKey: deps.auditKey, actor: deps.actor },
+  );
+  // 6. Best-effort evict so the new secret is honored on the NEXT ingest, not after the KV TTL. The secret is
+  //    ALREADY durably sealed+inserted+audited, so a transient evict failure must NOT throw (that would make
+  //    the caller retry and store a duplicate) — swallow it, exactly as the revoke path does.
+  try {
+    await deps.evict(tokenHash);
+  } catch (err) {
+    console.log(
+      JSON.stringify({ message: "provider_secret.register_evict_failed", error: String(err) }),
+    );
+  }
+  return added;
 }
 
 interface ProviderSecretRow {
