@@ -16,7 +16,9 @@ The canonical list lives in code: `packages/sdks/src/index.ts` (`SDKS`).
 ## Provenance (honestly tiered — the registries differ)
 
 - **npm**: full OIDC provenance — sigstore + Rekor + SLSA. `publishConfig.provenance: true` + `id-token: write`.
-- **PyPI**: tokenless OIDC trusted publisher (no stored token). PEP 740 attestations are best-effort.
+- **PyPI**: API-token publish via `twine` (the `PYPI_TOKEN` repo secret). PyPI records per-file hashes;
+  PEP 740 attestations are best-effort. (An OIDC trusted-publisher flow was the original design, but the
+  founder provided an API token rather than configuring a Trusted Publisher.)
 - **Go**: no registry upload — integrity is the Go checksum database (`sum.golang.org`) recording the tag's
   tree hash on first fetch, plus an **auxiliary** sigstore attestation over the source archive. This is
   deliberately **not** the same guarantee as npm's provenance; don't market it as "signed like npm".
@@ -41,7 +43,7 @@ When a contract change should ship across every language at the same version `X.
 2. Push all three tags at `X.Y.Z` (two in this repo, one in `webhook-go`).
 3. Verify provenance after publish:
    - npm: `npm view @webhook-co/sdk --json | jq .dist` and check the sigstore attestation on npmjs.com.
-   - PyPI: confirm the release shows the trusted-publisher provenance on pypi.org.
+   - PyPI: confirm the new version is live at `https://pypi.org/project/webhook-co/`.
    - Go: `gh attestation verify webhook-go-vX.Y.Z.tar.gz --repo webhook-co/webhook-go`.
 
 ## First publish (one-time, human-gated)
@@ -49,6 +51,9 @@ When a contract change should ship across every language at the same version `X.
 Publishing is intentionally **dormant** until a maintainer opts in:
 
 - **npm**: the `NPM_TOKEN` repo secret gates the publish step (already configured).
-- **PyPI**: configure a **Trusted Publisher** for `webhook-co` on pypi.org (repo `webhook-co/webhook`,
-  workflow `release-sdk-python.yml`) — until then the OIDC mint-token exchange 403s.
+- **PyPI**: the `PYPI_TOKEN` repo secret (a PyPI API token) gates the publish step (already configured).
 - **Go**: simply pushing the first `v*` tag makes the module installable (the checksum DB indexes it).
+
+> **Status (2026-07-04):** all three first releases are published — `@webhook-co/sdk@0.1.0` (npm),
+> `webhook-co@0.1.0` (PyPI), and `github.com/webhook-co/webhook-go@v0.1.0` (Go). Subsequent releases just
+> need a version bump + tag.

@@ -41,7 +41,8 @@ export const SDKS: readonly SdkInfo[] = [
     install: "pip install webhook-co",
     repository: "https://github.com/webhook-co/webhook",
     directory: "sdks/python",
-    integrity: "PyPI trusted publisher (OIDC); PEP 740 attestations best-effort",
+    integrity:
+      "PyPI API-token publish (twine); PyPI-side hashes + PEP 740 attestations best-effort",
   },
   {
     language: "Go",
