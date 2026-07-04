@@ -1,0 +1,42 @@
+# CI for the Python SDK (sdks/python). It lives outside the pnpm/turbo workspace, so it needs its own
+# job: format checks + the full pytest suite (which includes the generated-models drift guard). Uses only
+# GitHub-owned, SHA-pinned actions (the org restricts Actions to GitHub-owned publishers). Path-filtered so
+# it runs only when the Python SDK changes.
+name: ci-sdk-python
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sdks/python/**"
+      - ".github/workflows/ci-sdk-python.yml"
+  pull_request:
+    paths:
+      - "sdks/python/**"
+      - ".github/workflows/ci-sdk-python.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install (editable + dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Format check (black + isort)
+        run: |
+          black --check src tests scripts
+          isort --check-only src tests scripts
+      - name: Test (with coverage + the generated-models drift guard)
+        run: pytest --cov --cov-report=term-missing --cov-fail-under=95

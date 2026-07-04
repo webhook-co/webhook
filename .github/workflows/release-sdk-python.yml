@@ -1,0 +1,97 @@
+# Release the Python SDK (webhook-co) to PyPI. Triggered by an `sdk-python-vX.Y.Z` tag (or a manual
+# dispatch for testing). Builds + tests, then publishes via PyPI's OIDC "trusted publisher" mint-token
+# flow — NO long-lived token and NO marketplace action (the org restricts Actions to GitHub-owned
+# publishers). The first publish is naturally human-gated: it fails until a founder configures the Trusted
+# Publisher for `webhook-co` on pypi.org (repo webhook-co/webhook, workflow release-sdk-python.yml).
+name: release-sdk-python
+
+on:
+  push:
+    tags: ["sdk-python-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 1.0.0 (a dispatch never publishes)"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # OIDC for the PyPI trusted-publisher mint-token exchange
+
+concurrency:
+  group: release-sdk-python-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release webhook-co (PyPI)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sdks/python
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+
+      # User-controlled values (the dispatch input) flow through env, never `${{ }}`-interpolated into the
+      # script — a shell-injection guard. EVENT_NAME is a trusted GitHub context.
+      - name: Resolve version from the trigger
+        id: ver
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$DISPATCH_VERSION"
+          else
+            VERSION="${REF_NAME#sdk-python-v}"
+          fi
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$' \
+            || { echo "::error::not a valid version: '$VERSION' (expected X.Y.Z)"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Install + test (incl. the generated-models drift guard)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" build twine
+          black --check src tests scripts
+          isort --check-only src tests scripts
+          pytest -q
+
+      - name: Stamp the release version + build sdist/wheel
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          v = os.environ["VERSION"]
+          p = pathlib.Path("pyproject.toml")
+          t = p.read_text()
+          t = re.sub(r'(?m)^version = ".*"$', f'version = "{v}"', t, count=1)
+          p.write_text(t)
+          PY
+          python -m build
+
+      - name: Verify the built version matches the tag
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          ls "dist/webhook_co-${VERSION}-py3-none-any.whl" "dist/webhook_co-${VERSION}.tar.gz" \
+            || { echo "::error::built artifacts don't match version $VERSION"; exit 1; }
+
+      # Publish only on a real tag PUSH (never a dispatch). The mint-token exchange requires a Trusted
+      # Publisher configured on PyPI — until then it 403s, so the first publish is a deliberate human action.
+      - name: Publish to PyPI (OIDC trusted publisher — no stored token)
+        if: github.event_name == 'push'
+        run: |
+          oidc_resp="$(curl -sS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=pypi")"
+          oidc_token="$(printf '%s' "$oidc_resp" | python -c 'import sys,json;print(json.load(sys.stdin)["value"])')"
+          mint_resp="$(curl -sS -X POST https://pypi.org/_/oidc/mint-token \
+            -d "$(python -c 'import json,sys;print(json.dumps({"token": sys.argv[1]}))' "$oidc_token")")"
+          api_token="$(printf '%s' "$mint_resp" | python -c 'import sys,json;print(json.load(sys.stdin)["token"])')"
+          twine upload --non-interactive --username __token__ --password "$api_token" dist/*
+          echo "Published webhook-co ${{ steps.ver.outputs.version }} to PyPI with a trusted-publisher token."

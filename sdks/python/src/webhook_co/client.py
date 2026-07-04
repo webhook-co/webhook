@@ -1,0 +1,590 @@
+"""The public client: a typed, hardened facade over the webhook.co REST API.
+
+It composes the HTTP core (bearer + retries + timeout + typed errors), the redactor, and the cursor
+paginator, and exposes the API surface grouped by resource. Responses are parsed into validated pydantic
+models; a shape that violates the contract surfaces as a :class:`WebhookUnexpectedResponseError`.
+Idempotency flags mirror the server's semantics — a call is only marked retry-safe when a blind retry
+after a lost response cannot cause a duplicate side effect.
+"""
+
+from __future__ import annotations
+
+import base64
+import uuid
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any, TypeVar
+from urllib.parse import quote
+
+import httpx
+import pydantic
+
+from ._config import resolve_base_url
+from ._errors import WebhookConfigError, WebhookUnexpectedResponseError
+from ._generated import models as m
+from ._http import HttpClient
+from ._pagination import Page, Paginator
+from ._query import with_query
+from ._retry import DEFAULT_TIMEOUT_S
+
+M = TypeVar("M", bound=pydantic.BaseModel)
+
+
+def _enc(value: str) -> str:
+    return quote(value, safe="")
+
+
+def _parse(model: type[M], data: Any) -> M:
+    try:
+        return model.model_validate(data)
+    except pydantic.ValidationError:
+        # Do NOT chain the ValidationError: its string embeds the raw input, which for some responses
+        # includes secondary secrets (a rotated `whsec_`, a one-time ingest URL). `from None` drops the
+        # cause so no unredacted response body can reach a traceback.
+        raise WebhookUnexpectedResponseError(
+            "the API returned an unexpected response shape"
+        ) from None
+
+
+@dataclass
+class EventPayload:
+    """The decoded result of ``events.get_payload``: the content type + the exact raw body bytes."""
+
+    content_type: str | None
+    body: bytes
+
+
+class _Requester:
+    """The thin request layer each resource is built on; parses the HTTP core's JSON into a model."""
+
+    def __init__(self, http: HttpClient) -> None:
+        self._http = http
+
+    def get(self, path: str, model: type[M]) -> M:
+        return _parse(model, self._http.request("GET", path, idempotent=True))
+
+    def post(self, path: str, body: Any | None, idempotent: bool, model: type[M]) -> M:
+        return _parse(
+            model, self._http.request("POST", path, body=body, idempotent=idempotent)
+        )
+
+    def delete(self, path: str, idempotent: bool, model: type[M]) -> M:
+        return _parse(model, self._http.request("DELETE", path, idempotent=idempotent))
+
+    def paginate(
+        self, build_path: Callable[[str | None], str], response_model: type[M]
+    ) -> Paginator[Any]:
+        def fetch(cursor: str | None) -> Page[Any]:
+            resp = _parse(
+                response_model,
+                self._http.request("GET", build_path(cursor), idempotent=True),
+            )
+            return Page(items=list(resp.items), next_cursor=resp.next_cursor)  # type: ignore[attr-defined]
+
+        return Paginator(fetch)
+
+    def page(self, path: str, response_model: type[M]) -> Page[Any]:
+        resp = _parse(response_model, self._http.request("GET", path, idempotent=True))
+        return Page(items=list(resp.items), next_cursor=resp.next_cursor)  # type: ignore[attr-defined]
+
+
+class _ProviderSecretsResource:
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+
+    def add(
+        self,
+        *,
+        endpoint_id: str,
+        provider: str,
+        secret: str,
+        label: str | None = None,
+        kind: str | None = None,
+    ) -> m.AddedProviderSecret:
+        """Register a provider signing secret (or a ``verify_token`` / ``braintree_public_key``). NOT
+        idempotent — each call adds a secret.
+        """
+        body: dict[str, Any] = {"provider": provider, "secret": secret}
+        if label is not None:
+            body["label"] = label
+        if kind is not None:
+            body["kind"] = kind
+        return self._req.post(
+            f"/v1/endpoints/{_enc(endpoint_id)}/provider-secrets",
+            body,
+            False,
+            m.AddedProviderSecret,
+        )
+
+    def list(self, endpoint_id: str) -> list[m.ProviderSecretSummary]:
+        """An endpoint's provider secrets as metadata (not paginated)."""
+        resp = self._req.get(
+            f"/v1/endpoints/{_enc(endpoint_id)}/provider-secrets",
+            m.EndpointsListProviderSecretsResponse,
+        )
+        return list(resp.items)
+
+    def revoke(self, *, endpoint_id: str, secret_id: str) -> m.RevokedProviderSecret:
+        """Revoke a provider secret. NOT idempotent — a re-revoke is NOT_FOUND, so never blind-retried."""
+        return self._req.delete(
+            f"/v1/endpoints/{_enc(endpoint_id)}/provider-secrets/{_enc(secret_id)}",
+            False,
+            m.RevokedProviderSecret,
+        )
+
+
+class _EndpointsResource:
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+        self.provider_secrets = _ProviderSecretsResource(req)
+
+    def _path(self, *, cursor: str | None, limit: int | None, name: str | None) -> str:
+        return with_query(
+            "/v1/endpoints", {"cursor": cursor, "limit": limit, "name": name}
+        )
+
+    def list(
+        self, *, limit: int | None = None, name: str | None = None
+    ) -> Paginator[m.Endpoint]:
+        """Auto-paginating iterator over the org's endpoints."""
+        return self._req.paginate(
+            lambda cursor: self._path(cursor=cursor, limit=limit, name=name),
+            m.EndpointsListResponse,
+        )
+
+    def list_page(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        name: str | None = None,
+    ) -> Page[m.Endpoint]:
+        """A single page of endpoints (for manual cursor control)."""
+        return self._req.page(
+            self._path(cursor=cursor, limit=limit, name=name), m.EndpointsListResponse
+        )
+
+    def get(self, endpoint_id: str) -> m.Endpoint:
+        """A single endpoint by id."""
+        return self._req.get(f"/v1/endpoints/{_enc(endpoint_id)}", m.Endpoint)
+
+    def create(self, *, name: str) -> m.CreatedEndpoint:
+        """Create an endpoint. NOT idempotent — each call mints a new endpoint + one-time ingest URL."""
+        return self._req.post("/v1/endpoints", {"name": name}, False, m.CreatedEndpoint)
+
+    def delete(self, endpoint_id: str) -> m.DeletedEndpoint:
+        """Soft-delete an endpoint. Idempotent — a re-delete returns the recorded ``deletedAt``."""
+        return self._req.delete(
+            f"/v1/endpoints/{_enc(endpoint_id)}", True, m.DeletedEndpoint
+        )
+
+    def rotate(self, endpoint_id: str) -> m.CreatedEndpoint:
+        """Rotate an endpoint's ingest URL (hard cutover). NOT idempotent — never blind-retried."""
+        return self._req.post(
+            f"/v1/endpoints/{_enc(endpoint_id)}/rotate", None, False, m.CreatedEndpoint
+        )
+
+
+class _EventsResource:
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+
+    def _path(
+        self,
+        endpoint_id: str,
+        *,
+        cursor: str | None,
+        limit: int | None,
+        provider: Sequence[str] | None,
+        verification_state: Sequence[str] | None,
+        received_after: str | None,
+        received_before: str | None,
+        search: str | None,
+    ) -> str:
+        return with_query(
+            f"/v1/endpoints/{_enc(endpoint_id)}/events",
+            {
+                "cursor": cursor,
+                "limit": limit,
+                "provider": list(provider) if provider is not None else None,
+                "verificationState": (
+                    list(verification_state) if verification_state is not None else None
+                ),
+                "receivedAfter": received_after,
+                "receivedBefore": received_before,
+                "search": search,
+            },
+        )
+
+    def list(
+        self,
+        endpoint_id: str,
+        *,
+        limit: int | None = None,
+        provider: Sequence[str] | None = None,
+        verification_state: Sequence[str] | None = None,
+        received_after: str | None = None,
+        received_before: str | None = None,
+        search: str | None = None,
+    ) -> Paginator[m.EventSummary]:
+        """Auto-paginating iterator over an endpoint's captured events."""
+        return self._req.paginate(
+            lambda cursor: self._path(
+                endpoint_id,
+                cursor=cursor,
+                limit=limit,
+                provider=provider,
+                verification_state=verification_state,
+                received_after=received_after,
+                received_before=received_before,
+                search=search,
+            ),
+            m.EventsListResponse,
+        )
+
+    def list_page(
+        self,
+        endpoint_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        provider: Sequence[str] | None = None,
+        verification_state: Sequence[str] | None = None,
+        received_after: str | None = None,
+        received_before: str | None = None,
+        search: str | None = None,
+    ) -> Page[m.EventSummary]:
+        """A single page of an endpoint's events."""
+        return self._req.page(
+            self._path(
+                endpoint_id,
+                cursor=cursor,
+                limit=limit,
+                provider=provider,
+                verification_state=verification_state,
+                received_after=received_after,
+                received_before=received_before,
+                search=search,
+            ),
+            m.EventsListResponse,
+        )
+
+    def get(self, event_id: str) -> m.Event:
+        """A single event in full fidelity."""
+        return self._req.get(f"/v1/events/{_enc(event_id)}", m.Event)
+
+    def get_payload(self, event_id: str) -> EventPayload:
+        """The event's raw body bytes (base64 envelope decoded + length-checked against the declared size)."""
+        env = self._req.get(
+            f"/v1/events/{_enc(event_id)}/payload", m.EventsGetPayloadResponse
+        )
+        try:
+            body = base64.b64decode(env.body_base64, validate=True)
+        except ValueError as exc:  # binascii.Error subclasses ValueError
+            raise WebhookUnexpectedResponseError(
+                "the API returned a malformed base64 payload"
+            ) from exc
+        if len(body) != env.bytes:
+            raise WebhookUnexpectedResponseError(
+                "the API returned a corrupted payload response"
+            )
+        return EventPayload(content_type=env.content_type, body=body)
+
+    def tail(
+        self,
+        endpoint_id: str,
+        *,
+        since: str | None = None,
+        since_cursor: str | None = None,
+    ) -> m.EventsTailResponse:
+        """Poll the newest events for an endpoint (a single tail read; use the tunnel for live streaming)."""
+        path = with_query(
+            f"/v1/endpoints/{_enc(endpoint_id)}/events/tail",
+            {"sinceCursor": since_cursor, "since": since},
+        )
+        return self._req.get(path, m.EventsTailResponse)
+
+    def replay(
+        self,
+        event_id: str,
+        *,
+        target: dict[str, Any],
+        idempotency_key: str | None = None,
+    ) -> m.DeliveryAttempt:
+        """Replay a captured event. Idempotency-keyed → safe to retry a transient failure. If no key is
+        given, a random one is generated (so the SDK's own retries dedup, and each call is distinct).
+        """
+        key = idempotency_key if idempotency_key is not None else str(uuid.uuid4())
+        return self._req.post(
+            f"/v1/events/{_enc(event_id)}/replay",
+            {"target": target, "idempotencyKey": key},
+            True,
+            m.DeliveryAttempt,
+        )
+
+
+class _DeliveriesResource:
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+
+    def _path(
+        self,
+        *,
+        cursor: str | None,
+        limit: int | None,
+        destination_id: str | None,
+        subscription_id: str | None,
+        status: Sequence[str] | None,
+    ) -> str:
+        return with_query(
+            "/v1/deliveries",
+            {
+                "cursor": cursor,
+                "limit": limit,
+                "destinationId": destination_id,
+                "subscriptionId": subscription_id,
+                "status": list(status) if status is not None else None,
+            },
+        )
+
+    def list(
+        self,
+        *,
+        limit: int | None = None,
+        destination_id: str | None = None,
+        subscription_id: str | None = None,
+        status: Sequence[str] | None = None,
+    ) -> Paginator[m.Delivery]:
+        """Auto-paginating iterator over the org's outbound deliveries."""
+        return self._req.paginate(
+            lambda cursor: self._path(
+                cursor=cursor,
+                limit=limit,
+                destination_id=destination_id,
+                subscription_id=subscription_id,
+                status=status,
+            ),
+            m.DeliveriesListResponse,
+        )
+
+    def list_page(
+        self,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        destination_id: str | None = None,
+        subscription_id: str | None = None,
+        status: Sequence[str] | None = None,
+    ) -> Page[m.Delivery]:
+        """A single page of deliveries."""
+        return self._req.page(
+            self._path(
+                cursor=cursor,
+                limit=limit,
+                destination_id=destination_id,
+                subscription_id=subscription_id,
+                status=status,
+            ),
+            m.DeliveriesListResponse,
+        )
+
+    def get(self, delivery_id: str) -> m.Delivery:
+        """A single delivery by id."""
+        return self._req.get(f"/v1/deliveries/{_enc(delivery_id)}", m.Delivery)
+
+
+class _ReplayDestinationsResource:
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+
+    def create(
+        self, *, url: str, label: str | None = None
+    ) -> m.CreatedReplayDestination:
+        """Register an allowed replay destination. Idempotent server-side (a re-add returns the existing row)."""
+        body: dict[str, Any] = {"url": url}
+        if label is not None:
+            body["label"] = label
+        return self._req.post(
+            "/v1/replay-destinations", body, True, m.CreatedReplayDestination
+        )
+
+    def list(self) -> list[m.ReplayDestination]:
+        """The org's live replay-destination allowlist (not paginated)."""
+        resp = self._req.get(
+            "/v1/replay-destinations", m.ReplayDestinationsListResponse
+        )
+        return list(resp.items)
+
+    def delete(self, destination_id: str) -> m.ReplayDestinationDeleted:
+        """Remove (soft-delete) a replay destination. NOT idempotent — a re-delete is NOT_FOUND."""
+        return self._req.delete(
+            f"/v1/replay-destinations/{_enc(destination_id)}",
+            False,
+            m.ReplayDestinationDeleted,
+        )
+
+    def enable(self, destination_id: str) -> m.ReplayDestination:
+        """Clear a persistent-failure auto-disable. NOT idempotent — it also resets the failure tally, so a
+        blind retry could wipe failures that accrued between the first call and the retry.
+        """
+        return self._req.post(
+            f"/v1/replay-destinations/{_enc(destination_id)}/enable",
+            {},
+            False,
+            m.ReplayDestination,
+        )
+
+    def set_ordered(self, destination_id: str, ordered: bool) -> m.ReplayDestination:
+        """Set strict-FIFO (``ordered``) mode. Idempotent — converges to the same state on retry."""
+        return self._req.post(
+            f"/v1/replay-destinations/{_enc(destination_id)}/ordered",
+            {"ordered": ordered},
+            True,
+            m.ReplayDestination,
+        )
+
+    def rotate_signing_secret(self, destination_id: str) -> m.RotatedSigningSecret:
+        """Rotate the destination's signing secret (revealed once). NOT idempotent — each call mints a new one."""
+        return self._req.post(
+            f"/v1/replay-destinations/{_enc(destination_id)}/signing-secret",
+            {},
+            False,
+            m.RotatedSigningSecret,
+        )
+
+    def list_signing_secrets(
+        self, destination_id: str
+    ) -> list[m.SigningSecretMetadata]:
+        """A destination's signing-secret metadata (not paginated)."""
+        resp = self._req.get(
+            f"/v1/replay-destinations/{_enc(destination_id)}/signing-secrets",
+            m.ReplayDestinationsListSigningSecretsResponse,
+        )
+        return list(resp.items)
+
+
+class _SubscriptionsResource:
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+
+    def create(
+        self,
+        *,
+        source_endpoint_id: str,
+        destination_id: str,
+        provider: str | None = None,
+        event_types: Sequence[str] | None = None,
+        require_verified: bool | None = None,
+    ) -> m.Subscription:
+        """Create/upsert a delivery subscription. NOT idempotent — the upsert appends a tamper-evident
+        audit row on each call, so a blind retry would write a phantom audit entry for one user action.
+        """
+        body: dict[str, Any] = {
+            "sourceEndpointId": source_endpoint_id,
+            "destinationId": destination_id,
+        }
+        if provider is not None:
+            body["provider"] = provider
+        if event_types is not None:
+            body["eventTypes"] = list(event_types)
+        if require_verified is not None:
+            body["requireVerified"] = require_verified
+        return self._req.post("/v1/subscriptions", body, False, m.Subscription)
+
+    def list(self, source_endpoint_id: str | None = None) -> list[m.Subscription]:
+        """The org's delivery subscriptions, optionally filtered by source endpoint (not paginated)."""
+        path = with_query("/v1/subscriptions", {"sourceEndpointId": source_endpoint_id})
+        resp = self._req.get(path, m.SubscriptionsListResponse)
+        return list(resp.items)
+
+    def delete(self, subscription_id: str) -> m.SubscriptionDeleted:
+        """Remove a delivery subscription. NOT idempotent — a re-delete is NOT_FOUND."""
+        return self._req.delete(
+            f"/v1/subscriptions/{_enc(subscription_id)}", False, m.SubscriptionDeleted
+        )
+
+
+class _AuditResource:
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+
+    def verify(self) -> m.AuditVerifyResponse:
+        """Verify the org's tamper-evident audit chain. A read (no mutation) → safe to retry."""
+        return self._req.post("/v1/audit/verify", None, True, m.AuditVerifyResponse)
+
+
+class WebhookClient:
+    """A typed, hardened client for the webhook.co REST API.
+
+    Args:
+        api_key: A ``whk_``-prefixed API key. Required.
+        base_url: The API origin. Defaults to the hosted API; must be https (loopback http allowed for dev).
+        http_client: An optional ``httpx.Client`` (for custom transports/proxies or testing). When the
+            SDK creates its own, it disables redirect following.
+        max_retries: Retries after the first attempt for idempotent requests (default 2).
+        timeout_s: Per-request timeout in seconds, applied to each httpx phase (connect/read/write/pool);
+            default 30. Not a single total-wall-clock deadline.
+        refresh_auth: Hook to swap in a rotated bearer on a 401 (OAuth flows).
+        on_debug: Optional sink for redacted, single-line diagnostics (never the raw key).
+    """
+
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str | None = None,
+        http_client: httpx.Client | None = None,
+        max_retries: int | None = None,
+        timeout_s: float | None = None,
+        refresh_auth: Callable[[], str | None] | None = None,
+        on_debug: Callable[[str], None] | None = None,
+        sleep: Callable[[float], None] | None = None,
+        rand: Callable[[], float] | None = None,
+    ) -> None:
+        if not api_key:
+            raise WebhookConfigError("an api_key is required")
+        resolved = resolve_base_url(base_url)
+        self._owns_client = http_client is None
+        client = (
+            http_client
+            if http_client is not None
+            else httpx.Client(follow_redirects=False)
+        )
+        self._client = client
+
+        http = HttpClient(
+            base_url=resolved,
+            api_key=api_key,
+            http_client=client,
+            max_retries=max_retries,
+            timeout_s=timeout_s if timeout_s is not None else DEFAULT_TIMEOUT_S,
+            refresh_auth=refresh_auth,
+            on_debug=on_debug,
+            sleep=sleep,
+            rand=rand,
+        )
+        self._http = http
+        req = _Requester(http)
+        self.endpoints = _EndpointsResource(req)
+        self.events = _EventsResource(req)
+        self.deliveries = _DeliveriesResource(req)
+        self.replay_destinations = _ReplayDestinationsResource(req)
+        self.subscriptions = _SubscriptionsResource(req)
+        self.audit = _AuditResource(req)
+
+    def whoami(self) -> m.AuthContext:
+        """Resolve the caller's own identity (validates the key)."""
+        return _parse(
+            m.AuthContext, self._http.request("GET", "/v1/whoami", idempotent=True)
+        )
+
+    def close(self) -> None:
+        """Close the underlying HTTP client (only if the SDK created it)."""
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> WebhookClient:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        self.close()
