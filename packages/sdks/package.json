@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "main": "src/index.ts",
+  "types": "src/index.ts",
+  "description": "The registry of webhook.co's official client SDKs (TypeScript, Python, Go).",
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   }
 }
