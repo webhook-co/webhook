@@ -163,8 +163,19 @@ const APPS = {
     // be LIVE with the SessionExchange entrypoint first (it is — deployed in #200), or CF late-binds and web
     // fails to start. apps/web prefers this binding and falls back to the public fetch only when it's unbound,
     // so flipping it on is safe; the public route is retired in a follow-up once the binding is verified live.
+    // PROVIDER_SECRET_SEALER — the web→engine service binding to the engine's seal-only ProviderSecretSealer
+    // WorkerEntrypoint (mirrors api/mcp above), so the dashboard's replay-destination create/rotate actions
+    // seal the minted `whsec_` signing secret via the engine (the KEK never enters the web worker; the binding
+    // is write-only and cannot decrypt). Deploy-injected (NOT committed): the engine must be LIVE with the
+    // ProviderSecretSealer entrypoint first (it is — used by api/mcp). apps/web fails closed when it's unbound
+    // (a create/rotate errors rather than storing an unsigned secret), so flipping it on is safe.
     services: [
       { binding: "AUTH_SESSION_EXCHANGE", service: "webhook-auth", entrypoint: "SessionExchange" },
+      {
+        binding: "PROVIDER_SECRET_SEALER",
+        service: "webhook-engine",
+        entrypoint: "ProviderSecretSealer",
+      },
     ],
   },
   // The OAuth issuer + Better Auth runtime (auth.webhook.co) — an OpenNext SSR Worker (main = src/worker.ts

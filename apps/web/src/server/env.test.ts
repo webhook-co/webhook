@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { getCloudflareContext } = vi.hoisted(() => ({ getCloudflareContext: vi.fn() }));
 vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext }));
 
-import { getAuthBaseUrl, getSessionSecret } from "./env";
+import { getAuthBaseUrl, getProviderSecretSealer, getSessionSecret } from "./env";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -52,5 +52,30 @@ describe("getAuthBaseUrl", () => {
     });
     vi.stubEnv("AUTH_BASE_URL", "http://localhost:3001");
     expect(getAuthBaseUrl()).toBe("http://localhost:3001");
+  });
+});
+
+describe("getProviderSecretSealer", () => {
+  it("returns the binding when it structurally exposes a sealString method", () => {
+    const binding = { sealString: async () => ({}) };
+    getCloudflareContext.mockReturnValue({ env: { PROVIDER_SECRET_SEALER: binding } });
+    expect(getProviderSecretSealer()).toBe(binding);
+  });
+
+  it("returns undefined when the binding is absent (dev/preview/unprovisioned)", () => {
+    getCloudflareContext.mockReturnValue({ env: {} });
+    expect(getProviderSecretSealer()).toBeUndefined();
+  });
+
+  it("returns undefined outside a workerd request (no cf context)", () => {
+    getCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
+    expect(getProviderSecretSealer()).toBeUndefined();
+  });
+
+  it("returns undefined for a mis-shaped binding — never masquerades a non-sealer as one", () => {
+    getCloudflareContext.mockReturnValue({ env: { PROVIDER_SECRET_SEALER: { nope: 1 } } });
+    expect(getProviderSecretSealer()).toBeUndefined();
   });
 });
