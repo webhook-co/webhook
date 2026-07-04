@@ -24,8 +24,11 @@ import { formatDateTime } from "@/lib/format";
 import { verificationCopy } from "@/lib/verification-copy";
 import type { DetailHeader, EventDetailItem, RevealHeaderResult } from "@/server/events";
 import type { PayloadResult } from "@/server/payloads";
+import type { ReplayResult } from "@/server/replay-actions";
+import type { DestinationItem } from "@/server/replay-destinations";
 
 import { PayloadViewer } from "./payload-viewer";
+import { ReplayDialog } from "./replay-dialog";
 
 /** Reveal one sensitive header value (server action; re-reads under RLS). Injected by the gated page. */
 type RevealHeaderFn = (input: {
@@ -40,10 +43,25 @@ export interface EventDetailProps {
   revealHeader: RevealHeaderFn;
   /** Load the event body for the inline preview (server action). Injected by the gated page. */
   loadPayload: (input: { endpointId: string; eventId: string }) => Promise<PayloadResult>;
+  /** The org's registered replay destinations — the replay-to-destination picker's options. */
+  destinations: readonly DestinationItem[];
+  /** True when the destinations load faulted — the picker reads it as an error, never as "you have none". */
+  destinationsError?: boolean;
+  /** Replay this event to a registered destination via the engine (server action). Injected by the page. */
+  replay: (eventId: string, destinationId: string) => Promise<ReplayResult>;
 }
 
-export function EventDetail({ event, endpointId, revealHeader, loadPayload }: EventDetailProps) {
+export function EventDetail({
+  event,
+  endpointId,
+  revealHeader,
+  loadPayload,
+  destinations,
+  destinationsError,
+  replay,
+}: EventDetailProps) {
   const verification = verificationCopy(event.verification);
+  const [replayOpen, setReplayOpen] = React.useState(false);
 
   return (
     <div className="flex flex-col gap-6">
@@ -134,8 +152,25 @@ export function EventDetail({ event, endpointId, revealHeader, loadPayload }: Ev
           <CommandLine
             command={`wbhk replay ${event.id} --forward http://localhost:3000/webhooks`}
           />
+          <p className="leading-snug text-fg-secondary">
+            Or replay it to a registered destination:
+          </p>
+          <div>
+            <Button variant="secondary" onClick={() => setReplayOpen(true)}>
+              Replay to a destination
+            </Button>
+          </div>
         </CardContent>
       </Card>
+
+      <ReplayDialog
+        open={replayOpen}
+        onClose={() => setReplayOpen(false)}
+        eventId={event.id}
+        destinations={destinations}
+        destinationsError={destinationsError}
+        replay={replay}
+      />
     </div>
   );
 }

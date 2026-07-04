@@ -169,12 +169,22 @@ const APPS = {
     // is write-only and cannot decrypt). Deploy-injected (NOT committed): the engine must be LIVE with the
     // ProviderSecretSealer entrypoint first (it is — used by api/mcp). apps/web fails closed when it's unbound
     // (a create/rotate errors rather than storing an unsigned secret), so flipping it on is safe.
+    // DELIVERY_DISPATCHER — the web→engine service binding to the engine's DeliveryDispatcher WorkerEntrypoint
+    // (mirrors api above), so the dashboard's replay-to-destination action delivers via the engine — the ONLY
+    // guarded egress (connect-time DoH/CIDR SSRF guard + Standard-Webhooks signing happen there; the web worker
+    // never fetches a destination itself). Deploy-injected (NOT committed): the engine must be LIVE with the
+    // DeliveryDispatcher entrypoint first (it is — used by api). apps/web fails closed when it's unbound.
     services: [
       { binding: "AUTH_SESSION_EXCHANGE", service: "webhook-auth", entrypoint: "SessionExchange" },
       {
         binding: "PROVIDER_SECRET_SEALER",
         service: "webhook-engine",
         entrypoint: "ProviderSecretSealer",
+      },
+      {
+        binding: "DELIVERY_DISPATCHER",
+        service: "webhook-engine",
+        entrypoint: "DeliveryDispatcher",
       },
     ],
   },

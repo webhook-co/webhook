@@ -2,7 +2,7 @@ import "server-only";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
-import type { SecretSealer } from "@webhook-co/shared";
+import type { DeliveryDispatcherRpc, SecretSealer } from "@webhook-co/shared";
 
 import type { SessionExchangeBinding } from "./session-exchange";
 
@@ -107,6 +107,22 @@ export function getProviderSecretSealer(): SecretSealer | undefined {
   const binding = workerEnv().PROVIDER_SECRET_SEALER;
   if (binding && typeof (binding as { sealString?: unknown }).sealString === "function") {
     return binding as SecretSealer;
+  }
+  return undefined;
+}
+
+/**
+ * The `DELIVERY_DISPATCHER` Cloudflare service binding — the engine's `DeliveryDispatcher` WorkerEntrypoint,
+ * reachable as a direct RPC. It is the ONLY place the outbound replay POST + the authoritative connect-time
+ * SSRF guard happen; the web worker never fetches a destination itself. Bound only at deploy (the
+ * gen-wrangler-prod overlay, mirroring api); `undefined` in dev/preview and before provisioning — the replay
+ * mutation fails closed (a replay errors rather than silently no-op'ing). Detected structurally (an object
+ * with a `deliver` method) so a mis-shaped binding never masquerades as a working dispatcher.
+ */
+export function getDeliveryDispatcher(): DeliveryDispatcherRpc | undefined {
+  const binding = workerEnv().DELIVERY_DISPATCHER;
+  if (binding && typeof (binding as { deliver?: unknown }).deliver === "function") {
+    return binding as DeliveryDispatcherRpc;
   }
   return undefined;
 }

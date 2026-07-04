@@ -16,7 +16,8 @@
     "./reads": "./src/reads.ts",
     "./endpoints": "./src/endpoints.ts",
     "./replay-destinations": "./src/replay-destinations.ts",
-    "./signing-keys": "./src/signing-keys.ts"
+    "./signing-keys": "./src/signing-keys.ts",
+    "./replay": "./src/replay.ts"
   },
   "scripts": {
     "build": "tsc",
