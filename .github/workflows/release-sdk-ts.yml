@@ -1,0 +1,97 @@
+# Release the TypeScript SDK (@webhook-co/sdk). Triggered by an `sdk-ts-vX.Y.Z` tag (or a manual dispatch
+# for testing). Builds + tests the package, then publishes to npm with OIDC provenance. Calls tooling
+# directly (no marketplace actions — the org restricts Actions to GitHub-owned publishers, mirroring
+# ci.yml + the deploy CDs). The publish is gated on a real tag push AND a configured NPM_TOKEN, so the
+# build/test path is exercised on every dispatch while the first real publish stays a deliberate action.
+name: release-sdk-ts
+
+on:
+  push:
+    tags: ["sdk-ts-v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 1.0.0 (produces a dry-run unless NPM_TOKEN + a tag push)"
+        required: true
+
+permissions:
+  contents: read
+  id-token: write # OIDC for npm provenance (`npm publish`)
+
+concurrency:
+  group: release-sdk-ts-${{ github.ref }}
+  cancel-in-progress: false # never cancel a release mid-flight
+
+jobs:
+  release:
+    name: release @webhook-co/sdk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+
+      # User-controlled values (the dispatch input) flow through env, never `${{ }}`-interpolated into the
+      # script — that would be a shell-injection vector. EVENT_NAME is a trusted GitHub context.
+      - name: Resolve version from the trigger
+        id: ver
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_VERSION: ${{ inputs.version }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            VERSION="$DISPATCH_VERSION"
+          else
+            VERSION="${REF_NAME#sdk-ts-v}" # tag is sdk-ts-vX.Y.Z
+          fi
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)?$' \
+            || { echo "::error::not a valid version: '$VERSION' (expected X.Y.Z, tag sdk-ts-vX.Y.Z)"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # Gate on the generated types being in sync with the committed OpenAPI spec + all tests green, so a
+      # tag can never publish an SDK whose types drift from the wire contract.
+      - name: Test (incl. the generated-types drift guard)
+        run: pnpm --filter @webhook-co/sdk test
+
+      - name: Build (dual ESM + CJS + types)
+        run: pnpm --filter @webhook-co/sdk build
+
+      - name: Stamp the release version
+        working-directory: packages/sdk-ts
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+
+      - name: Smoke the built package (ESM + CJS import)
+        working-directory: packages/sdk-ts
+        run: |
+          node --input-type=module -e "import('./dist/index.js').then(m => { if (typeof m.WebhookClient !== 'function') { throw new Error('ESM export missing'); } })"
+          node -e "const m = require('./dist/index.cjs'); if (typeof m.WebhookClient !== 'function') { throw new Error('CJS export missing'); }"
+
+      # Publish gate: only on a real tag PUSH and only when NPM_TOKEN is configured (inert otherwise — the
+      # build + smoke above still run every time), so the first npm publish is a deliberate human action.
+      - name: Resolve the npm-publish gate
+        id: npmgate
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          if [ -n "$NPM_TOKEN" ] && [ "$EVENT_NAME" = "push" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "npm publish skipped (no NPM_TOKEN, or not a tag push)"
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm (with provenance)
+        if: steps.npmgate.outputs.publish == 'true'
+        working-directory: packages/sdk-ts
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # publishConfig.provenance:true in package.json + id-token:write → npm emits the provenance
+          # attestation automatically (no flag needed). Requires npm >= 9.5 (Node 24 ships npm 11).
+          npm config set "//registry.npmjs.org/:_authToken" "$NPM_TOKEN"
+          npm publish
+          echo "Published @webhook-co/sdk@$VERSION to npm with provenance."
