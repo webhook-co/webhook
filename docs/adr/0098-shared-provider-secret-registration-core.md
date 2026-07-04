@@ -1,7 +1,8 @@
-# ADR 0097 — shared provider-secret registration core + single-sourced shape validation/serialization
+# ADR 0098 — shared provider-secret registration core + single-sourced shape validation/serialization
 
 - status: accepted
 - date: 2026-07-04
+- note: renumbered from 0097 on rebase — 0097 was taken by the Mintlify docs-site ADR that merged to main first.
 - scope: `packages/webhooks-spec`, `packages/contract`, `packages/db`, `apps/api`, `apps/mcp`
 - review severity: high (a corruption-critical serialization + a control-plane write path that seals secrets)
 
