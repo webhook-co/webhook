@@ -21,6 +21,21 @@ const HMAC_BYTES = 16; // 128-bit truncated HMAC-SHA256 tag (matches the session
 const LISTEN_TICKET_KEY_BYTES = 32; // a dedicated 32-byte secret (LISTEN_TICKET_KEY), shared engine↔web.
 
 /**
+ * The WebSocket subprotocol the dashboard live-events client OFFERS and the engine ECHOES on the 101.
+ * Single-sourced here so the mint (web) and verify/echo (engine) sides can never drift — a browser aborts
+ * the handshake unless the server accepts exactly one of the subprotocols the client offered. Bump this in
+ * lockstep with any wire change (paired with LISTEN_TICKET_VERSION).
+ */
+export const LISTEN_SUBPROTOCOL = "wbhk.listen.v1";
+
+/**
+ * The subprotocol token prefix carrying the base64url ticket, e.g. `ticket.<token>`. The client offers
+ * `[LISTEN_SUBPROTOCOL, LISTEN_TICKET_SUBPROTOCOL_PREFIX + ticket]`; the engine pulls the ticket back off
+ * this prefix. Kept OUT of the URL/query (privacy — query strings are logged).
+ */
+export const LISTEN_TICKET_SUBPROTOCOL_PREFIX = "ticket.";
+
+/**
  * The current envelope version. `verifyListenTicket` rejects any envelope whose `v` is missing or != this,
  * so a codec change is a clean break: mismatched tickets fail closed (→ null) and the client re-mints.
  */

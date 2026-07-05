@@ -21,7 +21,11 @@ import {
   b64ToBytes,
   type EncryptionContext,
   importAuditKey,
+  importListenTicketKey,
   type KmsProvider,
+  LISTEN_SUBPROTOCOL,
+  LISTEN_TICKET_SUBPROTOCOL_PREFIX,
+  type ListenTicketGrant,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
   parseSince,
@@ -29,6 +33,7 @@ import {
   type SealedRecord,
   SecretStore,
   SERVICE_NAME,
+  verifyListenTicket,
 } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { WorkerEntrypoint } from "cloudflare:workers";
@@ -111,6 +116,17 @@ export interface Env {
   KV_AUTHZ: KVNamespace;
   /** Base64 HMAC key for opaque pagination cursors — must equal apps/api CURSOR_KEY (shared secret). */
   CURSOR_KEY: SecretsStoreSecret;
+  /**
+   * Base64 32-byte HMAC key for the dashboard live-events LISTEN TICKET — byte-identical in the web worker
+   * (mint) and here (verify). Lets the browser open `/listen` without an api-key bearer (wbhk.my is
+   * cookieless + the WS API can't send Authorization). Read via `readSecretBinding`.
+   */
+  LISTEN_TICKET_KEY: SecretsStoreSecret;
+  /**
+   * Optional non-prod dashboard origin (dev/preview) added to the listen-ticket Origin allowlist alongside
+   * the committed prod origin. Unset in prod. A committed VAR, not a secret.
+   */
+  DASHBOARD_ORIGIN?: string;
 }
 
 /**
@@ -370,6 +386,45 @@ export interface ListenAuthHandle {
 /** Build the listen-upgrade auth deps. Injected in tests so the upgrade is exercised without a DB. */
 export type MakeListenAuth = (env: Env) => Promise<ListenAuthHandle>;
 
+/** Verify a dashboard listen ticket → its {orgId, endpointId} grant, or null. Injected in tests. */
+export type VerifyListenTicketFn = (token: string) => Promise<ListenTicketGrant | null>;
+
+/** The canonical dashboard origin allowed to open a ticket-authed listen socket in prod. */
+const DASHBOARD_ORIGIN_PROD = "https://app.webhook.co";
+
+/** Pull the listen ticket out of a `Sec-WebSocket-Protocol` offer list (`wbhk.listen.v1, ticket.<token>`). */
+function extractListenTicket(header: string | null): string | null {
+  if (!header) return null;
+  for (const raw of header.split(",")) {
+    const proto = raw.trim();
+    if (proto.startsWith(LISTEN_TICKET_SUBPROTOCOL_PREFIX)) {
+      const token = proto.slice(LISTEN_TICKET_SUBPROTOCOL_PREFIX.length);
+      return token.length > 0 ? token : null;
+    }
+  }
+  return null;
+}
+
+/** Fail-closed Origin allowlist for the ticket path: the prod dashboard origin, plus an optional dev override. */
+function isAllowedListenOrigin(env: Env, origin: string | null): boolean {
+  if (!origin) return false;
+  if (origin === DASHBOARD_ORIGIN_PROD) return true;
+  return typeof env.DASHBOARD_ORIGIN === "string" && env.DASHBOARD_ORIGIN !== ""
+    ? origin === env.DASHBOARD_ORIGIN
+    : false;
+}
+
+/** The default ticket verifier: import the shared HMAC key + verify against the current clock (Unix seconds). */
+async function defaultVerifyListenTicket(
+  env: Env,
+  token: string,
+): Promise<ListenTicketGrant | null> {
+  const key = await importListenTicketKey(
+    b64ToBytes(await readSecretBinding(env.LISTEN_TICKET_KEY)),
+  );
+  return verifyListenTicket(key, token, Math.floor(Date.now() / 1000));
+}
+
 /**
  * Construct the listen-upgrade deps from the bindings: the api-key bearer chain (mirrors apps/api — a
  * KV-cached resolver over the webhook_authn cold lookup, audience-bound to API_RESOURCE) plus a
@@ -411,30 +466,58 @@ export async function handleListenUpgrade(
   request: Request,
   env: Env,
   makeAuth: MakeListenAuth = buildListenAuth,
+  verifyTicket: VerifyListenTicketFn = (token) => defaultVerifyListenTicket(env, token),
 ): Promise<Response> {
   const url = new URL(request.url);
   const handle = await makeAuth(env);
   try {
-    const authz = await authorizeBearer(
-      handle.authDeps,
-      request.headers.get("authorization"),
-      "events.tail",
-    );
-    if (!authz.ok) {
-      // 401 (no/invalid/misdirected credential) or 403 (under-scoped) — no socket, RFC 6750 challenge.
-      return new Response(null, {
-        status: authz.status,
-        headers: { "www-authenticate": authz.challenge },
-      });
+    // Two auth modes funnel here. The CLI presents an api-key BEARER (Authorization header). The dashboard
+    // browser can't set Authorization on a WebSocket, so it presents a signed LISTEN TICKET via the
+    // Sec-WebSocket-Protocol subprotocol + an Origin the engine allowlists. Either way we resolve a trusted
+    // (orgId, endpointId) that the client never controls, then bind the DO from it.
+    let orgId: string;
+    let endpointId: string | null;
+    let acceptSubprotocol: string | undefined;
+
+    // Prefer the bearer path; only take the ticket path when a ticket subprotocol is actually present and
+    // there's no Authorization header. A request with NEITHER credential falls through to the bearer path so
+    // it still gets the RFC 6750 Bearer challenge (the CLI-facing contract) rather than a bare ticket 401.
+    const authHeader = request.headers.get("authorization");
+    const ticket = authHeader
+      ? null
+      : extractListenTicket(request.headers.get("sec-websocket-protocol"));
+    if (!ticket) {
+      const authz = await authorizeBearer(handle.authDeps, authHeader, "events.tail");
+      if (!authz.ok) {
+        // 401 (no/invalid/misdirected credential) or 403 (under-scoped) — no socket, RFC 6750 challenge.
+        return new Response(null, {
+          status: authz.status,
+          headers: { "www-authenticate": authz.challenge },
+        });
+      }
+      orgId = authz.ctx.orgId;
+      endpointId = url.searchParams.get("endpointId");
+    } else {
+      // Dashboard ticket path. Enforce the Origin allowlist FIRST (a cross-origin page must never even
+      // attempt to tail), then verify the HMAC ticket. Both org + endpoint come from the SIGNED ticket —
+      // the browser controls neither the query string nor any header, so it can't tail another org/endpoint.
+      if (!isAllowedListenOrigin(env, request.headers.get("origin"))) {
+        return new Response("forbidden origin", { status: 403 });
+      }
+      const grant = await verifyTicket(ticket);
+      if (!grant) return new Response("invalid or expired listen ticket", { status: 401 });
+      orgId = grant.orgId;
+      endpointId = grant.endpointId;
+      acceptSubprotocol = LISTEN_SUBPROTOCOL;
     }
 
-    const endpointId = url.searchParams.get("endpointId");
     if (!endpointId || !UUID_RE.test(endpointId)) {
       return new Response("invalid or missing endpointId", { status: 400 });
     }
-    // Existence guard under the bearer-derived org's RLS: a cross-org or unknown id is NOT_FOUND
-    // (and indistinguishable — a caller can't probe another org's endpoints).
-    if (!(await handle.endpointExists(authz.ctx.orgId, endpointId))) {
+    // Existence guard under the resolved org's RLS: a cross-org or unknown id is NOT_FOUND (and
+    // indistinguishable — a caller can't probe another org's endpoints). For the ticket path this is
+    // defense-in-depth: the mint-time action already checked the endpoint belongs to the org.
+    if (!(await handle.endpointExists(orgId, endpointId))) {
       return new Response("endpoint not found", { status: 404 });
     }
 
@@ -444,9 +527,15 @@ export async function handleListenUpgrade(
 
     // Forward the upgrade with the binding on trusted headers, overwriting any client-supplied ones.
     const headers = new Headers(request.headers);
-    headers.set("x-listen-org-id", authz.ctx.orgId);
+    // Never forward the raw ticket subprotocol to the DO — keep the secret off the internal hop + its logs.
+    headers.delete("sec-websocket-protocol");
+    headers.set("x-listen-org-id", orgId);
     headers.set("x-listen-endpoint-id", endpointId);
     headers.set("x-listen-session-id", sessionId);
+    // Tell the DO which subprotocol to echo on its 101 (a browser aborts if the server accepts none). Only
+    // set for the ticket path; the CLI doesn't offer a subprotocol. Always delete first (never trust client).
+    headers.delete("x-listen-accept-subprotocol");
+    if (acceptSubprotocol) headers.set("x-listen-accept-subprotocol", acceptSubprotocol);
     // Two mutually exclusive seed modes (the CLI sets one or neither): `?sinceCursor=` is an opaque
     // resume cursor; `?since=` is a grammar (now|beginning|<duration>|<RFC3339>) the server resolves to
     // a boundary cursor. Both at once is an ambiguous request → a clean 400 (mirrors apps/api).

@@ -83,6 +83,8 @@ const HDR_SESSION = "x-listen-session-id";
 const HDR_SINCE = "x-listen-since-cursor";
 /** `?since=<grammar>` (now|beginning|<duration>|<RFC3339>): resolved server-side to a boundary cursor. */
 const HDR_SINCE_SPEC = "x-listen-since-spec";
+/** The WebSocket subprotocol to echo on the 101 (dashboard ticket path) — a browser aborts if unechoed. */
+const HDR_ACCEPT_SUBPROTOCOL = "x-listen-accept-subprotocol";
 
 /** The org/endpoint/session this DO is pinned to, persisted once on first connect. */
 interface Binding {
@@ -256,7 +258,15 @@ export class ListenSession extends DurableObject<ListenEnv> {
     // flush comes from this inline scan; the alarm only drives the steady-state tail.
     await this.runPoll();
     await this.armPoll();
-    return new Response(null, { status: 101, webSocket: client });
+    // Echo the accepted subprotocol on the 101 when the upgrade handler asked for it (the dashboard ticket
+    // path). workerd does NOT auto-negotiate `Sec-WebSocket-Protocol`, and a browser that offered a
+    // subprotocol aborts the connection unless the server accepts exactly one — so this echo is load-bearing
+    // for the browser client. The CLI offers no subprotocol, so the header is absent and nothing is echoed.
+    const acceptSubprotocol = request.headers.get(HDR_ACCEPT_SUBPROTOCOL);
+    const responseHeaders = acceptSubprotocol
+      ? { "Sec-WebSocket-Protocol": acceptSubprotocol }
+      : undefined;
+    return new Response(null, { status: 101, webSocket: client, headers: responseHeaders });
   }
 
   override async alarm(): Promise<void> {

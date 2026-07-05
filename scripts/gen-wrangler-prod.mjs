@@ -65,7 +65,16 @@ const secretsBlock = (names) => names.map((n) => ({ binding: n, store_id: STORE,
 const APPS = {
   engine: {
     domain: "wbhk.my",
-    secrets: [...SHARED, "KMS_KEY_ARN", "AWS_REGION", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY"],
+    // + LISTEN_TICKET_KEY: the dashboard live-events listen-ticket HMAC key. Shared with web ONLY (web
+    //   mints, engine verifies); byte-identical. Not in api/mcp, so appended per-app rather than to SHARED.
+    secrets: [
+      ...SHARED,
+      "KMS_KEY_ARN",
+      "AWS_REGION",
+      "AWS_ACCESS_KEY_ID",
+      "AWS_SECRET_ACCESS_KEY",
+      "LISTEN_TICKET_KEY",
+    ],
     placeholders: [
       "<HYPERDRIVE_TENANT_ID>",
       "<HYPERDRIVE_CACHED_ID>",
@@ -147,7 +156,14 @@ const APPS = {
   // defaults it to https://auth.webhook.co in prod.
   web: {
     domain: "app.webhook.co",
-    secrets: ["CREDENTIAL_PEPPER", "AUDIT_CHAIN_HMAC_KEY", "SESSION_TOKEN_SECRET"],
+    // + LISTEN_TICKET_KEY: mints the dashboard live-events listen ticket the engine verifies (byte-identical
+    //   to the engine's binding). Web signs, engine verifies — the browser opens `/listen` with it.
+    secrets: [
+      "CREDENTIAL_PEPPER",
+      "AUDIT_CHAIN_HMAC_KEY",
+      "SESSION_TOKEN_SECRET",
+      "LISTEN_TICKET_KEY",
+    ],
     // + KV_CONFIG (the engine's ingest-token cache, same namespace by id) so the dashboard's endpoint
     // delete/rotate actions evict the old token (ADR-0076/0077); + R2_PAYLOADS (webhook-payloads-dev →
     // -prod) for the event payload-inspect view. Both reuse existing GH repo vars/buckets — no new infra.
