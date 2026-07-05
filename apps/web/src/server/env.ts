@@ -153,6 +153,23 @@ export function getIngestBaseUrl(): string {
   return url ?? "https://wbhk.my";
 }
 
+/**
+ * The `wss://…/listen` URL the dashboard live-events client opens for an endpoint tail. Derived from the
+ * same committed ingest apex the one-time endpoint URL is built on (`getIngestBaseUrl`) — the `/listen`
+ * WebSocket lives on the cookieless `wbhk.my` apex — converting the http(s) scheme to ws(s) and appending
+ * `/listen`. Single-sourced here (never hardcoded in the client) so a self-host / preview apex flows
+ * through automatically.
+ */
+export function getListenWsUrl(): string {
+  const base = getIngestBaseUrl().replace(/\/+$/, "");
+  const wsBase = base.startsWith("https://")
+    ? `wss://${base.slice("https://".length)}`
+    : base.startsWith("http://")
+      ? `ws://${base.slice("http://".length)}`
+      : base;
+  return `${wsBase}/listen`;
+}
+
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */
 export function getAuthBaseUrl(): string {
   const fromBinding = workerEnv().AUTH_BASE_URL;
