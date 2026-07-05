@@ -13,22 +13,48 @@
  * shared theme-init script runs inline, and Radix injects inline styles). React's output-escaping stays the
  * primary XSS defense — load-bearing for the event payload-inspect view, which renders attacker-controlled
  * webhook bytes as escaped text; this CSP is defense-in-depth that locks down framing, base-uri, plugins,
- * form targets, and the connect/script origins to `'self'`. Unlike apps/auth (which allowlists Cloudflare
- * Turnstile), the dashboard loads NO third-party origin: it talks only to itself + same-origin server
- * actions, and the auth handoff is a server-side service binding, never a browser fetch. A nonce/hash CSP is
- * a follow-up gated on a Workers nonce-injection story.
+ * form targets, and the script origin to `'self'`. The ONE cross-origin allowance is `connect-src`: the
+ * live-events tail (ADR-0102) opens a WebSocket to the cookieless ingest apex (wbhk.my), a separate
+ * registrable apex — so prod allowlists `'self'` + that apex's https/wss origins (derived from
+ * INGEST_BASE_URL). Otherwise the dashboard loads NO third-party origin: no CDN, no analytics; the auth
+ * handoff is a server-side service binding, never a browser fetch. A nonce/hash CSP is a follow-up gated on
+ * a Workers nonce-injection story.
  *
  * DEV vs PROD: `next dev` (Turbopack) evaluates client modules with `eval()` and opens an HMR websocket —
  * both are DEV-ONLY (React never uses `eval` in production). Without `'unsafe-eval'` the dev client runtime
- * can't boot (client-side navigation blanks); without `ws:` the HMR socket is blocked. So the dev policy
- * adds those two; the PRODUCTION policy stays tight (no `eval`, connect inherits `'self'`).
+ * can't boot (client-side navigation blanks); without a broad `ws:`/`wss:` the HMR socket is blocked. So the
+ * dev policy adds those; the PRODUCTION policy stays tight (no `eval`, and connect-src is pinned to the
+ * ingest apex, never the scheme wildcards).
  */
 
+/**
+ * The ingest apex the dashboard's live-events tail connects a WebSocket to — the SAME committed apex the
+ * one-time endpoint URL + `getListenWsUrl()` are built on (`INGEST_BASE_URL`, default `https://wbhk.my`).
+ * Read from the BUILD env (this header is baked at `next build` time), so a self-host apex flows through
+ * automatically and can't drift from the socket URL. Returns the https + wss origins to allowlist.
+ */
+function ingestConnectOrigins(): readonly string[] {
+  const raw =
+    process.env.INGEST_BASE_URL && process.env.INGEST_BASE_URL.length > 0
+      ? process.env.INGEST_BASE_URL
+      : "https://wbhk.my";
+  let host: string;
+  try {
+    host = new URL(raw).host;
+  } catch {
+    host = "wbhk.my";
+  }
+  // Both schemes: the WebSocket connects over wss; the https origin covers a same-host probe/handshake.
+  // (A scheme-less host would also match, but being explicit keeps the policy legible.)
+  return [`https://${host}`, `wss://${host}`];
+}
+
 // Insertion order is the serialized order. Each value array is space-joined; directives are "; "-joined.
-// Only directives that DIFFER from default-src are listed: fetch directives that would merely restate
-// `default-src 'self'` (connect-src, font-src, …) are omitted and inherit it. Add an explicit directive
-// when a real cross-origin need lands — an OAuth avatar CDN on img-src if a view renders `user.image` (the
-// session carries it; the account menu shows initials today).
+// Only directives that DIFFER from default-src are listed. `connect-src` is now explicit: the live-events
+// tail (ADR-0102) opens a WebSocket to the cross-origin ingest apex (wbhk.my), which `default-src 'self'`
+// would block — so prod allowlists `'self'` + the ingest apex's https/wss origins (dev keeps the broad
+// ws:/wss: for the Turbopack HMR socket). Fetch directives with no cross-origin need (font-src, …) stay
+// omitted and inherit default-src.
 function cspDirectives(dev: boolean): Record<string, readonly string[]> {
   return {
     "default-src": ["'self'"],
@@ -37,8 +63,8 @@ function cspDirectives(dev: boolean): Record<string, readonly string[]> {
       : ["'self'", "'unsafe-inline'"],
     "style-src": ["'self'", "'unsafe-inline'"],
     "img-src": ["'self'", "data:"],
-    // Dev only: the Turbopack HMR websocket (prod inherits default-src 'self').
-    ...(dev ? { "connect-src": ["'self'", "ws:", "wss:"] } : {}),
+    // The live-events WebSocket to the ingest apex; dev also allows the Turbopack HMR ws.
+    "connect-src": dev ? ["'self'", "ws:", "wss:"] : ["'self'", ...ingestConnectOrigins()],
     "frame-ancestors": ["'none'"],
     "base-uri": ["'self'"],
     "form-action": ["'self'"],
