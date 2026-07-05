@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { EndpointDetail } from "@/components/endpoint-detail";
 import { ProviderSecretsManager } from "@/components/provider-secrets-manager";
 import { deleteEndpointAction, rotateEndpointAction } from "@/server/endpoint-actions";
+import { revealEndpointIngestUrl } from "@/server/endpoint-reveal";
 import { loadEndpoint } from "@/server/endpoints";
 import {
   addProviderSecretAction,
@@ -18,15 +19,22 @@ export const metadata: Metadata = {
   title: "Endpoint · webhook.co",
 };
 
+// The rendered HTML embeds the always-shown ingest URL (a bearer credential), so this page must never be
+// cached at the edge/browser. verifySession() already makes it dynamic; force-dynamic makes the no-store
+// posture explicit (S8-remainder / ADR-0101).
+export const dynamic = "force-dynamic";
+
 export default async function EndpointDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await verifySession();
   const { id } = await params;
-  // The endpoint detail and its provider (inbound-verification) secrets are independent org+id reads — run
-  // them concurrently. Secrets are metadata only (the sealed bytes never leave the DB); a loader fault
-  // renders a Banner but must not block the endpoint view.
-  const [result, secrets] = await Promise.all([
+  // The endpoint detail, its provider (inbound-verification) secrets, and its always-shown ingest URL are
+  // independent org+id reads — run them concurrently. Secrets are metadata only (the sealed bytes never
+  // leave the DB); the ingest URL is unsealed engine-side (identifier-only). A loader fault renders a
+  // Banner / the rotate-to-reveal hint but must not block the endpoint view.
+  const [result, secrets, ingestUrl] = await Promise.all([
     loadEndpoint(session.orgId, id),
     loadProviderSecrets(session.orgId, id),
+    revealEndpointIngestUrl({ orgId: session.orgId, endpointId: id }),
   ]);
 
   if (result.status === "not_found") notFound();
@@ -56,6 +64,7 @@ export default async function EndpointDetailPage({ params }: { params: Promise<{
         <>
           <EndpointDetail
             endpoint={result.endpoint}
+            ingestUrl={ingestUrl}
             rotateEndpoint={rotateEndpointAction}
             deleteEndpoint={deleteEndpointAction}
           />

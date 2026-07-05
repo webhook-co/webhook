@@ -217,6 +217,16 @@ const APPS = {
         service: "webhook-engine",
         entrypoint: "DeliveryDispatcher",
       },
+      // INGEST_URL_REVEALER (S8-remainder / ADR-0101) — the web→engine binding to the engine's
+      // IngestUrlRevealer WorkerEntrypoint (mirrors api/mcp), so the endpoint-detail page shows the always-shown
+      // ingest URL (the KEK stays in the engine; web passes identifiers, gets the URL). Deploy-injected (NOT
+      // committed): the engine is LIVE with the entrypoint from slice 2a. apps/web degrades to the
+      // rotate-to-reveal hint when it's unbound, so flipping it on is safe.
+      {
+        binding: "INGEST_URL_REVEALER",
+        service: "webhook-engine",
+        entrypoint: "IngestUrlRevealer",
+      },
     ],
   },
   // The OAuth issuer + Better Auth runtime (auth.webhook.co) — an OpenNext SSR Worker (main = src/worker.ts

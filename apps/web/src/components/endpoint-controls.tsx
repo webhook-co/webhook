@@ -39,6 +39,12 @@ export interface EndpointControlsProps {
   deleteEndpoint: (endpointId: string) => Promise<EndpointActionResult>;
   /** Called after a successful soft-delete — the list removes the row; the detail page navigates away. */
   onDeleted: () => void;
+  /**
+   * Called after the one-time rotate reveal is dismissed — the detail page refreshes so its ALWAYS-SHOWN
+   * ingest URL (ADR-0101) re-reveals the NEW token instead of the stale old one. Optional (the list-row
+   * menu variant shows no persistent URL, so it doesn't need it).
+   */
+  onRotated?: () => void;
   /** "menu" = a ⋯ dropdown (list rows); "buttons" = explicit Rotate/Delete buttons (detail page). */
   variant: "menu" | "buttons";
 }
@@ -54,6 +60,7 @@ export function EndpointControls({
   rotateEndpoint,
   deleteEndpoint,
   onDeleted,
+  onRotated,
   variant,
 }: EndpointControlsProps) {
   const [rotateOpen, setRotateOpen] = React.useState(false);
@@ -207,7 +214,12 @@ export function EndpointControls({
 
       <OneTimeUrlDialog
         open={revealed !== null}
-        onClose={() => setRevealed(null)}
+        onClose={() => {
+          setRevealed(null);
+          // Refresh so the detail page's always-shown ingest URL re-reveals the NEW token (ADR-0101),
+          // not the stale pre-rotate one. No-op on the list variant (onRotated undefined).
+          onRotated?.();
+        }}
         title="Copy your new webhook URL"
         description="The old URL has stopped working. Point your provider at this one."
         url={revealed}

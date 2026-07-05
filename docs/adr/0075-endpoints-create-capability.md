@@ -1,10 +1,11 @@
 # ADR 0075 — `endpoints.create` capability + the `endpoints:write` scope
 
-> **Superseded (partial), 2026-06-26.** The *one-time, unrecoverable reveal* of the ingest URL described
-> here is superseded by a decision to make the ingest URL **always-shown** — retrievable on demand and
-> stored **envelope-encrypted at rest** (not hash-only). The create flow keeps minting the URL; only the
-> "shown exactly once" property changes. This ADR will be revised when that change ships (tracked in the
-> internal backlog). API keys are unaffected — they remain one-time-reveal.
+> **Superseded (partial), 2026-06-26; IMPLEMENTED 2026-07-05 by [ADR-0101](0101-always-shown-ingest-url-sealed-at-rest.md).**
+> The *one-time, unrecoverable reveal* of the ingest URL described here is superseded: the ingest URL is now
+> **always-shown** — a recoverable copy of the token is stored **envelope-encrypted at rest** (alongside the
+> hash) and re-displayed on demand via the gated `endpoints.revealIngestUrl` capability (api/cli/mcp) + the
+> dashboard endpoint-detail page. The create flow is unchanged (it still returns the URL); it is simply no
+> longer the *only* time you can see it. **API keys are unaffected — they remain one-time-reveal.**
 
 - status: accepted.
 - date: 2026-06-25

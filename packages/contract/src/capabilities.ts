@@ -169,11 +169,15 @@ export const endpointsRevealIngestUrl = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
   semantics: {},
-  // Web (the always-shown endpoint-detail URL) lands in the follow-up slice 2b — its DB-direct session seam +
-  // the reveal service binding + the UI ship together with the light/dark screenshots. Programmatic parity
-  // (api/cli/mcp) ships now in 2a.
+  // This CAPABILITY (the endpoints:write-gated, audited, rate-limited programmatic reveal — the scripted
+  // exfil vector) is bound on api/cli/mcp. The dashboard shows the same URL, but NOT via this capability: the
+  // endpoint-detail page reads it as always-visible endpoint CONFIG through a DB-direct session seam
+  // (apps/web endpoint-reveal.ts → the engine IngestUrlRevealer) — a member viewing their own org's config,
+  // so deliberately NOT per-view audited/rate-limited (that would flood the tamper-evident audit chain with
+  // routine reads). Web is therefore surface-EXEMPT from the capability itself — it is a different, lighter
+  // mechanism, not this gated one — so parity is not falsely claimed on web.
   surfaceExempt: {
-    web: "S8-remainder slice 2b: dashboard always-shown URL + screenshots land next",
+    web: "S8-remainder slice 2b: the dashboard shows the URL as endpoint config via a DB-direct session read, not this gated + audited programmatic capability (ADR-0101).",
   },
 });
 

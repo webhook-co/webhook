@@ -83,8 +83,8 @@ describe("capability parity — current GA surfaces conformance", () => {
     "endpoints.create",
     "endpoints.delete",
     "endpoints.rotate",
-    // Ingest-URL reveal (S8-remainder / ADR-0101): api+mcp+cli now; web (dashboard always-shown URL) is
-    // surfaceExempt until slice 2b, so it is NOT in WEB_BOUND yet.
+    // Ingest-URL reveal (S8-remainder / ADR-0101): the gated + audited programmatic capability, api+mcp+cli.
+    // (The dashboard shows the URL via a separate DB-direct config read, so web is surfaceExempt — see below.)
     "endpoints.revealIngestUrl",
     // Provider-secret management (ADR-0078): full MCP parity (D2) — add/list/revoke on api+mcp+cli.
     "endpoints.addProviderSecret",
@@ -108,6 +108,9 @@ describe("capability parity — current GA surfaces conformance", () => {
     "endpoints.create",
     "endpoints.delete",
     "endpoints.rotate",
+    // NOTE: endpoints.revealIngestUrl is NOT web-bound. The dashboard shows the ingest URL, but as endpoint
+    // config via a DB-direct session read (endpoint-reveal.ts) — a lighter mechanism than this gated +
+    // audited programmatic capability, which is why the capability is surfaceExempt on web (see capabilities.ts).
     "events.list",
     "events.get",
     "events.getPayload",
