@@ -6,6 +6,7 @@ vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext }));
 import {
   getAuthBaseUrl,
   getDeliveryDispatcher,
+  getListenWsUrl,
   getProviderSecretSealer,
   getSessionSecret,
 } from "./env";
@@ -82,6 +83,32 @@ describe("getProviderSecretSealer", () => {
   it("returns undefined for a mis-shaped binding — never masquerades a non-sealer as one", () => {
     getCloudflareContext.mockReturnValue({ env: { PROVIDER_SECRET_SEALER: { nope: 1 } } });
     expect(getProviderSecretSealer()).toBeUndefined();
+  });
+});
+
+describe("getListenWsUrl", () => {
+  it("defaults to the prod wbhk.my apex as a wss /listen URL", () => {
+    getCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
+    vi.stubEnv("INGEST_BASE_URL", "");
+    expect(getListenWsUrl()).toBe("wss://wbhk.my/listen");
+  });
+
+  it("converts an https ingest base to wss and appends /listen (no double slash)", () => {
+    getCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
+    vi.stubEnv("INGEST_BASE_URL", "https://wbhk.example.com/");
+    expect(getListenWsUrl()).toBe("wss://wbhk.example.com/listen");
+  });
+
+  it("converts an http ingest base to ws (dev/preview)", () => {
+    getCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
+    vi.stubEnv("INGEST_BASE_URL", "http://localhost:8787");
+    expect(getListenWsUrl()).toBe("ws://localhost:8787/listen");
   });
 });
 

@@ -12,8 +12,10 @@ import {
   parseEventFilters,
   type EventFilterParams,
 } from "@/lib/event-filters";
+import { getListenWsUrl } from "@/server/env";
 import { loadMoreEventsAction } from "@/server/event-actions";
 import { loadEvents } from "@/server/events";
+import { mintListenTicketAction } from "@/server/listen-ticket-actions";
 import { verifySession } from "@/server/session";
 
 export const metadata: Metadata = {
@@ -112,6 +114,8 @@ export default async function EventsPage({
             filterParams={filterParams}
             isFiltered={hasAppliedFilters(filters)}
             loadMore={loadMoreEventsAction}
+            liveWsUrl={getListenWsUrl()}
+            mintTicket={mintListenTicketAction}
           />
         </div>
       )}
