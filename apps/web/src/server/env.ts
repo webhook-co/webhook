@@ -45,6 +45,7 @@ async function readSecret(value: unknown): Promise<string | null> {
 // Dev-only base64 secrets (32 bytes each) — usable only in dev/test against a local DB; prod fails closed.
 const DEV_CREDENTIAL_PEPPER = btoa("dev-only-credential-pepper-32by!");
 const DEV_AUDIT_CHAIN_KEY = btoa("dev-only-audit-chain-key-32bytes");
+const DEV_LISTEN_TICKET_KEY = btoa("dev-only-listen-ticket-key-32byt");
 
 /**
  * Read a secret by binding name: the Secrets Store binding (prod, via `.get()`) or `process.env`
@@ -76,6 +77,15 @@ export function getCredentialPepper(): Promise<string> {
 /** The base64 audit-chain HMAC key — signs the `key_minted` audit row (the same key every surface signs with). */
 export function getAuditChainKey(): Promise<string> {
   return readConfiguredSecret("AUDIT_CHAIN_HMAC_KEY", DEV_AUDIT_CHAIN_KEY);
+}
+
+/**
+ * The base64 32-byte HMAC key for the dashboard live-events LISTEN TICKET — byte-identical to the engine's
+ * LISTEN_TICKET_KEY (web mints, the engine verifies). A short-lived signed grant that lets the browser open
+ * the engine's `/listen` WebSocket without an api-key bearer.
+ */
+export function getListenTicketKey(): Promise<string> {
+  return readConfiguredSecret("LISTEN_TICKET_KEY", DEV_LISTEN_TICKET_KEY);
 }
 
 /**

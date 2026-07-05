@@ -53,6 +53,8 @@ function listenReq(opts: {
   since?: string;
   upgrade?: boolean;
   forgeOrgHeader?: string;
+  origin?: string;
+  subprotocol?: string;
 }): Request {
   const url = new URL("https://engine.example/listen");
   if (opts.endpointId !== undefined) url.searchParams.set("endpointId", opts.endpointId);
@@ -63,7 +65,18 @@ function listenReq(opts: {
   if (opts.auth) headers.authorization = opts.auth;
   if (opts.upgrade) headers.Upgrade = "websocket";
   if (opts.forgeOrgHeader) headers["x-listen-org-id"] = opts.forgeOrgHeader;
+  if (opts.origin) headers.Origin = opts.origin;
+  if (opts.subprotocol) headers["sec-websocket-protocol"] = opts.subprotocol;
   return new Request(url, { headers });
+}
+
+const DASHBOARD_ORIGIN = "https://app.webhook.co";
+const TICKET_ORG = "33333333-3333-3333-3333-333333333333";
+const TICKET_ENDPOINT = "44444444-4444-4444-4444-444444444444";
+
+/** A fake ticket verifier: returns a fixed grant, or null to simulate an invalid/expired ticket. */
+function fakeVerifyTicket(grant: { orgId: string; endpointId: string } | null) {
+  return async () => grant;
 }
 
 describe("listen upgrade — auth", () => {
@@ -193,7 +206,140 @@ describe("listen upgrade — routing", () => {
     );
     expect(res.status).toBe(400);
   });
+});
 
+describe("listen upgrade — dashboard ticket", () => {
+  const okAuth = fakeAuth({ ctx: READ_CTX, exists: true });
+
+  it("401s a request with neither an Authorization header nor a ticket subprotocol", async () => {
+    const res = await handleListenUpgrade(
+      listenReq({ upgrade: true, origin: DASHBOARD_ORIGIN }),
+      bindings,
+      okAuth,
+      fakeVerifyTicket({ orgId: TICKET_ORG, endpointId: TICKET_ENDPOINT }),
+    );
+    expect(res.status).toBe(401);
+    expect(res.webSocket).toBeNull();
+  });
+
+  it("403s a ticket presented from a disallowed Origin", async () => {
+    const res = await handleListenUpgrade(
+      listenReq({
+        upgrade: true,
+        origin: "https://evil.example",
+        subprotocol: `wbhk.listen.v1, ticket.sometoken`,
+      }),
+      bindings,
+      okAuth,
+      fakeVerifyTicket({ orgId: TICKET_ORG, endpointId: TICKET_ENDPOINT }),
+    );
+    expect(res.status).toBe(403);
+    expect(res.webSocket).toBeNull();
+  });
+
+  it("401s an invalid/expired ticket (verifier returns null)", async () => {
+    const res = await handleListenUpgrade(
+      listenReq({
+        upgrade: true,
+        origin: DASHBOARD_ORIGIN,
+        subprotocol: `wbhk.listen.v1, ticket.badtoken`,
+      }),
+      bindings,
+      okAuth,
+      fakeVerifyTicket(null),
+    );
+    expect(res.status).toBe(401);
+    expect(res.webSocket).toBeNull();
+  });
+
+  it("upgrades 101, binds the DO to the TICKET's org/endpoint, and echoes the subprotocol", async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
+    await runInDurableObject(stub, (inst) => {
+      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
+    });
+
+    const res = await handleListenUpgrade(
+      listenReq({
+        sessionId,
+        upgrade: true,
+        origin: DASHBOARD_ORIGIN,
+        // The query carries a DIFFERENT (attacker) endpoint; the ticket's endpoint must win.
+        endpointId: "99999999-9999-9999-9999-999999999999",
+        subprotocol: `wbhk.listen.v1, ticket.goodtoken`,
+      }),
+      bindings,
+      okAuth,
+      fakeVerifyTicket({ orgId: TICKET_ORG, endpointId: TICKET_ENDPOINT }),
+    );
+    expect(res.status).toBe(101);
+    expect(res.webSocket).not.toBeNull();
+    // The browser aborts without the echo — the server must accept exactly the base subprotocol.
+    expect(res.headers.get("sec-websocket-protocol")).toBe("wbhk.listen.v1");
+
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ orgId: string; endpointId: string }>("binding"),
+    );
+    // Bound to the SIGNED ticket, never the query string.
+    expect(binding?.orgId).toBe(TICKET_ORG);
+    expect(binding?.endpointId).toBe(TICKET_ENDPOINT);
+  });
+
+  it("prefers the bearer path when BOTH an Authorization header and a ticket subprotocol are present", async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
+    await runInDurableObject(stub, (inst) => {
+      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
+    });
+
+    const res = await handleListenUpgrade(
+      listenReq({
+        auth: "Bearer whsk_ok",
+        endpointId: crypto.randomUUID(),
+        sessionId,
+        upgrade: true,
+        origin: DASHBOARD_ORIGIN,
+        // A ticket for a DIFFERENT org rides alongside the bearer; the bearer must win + the ticket ignored.
+        subprotocol: `wbhk.listen.v1, ticket.attacker`,
+      }),
+      bindings,
+      fakeAuth({ ctx: READ_CTX, exists: true }),
+      fakeVerifyTicket({ orgId: TICKET_ORG, endpointId: TICKET_ENDPOINT }),
+    );
+    expect(res.status).toBe(101);
+    // Bound to the BEARER org (READ_CTX = ORG), never the ticket's TICKET_ORG; no subprotocol echoed.
+    expect(res.headers.get("sec-websocket-protocol")).toBeNull();
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ orgId: string }>("binding"),
+    );
+    expect(binding?.orgId).toBe(ORG);
+  });
+
+  it("404s when the ticket's endpoint no longer exists (defense in depth)", async () => {
+    const res = await handleListenUpgrade(
+      listenReq({
+        upgrade: true,
+        origin: DASHBOARD_ORIGIN,
+        subprotocol: `wbhk.listen.v1, ticket.goodtoken`,
+      }),
+      bindings,
+      fakeAuth({ ctx: READ_CTX, exists: false }),
+      fakeVerifyTicket({ orgId: TICKET_ORG, endpointId: TICKET_ENDPOINT }),
+    );
+    expect(res.status).toBe(404);
+    expect(res.webSocket).toBeNull();
+  });
+});
+
+describe("listen upgrade — since (bearer)", () => {
   it("forwards a valid --since grammar to the DO (resolved server-side), upgrading 101", async () => {
     const sessionId = crypto.randomUUID();
     const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));

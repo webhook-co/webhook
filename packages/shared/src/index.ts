@@ -28,6 +28,7 @@ export * from "./enums";
 export * from "./ids";
 export * from "./entities";
 export * from "./listen-protocol";
+export * from "./listen-ticket";
 export * from "./watermark";
 export * from "./cursor";
 export * from "./lag";
