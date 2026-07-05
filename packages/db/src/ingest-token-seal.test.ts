@@ -42,3 +42,79 @@ describe("serializeIngestToken / parseIngestToken", () => {
     expect(parseIngestToken(JSON.stringify(null))).toBeNull();
   });
 });
+
+import { revealIngestTokenCore } from "./ingest-token-seal";
+import type { ReadSealedIngestTokenResult } from "./ingest-token-seal";
+
+const SEALED: ReadSealedIngestTokenResult = {
+  found: true,
+  sealed: {
+    sealed: {
+      ciphertext: new Uint8Array([1]),
+      nonce: new Uint8Array([2]),
+      wrapped: { wrappedDek: new Uint8Array([3]), kekRef: "kek" },
+      envelopeVersion: 1,
+    },
+    context: { orgId: "o", endpointId: "e", keyId: "k" },
+  },
+};
+
+describe("revealIngestTokenCore", () => {
+  it("unseals + parses the wrapper and returns the token on success", async () => {
+    const out = await revealIngestTokenCore(
+      { read: async () => SEALED, unseal: async () => serializeIngestToken("whep_live") },
+      "o",
+      "e",
+    );
+    expect(out).toEqual({ found: true, token: "whep_live" });
+  });
+
+  it("returns {found:false} for an unknown/cross-org endpoint (→ NOT_FOUND) and never unseals", async () => {
+    let unsealed = false;
+    const out = await revealIngestTokenCore(
+      {
+        read: async () => ({ found: false }),
+        unseal: async () => {
+          unsealed = true;
+          return "";
+        },
+      },
+      "o",
+      "e",
+    );
+    expect(out).toEqual({ found: false, token: null });
+    expect(unsealed).toBe(false); // no blob, nothing to unseal
+  });
+
+  it("returns {found:true, token:null} for a visible endpoint with NO recoverable copy (rotate to reveal)", async () => {
+    const out = await revealIngestTokenCore(
+      { read: async () => ({ found: true, sealed: null }), unseal: async () => "unused" },
+      "o",
+      "e",
+    );
+    expect(out).toEqual({ found: true, token: null });
+  });
+
+  it("FAILS CLOSED: a non-ingest-token plaintext (wrong kind) yields token:null, never a bogus URL", async () => {
+    const out = await revealIngestTokenCore(
+      {
+        read: async () => SEALED,
+        // e.g. a provider-secret blob mistakenly reaching the ingest unsealer
+        unseal: async () => JSON.stringify({ kind: "verify_token", token: "x" }),
+      },
+      "o",
+      "e",
+    );
+    expect(out).toEqual({ found: true, token: null });
+  });
+
+  it("propagates an unseal THROW (KMS fault) — a transient error must not be conflated with 'no copy'", async () => {
+    await expect(
+      revealIngestTokenCore(
+        { read: async () => SEALED, unseal: async () => Promise.reject(new Error("kms down")) },
+        "o",
+        "e",
+      ),
+    ).rejects.toThrow(/kms down/);
+  });
+});

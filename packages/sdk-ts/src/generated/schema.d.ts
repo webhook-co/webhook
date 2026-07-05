@@ -159,6 +159,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/endpoints/{endpointId}/reveal-ingest-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reveal an endpoint's always-shown ingest URL */
+        post: operations["endpointsRevealIngestUrl"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/endpoints/{endpointId}/rotate": {
         parameters: {
             query?: never;
@@ -515,6 +532,9 @@ export interface components {
         EndpointsListResponse: {
             items: components["schemas"]["Endpoint"][];
             nextCursor: string | null;
+        };
+        EndpointsRevealIngestUrlResponse: {
+            ingestUrl: string | null;
         };
         /** @description The JSON error envelope for capability faults. */
         Error: {
@@ -1212,6 +1232,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RevokedProviderSecret"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    endpointsRevealIngestUrl: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpointId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EndpointsRevealIngestUrlResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

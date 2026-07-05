@@ -16,6 +16,7 @@
     "./reads": "./src/reads.ts",
     "./endpoints": "./src/endpoints.ts",
     "./ingest-token-seal": "./src/ingest-token-seal.ts",
+    "./ingest-url-reveal": "./src/ingest-url-reveal.ts",
     "./replay-destinations": "./src/replay-destinations.ts",
     "./signing-keys": "./src/signing-keys.ts",
     "./provider-secrets": "./src/provider-secrets.ts",

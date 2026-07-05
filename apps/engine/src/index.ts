@@ -13,6 +13,8 @@ import {
   listDestinationsWithDueDeliveries,
   makeApiKeyAuthDeps,
   readAuditChainHeads,
+  readSealedIngestToken,
+  revealIngestTokenCore,
   withTenant,
   type ResolvedPrincipal,
 } from "@webhook-co/db";
@@ -30,6 +32,7 @@ import {
   OrgScopedDekCache,
   parseSince,
   readSecretBinding,
+  type RevealedIngestToken,
   type SealedRecord,
   SecretStore,
   SERVICE_NAME,
@@ -235,6 +238,16 @@ export const getSignStore = memoizeIsolate(
  * decoupled from outbound signing. Memoized + lazy; only awaited when a GET is a secret-based handshake.
  */
 export const getHandshakeUnsealStore = memoizeIsolate(
+  async (env: Env) => new SecretStore(await kmsProviderFromEnv(env), DEK_CACHE),
+);
+
+/**
+ * The per-isolate UNSEAL store for the ingest-URL reveal (S8-remainder Slice 2 / ADR-0101). DEDICATED —
+ * NOT getSignStore/getHandshakeUnsealStore — so the reveal path is a distinct, auditable surface that only
+ * ever unseals the endpoints' sealed ingest-token column (never a caller-supplied blob). Carries the DEK
+ * cache (it UNWRAPS DEKs). Built lazily + memoized; only awaited when a reveal is requested.
+ */
+export const getRevealStore = memoizeIsolate(
   async (env: Env) => new SecretStore(await kmsProviderFromEnv(env), DEK_CACHE),
 );
 
@@ -663,6 +676,40 @@ export class ProviderSecretSealer extends WorkerEntrypoint<Env> {
   async sealString(plaintext: string, context: EncryptionContext): Promise<SealedRecord> {
     const store = await getSealStore(this.env);
     return store.sealString(plaintext, context);
+  }
+}
+
+/**
+ * Ingest-URL REVEAL over a Cloudflare service binding (S8-remainder Slice 2 / ADR-0101). api + mcp + web
+ * RPC `env.<binding>.revealIngestToken(orgId, endpointId)` to recover the always-shown wbhk.my/<token>
+ * ingest URL. This is the deliberate counterpart to the seal-only ProviderSecretSealer: the KEK never leaves
+ * the engine, so the UNSEAL happens ONLY here. It is IDENTIFIER-ONLY — the caller passes (orgId, endpointId)
+ * UUIDs and the engine reads the sealed columns for THAT endpoint itself (never a caller-supplied blob, which
+ * would make this a decrypt-anything oracle). The tenant read runs under the org's RLS (`withTenant(orgId)`
+ * on HYPERDRIVE_TENANT / webhook_app — an INDEPENDENT tenant check on top of the AAD binding, never a
+ * cross-org role), and only ever touches the endpoints ingest columns via a DEDICATED reveal store. Returns
+ * `{found, token}`: found=false for an unknown/cross-org endpoint (→ caller NOT_FOUND); token=null for no
+ * recoverable copy (→ "rotate to reveal"); an unseal fault propagates (a transient error, not "no copy").
+ * The plaintext token crosses the binding by structured clone; the caller builds `${apex}/<token>` + audits.
+ */
+export class IngestUrlRevealer extends WorkerEntrypoint<Env> {
+  async revealIngestToken(orgId: string, endpointId: string): Promise<RevealedIngestToken> {
+    const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+    try {
+      return await revealIngestTokenCore(
+        {
+          read: (o, e) => readSealedIngestToken(tenant, o, e),
+          unseal: async (sealed, context) => {
+            const store = await getRevealStore(this.env);
+            return store.openString(sealed, context);
+          },
+        },
+        orgId,
+        endpointId,
+      );
+    } finally {
+      await tenant.end({ timeout: 5 }).catch(() => {});
+    }
   }
 }
 

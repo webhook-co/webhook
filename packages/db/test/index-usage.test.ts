@@ -162,3 +162,23 @@ describe("keyset browse reads use their covering index (no Sort node)", () => {
     });
   });
 });
+
+describe("reveal rate-limit COUNT rides the audit_log action-window index (migration 0038)", () => {
+  it("count(*) over audit_log by (action, created-at window) uses audit_log_org_action_created_idx, no Seq Scan", async () => {
+    // The exact shape enforceIngestUrlRevealRateLimit runs (org_id supplied by RLS): a per-org COUNT of a
+    // single action within a recency window. Without the 0038 index this scans the org's whole audit
+    // partition; with it, it is an index scan. (enable_seqscan=off in planOf forces the planner to reveal
+    // whether a usable index exists — the point of the assertion.)
+    await withTenant(app, orgId, async (tx) => {
+      const p = await planOf(
+        tx,
+        (t) =>
+          t`select count(*) from audit_log
+            where action = ${"endpoint.ingest_url_revealed"}
+              and created_at > now() - make_interval(secs => ${60})`,
+      );
+      expect(p.indexes.has("audit_log_org_action_created_idx")).toBe(true);
+      expect(p.types.has("Seq Scan")).toBe(false);
+    });
+  });
+});

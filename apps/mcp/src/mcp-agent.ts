@@ -55,6 +55,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     "DESTRUCTIVE: permanently soft-delete a webhook endpoint by id. Its ingest URL stops accepting new events and it is removed from listings; captured events are retained but the endpoint can no longer receive new ones. Confirm with the user before calling.",
   "endpoints.rotate":
     "DESTRUCTIVE: rotate a webhook endpoint's ingest URL by id — mints a NEW URL and revokes the old one (for a leaked or lost URL). The endpoint id, name, and captured events are kept. The new URL contains a secret token shown ONLY ONCE in this response — surface it to the user to save. Confirm with the user before calling.",
+  "endpoints.revealIngestUrl":
+    "Reveal a webhook endpoint's current ingest URL by id (non-destructive — it does NOT rotate). The URL is a bearer credential, so this is treated like a write: it is audited. Returns `ingestUrl: null` for endpoints created before this feature (their URL is unrecoverable — rotate to mint a fresh always-shown one).",
   "events.list":
     "List received events for an endpoint (paginated, newest-first). Optional filters (AND across fields): `filter.provider`, an ARRAY of providers (OR'd — matches any); `filter.verificationState`, an ARRAY of verified | failed | unattempted (OR'd — failed = a signature was checked and rejected, unattempted = none was checked); a received-at range `filter.receivedAfter` (inclusive) / `filter.receivedBefore` (exclusive), each an RFC 3339 timestamp; and `filter.search`, a case-insensitive substring over the event's provider event id / external id / dedup key + the request header names and values (and an exact match on the event id when given a uuid).",
   "events.get": "Get a received event by id — headers, verification result, and payload pointer.",
@@ -161,6 +163,8 @@ export class WebhookMcp extends McpAgent<McpEnv> {
         ),
         // endpoints.addProviderSecret tool seals via the engine (the McpAgent never holds the KEK — D1).
         secretSealer: this.env.PROVIDER_SECRET_SEALER,
+        // endpoints.revealIngestUrl unseals the always-shown ingest URL via the engine (KEK stays there).
+        revealIngestUrl: this.env.INGEST_URL_REVEALER,
       });
       return await runCapabilityTool(handlers, capabilityName, ctx, args, (event, fields) =>
         this.log(event, fields),

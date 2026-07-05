@@ -5,7 +5,7 @@
 // The McpAgent tools run inside the MCP_OBJECT Durable Object; bearer resolution runs out here on the Worker.
 
 import type { TokenIntrospector } from "@webhook-co/contract";
-import type { SecretSealer } from "@webhook-co/shared";
+import type { IngestUrlRevealerRpc, SecretSealer } from "@webhook-co/shared";
 
 export interface McpEnv {
   /** The McpAgent Durable Object namespace. `WebhookMcp.serve("/mcp")` looks it up by this name. */
@@ -37,6 +37,13 @@ export interface McpEnv {
    * from B0 #246) — NOT committed, exactly like AUTH_ISSUER. (D2: agents may add/list/revoke secrets.)
    */
   PROVIDER_SECRET_SEALER: SecretSealer;
+  /**
+   * RPC to the engine's IngestUrlRevealer WorkerEntrypoint (S8-remainder / ADR-0101): the
+   * endpoints.revealIngestUrl tool recovers the always-shown ingest URL via
+   * `env.INGEST_URL_REVEALER.revealIngestToken(orgId, endpointId)`. The McpAgent NEVER holds the KEK (only
+   * the engine unseals); identifier-only. Deploy-injected by the overlay generator — NOT committed.
+   */
+  INGEST_URL_REVEALER: IngestUrlRevealerRpc;
   /**
    * The cookieless ingest apex the endpoints.create tool builds its one-time ingest URL from (prod:
    * https://wbhk.my). A plain wrangler `vars` value (NOT a secret, NOT deploy-injected — the overlay

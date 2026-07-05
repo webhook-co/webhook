@@ -13,6 +13,8 @@ export * from "./env";
 export * from "./client";
 export * from "./orgs";
 export * from "./endpoints";
+export * from "./ingest-token-seal";
+export * from "./ingest-url-reveal";
 export * from "./audit-append";
 export * from "./auth-audit";
 export * from "./auto-approve";

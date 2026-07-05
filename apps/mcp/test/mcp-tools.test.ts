@@ -29,6 +29,7 @@ const BOUND_TOOLS = [
   "endpoints.get",
   "endpoints.list",
   "endpoints.rotate",
+  "endpoints.revealIngestUrl",
   "endpoints.addProviderSecret",
   "endpoints.listProviderSecrets",
   "endpoints.revokeProviderSecret",

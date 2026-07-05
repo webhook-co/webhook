@@ -16,6 +16,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { SecretSealer } from "@webhook-co/shared";
+import type { ReadSealedIngestTokenResult } from "./ingest-token-seal";
 
 // Import CapabilityFault from the LEAF (not the `@webhook-co/contract` barrel): apps/web pulls this module
 // (DB-direct endpoint mutations) under Turbopack/OpenNext, where a named binding from a transpiled-package
@@ -350,6 +351,55 @@ export async function getEndpointIngestTokenHash(
   });
   const row = rows[0];
   return row ? Buffer.from(row.ingest_token_hash) : null;
+}
+
+interface SealedIngestRow {
+  ingest_token_ciphertext: Buffer | null;
+  ingest_token_wrapped_dek: Buffer | null;
+  ingest_token_kek_ref: string | null;
+  ingest_token_enc_nonce: Buffer | null;
+  ingest_token_envelope_version: number | null;
+  ingest_key_id: string | null;
+}
+
+/**
+ * Read an endpoint's SEALED ingest token for the reveal path (S8-remainder Slice 2 / ADR-0101). Runs as
+ * webhook_app under the org's RLS context (`withTenant(orgId)`) — so a cross-org / unknown / soft-deleted
+ * endpoint is RLS-invisible and returns `{found:false}` (→ NOT_FOUND), an INDEPENDENT tenant check on top of
+ * the AAD binding (never a `using(true)` cross-org role). This is the ENGINE-side, IDENTIFIER-only read: the
+ * engine calls it with `(orgId, endpointId)` and unseals the returned blob itself — a caller never supplies a
+ * blob (which would make the unseal a decrypt-anything oracle). The AAD context is rebuilt from the
+ * AUTHORITATIVE columns {orgId, id, ingest_key_id}, NEVER the audit-only enc_context jsonb. A visible endpoint
+ * with NULL sealed columns (legacy / seal-failed) returns `{found:true, sealed:null}` → "rotate to reveal".
+ */
+export async function readSealedIngestToken(
+  app: Sql,
+  orgId: string,
+  endpointId: string,
+): Promise<ReadSealedIngestTokenResult> {
+  const rows = await withTenant(app, orgId, async (tx) => {
+    return tx<SealedIngestRow[]>`
+      select ingest_token_ciphertext, ingest_token_wrapped_dek, ingest_token_kek_ref,
+             ingest_token_enc_nonce, ingest_token_envelope_version, ingest_key_id
+      from endpoints where id = ${endpointId} and deleted_at is null`;
+  });
+  const row = rows[0];
+  if (!row) return { found: false };
+  if (row.ingest_token_ciphertext === null || row.ingest_key_id === null) {
+    return { found: true, sealed: null };
+  }
+  return {
+    found: true,
+    sealed: {
+      sealed: {
+        ciphertext: row.ingest_token_ciphertext,
+        nonce: row.ingest_token_enc_nonce!,
+        wrapped: { wrappedDek: row.ingest_token_wrapped_dek!, kekRef: row.ingest_token_kek_ref! },
+        envelopeVersion: row.ingest_token_envelope_version!,
+      },
+      context: { orgId, endpointId, keyId: row.ingest_key_id },
+    },
+  };
 }
 
 interface EndpointResolveRow {

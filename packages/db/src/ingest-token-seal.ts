@@ -11,7 +11,12 @@
 
 import { randomUUID } from "node:crypto";
 
-import type { EncryptionContext, SecretSealer } from "@webhook-co/shared";
+import type {
+  EncryptionContext,
+  RevealedIngestToken,
+  SealedRecord,
+  SecretSealer,
+} from "@webhook-co/shared";
 
 const INGEST_TOKEN_KIND = "ingest_token";
 
@@ -110,4 +115,48 @@ export async function sealIngestTokenColumns(
     );
     return NULL_SEAL;
   }
+}
+
+// ── Reveal side (S8-remainder Slice 2) ──────────────────────────────────────────────────────────────
+// The recoverable ingest URL is displayed via a DEDICATED, engine-only, IDENTIFIER-only reveal path: the
+// engine reads the sealed columns for THAT endpoint itself (never a caller-supplied blob — that would be a
+// decrypt-anything oracle), unseals with its own store, and parses the typed wrapper (fail-closed). The
+// core below is pure (deps injected) so it is unit-testable without a DB or KMS.
+
+/** A retrieved sealed ingest token + the AAD context needed to unseal it (rebuilt from authoritative cols). */
+export interface SealedIngestToken {
+  readonly sealed: SealedRecord;
+  readonly context: EncryptionContext;
+}
+
+/**
+ * The result of reading an endpoint's sealed ingest token under RLS: whether the endpoint is visible at all
+ * (`found`), and if so whether it carries a recoverable copy (`sealed` non-null) or is a legacy/degraded
+ * endpoint with none (`sealed: null` → "rotate to reveal"). Distinguishing not-found from no-copy lets the
+ * reveal capability answer NOT_FOUND vs. a null URL.
+ */
+export type ReadSealedIngestTokenResult =
+  { readonly found: false } | { readonly found: true; readonly sealed: SealedIngestToken | null };
+
+/**
+ * The pure reveal core: read the sealed token (engine reads its OWN fixed endpoints columns by identifier),
+ * unseal, and parse the typed wrapper. Returns `{found:false}` for an unknown endpoint, `{found:true,
+ * token:null}` for no recoverable copy OR a wrapper that fails to parse (fail-closed — never surface a
+ * non-ingest-token plaintext as a URL), and `{found:true, token}` on success. An unseal THROW (KMS fault)
+ * propagates to the caller (a transient error is honest — it must NOT be conflated with "no copy"). `unseal`
+ * is the engine's own dedicated SecretStore.openString; `read` is the RLS-scoped tenant read.
+ */
+export async function revealIngestTokenCore(
+  deps: {
+    read: (orgId: string, endpointId: string) => Promise<ReadSealedIngestTokenResult>;
+    unseal: (sealed: SealedRecord, context: EncryptionContext) => Promise<string>;
+  },
+  orgId: string,
+  endpointId: string,
+): Promise<RevealedIngestToken> {
+  const res = await deps.read(orgId, endpointId);
+  if (!res.found) return { found: false, token: null };
+  if (res.sealed === null) return { found: true, token: null };
+  const plaintext = await deps.unseal(res.sealed.sealed, res.sealed.context);
+  return { found: true, token: parseIngestToken(plaintext) };
 }
