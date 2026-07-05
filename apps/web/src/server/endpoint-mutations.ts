@@ -17,7 +17,12 @@ import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { getTenantDb } from "./db";
-import { getAuditChainKey, getCredentialPepper, getIngestBaseUrl } from "./env";
+import {
+  getAuditChainKey,
+  getCredentialPepper,
+  getIngestBaseUrl,
+  getProviderSecretSealer,
+} from "./env";
 
 // The endpoint create/rotate/delete orchestration — the same DB-direct seam the credential dashboard uses
 // (mint/revoke), one level up from Lane B's tx-atomic db fns. Each runs under withTenant(orgId) as
@@ -141,6 +146,10 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
   const kv = (env as Record<string, unknown>).KV_CONFIG as
     Parameters<typeof kvCredentialCache>[0] | undefined;
   const cache = kv ? kvCredentialCache(kv) : null;
+  // The seal-only engine RPC used to store a RECOVERABLE copy of the ingest token so the URL is always-shown
+  // (decision-0018). OPTIONAL here (unlike provider secrets, which fail closed): a missing sealer degrades
+  // create/rotate to a NULL sealed copy ("rotate to reveal"), never blocks the mutation.
+  const sealer = getProviderSecretSealer();
   const app = await getTenantDb();
   // The hasher (CREDENTIAL_PEPPER fetch → key import) is needed ONLY by create/rotate, which mint a token —
   // NOT by soft-delete. Resolve it lazily + memoized so a delete never does the wasted secret round-trip +
@@ -156,6 +165,7 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
           { orgId, name, actor, maxEndpoints: DEFAULT_MAX_ENDPOINTS_PER_ORG },
           await getHasher(),
           auditKey,
+          sealer,
         );
         return {
           id: r.id,
@@ -171,6 +181,7 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
           { orgId, endpointId, actor },
           await getHasher(),
           auditKey,
+          sealer,
         );
         return {
           id: r.id,

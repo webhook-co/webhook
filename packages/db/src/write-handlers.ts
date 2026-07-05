@@ -113,6 +113,9 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
       { orgId: ctx.orgId, name: parsed.data.name, actor: ctx.userId ?? null, maxEndpoints },
       deps.hasher,
       deps.auditKey,
+      // Seal a recoverable copy of the token so the ingest URL becomes always-shown (decision-0018).
+      // Optional — a surface without the sealer degrades to "rotate to reveal", never fails the create.
+      deps.secretSealer,
     );
     // The ingestUrl EMBEDS the plaintext token — the one-time reveal. Never log it; return it once.
     return {
@@ -172,6 +175,9 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
       { orgId: ctx.orgId, endpointId: parsed.data.endpointId, actor: ctx.userId ?? null },
       deps.hasher,
       deps.auditKey,
+      // Reseal the new token so the rotated always-shown URL is retrievable (decision-0018). Optional —
+      // a failed reseal NULLs the sealed columns (never leaves a stale seal), never fails the rotate.
+      deps.secretSealer,
     );
     // HARD cutover: evict the OLD token so the old URL stops resolving immediately. Best-effort —
     // never fails the call (a thrown eviction would lose the one-time reveal of the NEW url below).

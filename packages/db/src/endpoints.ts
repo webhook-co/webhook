@@ -15,6 +15,8 @@
 
 import { randomUUID } from "node:crypto";
 
+import type { SecretSealer } from "@webhook-co/shared";
+
 // Import CapabilityFault from the LEAF (not the `@webhook-co/contract` barrel): apps/web pulls this module
 // (DB-direct endpoint mutations) under Turbopack/OpenNext, where a named binding from a transpiled-package
 // `export *` barrel resolves to `undefined` at runtime — so a barrel import would make `new CapabilityFault`
@@ -26,6 +28,7 @@ import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import { credentialHashEquals, mintCredential, type CredentialHasher } from "./credential";
 import type { ResolvedPrincipal } from "./credential-cache";
+import { sealIngestTokenColumns } from "./ingest-token-seal";
 
 /** Display + path prefix for ingest tokens (the wbhk.my/<token> path token). */
 export const INGEST_TOKEN_PREFIX = "whep";
@@ -112,9 +115,18 @@ export async function createEndpointWithAudit(
   input: CreateEndpointWithAuditInput,
   hasher: CredentialHasher,
   auditKey: CryptoKey,
+  sealer?: SecretSealer,
 ): Promise<CreatedEndpointRow> {
   const { plaintext, keyHash } = mintCredential(INGEST_TOKEN_PREFIX, hasher);
   const id = randomUUID();
+  // Seal a recoverable copy of the token BEFORE the tx (deliberately): the seal is an external RPC, and
+  // sealing inside the tx would hold a DB connection (and, on rotate, the endpoint `for update` lock) open
+  // across that RPC on every SUCCESSFUL mutation — worse than the accepted trade here, where a create later
+  // rejected by the soft cap wastes one (KMS-timeout-bounded) seal. That waste only hits an already-
+  // authenticated over-cap caller, so it is a bounded cost, not a correctness or auth issue. Degrades to
+  // all-NULL columns if no sealer is wired or the seal fails — the endpoint is still created from its hash
+  // (the always-shown URL just falls back to "rotate to reveal"). S8-remainder / decision-0018.
+  const seal = await sealIngestTokenColumns(sealer, input.orgId, id, plaintext);
   const createdAt = await withTenant(app, input.orgId, async (tx) => {
     // Serialize concurrent creates for THIS org (transaction-scoped, released on commit/rollback) so the
     // soft-cap check below is exact rather than racy (cap+N under a burst). Creates are infrequent, so
@@ -132,8 +144,18 @@ export async function createEndpointWithAudit(
       );
     }
     const rows = await tx<{ created_at: Date }[]>`
-      insert into endpoints (id, org_id, ingest_token_hash, name)
-      values (${id}, ${input.orgId}, ${keyHash}, ${input.name})
+      insert into endpoints (
+        id, org_id, ingest_token_hash, name,
+        ingest_token_ciphertext, ingest_token_wrapped_dek, ingest_token_kek_ref,
+        ingest_token_enc_nonce, ingest_token_enc_context, ingest_token_envelope_version, ingest_key_id
+      )
+      values (
+        ${id}, ${input.orgId}, ${keyHash}, ${input.name},
+        ${seal.ciphertext}, ${seal.wrappedDek}, ${seal.kekRef},
+        ${seal.nonce},
+        ${seal.encContext === null ? null : tx.json(seal.encContext as unknown as Parameters<typeof tx.json>[0])}::jsonb,
+        ${seal.envelopeVersion}, ${seal.keyId}
+      )
       returning created_at`;
     const inserted = rows[0];
     if (!inserted) throw new Error("createEndpointWithAudit: insert returned no row");
@@ -249,8 +271,17 @@ export async function rotateEndpointWithAudit(
   input: RotateEndpointInput,
   hasher: CredentialHasher,
   auditKey: CryptoKey,
+  sealer?: SecretSealer,
 ): Promise<RotatedEndpointRow> {
   const { plaintext, keyHash } = mintCredential(INGEST_TOKEN_PREFIX, hasher);
+  // Reseal the NEW token BEFORE the tx (deliberately — never hold the endpoint `for update` lock across the
+  // seal RPC; see createEndpointWithAudit for the same trade). The single UPDATE below writes the hash AND
+  // the sealed columns together, so they can never diverge; ALWAYS writing the seal result (even all-NULL on
+  // a failed reseal) overwrites the prior seal rather than leaving a STALE one behind the rotated hash —
+  // which would reveal a dead URL. A rotate of an unknown/deleted id (rejected NOT_FOUND in the tx) wastes
+  // one KMS-timeout-bounded seal — the accepted trade vs. holding the row lock across the RPC on every
+  // successful rotate. S8-remainder / decision-0018.
+  const seal = await sealIngestTokenColumns(sealer, input.orgId, input.endpointId, plaintext);
   return withTenant(app, input.orgId, async (tx) => {
     const rows = await tx<{ old_hash: Buffer; name: string; paused: boolean; created_at: Date }[]>`
       with cur as (
@@ -259,7 +290,15 @@ export async function rotateEndpointWithAudit(
         where id = ${input.endpointId} and deleted_at is null
         for update
       )
-      update endpoints e set ingest_token_hash = ${keyHash}
+      update endpoints e set
+          ingest_token_hash = ${keyHash},
+          ingest_token_ciphertext = ${seal.ciphertext},
+          ingest_token_wrapped_dek = ${seal.wrappedDek},
+          ingest_token_kek_ref = ${seal.kekRef},
+          ingest_token_enc_nonce = ${seal.nonce},
+          ingest_token_enc_context = ${seal.encContext === null ? null : tx.json(seal.encContext as unknown as Parameters<typeof tx.json>[0])}::jsonb,
+          ingest_token_envelope_version = ${seal.envelopeVersion},
+          ingest_key_id = ${seal.keyId}
         from cur
        where e.id = ${input.endpointId}
       returning cur.old_hash, cur.name, cur.paused, cur.created_at`;
