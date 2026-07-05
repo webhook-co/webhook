@@ -24,6 +24,7 @@ function due(over: Partial<DueDelivery> = {}): DueDelivery {
     headers: [],
     url: "https://d.example.com/in",
     verified: over.verified ?? true,
+    deliverable: over.deliverable ?? true,
   };
 }
 const ok = (status = 200): DeliverResult => ({
@@ -122,6 +123,18 @@ describe("runDeliveryDrain — best-effort (default)", () => {
     expect(d.retried).toEqual([]);
     expect(d.dead).toEqual([]);
   });
+
+  it("a non-deliverable (failed-verification) row is terminally BLOCKED and NEVER POSTed — ADR-0103 defense-in-depth", async () => {
+    // The enqueue gate already drops `failed` events, but the drain re-checks per delivery so a pre-gate /
+    // backlog row (or any future enqueue path that forgets the gate) is refused HERE, not forwarded.
+    const d = deps([due({ id: "a", deliverable: false }), due({ id: "b" })], () => ok());
+    await runDeliveryDrain(d);
+    expect(d.delivers).toEqual(["b"]); // 'a' is never handed to deliver() — no outbound POST
+    expect(d.blockedRec).toEqual(["a"]); // terminally blocked
+    expect(d.retried).toEqual([]); // never retried
+    expect(d.dead).toEqual([]);
+    expect(d.delivered).toEqual([["b", 200]]);
+  });
 });
 
 describe("runDeliveryDrain — strict ordered (head-of-line)", () => {
@@ -137,6 +150,14 @@ describe("runDeliveryDrain — strict ordered (head-of-line)", () => {
     expect(d.retried[0]![1]).toBeGreaterThanOrEqual(NOW + 5 * 60_000 * 0.9); // schedule[attempt 2] = 5m ±jitter
     expect(d.retried[0]![1]).toBeLessThanOrEqual(NOW + 5 * 60_000 * 1.1);
     expect(d.delivered).toEqual([]);
+  });
+
+  it("ordered: a non-deliverable head is terminal (blocked) → newer deliveries proceed", async () => {
+    const d = deps([due({ id: "a", deliverable: false }), due({ id: "b" })], () => ok(), true);
+    await runDeliveryDrain(d);
+    expect(d.blockedRec).toEqual(["a"]); // head refused (never POSTed)…
+    expect(d.delivers).toEqual(["b"]); // …and, being terminal, does not block the rest
+    expect(d.delivered).toEqual([["b", 200]]);
   });
 
   it("a terminal head (delivered / dead / blocked) lets newer deliveries proceed", async () => {

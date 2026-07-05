@@ -45,9 +45,16 @@ queued row's `events.verified`) gates signing on it directly.
 
 **The three chokepoints** (a shared helper, no per-site drift):
 1. **Auto-delivery enqueue** (`enqueueAutoDeliveries`, `packages/db`): a `failed` event enqueues **nothing**.
-   `unattempted`/`verified` enqueue as before. The DO drain then re-signs a queued delivery **only** when the
-   source event `verified` (the `events.verified` column, joined into `listDueDeliveries` — no migration) —
-   so an `unattempted` event is delivered UNSIGNED even to a signing destination.
+   `unattempted`/`verified` enqueue as before. The ingest caller **short-circuits** a `failed` event before
+   the enqueue tx and logs an explicit `ingest.autodelivery_skipped_unverifiable` breadcrumb (so the drop is
+   a visible operator signal, not a silent empty enqueue). The DO drain then re-signs a queued delivery
+   **only** when the source event `verified` (the `events.verified` column, joined into `listDueDeliveries` —
+   no migration) — so an `unattempted` event is delivered UNSIGNED even to a signing destination.
+   **Defense in depth:** the drain does not *trust* that enqueue filtered `failed` events — it re-derives the
+   deliverability verdict per delivery (`deliveryVerificationDecision`, from `events.verified` +
+   `events.verification`, both joined into `listDueDeliveries`) and **terminally blocks** any non-deliverable
+   row (never handed to the guarded POST), so a pre-gate/backlog row — or any future enqueue path that forgets
+   the gate — is refused at the drain rather than forwarded.
 2. **api remote-replay** (`apps/api/remote-replay.ts`): a `failed` event → a visible `FORBIDDEN` (operator
    action — errors, never a silent drop); the `signing` block is built only when `verified`.
 3. **web dashboard replay** (`apps/web/replay-mutations.ts`): the same — a `failed` event surfaces a clear

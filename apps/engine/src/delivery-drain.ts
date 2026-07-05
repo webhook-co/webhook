@@ -62,6 +62,20 @@ export async function runDeliveryDrain(deps: DrainDeps): Promise<void> {
     deps.ordered(),
   ]);
   for (const d of due) {
+    // SECURITY GATE (S8-remainder Slice 3 / ADR-0103), defense in depth. A `failed`-verification event (a
+    // signature WAS checked and REJECTED — forged/tampered) is never forwardable. The enqueue gate already
+    // drops it, but the drain re-checks per delivery so a pre-gate/backlog row — or any future enqueue path
+    // that forgets the gate — is terminally REFUSED here (never handed to the guarded POST), not delivered.
+    // Terminal like an SSRF block: not retried, no auto-disable tally bump; a blocked head advances in
+    // ordered mode. The signing gate (buildDeliverArgs) is a separate, narrower check on `verified`.
+    if (!d.deliverable) {
+      await deps.recordBlocked(
+        d,
+        null,
+        "verification failed: source signature was checked and rejected",
+      );
+      continue;
+    }
     const result = await deps.deliver(d, secrets);
     if (result.outcome === "delivered") {
       await deps.recordDelivered(d, result.status ?? 0);
@@ -165,8 +179,9 @@ export function makeDrainDeps(io: DrainIo): DrainDeps {
  * delivery is signed ONLY when the destination has secrets AND the source event was VERIFIED
  * (S8-remainder Slice 3 / ADR-0103): we never re-sign — vouch for as webhook.co — an event we did not
  * authenticate, so an unverified (`unattempted`) event is delivered UNSIGNED even to a signing destination.
- * (`failed` events are blocked at enqueue and never reach the drain.) Omitting the `signing` block is what
- * gates the engine away from KMS. `nowMs` yields the per-attempt timestamp.
+ * (`failed` events are dropped at enqueue AND terminally blocked in the drain — see runDeliveryDrain's
+ * `deliverable` gate — so they never reach here.) Omitting the `signing` block is what gates the engine away
+ * from KMS. `nowMs` yields the per-attempt timestamp.
  */
 export function buildDeliverArgs(
   orgId: string,

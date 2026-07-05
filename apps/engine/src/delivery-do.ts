@@ -225,9 +225,11 @@ export class DeliveryDO extends DurableObject<Env> {
     }
   }
 
-  /** ONE guarded, signed delivery attempt: the SSRF-guarded POST of the event's bytes, re-signed with the
-   *  destination's secrets. webhook-id = the delivery row id (STABLE across retries → the receiver dedups a
-   *  re-sent delivery); the timestamp is fresh per attempt (within the receiver's replay window). */
+  /** ONE guarded delivery attempt: the SSRF-guarded POST of the event's bytes, re-signed with the
+   *  destination's secrets ONLY when the source event was VERIFIED (S8-remainder Slice 3 / ADR-0103 — we
+   *  never vouch for an event we didn't authenticate; the `signing` gate lives in buildDeliverArgs, so an
+   *  unverified event POSTs UNSIGNED even here). webhook-id = the delivery row id (STABLE across retries →
+   *  the receiver dedups a re-sent delivery); the timestamp is fresh per attempt (within the replay window). */
   private deliverOne(
     orgId: string,
     d: DueDelivery,
@@ -241,8 +243,10 @@ export class DeliveryDO extends DurableObject<Env> {
         },
         resolve: (host) => resolveViaDoh((input, init) => fetch(input, init), host),
         fetch: (input, init) => fetch(input, init),
-        // Sign only when the destination has secrets; the store is built lazily (an unsigned destination
-        // never touches KMS).
+        // Provide the signer whenever the destination HAS secrets; the store is built lazily (an unsigned
+        // destination never touches KMS). Whether a given attempt actually signs is decided in
+        // buildDeliverArgs (only a VERIFIED event gets a `signing` block) — so an unverified event leaves
+        // this signer unused and POSTs unsigned.
         sign:
           secrets.length > 0
             ? async (signArgs) => makeSignDelivery(await getSignStore(this.env))(signArgs)
