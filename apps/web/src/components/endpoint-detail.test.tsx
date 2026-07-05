@@ -24,12 +24,47 @@ beforeEach(() => {
   refresh.mockReset();
 });
 
+const URL = "https://wbhk.my/whep_shown";
+
 describe("EndpointDetail", () => {
   it("renders the endpoint config (name, id, status)", () => {
-    render(<EndpointDetail endpoint={ep} rotateEndpoint={vi.fn()} deleteEndpoint={vi.fn()} />);
+    render(
+      <EndpointDetail
+        endpoint={ep}
+        ingestUrl={URL}
+        rotateEndpoint={vi.fn()}
+        deleteEndpoint={vi.fn()}
+      />,
+    );
     expect(screen.getByText("Stripe prod")).toBeInTheDocument();
     expect(screen.getByText("ep_1")).toBeInTheDocument();
     expect(screen.getByText("Active")).toBeInTheDocument();
+  });
+
+  it("ALWAYS shows the ingest URL with a copy affordance (decision-0018 / ADR-0101)", () => {
+    render(
+      <EndpointDetail
+        endpoint={ep}
+        ingestUrl={URL}
+        rotateEndpoint={vi.fn()}
+        deleteEndpoint={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(URL)).toBeInTheDocument();
+    // No "shown only once" copy anymore — the URL is retrievable any time.
+    expect(screen.queryByText(/shown only once/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a rotate-to-reveal hint for a legacy endpoint with no recoverable URL (null)", () => {
+    render(
+      <EndpointDetail
+        endpoint={ep}
+        ingestUrl={null}
+        rotateEndpoint={vi.fn()}
+        deleteEndpoint={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/rotate to mint a fresh ingest url/i)).toBeInTheDocument();
   });
 
   it("warns about the hard cutover, then rotates and reveals the new one-time URL", async () => {
@@ -39,7 +74,12 @@ describe("EndpointDetail", () => {
       ingestUrl: "https://wbhk.my/whep_rotated",
     }));
     render(
-      <EndpointDetail endpoint={ep} rotateEndpoint={rotateEndpoint} deleteEndpoint={vi.fn()} />,
+      <EndpointDetail
+        endpoint={ep}
+        ingestUrl={URL}
+        rotateEndpoint={rotateEndpoint}
+        deleteEndpoint={vi.fn()}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: /rotate url/i }));
@@ -53,13 +93,22 @@ describe("EndpointDetail", () => {
       expect(screen.getByText(/only time you'll see this url/i)).toBeInTheDocument(),
     );
     expect(screen.getByText("https://wbhk.my/whep_rotated")).toBeInTheDocument();
+
+    // Dismissing the one-time dialog refreshes the page so the ALWAYS-SHOWN URL re-reveals the new token.
+    await user.click(screen.getByRole("button", { name: /done/i }));
+    expect(refresh).toHaveBeenCalled();
   });
 
   it("warns soft-delete is immediate but events are retained, then deletes and navigates away", async () => {
     const user = userEvent.setup();
     const deleteEndpoint = vi.fn(async () => ({ ok: true as const }));
     render(
-      <EndpointDetail endpoint={ep} rotateEndpoint={vi.fn()} deleteEndpoint={deleteEndpoint} />,
+      <EndpointDetail
+        endpoint={ep}
+        ingestUrl={URL}
+        rotateEndpoint={vi.fn()}
+        deleteEndpoint={deleteEndpoint}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: /delete endpoint/i }));
@@ -76,7 +125,12 @@ describe("EndpointDetail", () => {
     const user = userEvent.setup();
     const rotateEndpoint = vi.fn(async () => ({ ok: false as const, error: "endpoint not found" }));
     render(
-      <EndpointDetail endpoint={ep} rotateEndpoint={rotateEndpoint} deleteEndpoint={vi.fn()} />,
+      <EndpointDetail
+        endpoint={ep}
+        ingestUrl={URL}
+        rotateEndpoint={rotateEndpoint}
+        deleteEndpoint={vi.fn()}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: /rotate url/i }));

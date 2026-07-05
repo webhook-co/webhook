@@ -2,7 +2,7 @@ import "server-only";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
-import type { DeliveryDispatcherRpc, SecretSealer } from "@webhook-co/shared";
+import type { DeliveryDispatcherRpc, IngestUrlRevealerRpc, SecretSealer } from "@webhook-co/shared";
 
 import type { SessionExchangeBinding } from "./session-exchange";
 
@@ -133,6 +133,26 @@ export function getDeliveryDispatcher(): DeliveryDispatcherRpc | undefined {
   const binding = workerEnv().DELIVERY_DISPATCHER;
   if (binding && typeof (binding as { deliver?: unknown }).deliver === "function") {
     return binding as DeliveryDispatcherRpc;
+  }
+  return undefined;
+}
+
+/**
+ * The `INGEST_URL_REVEALER` Cloudflare service binding — the engine's `IngestUrlRevealer` WorkerEntrypoint,
+ * reachable as a direct RPC (S8-remainder / ADR-0101). The engine is the sole KEK holder, so the ingest-URL
+ * UNSEAL happens ONLY there; the web worker passes identifiers `(orgId, endpointId)` and gets back the
+ * plaintext token — it never sees or supplies the sealed blob. Bound only at deploy (the gen-wrangler-prod
+ * overlay, mirroring api/mcp); `undefined` in dev/preview and before provisioning — the endpoint-detail
+ * reveal degrades to "rotate to reveal" (never a crash). Detected structurally (an object with a
+ * `revealIngestToken` method) so a mis-shaped binding never masquerades as a working revealer.
+ */
+export function getIngestUrlRevealer(): IngestUrlRevealerRpc | undefined {
+  const binding = workerEnv().INGEST_URL_REVEALER;
+  if (
+    binding &&
+    typeof (binding as { revealIngestToken?: unknown }).revealIngestToken === "function"
+  ) {
+    return binding as IngestUrlRevealerRpc;
   }
   return undefined;
 }

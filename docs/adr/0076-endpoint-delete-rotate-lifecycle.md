@@ -1,10 +1,11 @@
 # ADR 0076 — `endpoints.delete` (soft) + `endpoints.rotate` (hard cutover) + KV ingest-cache eviction
 
-> **Superseded (partial), 2026-06-26.** The *one-time, unrecoverable reveal* of the rotated ingest URL
-> described here is superseded by a decision to make the ingest URL **always-shown** — retrievable on demand
-> and stored **envelope-encrypted at rest** (not hash-only). Rotate still mints a new token and hard-cuts the
-> old one (unchanged); only the "new URL shown exactly once" property changes. Delete/soft-delete semantics
-> are unaffected. This ADR will be revised when that change ships (tracked in the internal backlog).
+> **Superseded (partial), 2026-06-26; IMPLEMENTED 2026-07-05 by [ADR-0101](0101-always-shown-ingest-url-sealed-at-rest.md).**
+> The *one-time, unrecoverable reveal* of the rotated ingest URL described here is superseded: the ingest URL
+> is now **always-shown** — a recoverable copy of the token is stored **envelope-encrypted at rest** and
+> re-displayed on demand (the reveal capability + the dashboard). Rotate still mints a new token and hard-cuts
+> the old one (unchanged) and re-seals the new token in lockstep; it is simply no longer the *only* time you
+> can see the new URL. Delete / soft-delete semantics are unaffected.
 
 - status: accepted.
 - date: 2026-06-25

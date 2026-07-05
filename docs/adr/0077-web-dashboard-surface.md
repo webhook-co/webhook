@@ -1,10 +1,10 @@
 # ADR 0077 — web dashboard surface: events + endpoint management at parity (DB-direct, R2/KV-on-web, CSP)
 
-> **Superseded (partial), 2026-06-26.** The ingest-URL **one-time reveal** in the dashboard (the "shown only
-> once" copy) is superseded by a decision to make the ingest URL **always-shown** — retrievable on demand
-> from the endpoint detail and stored **envelope-encrypted at rest** (not hash-only). The create/rotate
-> reveal dialogs and the detail page will be revised when that change ships (tracked in the internal
-> backlog). API keys are unaffected — they remain one-time-reveal.
+> **Superseded (partial), 2026-06-26; IMPLEMENTED 2026-07-05 by [ADR-0101](0101-always-shown-ingest-url-sealed-at-rest.md).**
+> The ingest-URL **one-time reveal** in the dashboard (the old "shown only once" copy) is superseded: the
+> endpoint-detail page now shows the `wbhk.my/<token>` URL **always** (unsealed engine-side from the
+> recoverable copy stored **envelope-encrypted at rest**), with a copy button. The create/rotate one-time
+> dialogs remain as an immediate confirmation. **API keys are unaffected — they remain one-time-reveal.**
 
 - status: accepted.
 - date: 2026-06-25
