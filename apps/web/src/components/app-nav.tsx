@@ -13,15 +13,19 @@ export function AppNav() {
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
   return (
     <>
-      <AppNavSection>Workspace</AppNavSection>
+      {/* Grouped by direction: Inbound is what you receive; Outbound is where you send it and how those
+          sends fared. Within Outbound, Destinations (the targets) precede Deliveries (the results) —
+          a delivery can't exist before a destination. */}
+      <AppNavSection>Inbound</AppNavSection>
       <AppNavItem href="/endpoints" active={isActive("/endpoints")}>
         Endpoints
       </AppNavItem>
-      <AppNavItem href="/deliveries" active={isActive("/deliveries")}>
-        Deliveries
-      </AppNavItem>
+      <AppNavSection>Outbound</AppNavSection>
       <AppNavItem href="/destinations" active={isActive("/destinations")}>
         Destinations
+      </AppNavItem>
+      <AppNavItem href="/deliveries" active={isActive("/deliveries")}>
+        Deliveries
       </AppNavItem>
       <AppNavSection>Account</AppNavSection>
       <AppNavItem href="/settings" active={isActive("/settings")}>

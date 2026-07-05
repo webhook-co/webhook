@@ -38,7 +38,8 @@ export default async function DeliveriesPage({
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-heading text-fg">Deliveries</h1>
         <p className="leading-snug text-fg-secondary">
-          Every attempt to deliver an event to a destination.
+          Every delivery attempt across all your destinations, including one-off replays. Open a
+          destination to see just its deliveries.
         </p>
       </div>
 
