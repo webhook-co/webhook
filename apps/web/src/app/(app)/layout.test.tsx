@@ -23,4 +23,19 @@ describe("AppLayout (gated dashboard shell)", () => {
     expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Account menu" })).toBeInTheDocument();
   });
+
+  it("groups the nav Inbound/Outbound and orders Destinations before Deliveries", async () => {
+    render(await AppLayout({ children: <p>page content</p> }));
+    // The sidebar reads inbound (what you receive) → outbound targets → outbound results.
+    expect(screen.getByText("Inbound")).toBeInTheDocument();
+    expect(screen.getByText("Outbound")).toBeInTheDocument();
+
+    const links = screen.getAllByRole("link").map((l) => l.textContent);
+    const destinations = links.indexOf("Destinations");
+    const deliveries = links.indexOf("Deliveries");
+    expect(destinations).toBeGreaterThanOrEqual(0);
+    expect(deliveries).toBeGreaterThanOrEqual(0);
+    // A delivery can't exist before a destination — Destinations comes first.
+    expect(destinations).toBeLessThan(deliveries);
+  });
 });
