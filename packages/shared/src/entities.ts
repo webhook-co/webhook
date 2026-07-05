@@ -77,6 +77,38 @@ export function deriveVerificationState(
   return verification != null ? "failed" : "unattempted";
 }
 
+/** Whether a captured event may be forwarded to a destination, and whether we may RE-SIGN it. */
+export interface DeliveryVerificationDecision {
+  /** May this event be forwarded to a destination at all? */
+  readonly deliver: boolean;
+  /** May we re-sign it with the DESTINATION's signing secret (vouch for it as webhook.co)? */
+  readonly sign: boolean;
+}
+
+/**
+ * The forward/re-sign decision for a captured event, keyed on the UN-FORGEABLE server-derived verification
+ * state — never the attacker-controlled `provider` (S8-remainder Slice 3 / ADR-0103). A forged event (anyone
+ * who learns the ingest URL can POST one) must never be auto-delivered/replayed AND re-signed with our
+ * destination secret, or the receiver would trust attacker-authored content under webhook.co's signature.
+ *
+ *   - `verified` / `authenticated` → deliver + SIGN (we authenticated the source).
+ *   - `unattempted` (no signature was checked — no secret, or the header was omitted) → deliver but NEVER
+ *     sign. Unverified forwarding is preserved (the event still delivers), but stripped of our signature, so
+ *     a forged event can never carry it. We do not vouch for content we did not authenticate.
+ *   - `failed` (a signature WAS checked and REJECTED) → BLOCK. A rejected signature is forged/tampered — never
+ *     forwardable, no configuration overrides this.
+ *
+ * `sign` is exactly the un-forgeable `verified` bool; a caller with only that bool (e.g. the delivery drain
+ * reading a queued row's `events.verified`) can gate signing on it directly.
+ */
+export function deliveryVerificationDecision(
+  verified: boolean,
+  verification: unknown,
+): DeliveryVerificationDecision {
+  const state = deriveVerificationState(verified, verification);
+  return { deliver: state !== "failed", sign: state === "verified" || state === "authenticated" };
+}
+
 /** The list view of an event (events.list) — no body, no full headers. */
 export const EventSummarySchema = z.object({
   id: uuid,

@@ -133,6 +133,10 @@ export interface DueDelivery {
   readonly headers: ReadonlyArray<readonly [string, string]>;
   /** The destination's canonical delivery URL. */
   readonly url: string;
+  /** Whether the source event's signature VERIFIED. The drain re-signs with the destination secret ONLY when
+   *  true — an unverified (`unattempted`) event is delivered UNSIGNED, so a forged event never carries our
+   *  signature (S8-remainder Slice 3 / ADR-0103). `failed` events are blocked at enqueue and never queue. */
+  readonly verified: boolean;
 }
 
 interface DueDeliveryRow {
@@ -143,6 +147,7 @@ interface DueDeliveryRow {
   dedup_key: string;
   headers: [string, string][];
   url: string;
+  verified: boolean;
 }
 
 /**
@@ -163,7 +168,7 @@ export async function listDueDeliveries(
   limit = 50,
 ): Promise<DueDelivery[]> {
   const rows = await tx<DueDeliveryRow[]>`
-    select da.id, da.attempt, da.event_id, e.endpoint_id, e.dedup_key, e.headers, d.url
+    select da.id, da.attempt, da.event_id, e.endpoint_id, e.dedup_key, e.headers, e.verified, d.url
     from delivery_attempts da
     join events e on e.id = da.event_id and e.org_id = da.org_id
     join replay_destinations d on d.id = da.destination_id and d.org_id = da.org_id
@@ -194,6 +199,7 @@ export async function listDueDeliveries(
     dedupKey: r.dedup_key,
     headers: r.headers,
     url: r.url,
+    verified: r.verified,
   }));
 }
 

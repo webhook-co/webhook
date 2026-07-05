@@ -14,6 +14,7 @@ const {
   ReplayNotFoundError,
   DispatcherUnavailableError,
   ReplayConflictError,
+  ReplayUnverifiedError,
 } = vi.hoisted(() => {
   class ReplayNotFoundError extends Error {
     constructor() {
@@ -33,11 +34,18 @@ const {
       this.name = "ReplayConflictError";
     }
   }
+  class ReplayUnverifiedError extends Error {
+    constructor() {
+      super("unverified");
+      this.name = "ReplayUnverifiedError";
+    }
+  }
   return {
     replayToDestination: vi.fn(),
     ReplayNotFoundError,
     DispatcherUnavailableError,
     ReplayConflictError,
+    ReplayUnverifiedError,
   };
 });
 vi.mock("./replay-mutations", () => ({
@@ -45,6 +53,7 @@ vi.mock("./replay-mutations", () => ({
   ReplayNotFoundError,
   DispatcherUnavailableError,
   ReplayConflictError,
+  ReplayUnverifiedError,
 }));
 
 const { logActionError } = vi.hoisted(() => ({ logActionError: vi.fn() }));
@@ -117,6 +126,13 @@ describe("replayToDestinationAction", () => {
     const res = await replayToDestinationAction(EVENT, DEST);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/try again/i);
+  });
+
+  it("maps a ReplayUnverifiedError to a clear 'signature was rejected' message (ADR-0103)", async () => {
+    replayToDestination.mockRejectedValue(new ReplayUnverifiedError());
+    const res = await replayToDestinationAction(EVENT, DEST);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/signature was rejected/i);
   });
 
   it("maps an unexpected error to a generic failure (scrubbed log)", async () => {

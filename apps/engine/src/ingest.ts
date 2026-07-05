@@ -110,6 +110,10 @@ export interface AutoDeliverArgs {
     readonly eventType: string | null;
     /** Whether the event's signature verified (gates require_verified subscriptions). */
     readonly verified: boolean;
+    /** The structured verification diagnostic — distinguishes `failed` (signature checked + REJECTED →
+     *  forged → never auto-delivered) from `unattempted` (no signature checked → delivered UNSIGNED).
+     *  S8-remainder Slice 3 / ADR-0103. */
+    readonly verification: VerificationResult | null;
   };
 }
 
@@ -484,7 +488,13 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
       .autoDeliver({
         orgId: endpoint.orgId,
         sourceEndpointId: endpoint.endpointId,
-        event: { eventId, provider, eventType, verified: outcome.verified },
+        event: {
+          eventId,
+          provider,
+          eventType,
+          verified: outcome.verified,
+          verification: outcome.verification,
+        },
       })
       .catch((err: unknown) =>
         deps.log("ingest.autodeliver_failed", {

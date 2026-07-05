@@ -10,7 +10,12 @@ import {
   type ReplayHandler,
   type Sql,
 } from "@webhook-co/db";
-import type { DeliverResult, DeliveryDispatcherRpc, DeliverySigning } from "@webhook-co/shared";
+import {
+  deliveryVerificationDecision,
+  type DeliverResult,
+  type DeliveryDispatcherRpc,
+  type DeliverySigning,
+} from "@webhook-co/shared";
 
 // The api-side orchestration for the REMOTE replay arm (events.replay with {kind:"destination"}, ADR-0081).
 // The server delivers (unlike the localhost-tunnel arm, where the CLI POSTs and the api only records). This
@@ -51,6 +56,16 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
     const claimed = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       const event = await getEvent(tx, eventId);
       if (!event) throw new CapabilityFault("NOT_FOUND", "event not found");
+      // SECURITY GATE (S8-remainder Slice 3 / ADR-0103): never replay a `failed` event (its signature was
+      // checked and REJECTED — forged/tampered) to a destination; that would re-sign attacker-authored
+      // content with our secret. `unattempted` (no signature checked) replays but is delivered UNSIGNED below.
+      // Keyed on the un-forgeable verified-state, visible error (operator-facing) — not a silent drop.
+      if (!deliveryVerificationDecision(event.verified, event.verification).deliver) {
+        throw new CapabilityFault(
+          "FORBIDDEN",
+          "cannot replay this event: its signature was checked and rejected (unverifiable/forged)",
+        );
+      }
       const destination = await getReplayDestination(tx, target.destinationId);
       // NOT_FOUND (not a distinct code) so we don't leak whether the destination id exists cross-org.
       if (!destination) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
@@ -96,7 +111,10 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
     // Re-sign with the destination's secret(s) so the receiver can verify webhook.co (S3 Slice 2). The
     // webhook-id is THIS attempt's id (a fresh idempotency key per delivery). No secret on the destination
     // ⇒ no `signing` ⇒ delivered unsigned (the 1b verbatim behavior). The engine unseals + signs.
+    // Re-sign ONLY a verified event (ADR-0103): we never vouch (sign) for content we didn't authenticate, so
+    // an `unattempted` event is replayed UNSIGNED even to a signing destination.
     const signing: DeliverySigning | undefined =
+      deliveryVerificationDecision(claimed.event.verified, claimed.event.verification).sign &&
       claimed.signingSecrets.length > 0
         ? {
             webhookId: claimed.attempt.id,

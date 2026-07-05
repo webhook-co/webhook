@@ -6,6 +6,7 @@ import {
   replayToDestination,
   ReplayConflictError,
   ReplayNotFoundError,
+  ReplayUnverifiedError,
   type ClaimOutcome,
   type ReplayDeps,
 } from "./replay-mutations";
@@ -37,6 +38,7 @@ function claimed(
       endpointId: "ep-1",
       dedupKey: "dk-1",
       headers: [["content-type", "application/json"]],
+      verified: true,
     },
     destinationUrl: "https://hooks.example.com/in",
     signingSecrets: [],
@@ -121,6 +123,35 @@ describe("replayToDestination", () => {
     const args: DeliverArgs = (d.dispatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(args.signing?.webhookId).toBe(ATTEMPT_ID);
     expect(args.signing?.secrets).toHaveLength(1);
+  });
+
+  it("delivers an UNVERIFIED event UNSIGNED even with destination secrets (ADR-0103 — no false vouch)", async () => {
+    const d = deps({
+      claim: vi.fn(async () =>
+        claimed({
+          event: {
+            endpointId: "ep-1",
+            dedupKey: "dk-1",
+            headers: [["content-type", "application/json"]],
+            verified: false, // unattempted → deliver, but never sign
+          },
+          signingSecrets: [
+            { id: "k1", status: "active", sealed: { s: 1 }, context: { orgId: ORG } } as never,
+          ],
+        }),
+      ),
+    });
+    await replayToDestination({ orgId: ORG, eventId: EVENT, destinationId: DEST }, d);
+    const args: DeliverArgs = (d.dispatch as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(args.signing).toBeUndefined(); // unverified → delivered, but UNSIGNED
+  });
+
+  it("THROWS ReplayUnverifiedError for a `failed` event (blocked at claim) and never dispatches", async () => {
+    const d = deps({ claim: vi.fn(async () => ({ kind: "blocked" })) });
+    await expect(
+      replayToDestination({ orgId: ORG, eventId: EVENT, destinationId: DEST }, d),
+    ).rejects.toBeInstanceOf(ReplayUnverifiedError);
+    expect(d.dispatch).not.toHaveBeenCalled();
   });
 
   it("records a 'failed' outcome (never throws) when the dispatcher RPC throws", async () => {

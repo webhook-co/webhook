@@ -244,4 +244,53 @@ describe("createRemoteReplayHandler", () => {
     await h(ctx(), input()); // destId has no signing secret
     expect(d.calls[0]!.signing).toBeUndefined();
   });
+
+  // Seed an event with an explicit (verified, verification) pair to model the failed / unattempted states.
+  async function seedEvt(verified: boolean, verification: unknown): Promise<string> {
+    const id = newId();
+    await withTenant(app, orgId, async (tx) => {
+      await tx`
+        insert into events
+          (id, org_id, endpoint_id, payload_r2_key, payload_bytes, content_type, headers,
+           dedup_key, dedup_strategy, provider, verified, verification)
+        values
+          (${id}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${id}`}, ${10},
+           ${"application/json"}, ${tx.json([["webhook-id", "m"]])}, ${newId()}, ${"content_hash"},
+           ${"stripe"}, ${verified}, ${verification === null ? null : tx.json(verification as object)})`;
+    });
+    return id;
+  }
+
+  it("BLOCKS replay of a `failed` event (signature checked + REJECTED) with FORBIDDEN — no delivery (ADR-0103)", async () => {
+    const failedId = await seedEvt(false, {
+      ok: false,
+      reason: { code: "NO_MATCHING_KEY", keysTried: 1 },
+    });
+    const d = dispatcherReturning({ outcome: "delivered", status: 200, error: null, latencyMs: 1 });
+    const h = createRemoteReplayHandler({ tenant: app, dispatcher: d.rpc });
+    await expect(h(ctx(), input({ eventId: failedId }))).rejects.toMatchObject({
+      name: "CapabilityFault",
+      code: "FORBIDDEN",
+    });
+    expect(d.calls).toHaveLength(0); // never dispatched (never re-signed)
+  });
+
+  it("replays an `unattempted` event UNSIGNED even to a SIGNED destination (ADR-0103 — no false vouch)", async () => {
+    const store = new SecretStore(await LocalKmsProvider.generate());
+    const signedDest = (
+      await createReplayDestination(app, { orgId, url: "https://signed2.example.com/in" })
+    ).id;
+    await createSigningSecret(app, { orgId, destinationId: signedDest }, store);
+    const unattemptedId = await seedEvt(false, null); // no signature checked → deliver, but never sign
+
+    const d = dispatcherReturning({ outcome: "delivered", status: 200, error: null, latencyMs: 1 });
+    const h = createRemoteReplayHandler({ tenant: app, dispatcher: d.rpc });
+    const out = await h(ctx(), {
+      eventId: unattemptedId,
+      target: { kind: "destination", destinationId: signedDest },
+      idempotencyKey: randomUUID(),
+    });
+    expect(out.status).toBe("delivered");
+    expect(d.calls[0]!.signing).toBeUndefined(); // delivered, but UNSIGNED (we didn't authenticate it)
+  });
 });

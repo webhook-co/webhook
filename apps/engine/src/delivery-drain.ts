@@ -161,9 +161,12 @@ export function makeDrainDeps(io: DrainIo): DrainDeps {
 
 /**
  * Build the guarded-deliver args for ONE attempt. The Standard Webhooks `webhook-id` is the STABLE delivery
- * row id across every retry (so a receiver dedups a re-sent delivery — the founder-locked invariant), and the
- * delivery is signed ONLY when the destination has secrets (an unsigned destination must never construct a
- * `signing` block, which is what gates the engine away from KMS). `nowMs` yields the per-attempt timestamp.
+ * row id across every retry (so a receiver dedups a re-sent delivery — the founder-locked invariant). The
+ * delivery is signed ONLY when the destination has secrets AND the source event was VERIFIED
+ * (S8-remainder Slice 3 / ADR-0103): we never re-sign — vouch for as webhook.co — an event we did not
+ * authenticate, so an unverified (`unattempted`) event is delivered UNSIGNED even to a signing destination.
+ * (`failed` events are blocked at enqueue and never reach the drain.) Omitting the `signing` block is what
+ * gates the engine away from KMS. `nowMs` yields the per-attempt timestamp.
  */
 export function buildDeliverArgs(
   orgId: string,
@@ -178,7 +181,7 @@ export function buildDeliverArgs(
     url: d.url,
     headers: d.headers,
     signing:
-      secrets.length > 0
+      d.verified && secrets.length > 0
         ? { webhookId: d.id, timestamp: Math.floor(nowMs / 1000), secrets }
         : undefined,
   };

@@ -23,6 +23,7 @@ function due(over: Partial<DueDelivery> = {}): DueDelivery {
     dedupKey: "dk_1",
     headers: [],
     url: "https://d.example.com/in",
+    verified: over.verified ?? true,
   };
 }
 const ok = (status = 200): DeliverResult => ({
@@ -277,6 +278,12 @@ describe("buildDeliverArgs — stable webhook-id + signing gate", () => {
   it("signs ONLY when secrets are present (an unsigned destination builds no signing block → no KMS)", () => {
     expect(buildDeliverArgs("org", due(), [], 0).signing).toBeUndefined();
     expect(buildDeliverArgs("org", due(), sealed, 0).signing).toBeDefined();
+  });
+
+  it("signs ONLY a VERIFIED event — an unverified (unattempted) delivery is UNSIGNED even with secrets (ADR-0103)", () => {
+    // We never re-sign (vouch for) an event we didn't authenticate — a forged event can't carry our signature.
+    expect(buildDeliverArgs("org", due({ verified: false }), sealed, 0).signing).toBeUndefined();
+    expect(buildDeliverArgs("org", due({ verified: true }), sealed, 0).signing).toBeDefined();
   });
 
   it("threads orgId/endpointId/dedupKey/url/headers and a per-attempt unix-seconds timestamp", () => {

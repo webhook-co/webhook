@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   DeliveryAttemptSchema,
+  deliveryVerificationDecision,
   deriveVerificationState,
   EndpointSchema,
   EventSchema,
@@ -49,6 +50,27 @@ describe("deriveVerificationState", () => {
       // no verificationState
     });
     expect(parsed.verificationState).toBeUndefined();
+  });
+});
+
+describe("deliveryVerificationDecision (S8-remainder Slice 3 / ADR-0103)", () => {
+  it("verified → deliver + SIGN (we authenticated the source)", () => {
+    expect(deliveryVerificationDecision(true, { ok: true })).toEqual({ deliver: true, sign: true });
+  });
+  it("authenticated (token/basic) → deliver + SIGN", () => {
+    expect(deliveryVerificationDecision(true, { ok: true, authenticity: "token" })).toEqual({
+      deliver: true,
+      sign: true,
+    });
+  });
+  it("unattempted (no signature checked) → deliver but NEVER sign (unverified forwarding, unsigned)", () => {
+    expect(deliveryVerificationDecision(false, null)).toEqual({ deliver: true, sign: false });
+    expect(deliveryVerificationDecision(false, undefined)).toEqual({ deliver: true, sign: false });
+  });
+  it("failed (a signature was checked and REJECTED) → BLOCK (forged/tampered, never forwardable)", () => {
+    expect(
+      deliveryVerificationDecision(false, { ok: false, reason: { code: "WRONG_SECRET" } }),
+    ).toEqual({ deliver: false, sign: false });
   });
 });
 
