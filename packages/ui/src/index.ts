@@ -85,6 +85,7 @@ export {
   type MultiSelectProps,
 } from "./components/multi-select";
 export { Calendar, type CalendarRange, type CalendarProps } from "./components/calendar";
+export { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/tabs";
 export {
   Card,
   CardHeader,

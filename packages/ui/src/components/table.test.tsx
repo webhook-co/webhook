@@ -100,6 +100,30 @@ describe("Table", () => {
     expect(ref.current).toBeInstanceOf(HTMLTableCellElement);
   });
 
+  it("uses comfortable row padding by default", () => {
+    render(<Example />);
+    expect(screen.getAllByRole("cell")[0]).toHaveClass("py-3");
+    // No dense overrides on a default table.
+    expect(screen.getByRole("table")).not.toHaveClass("[&_td]:py-1.5");
+  });
+
+  it("applies compact cell/header overrides on the table when dense", () => {
+    render(
+      <Table dense>
+        <TableBody>
+          <TableRow>
+            <TableCell>evt_1</TableCell>
+          </TableRow>
+        </TableBody>
+      </Table>,
+    );
+    // Density rides on the table as descendant utilities (wins on specificity) — cells/headers stay
+    // context-free primitives.
+    const table = screen.getByRole("table");
+    expect(table).toHaveClass("[&_td]:py-1.5");
+    expect(table).toHaveClass("[&_th]:h-8");
+  });
+
   it("makes the scroll wrapper keyboard-focusable and forwards containerProps", () => {
     render(<Table containerProps={{ role: "region", "aria-label": "Deliveries" }} />);
     const region = screen.getByRole("region", { name: "Deliveries" });

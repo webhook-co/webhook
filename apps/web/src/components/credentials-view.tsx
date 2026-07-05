@@ -13,6 +13,10 @@ import {
   TableHead,
   TableHeader,
   TableRow,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
   type BadgeProps,
 } from "@webhook-co/ui";
 import type { ReactNode } from "react";
@@ -72,7 +76,7 @@ function KeysTable({
   // standalone table); device-child keys are revoked via their grant's cascade, never directly.
   const colSpan = onRevoke ? 7 : 6;
   return (
-    <Table>
+    <Table dense>
       <TableHeader>
         <TableRow>
           <TableHead>Name</TableHead>
@@ -179,10 +183,75 @@ function DeviceCard({
 function EmptyState({ children }: { children: ReactNode }) {
   return (
     <Card>
-      <CardContent className="py-10 text-center text-sm text-fg-muted">{children}</CardContent>
+      <CardContent className="py-8 text-center text-sm text-fg-muted">{children}</CardContent>
     </Card>
   );
 }
+
+/** The API-keys grouping — rendered first (above devices). `omitEmpty` drops it entirely when empty
+ *  (used on the Inactive tab, where an absent grouping is quieter than an empty card). */
+function KeysSection({
+  keys,
+  onRevoke,
+  variant,
+  omitEmpty = false,
+}: {
+  keys: readonly ApiKeyItem[];
+  onRevoke?: (key: ApiKeyItem) => void;
+  variant: "active" | "inactive";
+  omitEmpty?: boolean;
+}) {
+  if (omitEmpty && keys.length === 0) return null;
+  const headingId = `keys-heading-${variant}`;
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <h2 id={headingId} className="text-lg font-semibold tracking-tight text-fg">
+        API keys
+      </h2>
+      {keys.length === 0 ? (
+        <EmptyState>No API keys yet.</EmptyState>
+      ) : (
+        <Card>
+          <CardContent className="pt-4">
+            <KeysTable keys={keys} onRevoke={onRevoke} />
+          </CardContent>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+/** The authorized-devices grouping — rendered below API keys. */
+function DevicesSection({
+  devices,
+  onRevoke,
+  variant,
+  omitEmpty = false,
+}: {
+  devices: readonly DeviceGrant[];
+  onRevoke?: (grant: DeviceGrant) => void;
+  variant: "active" | "inactive";
+  omitEmpty?: boolean;
+}) {
+  if (omitEmpty && devices.length === 0) return null;
+  const headingId = `devices-heading-${variant}`;
+  return (
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
+      <h2 id={headingId} className="text-lg font-semibold tracking-tight text-fg">
+        Authorized devices
+      </h2>
+      {devices.length === 0 ? (
+        <EmptyState>No authorized devices.</EmptyState>
+      ) : (
+        devices.map((grant) => <DeviceCard key={grant.id} grant={grant} onRevoke={onRevoke} />)
+      )}
+    </section>
+  );
+}
+
+/** A key is dead once revoked; a grant is dead once revoked or expired (pending/active stay live). */
+const isDeadKey = (k: ApiKeyItem) => k.revokedAt !== null;
+const isDeadGrant = (g: DeviceGrant) => g.status === "revoked" || g.status === "expired";
 
 export function CredentialsView({ result, onRevokeKey, onRevokeGrant }: CredentialsViewProps) {
   if (result.status === "denied") {
@@ -197,35 +266,41 @@ export function CredentialsView({ result, onRevokeKey, onRevokeGrant }: Credenti
   }
 
   const { devices, keys } = result;
-  return (
-    <div className="flex flex-col gap-10">
-      <section aria-labelledby="devices-heading" className="flex flex-col gap-4">
-        <h2 id="devices-heading" className="text-lg font-semibold tracking-tight text-fg">
-          Authorized devices
-        </h2>
-        {devices.length === 0 ? (
-          <EmptyState>No authorized devices.</EmptyState>
-        ) : (
-          devices.map((grant) => (
-            <DeviceCard key={grant.id} grant={grant} onRevoke={onRevokeGrant} />
-          ))
-        )}
-      </section>
+  // Split live from dead so the default view stays compact — revoked keys + revoked/expired grants
+  // move behind an "Inactive" tab (they're audit history, not something you act on). Only live
+  // credentials carry a revoke affordance, so the dead groupings pass no revoke handler.
+  const activeKeys = keys.filter((k) => !isDeadKey(k));
+  const inactiveKeys = keys.filter(isDeadKey);
+  const activeDevices = devices.filter((g) => !isDeadGrant(g));
+  const inactiveDevices = devices.filter(isDeadGrant);
+  const inactiveCount = inactiveKeys.length + inactiveDevices.length;
 
-      <section aria-labelledby="keys-heading" className="flex flex-col gap-4">
-        <h2 id="keys-heading" className="text-lg font-semibold tracking-tight text-fg">
-          API keys
-        </h2>
-        {keys.length === 0 ? (
-          <EmptyState>No API keys yet.</EmptyState>
+  return (
+    <Tabs defaultValue="active" className="flex flex-col gap-6">
+      <TabsList aria-label="Credential status">
+        <TabsTrigger value="active">Active</TabsTrigger>
+        <TabsTrigger value="inactive">
+          Inactive{inactiveCount > 0 ? ` (${inactiveCount})` : ""}
+        </TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="active">
+        <div className="flex flex-col gap-8">
+          <KeysSection keys={activeKeys} onRevoke={onRevokeKey} variant="active" />
+          <DevicesSection devices={activeDevices} onRevoke={onRevokeGrant} variant="active" />
+        </div>
+      </TabsContent>
+
+      <TabsContent value="inactive">
+        {inactiveCount === 0 ? (
+          <EmptyState>No revoked or expired credentials.</EmptyState>
         ) : (
-          <Card>
-            <CardContent className="pt-6">
-              <KeysTable keys={keys} onRevoke={onRevokeKey} />
-            </CardContent>
-          </Card>
+          <div className="flex flex-col gap-8">
+            <KeysSection keys={inactiveKeys} variant="inactive" omitEmpty />
+            <DevicesSection devices={inactiveDevices} variant="inactive" omitEmpty />
+          </div>
         )}
-      </section>
-    </div>
+      </TabsContent>
+    </Tabs>
   );
 }
