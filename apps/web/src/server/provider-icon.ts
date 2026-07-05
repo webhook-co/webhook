@@ -1,4 +1,8 @@
-import { PROVIDER_DOMAINS } from "@webhook-co/ui";
+// Import the provider-domain map from its LEAF subpath, not the package barrel: this module runs in the
+// edge `/api/provider-icon` route, and pulling the React design-system barrel there eagerly evaluates
+// client-only modules (module-level `createContext`), which crashes the non-React build. The leaf is pure
+// data. (See the turbopack-contract-barrel gotcha.)
+import { PROVIDER_DOMAINS } from "@webhook-co/ui/provider-branding";
 
 // The favicon-proxy route's pure helpers (the route handler in app/api/provider-icon/route.ts is a thin
 // shell around these). The route exists so the dashboard can show a real brand logo for the brands Simple

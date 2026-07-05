@@ -9,7 +9,16 @@ export interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
    * via `containerProps={{ role: "region", "aria-label": "…" }}`.
    */
   containerProps?: React.HTMLAttributes<HTMLDivElement>;
+  /**
+   * Tighten row height + cell padding for dense, metadata-heavy lists (e.g. credentials). Off by
+   * default (comfortable). Applied as descendant utilities on the `<table>` so `TableHead`/`TableCell`
+   * stay context-free (and server-safe) while the caller sets density once on `Table`.
+   */
+  dense?: boolean;
 }
+
+/** Compact overrides applied to a dense table's cells/headers (descendant selectors win on specificity). */
+const DENSE_CELLS = "[&_td]:px-3 [&_td]:py-1.5 [&_th]:h-8 [&_th]:px-3";
 
 /**
  * A composable data table — the structural primitives (`TableHeader`/`TableBody`/`TableRow`/
@@ -19,7 +28,7 @@ export interface TableProps extends React.HTMLAttributes<HTMLTableElement> {
  * the wrapper is keyboard-focusable so those columns stay reachable without a pointer.
  */
 export const Table = React.forwardRef<HTMLTableElement, TableProps>(
-  ({ className, containerProps, ...props }, ref) => {
+  ({ className, containerProps, dense = false, ...props }, ref) => {
     const { className: containerClassName, ...restContainer } = containerProps ?? {};
     return (
       <div
@@ -29,7 +38,11 @@ export const Table = React.forwardRef<HTMLTableElement, TableProps>(
       >
         <table
           ref={ref}
-          className={cn("w-full caption-bottom border-collapse text-sm", className)}
+          className={cn(
+            "w-full caption-bottom border-collapse text-sm",
+            dense && DENSE_CELLS,
+            className,
+          )}
           {...props}
         />
       </div>

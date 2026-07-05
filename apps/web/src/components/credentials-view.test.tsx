@@ -1,4 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import type { ApiKeyItem, CredentialsResult, DeviceGrant } from "@/server/credentials";
@@ -41,10 +42,20 @@ const ok = (
 });
 
 describe("CredentialsView", () => {
-  it("renders the two groupings: authorized devices and API keys", () => {
+  it("renders the two groupings: API keys and authorized devices", () => {
     render(<CredentialsView result={ok()} />);
     expect(screen.getByRole("heading", { name: /authorized devices/i })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /api keys/i })).toBeInTheDocument();
+  });
+
+  it("orders the API keys grouping above authorized devices", () => {
+    render(<CredentialsView result={ok()} />);
+    const headings = screen.getAllByRole("heading").map((h) => h.textContent ?? "");
+    const keysIdx = headings.findIndex((t) => /api keys/i.test(t));
+    const devicesIdx = headings.findIndex((t) => /authorized devices/i.test(t));
+    expect(keysIdx).toBeGreaterThanOrEqual(0);
+    expect(devicesIdx).toBeGreaterThanOrEqual(0);
+    expect(keysIdx).toBeLessThan(devicesIdx);
   });
 
   it("shows a device with its status and child keys", () => {
@@ -62,7 +73,8 @@ describe("CredentialsView", () => {
     expect(screen.getByText(/endpoints:read/)).toBeInTheDocument();
   });
 
-  it("marks a revoked key as revoked, distinct from a live one", () => {
+  it("keeps a live key on the Active tab and a revoked one on the Inactive tab", async () => {
+    const user = userEvent.setup();
     render(
       <CredentialsView
         result={ok({
@@ -79,10 +91,32 @@ describe("CredentialsView", () => {
         })}
       />,
     );
+    // Active tab (default): the live key is here and reads active; the revoked one is not.
     const liveRow = screen.getByText("live key").closest("tr");
-    const deadRow = screen.getByText("dead key").closest("tr");
     expect(within(liveRow as HTMLElement).getByText("active")).toBeInTheDocument();
+    expect(screen.queryByText("dead key")).not.toBeInTheDocument();
+
+    // Switch to Inactive: the revoked key is here and reads revoked; the live one is not.
+    await user.click(screen.getByRole("tab", { name: /inactive/i }));
+    const deadRow = screen.getByText("dead key").closest("tr");
     expect(within(deadRow as HTMLElement).getByText("revoked")).toBeInTheDocument();
+    expect(screen.queryByText("live key")).not.toBeInTheDocument();
+  });
+
+  it("counts revoked + expired credentials on the Inactive tab", () => {
+    render(
+      <CredentialsView
+        result={ok({
+          devices: [grant({ id: "g_e", deviceName: "old-dev", status: "expired", keys: [] })],
+          keys: [
+            key({ id: "live", name: "live key", revokedAt: null }),
+            key({ id: "dead", name: "dead key", revokedAt: new Date("2026-06-01T00:00:00Z") }),
+          ],
+        })}
+      />,
+    );
+    // one revoked key + one expired grant = 2 inactive.
+    expect(screen.getByRole("tab", { name: /inactive \(2\)/i })).toBeInTheDocument();
   });
 
   it("only ever shows the redacted prefix — never a full secret or a key_hash", () => {
@@ -108,7 +142,8 @@ describe("CredentialsView", () => {
     expect(screen.getByText(/don't have permission/i)).toBeInTheDocument();
   });
 
-  it("marks an expired grant distinctly from an active one", () => {
+  it("keeps an active device on Active and an expired one on the Inactive tab", async () => {
+    const user = userEvent.setup();
     render(
       <CredentialsView
         result={ok({
@@ -119,6 +154,11 @@ describe("CredentialsView", () => {
         })}
       />,
     );
+    // Active tab (default): the active device is here; the expired one is not.
+    expect(screen.getByText("active-dev")).toBeInTheDocument();
+    expect(screen.queryByText("old-dev")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: /inactive/i }));
     const expiredDevice = screen.getByText("old-dev").closest("article, section, div");
     expect(within(expiredDevice as HTMLElement).getByText(/expired/i)).toBeInTheDocument();
   });

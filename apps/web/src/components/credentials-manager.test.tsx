@@ -240,11 +240,15 @@ describe("CredentialsManager — revoke", () => {
     await user.click(within(dialog).getByRole("button", { name: "Revoke key" }));
 
     expect(revokeKey).toHaveBeenCalledWith(activeKey.id);
-    // the row now reads as dead and the revoke affordance is gone
-    expect(await screen.findByText("revoked")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: `Revoke ${activeKey.name}` }),
-    ).not.toBeInTheDocument();
+    // The revoke affordance is gone from the Active tab — the newly-dead row moved to Inactive.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: `Revoke ${activeKey.name}` }),
+      ).not.toBeInTheDocument(),
+    );
+    // On the Inactive tab it reads as revoked.
+    await user.click(screen.getByRole("tab", { name: /inactive/i }));
+    expect(screen.getByText("revoked")).toBeInTheDocument();
   });
 
   it("cascades a device-grant revoke to its child keys", async () => {
@@ -259,7 +263,8 @@ describe("CredentialsManager — revoke", () => {
 
     expect(revokeGrant).toHaveBeenCalledWith(activeGrant.id);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    // both the grant badge and its one child key now read revoked
+    // The grant moved to the Inactive tab; there both it and its one child key read revoked.
+    await user.click(screen.getByRole("tab", { name: /inactive/i }));
     expect(screen.getAllByText("revoked")).toHaveLength(2);
   });
 
