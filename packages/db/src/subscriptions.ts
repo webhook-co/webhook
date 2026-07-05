@@ -10,7 +10,7 @@ import {
   subscriptionsDelete,
   subscriptionsList,
 } from "@webhook-co/contract";
-import { newId } from "@webhook-co/shared";
+import { deliveryVerificationDecision, newId } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
@@ -302,6 +302,10 @@ export async function listMatchingSubscriptions(
 export interface AutoDeliveryEvent extends MatchableEvent {
   /** The durable events row id — also each queued delivery's event link + STABLE Standard Webhooks id. */
   readonly eventId: string;
+  /** The structured verification diagnostic (jsonb), needed to distinguish `failed` (a signature was checked
+   *  and REJECTED — forged, never forwarded) from `unattempted` (no signature checked — forwarded UNSIGNED).
+   *  S8-remainder Slice 3 / ADR-0103. */
+  readonly verification: unknown;
 }
 
 /**
@@ -319,6 +323,13 @@ export async function enqueueAutoDeliveries(
   app: Sql,
   args: { orgId: string; sourceEndpointId: string; event: AutoDeliveryEvent },
 ): Promise<string[]> {
+  // SECURITY GATE (S8-remainder Slice 3 / ADR-0103): a `failed` event (a signature was checked and REJECTED)
+  // is forged/tampered — never auto-deliver it (which would re-sign attacker-authored content with our
+  // destination secret). Keyed on the un-forgeable server-derived state, NOT the attacker-controlled provider.
+  // `unattempted` events still enqueue (unverified forwarding is preserved) but the drain delivers them
+  // UNSIGNED — see listDueDeliveries/buildDeliverArgs, which gate signing on the event's `verified` flag.
+  if (!deliveryVerificationDecision(args.event.verified, args.event.verification).deliver)
+    return [];
   return withTenant(app, args.orgId, async (tx) => {
     const matches = await listMatchingSubscriptions(tx, {
       orgId: args.orgId,

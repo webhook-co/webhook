@@ -18,6 +18,7 @@
 
 import { type CachedSealedSecret } from "@webhook-co/db";
 import {
+  deliveryVerificationDecision,
   newId,
   payloadR2Key,
   redactHeadersForLog,
@@ -110,6 +111,10 @@ export interface AutoDeliverArgs {
     readonly eventType: string | null;
     /** Whether the event's signature verified (gates require_verified subscriptions). */
     readonly verified: boolean;
+    /** The structured verification diagnostic — distinguishes `failed` (signature checked + REJECTED →
+     *  forged → never auto-delivered) from `unattempted` (no signature checked → delivered UNSIGNED).
+     *  S8-remainder Slice 3 / ADR-0103. */
+    readonly verification: VerificationResult | null;
   };
 }
 
@@ -479,12 +484,28 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // PR3's reconciler are the recovery net for a fast-path miss. A dedup no-op (inserted=false) never
   // re-routes (the original capture already enqueued); liveness/handshake verbs never reach here with a real
   // insert. Tests omit waitUntil → the task is awaited inline for deterministic ordering.
-  if (inserted && deps.autoDeliver) {
+  // ADR-0103: a `failed`-verification event (a signature was checked and REJECTED) is never forwardable —
+  // enqueueAutoDeliveries would drop it and return []. Short-circuit HERE so the drop is an explicit,
+  // greppable operator signal (mirroring the replay arms' FORBIDDEN/ReplayUnverifiedError) rather than a
+  // silent empty enqueue, and to skip the wasted no-op tenant tx. `unattempted`/`verified` still route.
+  const deliverable = deliveryVerificationDecision(outcome.verified, outcome.verification).deliver;
+  if (inserted && deps.autoDeliver && !deliverable) {
+    deps.log("ingest.autodelivery_skipped_unverifiable", {
+      endpointId: endpoint.endpointId,
+      eventId,
+    });
+  } else if (inserted && deps.autoDeliver) {
     const task = deps
       .autoDeliver({
         orgId: endpoint.orgId,
         sourceEndpointId: endpoint.endpointId,
-        event: { eventId, provider, eventType, verified: outcome.verified },
+        event: {
+          eventId,
+          provider,
+          eventType,
+          verified: outcome.verified,
+          verification: outcome.verification,
+        },
       })
       .catch((err: unknown) =>
         deps.log("ingest.autodeliver_failed", {

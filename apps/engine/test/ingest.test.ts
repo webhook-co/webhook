@@ -401,6 +401,24 @@ describe("handleIngest — the wbhk.my write path", () => {
     });
   });
 
+  it("does NOT auto-deliver a `failed`-verification event — it logs an explicit skip instead (ADR-0103)", async () => {
+    // A signature WAS checked and REJECTED (forged/tampered) → never forwardable. The caller short-circuits
+    // (enqueueAutoDeliveries would drop it anyway) so the drop is an explicit operator signal, not silent.
+    const { deps, calls } = makeDeps({
+      verify: async () => ({
+        verified: false,
+        verification: { ok: false, reason: { code: "NO_MATCHING_KEY", keysTried: 1 } },
+      }),
+    });
+    const res = await handleIngest(req(GOOD), deps);
+    expect(res.status).toBe(200); // capture still succeeds — the event is the durable floor
+    expect(calls.ingest).toHaveLength(1);
+    expect(calls.autoDeliver).toHaveLength(0); // never routed
+    const skip = calls.logs.find((l) => l.event === "ingest.autodelivery_skipped_unverifiable");
+    expect(skip).toBeDefined();
+    expect(skip!.fields.eventId).toBe(calls.ingest[0]!.id);
+  });
+
   it("a thrown autoDeliver is swallowed — capture still ACKs 200 (best-effort, never blocks the floor)", async () => {
     const { deps, calls } = makeDeps({
       autoDeliver: async () => {

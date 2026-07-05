@@ -9,6 +9,7 @@ import {
   replayToDestination,
   ReplayConflictError,
   ReplayNotFoundError,
+  ReplayUnverifiedError,
 } from "./replay-mutations";
 import { verifySession } from "./session";
 
@@ -56,6 +57,13 @@ export async function replayToDestinationAction(
     }
     if (error instanceof DispatcherUnavailableError) {
       return { ok: false, error: "Replay is unavailable right now. Please try again shortly." };
+    }
+    if (error instanceof ReplayUnverifiedError) {
+      // A `failed`-verification event can't be replayed (it would re-sign forged content) — ADR-0103.
+      return {
+        ok: false,
+        error: "This event's signature was rejected, so it can't be replayed to a destination.",
+      };
     }
     if (error instanceof ReplayConflictError) {
       // A near-impossible key collision — ask the user to retry (a fresh key is minted next time).

@@ -9,12 +9,13 @@ import {
 } from "@webhook-co/db/replay";
 import { getEvent } from "@webhook-co/db/reads";
 import { getActiveSigningSecrets } from "@webhook-co/db/signing-keys";
-import type {
-  DeliverArgs,
-  DeliverResult,
-  DeliveryAttempt,
-  DeliveryDispatcherRpc,
-  DeliverySigning,
+import {
+  deliveryVerificationDecision,
+  type DeliverArgs,
+  type DeliverResult,
+  type DeliveryAttempt,
+  type DeliveryDispatcherRpc,
+  type DeliverySigning,
 } from "@webhook-co/shared";
 
 import { withTenantDb } from "./db";
@@ -54,21 +55,34 @@ export class ReplayConflictError extends Error {
   }
 }
 
+/** Raised when the event's signature was checked and REJECTED (`failed`) — it must never be replayed to a
+ *  destination (which would re-sign forged content with our secret). S8-remainder Slice 3 / ADR-0103. */
+export class ReplayUnverifiedError extends Error {
+  constructor() {
+    super("this event's signature was rejected — it can't be replayed to a destination");
+    this.name = "ReplayUnverifiedError";
+  }
+}
+
 export interface ReplayInput {
   readonly orgId: string;
   readonly eventId: string;
   readonly destinationId: string;
 }
 
-/** The resolved-and-claimed context, or a not-found sentinel (event or destination invisible under RLS). */
+/** The resolved-and-claimed context, a not-found sentinel (event or destination invisible under RLS), or a
+ *  blocked sentinel (a `failed` event that must not be replayed — ADR-0103). */
 export type ClaimOutcome =
   | { readonly kind: "not_found" }
+  | { readonly kind: "blocked" }
   | {
       readonly kind: "claimed";
       readonly event: {
         readonly endpointId: string;
         readonly dedupKey: string;
         readonly headers: DeliverArgs["headers"];
+        /** Whether the source event VERIFIED — the engine re-signs ONLY a verified event (ADR-0103). */
+        readonly verified: boolean;
       };
       readonly destinationUrl: string;
       /** The destination's active(+retiring) SEALED signing secrets, in the shape the engine's signing wants. */
@@ -109,6 +123,12 @@ function boundDeps(app: Sql, dispatcher: DeliveryDispatcherRpc): ReplayDeps {
       withTenant(app, input.orgId, async (tx): Promise<ClaimOutcome> => {
         const event = await getEvent(tx, input.eventId);
         if (!event) return { kind: "not_found" };
+        // SECURITY GATE (ADR-0103): a `failed` event (signature checked + REJECTED = forged) must never be
+        // replayed to a destination (which would re-sign attacker content with our secret). `unattempted`
+        // still replays but is delivered UNSIGNED (the signing gate below keys on event.verified).
+        if (!deliveryVerificationDecision(event.verified, event.verification).deliver) {
+          return { kind: "blocked" };
+        }
         // Resolves any LIVE (deleted_at is null) destination — NOT gated on disabled_at, matching the api
         // remote-replay handler exactly (a manual replay is a deliberate act; `disabled` pauses the engine's
         // AUTOMATIC delivery loop, not an explicit replay). The UI hides disabled rows from the picker as a
@@ -130,6 +150,7 @@ function boundDeps(app: Sql, dispatcher: DeliveryDispatcherRpc): ReplayDeps {
             endpointId: event.endpointId,
             dedupKey: event.dedupKey,
             headers: event.headers as DeliverArgs["headers"],
+            verified: event.verified,
           },
           destinationUrl: destination.url,
           signingSecrets: signingSecrets.map((s) => ({ sealed: s.sealed, context: s.context })),
@@ -178,6 +199,7 @@ async function orchestrate(input: ReplayInput, deps: ReplayDeps): Promise<Delive
   const target = serializeTarget({ kind: "destination", destinationId: input.destinationId });
   const claimed = await deps.claim({ ...input, target, idempotencyKey });
   if (claimed.kind === "not_found") throw new ReplayNotFoundError();
+  if (claimed.kind === "blocked") throw new ReplayUnverifiedError();
   if (!claimed.won) {
     // A fresh key ⇒ won is practically always true; a non-won re-claim can only be a same-(event,target)
     // sibling (a transient retry) → return it (idempotent, no re-POST). Defense-in-depth (api parity): if the
@@ -191,8 +213,10 @@ async function orchestrate(input: ReplayInput, deps: ReplayDeps): Promise<Delive
 
   // Re-sign with the destination's sealed secret(s) so the receiver can verify webhook.co; the webhook-id is
   // THIS attempt's id. No secret ⇒ no signing ⇒ delivered unsigned. The engine unseals + signs.
+  // Re-sign ONLY a verified event (ADR-0103): an `unattempted` event is delivered UNSIGNED even to a signing
+  // destination — we never vouch (sign) for content we didn't authenticate.
   const signing: DeliverySigning | undefined =
-    claimed.signingSecrets.length > 0
+    claimed.event.verified && claimed.signingSecrets.length > 0
       ? {
           webhookId: claimed.attempt.id,
           timestamp: Math.floor(Date.now() / 1000),

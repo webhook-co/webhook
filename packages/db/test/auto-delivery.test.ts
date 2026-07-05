@@ -168,6 +168,53 @@ describe("enqueueAutoDeliveries", () => {
     expect(await openDeliveries(dest)).toHaveLength(0);
   });
 
+  it("BLOCKS a `failed` event (signature checked + REJECTED = forged) from ALL delivery — even a match-any sub (ADR-0103)", async () => {
+    const ep = await freshEndpoint("ep-failed");
+    const dest = (await createReplayDestination(app, { orgId, url: "https://m4.example.com/in" }))
+      .id;
+    // The default match-any subscription (no provider, ['*'], requireVerified false) — would otherwise route.
+    await createSubscription(app, { orgId, sourceEndpointId: ep, destinationId: dest });
+    const eventId = await seedEvent(ep, { verified: false });
+
+    const out = await enqueueAutoDeliveries(app, {
+      orgId,
+      sourceEndpointId: ep,
+      // failed = verified:false AND a non-null verification diagnostic (an adapter ran and rejected).
+      event: {
+        eventId,
+        provider: "stripe",
+        eventType: "charge.x",
+        verified: false,
+        verification: { ok: false, reason: { code: "WRONG_SECRET" } },
+      },
+    });
+    expect(out).toEqual([]); // forged/rejected → routed to nothing (never re-signed + delivered)
+    expect(await openDeliveries(dest)).toHaveLength(0);
+  });
+
+  it("still enqueues an `unattempted` event (no signature checked) — unverified forwarding is preserved", async () => {
+    const ep = await freshEndpoint("ep-unattempted");
+    const dest = (await createReplayDestination(app, { orgId, url: "https://m5.example.com/in" }))
+      .id;
+    await createSubscription(app, { orgId, sourceEndpointId: ep, destinationId: dest });
+    const eventId = await seedEvent(ep, { verified: false });
+
+    const out = await enqueueAutoDeliveries(app, {
+      orgId,
+      sourceEndpointId: ep,
+      // unattempted = verified:false AND verification NULL (no secret / no header) — legit unverified.
+      event: {
+        eventId,
+        provider: "stripe",
+        eventType: "charge.x",
+        verified: false,
+        verification: null,
+      },
+    });
+    expect(out).toEqual([dest]); // delivered (the drain will send it UNSIGNED — see delivery-drain)
+    expect(await openDeliveries(dest)).toHaveLength(1);
+  });
+
   it("fans out across multiple matching destinations (one queued delivery + one wake target each)", async () => {
     const ep = await freshEndpoint("ep-fan");
     const d1 = (await createReplayDestination(app, { orgId, url: "https://f1.example.com/in" })).id;

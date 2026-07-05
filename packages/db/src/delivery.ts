@@ -7,6 +7,8 @@
 // (that stays the legacy 1b one-shot terminal). All run under the org's RLS context (webhook_app); the
 // engine binds HYPERDRIVE_TENANT as webhook_app, so the DO writes these directly with no api callback.
 
+import { deliveryVerificationDecision } from "@webhook-co/shared";
+
 import { appendAuditEntry } from "./audit-append";
 import { type TenantTx } from "./client";
 import { serializeTarget } from "./replay";
@@ -133,6 +135,16 @@ export interface DueDelivery {
   readonly headers: ReadonlyArray<readonly [string, string]>;
   /** The destination's canonical delivery URL. */
   readonly url: string;
+  /** Whether the source event's signature VERIFIED. The drain re-signs with the destination secret ONLY when
+   *  true — an unverified (`unattempted`) event is delivered UNSIGNED, so a forged event never carries our
+   *  signature (S8-remainder Slice 3 / ADR-0103). */
+  readonly verified: boolean;
+  /** Whether this event may be forwarded AT ALL (the un-forgeable {@link deliveryVerificationDecision}
+   *  `deliver` verdict). `verified`/`unattempted` → true; `failed` (a signature was checked and REJECTED —
+   *  forged/tampered) → false. The enqueue gate already drops `failed` events, so this is normally true; the
+   *  drain re-checks it per delivery as DEFENSE IN DEPTH — a pre-gate/backlog row (or any future enqueue path
+   *  that forgets the gate) is terminally refused at the drain, never POSTed (S8-remainder Slice 3 / ADR-0103). */
+  readonly deliverable: boolean;
 }
 
 interface DueDeliveryRow {
@@ -143,6 +155,10 @@ interface DueDeliveryRow {
   dedup_key: string;
   headers: [string, string][];
   url: string;
+  verified: boolean;
+  /** The raw structured verification diagnostic (jsonb) — used ONLY to derive `deliverable` (`failed` vs
+   *  `unattempted`); never surfaced on {@link DueDelivery}. */
+  verification: unknown;
 }
 
 /**
@@ -163,7 +179,8 @@ export async function listDueDeliveries(
   limit = 50,
 ): Promise<DueDelivery[]> {
   const rows = await tx<DueDeliveryRow[]>`
-    select da.id, da.attempt, da.event_id, e.endpoint_id, e.dedup_key, e.headers, d.url
+    select da.id, da.attempt, da.event_id, e.endpoint_id, e.dedup_key, e.headers, e.verified,
+           e.verification, d.url
     from delivery_attempts da
     join events e on e.id = da.event_id and e.org_id = da.org_id
     join replay_destinations d on d.id = da.destination_id and d.org_id = da.org_id
@@ -194,6 +211,8 @@ export async function listDueDeliveries(
     dedupKey: r.dedup_key,
     headers: r.headers,
     url: r.url,
+    verified: r.verified,
+    deliverable: deliveryVerificationDecision(r.verified, r.verification).deliver,
   }));
 }
 

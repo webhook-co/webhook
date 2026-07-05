@@ -33,17 +33,23 @@ let endpointId: string;
 
 // Seed an event under a tenant. Defaults to the module's org/endpoint; pass explicit ones (e.g. for org B)
 // so the cross-org isolation test reuses this single column-list instead of duplicating the insert inline.
-async function seedEvent(forOrg = orgId, forEndpoint = endpointId): Promise<string> {
+async function seedEvent(
+  forOrg = orgId,
+  forEndpoint = endpointId,
+  ver: { verified?: boolean; verification?: unknown } = {},
+): Promise<string> {
   const id = newId();
+  const verified = ver.verified ?? true;
   await withTenant(app, forOrg, async (tx) => {
     await tx`
       insert into events
         (id, org_id, endpoint_id, payload_r2_key, payload_bytes, content_type, headers,
-         dedup_key, dedup_strategy, provider, verified)
+         dedup_key, dedup_strategy, provider, verified, verification)
       values
         (${id}, ${forOrg}, ${forEndpoint}, ${`org/${forOrg}/ep/${forEndpoint}/${id}`}, ${10},
          ${"application/json"}, ${tx.json([["webhook-id", "in_1"]])}, ${newId()}, ${"content_hash"},
-         ${"stripe"}, ${true})`;
+         ${"stripe"}, ${verified},
+         ${ver.verification != null ? tx.json(ver.verification as Record<string, unknown>) : null})`;
   });
   return id;
 }
@@ -108,6 +114,30 @@ describe("listDueDeliveries", () => {
     expect(due[0]).toMatchObject({ id, attempt: 1, url: "https://d1.example.com/in" });
     expect(due[0]!.endpointId).toBe(endpointId);
     expect(due[0]!.headers).toEqual([["webhook-id", "in_1"]]);
+    expect(due[0]!.verified).toBe(true);
+    expect(due[0]!.deliverable).toBe(true);
+  });
+
+  it("derives `deliverable` from the event's verification state — `failed` is NOT deliverable (ADR-0103)", async () => {
+    const dest = (await createReplayDestination(app, { orgId, url: "https://dv.example.com/in" }))
+      .id;
+    // verified → deliverable; unattempted (no signature checked) → deliverable UNSIGNED; failed
+    // (a signature was checked and REJECTED) → NOT deliverable (the drain terminally blocks it).
+    const verifiedEv = await seedEvent(orgId, endpointId, { verified: true });
+    const unattemptedEv = await seedEvent(orgId, endpointId, { verified: false });
+    const failedEv = await seedEvent(orgId, endpointId, {
+      verified: false,
+      verification: { ok: false, reason: { code: "NO_MATCHING_KEY", keysTried: 1 } },
+    });
+    const vId = await seedDelivery(dest, { eventId: verifiedEv, createdAt: new Date(1) });
+    const uId = await seedDelivery(dest, { eventId: unattemptedEv, createdAt: new Date(2) });
+    const fId = await seedDelivery(dest, { eventId: failedEv, createdAt: new Date(3) });
+
+    const due = await withTenant(app, orgId, (tx) => listDueDeliveries(tx, dest));
+    const byId = new Map(due.map((d) => [d.id, d]));
+    expect(byId.get(vId)).toMatchObject({ verified: true, deliverable: true });
+    expect(byId.get(uId)).toMatchObject({ verified: false, deliverable: true });
+    expect(byId.get(fId)).toMatchObject({ verified: false, deliverable: false });
   });
 
   it("excludes a future retry, a terminal row, and a disabled/deleted destination", async () => {
