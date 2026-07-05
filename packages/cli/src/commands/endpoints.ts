@@ -236,6 +236,40 @@ export const endpointsRotateCommand = buildCommand<DestructiveFlags, [string], A
   docs: { brief: "rotate an endpoint's ingest url (kills the old one, reveals a new one once)" },
 });
 
+// `wbhk endpoints reveal <id>` — re-display an endpoint's always-shown ingest url (S8-remainder / ADR-0101).
+// Non-destructive (does NOT rotate). A bearer-credential disclosure, so it's audited server-side. Prints
+// null for endpoints created before sealed storage (their token is gone — rotate to mint a fresh one).
+export const endpointsRevealCommand = buildCommand<GlobalFlags, [string], AppContext>({
+  async func(this: AppContext, flags, endpointId) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format } = resolveGlobals(this, flags);
+    const revealed = await client.endpointsRevealIngestUrl(endpointId);
+    if (format === "json") {
+      this.process.stdout.write(`${renderJson(revealed)}\n`);
+      return;
+    }
+    if (revealed.ingestUrl === null) {
+      this.process.stderr.write(
+        "no ingest url on record for this endpoint (created before it was retrievable) — rotate to mint a fresh one.\n",
+      );
+      return;
+    }
+    // The url IS the credential — print it clean to stdout so a pipe captures just the url.
+    this.process.stdout.write(`${revealed.ingestUrl}\n`);
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        { parse: (value: string) => value, brief: "the endpoint id", placeholder: "endpointId" },
+      ],
+    },
+    flags: { ...globalFlags },
+  },
+  docs: { brief: "reveal an endpoint's current ingest url (does not rotate)" },
+});
+
 // `wbhk endpoints add-provider-secret <id> --provider <p>` / `list-provider-secrets <id>` /
 // `revoke-provider-secret <id> <secretId>` — manage an endpoint's inbound-verification signing secrets
 // (ADR-0078). The secret is read via a no-echo prompt or piped stdin (NEVER an argv flag — that would

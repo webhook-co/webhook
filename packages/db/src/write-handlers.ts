@@ -15,10 +15,11 @@ import {
   endpointsCreate,
   endpointsDelete,
   endpointsListProviderSecrets,
+  endpointsRevealIngestUrl,
   endpointsRevokeProviderSecret,
   endpointsRotate,
 } from "@webhook-co/contract";
-import { type SecretSealer } from "@webhook-co/shared";
+import { type IngestUrlRevealerRpc, type SecretSealer } from "@webhook-co/shared";
 
 import type { Sql } from "./client";
 import type { CredentialHasher } from "./credential";
@@ -29,6 +30,7 @@ import {
   getEndpointIngestTokenHash,
   rotateEndpointWithAudit,
 } from "./endpoints";
+import { appendIngestUrlRevealAudit, enforceIngestUrlRevealRateLimit } from "./ingest-url-reveal";
 import {
   listEndpointProviderSecrets,
   registerProviderSecret,
@@ -62,6 +64,13 @@ export interface WriteHandlerDeps {
    * a local SecretStore. Write-only seam (`sealString`); required by addProviderSecret only.
    */
   readonly secretSealer?: SecretSealer;
+  /**
+   * Reveal (unseal) an endpoint's always-shown ingest URL on endpoints.revealIngestUrl (S8-remainder /
+   * ADR-0101). In prod this is the engine's IngestUrlRevealer reached over the INGEST_URL_REVEALER service
+   * binding (the KEK never enters api/mcp — only the engine unseals); in tests a local fake. Identifier-only
+   * (the caller passes UUIDs, the engine reads + unseals the blob itself). Required by that handler only.
+   */
+  readonly revealIngestUrl?: IngestUrlRevealerRpc;
   /**
    * Evict an ingest-token hash from the KV ingest cache (ADR-0076) — required by endpoints.delete +
    * endpoints.rotate to stop/redirect ingest on the wbhk.my hot path. Build it with makeIngestHashEvictor
@@ -148,6 +157,15 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     return deps.secretSealer;
   }
 
+  function requireRevealer(): IngestUrlRevealerRpc {
+    if (deps.revealIngestUrl === undefined) {
+      throw new Error(
+        "write handlers: revealIngestUrl dep is required for endpoints.revealIngestUrl",
+      );
+    }
+    return deps.revealIngestUrl;
+  }
+
   handlers.set(endpointsDelete.name, async (ctx, input) => {
     ensureScope(ctx, endpointsDelete); // FIRST — sole authz gate on mcp
     const parsed = endpointsDelete.input.safeParse(input);
@@ -191,6 +209,32 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
       createdAt: rotated.createdAt,
       ingestUrl: `${apex}/${rotated.plaintext}`,
     };
+  });
+
+  // ── Ingest-URL reveal (S8-remainder / ADR-0101) ────────────────────────────────────────────────
+  handlers.set(endpointsRevealIngestUrl.name, async (ctx, input) => {
+    ensureScope(ctx, endpointsRevealIngestUrl); // FIRST — endpoints:write; sole authz gate on mcp
+    const parsed = endpointsRevealIngestUrl.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const apex = normalizeIngestApex(deps.ingestBaseUrl); // validate BEFORE the reveal (mirrors create)
+    const reveal = requireRevealer();
+    // Rate-limit BEFORE the unseal so a throttled caller never reaches the engine/KMS (audit-derived cap).
+    await enforceIngestUrlRevealRateLimit(deps.tenant, ctx.orgId);
+    // Identifier-only: the engine reads + unseals the sealed blob itself (never a caller-supplied blob).
+    const result = await reveal.revealIngestToken(ctx.orgId, parsed.data.endpointId);
+    if (!result.found) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
+    const ingestUrl = result.token === null ? null : `${apex}/${result.token}`;
+    // Audit ONLY an actual disclosure (a null "rotate to reveal" hands out nothing). Tamper-evident chain.
+    if (ingestUrl !== null) {
+      await appendIngestUrlRevealAudit(
+        deps.tenant,
+        deps.auditKey,
+        ctx.orgId,
+        ctx.userId ?? null,
+        parsed.data.endpointId,
+      );
+    }
+    return { ingestUrl };
   });
 
   // ── Provider signing-secret management (ADR-0078) ──────────────────────────────────────────────

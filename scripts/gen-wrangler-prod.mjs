@@ -118,6 +118,14 @@ const APPS = {
         service: "webhook-engine",
         entrypoint: "DeliveryDispatcher",
       },
+      // INGEST_URL_REVEALER (S8-remainder / ADR-0101) — endpoints.revealIngestUrl unseals the always-shown
+      // ingest URL via the engine's IngestUrlRevealer entrypoint (api never holds the KEK). The engine must
+      // deploy with this entrypoint FIRST (same deploy, engine-before-api order) or CF late-binds.
+      {
+        binding: "INGEST_URL_REVEALER",
+        service: "webhook-engine",
+        entrypoint: "IngestUrlRevealer",
+      },
     ],
   },
   mcp: {
@@ -144,6 +152,13 @@ const APPS = {
         binding: "PROVIDER_SECRET_SEALER",
         service: "webhook-engine",
         entrypoint: "ProviderSecretSealer",
+      },
+      // INGEST_URL_REVEALER (S8-remainder / ADR-0101) — the endpoints.revealIngestUrl tool unseals via the
+      // engine's IngestUrlRevealer entrypoint (the McpAgent never holds the KEK); engine-before-mcp order.
+      {
+        binding: "INGEST_URL_REVEALER",
+        service: "webhook-engine",
+        entrypoint: "IngestUrlRevealer",
       },
     ],
   },

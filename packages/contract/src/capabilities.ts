@@ -150,6 +150,33 @@ export const endpointsRotate = defineCapability({
   semantics: {},
 });
 
+// endpoints.revealIngestUrl RE-DISPLAYS the always-shown wbhk.my/<token> ingest URL for an endpoint
+// (S8-remainder / decision-0018 / ADR-0101). The URL is a BEARER CREDENTIAL, so this is a DEDICATED,
+// deliberately-gated reveal — NOT a field on endpoints.get/list (a read-only key must never harvest live
+// ingest URLs org-wide). It is gated on `endpoints:write` (a key that can rotate can already mint a URL, so
+// revealing the current one is no escalation; a read-only key cannot), every disclosure writes a
+// tamper-evident `endpoint.ingest_url_revealed` audit row, and it is rate-limited. `ingestUrl` is NULLABLE:
+// null when the endpoint predates sealed storage or its seal degraded (its plaintext is one-way-hashed and
+// gone → "rotate to reveal"); a populated URL otherwise. The unseal is engine-only (the KEK never leaves the
+// engine) and identifier-only (the engine reads the sealed blob itself — a caller never supplies ciphertext).
+export const RevealedIngestUrlSchema = z.object({ ingestUrl: z.url().nullable() });
+export type RevealedIngestUrl = z.infer<typeof RevealedIngestUrlSchema>;
+
+export const endpointsRevealIngestUrl = defineCapability({
+  name: "endpoints.revealIngestUrl",
+  input: z.object({ endpointId: uuid }),
+  output: RevealedIngestUrlSchema,
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: {},
+  // Web (the always-shown endpoint-detail URL) lands in the follow-up slice 2b — its DB-direct session seam +
+  // the reveal service binding + the UI ship together with the light/dark screenshots. Programmatic parity
+  // (api/cli/mcp) ships now in 2a.
+  surfaceExempt: {
+    web: "S8-remainder slice 2b: dashboard always-shown URL + screenshots land next",
+  },
+});
+
 export const eventsList = defineCapability({
   name: "events.list",
   input: z.object({
@@ -659,6 +686,7 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   endpointsCreate,
   endpointsDelete,
   endpointsRotate,
+  endpointsRevealIngestUrl,
   endpointsAddProviderSecret,
   endpointsListProviderSecrets,
   endpointsRevokeProviderSecret,

@@ -16,8 +16,12 @@ import {
   CREDENTIAL_PEPPER_MIN_BYTES,
   type CredentialHasher,
 } from "../src/credential";
-import { createEndpointWithAudit, rotateEndpointWithAudit } from "../src/endpoints";
-import { parseIngestToken } from "../src/ingest-token-seal";
+import {
+  createEndpointWithAudit,
+  readSealedIngestToken,
+  rotateEndpointWithAudit,
+} from "../src/endpoints";
+import { parseIngestToken, revealIngestTokenCore } from "../src/ingest-token-seal";
 import { createOrg } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -220,5 +224,80 @@ describe("grant hygiene", () => {
       select id, ingest_token_hash, paused from endpoints where id = ${created.id}`;
     expect(ok.length).toBe(1);
     expect(ok[0]!.id).toBe(created.id);
+  });
+});
+
+describe("readSealedIngestToken + revealIngestTokenCore — the reveal round-trip (Slice 2)", () => {
+  const reveal = (orgId: string, endpointId: string) =>
+    revealIngestTokenCore(
+      {
+        read: (o, e) => readSealedIngestToken(app, o, e),
+        unseal: (sealed, context) => store.openString(sealed, context),
+      },
+      orgId,
+      endpointId,
+    );
+
+  it("reveals the SAME token that was sealed on create (engine-only unseal round-trip)", async () => {
+    const created = await createEndpointWithAudit(
+      app,
+      { orgId: orgA, name: "reveal-roundtrip", actor: null, maxEndpoints: 100 },
+      hasher,
+      auditKey,
+      store,
+    );
+    const read = await readSealedIngestToken(app, orgA, created.id);
+    expect(read.found).toBe(true);
+    expect(await reveal(orgA, created.id)).toEqual({ found: true, token: created.plaintext });
+  });
+
+  it("returns found:true, token:null for a legacy endpoint with no recoverable copy (rotate to reveal)", async () => {
+    const created = await createEndpointWithAudit(
+      app,
+      { orgId: orgA, name: "reveal-legacy", actor: null, maxEndpoints: 100 },
+      hasher,
+      auditKey,
+      // no sealer -> NULL sealed columns (legacy shape)
+    );
+    expect(await readSealedIngestToken(app, orgA, created.id)).toEqual({
+      found: true,
+      sealed: null,
+    });
+    expect(await reveal(orgA, created.id)).toEqual({ found: true, token: null });
+  });
+
+  it("is RLS-fenced cross-org: a different org cannot read/reveal another org's sealed token (→ NOT_FOUND)", async () => {
+    const orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B reveal" }))
+      .id;
+    const created = await createEndpointWithAudit(
+      app,
+      { orgId: orgA, name: "reveal-crossorg", actor: null, maxEndpoints: 100 },
+      hasher,
+      auditKey,
+      store,
+    );
+    // orgB asking for orgA's endpoint: RLS makes the row invisible -> found:false.
+    expect(await readSealedIngestToken(app, orgB, created.id)).toEqual({ found: false });
+    expect(await reveal(orgB, created.id)).toEqual({ found: false, token: null });
+  });
+
+  it("returns found:false for an unknown endpoint id", async () => {
+    expect(await reveal(orgA, randomUUID())).toEqual({ found: false, token: null });
+  });
+
+  it("does NOT reveal a soft-deleted endpoint (deleted_at filter → NOT_FOUND)", async () => {
+    const created = await createEndpointWithAudit(
+      app,
+      { orgId: orgA, name: "reveal-deleted", actor: null, maxEndpoints: 100 },
+      hasher,
+      auditKey,
+      store,
+    );
+    await withTenant(
+      app,
+      orgA,
+      (tx) => tx`update endpoints set deleted_at = now() where id = ${created.id}`,
+    );
+    expect(await readSealedIngestToken(app, orgA, created.id)).toEqual({ found: false });
   });
 });

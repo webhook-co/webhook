@@ -69,8 +69,36 @@ envelope, on the `endpoints` row — alongside (never replacing) `ingest_token_h
 
 The **reveal** itself — a dedicated `endpoints.revealIngestUrl` capability gated on `endpoints:write`, an
 identifier-only engine unseal entrypoint that reads the blob server-side, an audit row per reveal, and the
-always-shown dashboard endpoint-detail — lands in the follow-up slice under this ADR. API keys stay one-time
+always-shown dashboard endpoint-detail — lands in the follow-up slices under this ADR. API keys stay one-time
 reveal; this is the low-tier ingest URL only.
+
+### Reveal — slice 2a (api/cli/mcp; shipped)
+
+`endpoints.revealIngestUrl(endpointId) -> { ingestUrl: string | null }`, gated on **`endpoints:write`** — a
+key that can rotate can already mint a URL, so revealing the current one is no escalation, and a **read-only
+key cannot harvest ingest URLs**. It is a DEDICATED capability, NOT a field on `endpoints.get`/`list` (those
+stay hash-only). The unseal runs ONLY in the engine, exposed as the `IngestUrlRevealer` WorkerEntrypoint (the
+seal-only `ProviderSecretSealer`'s deliberate counterpart), reached over the `INGEST_URL_REVEALER` service
+binding:
+
+- **Identifier-only.** The caller passes `(orgId, endpointId)` UUIDs; the engine reads the sealed columns for
+  THAT endpoint itself, under the org's RLS (`withTenant` on `HYPERDRIVE_TENANT` / webhook_app — an
+  independent tenant check on top of the AAD binding, never a cross-org role), via a **dedicated reveal
+  store**. A caller never supplies a blob, keyId, or context — that would make the unseal a decrypt-anything
+  oracle. The plaintext is fail-closed by the typed wrapper (`parseIngestToken`): a non-ingest-token blob
+  yields `null`, never a bogus URL. `{found:false}` → NOT_FOUND; `{found:true, token:null}` → "rotate to
+  reveal"; an unseal fault propagates (a transient error, not "no copy").
+- **Audit + rate-limit (control plane, caller-side).** The KEK is engine-only, but the audit HMAC key is
+  caller-side, so api/mcp write the tamper-evident `endpoint.ingest_url_revealed` chain row for each actual
+  disclosure (a null result discloses nothing → no row). Every reveal is rate-limited per org via an
+  audit-derived windowed COUNT — backed by migration 0038's `(org_id, action, created_at desc)` index on
+  `audit_log` so the COUNT is index-only, not a scan of the org's audit history (mirrors `auth_audit_event`).
+  The cap is org-wide and set above the per-org endpoint soft cap, so a legitimate "reveal every endpoint"
+  sweep fits one window; it bounds hammering, not real bulk reveal. The URL is built caller-side as
+  `${apex}/<token>`, exactly like create/rotate.
+- **Deploy order:** the engine (new `IngestUrlRevealer` entrypoint) must deploy before api/mcp bind
+  `INGEST_URL_REVEALER`, or CF late-binds. Web (the always-shown endpoint-detail) is surfaceExempt until
+  slice 2b, which also flips the public show-once copy in ADR-0075/0076/0077 + decision-0018.
 
 ## consequences
 

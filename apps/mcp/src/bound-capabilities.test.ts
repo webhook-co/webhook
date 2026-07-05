@@ -18,6 +18,7 @@ describe("MCP bound capabilities", () => {
         "endpoints.create",
         "endpoints.delete",
         "endpoints.rotate",
+        "endpoints.revealIngestUrl",
         "endpoints.addProviderSecret",
         "endpoints.listProviderSecrets",
         "endpoints.revokeProviderSecret",

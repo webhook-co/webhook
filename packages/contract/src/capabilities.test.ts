@@ -30,6 +30,7 @@ const EXPECTED_NAMES = [
   "endpoints.create",
   "endpoints.delete",
   "endpoints.rotate",
+  "endpoints.revealIngestUrl",
   "endpoints.addProviderSecret",
   "endpoints.listProviderSecrets",
   "endpoints.revokeProviderSecret",

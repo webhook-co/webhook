@@ -10,6 +10,7 @@ import {
   endpointsList as endpointsListCap,
   endpointsListProviderSecrets as endpointsListProviderSecretsCap,
   endpointsRevokeProviderSecret as endpointsRevokeProviderSecretCap,
+  endpointsRevealIngestUrl as endpointsRevealIngestUrlCap,
   endpointsRotate as endpointsRotateCap,
   eventsGet as eventsGetCap,
   eventsGetPayload as eventsGetPayloadCap,
@@ -33,6 +34,7 @@ import {
   type DeletedEndpoint,
   type ProviderSecretSummary,
   type ReplayDestinationDeleted,
+  type RevealedIngestUrl,
   type RevokedProviderSecret,
   type RotatedSigningSecret,
   type SigningSecretMetadataView,
@@ -197,6 +199,13 @@ export interface ApiClient {
    * a transient failure is never blind-retried (no accidental second rotation).
    */
   endpointsRotate(endpointId: string): Promise<CreatedEndpoint>;
+  /**
+   * Reveal an endpoint's always-shown ingest URL (`POST /v1/endpoints/:id/reveal-ingest-url`,
+   * S8-remainder / ADR-0101). Non-destructive (does NOT rotate) but a bearer-credential disclosure, so it
+   * is audited server-side. `ingestUrl` is null for endpoints created before sealed storage (their token is
+   * gone — rotate to mint a fresh one). Sent idempotent=false so a blind retry can't double-audit.
+   */
+  endpointsRevealIngestUrl(endpointId: string): Promise<RevealedIngestUrl>;
   /**
    * Register a provider signing secret on an endpoint (`POST /v1/endpoints/:id/provider-secrets`). The
    * plaintext `secret` is sealed server-side and NEVER returned. NOT idempotent — each call adds a
@@ -442,6 +451,13 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       const path = `/v1/endpoints/${encodeURIComponent(endpointId)}/rotate`;
       const json = await postJson(path, undefined, false);
       return parseOrThrow(endpointsRotateCap.output, json, "rotated endpoint");
+    },
+    async endpointsRevealIngestUrl(endpointId): Promise<RevealedIngestUrl> {
+      // idempotent=false: reveal audits each disclosure + counts against the reveal rate limit, so a blind
+      // retry should not double-count; the caller can re-issue explicitly.
+      const path = `/v1/endpoints/${encodeURIComponent(endpointId)}/reveal-ingest-url`;
+      const json = await postJson(path, undefined, false);
+      return parseOrThrow(endpointsRevealIngestUrlCap.output, json, "revealed ingest url");
     },
     async addProviderSecret(input): Promise<AddedProviderSecret> {
       // idempotent=false: each call registers a new secret; a blind retry would add a duplicate.

@@ -184,6 +184,19 @@ export const ROUTES: readonly RouteDef[] = [
   },
   {
     method: "POST",
+    path: "/v1/endpoints/{endpointId}/reveal-ingest-url",
+    capability: "endpoints.revealIngestUrl",
+    successStatus: 200,
+    dispatch: "shared",
+    body: false,
+    // A POST (not GET): it is gated on endpoints:write, writes a tamper-evident disclosure audit row, and is
+    // rate-limited — an action, not a cacheable read. `ingestUrl` is null for endpoints that predate sealed
+    // storage (their token is one-way-hashed and gone → rotate to reveal).
+    summary: "Reveal an endpoint's always-shown ingest URL",
+    buildInput: pathParam("endpointId", "endpointId"),
+  },
+  {
+    method: "POST",
     path: "/v1/endpoints/{endpointId}/provider-secrets",
     capability: "endpoints.addProviderSecret",
     successStatus: 200,

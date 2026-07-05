@@ -83,6 +83,9 @@ describe("capability parity — current GA surfaces conformance", () => {
     "endpoints.create",
     "endpoints.delete",
     "endpoints.rotate",
+    // Ingest-URL reveal (S8-remainder / ADR-0101): api+mcp+cli now; web (dashboard always-shown URL) is
+    // surfaceExempt until slice 2b, so it is NOT in WEB_BOUND yet.
+    "endpoints.revealIngestUrl",
     // Provider-secret management (ADR-0078): full MCP parity (D2) — add/list/revoke on api+mcp+cli.
     "endpoints.addProviderSecret",
     "endpoints.listProviderSecrets",
