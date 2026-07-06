@@ -8,8 +8,8 @@ event can arrive more than once. webhook.co deduplicates inbound requests per en
 into the event you already captured, instead of showing up (and metering) twice.
 
 <Note>
-Deduplication is best-effort **load reduction**, not an exactly-once guarantee. Keep your own handler
-idempotent — dedup reduces duplicates, it doesn't promise their absence.
+  Deduplication is best-effort **load reduction**, not an exactly-once guarantee. Keep your own
+  handler idempotent — dedup reduces duplicates, it doesn't promise their absence.
 </Note>
 
 ## The default
@@ -29,18 +29,18 @@ configuration.
 
 Set a per-endpoint `dedupConfig` to change how the key is derived:
 
-| Mode | Keys on | Use it when |
-| --- | --- | --- |
-| `identifier` (default) | id ladder, then content hash | the sender supplies a stable id, or you want the safe default |
-| `content` | the canonical request content (method + path + query + body) | the sender's ids are unreliable or reused across distinct events |
-| `fields` | operator-selected field paths | the sender has no stable id but a stable field (e.g. `body.data.id`) |
-| `off` | nothing — every request is its own event | you want to capture every request (testing, debugging) |
+| Mode                   | Keys on                                                      | Use it when                                                          |
+| ---------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| `identifier` (default) | id ladder, then content hash                                 | the sender supplies a stable id, or you want the safe default        |
+| `content`              | the canonical request content (method + path + query + body) | the sender's ids are unreliable or reused across distinct events     |
+| `fields`               | operator-selected field paths                                | the sender has no stable id but a stable field (e.g. `body.data.id`) |
+| `off`                  | nothing — every request is its own event                     | you want to capture every request (testing, debugging)               |
 
 Each mode (except `off`) takes a `windowSeconds` (60–604800). `off` disables collapsing entirely.
 
 <Warning>
-`off` means **every** request is a distinct, billable event — including retries and any non-webhook
-traffic (uptime checks, link previews) that reaches the URL. Use it deliberately.
+  `off` means **every** request is a distinct, billable event — including retries and any
+  non-webhook traffic (uptime checks, link previews) that reaches the URL. Use it deliberately.
 </Warning>
 
 ## Field paths
@@ -68,14 +68,18 @@ update it any time.
 wbhk endpoints create orders-prod --dedup-mode content --dedup-window 300
 
 # switch an endpoint to key on a body field
+
 wbhk endpoints update <endpoint-id> --dedup-mode fields --dedup-field body.data.id
 
 # capture every request (testing)
+
 wbhk endpoints update <endpoint-id> --dedup-mode off
 
 # back to the default
+
 wbhk endpoints update <endpoint-id> --dedup-reset
-```
+
+````
 
 ```sh API
 # create with a dedup config
@@ -89,7 +93,7 @@ curl -X PATCH https://api.webhook.co/v1/endpoints/<endpoint-id> \
   -H "authorization: Bearer $WBHK_API_KEY" \
   -H "content-type: application/json" \
   -d '{"dedupConfig":{"mode":"fields","windowSeconds":300,"fields":{"include":["body.data.id"]}}}'
-```
+````
 
 ```ts SDK
 await webhook.endpoints.update({
@@ -97,6 +101,7 @@ await webhook.endpoints.update({
   dedupConfig: { mode: "content", windowSeconds: 300 },
 });
 ```
+
 </CodeGroup>
 
 Config changes take effect within the cache-propagation window (about five minutes), not instantly — and
