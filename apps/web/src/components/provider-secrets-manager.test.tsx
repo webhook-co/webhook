@@ -110,8 +110,11 @@ describe("ProviderSecretsManager — kind options depend on provider", () => {
     // Stripe (default) → signing_secret only.
     expect(within(kindSelect).queryByRole("option", { name: /verify token/i })).toBeNull();
 
-    // Switch the provider to Meta (a verify-token provider) → the Verify token option appears.
-    await user.selectOptions(screen.getByLabelText(/provider/i), "meta");
+    // Switch the provider to Meta (a verify-token provider) via the searchable combobox → the Verify
+    // token option appears. (The provider picker is now a Combobox, not a native select.)
+    await user.click(screen.getByRole("button", { name: /provider:/i }));
+    await user.type(screen.getByLabelText(/search providers/i), "meta");
+    await user.click(screen.getByRole("option", { name: /^meta$/i }));
     await waitFor(() =>
       expect(within(kindSelect).getByRole("option", { name: /verify token/i })).toBeInTheDocument(),
     );

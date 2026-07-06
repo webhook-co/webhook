@@ -84,6 +84,7 @@ export {
   type MultiSelectOption,
   type MultiSelectProps,
 } from "./components/multi-select";
+export { Combobox, type ComboboxOption, type ComboboxProps } from "./components/combobox";
 export { Calendar, type CalendarRange, type CalendarProps } from "./components/calendar";
 export { Tabs, TabsList, TabsTrigger, TabsContent } from "./components/tabs";
 export {
