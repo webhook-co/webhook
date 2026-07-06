@@ -15,7 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import type { DedupConfig, SecretSealer } from "@webhook-co/shared";
+import { DedupConfigSchema, type DedupConfig, type SecretSealer } from "@webhook-co/shared";
 import type { ReadSealedIngestTokenResult } from "./ingest-token-seal";
 
 // Import CapabilityFault from the LEAF (not the `@webhook-co/contract` barrel): apps/web pulls this module
@@ -437,15 +437,14 @@ export function makeEndpointTokenColdLookup(authn: Sql) {
     if (!credentialHashEquals(Buffer.from(row.ingest_token_hash), tokenHash)) return null;
     // Ingest tokens are audience-less (a write-only path token, not a bearer api key) and
     // carry no scopes; the ingest path's authorization is "owns this endpoint", not a scope.
-    // dedup_config is written only via the contract-validated control plane, so it's trusted here;
-    // the KV validator re-checks it on the cache path (poisoned-entry defense). Pass NULL through as
-    // "use the default" (the engine's resolveDedupParams handles NULL).
-    return {
-      orgId: row.org_id,
-      endpointId: row.id,
-      scopes: [],
-      paused: row.paused,
-      dedupConfig: row.dedup_config,
-    };
+    // dedup_config is validated HERE at the DB->system boundary (full schema, once per cold miss):
+    // a NULL or malformed/schema-drifted value resolves to NULL = "use the default", so the engine
+    // never derives a key from a config it can't interpret. The KV read path does a cheap structural
+    // re-check (poisoned-entry defense) without re-parsing field grammar.
+    const dedupConfig: DedupConfig | null =
+      row.dedup_config != null && DedupConfigSchema.safeParse(row.dedup_config).success
+        ? (row.dedup_config as DedupConfig)
+        : null;
+    return { orgId: row.org_id, endpointId: row.id, scopes: [], paused: row.paused, dedupConfig };
   };
 }

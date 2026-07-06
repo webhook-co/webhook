@@ -17,7 +17,11 @@
 // NOT cached (caching negatives would let a just-created key 404 for the TTL window, and
 // would let an attacker pin a negative). Only positive resolutions are cached.
 
-import { DedupConfigSchema } from "@webhook-co/shared";
+import {
+  DEDUP_MODES,
+  MAX_DEDUP_WINDOW_SECONDS,
+  MIN_DEDUP_WINDOW_SECONDS,
+} from "@webhook-co/shared";
 
 import { credentialCacheKey, type CredentialHasher } from "./credential";
 import {
@@ -97,11 +101,23 @@ function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
     if (!Array.isArray(v.sealedSecrets) || !v.sealedSecrets.every(isCachedSealedSecret))
       return false;
   }
-  // dedupConfig drives the ingest key derivation. A poisoned/legacy entry (unknown mode, out-of-range
-  // window, malformed field paths) must fall through to the cold path so the engine never derives a key
-  // from a garbled config — validate it fully against the same schema the write path enforces.
+  // dedupConfig drives the ingest key derivation. This runs on every KV hit (the hot path), so it is a
+  // CHEAP structural check — a wrong `mode` or a non-numeric `windowSeconds` (an obviously-poisoned or
+  // legacy entry) falls through to the cold path, which re-runs the FULL DedupConfigSchema. Malformed
+  // field paths are not re-parsed here: the ingest-time evaluator is fail-safe (an unresolvable path
+  // yields a per-request unique key, never an over-collapse), so a corrupt selector can't drop events.
   if (v.dedupConfig !== undefined && v.dedupConfig !== null) {
-    if (!DedupConfigSchema.safeParse(v.dedupConfig).success) return false;
+    if (typeof v.dedupConfig !== "object") return false;
+    const dc = v.dedupConfig as Record<string, unknown>;
+    if (typeof dc.mode !== "string" || !(DEDUP_MODES as readonly string[]).includes(dc.mode))
+      return false;
+    if (
+      typeof dc.windowSeconds !== "number" ||
+      !Number.isFinite(dc.windowSeconds) ||
+      dc.windowSeconds < MIN_DEDUP_WINDOW_SECONDS ||
+      dc.windowSeconds > MAX_DEDUP_WINDOW_SECONDS
+    )
+      return false;
   }
   return true;
 }
