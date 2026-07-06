@@ -59,50 +59,39 @@ treated as distinct rather than collapsed — webhook.co never silently drops an
 
 ## Configure it
 
-Deduplication is configured identically across every surface. Set it when you create an endpoint, or
-update it any time.
+Deduplication is configured identically across every surface — set it when you create an endpoint, or
+update it any time. `--dedup-reset` (CLI) or a `null` `dedupConfig` (API) returns an endpoint to the
+default.
 
-<CodeGroup>
-```sh CLI
-# content mode with a 5-minute window
+From the CLI:
+
+```sh
 wbhk endpoints create orders-prod --dedup-mode content --dedup-window 300
-
-# switch an endpoint to key on a body field
-
 wbhk endpoints update <endpoint-id> --dedup-mode fields --dedup-field body.data.id
-
-# capture every request (testing)
-
 wbhk endpoints update <endpoint-id> --dedup-mode off
-
-# back to the default
-
 wbhk endpoints update <endpoint-id> --dedup-reset
+```
 
-````
+From the API — set the config on create, or `PATCH` it later:
 
-```sh API
-# create with a dedup config
+```sh
 curl -X POST https://api.webhook.co/v1/endpoints \
-  -H "authorization: Bearer $WBHK_API_KEY" \
-  -H "content-type: application/json" \
+  -H "authorization: Bearer $WBHK_API_KEY" -H "content-type: application/json" \
   -d '{"name":"orders-prod","dedupConfig":{"mode":"content","windowSeconds":300}}'
 
-# update an existing endpoint (null resets to the default)
 curl -X PATCH https://api.webhook.co/v1/endpoints/<endpoint-id> \
-  -H "authorization: Bearer $WBHK_API_KEY" \
-  -H "content-type: application/json" \
+  -H "authorization: Bearer $WBHK_API_KEY" -H "content-type: application/json" \
   -d '{"dedupConfig":{"mode":"fields","windowSeconds":300,"fields":{"include":["body.data.id"]}}}'
-````
+```
 
-```ts SDK
+From a typed SDK:
+
+```ts
 await webhook.endpoints.update({
   endpointId,
   dedupConfig: { mode: "content", windowSeconds: 300 },
 });
 ```
-
-</CodeGroup>
 
 Config changes take effect within the cache-propagation window (about five minutes), not instantly — and
 a change never claims exactly-once across the transition. Every change is recorded in your endpoint's
