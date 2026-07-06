@@ -153,6 +153,33 @@ describe("MultiSelect", () => {
     expect(screen.getByRole("listbox")).toBeInTheDocument();
   });
 
+  it("keeps aria-activedescendant a valid IDREF even when an option value contains spaces", async () => {
+    // A generic reusable control may get values with spaces (e.g. a country). The option DOM id must stay a
+    // valid, resolvable IDREF — a value-derived id would embed the space and silently break the reference.
+    const opts: MultiSelectOption[] = [
+      { value: "united states", label: "United States" },
+      { value: "canada", label: "Canada" },
+    ];
+    render(
+      <MultiSelect
+        options={opts}
+        selected={[]}
+        onChange={() => {}}
+        placeholder="All regions"
+        label="Filter by region"
+        searchable
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Filter by region/ }));
+    const search = screen.getByLabelText("Search…");
+    search.focus();
+    await userEvent.keyboard("{ArrowDown}"); // highlight an option → sets aria-activedescendant
+    const activeId = search.getAttribute("aria-activedescendant");
+    expect(activeId).toBeTruthy();
+    expect(activeId).not.toMatch(/\s/); // a valid HTML id has no whitespace
+    expect(document.getElementById(activeId!)).not.toBeNull(); // and it resolves to a real option
+  });
+
   it("matches an option's value/keywords in search, not only the label", async () => {
     const opts: MultiSelectOption[] = [
       { value: "ms_graph", label: "Microsoft Graph" },

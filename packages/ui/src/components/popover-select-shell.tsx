@@ -61,7 +61,8 @@ function CheckIcon() {
   );
 }
 
-/** Leading checkbox for the multi-select variant. Presentational — the row <button> owns aria-selected. */
+/** Leading checkbox for the multi-select variant. Presentational — NOT the interactive `Checkbox` primitive,
+ *  which can't nest inside the option <button>; the row <button> owns aria-selected + the real selection. */
 function CheckboxIndicator({ checked }: { checked: boolean }) {
   return (
     <span
@@ -153,7 +154,9 @@ export function PopoverSelectShell({
   const [query, setQuery] = React.useState("");
   const [active, setActive] = React.useState(0);
   const listboxId = React.useId();
-  const optionDomId = (value: string) => `${listboxId}-opt-${value}`;
+  // Key the DOM id off the option's *position*, never its value: a value can hold spaces or other
+  // characters illegal in an id/IDREF, which would silently break aria-activedescendant for that option.
+  const optionDomId = (index: number) => `${listboxId}-opt-${index}`;
 
   const needle = query.trim().toLowerCase();
   const filtered = needle ? options.filter((o) => matches(o, needle)) : options;
@@ -166,9 +169,8 @@ export function PopoverSelectShell({
   // Keep the highlighted option visible while arrow-keying through a long list.
   React.useEffect(() => {
     if (!open) return;
-    const target = filtered[active];
-    if (!target) return;
-    document.getElementById(optionDomId(target.value))?.scrollIntoView({ block: "nearest" });
+    if (!filtered[active]) return;
+    document.getElementById(optionDomId(active))?.scrollIntoView({ block: "nearest" });
   }, [active, needle, open]);
 
   function select(value: string) {
@@ -201,8 +203,7 @@ export function PopoverSelectShell({
     }
   }
 
-  const activeDescendant =
-    open && filtered[active] ? optionDomId(filtered[active]!.value) : undefined;
+  const activeDescendant = open && filtered[active] ? optionDomId(active) : undefined;
 
   return (
     <Popover
@@ -273,7 +274,7 @@ export function PopoverSelectShell({
               return (
                 <button
                   key={option.value}
-                  id={optionDomId(option.value)}
+                  id={optionDomId(index)}
                   type="button"
                   role="option"
                   aria-selected={sel}
@@ -281,6 +282,9 @@ export function PopoverSelectShell({
                   onMouseEnter={() => setActive(index)}
                   className={cn(
                     "flex w-full cursor-pointer items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left text-sm outline-none",
+                    // The rows are real tabbable buttons; keep a visible indicator when Tab-focused, not just
+                    // when arrow-key/hover-highlighted via `active` (WCAG 2.4.7).
+                    "focus-visible:bg-surface-sunken focus-visible:text-fg",
                     isActive ? "bg-surface-sunken text-fg" : "text-fg-secondary",
                   )}
                 >
