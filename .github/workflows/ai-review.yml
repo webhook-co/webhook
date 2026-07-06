@@ -1,15 +1,24 @@
 name: AI review
 
-# Runs the security + QA review sub-agents (.cursor/agents/) against the PR diff.
+# Runs the security + QA review sub-agents against the PR diff, with two providers and
+# an automatic fallback: Cursor is tried first, Claude is the fallback.
 #
-# The job is gated on a `CURSOR_API_KEY` repo secret (Settings -> Secrets and variables
-# -> Actions). Without the secret the job detects the missing key and exits successfully
-# with a notice. With the secret set, it installs the Cursor CLI and runs the reviewers
-# on the diff. Headless `cursor-agent` requires `--trust` to skip the interactive
-# workspace-trust prompt; without it the CLI exits non-zero in CI.
+# Provider selection (per run):
+#   1. If a `CURSOR_API_KEY` repo secret is set, install the Cursor CLI and run the
+#      reviewers on the diff (the historical path).
+#   2. If Cursor is not configured OR its step fails, fall back to Claude via
+#      anthropics/claude-code-action, provided a Claude credential is present.
+#   3. If no provider is configured, the job emits a notice and exits successfully.
 #
-# Alternative providers (swap in if preferred): anthropics/claude-code-action with
-# ANTHROPIC_API_KEY, or any code-review GitHub Action.
+# Claude credentials (either works; the OAuth token is checked first):
+#   - `CLAUDE_CODE_OAUTH_TOKEN` — mint locally with `claude setup-token` on a Claude
+#     Pro or Max subscription (no separate pay-as-you-go API account needed).
+#   - `ANTHROPIC_API_KEY` — a pay-as-you-go Claude Console key.
+# Add whichever you use in Settings -> Secrets and variables -> Actions.
+#
+# Headless `cursor-agent` requires `--trust` to skip the interactive workspace-trust
+# prompt; without it the CLI exits non-zero in CI. The whole job is non-blocking, so a
+# reviewer failure never wedges a PR.
 
 on:
   pull_request:
@@ -31,35 +40,48 @@ jobs:
     continue-on-error: true
     env:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
-      - name: Check for API key
+      - name: Detect configured providers
         id: gate
         run: |
           if [ -n "${CURSOR_API_KEY:-}" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "cursor=true" >> "$GITHUB_OUTPUT"
           else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=AI review pending::No CURSOR_API_KEY secret set. Skipping AI review. Add the secret in repo Settings to enable the security + QA reviewers."
+            echo "cursor=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "claude=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "claude=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -z "${CURSOR_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+            echo "::notice title=AI review pending::No reviewer credential set. Add CURSOR_API_KEY (Cursor) and/or CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY (Claude) in repo Settings to enable the security + QA reviewers."
           fi
 
       - name: Compute PR diff
-        if: steps.gate.outputs.enabled == 'true'
+        if: steps.gate.outputs.cursor == 'true' || steps.gate.outputs.claude == 'true'
         run: |
           git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
           echo "Diff size: $(wc -l < pr.diff) lines"
 
+      # --- Provider 1: Cursor (tried first) ---
       - name: Install Cursor CLI
-        if: steps.gate.outputs.enabled == 'true'
+        if: steps.gate.outputs.cursor == 'true'
         run: |
           curl https://cursor.com/install -fsS | bash
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
 
-      - name: Run security + QA reviewers on the diff
-        if: steps.gate.outputs.enabled == 'true'
+      - name: Run security + QA reviewers on the diff (Cursor)
+        id: cursor
+        if: steps.gate.outputs.cursor == 'true'
+        # Don't abort the job if Cursor fails — let the Claude fallback take over.
+        continue-on-error: true
         run: |
           cursor-agent --print --trust --output-format text \
             "You are running in CI on a pull request. Review ONLY the changes in pr.diff. \
@@ -68,3 +90,24 @@ jobs:
              PII in logs, missing/weak tests, skipped tests, lowered coverage) with file:line \
              and a concrete fix. If there are no blocking issues, say so explicitly." \
             < pr.diff
+
+      # --- Provider 2: Claude (fallback when Cursor is absent or failed) ---
+      - name: Run security + QA reviewers on the diff (Claude fallback)
+        if: >
+          steps.gate.outputs.claude == 'true' &&
+          (steps.gate.outputs.cursor != 'true' || steps.cursor.outcome == 'failure')
+        uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a # v1
+        with:
+          # OAuth token (Pro/Max subscription) is preferred; the API key also works.
+          # Whichever secret is unset resolves to an empty string and is ignored.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are running in CI on a pull request. The full PR diff is in the file
+            `pr.diff` at the repo root — review ONLY those changes. Apply the
+            security-reviewer and qa-test-reviewer sub-agents defined in `.claude/agents/`.
+            Report blocking issues (injection, XSS, secrets, authz/SSRF, PII in logs,
+            missing/weak tests, skipped tests, lowered coverage) with file:line and a
+            concrete fix. If there are no blocking issues, say so explicitly.
+          claude_args: "--model claude-sonnet-5 --max-turns 15"
