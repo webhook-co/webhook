@@ -7,6 +7,8 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Combobox,
+  type ComboboxOption,
   Dialog,
   DialogClose,
   DialogContent,
@@ -16,8 +18,8 @@ import {
   DialogTitle,
   Field,
   Label,
+  ProviderLogo,
   providerDisplayName,
-  Select,
   StatusPill,
   type StatusTone,
   Table,
@@ -142,6 +144,25 @@ export function ProviderSecretsManager({
   const creating = isBusy("create");
   const canCreate = secret.trim() !== "" && !creating;
 
+  // The provider picker's options — one per provider, with its brand logo + display name, so the searchable
+  // dropdown matches the events-page provider filter. Static list; memoized so the icons aren't rebuilt.
+  const providerOptions = React.useMemo<ComboboxOption[]>(
+    () =>
+      PROVIDERS.map((p) => ({
+        value: p,
+        label: providerDisplayName(p),
+        icon: <ProviderLogo slug={p} size={16} />,
+      })),
+    [],
+  );
+
+  // The secret-type options for the SELECTED provider (always signing_secret; + verify_token /
+  // braintree_public_key where valid). No logos + few options, so the combobox shows no search box.
+  const kindOptions: ComboboxOption[] = availableKinds.map((k) => ({
+    value: k,
+    label: KIND_LABELS[k],
+  }));
+
   function handleProviderChange(next: Provider) {
     setProvider(next);
     if (formError) setFormError(null);
@@ -240,36 +261,32 @@ export function ProviderSecretsManager({
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
             <div className="flex flex-1 flex-col gap-1.5">
               <Label htmlFor="provider-secret-provider">Provider</Label>
-              <Select
+              <Combobox
                 id="provider-secret-provider"
+                label="Provider"
+                options={providerOptions}
                 value={provider}
                 disabled={creating}
-                onChange={(e) => handleProviderChange(e.target.value as Provider)}
-              >
-                {PROVIDERS.map((p) => (
-                  <option key={p} value={p}>
-                    {providerDisplayName(p)}
-                  </option>
-                ))}
-              </Select>
+                onChange={(v) => handleProviderChange(v as Provider)}
+                searchable
+                searchPlaceholder="Search providers…"
+                className="w-full"
+              />
             </div>
             <div className="flex flex-1 flex-col gap-1.5">
               <Label htmlFor="provider-secret-kind">Secret type</Label>
-              <Select
+              <Combobox
                 id="provider-secret-kind"
+                label="Secret type"
+                options={kindOptions}
                 value={kind}
                 disabled={creating}
-                onChange={(e) => {
-                  setKind(e.target.value as ProviderSecretKind);
+                onChange={(v) => {
+                  setKind(v as ProviderSecretKind);
                   if (formError) setFormError(null);
                 }}
-              >
-                {availableKinds.map((k) => (
-                  <option key={k} value={k}>
-                    {KIND_LABELS[k]}
-                  </option>
-                ))}
-              </Select>
+                className="w-full"
+              />
             </div>
           </div>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start">

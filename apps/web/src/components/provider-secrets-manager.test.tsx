@@ -106,14 +106,22 @@ describe("ProviderSecretsManager — kind options depend on provider", () => {
     const user = userEvent.setup();
     renderManager([]);
 
-    const kindSelect = screen.getByLabelText(/secret type/i);
-    // Stripe (default) → signing_secret only.
-    expect(within(kindSelect).queryByRole("option", { name: /verify token/i })).toBeNull();
+    // Both pickers are searchable comboboxes now. Stripe (default) → the Secret type dropdown offers only
+    // "Signing secret" (no "Verify token").
+    await user.click(screen.getByRole("button", { name: /secret type:/i }));
+    expect(screen.getByRole("option", { name: /signing secret/i })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /verify token/i })).toBeNull();
+    await user.keyboard("{Escape}");
 
-    // Switch the provider to Meta (a verify-token provider) → the Verify token option appears.
-    await user.selectOptions(screen.getByLabelText(/provider/i), "meta");
+    // Switch the provider to Meta (a verify-token provider) via the searchable provider combobox.
+    await user.click(screen.getByRole("button", { name: /provider:/i }));
+    await user.type(screen.getByLabelText(/search providers/i), "meta");
+    await user.click(screen.getByRole("option", { name: /^meta$/i }));
+
+    // Now the Secret type dropdown offers "Verify token".
+    await user.click(screen.getByRole("button", { name: /secret type:/i }));
     await waitFor(() =>
-      expect(within(kindSelect).getByRole("option", { name: /verify token/i })).toBeInTheDocument(),
+      expect(screen.getByRole("option", { name: /verify token/i })).toBeInTheDocument(),
     );
   });
 });
