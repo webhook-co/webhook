@@ -434,6 +434,7 @@ export interface components {
         CreatedEndpoint: {
             /** Format: date-time */
             createdAt: string;
+            /** @default null */
             dedupConfig: {
                 fields?: {
                     exclude?: string[];
@@ -515,6 +516,7 @@ export interface components {
         Endpoint: {
             /** Format: date-time */
             createdAt: string;
+            /** @default null */
             dedupConfig: {
                 fields?: {
                     exclude?: string[];

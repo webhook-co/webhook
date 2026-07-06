@@ -2078,6 +2078,7 @@
             "format": "date-time"
           },
           "dedupConfig": {
+            "default": null,
             "anyOf": [
               {
                 "type": "object",
@@ -2171,6 +2172,7 @@
             "format": "date-time"
           },
           "dedupConfig": {
+            "default": null,
             "anyOf": [
               {
                 "type": "object",

@@ -118,6 +118,24 @@ describe("endpoints.update — dedup config round-trip", () => {
     ).toBeNull();
   });
 
+  it("read FAILS SAFE: a schema-drifted stored dedup_config degrades to null (no 500 for the org)", async () => {
+    const created = await createEndpointWithAudit(
+      app,
+      { orgId: orgA, name: "poisoned", actor: null, maxEndpoints: 100 },
+      hasher,
+      auditKey,
+    );
+    // Simulate an out-of-band / forward-compat value the current schema rejects (unknown mode).
+    await withTenant(
+      app,
+      orgA,
+      (tx) =>
+        tx`update endpoints set dedup_config = '{"mode":"from_the_future","windowSeconds":1}'::jsonb where id = ${created.id}`,
+    );
+    const read = await withTenant(app, orgA, (tx) => getEndpoint(tx, created.id));
+    expect(read?.dedupConfig).toBeNull(); // degraded, did NOT throw
+  });
+
   it("throws NOT_FOUND for an unknown endpoint id", async () => {
     await expect(
       updateEndpointDedupWithAudit(

@@ -73,8 +73,9 @@ export async function createEndpoint(
   const id = randomUUID();
   await withTenant(app, input.orgId, async (tx) => {
     await tx`
-      insert into endpoints (id, org_id, ingest_token_hash, name)
-      values (${id}, ${input.orgId}, ${keyHash}, ${input.name})`;
+      insert into endpoints (id, org_id, ingest_token_hash, name, dedup_config)
+      values (${id}, ${input.orgId}, ${keyHash}, ${input.name},
+        ${input.dedupConfig == null ? null : tx.json(input.dedupConfig as unknown as Parameters<typeof tx.json>[0])}::jsonb)`;
   });
   return { id, orgId: input.orgId, name: input.name, paused: false, start, plaintext };
 }

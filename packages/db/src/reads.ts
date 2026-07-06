@@ -5,6 +5,7 @@
 // shared camelCase entity schemas, which also validate the row shape.
 
 import {
+  DedupConfigSchema,
   deriveVerificationState,
   DeliverySchema,
   EndpointSchema,
@@ -182,13 +183,21 @@ interface EndpointRow {
 }
 
 function toEndpoint(r: EndpointRow): Endpoint {
+  // Fail SAFE on a schema-drifted / out-of-band dedup_config, mirroring the ingest cold lookup
+  // (endpoints.ts): a stored value that no longer satisfies DedupConfigSchema degrades to null (the
+  // default) rather than throwing — otherwise ONE poisoned row would 500 the whole org's
+  // endpoints.list/get (and the events reads that gate on getEndpoint), while ingest keeps working.
+  const dedupConfig =
+    r.dedup_config != null && DedupConfigSchema.safeParse(r.dedup_config).success
+      ? r.dedup_config
+      : null;
   return EndpointSchema.parse({
     id: r.id,
     orgId: r.org_id,
     name: r.name,
     paused: r.paused,
     createdAt: r.created_at,
-    dedupConfig: r.dedup_config,
+    dedupConfig,
   });
 }
 
