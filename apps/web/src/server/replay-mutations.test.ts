@@ -36,7 +36,7 @@ function claimed(
     kind: "claimed",
     event: {
       endpointId: "ep-1",
-      dedupKey: "dk-1",
+      payloadR2Key: "org/o/ep/ep-1/" + "a".repeat(64),
       headers: [["content-type", "application/json"]],
       verified: true,
     },
@@ -92,7 +92,7 @@ describe("replayToDestination", () => {
     expect(args).toMatchObject({
       orgId: ORG,
       endpointId: "ep-1",
-      dedupKey: "dk-1",
+      payloadR2Key: "org/o/ep/ep-1/" + "a".repeat(64),
       url: "https://hooks.example.com/in",
     });
     expect(res.status).toBe("delivered");
@@ -131,7 +131,7 @@ describe("replayToDestination", () => {
         claimed({
           event: {
             endpointId: "ep-1",
-            dedupKey: "dk-1",
+            payloadR2Key: "org/o/ep/ep-1/" + "a".repeat(64),
             headers: [["content-type", "application/json"]],
             verified: false, // unattempted → deliver, but never sign
           },

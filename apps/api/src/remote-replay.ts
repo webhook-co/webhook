@@ -101,8 +101,8 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
     }
 
     // Deliver via the engine — the single guarded egress. No DB tx is held across the outbound POST (it
-    // would pin a Hyperdrive connection for the whole RTT). The engine re-derives the R2 key from the
-    // authenticated org/endpoint/dedup (H1) and runs the connect-time SSRF guard.
+    // would pin a Hyperdrive connection for the whole RTT). The engine reads the STORED R2 key, fenced to
+    // the authenticated org/endpoint prefix (H1, readPayloadKey), and runs the connect-time SSRF guard.
     //
     // If the RPC throws, the POST's outcome is UNKNOWN → record 'failed' (terminal, retryable) rather than
     // leaving the claim stuck 'pending'. Delivery is AT-LEAST-ONCE here: a fresh-key retry may re-send
@@ -128,7 +128,7 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
       result = await deps.dispatcher.deliver({
         orgId: ctx.orgId,
         endpointId: claimed.event.endpointId,
-        dedupKey: claimed.event.dedupKey,
+        payloadR2Key: claimed.event.payloadR2Key,
         url: claimed.destinationUrl,
         headers: claimed.event.headers,
         signing,

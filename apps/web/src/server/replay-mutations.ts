@@ -79,7 +79,9 @@ export type ClaimOutcome =
       readonly kind: "claimed";
       readonly event: {
         readonly endpointId: string;
-        readonly dedupKey: string;
+        /** The STORED R2 object key for the body — the engine resolves it directly (never re-derives),
+         *  fenced to the endpoint prefix at the dispatcher (ADR-0104 forged-overwrite hardening). */
+        readonly payloadR2Key: string;
         readonly headers: DeliverArgs["headers"];
         /** Whether the source event VERIFIED — the engine re-signs ONLY a verified event (ADR-0103). */
         readonly verified: boolean;
@@ -148,7 +150,7 @@ function boundDeps(app: Sql, dispatcher: DeliveryDispatcherRpc): ReplayDeps {
           kind: "claimed",
           event: {
             endpointId: event.endpointId,
-            dedupKey: event.dedupKey,
+            payloadR2Key: event.payloadR2Key,
             headers: event.headers as DeliverArgs["headers"],
             verified: event.verified,
           },
@@ -230,7 +232,7 @@ async function orchestrate(input: ReplayInput, deps: ReplayDeps): Promise<Delive
     result = await deps.dispatch({
       orgId: input.orgId,
       endpointId: claimed.event.endpointId,
-      dedupKey: claimed.event.dedupKey,
+      payloadR2Key: claimed.event.payloadR2Key,
       url: claimed.destinationUrl,
       headers: claimed.event.headers,
       signing,

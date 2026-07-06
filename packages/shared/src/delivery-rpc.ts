@@ -35,7 +35,13 @@ export interface DeliverySigning {
 export interface DeliverArgs {
   readonly orgId: string;
   readonly endpointId: string;
-  readonly dedupKey: string;
+  /**
+   * The STORED R2 object key for the event body, resolved from the event row (NOT re-derived from the
+   * request). The dispatcher fences it to `endpointPrefix(orgId, endpointId)` before the read, so a
+   * poisoned value can never point at another tenant's object, while a forged same-dedup-key request
+   * (which hashes to a different object) can never have overwritten the legit body (ADR-0104).
+   */
+  readonly payloadR2Key: string;
   /** The destination URL (canonical at registration; re-validated by the connect-time guard at delivery). */
   readonly url: string;
   /** The event's captured headers ([name,value] pairs); filtered (hop-by-hop dropped) before the POST. */
