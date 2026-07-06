@@ -3,8 +3,9 @@
 // RPCs `env.DELIVERY_DISPATCHER.deliver(...)`; only the engine performs the user-controlled outbound POST.
 //
 // guardedDeliver is the pure pipeline (deps injected) so the whole guard — structural reject, resolve-and-
-// validate EVERY resolved address, fail-closed, the H1 key re-derivation, redirect:manual, the header
-// filter — is provable with fakes under the workerd test pool. The DeliveryDispatcher WorkerEntrypoint just
+// validate EVERY resolved address, fail-closed, the H1 stored-key prefix fence (readPayloadKey),
+// redirect:manual, the header filter — is provable with fakes under the workerd test pool. The
+// DeliveryDispatcher WorkerEntrypoint just
 // wires the real R2 / DoH / fetch. NOTE: the resolve→fetch gap is an irreducible DNS-rebinding TOCTOU on
 // workerd (no IP-pinning / SNI override); the guard is authoritative defense-in-depth atop the platform's
 // public-only egress default — the residual is tracked internally, not published.
@@ -131,7 +132,13 @@ export async function guardedDeliver(deps: DeliverDeps, args: DeliverArgs): Prom
   //    endpoint's own prefix. A poisoned/mismatched key fails closed (a recorded 'failed', never a
   //    cross-tenant read). (ADR-0104 forged-overwrite hardening.)
   const key = readPayloadKey(args.orgId, args.endpointId, args.payloadR2Key);
-  if (key === null) return done("failed", null, "payload key outside endpoint prefix");
+  // 'failed' (RETRYABLE), not 'blocked' (terminal): the common cause of a null here is a rolling-deploy
+  // skew where a previous-release caller omitted payloadR2Key — a TRANSIENT condition that self-heals once
+  // both Workers finish deploying, so it must not dead-letter. A genuinely poisoned/cross-tenant stored key
+  // is permanent, but retrying it is bounded (it exhausts the retry schedule → auto-disable) and is the
+  // safer default than terminally dropping a delivery that would have succeeded a minute later.
+  if (key === null)
+    return done("failed", null, "payload key rejected by the endpoint-prefix fence");
   const obj = await deps.getPayload(key);
   if (obj === null) return done("failed", null, "payload not found");
   const body = new Uint8Array(obj); // sign and POST the SAME bytes — byte-correctness for the signature.

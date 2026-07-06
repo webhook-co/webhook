@@ -116,3 +116,27 @@ read). This preserves the original "never trust a handed key" (H1) guarantee wit
   (a sender hammering cache-busting query params would previously have shown as one event/day and now
   shows as many). The volatile-param denylist (`_`, `cachebust`, `cache_bust`) absorbs the common
   cache-buster patterns; extend it if a real sender surfaces a new one.
+- **Rolling-deploy compatibility (Slice 5).** The Slice-5 hardening changed the `DELIVERY_DISPATCHER`
+  RPC contract (`DeliverArgs.dedupKey` → `payloadR2Key`) AND the `payloadR2Key(...)` key formula, and
+  the api/web/engine Workers deploy on independent CDs — so a brief multi-Worker skew is unavoidable.
+  It is handled by construction, not by deploy ordering: `readPayloadKey` validates its input as
+  `unknown` and **fails closed** on a missing/non-string value, so a previous-release caller that omits
+  `payloadR2Key` yields a *retryable* `failed` (never a thrown `undefined.startsWith` / 500), and the
+  engine reading the STORED key (not re-deriving) means existing objects — written under the old 3-arg
+  key — still resolve by their persisted key regardless of the formula change. In-flight replays during
+  the ~1–2 min window may record a retryable `failed` and self-heal on the next attempt; no crash, no
+  misdelivery, no data loss.
+- **Orphan lifecycle (Slice 5).** Content-addressing means a forged different-body request under a known
+  `dedup_key` writes a NEW (unreferenced, unmetered) R2 object instead of overwriting the legit one — a
+  storage-amplification tradeoff we take deliberately: it converts main's *forged-overwrite corruption*
+  (a real integrity break) into *prunable orphans* (a cost line, not the billable events dimension).
+  Orphans are unreferenced by any event row and are reclaimed by the per-prefix retention/reconcile
+  sweep; the amplification is bounded by the ingest rate-limit + soft-cap and requires the attacker to
+  already hold the endpoint's bearer URL.
+- **Stored-key trust boundary (Slice 5).** Delivery/replay now trust the `payload_r2_key` column
+  (fenced to the endpoint prefix + sha256-hex shape) instead of re-deriving from the dedup basis. The
+  column is written only at ingest, in the same atomic `ingest_event` insert as the row, from a
+  server-computed key under RLS — there is no partial-write or user-write path that could point it at
+  another intra-endpoint object. The fence catches cross-tenant/malformed keys; a future content-hash
+  post-read check could additionally bind the read to the event's own body if a mis-population path ever
+  emerges, but none exists today.

@@ -47,12 +47,19 @@ export async function payloadR2Key(
  * would have to fetch the body to recompute — a chicken-and-egg). To keep the "never trust a handed
  * key" guarantee, we fence the key to the principal's own prefix: even a poisoned column value can
  * never point at another tenant's object. Returns the key if valid, else null (caller fails closed).
+ *
+ * `storedKey` is TYPED as string but validated as `unknown` at runtime: this is a cross-Worker RPC
+ * boundary (api/web → engine `DeliverArgs`), and the api/web/engine Workers deploy on independent CDs.
+ * During a rolling-deploy skew a caller on the previous release can omit `payloadR2Key`, so a missing /
+ * non-string value must FAIL CLOSED (null → the dispatcher records a retryable `failed` that self-heals
+ * once both sides finish deploying) rather than throw `undefined.startsWith` out of the deliver RPC.
  */
 export function readPayloadKey(
   orgId: string,
   endpointId: string,
   storedKey: string,
 ): string | null {
+  if (typeof storedKey !== "string") return null;
   const prefix = endpointPrefix(orgId, endpointId);
   if (!storedKey.startsWith(prefix)) return null;
   // The suffix is an opaque sha256 hex object name — no separators, no traversal.

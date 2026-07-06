@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { endpointPrefix, payloadR2Key } from "./r2";
+import { endpointPrefix, payloadR2Key, readPayloadKey } from "./r2";
 
 const org = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const ep = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
@@ -40,5 +40,34 @@ describe("R2 key model", () => {
     const a = await payloadR2Key(org, `${ep}x`, "y", bodyA);
     const b = await payloadR2Key(org, ep, `xy`, bodyA);
     expect(a).not.toBe(b);
+  });
+});
+
+describe("readPayloadKey — stored-key read fence", () => {
+  const key = `${endpointPrefix(org, ep)}${"a".repeat(64)}`;
+
+  it("returns a well-formed key under the endpoint's own prefix", () => {
+    expect(readPayloadKey(org, ep, key)).toBe(key);
+  });
+
+  it("rejects a key under a DIFFERENT endpoint / org prefix (cross-tenant fence)", () => {
+    const otherEp = `${endpointPrefix(org, "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5099")}${"a".repeat(64)}`;
+    const otherOrg = `${endpointPrefix("0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f50ff", ep)}${"a".repeat(64)}`;
+    expect(readPayloadKey(org, ep, otherEp)).toBeNull();
+    expect(readPayloadKey(org, ep, otherOrg)).toBeNull();
+  });
+
+  it("rejects a malformed object-name suffix (traversal / wrong shape)", () => {
+    expect(readPayloadKey(org, ep, `${endpointPrefix(org, ep)}../../etc/passwd`)).toBeNull();
+    expect(readPayloadKey(org, ep, `${endpointPrefix(org, ep)}${"a".repeat(63)}`)).toBeNull();
+    expect(readPayloadKey(org, ep, `${endpointPrefix(org, ep)}${"A".repeat(64)}`)).toBeNull();
+  });
+
+  it("FAILS CLOSED on a non-string value (rolling-deploy skew: a caller omitted payloadR2Key)", () => {
+    // A previous-release caller can send { dedupKey } with no payloadR2Key; the field arrives
+    // undefined over the RPC. This MUST return null (→ retryable failed), never throw.
+    expect(readPayloadKey(org, ep, undefined as unknown as string)).toBeNull();
+    expect(readPayloadKey(org, ep, null as unknown as string)).toBeNull();
+    expect(readPayloadKey(org, ep, 42 as unknown as string)).toBeNull();
   });
 });
