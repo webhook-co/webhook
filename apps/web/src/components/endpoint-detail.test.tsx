@@ -55,6 +55,21 @@ describe("EndpointDetail", () => {
     expect(screen.queryByText(/shown only once/i)).not.toBeInTheDocument();
   });
 
+  it("vertically centers each label with its value (the tall Copy button must not offset the labels)", () => {
+    // Regression guard: the rows are a two-column grid whose height is set by the Copy button; without
+    // `items-center` the label text sat ~7px above its centered value. jsdom has no layout, so this
+    // asserts the load-bearing class rather than pixel positions.
+    const { container } = render(
+      <EndpointDetail
+        endpoint={ep}
+        ingestUrl={URL}
+        rotateEndpoint={vi.fn()}
+        deleteEndpoint={vi.fn()}
+      />,
+    );
+    expect(container.querySelector("dl")).toHaveClass("items-center");
+  });
+
   it("shows a rotate-to-reveal hint for a legacy endpoint with no recoverable URL (null)", () => {
     render(
       <EndpointDetail

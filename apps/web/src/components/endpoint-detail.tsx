@@ -41,7 +41,7 @@ export function EndpointDetail({
           </Badge>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+          <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-2 text-sm">
             <dt className="text-fg-secondary">Ingest URL</dt>
             <dd className="flex min-w-0 items-center gap-2">
               {ingestUrl ? (
