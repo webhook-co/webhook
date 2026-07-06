@@ -21,7 +21,7 @@ import { flushSync } from "react-dom";
 import type { EndpointActionResult, RotateEndpointResult } from "@/server/endpoint-actions";
 import type { EndpointItem } from "@/server/endpoints";
 
-import { OneTimeUrlDialog } from "./one-time-url-dialog";
+import { IngestUrlDialog } from "./ingest-url-dialog";
 
 function MoreIcon() {
   return (
@@ -40,7 +40,7 @@ export interface EndpointControlsProps {
   /** Called after a successful soft-delete — the list removes the row; the detail page navigates away. */
   onDeleted: () => void;
   /**
-   * Called after the one-time rotate reveal is dismissed — the detail page refreshes so its ALWAYS-SHOWN
+   * Called after the rotate reveal dialog is dismissed — the detail page refreshes so its ALWAYS-SHOWN
    * ingest URL (ADR-0101) re-reveals the NEW token instead of the stale old one. Optional (the list-row
    * menu variant shows no persistent URL, so it doesn't need it).
    */
@@ -51,8 +51,8 @@ export interface EndpointControlsProps {
 
 /**
  * The rotate + delete controls for a single endpoint, shared by the list (per-row ⋯ menu) and the detail
- * page (explicit buttons) so the security-sensitive confirm copy + one-time reveal live in ONE place. Rotate
- * is a hard cutover (confirm → new one-time URL); delete is soft (confirm → onDeleted). Both carry a
+ * page (explicit buttons) so the confirm copy + URL reveal dialog live in ONE place. Rotate is a hard
+ * cutover (confirm → new ingest URL); delete is soft (confirm → onDeleted). Both carry a
  * synchronous in-flight latch so a double-fire can't mint/delete twice.
  */
 export function EndpointControls({
@@ -165,7 +165,7 @@ export function EndpointControls({
             <DialogDescription>
               The current webhook URL for &quot;{endpoint.name}&quot; stops working the moment you
               rotate — there&apos;s no grace window. Update it everywhere it&apos;s configured
-              first. You&apos;ll see the new URL once.
+              first.
             </DialogDescription>
           </DialogHeader>
           {rotateError ? <Banner tone="danger">{rotateError}</Banner> : null}
@@ -212,7 +212,7 @@ export function EndpointControls({
         </DialogContent>
       </Dialog>
 
-      <OneTimeUrlDialog
+      <IngestUrlDialog
         open={revealed !== null}
         onClose={() => {
           setRevealed(null);

@@ -179,4 +179,25 @@ describe("EventDetail", () => {
     expect(container.querySelector("b")).toBeNull();
     expect(screen.getByText("<b>hi</b>")).toBeInTheDocument();
   });
+
+  it("enables 'Replay to a destination' for a verified event", () => {
+    renderDetail(detail());
+    expect(screen.getByRole("button", { name: /replay to a destination/i })).toBeEnabled();
+  });
+
+  it("enables 'Replay to a destination' for an unattempted (unverified) event", () => {
+    renderDetail(detail({ verified: false, verification: null }));
+    expect(screen.getByRole("button", { name: /replay to a destination/i })).toBeEnabled();
+  });
+
+  it("disables 'Replay to a destination' and explains it for a FAILED event (ADR-0103)", () => {
+    const verification: VerificationResult = {
+      ok: false,
+      reason: { code: "WRONG_SECRET", confidence: "medium" },
+    };
+    renderDetail(detail({ verified: false, verification }));
+    expect(screen.getByRole("button", { name: /replay to a destination/i })).toBeDisabled();
+    // The button pre-explains why (rather than letting the user click through to an error toast).
+    expect(screen.getByText(/rejected signature can't be replayed/i)).toBeInTheDocument();
+  });
 });

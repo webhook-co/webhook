@@ -18,6 +18,7 @@ import {
   ProviderLogo,
   providerDisplayName,
 } from "@webhook-co/ui";
+import { deriveVerificationState } from "@webhook-co/shared";
 import * as React from "react";
 
 import { formatDateTime } from "@/lib/format";
@@ -61,6 +62,12 @@ export function EventDetail({
   replay,
 }: EventDetailProps) {
   const verification = verificationCopy(event.verification);
+  // The un-forgeable server-derived state (ADR-0103): a `failed` event (signature checked + rejected) can't
+  // be replayed — replaying would re-sign forged content — so we pre-gate the button rather than let the
+  // user click through to an error. `unattempted`/`verified`/`authenticated` all replay (the dialog then
+  // tells the truth about whether we sign the delivery).
+  const verificationState = deriveVerificationState(event.verified, event.verification);
+  const canReplay = verificationState !== "failed";
   const [replayOpen, setReplayOpen] = React.useState(false);
 
   return (
@@ -71,7 +78,7 @@ export function EventDetail({
           <StatusPill tone={verification.tone}>{verification.pill}</StatusPill>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+          <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-2 text-sm">
             <dt className="text-fg-secondary">Event ID</dt>
             <dd className="flex items-center gap-2">
               <code className="font-mono text-fg">{event.id}</code>
@@ -155,10 +162,17 @@ export function EventDetail({
           <p className="leading-snug text-fg-secondary">
             Or replay it to a registered destination:
           </p>
-          <div>
-            <Button variant="secondary" onClick={() => setReplayOpen(true)}>
-              Replay to a destination
-            </Button>
+          <div className="flex flex-col gap-1.5">
+            <div>
+              <Button variant="secondary" onClick={() => setReplayOpen(true)} disabled={!canReplay}>
+                Replay to a destination
+              </Button>
+            </div>
+            {!canReplay ? (
+              <p className="leading-snug text-fg-secondary">
+                A rejected signature can&apos;t be replayed — it would re-sign forged content.
+              </p>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -167,6 +181,7 @@ export function EventDetail({
         open={replayOpen}
         onClose={() => setReplayOpen(false)}
         eventId={event.id}
+        verificationState={verificationState}
         destinations={destinations}
         destinationsError={destinationsError}
         replay={replay}
