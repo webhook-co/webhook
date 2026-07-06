@@ -153,6 +153,7 @@ describe("handleIngest — the wbhk.my write path", () => {
         endpointId: "be000000-0000-4000-8000-0000000000bb",
         paused: false,
         sealedSecrets: [],
+        dedupConfig: null,
       }),
     });
     const resA = await handleIngest(req(GOOD, { method: "GET" }), epA.deps);
