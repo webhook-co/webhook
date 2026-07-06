@@ -18,6 +18,7 @@ import {
   endpointsRevealIngestUrl,
   endpointsRevokeProviderSecret,
   endpointsRotate,
+  endpointsUpdate,
 } from "@webhook-co/contract";
 import { type IngestUrlRevealerRpc, type SecretSealer } from "@webhook-co/shared";
 
@@ -29,6 +30,7 @@ import {
   deleteEndpointWithAudit,
   getEndpointIngestTokenHash,
   rotateEndpointWithAudit,
+  updateEndpointDedupWithAudit,
 } from "./endpoints";
 import { appendIngestUrlRevealAudit, enforceIngestUrlRevealRateLimit } from "./ingest-url-reveal";
 import {
@@ -117,9 +119,16 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     // Validate the apex BEFORE minting: a misconfig must fail closed WITHOUT committing an orphan
     // endpoint whose one-time URL would then be unrecoverable.
     const apex = normalizeIngestApex(deps.ingestBaseUrl);
+    const dedupConfig = parsed.data.dedupConfig ?? null;
     const created = await createEndpointWithAudit(
       deps.tenant,
-      { orgId: ctx.orgId, name: parsed.data.name, actor: ctx.userId ?? null, maxEndpoints },
+      {
+        orgId: ctx.orgId,
+        name: parsed.data.name,
+        dedupConfig,
+        actor: ctx.userId ?? null,
+        maxEndpoints,
+      },
       deps.hasher,
       deps.auditKey,
       // Seal a recoverable copy of the token so the ingest URL becomes always-shown (decision-0018).
@@ -133,6 +142,7 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
       name: created.name,
       paused: created.paused,
       createdAt: created.createdAt,
+      dedupConfig,
       ingestUrl: `${apex}/${created.plaintext}`,
     };
   });
@@ -207,7 +217,37 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
       name: rotated.name,
       paused: rotated.paused,
       createdAt: rotated.createdAt,
+      dedupConfig: rotated.dedupConfig,
       ingestUrl: `${apex}/${rotated.plaintext}`,
+    };
+  });
+
+  // endpoints.update — mutate the per-endpoint dedup config (ADR-0104), audit it, and EVICT the KV
+  // ingest-cache entry so the engine picks up the new config (the cached principal carries it). The
+  // eviction is best-effort (never fails the call); it self-heals within the KV TTL if missed.
+  handlers.set(endpointsUpdate.name, async (ctx, input) => {
+    ensureScope(ctx, endpointsUpdate); // FIRST — endpoints:write; sole authz gate on mcp
+    const parsed = endpointsUpdate.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    const evict = requireEvictor();
+    const updated = await updateEndpointDedupWithAudit(
+      deps.tenant,
+      {
+        orgId: ctx.orgId,
+        endpointId: parsed.data.endpointId,
+        dedupConfig: parsed.data.dedupConfig,
+        actor: ctx.userId ?? null,
+      },
+      deps.auditKey,
+    );
+    await evict(updated.tokenHash);
+    return {
+      id: updated.id,
+      orgId: updated.orgId,
+      name: updated.name,
+      paused: updated.paused,
+      createdAt: updated.createdAt,
+      dedupConfig: updated.dedupConfig,
     };
   });
 

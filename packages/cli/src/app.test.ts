@@ -1,5 +1,5 @@
 import { run } from "@stricli/core";
-import { CAPABILITIES } from "@webhook-co/contract";
+import { CAPABILITIES, requiredSurfaces } from "@webhook-co/contract";
 import { describe, expect, it } from "vitest";
 
 import { app, CAPABILITY_COMMANDS, VERSION } from "./app.js";
@@ -34,8 +34,10 @@ function isCommand(target: unknown): boolean {
 }
 
 describe("CLI command surface ↔ capability parity", () => {
-  it("maps every contract capability to a registered CLI command", () => {
-    for (const cap of CAPABILITIES) {
+  it("maps every CLI-required contract capability to a registered CLI command", () => {
+    // cli-exempt capabilities (surfaceExempt.cli) bind on their own slice; parity only requires the ones
+    // whose required GA surfaces include cli — mirroring how MCP_BOUND_CAPABILITIES honors mcp exemptions.
+    for (const cap of CAPABILITIES.filter((c) => requiredSurfaces(c).includes("cli"))) {
       const path = CAPABILITY_COMMANDS[cap.name];
       expect(path, `capability ${cap.name} has no CLI command mapping`).toBeDefined();
       expect(

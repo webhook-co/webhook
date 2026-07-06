@@ -14,6 +14,7 @@ import {
   msToOrderKey,
   WATERMARK_DELTA_MS,
   type Cursor,
+  type DedupConfig,
   type Delivery,
   type Endpoint,
   type Event,
@@ -175,6 +176,7 @@ interface EndpointRow {
   name: string;
   paused: boolean;
   created_at: Date;
+  dedup_config: DedupConfig | null;
   /** Projected by listEndpoints via orderKeyCol — the cursor's UTC ISO-µs order key. Absent on getEndpoint. */
   order_key?: string;
 }
@@ -186,6 +188,7 @@ function toEndpoint(r: EndpointRow): Endpoint {
     name: r.name,
     paused: r.paused,
     createdAt: r.created_at,
+    dedupConfig: r.dedup_config,
   });
 }
 
@@ -202,7 +205,7 @@ export async function listEndpoints(
   const { cursor, name } = opts;
   // `deleted_at is null` hides soft-deleted endpoints (ADR-0076) from endpoints.list.
   const rows = await tx<EndpointRow[]>`
-    select id, org_id, name, paused, created_at, ${orderKeyCol(tx, "created_at")}
+    select id, org_id, name, paused, created_at, dedup_config, ${orderKeyCol(tx, "created_at")}
     from endpoints
     where deleted_at is null
     ${name ? tx`and name ilike ${likeContains(name)}` : tx``}
@@ -227,7 +230,7 @@ export async function getEndpoint(
   opts: { readonly includeDeleted?: boolean } = {},
 ): Promise<Endpoint | null> {
   const [row] = await tx<EndpointRow[]>`
-    select id, org_id, name, paused, created_at from endpoints
+    select id, org_id, name, paused, created_at, dedup_config from endpoints
     where id = ${id} ${opts.includeDeleted ? tx`` : tx`and deleted_at is null`}`;
   return row ? toEndpoint(row) : null;
 }

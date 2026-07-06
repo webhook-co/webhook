@@ -283,6 +283,70 @@
             }
           }
         ]
+      },
+      "patch": {
+        "operationId": "endpointsUpdate",
+        "summary": "Update an endpoint's deduplication config (null resets to the default)",
+        "tags": [
+          "Endpoints"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Endpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "endpointId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EndpointsUpdateRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/v1/endpoints/{endpointId}/rotate": {
@@ -2012,6 +2076,65 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "dedupConfig": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "identifier",
+                      "content",
+                      "fields",
+                      "off"
+                    ]
+                  },
+                  "windowSeconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 604800
+                  },
+                  "fields": {
+                    "type": "object",
+                    "properties": {
+                      "include": {
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "exclude": {
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      }
+                    },
+                    "required": [
+                      "include"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "mode",
+                  "windowSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -2019,7 +2142,8 @@
           "orgId",
           "name",
           "paused",
-          "createdAt"
+          "createdAt",
+          "dedupConfig"
         ],
         "additionalProperties": false
       },
@@ -2046,6 +2170,65 @@
             "type": "string",
             "format": "date-time"
           },
+          "dedupConfig": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "identifier",
+                      "content",
+                      "fields",
+                      "off"
+                    ]
+                  },
+                  "windowSeconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 604800
+                  },
+                  "fields": {
+                    "type": "object",
+                    "properties": {
+                      "include": {
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "exclude": {
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      }
+                    },
+                    "required": [
+                      "include"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "mode",
+                  "windowSeconds"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "ingestUrl": {
             "type": "string",
             "format": "uri"
@@ -2057,6 +2240,7 @@
           "name",
           "paused",
           "createdAt",
+          "dedupConfig",
           "ingestUrl"
         ],
         "additionalProperties": false
@@ -4246,10 +4430,132 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 200
+          },
+          "dedupConfig": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "identifier",
+                      "content",
+                      "fields",
+                      "off"
+                    ]
+                  },
+                  "windowSeconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 604800
+                  },
+                  "fields": {
+                    "type": "object",
+                    "properties": {
+                      "include": {
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "exclude": {
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      }
+                    },
+                    "required": [
+                      "include"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode",
+                  "windowSeconds"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "name"
+        ]
+      },
+      "EndpointsUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "dedupConfig": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "identifier",
+                      "content",
+                      "fields",
+                      "off"
+                    ]
+                  },
+                  "windowSeconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 604800
+                  },
+                  "fields": {
+                    "type": "object",
+                    "properties": {
+                      "include": {
+                        "minItems": 1,
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "exclude": {
+                        "maxItems": 16,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      }
+                    },
+                    "required": [
+                      "include"
+                    ]
+                  }
+                },
+                "required": [
+                  "mode",
+                  "windowSeconds"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "dedupConfig"
         ]
       },
       "EndpointsAddProviderSecretRequest": {
