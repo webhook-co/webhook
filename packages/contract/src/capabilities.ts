@@ -1,5 +1,6 @@
 import {
   canonicalizeAndValidateUrl,
+  DedupConfigSchema,
   DeliveryAttemptSchema,
   DeliverySchema,
   DeliveryStatusSchema,
@@ -105,7 +106,11 @@ export type CreatedEndpoint = z.infer<typeof CreatedEndpointSchema>;
 
 export const endpointsCreate = defineCapability({
   name: "endpoints.create",
-  input: z.object({ name: z.string().trim().min(1).max(200) }),
+  input: z.object({
+    name: z.string().trim().min(1).max(200),
+    // Optional per-endpoint dedup config (ADR-0104). Absent = the default (identifier ladder, 24h).
+    dedupConfig: DedupConfigSchema.nullable().optional(),
+  }),
   output: CreatedEndpointSchema,
   // FORBIDDEN: a bearer lacking endpoints:write (the api edge returns 403 before dispatch; mcp has no
   // edge scope gate, so the handler's scope check is the sole gate there). RATE_LIMITED: the per-org
@@ -148,6 +153,23 @@ export const endpointsRotate = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
   semantics: {},
+});
+
+// endpoints.update MUTATES an endpoint's per-endpoint dedup config (ADR-0104) in place. dedupConfig is
+// REQUIRED: a config object SETS it; explicit `null` RESETS to the default (identifier/24h). It is the
+// first mutable-config capability (name/paused stay immutable in v1). Idempotent (same config -> same
+// result). Gated on endpoints:write (a key that can rotate can already tune dedup); each change writes a
+// tamper-evident `endpoint.dedup_config_updated` audit row and EVICTS the endpoint's KV ingest-cache
+// entry so the engine reads the new config within the propagation window (never claims exactly-once
+// across the change). CLI + web are surface-deferred to their own slices; api + mcp bind now.
+export const endpointsUpdate = defineCapability({
+  name: "endpoints.update",
+  input: z.object({ endpointId: uuid, dedupConfig: DedupConfigSchema.nullable() }),
+  output: EndpointSchema,
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "endpoints:write" },
+  semantics: { idempotent: true },
+  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 // endpoints.revealIngestUrl RE-DISPLAYS the always-shown wbhk.my/<token> ingest URL for an endpoint
@@ -690,6 +712,7 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   endpointsCreate,
   endpointsDelete,
   endpointsRotate,
+  endpointsUpdate,
   endpointsRevealIngestUrl,
   endpointsAddProviderSecret,
   endpointsListProviderSecrets,

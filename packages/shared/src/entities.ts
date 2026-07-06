@@ -1,6 +1,7 @@
 import { ProviderSchema, VerificationResultSchema } from "@webhook-co/webhooks-spec";
 import { z } from "zod";
 
+import { DedupConfigSchema } from "./dedup-config";
 import { DedupStrategySchema, MembershipRoleSchema, PausePolicySchema } from "./enums";
 
 // Cross-surface entity schemas + inferred types. One definition consumed by
@@ -34,6 +35,10 @@ export const EndpointSchema = z.object({
   name: z.string(),
   paused: z.boolean(),
   createdAt: z.coerce.date(),
+  /** Per-endpoint dedup config (ADR-0104); null = the default (identifier ladder, 24h). `.default(null)`
+   *  keeps this forward-compatible: a response from an OLDER api that omits the field parses to null
+   *  rather than failing a newer consumer (e.g. the separately-published CLI). */
+  dedupConfig: DedupConfigSchema.nullable().default(null),
 });
 export type Endpoint = z.infer<typeof EndpointSchema>;
 

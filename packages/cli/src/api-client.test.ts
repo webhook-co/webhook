@@ -165,6 +165,7 @@ const endpoint = {
   name: "orders-prod",
   paused: false,
   createdAt: "2026-05-01T00:00:00.000Z",
+  dedupConfig: null,
 };
 const eventSummary = {
   id: EV_ID,

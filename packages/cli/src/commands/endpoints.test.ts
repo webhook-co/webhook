@@ -59,6 +59,7 @@ const endpoint = (id: string, name: string, paused = false) => ({
   name,
   paused,
   createdAt: "2026-05-01T00:00:00.000Z",
+  dedupConfig: null,
 });
 
 describe("wbhk endpoints list", () => {
@@ -197,6 +198,7 @@ describe("wbhk endpoints create", () => {
     name: "orders-prod",
     paused: false,
     createdAt: "2026-05-01T00:00:00.000Z",
+    dedupConfig: null,
     ingestUrl: "https://wbhk.my/whep_one_time_secret_token_value_aaaaaaaaaaaa",
   };
 
@@ -302,6 +304,7 @@ describe("wbhk endpoints rotate", () => {
     name: "orders-prod",
     paused: false,
     createdAt: "2026-05-01T00:00:00.000Z",
+    dedupConfig: null,
     ingestUrl: "https://wbhk.my/whep_rotated_secret_token_value_bbbbbbbbbbbb",
   };
 
@@ -417,5 +420,161 @@ describe("global --profile (end to end)", () => {
     });
     await run(app, ["endpoints", "list"], t.ctx);
     expect(t.stderr().toLowerCase()).not.toContain("profile");
+  });
+});
+
+// A fetch mock that records method + parsed JSON body (capturingFetch only records URLs).
+function capturingReq(body: unknown): {
+  fetch: typeof fetch;
+  calls: { url: string; method: string; body: unknown }[];
+} {
+  const calls: { url: string; method: string; body: unknown }[] = [];
+  const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({
+      url: String(url),
+      method: init?.method ?? "GET",
+      body: init?.body != null ? JSON.parse(String(init.body)) : undefined,
+    });
+    return json(body);
+  }) as unknown as typeof fetch;
+  return { fetch: fetchImpl, calls };
+}
+
+describe("wbhk endpoints update", () => {
+  it("PATCHes the endpoint with the built dedup config for --dedup-mode", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "update", EP1, "--dedup-mode", "off"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(cap.calls[0]?.method).toBe("PATCH");
+    expect(cap.calls[0]?.url).toContain(`/v1/endpoints/${EP1}`);
+    expect(cap.calls[0]?.body).toEqual({ dedupConfig: { mode: "off", windowSeconds: 86400 } });
+  });
+
+  it("builds a fields config from --dedup-field + --dedup-window", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      [
+        "endpoints",
+        "update",
+        EP1,
+        "--dedup-mode",
+        "fields",
+        "--dedup-field",
+        "body.id, body.x",
+        "--dedup-window",
+        "300",
+      ],
+      t.ctx,
+    );
+    expect(cap.calls[0]?.body).toEqual({
+      dedupConfig: {
+        mode: "fields",
+        windowSeconds: 300,
+        fields: { include: ["body.id", "body.x"] },
+      },
+    });
+  });
+
+  it("sends dedupConfig=null for --dedup-reset", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "update", EP1, "--dedup-reset"], t.ctx);
+    expect(cap.calls[0]?.body).toEqual({ dedupConfig: null });
+  });
+
+  it("errors (no request) when neither --dedup-mode nor --dedup-reset is given", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "update", EP1], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(t.stderr().toLowerCase()).toMatch(/dedup-mode|dedup-reset/);
+    expect(cap.calls).toHaveLength(0); // failed before any request
+  });
+
+  it("errors on --dedup-field with a non-fields mode (no silent drop)", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["endpoints", "update", EP1, "--dedup-mode", "identifier", "--dedup-field", "body.id"],
+      t.ctx,
+    );
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("errors on a sub-flag without --dedup-mode (no silent drop)", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "update", EP1, "--dedup-window", "300"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("errors on --dedup-reset combined with a config flag (contradiction)", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "update", EP1, "--dedup-reset", "--dedup-mode", "content"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("rejects a non-decimal --dedup-window (1e3) as a usage error", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["endpoints", "update", EP1, "--dedup-mode", "content", "--dedup-window", "1e3"],
+      t.ctx,
+    );
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("rejects an out-of-range --dedup-window at the CLI (before the request)", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["endpoints", "update", EP1, "--dedup-mode", "content", "--dedup-window", "5"],
+      t.ctx,
+    );
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+});
+
+describe("wbhk endpoints create --dedup-*", () => {
+  const created = {
+    id: EP1,
+    orgId: ORG,
+    name: "orders-prod",
+    paused: false,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    dedupConfig: { mode: "content", windowSeconds: 300 },
+    ingestUrl: "https://wbhk.my/whep_one_time_secret_token_value_aaaaaaaaaaaa",
+  };
+  it("sends the dedup config in the create body", async () => {
+    const cap = capturingReq(created);
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["endpoints", "create", "orders-prod", "--dedup-mode", "content", "--dedup-window", "300"],
+      t.ctx,
+    );
+    expect(cap.calls[0]?.method).toBe("POST");
+    expect(cap.calls[0]?.body).toEqual({
+      name: "orders-prod",
+      dedupConfig: { mode: "content", windowSeconds: 300 },
+    });
+  });
+  it("omits dedupConfig from the create body when no --dedup-mode is given", async () => {
+    const cap = capturingReq({ ...created, dedupConfig: null });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
+    expect(cap.calls[0]?.body).toEqual({ name: "orders-prod" });
   });
 });

@@ -44,6 +44,8 @@ const ENDPOINT_CREATE_LOCK_NAMESPACE = 0x454e4450;
 export interface CreateEndpointInput {
   readonly orgId: string;
   readonly name: string;
+  /** Optional per-endpoint dedup config (ADR-0104); null/absent = the default (identifier ladder, 24h). */
+  readonly dedupConfig?: DedupConfig | null;
 }
 
 export interface CreatedEndpoint {
@@ -71,8 +73,9 @@ export async function createEndpoint(
   const id = randomUUID();
   await withTenant(app, input.orgId, async (tx) => {
     await tx`
-      insert into endpoints (id, org_id, ingest_token_hash, name)
-      values (${id}, ${input.orgId}, ${keyHash}, ${input.name})`;
+      insert into endpoints (id, org_id, ingest_token_hash, name, dedup_config)
+      values (${id}, ${input.orgId}, ${keyHash}, ${input.name},
+        ${input.dedupConfig == null ? null : tx.json(input.dedupConfig as unknown as Parameters<typeof tx.json>[0])}::jsonb)`;
   });
   return { id, orgId: input.orgId, name: input.name, paused: false, start, plaintext };
 }
@@ -146,12 +149,13 @@ export async function createEndpointWithAudit(
     }
     const rows = await tx<{ created_at: Date }[]>`
       insert into endpoints (
-        id, org_id, ingest_token_hash, name,
+        id, org_id, ingest_token_hash, name, dedup_config,
         ingest_token_ciphertext, ingest_token_wrapped_dek, ingest_token_kek_ref,
         ingest_token_enc_nonce, ingest_token_enc_context, ingest_token_envelope_version, ingest_key_id
       )
       values (
         ${id}, ${input.orgId}, ${keyHash}, ${input.name},
+        ${input.dedupConfig == null ? null : tx.json(input.dedupConfig as unknown as Parameters<typeof tx.json>[0])}::jsonb,
         ${seal.ciphertext}, ${seal.wrappedDek}, ${seal.kekRef},
         ${seal.nonce},
         ${seal.encContext === null ? null : tx.json(seal.encContext as unknown as Parameters<typeof tx.json>[0])}::jsonb,
@@ -251,6 +255,8 @@ export interface RotatedEndpointRow {
   readonly name: string;
   readonly paused: boolean;
   readonly createdAt: Date;
+  /** The endpoint's dedup config (preserved across rotate) — echoed so the output matches EndpointSchema. */
+  readonly dedupConfig: DedupConfig | null;
   /** The OLD ingest-token hash — the caller evicts it from the KV ingest cache (the HARD cutover). */
   readonly oldTokenHash: Buffer;
   /** The NEW plaintext ingest token — returned ONCE; the wbhk.my URL embeds it (one-time reveal). */
@@ -284,9 +290,17 @@ export async function rotateEndpointWithAudit(
   // successful rotate. S8-remainder / decision-0018.
   const seal = await sealIngestTokenColumns(sealer, input.orgId, input.endpointId, plaintext);
   return withTenant(app, input.orgId, async (tx) => {
-    const rows = await tx<{ old_hash: Buffer; name: string; paused: boolean; created_at: Date }[]>`
+    const rows = await tx<
+      {
+        old_hash: Buffer;
+        name: string;
+        paused: boolean;
+        created_at: Date;
+        dedup_config: DedupConfig | null;
+      }[]
+    >`
       with cur as (
-        select ingest_token_hash as old_hash, name, paused, created_at
+        select ingest_token_hash as old_hash, name, paused, created_at, dedup_config
         from endpoints
         where id = ${input.endpointId} and deleted_at is null
         for update
@@ -302,7 +316,7 @@ export async function rotateEndpointWithAudit(
           ingest_key_id = ${seal.keyId}
         from cur
        where e.id = ${input.endpointId}
-      returning cur.old_hash, cur.name, cur.paused, cur.created_at`;
+      returning cur.old_hash, cur.name, cur.paused, cur.created_at, cur.dedup_config`;
     const row = rows[0];
     if (!row) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
     await appendAuditEntry(tx, auditKey, {
@@ -317,8 +331,69 @@ export async function rotateEndpointWithAudit(
       name: row.name,
       paused: row.paused,
       createdAt: row.created_at,
+      dedupConfig: row.dedup_config,
       oldTokenHash: Buffer.from(row.old_hash),
       plaintext,
+    };
+  });
+}
+
+export interface UpdateEndpointDedupInput {
+  readonly orgId: string;
+  readonly endpointId: string;
+  /** The new dedup config; null RESETS to the default (identifier/24h). */
+  readonly dedupConfig: DedupConfig | null;
+  /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
+  readonly actor: string | null;
+}
+
+export interface UpdatedEndpointRow {
+  readonly id: string;
+  readonly orgId: string;
+  readonly name: string;
+  readonly paused: boolean;
+  readonly createdAt: Date;
+  readonly dedupConfig: DedupConfig | null;
+  /** The endpoint's ingest-token hash — the caller EVICTS it from the KV ingest cache so the engine picks
+   *  up the new dedup config (the cached principal carries the config; ADR-0104). */
+  readonly tokenHash: Buffer;
+}
+
+/**
+ * UPDATE a live endpoint's dedup config (ADR-0104) and append the control-plane audit row, in ONE tx
+ * under the org's RLS context (webhook_app). null resets to the default. Returns the endpoint's current
+ * ingest-token hash so the caller evicts the KV entry (config rides on the cached principal). The single
+ * UPDATE row-locks the row for the tx, so a concurrent rotate serializes and `returning ingest_token_hash`
+ * yields the post-mutation hash — no explicit `for update` needed. A deleted/unknown/cross-org id -> NOT_FOUND.
+ */
+export async function updateEndpointDedupWithAudit(
+  app: Sql,
+  input: UpdateEndpointDedupInput,
+  auditKey: CryptoKey,
+): Promise<UpdatedEndpointRow> {
+  return withTenant(app, input.orgId, async (tx) => {
+    const rows = await tx<
+      { ingest_token_hash: Buffer; name: string; paused: boolean; created_at: Date }[]
+    >`
+      update endpoints set dedup_config = ${input.dedupConfig == null ? null : tx.json(input.dedupConfig as unknown as Parameters<typeof tx.json>[0])}::jsonb
+      where id = ${input.endpointId} and deleted_at is null
+      returning ingest_token_hash, name, paused, created_at`;
+    const row = rows[0];
+    if (!row) throw new CapabilityFault("NOT_FOUND", "endpoint not found");
+    await appendAuditEntry(tx, auditKey, {
+      orgId: input.orgId,
+      actor: input.actor,
+      action: "endpoint.dedup_config_updated",
+      target: input.endpointId,
+    });
+    return {
+      id: input.endpointId,
+      orgId: input.orgId,
+      name: row.name,
+      paused: row.paused,
+      createdAt: row.created_at,
+      dedupConfig: input.dedupConfig,
+      tokenHash: Buffer.from(row.ingest_token_hash),
     };
   });
 }

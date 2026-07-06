@@ -96,6 +96,9 @@ jobs:
         if: >
           steps.gate.outputs.claude == 'true' &&
           (steps.gate.outputs.cursor != 'true' || steps.cursor.outcome == 'failure')
+        # Don't fail the check if Claude errors — including hitting the --max-turns
+        # cap (exit 1). The reviewer is advisory; a cut-off review skips silently.
+        continue-on-error: true
         uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a # v1
         with:
           # OAuth token (Pro/Max subscription) is preferred; the API key also works.

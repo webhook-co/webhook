@@ -83,6 +83,8 @@ describe("capability parity — current GA surfaces conformance", () => {
     "endpoints.create",
     "endpoints.delete",
     "endpoints.rotate",
+    // endpoints.update (dedup config, ADR-0104): api + mcp; cli + web deferred to their dedup slices.
+    "endpoints.update",
     // Ingest-URL reveal (S8-remainder / ADR-0101): the gated + audited programmatic capability, api+mcp+cli.
     // (The dashboard shows the URL via a separate DB-direct config read, so web is surfaceExempt — see below.)
     "endpoints.revealIngestUrl",

@@ -5,6 +5,7 @@
 // shared camelCase entity schemas, which also validate the row shape.
 
 import {
+  DedupConfigSchema,
   deriveVerificationState,
   DeliverySchema,
   EndpointSchema,
@@ -14,6 +15,7 @@ import {
   msToOrderKey,
   WATERMARK_DELTA_MS,
   type Cursor,
+  type DedupConfig,
   type Delivery,
   type Endpoint,
   type Event,
@@ -175,17 +177,27 @@ interface EndpointRow {
   name: string;
   paused: boolean;
   created_at: Date;
+  dedup_config: DedupConfig | null;
   /** Projected by listEndpoints via orderKeyCol — the cursor's UTC ISO-µs order key. Absent on getEndpoint. */
   order_key?: string;
 }
 
 function toEndpoint(r: EndpointRow): Endpoint {
+  // Fail SAFE on a schema-drifted / out-of-band dedup_config, mirroring the ingest cold lookup
+  // (endpoints.ts): a stored value that no longer satisfies DedupConfigSchema degrades to null (the
+  // default) rather than throwing — otherwise ONE poisoned row would 500 the whole org's
+  // endpoints.list/get (and the events reads that gate on getEndpoint), while ingest keeps working.
+  const dedupConfig =
+    r.dedup_config != null && DedupConfigSchema.safeParse(r.dedup_config).success
+      ? r.dedup_config
+      : null;
   return EndpointSchema.parse({
     id: r.id,
     orgId: r.org_id,
     name: r.name,
     paused: r.paused,
     createdAt: r.created_at,
+    dedupConfig,
   });
 }
 
@@ -202,7 +214,7 @@ export async function listEndpoints(
   const { cursor, name } = opts;
   // `deleted_at is null` hides soft-deleted endpoints (ADR-0076) from endpoints.list.
   const rows = await tx<EndpointRow[]>`
-    select id, org_id, name, paused, created_at, ${orderKeyCol(tx, "created_at")}
+    select id, org_id, name, paused, created_at, dedup_config, ${orderKeyCol(tx, "created_at")}
     from endpoints
     where deleted_at is null
     ${name ? tx`and name ilike ${likeContains(name)}` : tx``}
@@ -227,7 +239,7 @@ export async function getEndpoint(
   opts: { readonly includeDeleted?: boolean } = {},
 ): Promise<Endpoint | null> {
   const [row] = await tx<EndpointRow[]>`
-    select id, org_id, name, paused, created_at from endpoints
+    select id, org_id, name, paused, created_at, dedup_config from endpoints
     where id = ${id} ${opts.includeDeleted ? tx`` : tx`and deleted_at is null`}`;
   return row ? toEndpoint(row) : null;
 }

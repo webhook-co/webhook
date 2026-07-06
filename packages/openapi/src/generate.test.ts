@@ -61,7 +61,7 @@ describe("drift guard L2 — the paths bijection with the route manifest", () =>
   it("has exactly one operation per route (no gaps, no extras)", () => {
     const operationCount = Object.values(paths).reduce(
       (n, item) =>
-        n + Object.keys(item).filter((k) => ["get", "post", "delete"].includes(k)).length,
+        n + Object.keys(item).filter((k) => ["get", "post", "patch", "delete"].includes(k)).length,
       0,
     );
     expect(operationCount).toBe(ROUTES.length);

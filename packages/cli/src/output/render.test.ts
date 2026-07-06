@@ -17,6 +17,7 @@ const endpoint: Endpoint = {
   name: "orders-prod",
   paused: false,
   createdAt: new Date("2026-05-01T00:00:00.000Z"),
+  dedupConfig: null,
 };
 
 const eventSummary: EventSummary = {
