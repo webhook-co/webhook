@@ -494,6 +494,46 @@ describe("wbhk endpoints update", () => {
     expect(cap.calls).toHaveLength(0); // failed before any request
   });
 
+  it("errors on --dedup-field with a non-fields mode (no silent drop)", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["endpoints", "update", EP1, "--dedup-mode", "identifier", "--dedup-field", "body.id"],
+      t.ctx,
+    );
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("errors on a sub-flag without --dedup-mode (no silent drop)", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "update", EP1, "--dedup-window", "300"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("errors on --dedup-reset combined with a config flag (contradiction)", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["endpoints", "update", EP1, "--dedup-reset", "--dedup-mode", "content"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+
+  it("rejects a non-decimal --dedup-window (1e3) as a usage error", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["endpoints", "update", EP1, "--dedup-mode", "content", "--dedup-window", "1e3"],
+      t.ctx,
+    );
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(cap.calls).toHaveLength(0);
+  });
+
   it("rejects an out-of-range --dedup-window at the CLI (before the request)", async () => {
     const cap = capturingReq(endpoint(EP1, "orders-prod"));
     const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });

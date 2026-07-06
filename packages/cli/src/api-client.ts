@@ -457,10 +457,11 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       return parseOrThrow(endpointsCreateCap.output, json, "endpoint");
     },
     async endpointsUpdate(input): Promise<Endpoint> {
-      // idempotent=true: update sets the endpoint's dedup config to a fixed value (or null), so a blind
-      // retry is safe (same input -> same result). PATCH /v1/endpoints/:id with the config in the body.
+      // idempotent=false: although the RESULT is idempotent (config ends up the same), each server-side
+      // apply writes a tamper-evident `endpoint.dedup_config_updated` audit row + evicts the KV cache, so
+      // a blind retry after a lost response would double-audit ONE operator action. PATCH the config.
       const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}`;
-      const json = await patchJson(path, { dedupConfig: input.dedupConfig }, true);
+      const json = await patchJson(path, { dedupConfig: input.dedupConfig }, false);
       return parseOrThrow(endpointsUpdateCap.output, json, "updated endpoint");
     },
     async endpointsDelete(endpointId): Promise<DeletedEndpoint> {

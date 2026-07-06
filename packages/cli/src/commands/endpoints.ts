@@ -121,12 +121,14 @@ const dedupFlags = {
   dedupWindow: {
     kind: "parsed" as const,
     parse: (value: string) => {
-      const n = Number(value);
-      if (!Number.isInteger(n))
-        throw new Error("--dedup-window must be an integer number of seconds");
-      return n;
+      // Strict decimal integer only: Number() would accept 1e3 / 0x10 / " 5 " and Number.isInteger
+      // would pass them, coercing a fat-fingered value into a valid-but-wrong window.
+      if (!/^\d+$/.test(value)) {
+        throw new Error("--dedup-window must be a whole number of seconds (e.g. 300)");
+      }
+      return Number(value);
     },
-    brief: "dedup window in seconds (default 86400)",
+    brief: `dedup window in seconds (default ${DEFAULT_DEDUP_WINDOW_SECONDS})`,
     optional: true as const,
   },
   dedupField: {
@@ -156,9 +158,42 @@ function splitPaths(s?: string): string[] {
         .filter(Boolean)
     : [];
 }
-/** Build (and validate) a DedupConfig from the flags, or undefined when no --dedup-mode was given. */
+/** True if the caller set any dedup-config flag (mode or a sub-flag). */
+function hasAnyDedupFlag(flags: DedupFlagValues): boolean {
+  return (
+    flags.dedupMode !== undefined ||
+    flags.dedupWindow !== undefined ||
+    flags.dedupField !== undefined ||
+    flags.dedupExclude !== undefined
+  );
+}
+
+/**
+ * Build (and validate) a DedupConfig from the flags, or undefined when NO dedup flag was given.
+ * Rejects (rather than silently drops) contradictory combinations: a sub-flag without --dedup-mode,
+ * or --dedup-field/--dedup-exclude with a non-`fields` mode — silent drops would over/under-collapse.
+ */
 function buildDedupConfig(flags: DedupFlagValues): DedupConfig | undefined {
-  if (flags.dedupMode === undefined) return undefined;
+  const hasSubFlag =
+    flags.dedupWindow !== undefined ||
+    flags.dedupField !== undefined ||
+    flags.dedupExclude !== undefined;
+  if (flags.dedupMode === undefined) {
+    if (hasSubFlag) {
+      throw new MissingInputError(
+        "--dedup-window / --dedup-field / --dedup-exclude require --dedup-mode <mode>",
+      );
+    }
+    return undefined;
+  }
+  if (
+    flags.dedupMode !== "fields" &&
+    (flags.dedupField !== undefined || flags.dedupExclude !== undefined)
+  ) {
+    throw new MissingInputError(
+      "--dedup-field / --dedup-exclude are only valid with --dedup-mode fields",
+    );
+  }
   const windowSeconds = flags.dedupWindow ?? DEFAULT_DEDUP_WINDOW_SECONDS;
   const candidate =
     flags.dedupMode === "fields"
@@ -223,7 +258,13 @@ export const endpointsUpdateCommand = buildCommand<UpdateFlags, [string], AppCon
     const { format, color } = resolveGlobals(this, flags);
     let dedupConfig: DedupConfig | null;
     if (flags.dedupReset) {
-      dedupConfig = null; // reset to the default (identifier/24h)
+      // --dedup-reset and a config are contradictory — reject rather than silently letting reset win.
+      if (hasAnyDedupFlag(flags)) {
+        throw new MissingInputError(
+          "--dedup-reset cannot be combined with --dedup-mode / --dedup-window / --dedup-field / --dedup-exclude",
+        );
+      }
+      dedupConfig = null; // reset to the default
     } else {
       const built = buildDedupConfig(flags);
       if (built === undefined) {
@@ -252,7 +293,7 @@ export const endpointsUpdateCommand = buildCommand<UpdateFlags, [string], AppCon
       ...dedupFlags,
       dedupReset: {
         kind: "boolean",
-        brief: "reset the dedup config to the default (identifier/24h)",
+        brief: `reset the dedup config to the default (identifier, ${DEFAULT_DEDUP_WINDOW_SECONDS}s)`,
         default: false,
       },
     },

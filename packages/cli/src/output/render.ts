@@ -7,6 +7,7 @@ import type {
   RevokedProviderSecret,
   SubscriptionDeleted,
 } from "@webhook-co/contract";
+import { DEFAULT_DEDUP_WINDOW_SECONDS } from "@webhook-co/shared";
 import type {
   Delivery,
   Endpoint,
@@ -95,7 +96,7 @@ function block(rows: readonly (readonly [string, string])[]): string {
 
 /** A compact one-line summary of an endpoint's dedup config (ADR-0104); "default" when unset. */
 function dedupSummary(cfg: Endpoint["dedupConfig"]): string {
-  if (cfg == null) return field("default (identifier, 24h)");
+  if (cfg == null) return field(`default (identifier, ${DEFAULT_DEDUP_WINDOW_SECONDS}s)`);
   if (cfg.mode === "off") return field("off");
   const win = `${cfg.windowSeconds}s`;
   if (cfg.mode === "fields") {
