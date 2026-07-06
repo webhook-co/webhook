@@ -56,8 +56,8 @@ export function EndpointDetail({
               )}
             </dd>
             <dt className="text-fg-secondary">Endpoint ID</dt>
-            <dd className="flex items-center gap-2">
-              <code className="font-mono text-fg">{endpoint.id}</code>
+            <dd className="flex min-w-0 items-center gap-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-fg">{endpoint.id}</code>
               <CopyButton value={endpoint.id} size="sm" />
             </dd>
             <dt className="text-fg-secondary">Created</dt>
