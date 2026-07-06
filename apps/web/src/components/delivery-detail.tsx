@@ -10,7 +10,7 @@ import {
   StatusPill,
 } from "@webhook-co/ui";
 
-import { deliveryCopy } from "@/lib/delivery-copy";
+import { deliveryCopy, deliverySignatureCopy, deliveryWasDispatched } from "@/lib/delivery-copy";
 import { formatDateTime } from "@/lib/format";
 import type { DeliveryItem } from "@/server/deliveries";
 
@@ -24,7 +24,12 @@ export interface DeliveryDetailProps {
 }
 
 export function DeliveryDetail({ delivery }: DeliveryDetailProps) {
-  const copy = deliveryCopy(delivery.status, { nextRetryAt: delivery.nextRetryAt });
+  const copy = deliveryCopy(delivery.status, {
+    nextRetryAt: delivery.nextRetryAt,
+    sourceVerificationState: delivery.sourceVerificationState,
+  });
+  const dispatched = deliveryWasDispatched(delivery.status);
+  const signature = deliverySignatureCopy(delivery.sourceVerificationState);
 
   return (
     <div className="flex flex-col gap-6">
@@ -36,7 +41,7 @@ export function DeliveryDetail({ delivery }: DeliveryDetailProps) {
         <CardContent className="flex flex-col gap-4">
           {copy.hint ? <p className="leading-snug text-fg-secondary">{copy.hint}</p> : null}
 
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+          <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-2 text-sm">
             <dt className="text-fg-secondary">Event ID</dt>
             <dd className="flex items-center gap-2">
               <code className="font-mono text-fg">{delivery.eventId}</code>
@@ -48,6 +53,18 @@ export function DeliveryDetail({ delivery }: DeliveryDetailProps) {
 
             <dt className="text-fg-secondary">Attempt</dt>
             <dd className="text-fg">{delivery.attempt}</dd>
+
+            {dispatched ? (
+              <>
+                <dt className="text-fg-secondary">Signature</dt>
+                <dd className="flex flex-wrap items-center gap-2">
+                  <StatusPill tone={signature.tone}>{signature.label}</StatusPill>
+                  {signature.hint ? (
+                    <span className="text-fg-secondary">{signature.hint}</span>
+                  ) : null}
+                </dd>
+              </>
+            ) : null}
 
             <dt className="text-fg-secondary">Destination</dt>
             <dd className="text-fg">

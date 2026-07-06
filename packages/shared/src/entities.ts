@@ -209,6 +209,11 @@ export const DeliverySchema = z.object({
   error: z.string().nullable(),
   nextRetryAt: z.coerce.date().nullable(),
   createdAt: z.coerce.date(),
+  // The SOURCE event's verification state (ADR-0103), so a consumer can tell whether this delivery was
+  // signed (verified/authenticated) or delivered UNSIGNED (unattempted) — and distinguish a
+  // verification-failure block (failed) from an SSRF block. Derived server-side from the source event;
+  // always present (a delivery's source event exists by FK).
+  sourceVerificationState: VerificationStateSchema,
 });
 export type Delivery = z.infer<typeof DeliverySchema>;
 

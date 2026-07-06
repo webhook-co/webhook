@@ -479,6 +479,7 @@ export interface components {
             /** Format: uuid */
             id: string;
             nextRetryAt: string | null;
+            sourceVerificationState: components["schemas"]["VerificationState"];
             status: components["schemas"]["DeliveryStatus"];
             statusCode: number | null;
             subscriptionId: string | null;

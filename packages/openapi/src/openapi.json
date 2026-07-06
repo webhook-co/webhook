@@ -2533,6 +2533,9 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "sourceVerificationState": {
+            "$ref": "#/components/schemas/VerificationState"
           }
         },
         "required": [
@@ -2545,7 +2548,8 @@
           "attempt",
           "error",
           "nextRetryAt",
-          "createdAt"
+          "createdAt",
+          "sourceVerificationState"
         ],
         "additionalProperties": false
       },

@@ -19,7 +19,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import * as React from "react";
 
-import { deliveryCopy } from "@/lib/delivery-copy";
+import { deliveryCopy, deliverySignatureCopy, deliveryWasDispatched } from "@/lib/delivery-copy";
 import type { DeliveryFilterParams } from "@/lib/delivery-filters";
 import { formatDate } from "@/lib/format";
 import type { LoadMoreDeliveriesResult } from "@/server/delivery-actions";
@@ -175,14 +175,23 @@ export function DeliveriesList({
             </TableEmpty>
           ) : (
             items.map((delivery) => {
-              const copy = deliveryCopy(delivery.status, { nextRetryAt: delivery.nextRetryAt });
+              const copy = deliveryCopy(delivery.status, {
+                nextRetryAt: delivery.nextRetryAt,
+                sourceVerificationState: delivery.sourceVerificationState,
+              });
+              const signature = deliveryWasDispatched(delivery.status)
+                ? deliverySignatureCopy(delivery.sourceVerificationState)
+                : null;
               return (
                 <TableRow key={delivery.id}>
                   <TableCell>
-                    <span className="flex flex-col gap-1">
+                    <span className="flex flex-col items-start gap-1">
                       <StatusPill tone={copy.tone}>{copy.label}</StatusPill>
                       {copy.hint ? (
                         <span className="text-xs text-fg-muted">{copy.hint}</span>
+                      ) : null}
+                      {signature ? (
+                        <StatusPill tone={signature.tone}>{signature.label}</StatusPill>
                       ) : null}
                     </span>
                   </TableCell>
