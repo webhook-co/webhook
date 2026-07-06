@@ -18,6 +18,7 @@
 
 import { type CachedSealedSecret } from "@webhook-co/db";
 import {
+  bytesToHex,
   deliveryVerificationDecision,
   newId,
   payloadR2Key,
@@ -343,13 +344,16 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // Capture: exact body bytes + normalized headers (see the header-fidelity note above).
   const headers: [string, string][] = [...request.headers];
   const contentType = request.headers.get("content-type");
-  const derived = await deriveDedup(
-    raw,
-    headers,
-    request.method,
-    deps.now(),
-    deps.dedupBucketWidthMs,
-  );
+  // Pre-mint the event id BEFORE dedup: `off` mode (and the fields fail-safe) key on it for a
+  // per-request-unique dedup key, and it is the events row id below. Minting it once keeps the key,
+  // the row, and the auto-delivery routing all agreed on the same identity.
+  const eventId = newId();
+  // Slice 1 keeps today's default (identifier ladder, deps window). The per-endpoint config that can
+  // select content/fields/off is threaded onto `endpoint` and resolved here in a later slice.
+  const derived = await deriveDedup(raw, headers, request.method, url, eventId, deps.now(), {
+    mode: "identifier",
+    windowMs: deps.dedupBucketWidthMs,
+  });
 
   // POST subscription-validation handshakes (Microsoft Graph `?validationToken`, Twitch
   // `webhook_callback_verification`, monday.com `{challenge}`) — pre-capture echoes that capture NOTHING
@@ -410,7 +414,18 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
 
   // R2 PUT FIRST: the body is durable before any metadata row can point at it. A PUT failure means
   // the body isn't durable -> 500, and we never write the row (never ACK an undurable event).
-  const key = await payloadR2Key(endpoint.orgId, endpoint.endpointId, derived.dedupKey);
+  //
+  // CONTENT-ADDRESSED KEY: the object is named by the content hash, NOT the dedup key. The dedup key
+  // is derived from UNVERIFIED, attacker-influenceable input; naming the object by it would let a forged
+  // key-collision overwrite a legitimate payload (the PUT precedes the ON CONFLICT gate). Content
+  // addressing means two distinct payloads never share an object (distinct hash), while byte-identical
+  // retries still coalesce onto one object. Per-event `payloadR2Key` is stored, so existing objects and
+  // reads are unaffected.
+  const key = await payloadR2Key(
+    endpoint.orgId,
+    endpoint.endpointId,
+    bytesToHex(derived.contentHash),
+  );
   try {
     await deps.putPayload(key, raw, contentType);
   } catch (err) {
@@ -444,7 +459,7 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // collide on a signature header); otherwise fall back to the detected provider. The providerEventId/
   // dedupStrategy/dedupBucket stay under the DETECTED provider (the dedup basis) — that only diverges from
   // `provider` if a request carried two providers' signature headers, impossible for the current providers.
-  const eventId = newId();
+  // (`eventId` was minted before dedup so `off`/fail-safe keys and the row id are the same identity.)
   const provider = outcome.provider ?? derived.provider;
   // The normalized event type for subscription routing (S3 Slice 3), derived from the AUTHORITATIVE provider
   // (same as the `provider` column). null when unextracted → the matcher routes it via `*` only. Computed
