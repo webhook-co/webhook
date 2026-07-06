@@ -41,7 +41,7 @@ export function DeliveryDetail({ delivery }: DeliveryDetailProps) {
         <CardContent className="flex flex-col gap-4">
           {copy.hint ? <p className="leading-snug text-fg-secondary">{copy.hint}</p> : null}
 
-          <dl className="grid grid-cols-[auto_1fr] gap-x-6 gap-y-2 text-sm">
+          <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-2 text-sm">
             <dt className="text-fg-secondary">Event ID</dt>
             <dd className="flex items-center gap-2">
               <code className="font-mono text-fg">{delivery.eventId}</code>
