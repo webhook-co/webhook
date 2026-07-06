@@ -7,7 +7,16 @@ import { z } from "zod";
  * How `events.dedup_key` was derived, recorded so inspection can explain why
  * two events did or didn't collapse. First match wins, in this order.
  */
-export const DEDUP_STRATEGIES = ["sw_webhook_id", "provider_event_id", "content_hash"] as const;
+export const DEDUP_STRATEGIES = [
+  "sw_webhook_id",
+  "provider_event_id",
+  "content_hash",
+  // `fields` — key derived from an endpoint's configured field selectors (fields mode).
+  "fields",
+  // `unique` — a per-request unique key (off mode, or the fail-safe when a configured field is
+  // unresolvable): every request is a distinct event, nothing ever collapses.
+  "unique",
+] as const;
 export const DedupStrategySchema = z.enum(DEDUP_STRATEGIES);
 export type DedupStrategy = z.infer<typeof DedupStrategySchema>;
 

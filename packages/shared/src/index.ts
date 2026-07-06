@@ -25,6 +25,7 @@ export {
 } from "./bytes";
 
 export * from "./enums";
+export * from "./dedup-config";
 export * from "./ids";
 export * from "./entities";
 export * from "./listen-protocol";
