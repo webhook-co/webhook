@@ -425,11 +425,17 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
 
   // R2 PUT FIRST: the body is durable before any metadata row can point at it. A PUT failure means
   // the body isn't durable -> 500, and we never write the row (never ACK an undurable event).
-  // The object is named deterministically by (endpoint, dedup_key) so a retry re-PUTs the same object
-  // and every reader (dispatcher/replay) re-derives the same key. Hardening the forged-overwrite
-  // residual (fold content_hash into the key material AND switch readers to the STORED key rather than
-  // re-derive) is tracked as its own slice - see ADR-0104 and docs/threat-model.md.
-  const key = await payloadR2Key(endpoint.orgId, endpoint.endpointId, derived.dedupKey);
+  // The object is named deterministically by (endpoint, dedup_key, content_hash): a genuine retry
+  // (same key AND same body) re-PUTs the same object, but a forged request that re-derives an
+  // existing dedup_key from unverified input yet ships a DIFFERENT body hashes to a different object
+  // and cannot overwrite the legit payload. Readers resolve the STORED payload_r2_key (never
+  // re-derive), so a dedup no-op leaves the winning body untouched. (ADR-0104 / docs/threat-model.md.)
+  const key = await payloadR2Key(
+    endpoint.orgId,
+    endpoint.endpointId,
+    derived.dedupKey,
+    derived.contentHash,
+  );
   try {
     await deps.putPayload(key, raw, contentType);
   } catch (err) {

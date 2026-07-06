@@ -20,7 +20,7 @@ function due(over: Partial<DueDelivery> = {}): DueDelivery {
     attempt: over.attempt ?? 1,
     eventId: "ev_1",
     endpointId: "ep_1",
-    dedupKey: "dk_1",
+    payloadR2Key: "org/org_x/ep/ep_1/" + "a".repeat(64),
     headers: [],
     url: "https://d.example.com/in",
     verified: over.verified ?? true,
@@ -307,13 +307,13 @@ describe("buildDeliverArgs — stable webhook-id + signing gate", () => {
     expect(buildDeliverArgs("org", due({ verified: true }), sealed, 0).signing).toBeDefined();
   });
 
-  it("threads orgId/endpointId/dedupKey/url/headers and a per-attempt unix-seconds timestamp", () => {
+  it("threads orgId/endpointId/payloadR2Key/url/headers and a per-attempt unix-seconds timestamp", () => {
     const d = due({ id: "del_1" });
     const args = buildDeliverArgs("org_x", d, sealed, 5_000);
     expect(args).toMatchObject({
       orgId: "org_x",
       endpointId: d.endpointId,
-      dedupKey: d.dedupKey,
+      payloadR2Key: d.payloadR2Key,
       url: d.url,
       headers: d.headers,
     });

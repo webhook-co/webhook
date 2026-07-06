@@ -134,8 +134,9 @@ export async function variantD(sql: Sql, p: BenchInsert): Promise<VariantResult>
  * NOT in VARIANT_FNS — the worker routes /run/R to it directly.
  */
 export async function variantR(sql: Sql, r2: R2Bucket, p: BenchInsert): Promise<VariantResult> {
-  const key = await payloadR2Key(p.orgId, p.endpointId, p.dedupKey);
   const body = new Uint8Array(p.payloadBytes);
+  const contentHash = new Uint8Array(await crypto.subtle.digest("SHA-256", body));
+  const key = await payloadR2Key(p.orgId, p.endpointId, p.dedupKey, contentHash);
   const tR2 = performance.now();
   await r2.put(key, body);
   const r2Ms = performance.now() - tR2;

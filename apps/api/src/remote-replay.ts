@@ -128,7 +128,7 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
       result = await deps.dispatcher.deliver({
         orgId: ctx.orgId,
         endpointId: claimed.event.endpointId,
-        dedupKey: claimed.event.dedupKey,
+        payloadR2Key: claimed.event.payloadR2Key,
         url: claimed.destinationUrl,
         headers: claimed.event.headers,
         signing,

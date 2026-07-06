@@ -13,7 +13,7 @@ import {
   canonicalizeAndValidateUrl,
   filterDeliveryHeaders,
   isBlockedIp,
-  payloadR2Key,
+  readPayloadKey,
   signStandardWebhooks,
   type DeliverArgs,
   type DeliveryOutcome,
@@ -125,8 +125,13 @@ export async function guardedDeliver(deps: DeliverDeps, args: DeliverArgs): Prom
     }
   }
 
-  // 3. Re-derive the payload key from the AUTHENTICATED principal (H1) — never trust a handed key — read.
-  const key = await payloadR2Key(args.orgId, args.endpointId, args.dedupKey);
+  // 3. Resolve the STORED payload key, FENCED to the authenticated principal (H1) — never trust a handed
+  //    key. The key is content-addressed (endpoint ∥ dedup ∥ content_hash), so it can't be re-derived
+  //    here without the body; instead we take the persisted value and require it to live under this
+  //    endpoint's own prefix. A poisoned/mismatched key fails closed (a recorded 'failed', never a
+  //    cross-tenant read). (ADR-0104 forged-overwrite hardening.)
+  const key = readPayloadKey(args.orgId, args.endpointId, args.payloadR2Key);
+  if (key === null) return done("failed", null, "payload key outside endpoint prefix");
   const obj = await deps.getPayload(key);
   if (obj === null) return done("failed", null, "payload not found");
   const body = new Uint8Array(obj); // sign and POST the SAME bytes — byte-correctness for the signature.

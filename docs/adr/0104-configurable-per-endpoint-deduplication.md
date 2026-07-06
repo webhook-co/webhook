@@ -69,14 +69,19 @@ folds a canonical path+query, but the canonical target is **hashed** into the ke
 hash(target):bucket`), never inlined — a multi-KB query string can't blow the Postgres unique-index
 btree tuple limit and lose the event on insert.
 
-**R2 forged-overwrite hardening — sequenced to its own slice.** The dedup key is attacker-influenceable
-and the R2 PUT precedes the ON CONFLICT gate, so keying the object by the dedup key alone lets a forged
-same-dedup-key request with a different body overwrite a legit payload (a pre-existing residual). The
-fix — key the object on `dedup_key ∥ content_hash` (a forged different-body request then writes a
-prunable orphan, not an overwrite; distinct events keep distinct keys so per-event-delete stays safe) —
-**also requires every reader (delivery dispatcher, replay) to use the STORED `payloadR2Key` rather than
-re-derive it from the dedup key**, and is therefore done as its own slice with that reader change, not
-folded into the engine-core slice (where it would break delivery). Tracked in the threat-model residual.
+**R2 forged-overwrite hardening — SHIPPED (Slice 5).** The dedup key is attacker-influenceable and the
+R2 PUT precedes the ON CONFLICT gate, so keying the object by the dedup key alone let a forged
+same-dedup-key request with a different body overwrite a legit payload (a pre-existing residual). Fixed
+by keying the object on `endpoint ∥ dedup_key ∥ content_hash` (`payloadR2Key(org, endpoint, dedupKey,
+contentHash)`): a forged different-body request now hashes to a *different* object — a prunable orphan,
+not an overwrite — while a genuine retry (same key AND same body) still coalesces, and distinct events
+keep distinct keys so per-event-delete retention stays safe even for byte-identical bodies. Because the
+key now depends on `content_hash` (which a reader can't recompute without the body it's trying to fetch),
+**every engine reader (delivery dispatcher, remote + web replay) now resolves the STORED `payload_r2_key`
+from the event row instead of re-deriving it**, fenced by `readPayloadKey(org, endpoint, storedKey)`,
+which requires the key to live under the authenticated endpoint's own prefix and match the opaque
+sha256-hex object-name shape — a poisoned or cross-tenant key fails closed (a recorded `failed`, never a
+read). This preserves the original "never trust a handed key" (H1) guarantee without re-derivation.
 
 ## alternatives rejected
 
@@ -95,3 +100,19 @@ folded into the engine-core slice (where it would break delivery). Tracked in th
   event is explainable. Config changes must evict the resolver's KV entry (later slice) or the engine
   serves stale config until TTL; a config change opens a brief dual-key window (documented, not
   exactly-once).
+- **Unverified-input collapse — accepted residual, annotated (Slice 5).** The dedup key is derived
+  before signature verification (verify needs the durable body first), so for a signed endpoint an
+  attacker who can guess a future event's identifier/selected-field values could pre-send a request
+  that collapses (suppresses) the real event as a duplicate. This is inherent to at-least-once dedup on
+  unverified input and cannot be closed without gating collapse on a verified key, which would break
+  capture-is-the-floor (an unverifiable-but-legit event must still be stored). We accept it and make it
+  **explainable**: every event records its `dedup_strategy` and `verified` state, so a "missing"
+  (collapsed) event is diagnosable, and operators who need stronger guarantees prefer a `fields` key
+  over verified fields or `off`. Documented as a standing threat-model entry, not silently dropped.
+- **Metering-delta watch (Slice 5).** The default now folds canonical path+query into the fallback
+  content hash, so endpoints that previously collapsed distinct-query GETs into one event will meter
+  more events. This is the intended fix (distinct query → distinct event), but it is a billing-visible
+  change: watch `usage.event_count` on high-GET endpoints after rollout for an unexpected step-up
+  (a sender hammering cache-busting query params would previously have shown as one event/day and now
+  shows as many). The volatile-param denylist (`_`, `cachebust`, `cache_bust`) absorbs the common
+  cache-buster patterns; extend it if a real sender surfaces a new one.

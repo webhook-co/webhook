@@ -130,7 +130,9 @@ export interface DueDelivery {
   readonly attempt: number;
   readonly eventId: string;
   readonly endpointId: string;
-  readonly dedupKey: string;
+  /** The STORED R2 object key for the event body — resolved directly (never re-derived); the drain
+   *  fences it to the endpoint's own prefix before the read (forged-overwrite hardening, ADR-0104). */
+  readonly payloadR2Key: string;
   /** The event's captured headers ([name,value] pairs), forwarded (hop-by-hop dropped engine-side). */
   readonly headers: ReadonlyArray<readonly [string, string]>;
   /** The destination's canonical delivery URL. */
@@ -152,7 +154,7 @@ interface DueDeliveryRow {
   attempt: number;
   event_id: string;
   endpoint_id: string;
-  dedup_key: string;
+  payload_r2_key: string;
   headers: [string, string][];
   url: string;
   verified: boolean;
@@ -179,7 +181,7 @@ export async function listDueDeliveries(
   limit = 50,
 ): Promise<DueDelivery[]> {
   const rows = await tx<DueDeliveryRow[]>`
-    select da.id, da.attempt, da.event_id, e.endpoint_id, e.dedup_key, e.headers, e.verified,
+    select da.id, da.attempt, da.event_id, e.endpoint_id, e.payload_r2_key, e.headers, e.verified,
            e.verification, d.url
     from delivery_attempts da
     join events e on e.id = da.event_id and e.org_id = da.org_id
@@ -208,7 +210,7 @@ export async function listDueDeliveries(
     attempt: r.attempt,
     eventId: r.event_id,
     endpointId: r.endpoint_id,
-    dedupKey: r.dedup_key,
+    payloadR2Key: r.payload_r2_key,
     headers: r.headers,
     url: r.url,
     verified: r.verified,

@@ -1,7 +1,7 @@
 import {
+  endpointPrefix,
   generateSigningSecret,
   LocalKmsProvider,
-  payloadR2Key,
   SecretStore,
   standardWebhooksAdapter,
 } from "@webhook-co/shared";
@@ -18,12 +18,17 @@ import {
 // The engine's server-side remote delivery + its AUTHORITATIVE connect-time SSRF guard (ADR-0081),
 // exercised in the real Workers runtime (workerd). guardedDeliver takes injected deps (R2 read / DoH
 // resolve / fetch) so the whole guard pipeline — structural reject, resolve-and-validate every IP,
-// fail-closed, the H1 key re-derivation, redirect:manual, the header filter — is provable with fakes.
+// fail-closed, the H1 stored-key prefix fence, redirect:manual, the header filter — is provable with fakes.
+
+const ORG = "11111111-1111-4111-8111-111111111111";
+const ENDPOINT = "22222222-2222-4222-8222-222222222222";
+// A well-formed STORED key: under the endpoint's own prefix + a 64-char sha256-hex object name.
+const STORED_KEY = `${endpointPrefix(ORG, ENDPOINT)}${"a".repeat(64)}`;
 
 const ARGS: DeliverArgs = {
-  orgId: "11111111-1111-4111-8111-111111111111",
-  endpointId: "22222222-2222-4222-8222-222222222222",
-  dedupKey: "dedup-1",
+  orgId: ORG,
+  endpointId: ENDPOINT,
+  payloadR2Key: STORED_KEY,
   url: "https://hooks.example.com/in",
   headers: [
     ["Host", "wbhk.my"],
@@ -91,14 +96,14 @@ describe("guardedDeliver — connect-time SSRF guard", () => {
     expect(empty.fetchMock).not.toHaveBeenCalled();
   });
 
-  it("delivers to a public destination: re-derives the R2 key (H1), filters headers, no-follow", async () => {
+  it("delivers to a public destination: reads the STORED key (H1 prefix fence), filters headers, no-follow", async () => {
     const d = deps();
     const r = await guardedDeliver(d, ARGS);
     expect(r.outcome).toBe("delivered");
     expect(r.status).toBe(200);
-    // H1: the payload is read by the RE-DERIVED key, never a handed key.
-    const expectedKey = await payloadR2Key(ARGS.orgId, ARGS.endpointId, ARGS.dedupKey);
-    expect(d.getPayloadMock).toHaveBeenCalledWith(expectedKey);
+    // H1: the payload is read by the STORED key AFTER the endpoint-prefix fence, never re-derived nor
+    // a cross-tenant handed key.
+    expect(d.getPayloadMock).toHaveBeenCalledWith(STORED_KEY);
     // the POST: canonical url, manual redirect, filtered headers (host dropped, webhook-* kept).
     expect(d.fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = d.fetchMock.mock.calls[0] as [string, RequestInit];
@@ -108,6 +113,26 @@ describe("guardedDeliver — connect-time SSRF guard", () => {
     const h = new Headers(init.headers);
     expect(h.get("host")).toBeNull();
     expect(h.get("webhook-id")).toBe("msg_1");
+  });
+
+  it("H1 fence: a stored key OUTSIDE this endpoint's prefix fails closed — no read, no fetch", async () => {
+    // A poisoned/cross-tenant key (another org's prefix) must never be read or delivered.
+    const foreign = `${endpointPrefix("99999999-9999-4999-8999-999999999999", ENDPOINT)}${"b".repeat(64)}`;
+    const d = deps();
+    const r = await guardedDeliver(d, { ...ARGS, payloadR2Key: foreign });
+    expect(r.outcome).toBe("failed");
+    expect(r.error).toContain("prefix");
+    expect(d.getPayloadMock).not.toHaveBeenCalled();
+    expect(d.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("H1 fence: a malformed stored key (bad object-name shape) fails closed — no read, no fetch", async () => {
+    const malformed = `${endpointPrefix(ORG, ENDPOINT)}../../etc/passwd`;
+    const d = deps();
+    const r = await guardedDeliver(d, { ...ARGS, payloadR2Key: malformed });
+    expect(r.outcome).toBe("failed");
+    expect(d.getPayloadMock).not.toHaveBeenCalled();
+    expect(d.fetchMock).not.toHaveBeenCalled();
   });
 
   it("records a non-2xx as failed (with the status) and never follows a 3xx", async () => {

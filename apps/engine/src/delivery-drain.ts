@@ -192,7 +192,7 @@ export function buildDeliverArgs(
   return {
     orgId,
     endpointId: d.endpointId,
-    dedupKey: d.dedupKey,
+    payloadR2Key: d.payloadR2Key,
     url: d.url,
     headers: d.headers,
     signing:
