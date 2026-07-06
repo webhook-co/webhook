@@ -548,7 +548,7 @@ export interface components {
             contentType: string | null;
             dedupKey: string;
             /** @enum {string} */
-            dedupStrategy: "sw_webhook_id" | "provider_event_id" | "content_hash";
+            dedupStrategy: "sw_webhook_id" | "provider_event_id" | "content_hash" | "fields" | "unique";
             /** Format: uuid */
             endpointId: string;
             externalId: string | null;
@@ -607,7 +607,7 @@ export interface components {
         EventSummary: {
             dedupKey: string;
             /** @enum {string} */
-            dedupStrategy: "sw_webhook_id" | "provider_event_id" | "content_hash";
+            dedupStrategy: "sw_webhook_id" | "provider_event_id" | "content_hash" | "fields" | "unique";
             /** Format: uuid */
             endpointId: string;
             /** Format: uuid */

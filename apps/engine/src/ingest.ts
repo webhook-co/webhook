@@ -343,13 +343,16 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // Capture: exact body bytes + normalized headers (see the header-fidelity note above).
   const headers: [string, string][] = [...request.headers];
   const contentType = request.headers.get("content-type");
-  const derived = await deriveDedup(
-    raw,
-    headers,
-    request.method,
-    deps.now(),
-    deps.dedupBucketWidthMs,
-  );
+  // Pre-mint the event id BEFORE dedup: `off` mode (and the fields fail-safe) key on it for a
+  // per-request-unique dedup key, and it is the events row id below. Minting it once keeps the key,
+  // the row, and the auto-delivery routing all agreed on the same identity.
+  const eventId = newId();
+  // Slice 1 keeps today's default (identifier ladder, deps window). The per-endpoint config that can
+  // select content/fields/off is threaded onto `endpoint` and resolved here in a later slice.
+  const derived = await deriveDedup(raw, headers, request.method, url, eventId, deps.now(), {
+    mode: "identifier",
+    windowMs: deps.dedupBucketWidthMs,
+  });
 
   // POST subscription-validation handshakes (Microsoft Graph `?validationToken`, Twitch
   // `webhook_callback_verification`, monday.com `{challenge}`) — pre-capture echoes that capture NOTHING
@@ -410,6 +413,10 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
 
   // R2 PUT FIRST: the body is durable before any metadata row can point at it. A PUT failure means
   // the body isn't durable -> 500, and we never write the row (never ACK an undurable event).
+  // The object is named deterministically by (endpoint, dedup_key) so a retry re-PUTs the same object
+  // and every reader (dispatcher/replay) re-derives the same key. Hardening the forged-overwrite
+  // residual (fold content_hash into the key material AND switch readers to the STORED key rather than
+  // re-derive) is tracked as its own slice - see ADR-0104 and docs/threat-model.md.
   const key = await payloadR2Key(endpoint.orgId, endpoint.endpointId, derived.dedupKey);
   try {
     await deps.putPayload(key, raw, contentType);
@@ -444,7 +451,7 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // collide on a signature header); otherwise fall back to the detected provider. The providerEventId/
   // dedupStrategy/dedupBucket stay under the DETECTED provider (the dedup basis) — that only diverges from
   // `provider` if a request carried two providers' signature headers, impossible for the current providers.
-  const eventId = newId();
+  // (`eventId` was minted before dedup so `off`/fail-safe keys and the row id are the same identity.)
   const provider = outcome.provider ?? derived.provider;
   // The normalized event type for subscription routing (S3 Slice 3), derived from the AUTHORITATIVE provider
   // (same as the `provider` column). null when unextracted → the matcher routes it via `*` only. Computed

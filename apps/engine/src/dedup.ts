@@ -12,12 +12,16 @@
 
 import {
   bytesToHex,
+  DEFAULT_DEDUP_WINDOW_SECONDS,
   detectScheme,
   findHeader,
+  type DedupConfig,
   type DedupStrategy,
   type Provider,
   type WebhookScheme,
 } from "@webhook-co/shared";
+
+import { evaluateFields } from "./dedup-fields";
 
 /**
  * Map a detected scheme to its Provider (null for "unknown"). The `return scheme` below is a
@@ -104,60 +108,185 @@ export function extractEventType(
 }
 
 /**
+ * The resolved per-endpoint dedup parameters the engine feeds `deriveDedup`. Derived from the
+ * endpoint's stored `DedupConfig` (or the default when unset) by `resolveDedupParams`.
+ */
+export type DedupParams =
+  | { readonly mode: "identifier"; readonly windowMs: number }
+  | { readonly mode: "content"; readonly windowMs: number }
+  | {
+      readonly mode: "fields";
+      readonly windowMs: number;
+      readonly include: readonly string[];
+      readonly exclude: readonly string[];
+    }
+  | { readonly mode: "off" };
+
+/** NULL config → today's default (identifier ladder, 24h window). Never changes existing behavior. */
+export function resolveDedupParams(cfg: DedupConfig | null): DedupParams {
+  if (cfg === null) {
+    return { mode: "identifier", windowMs: DEFAULT_DEDUP_WINDOW_SECONDS * 1000 };
+  }
+  switch (cfg.mode) {
+    case "off":
+      return { mode: "off" };
+    case "content":
+      return { mode: "content", windowMs: cfg.windowSeconds * 1000 };
+    case "fields":
+      return {
+        mode: "fields",
+        windowMs: cfg.windowSeconds * 1000,
+        include: cfg.fields?.include ?? [],
+        exclude: cfg.fields?.exclude ?? [],
+      };
+    case "identifier":
+      return { mode: "identifier", windowMs: cfg.windowSeconds * 1000 };
+  }
+}
+
+// Only params that are UNAMBIGUOUSLY tracking / cache-busting are dropped. Params that could carry
+// real request identity (e.g. `ts`, `nonce`, `attempt`, `sig`) are deliberately NOT stripped — stripping
+// them would over-collapse two legitimately-distinct events that share a body and differ only in that
+// param, and over-collapse (dropping a real event) is worse than under-dedup.
+const VOLATILE_QUERY_PARAMS = new Set(["_", "cachebust", "cache_bust"]);
+const MAX_CANONICAL_QUERY_PARAMS = 512;
+
+function isVolatileParam(key: string): boolean {
+  return VOLATILE_QUERY_PARAMS.has(key) || key.startsWith("utm_");
+}
+
+/**
+ * A canonical `path?query` string folded into the content-hash key so two requests that differ only
+ * in the URL are distinct. Volatile params (tracking/cache-busting/per-attempt) are dropped, remaining
+ * params are sorted, and everything is re-encoded uniformly — so `?b=2&a=1` and `?a=1&b=2` collapse,
+ * while `?id=1` and `?id=2` stay distinct. Duplicate keys are preserved (they are semantically distinct).
+ */
+function canonicalTarget(url: URL): string {
+  let path = url.pathname.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
+  if (path === "") path = "/";
+  const params = [...url.searchParams];
+  if (params.length > MAX_CANONICAL_QUERY_PARAMS) {
+    // Pathological param count: skip sorting (bounded work); the raw search is length-bounded by the URL.
+    return `${path}?${url.search}`;
+  }
+  const kept = new URLSearchParams();
+  for (const [k, v] of params) if (!isVolatileParam(k)) kept.append(k, v);
+  kept.sort();
+  const q = kept.toString();
+  return q ? `${path}?${q}` : path;
+}
+
+const canonicalTargetEncoder = new TextEncoder();
+
+async function contentHashResult(
+  contentHash: Uint8Array,
+  method: string,
+  url: URL,
+  bucket: number,
+  provider: Provider | null,
+): Promise<DerivedDedup> {
+  // method + hash(canonical-target) + content hash + coarse bucket, all folded into the key. The method
+  // keeps different verbs with the same (often empty) body distinct; the target hash keeps requests that
+  // differ only by URL/query distinct; the bucket keeps a legitimately-identical request in a LATER window
+  // distinct. The canonical target is HASHED (not inlined) so a multi-KB query string can't blow the
+  // Postgres unique-index btree tuple limit and lose the event on insert. Same (method, target, body,
+  // bucket) is a retry and collapses.
+  const targetHash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", canonicalTargetEncoder.encode(canonicalTarget(url))),
+  );
+  return {
+    dedupKey: `${method}:${bytesToHex(contentHash)}:${bytesToHex(targetHash)}:${bucket}`,
+    dedupStrategy: "content_hash",
+    provider,
+    providerEventId: null,
+    dedupBucket: bucket,
+    contentHash,
+  };
+}
+
+function uniqueResult(
+  eventId: string,
+  contentHash: Uint8Array,
+  provider: Provider | null,
+): DerivedDedup {
+  // A per-request unique key: off mode, or the fail-safe when a configured field is unresolvable.
+  return {
+    dedupKey: `unique:${eventId}`,
+    dedupStrategy: "unique",
+    provider,
+    providerEventId: null,
+    dedupBucket: null,
+    contentHash,
+  };
+}
+
+/**
  * Derive `{dedup_key, dedup_strategy, provider, provider_event_id, dedup_bucket}` (+ the content
- * hash) from the raw body + ordered headers. `now` is the server-assigned receive time and
- * `bucketWidthMs` the content-hash window (≥ the provider retry window where known).
+ * hash) from the raw body + ordered headers + request URL, per the endpoint's resolved `params`.
+ * `now` is the server-assigned receive time; `eventId` a pre-minted uuidv7 used for `off`/fail-safe.
  */
 export async function deriveDedup(
   rawBody: Uint8Array,
   headers: Headers,
   method: string,
+  url: URL,
+  eventId: string,
   now: Date,
-  bucketWidthMs: number,
+  params: DedupParams,
 ): Promise<DerivedDedup> {
   const contentHash = new Uint8Array(await crypto.subtle.digest("SHA-256", rawBody));
   const scheme = detectScheme(headers);
   const provider = schemeToProvider(scheme);
 
-  // 1. Standard Webhooks id (stable across retries, SW-native senders).
-  const webhookId = findHeader(headers, "webhook-id");
-  if (webhookId) {
+  // off — every request is a distinct event (opt-in; idempotency disabled).
+  if (params.mode === "off") return uniqueResult(eventId, contentHash, provider);
+
+  // fields — key from the endpoint's configured selectors; fail safe to a unique key, or degrade to a
+  // whole-body content hash when the payload is too large / has too many values (both bounded, safe).
+  if (params.mode === "fields") {
+    const evaluated = evaluateFields(rawBody, headers, url, params.include, params.exclude);
+    if (evaluated.kind === "unique") return uniqueResult(eventId, contentHash, provider);
+    const bucket = Math.floor(now.getTime() / params.windowMs);
+    if (evaluated.kind === "content")
+      return await contentHashResult(contentHash, method, url, bucket, provider);
+    const fieldsHash = new Uint8Array(await crypto.subtle.digest("SHA-256", evaluated.bytes));
     return {
-      dedupKey: webhookId,
-      dedupStrategy: "sw_webhook_id",
+      dedupKey: `fields:${bytesToHex(fieldsHash)}:${bucket}`,
+      dedupStrategy: "fields",
       provider,
       providerEventId: null,
-      dedupBucket: null,
+      dedupBucket: bucket,
       contentHash,
     };
   }
 
-  // 2. Provider event id, namespaced by scheme.
-  const providerEventId = extractProviderEventId(scheme, rawBody, headers);
-  if (providerEventId) {
-    return {
-      dedupKey: `${scheme}:${providerEventId}`,
-      dedupStrategy: "provider_event_id",
-      provider,
-      providerEventId,
-      dedupBucket: null,
-      contentHash,
-    };
+  // identifier — the id ladder (stable across retries), then the content-hash fallback below.
+  if (params.mode === "identifier") {
+    const webhookId = findHeader(headers, "webhook-id");
+    if (webhookId) {
+      return {
+        dedupKey: webhookId,
+        dedupStrategy: "sw_webhook_id",
+        provider,
+        providerEventId: null,
+        dedupBucket: null,
+        contentHash,
+      };
+    }
+    const providerEventId = extractProviderEventId(scheme, rawBody, headers);
+    if (providerEventId) {
+      return {
+        dedupKey: `${scheme}:${providerEventId}`,
+        dedupStrategy: "provider_event_id",
+        provider,
+        providerEventId,
+        dedupBucket: null,
+        contentHash,
+      };
+    }
   }
 
-  // 3. content_hash + a coarse time bucket + the HTTP method, all folded into the key. The bucket keeps
-  //    a legitimately-identical body in a LATER window distinct; the method keeps DIFFERENT verbs with
-  //    the same (often empty) body distinct — under accept-all-verbs a bodyless liveness GET, or an
-  //    empty-body PUT/DELETE, must not collide with a real empty-body POST and dedup-suppress it. Same
-  //    (method, body, bucket) is still a retry and collapses; a different verb is a distinct request and
-  //    is captured. (The id-based strategies above are verb-independent — a provider retries same-verb.)
-  const dedupBucket = Math.floor(now.getTime() / bucketWidthMs);
-  return {
-    dedupKey: `${method}:${bytesToHex(contentHash)}:${dedupBucket}`,
-    dedupStrategy: "content_hash",
-    provider,
-    providerEventId: null,
-    dedupBucket,
-    contentHash,
-  };
+  // content mode, or the identifier fallback: canonical content hash + a coarse time bucket.
+  const bucket = Math.floor(now.getTime() / params.windowMs);
+  return await contentHashResult(contentHash, method, url, bucket, provider);
 }
