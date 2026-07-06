@@ -3,9 +3,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
+import { EndpointDedupManager } from "@/components/endpoint-dedup-manager";
 import { EndpointDetail } from "@/components/endpoint-detail";
 import { ProviderSecretsManager } from "@/components/provider-secrets-manager";
-import { deleteEndpointAction, rotateEndpointAction } from "@/server/endpoint-actions";
+import {
+  deleteEndpointAction,
+  rotateEndpointAction,
+  updateEndpointDedupAction,
+} from "@/server/endpoint-actions";
 import { revealEndpointIngestUrl } from "@/server/endpoint-reveal";
 import { loadEndpoint } from "@/server/endpoints";
 import {
@@ -80,6 +85,11 @@ export default async function EndpointDetailPage({ params }: { params: Promise<{
               revoke={revokeProviderSecretAction}
             />
           )}
+          <EndpointDedupManager
+            endpointId={result.endpoint.id}
+            initial={result.endpoint.dedupConfig}
+            update={updateEndpointDedupAction}
+          />
         </>
       )}
     </div>

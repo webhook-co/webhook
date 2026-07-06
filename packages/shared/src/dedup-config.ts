@@ -28,6 +28,34 @@ export const MIN_DEDUP_WINDOW_SECONDS = 60;
 export const MAX_DEDUP_WINDOW_SECONDS = 604_800;
 export const DEFAULT_DEDUP_WINDOW_SECONDS = 86_400; // 24h — today's global default
 
+/**
+ * Whether a raw window entry (from a UI number field) is a whole number of seconds INSIDE the accepted
+ * range — so a form can reject an out-of-range value with clear feedback instead of silently clamping it to
+ * a bound the operator never chose. Empty / non-numeric / fractional / out-of-range → false. Pure + total.
+ */
+export function isDedupWindowInRange(raw: string | number): boolean {
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (String(raw).trim() === "") return false;
+  return Number.isInteger(n) && n >= MIN_DEDUP_WINDOW_SECONDS && n <= MAX_DEDUP_WINDOW_SECONDS;
+}
+
+/**
+ * Coerce a raw window entry to a valid in-range integer second count — the single clamp used by every
+ * surface (create dialog + detail editor) so they can't drift. Rounds, then clamps into
+ * [MIN, MAX]; a blank / non-numeric entry falls back to the default. This is the LAST-RESORT normalizer —
+ * a form should validate with {@link isDedupWindowInRange} first and only rely on this as the server-safe
+ * floor (the server re-validates regardless).
+ */
+export function clampDedupWindow(raw: string | number): number {
+  // A blank string coerces to 0 via Number(), not NaN — treat it (and any non-numeric entry) as "unset" →
+  // the default, rather than clamping an empty field up to the minimum.
+  const s = String(raw).trim();
+  if (s === "") return DEFAULT_DEDUP_WINDOW_SECONDS;
+  const parsed = Math.round(Number(s));
+  if (!Number.isFinite(parsed)) return DEFAULT_DEDUP_WINDOW_SECONDS;
+  return Math.min(MAX_DEDUP_WINDOW_SECONDS, Math.max(MIN_DEDUP_WINDOW_SECONDS, parsed));
+}
+
 export type FieldPathRoot = "headers" | "body" | "query" | "path";
 const FIELD_PATH_ROOTS: readonly FieldPathRoot[] = ["headers", "body", "query", "path"];
 

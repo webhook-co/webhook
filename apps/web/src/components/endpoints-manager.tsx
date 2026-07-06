@@ -4,6 +4,8 @@ import {
   Badge,
   Banner,
   Button,
+  Combobox,
+  type ComboboxOption,
   Dialog,
   DialogClose,
   DialogContent,
@@ -13,6 +15,7 @@ import {
   DialogTitle,
   DialogTrigger,
   Field,
+  Label,
   Table,
   TableBody,
   TableCell,
@@ -21,6 +24,14 @@ import {
   TableHeader,
   TableRow,
 } from "@webhook-co/ui";
+import {
+  clampDedupWindow,
+  DEFAULT_DEDUP_WINDOW_SECONDS,
+  isDedupWindowInRange,
+  MAX_DEDUP_WINDOW_SECONDS,
+  MIN_DEDUP_WINDOW_SECONDS,
+  type DedupConfig,
+} from "@webhook-co/shared";
 import Link from "next/link";
 import * as React from "react";
 
@@ -35,13 +46,26 @@ import type { EndpointItem, EndpointsResult } from "@/server/endpoints";
 import { EndpointControls } from "./endpoint-controls";
 import { IngestUrlDialog } from "./ingest-url-dialog";
 
+// The create dialog offers the three modes that need no extra input — the `fields` editor lives on the
+// endpoint's detail page (a fresh endpoint has no payloads to pick fields against yet). Labels are the plain,
+// user-facing wording, never the raw enum.
+type CreateDedupMode = "identifier" | "content" | "off";
+const CREATE_DEDUP_OPTIONS: ComboboxOption[] = [
+  { value: "identifier", label: "Automatic (recommended)" },
+  { value: "content", label: "Match on full content" },
+  { value: "off", label: "Off — record every request" },
+];
+
 export interface EndpointsManagerProps {
   initialResult: EndpointsResult;
   /** The active name-search term (the server already filtered `initialResult` by it). Drives the
    *  empty-state copy AND gates optimistic create so a non-matching new endpoint isn't shown filtered. */
   nameFilter?: string;
   /** The create-endpoint server action, injected by the gated page. */
-  createEndpoint: (input: { name: string }) => Promise<CreateEndpointResult>;
+  createEndpoint: (input: {
+    name: string;
+    dedupConfig?: DedupConfig | null;
+  }) => Promise<CreateEndpointResult>;
   /** Rotate an endpoint's ingest token (hard cutover) → its NEW ingest URL. Injected by the page. */
   rotateEndpoint: (endpointId: string) => Promise<RotateEndpointResult>;
   /** Soft-delete an endpoint. Injected by the page. */
@@ -68,6 +92,10 @@ export function EndpointsManager({
   const isFiltered = Boolean(nameFilter && nameFilter.trim() !== "");
   const [createOpen, setCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
+  // Dedup config for the new endpoint. Defaults to the automatic ladder + 24h — the same as an untouched
+  // (null) config — so a create that doesn't touch these sends no dedupConfig at all (keeps the null default).
+  const [dedupMode, setDedupMode] = React.useState<CreateDedupMode>("identifier");
+  const [dedupWindow, setDedupWindow] = React.useState(String(DEFAULT_DEDUP_WINDOW_SECONDS));
   const [pending, setPending] = React.useState(false);
   // A synchronous in-flight latch: `pending` state can't block a same-tick double-submit (it re-renders a
   // frame later), so this ref reliably prevents a double-mint (two endpoints/tokens, the first URL lost).
@@ -83,10 +111,19 @@ export function EndpointsManager({
     );
   }
 
-  const canCreate = name.trim() !== "" && !pending;
+  // Gate create on a valid window (when the mode uses one) so an out-of-range entry is rejected with visible
+  // feedback rather than silently clamped to a bound the user never chose.
+  const windowInRange = dedupMode === "off" || isDedupWindowInRange(dedupWindow);
+  const dedupWindowError =
+    dedupMode !== "off" && dedupWindow.trim() !== "" && !isDedupWindowInRange(dedupWindow)
+      ? "Enter a whole number of seconds between 60 and 604800 (7 days)."
+      : undefined;
+  const canCreate = name.trim() !== "" && windowInRange && !pending;
 
   function resetForm() {
     setName("");
+    setDedupMode("identifier");
+    setDedupWindow(String(DEFAULT_DEDUP_WINDOW_SECONDS));
     setFormError(null);
   }
 
@@ -97,7 +134,21 @@ export function EndpointsManager({
     setFormError(null);
     setPending(true);
     try {
-      const result = await createEndpoint({ name: name.trim() });
+      // Assemble the dedup config. The Create button is gated on an in-range window (windowInRange), so the
+      // shared clamp only ever rounds an already-valid entry — the server is still authoritative. Omit the
+      // config entirely when it's the default (automatic + 24h) so a plain create keeps the null default
+      // rather than persisting an explicit equivalent. `off` hides the window field, so it just carries the
+      // default value.
+      const windowSeconds = clampDedupWindow(dedupWindow);
+      const isDefault =
+        dedupMode === "identifier" && windowSeconds === DEFAULT_DEDUP_WINDOW_SECONDS;
+      const dedupConfig: DedupConfig | undefined = isDefault
+        ? undefined
+        : { mode: dedupMode, windowSeconds };
+      const result = await createEndpoint({
+        name: name.trim(),
+        ...(dedupConfig ? { dedupConfig } : {}),
+      });
       if (!result.ok) {
         setFormError(result.error);
         return;
@@ -150,6 +201,38 @@ export function EndpointsManager({
                 onChange={(e) => setName(e.target.value)}
                 disabled={pending}
               />
+
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="create-dedup-mode">Deduplication</Label>
+                <Combobox
+                  id="create-dedup-mode"
+                  label="Deduplication"
+                  options={CREATE_DEDUP_OPTIONS}
+                  value={dedupMode}
+                  disabled={pending}
+                  onChange={(v) => setDedupMode(v as CreateDedupMode)}
+                  className="w-full"
+                />
+                <p className="text-sm text-fg-secondary">
+                  How we collapse repeat deliveries. You can tune this — including matching on
+                  specific fields — any time on the endpoint&apos;s page.
+                </p>
+              </div>
+
+              {dedupMode !== "off" ? (
+                <Field
+                  label="Deduplication window (seconds)"
+                  type="number"
+                  inputMode="numeric"
+                  min={MIN_DEDUP_WINDOW_SECONDS}
+                  max={MAX_DEDUP_WINDOW_SECONDS}
+                  hint="Between 60 seconds and 7 days."
+                  error={dedupWindowError}
+                  value={dedupWindow}
+                  onChange={(e) => setDedupWindow(e.target.value)}
+                  disabled={pending}
+                />
+              ) : null}
 
               {formError ? <Banner tone="danger">{formError}</Banner> : null}
 

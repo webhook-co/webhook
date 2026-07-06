@@ -17,6 +17,7 @@ const ep: EndpointItem = {
   name: "Stripe prod",
   paused: false,
   createdAt: new Date("2026-06-25T00:00:00Z"),
+  dedupConfig: null,
 };
 
 beforeEach(() => {
