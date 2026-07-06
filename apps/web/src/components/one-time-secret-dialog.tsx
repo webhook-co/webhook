@@ -25,7 +25,7 @@ export interface OneTimeSecretDialogProps {
 /**
  * The one-time signing-secret reveal — shared by destination CREATE and ROTATE so this security-sensitive
  * surface ("this is the only time you'll see this secret") can't drift between the two. hideCloseButton +
- * warn Banner + mono code + CopyButton + Done (mirrors OneTimeUrlDialog + the API-key reveal). The secret is
+ * warn Banner + mono code + CopyButton + Done (mirrors the API-key reveal). The secret is
  * never persisted or logged — it lives only in the caller's transient state, and only renders while the
  * dialog is open AND a secret is present.
  */

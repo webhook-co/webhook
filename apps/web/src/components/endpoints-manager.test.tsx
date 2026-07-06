@@ -77,10 +77,8 @@ describe("EndpointsManager", () => {
     await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
     expect(createEndpoint).toHaveBeenCalledWith({ name: "GitHub" });
-    // The reveal dialog shows the full ingest URL + the one-time warning.
-    await waitFor(() =>
-      expect(screen.getByText(/only time you'll see this url/i)).toBeInTheDocument(),
-    );
+    // The reveal dialog shows the full ingest URL + the always-viewable reassurance.
+    await waitFor(() => expect(screen.getByText(/view this url any time/i)).toBeInTheDocument());
     expect(screen.getByText("https://wbhk.my/whep_secret123")).toBeInTheDocument();
   });
 
@@ -104,7 +102,7 @@ describe("EndpointsManager", () => {
     await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
     await waitFor(() => expect(screen.getByText(/endpoint limit reached/i)).toBeInTheDocument());
-    expect(screen.queryByText(/only time you'll see this url/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/view this url any time/i)).not.toBeInTheDocument();
   });
 
   it("re-syncs the list to a new initialResult WITHOUT remounting (server-filtered search)", () => {

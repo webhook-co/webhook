@@ -41,7 +41,7 @@ export default async function SettingsPage() {
       </Card>
 
       <form action={logout}>
-        <Button type="submit" variant="secondary">
+        <Button type="submit" variant="danger">
           Log out
         </Button>
       </form>

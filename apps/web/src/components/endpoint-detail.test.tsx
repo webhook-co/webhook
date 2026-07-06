@@ -89,12 +89,10 @@ describe("EndpointDetail", () => {
     await user.click(within(dialog).getByRole("button", { name: /rotate url/i }));
 
     expect(rotateEndpoint).toHaveBeenCalledWith("ep_1");
-    await waitFor(() =>
-      expect(screen.getByText(/only time you'll see this url/i)).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(screen.getByText(/view this url any time/i)).toBeInTheDocument());
     expect(screen.getByText("https://wbhk.my/whep_rotated")).toBeInTheDocument();
 
-    // Dismissing the one-time dialog refreshes the page so the ALWAYS-SHOWN URL re-reveals the new token.
+    // Dismissing the reveal dialog refreshes the page so the ALWAYS-SHOWN URL re-reveals the new token.
     await user.click(screen.getByRole("button", { name: /done/i }));
     expect(refresh).toHaveBeenCalled();
   });
@@ -138,6 +136,6 @@ describe("EndpointDetail", () => {
     await user.click(within(dialog).getByRole("button", { name: /rotate url/i }));
 
     await waitFor(() => expect(screen.getByText(/endpoint not found/i)).toBeInTheDocument());
-    expect(screen.queryByText(/only time you'll see this url/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/view this url any time/i)).not.toBeInTheDocument();
   });
 });

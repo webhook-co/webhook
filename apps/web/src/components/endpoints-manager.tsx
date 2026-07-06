@@ -33,7 +33,7 @@ import type {
 import type { EndpointItem, EndpointsResult } from "@/server/endpoints";
 
 import { EndpointControls } from "./endpoint-controls";
-import { OneTimeUrlDialog } from "./one-time-url-dialog";
+import { IngestUrlDialog } from "./ingest-url-dialog";
 
 export interface EndpointsManagerProps {
   initialResult: EndpointsResult;
@@ -222,7 +222,7 @@ export function EndpointsManager({
         </TableBody>
       </Table>
 
-      <OneTimeUrlDialog
+      <IngestUrlDialog
         open={revealed !== null}
         onClose={() => setRevealed(null)}
         title="Copy your webhook URL"

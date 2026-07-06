@@ -18,6 +18,7 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByText("Dana Kessler")).toBeInTheDocument();
     expect(screen.getByText("dana@acme.co")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Log out" })).toBeInTheDocument();
+    // Log out is a destructive action → the red danger button (matches "Delete endpoint").
+    expect(screen.getByRole("button", { name: "Log out" })).toHaveClass("bg-danger");
   });
 });

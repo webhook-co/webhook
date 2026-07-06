@@ -21,7 +21,7 @@ import { flushSync } from "react-dom";
 import type { EndpointActionResult, RotateEndpointResult } from "@/server/endpoint-actions";
 import type { EndpointItem } from "@/server/endpoints";
 
-import { OneTimeUrlDialog } from "./one-time-url-dialog";
+import { IngestUrlDialog } from "./ingest-url-dialog";
 
 function MoreIcon() {
   return (
@@ -212,7 +212,7 @@ export function EndpointControls({
         </DialogContent>
       </Dialog>
 
-      <OneTimeUrlDialog
+      <IngestUrlDialog
         open={revealed !== null}
         onClose={() => {
           setRevealed(null);
