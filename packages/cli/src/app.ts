@@ -19,6 +19,7 @@ import {
   endpointsRevealCommand,
   endpointsRevokeProviderSecretCommand,
   endpointsRotateCommand,
+  endpointsUpdateCommand,
 } from "./commands/endpoints.js";
 import { deliveriesGetCommand, deliveriesListCommand } from "./commands/deliveries.js";
 import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
@@ -62,6 +63,7 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "endpoints.create": ["endpoints", "create"],
   "endpoints.delete": ["endpoints", "delete"],
   "endpoints.rotate": ["endpoints", "rotate"],
+  "endpoints.update": ["endpoints", "update"],
   "endpoints.revealIngestUrl": ["endpoints", "reveal"],
   "endpoints.addProviderSecret": ["endpoints", "add-provider-secret"],
   "endpoints.listProviderSecrets": ["endpoints", "list-provider-secrets"],
@@ -93,6 +95,7 @@ const endpointsRoute = buildRouteMap({
     create: endpointsCreateCommand,
     delete: endpointsDeleteCommand,
     rotate: endpointsRotateCommand,
+    update: endpointsUpdateCommand,
     reveal: endpointsRevealCommand,
     "add-provider-secret": endpointsAddProviderSecretCommand,
     "list-provider-secrets": endpointsListProviderSecretsCommand,

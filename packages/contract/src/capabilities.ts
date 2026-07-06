@@ -41,9 +41,6 @@ const cursor = z.string();
 // reads back; lifting one is the checklist item that fails the build if a surface forgets to bind.
 /** The browser dashboard (read views) is deferred to the frontend epic — no web binding yet. */
 const WEB_DEFERRED = "dashboard read views deferred to the frontend epic";
-/** endpoints.update's CLI binding lands in its own dedup slice (3b); api + mcp bind now. */
-const DEDUP_UPDATE_CLI_DEFERRED =
-  "the endpoints.update CLI command lands in the dedup CLI slice (3b); api + mcp bind now";
 /** events.replay's mcp exemption — the localhost-tunnel target is CLI-intrinsic (no agent localhost). */
 const REPLAY_MCP_EXEMPT =
   "the localhost-tunnel target is CLI-intrinsic — an agent has no user-localhost session (remote targets are a future Target kind per ADR-0005)";
@@ -172,7 +169,7 @@ export const endpointsUpdate = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
   semantics: { idempotent: true },
-  surfaceExempt: { cli: DEDUP_UPDATE_CLI_DEFERRED, web: WEB_DEFERRED },
+  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 // endpoints.revealIngestUrl RE-DISPLAYS the always-shown wbhk.my/<token> ingest URL for an endpoint

@@ -1,5 +1,13 @@
 import { buildCommand } from "@stricli/core";
-import { PROVIDERS, type Provider } from "@webhook-co/shared";
+import {
+  DEDUP_MODES,
+  DedupConfigSchema,
+  DEFAULT_DEDUP_WINDOW_SECONDS,
+  PROVIDERS,
+  type DedupConfig,
+  type DedupMode,
+  type Provider,
+} from "@webhook-co/shared";
 
 import type { AppContext } from "../context.js";
 import { ConfirmationError, MissingInputError, NotLoggedInError } from "../errors.js";
@@ -98,12 +106,88 @@ export const endpointsGetCommand = buildCommand<GetFlags, [string], AppContext>(
   docs: { brief: "show a single endpoint by id" },
 });
 
-export const endpointsCreateCommand = buildCommand<GetFlags, [string], AppContext>({
+// Shared dedup-config flags for `endpoints create` / `endpoints update` (ADR-0104). `--dedup-mode`
+// selects the mode; `--dedup-window` the bucket seconds; `--dedup-field` / `--dedup-exclude` are
+// comma-separated field paths for `fields` mode. Absent `--dedup-mode` = no config (create: default;
+// update: nothing to set — use --dedup-reset). buildDedupConfig validates against the shared schema
+// (the same one the api enforces) so a bad combo fails at the CLI, before the request.
+const dedupFlags = {
+  dedupMode: {
+    kind: "enum" as const,
+    values: DEDUP_MODES,
+    brief: `dedup mode (${DEDUP_MODES.join("|")})`,
+    optional: true as const,
+  },
+  dedupWindow: {
+    kind: "parsed" as const,
+    parse: (value: string) => {
+      const n = Number(value);
+      if (!Number.isInteger(n))
+        throw new Error("--dedup-window must be an integer number of seconds");
+      return n;
+    },
+    brief: "dedup window in seconds (default 86400)",
+    optional: true as const,
+  },
+  dedupField: {
+    kind: "parsed" as const,
+    parse: (value: string) => value,
+    brief: "fields-mode include paths, comma-separated (e.g. body.id,headers.x-event-id)",
+    optional: true as const,
+  },
+  dedupExclude: {
+    kind: "parsed" as const,
+    parse: (value: string) => value,
+    brief: "fields-mode exclude paths, comma-separated",
+    optional: true as const,
+  },
+};
+interface DedupFlagValues {
+  dedupMode?: DedupMode;
+  dedupWindow?: number;
+  dedupField?: string;
+  dedupExclude?: string;
+}
+function splitPaths(s?: string): string[] {
+  return s
+    ? s
+        .split(",")
+        .map((p) => p.trim())
+        .filter(Boolean)
+    : [];
+}
+/** Build (and validate) a DedupConfig from the flags, or undefined when no --dedup-mode was given. */
+function buildDedupConfig(flags: DedupFlagValues): DedupConfig | undefined {
+  if (flags.dedupMode === undefined) return undefined;
+  const windowSeconds = flags.dedupWindow ?? DEFAULT_DEDUP_WINDOW_SECONDS;
+  const candidate =
+    flags.dedupMode === "fields"
+      ? {
+          mode: flags.dedupMode,
+          windowSeconds,
+          fields: {
+            include: splitPaths(flags.dedupField),
+            ...(flags.dedupExclude ? { exclude: splitPaths(flags.dedupExclude) } : {}),
+          },
+        }
+      : { mode: flags.dedupMode, windowSeconds };
+  const parsed = DedupConfigSchema.safeParse(candidate);
+  if (!parsed.success) {
+    throw new MissingInputError(
+      `invalid dedup config: ${parsed.error.issues[0]?.message ?? "validation failed"}`,
+    );
+  }
+  return parsed.data;
+}
+
+interface CreateFlags extends GlobalFlags, DedupFlagValues {}
+
+export const endpointsCreateCommand = buildCommand<CreateFlags, [string], AppContext>({
   async func(this: AppContext, flags, name) {
     const client = await authedClient(this, flags);
     if (client instanceof NotLoggedInError) return client;
     const { format, color } = resolveGlobals(this, flags);
-    const created = await client.endpointsCreate({ name });
+    const created = await client.endpointsCreate({ name, dedupConfig: buildDedupConfig(flags) });
     if (format === "json") {
       // Machine view: the whole record (incl. the one-time ingestUrl) to stdout, nothing to stderr.
       this.process.stdout.write(`${renderJson(created)}\n`);
@@ -123,9 +207,57 @@ export const endpointsCreateCommand = buildCommand<GetFlags, [string], AppContex
         { parse: (value: string) => value, brief: "a name for the endpoint", placeholder: "name" },
       ],
     },
-    flags: { ...globalFlags },
+    flags: { ...globalFlags, ...dedupFlags },
   },
   docs: { brief: "create an endpoint and reveal its ingest url (shown once)" },
+});
+
+interface UpdateFlags extends GlobalFlags, DedupFlagValues {
+  dedupReset: boolean;
+}
+
+export const endpointsUpdateCommand = buildCommand<UpdateFlags, [string], AppContext>({
+  async func(this: AppContext, flags, endpointId) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format, color } = resolveGlobals(this, flags);
+    let dedupConfig: DedupConfig | null;
+    if (flags.dedupReset) {
+      dedupConfig = null; // reset to the default (identifier/24h)
+    } else {
+      const built = buildDedupConfig(flags);
+      if (built === undefined) {
+        throw new MissingInputError(
+          "specify --dedup-mode <mode> (with optional --dedup-window / --dedup-field / --dedup-exclude), or --dedup-reset to clear the config",
+        );
+      }
+      dedupConfig = built;
+    }
+    const updated = await client.endpointsUpdate({ endpointId, dedupConfig });
+    if (format === "json") {
+      this.process.stdout.write(`${renderJson(updated)}\n`);
+      return;
+    }
+    this.process.stdout.write(`${renderEndpoint(updated, color)}\n`);
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        { parse: (value: string) => value, brief: "the endpoint id", placeholder: "endpointId" },
+      ],
+    },
+    flags: {
+      ...globalFlags,
+      ...dedupFlags,
+      dedupReset: {
+        kind: "boolean",
+        brief: "reset the dedup config to the default (identifier/24h)",
+        default: false,
+      },
+    },
+  },
+  docs: { brief: "update an endpoint's deduplication config" },
 });
 
 // `wbhk endpoints delete <id>` (soft delete) + `wbhk endpoints rotate <id>` (replace the ingest url) —

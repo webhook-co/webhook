@@ -12,6 +12,7 @@ import {
   endpointsRevokeProviderSecret as endpointsRevokeProviderSecretCap,
   endpointsRevealIngestUrl as endpointsRevealIngestUrlCap,
   endpointsRotate as endpointsRotateCap,
+  endpointsUpdate as endpointsUpdateCap,
   eventsGet as eventsGetCap,
   eventsGetPayload as eventsGetPayloadCap,
   eventsList as eventsListCap,
@@ -45,6 +46,7 @@ import {
   b64ToBytes,
   type Delivery,
   type DeliveryAttempt,
+  type DedupConfig,
   type Endpoint,
   type Event,
   type EventSummary,
@@ -187,7 +189,15 @@ export interface ApiClient {
    * one-time ingest URL (returned once in `ingestUrl`; never recoverable after). Sent with
    * idempotent=false so a transient failure is never blind-retried (no accidental duplicate).
    */
-  endpointsCreate(input: { name: string }): Promise<CreatedEndpoint>;
+  endpointsCreate(input: { name: string; dedupConfig?: DedupConfig }): Promise<CreatedEndpoint>;
+  /**
+   * Update an endpoint's dedup config (`PATCH /v1/endpoints/:id`, ADR-0104). Idempotent — sets the config
+   * to a fixed value, or `null` to reset to the default (identifier/24h). Returns the updated endpoint.
+   */
+  endpointsUpdate(input: {
+    endpointId: string;
+    dedupConfig: DedupConfig | null;
+  }): Promise<Endpoint>;
   /**
    * Soft-delete an endpoint (`DELETE /v1/endpoints/:id`). Idempotent — a re-delete returns the recorded
    * deletedAt, an unknown id is NOT_FOUND. The ingest URL stops accepting events; captured events remain.
@@ -345,7 +355,7 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   // non-idempotent request, is never retried — so a replay can't be double-delivered by a blind retry.
   async function request(
     path: string,
-    method: "GET" | "POST" | "DELETE",
+    method: "GET" | "POST" | "PATCH" | "DELETE",
     opts: { body?: unknown; idempotent: boolean },
   ): Promise<unknown> {
     // The live bearer — mutated when the reactive refresh hook hands back a rotated access token. A 401
@@ -400,6 +410,8 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
   const getJson = (path: string): Promise<unknown> => request(path, "GET", { idempotent: true });
   const postJson = (path: string, body: unknown, idempotent: boolean): Promise<unknown> =>
     request(path, "POST", { body, idempotent });
+  const patchJson = (path: string, body: unknown, idempotent: boolean): Promise<unknown> =>
+    request(path, "PATCH", { body, idempotent });
   // DELETE defaults to idempotent (endpoints.delete coalesces a re-delete to the recorded deletedAt, so
   // a blind retry is safe). The caller passes idempotent=false where the server handler is NOT idempotent
   // — e.g. revokeProviderSecret, where a re-revoke returns NOT_FOUND, so a blind retry after a lost
@@ -439,8 +451,17 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     },
     async endpointsCreate(input): Promise<CreatedEndpoint> {
       // idempotent=false: a create is not safe to blind-retry (it would mint a duplicate endpoint).
-      const json = await postJson("/v1/endpoints", { name: input.name }, false);
+      const body: { name: string; dedupConfig?: DedupConfig } = { name: input.name };
+      if (input.dedupConfig !== undefined) body.dedupConfig = input.dedupConfig;
+      const json = await postJson("/v1/endpoints", body, false);
       return parseOrThrow(endpointsCreateCap.output, json, "endpoint");
+    },
+    async endpointsUpdate(input): Promise<Endpoint> {
+      // idempotent=true: update sets the endpoint's dedup config to a fixed value (or null), so a blind
+      // retry is safe (same input -> same result). PATCH /v1/endpoints/:id with the config in the body.
+      const path = `/v1/endpoints/${encodeURIComponent(input.endpointId)}`;
+      const json = await patchJson(path, { dedupConfig: input.dedupConfig }, true);
+      return parseOrThrow(endpointsUpdateCap.output, json, "updated endpoint");
     },
     async endpointsDelete(endpointId): Promise<DeletedEndpoint> {
       const path = `/v1/endpoints/${encodeURIComponent(endpointId)}`;
