@@ -131,4 +131,50 @@ describe("MultiSelect", () => {
     expect(trigger()).toHaveTextContent("Stripe");
     expect(within(trigger()).getByTestId("logo-stripe")).toBeInTheDocument();
   });
+
+  it("is keyboard-operable: Arrow to highlight, Enter to toggle, and stays open (multi)", async () => {
+    const onChange = vi.fn();
+    render(
+      <MultiSelect
+        options={OPTIONS}
+        selected={[]}
+        onChange={onChange}
+        placeholder="All providers"
+        label="Filter by provider"
+        searchable
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Filter by provider/ }));
+    expect(screen.getByRole("listbox")).toHaveAttribute("aria-multiselectable", "true");
+    screen.getByLabelText("Search…").focus();
+    await userEvent.keyboard("{ArrowDown}{Enter}"); // stripe(0) → github(1) → toggle on
+    expect(onChange).toHaveBeenCalledWith(["github"]);
+    // A multi-select toggle keeps the popover open to pick more.
+    expect(screen.getByRole("listbox")).toBeInTheDocument();
+  });
+
+  it("matches an option's value/keywords in search, not only the label", async () => {
+    const opts: MultiSelectOption[] = [
+      { value: "ms_graph", label: "Microsoft Graph" },
+      { value: "meta", label: "Meta", keywords: ["facebook"] },
+    ];
+    render(
+      <MultiSelect
+        options={opts}
+        selected={[]}
+        onChange={() => {}}
+        placeholder="All providers"
+        label="Filter by provider"
+        searchable
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /Filter by provider/ }));
+    const search = screen.getByLabelText("Search…");
+    await userEvent.type(search, "facebook"); // keyword hit on Meta
+    expect(screen.getByRole("option", { name: "Meta" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Microsoft Graph" })).not.toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.type(search, "ms_graph"); // value/slug hit
+    expect(screen.getByRole("option", { name: "Microsoft Graph" })).toBeInTheDocument();
+  });
 });
