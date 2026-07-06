@@ -67,7 +67,7 @@ describe("EndpointDetail", () => {
     expect(screen.getByText(/rotate to mint a fresh ingest url/i)).toBeInTheDocument();
   });
 
-  it("warns about the hard cutover, then rotates and reveals the new one-time URL", async () => {
+  it("warns about the hard cutover, then rotates and reveals the new ingest URL", async () => {
     const user = userEvent.setup();
     const rotateEndpoint = vi.fn(async () => ({
       ok: true as const,

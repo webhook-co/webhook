@@ -60,7 +60,7 @@ describe("EndpointsManager", () => {
     expect(screen.getByText(/couldn't load your endpoints/i)).toBeInTheDocument();
   });
 
-  it("creates an endpoint and reveals the one-time ingest URL exactly once", async () => {
+  it("creates an endpoint and reveals its ingest URL in the copy dialog", async () => {
     const user = userEvent.setup();
     const createEndpoint = vi.fn(async () => created);
     render(
@@ -161,7 +161,7 @@ describe("EndpointsManager", () => {
     await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
     await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
-    // The one-time URL is still revealed (creation succeeded)...
+    // The ingest URL is still revealed (creation succeeded)...
     await waitFor(() =>
       expect(screen.getByText("https://wbhk.my/whep_secret123")).toBeInTheDocument(),
     );
@@ -169,7 +169,7 @@ describe("EndpointsManager", () => {
     expect(screen.queryByRole("link", { name: "GitHub" })).not.toBeInTheDocument();
   });
 
-  it("keeps the one-time URL visible across an initialResult re-sync (no remount discards it)", async () => {
+  it("keeps the revealed URL visible across an initialResult re-sync (no remount discards it)", async () => {
     const user = userEvent.setup();
     const createEndpoint = vi.fn(async () => created);
     const { rerender } = render(
@@ -187,8 +187,8 @@ describe("EndpointsManager", () => {
       expect(screen.getByText("https://wbhk.my/whep_secret123")).toBeInTheDocument(),
     );
 
-    // A search-debounce navigation re-renders the page with a fresh initialResult; the reveal — the
-    // one-time ingest URL that is never shown again — must SURVIVE (the bug the re-key remount caused).
+    // A search-debounce navigation re-renders the page with a fresh initialResult; the transiently
+    // revealed ingest URL must SURVIVE (the bug the re-key remount caused).
     rerender(
       <EndpointsManager
         initialResult={{ status: "ok", endpoints: [ep] }}

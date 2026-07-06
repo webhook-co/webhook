@@ -31,7 +31,7 @@ export interface IngestUrlDialogProps {
 export function IngestUrlDialog({ open, onClose, title, description, url }: IngestUrlDialogProps) {
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent hideCloseButton>
+      <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>

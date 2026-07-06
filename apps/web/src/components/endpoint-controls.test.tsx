@@ -14,7 +14,7 @@ const ep: EndpointItem = {
 };
 
 describe("EndpointControls (menu variant)", () => {
-  it("rotates from the ⋯ menu and reveals the new one-time URL", async () => {
+  it("rotates from the ⋯ menu and reveals the new ingest URL", async () => {
     const user = userEvent.setup();
     const rotateEndpoint = vi.fn(async () => ({
       ok: true as const,
