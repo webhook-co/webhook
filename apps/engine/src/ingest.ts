@@ -23,12 +23,13 @@ import {
   payloadR2Key,
   redactHeadersForLog,
   utf8Decoder,
+  type DedupConfig,
   type DedupStrategy,
   type Provider,
   type VerificationResult,
 } from "@webhook-co/shared";
 
-import { deriveDedup, extractEventType } from "./dedup";
+import { deriveDedup, extractEventType, resolveDedupParams } from "./dedup";
 import { dispatchGetHandshake, dispatchPostHandshake } from "./handshake";
 
 /** A resolved ingest token -> its owning endpoint (the ingest resolver's narrowed result). */
@@ -38,6 +39,8 @@ export interface ResolvedEndpoint {
   readonly paused: boolean;
   /** The endpoint's sealed provider signing secrets, delivered on the principal for verify. */
   readonly sealedSecrets: readonly CachedSealedSecret[];
+  /** The endpoint's dedup config (ADR-0104); NULL = the default (identifier ladder, deps window). */
+  readonly dedupConfig: DedupConfig | null;
 }
 
 /** What handleIngest hands the verify dep to attempt provider-signature verification. */
@@ -347,12 +350,21 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // per-request-unique dedup key, and it is the events row id below. Minting it once keeps the key,
   // the row, and the auto-delivery routing all agreed on the same identity.
   const eventId = newId();
-  // Slice 1 keeps today's default (identifier ladder, deps window). The per-endpoint config that can
-  // select content/fields/off is threaded onto `endpoint` and resolved here in a later slice.
-  const derived = await deriveDedup(raw, headers, request.method, url, eventId, deps.now(), {
-    mode: "identifier",
-    windowMs: deps.dedupBucketWidthMs,
-  });
+  // Resolve the endpoint's dedup params: its stored config (content/fields/off/identifier + window),
+  // or the default (identifier ladder, deps window) when unset. NULL config reproduces today's behavior
+  // exactly — the deps window IS the default window — so existing endpoints are unchanged.
+  const dedupParams = endpoint.dedupConfig
+    ? resolveDedupParams(endpoint.dedupConfig)
+    : ({ mode: "identifier", windowMs: deps.dedupBucketWidthMs } as const);
+  const derived = await deriveDedup(
+    raw,
+    headers,
+    request.method,
+    url,
+    eventId,
+    deps.now(),
+    dedupParams,
+  );
 
   // POST subscription-validation handshakes (Microsoft Graph `?validationToken`, Twitch
   // `webhook_callback_verification`, monday.com `{challenge}`) — pre-capture echoes that capture NOTHING

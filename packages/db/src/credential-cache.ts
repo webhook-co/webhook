@@ -11,6 +11,8 @@
 // can't be invalidated on revocation. KV can: revoke deletes the KV entry, so a
 // revoked credential stops resolving on the very next request.
 
+import { type DedupConfig } from "@webhook-co/shared";
+
 /**
  * A sealed provider secret in JSON-SAFE form, carried on the cached principal. The envelope's
  * byte fields are base64 (Uint8Array doesn't survive JSON.stringify/parse, which is exactly the
@@ -58,6 +60,12 @@ export interface ResolvedPrincipal {
    * unused by api keys. Empty array = endpoint has no registered secrets (verify -> unverified).
    */
   readonly sealedSecrets?: readonly CachedSealedSecret[];
+  /**
+   * The endpoint's dedup config (ADR-0104), carried so the ingest hot path resolves the dedup mode
+   * from the one KV read. NULL/absent = the default (identifier ladder, 24h). Populated by the
+   * ingest-token resolver only; unused by api keys.
+   */
+  readonly dedupConfig?: DedupConfig | null;
   /**
    * The resource the credential is bound to (RFC 8707 audience). verifyBearer rejects a
    * credential whose audience != the resource it's presented at. Optional on the cache

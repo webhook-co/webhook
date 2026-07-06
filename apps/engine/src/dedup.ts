@@ -122,11 +122,14 @@ export type DedupParams =
     }
   | { readonly mode: "off" };
 
+/** The default params (identifier ladder, 24h window) — a NULL/garbled config resolves to this. */
+export function defaultDedupParams(): DedupParams {
+  return { mode: "identifier", windowMs: DEFAULT_DEDUP_WINDOW_SECONDS * 1000 };
+}
+
 /** NULL config → today's default (identifier ladder, 24h window). Never changes existing behavior. */
 export function resolveDedupParams(cfg: DedupConfig | null): DedupParams {
-  if (cfg === null) {
-    return { mode: "identifier", windowMs: DEFAULT_DEDUP_WINDOW_SECONDS * 1000 };
-  }
+  if (cfg === null) return defaultDedupParams();
   switch (cfg.mode) {
     case "off":
       return { mode: "off" };
@@ -141,6 +144,11 @@ export function resolveDedupParams(cfg: DedupConfig | null): DedupParams {
       };
     case "identifier":
       return { mode: "identifier", windowMs: cfg.windowSeconds * 1000 };
+    default:
+      // Defense-in-depth: config is validated at write time AND on the DB/KV read boundaries, so an
+      // out-of-enum mode is unreachable without a DB compromise. Fall back to the safe default rather
+      // than return undefined (which would throw in deriveDedup and 500 the ingest).
+      return defaultDedupParams();
   }
 }
 

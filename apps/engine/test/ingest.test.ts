@@ -26,7 +26,9 @@ function makeDeps(over: Partial<IngestDeps> = {}): { deps: IngestDeps; calls: Ca
   const calls: Calls = { put: [], ingest: [], verify: [], logs: [], order: [], autoDeliver: [] };
   const deps: IngestDeps = {
     resolve: async (token) =>
-      token === GOOD ? { orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [] } : null,
+      token === GOOD
+        ? { orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [], dedupConfig: null }
+        : null,
     verify: async (input) => {
       calls.order.push("verify");
       calls.verify.push(input);
@@ -137,7 +139,13 @@ describe("handleIngest — the wbhk.my write path", () => {
 
   it("GET liveness is byte-identical across two different resolved endpoints (constant — leaks nothing resolved)", async () => {
     const epA = makeDeps({
-      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [] }),
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: false,
+        sealedSecrets: [],
+        dedupConfig: null,
+      }),
     });
     const epB = makeDeps({
       resolve: async () => ({
@@ -145,6 +153,7 @@ describe("handleIngest — the wbhk.my write path", () => {
         endpointId: "be000000-0000-4000-8000-0000000000bb",
         paused: false,
         sealedSecrets: [],
+        dedupConfig: null,
       }),
     });
     const resA = await handleIngest(req(GOOD, { method: "GET" }), epA.deps);
@@ -155,7 +164,13 @@ describe("handleIngest — the wbhk.my write path", () => {
 
   it("a GET to a PAUSED endpoint returns the constant liveness 200 and captures nothing (paused not observable via GET)", async () => {
     const { deps, calls } = makeDeps({
-      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true, sealedSecrets: [] }),
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: true,
+        sealedSecrets: [],
+        dedupConfig: null,
+      }),
     });
     const res = await handleIngest(req(GOOD, { method: "GET" }), deps);
     // identical to an active endpoint's GET — a browser GET never reveals the paused/active distinction
@@ -185,7 +200,13 @@ describe("handleIngest — the wbhk.my write path", () => {
 
   it("returns 429 + Retry-After for a paused endpoint (founder decision: reject, don't drop)", async () => {
     const { deps, calls } = makeDeps({
-      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true, sealedSecrets: [] }),
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: true,
+        sealedSecrets: [],
+        dedupConfig: null,
+      }),
     });
     const res = await handleIngest(req(GOOD), deps);
     expect(res.status).toBe(429);
@@ -302,7 +323,13 @@ describe("handleIngest — the wbhk.my write path", () => {
       context: { orgId: ORG, endpointId: EP, keyId: "sec-1" },
     } as const;
     const { deps, calls } = makeDeps({
-      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [secret] }),
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: false,
+        sealedSecrets: [secret],
+        dedupConfig: null,
+      }),
       verify: async (input) => {
         calls.order.push("verify");
         calls.verify.push(input);
@@ -622,7 +649,13 @@ describe("handleIngest — GET verification-handshake dispatch (no-secret protoc
 
   it("completes a ?challenge= handshake even on a PAUSED endpoint (subscription setup, not an event)", async () => {
     const { deps, calls } = makeDeps({
-      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true, sealedSecrets: [] }),
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: true,
+        sealedSecrets: [],
+        dedupConfig: null,
+      }),
     });
     const res = await handleIngest(
       new Request(`https://wbhk.my/${GOOD}?challenge=abc123`, { method: "GET" }),
@@ -944,7 +977,13 @@ describe("handleIngest — POST subscription-validation handshakes (Graph/Twitch
 
     // a PAUSED endpoint answers the SAME liveness — the validationToken param leaks no paused/active signal
     const paused = makeDeps({
-      resolve: async () => ({ orgId: ORG, endpointId: EP, paused: true, sealedSecrets: [] }),
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: true,
+        sealedSecrets: [],
+        dedupConfig: null,
+      }),
     });
     const resPaused = await handleIngest(
       new Request(`https://wbhk.my/${GOOD}?validationToken=probe`, { method: "GET" }),
@@ -952,5 +991,47 @@ describe("handleIngest — POST subscription-validation handshakes (Graph/Twitch
     );
     expect(await resPaused.text()).toBe(bodyActive); // byte-identical -> no oracle
     expect(paused.calls.ingest).toHaveLength(0);
+  });
+});
+
+describe("handleIngest — per-endpoint dedup config threads to the key (Slice 2)", () => {
+  it("an `off`-config endpoint derives a per-request unique key (config drives the mode)", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: false,
+        sealedSecrets: [],
+        dedupConfig: { mode: "off", windowSeconds: 3600 },
+      }),
+    });
+    const res = await handleIngest(req(GOOD, { body: `{"v":1}` }), deps);
+    expect(res.status).toBe(200);
+    expect(calls.ingest).toHaveLength(1);
+    expect(calls.ingest[0]?.dedupStrategy).toBe("unique");
+  });
+
+  it("a `content`-config endpoint keys on content even when a provider id is present", async () => {
+    const { deps, calls } = makeDeps({
+      resolve: async () => ({
+        orgId: ORG,
+        endpointId: EP,
+        paused: false,
+        sealedSecrets: [],
+        dedupConfig: { mode: "content", windowSeconds: 3600 },
+      }),
+    });
+    // A stripe body carries an id; identifier mode would use provider_event_id, content mode ignores it.
+    await handleIngest(
+      req(GOOD, { body: `{"id":"evt_x"}`, headers: { "stripe-signature": "t=1,v1=x" } }),
+      deps,
+    );
+    expect(calls.ingest[0]?.dedupStrategy).toBe("content_hash");
+  });
+
+  it("NULL config reproduces the identifier default (content_hash for a generic body)", async () => {
+    const { deps, calls } = makeDeps(); // default fake carries dedupConfig: null
+    await handleIngest(req(GOOD, { body: `no recognized id` }), deps);
+    expect(calls.ingest[0]?.dedupStrategy).toBe("content_hash");
   });
 });
