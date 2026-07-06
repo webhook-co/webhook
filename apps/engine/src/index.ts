@@ -282,6 +282,7 @@ function toResolvedEndpoint(principal: ResolvedPrincipal | null): ResolvedEndpoi
     endpointId: principal.endpointId,
     paused: principal.paused ?? false,
     sealedSecrets: principal.sealedSecrets ?? [],
+    dedupConfig: principal.dedupConfig ?? null,
   };
 }
 

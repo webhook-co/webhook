@@ -15,7 +15,7 @@
 
 import { randomUUID } from "node:crypto";
 
-import type { SecretSealer } from "@webhook-co/shared";
+import type { DedupConfig, SecretSealer } from "@webhook-co/shared";
 import type { ReadSealedIngestTokenResult } from "./ingest-token-seal";
 
 // Import CapabilityFault from the LEAF (not the `@webhook-co/contract` barrel): apps/web pulls this module
@@ -407,6 +407,7 @@ interface EndpointResolveRow {
   org_id: string;
   ingest_token_hash: Buffer;
   paused: boolean;
+  dedup_config: DedupConfig | null;
 }
 
 /**
@@ -428,7 +429,7 @@ export function makeEndpointTokenColdLookup(authn: Sql) {
     // the system also SELF-HEALS within the KV TTL if an eviction is ever missed. (webhook_authn was
     // granted select(deleted_at) in migration 0021 so this column read is permitted.)
     const rows = await authn<EndpointResolveRow[]>`
-      select id, org_id, ingest_token_hash, paused
+      select id, org_id, ingest_token_hash, paused, dedup_config
       from endpoints
       where ingest_token_hash = ${tokenHash} and deleted_at is null`;
     const row = rows[0];
@@ -436,6 +437,15 @@ export function makeEndpointTokenColdLookup(authn: Sql) {
     if (!credentialHashEquals(Buffer.from(row.ingest_token_hash), tokenHash)) return null;
     // Ingest tokens are audience-less (a write-only path token, not a bearer api key) and
     // carry no scopes; the ingest path's authorization is "owns this endpoint", not a scope.
-    return { orgId: row.org_id, endpointId: row.id, scopes: [], paused: row.paused };
+    // dedup_config is written only via the contract-validated control plane, so it's trusted here;
+    // the KV validator re-checks it on the cache path (poisoned-entry defense). Pass NULL through as
+    // "use the default" (the engine's resolveDedupParams handles NULL).
+    return {
+      orgId: row.org_id,
+      endpointId: row.id,
+      scopes: [],
+      paused: row.paused,
+      dedupConfig: row.dedup_config,
+    };
   };
 }

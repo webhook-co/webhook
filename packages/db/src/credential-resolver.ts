@@ -17,6 +17,8 @@
 // NOT cached (caching negatives would let a just-created key 404 for the TTL window, and
 // would let an attacker pin a negative). Only positive resolutions are cached.
 
+import { DedupConfigSchema } from "@webhook-co/shared";
+
 import { credentialCacheKey, type CredentialHasher } from "./credential";
 import {
   CREDENTIAL_CACHE_TTL_SECONDS,
@@ -94,6 +96,12 @@ function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
   if (v.sealedSecrets !== undefined) {
     if (!Array.isArray(v.sealedSecrets) || !v.sealedSecrets.every(isCachedSealedSecret))
       return false;
+  }
+  // dedupConfig drives the ingest key derivation. A poisoned/legacy entry (unknown mode, out-of-range
+  // window, malformed field paths) must fall through to the cold path so the engine never derives a key
+  // from a garbled config — validate it fully against the same schema the write path enforces.
+  if (v.dedupConfig !== undefined && v.dedupConfig !== null) {
+    if (!DedupConfigSchema.safeParse(v.dedupConfig).success) return false;
   }
   return true;
 }
