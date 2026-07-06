@@ -15,7 +15,7 @@
         "groups": [
           {
             "group": "Get started",
-            "pages": ["introduction", "quickstart", "authentication"]
+            "pages": ["introduction", "quickstart", "authentication", "deduplication"]
           },
           {
             "group": "SDKs",
