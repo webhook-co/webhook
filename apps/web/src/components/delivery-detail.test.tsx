@@ -20,6 +20,7 @@ function del(over: Partial<Delivery> = {}): Delivery {
     error: null,
     nextRetryAt: null,
     createdAt: new Date("2026-06-28T12:00:00Z"),
+    sourceVerificationState: "verified",
     ...over,
   };
 }
@@ -65,6 +66,40 @@ describe("DeliveryDetail", () => {
     expect(screen.getByText(/the destination isn't allowed/i)).toBeInTheDocument();
     // A blocked row is not a legacy localhost forward — it must not be mislabeled "localhost".
     expect(screen.queryByText("localhost")).not.toBeInTheDocument();
+    // A blocked (never-dispatched) row shows no signed/unsigned indicator.
+    expect(screen.queryByText(/^signed$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^unsigned$/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a 'Signed' indicator for a delivered event from a verified source", () => {
+    render(<DeliveryDetail delivery={del({ sourceVerificationState: "verified" })} />);
+    expect(screen.getByText("Signature")).toBeInTheDocument();
+    expect(screen.getByText("Signed")).toBeInTheDocument();
+  });
+
+  it("shows an 'Unsigned' indicator for a delivered event from an unattempted source (ADR-0103)", () => {
+    render(<DeliveryDetail delivery={del({ sourceVerificationState: "unattempted" })} />);
+    expect(screen.getByText("Unsigned")).toBeInTheDocument();
+    expect(screen.getByText(/without a signature/i)).toBeInTheDocument();
+  });
+
+  it("a verification-failure block reads about the signature, not the SSRF guard (ADR-0103)", () => {
+    render(
+      <DeliveryDetail
+        delivery={del({
+          status: "blocked",
+          statusCode: null,
+          destinationId: null,
+          sourceVerificationState: "failed",
+          error: "verification failed: source signature was checked and rejected",
+        })}
+      />,
+    );
+    expect(screen.getByText(/the source event's signature was rejected/i)).toBeInTheDocument();
+    // The wrong SSRF hint must NOT appear for this case.
+    expect(screen.queryByText(/the destination isn't allowed/i)).not.toBeInTheDocument();
+    // The raw engine error still shows, and now agrees with the hint.
+    expect(screen.getByText(/source signature was checked and rejected/i)).toBeInTheDocument();
   });
 
   it("labels a null destination 'localhost' only on a legacy forwarded row", () => {

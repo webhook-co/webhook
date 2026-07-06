@@ -30,6 +30,7 @@ function del(id: string, over: Partial<Delivery> = {}): Delivery {
     error: null,
     nextRetryAt: null,
     createdAt: new Date("2026-06-28T12:00:00Z"),
+    sourceVerificationState: "verified",
     ...over,
   };
 }
@@ -83,6 +84,43 @@ describe("DeliveriesList", () => {
     expect(within(blockedRow).getByText(/the destination isn't allowed/i)).toBeInTheDocument();
     expect(within(blockedRow).getByText("—")).toBeInTheDocument();
     expect(within(blockedRow).queryByText("localhost")).not.toBeInTheDocument();
+  });
+
+  it("shows a signed/unsigned indicator per row and the verification-failure block hint (ADR-0103)", () => {
+    const C = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5063";
+    render(
+      <DeliveriesList
+        initialItems={[
+          del(A, { status: "delivered", sourceVerificationState: "verified" }),
+          del(B, { status: "delivered", sourceVerificationState: "unattempted" }),
+          del(C, {
+            status: "blocked",
+            statusCode: null,
+            destinationId: null,
+            sourceVerificationState: "failed",
+          }),
+        ]}
+        initialCursor={null}
+        filterParams={{}}
+        isFiltered={false}
+        loadMore={vi.fn()}
+      />,
+    );
+    // Signed on the verified-source row; Unsigned on the unattempted-source row.
+    const signedRow = document.querySelector(`a[href="/deliveries/${A}"]`)!.closest("tr")!;
+    expect(within(signedRow).getByText("Signed")).toBeInTheDocument();
+    const unsignedRow = document.querySelector(`a[href="/deliveries/${B}"]`)!.closest("tr")!;
+    expect(within(unsignedRow).getByText("Unsigned")).toBeInTheDocument();
+    // The verification-failure block reads about the signature, not the SSRF guard, and shows no signature pill.
+    const blockedRow = screen.getByText("Blocked").closest("tr")!;
+    expect(
+      within(blockedRow).getByText(/the source event's signature was rejected/i),
+    ).toBeInTheDocument();
+    expect(
+      within(blockedRow).queryByText(/the destination isn't allowed/i),
+    ).not.toBeInTheDocument();
+    expect(within(blockedRow).queryByText(/^signed$/i)).not.toBeInTheDocument();
+    expect(within(blockedRow).queryByText(/^unsigned$/i)).not.toBeInTheDocument();
   });
 
   it("threads the active filterParams into the load-more action and appends the next page", async () => {

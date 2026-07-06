@@ -1,4 +1,4 @@
-import type { DeliveryStatus } from "@webhook-co/shared";
+import type { DeliveryStatus, VerificationState } from "@webhook-co/shared";
 import type { StatusTone } from "@webhook-co/ui";
 
 /**
@@ -20,6 +20,9 @@ export interface DeliveryCopyOptions {
   readonly nextRetryAt?: Date | null;
   /** Injectable "now" for deterministic relative-time hints (tests). Defaults to the real clock. */
   readonly now?: Date;
+  /** The SOURCE event's verification state — disambiguates a `blocked` row (ADR-0103): a verification
+   *  failure (`failed`) blocks for a very different reason than the SSRF guard, so its hint must differ. */
+  readonly sourceVerificationState?: VerificationState;
 }
 
 /** A coarse, honest relative-time string ("in 4m" / "in 2h"); undefined once the due time has passed. */
@@ -62,5 +65,29 @@ export function deliveryCopy(status: DeliveryStatus, opts: DeliveryCopyOptions =
       ? { tone: "neutral", label: "Retrying", hint }
       : { tone: "neutral", label: "In progress" };
   }
+  // A `blocked` status covers two very different refusals: the SSRF delivery guard (the default hint) AND a
+  // verification-failure block (ADR-0103 — the source event's signature was checked and rejected, so we
+  // never re-sign/forward it). Branch on the un-forgeable source state so the hint matches the raw `error`.
+  if (status === "blocked" && opts.sourceVerificationState === "failed") {
+    return {
+      tone: "danger",
+      label: "Blocked",
+      hint: "Not delivered — the source event's signature was rejected",
+    };
+  }
   return STATIC_COPY[status];
+}
+
+/** Was this delivery signed with the destination's secret? Signed only when the source was verified —
+ *  an unverified (`unattempted`) event is forwarded UNSIGNED (ADR-0103), so a downstream that requires a
+ *  webhook.co signature will reject it. Shown as a small indicator on the deliveries list + detail. */
+export function deliverySignatureCopy(sourceState: VerificationState): DeliveryCopy {
+  const signed = sourceState === "verified" || sourceState === "authenticated";
+  return signed
+    ? { tone: "ok", label: "Signed", hint: "Signed with your destination's secret" }
+    : {
+        tone: "neutral",
+        label: "Unsigned",
+        hint: "Delivered without a signature — the source event wasn't verified",
+      };
 }

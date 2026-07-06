@@ -10,9 +10,16 @@ import {
   StatusPill,
 } from "@webhook-co/ui";
 
-import { deliveryCopy } from "@/lib/delivery-copy";
+import { deliveryCopy, deliverySignatureCopy } from "@/lib/delivery-copy";
 import { formatDateTime } from "@/lib/format";
 import type { DeliveryItem } from "@/server/deliveries";
+
+// A delivery that reached (or is on its way to) the destination carries a signing decision; a `blocked` or
+// `cancelled` row never left, so a signed/unsigned indicator would be meaningless (and misleading for an
+// SSRF-blocked row whose source WAS verified). Only these dispatched states show the signature indicator.
+function isDispatched(status: DeliveryItem["status"]): boolean {
+  return status !== "blocked" && status !== "cancelled";
+}
 
 // One delivery — the tenant-facing read view of a delivery attempt. The status pill + hint come from the
 // single `deliveryCopy` source (never the raw enum); the retry clock, status code, routing links, and the
@@ -24,7 +31,12 @@ export interface DeliveryDetailProps {
 }
 
 export function DeliveryDetail({ delivery }: DeliveryDetailProps) {
-  const copy = deliveryCopy(delivery.status, { nextRetryAt: delivery.nextRetryAt });
+  const copy = deliveryCopy(delivery.status, {
+    nextRetryAt: delivery.nextRetryAt,
+    sourceVerificationState: delivery.sourceVerificationState,
+  });
+  const dispatched = isDispatched(delivery.status);
+  const signature = deliverySignatureCopy(delivery.sourceVerificationState);
 
   return (
     <div className="flex flex-col gap-6">
@@ -48,6 +60,18 @@ export function DeliveryDetail({ delivery }: DeliveryDetailProps) {
 
             <dt className="text-fg-secondary">Attempt</dt>
             <dd className="text-fg">{delivery.attempt}</dd>
+
+            {dispatched ? (
+              <>
+                <dt className="text-fg-secondary">Signature</dt>
+                <dd className="flex flex-wrap items-center gap-2">
+                  <StatusPill tone={signature.tone}>{signature.label}</StatusPill>
+                  {signature.hint ? (
+                    <span className="text-fg-secondary">{signature.hint}</span>
+                  ) : null}
+                </dd>
+              </>
+            ) : null}
 
             <dt className="text-fg-secondary">Destination</dt>
             <dd className="text-fg">

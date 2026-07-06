@@ -19,11 +19,17 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import * as React from "react";
 
-import { deliveryCopy } from "@/lib/delivery-copy";
+import { deliveryCopy, deliverySignatureCopy } from "@/lib/delivery-copy";
 import type { DeliveryFilterParams } from "@/lib/delivery-filters";
 import { formatDate } from "@/lib/format";
 import type { LoadMoreDeliveriesResult } from "@/server/delivery-actions";
 import type { DeliveryItem } from "@/server/deliveries";
+
+// A `blocked`/`cancelled` delivery never left, so a signed/unsigned indicator would mislead (an
+// SSRF-blocked row's source may be verified); only dispatched rows show it. Mirrors delivery-detail.
+function isDispatched(status: DeliveryItem["status"]): boolean {
+  return status !== "blocked" && status !== "cancelled";
+}
 
 /** A long uuid, trimmed to its leading segment for a scannable table cell. */
 function shortId(id: string): string {
@@ -175,14 +181,23 @@ export function DeliveriesList({
             </TableEmpty>
           ) : (
             items.map((delivery) => {
-              const copy = deliveryCopy(delivery.status, { nextRetryAt: delivery.nextRetryAt });
+              const copy = deliveryCopy(delivery.status, {
+                nextRetryAt: delivery.nextRetryAt,
+                sourceVerificationState: delivery.sourceVerificationState,
+              });
+              const signature = isDispatched(delivery.status)
+                ? deliverySignatureCopy(delivery.sourceVerificationState)
+                : null;
               return (
                 <TableRow key={delivery.id}>
                   <TableCell>
-                    <span className="flex flex-col gap-1">
+                    <span className="flex flex-col items-start gap-1">
                       <StatusPill tone={copy.tone}>{copy.label}</StatusPill>
                       {copy.hint ? (
                         <span className="text-xs text-fg-muted">{copy.hint}</span>
+                      ) : null}
+                      {signature ? (
+                        <StatusPill tone={signature.tone}>{signature.label}</StatusPill>
                       ) : null}
                     </span>
                   </TableCell>
