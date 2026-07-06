@@ -9,6 +9,8 @@ export interface ComboboxOption {
   readonly label: string;
   /** Optional leading visual (e.g. a provider logo) shown before the label in the list + trigger. */
   readonly icon?: React.ReactNode;
+  /** Extra search terms matched beyond the label — e.g. the technical slug or a brand alias. */
+  readonly keywords?: readonly string[];
 }
 
 export interface ComboboxProps {
@@ -77,12 +79,22 @@ function CheckIcon() {
   );
 }
 
+function matches(option: ComboboxOption, needle: string): boolean {
+  if (option.label.toLowerCase().includes(needle)) return true;
+  if (option.value.toLowerCase().includes(needle)) return true;
+  return option.keywords?.some((k) => k.toLowerCase().includes(needle)) ?? false;
+}
+
 /**
  * A searchable SINGLE-select dropdown, built on `Popover` + a filtered option list — the single-select
  * sibling of `MultiSelect` (same search + optional per-option `icon`, e.g. a provider logo). Unlike the
  * native `Select` it supports search and rich option visuals; unlike `MultiSelect` it holds ONE value,
- * marks the chosen option with a check, and closes on select. The trigger shows the selected option's
- * icon + label (or `placeholder` when the value matches nothing).
+ * marks the chosen option with a check, and closes on select.
+ *
+ * Keyboard: the search box is an ARIA `combobox` driving the `listbox` — Up/Down/Home/End move a
+ * highlighted option (announced via `aria-activedescendant`) and Enter selects it, so the control is
+ * fully operable without a mouse (the native `<select>` it replaces was). Search matches the label, the
+ * value/slug, and any `keywords`.
  */
 export function Combobox({
   options,
@@ -98,17 +110,60 @@ export function Combobox({
 }: ComboboxProps) {
   const [open, setOpen] = React.useState(false);
   const [query, setQuery] = React.useState("");
+  const [active, setActive] = React.useState(0);
+  const listboxId = React.useId();
+  const optionDomId = (v: string) => `${listboxId}-opt-${v}`;
+
   const needle = query.trim().toLowerCase();
-  const filtered = needle ? options.filter((o) => o.label.toLowerCase().includes(needle)) : options;
+  const filtered = needle ? options.filter((o) => matches(o, needle)) : options;
 
   const selected = options.find((o) => o.value === value);
   const summary = selected?.label ?? placeholder;
 
+  // Keep the highlight on the first result whenever the query changes or the popover (re)opens.
+  React.useEffect(() => {
+    setActive(0);
+  }, [needle, open]);
+
+  // Keep the highlighted option visible while arrow-keying through a long list.
+  React.useEffect(() => {
+    if (!open) return;
+    const target = filtered[active];
+    if (!target) return;
+    // `filtered[active]` is recomputed each render; re-run when the highlight, query, or open state moves.
+    document.getElementById(optionDomId(target.value))?.scrollIntoView({ block: "nearest" });
+  }, [active, needle, open]);
+
   function choose(next: string) {
-    onChange(next);
+    if (next !== value) onChange(next); // a no-op re-select shouldn't fire onChange (parity with <select>)
     setOpen(false);
     setQuery("");
   }
+
+  function onSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActive((a) => Math.min(a + 1, filtered.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActive((a) => Math.max(a - 1, 0));
+    } else if (e.key === "Home") {
+      e.preventDefault();
+      setActive(0);
+    } else if (e.key === "End") {
+      e.preventDefault();
+      setActive(filtered.length - 1);
+    } else if (e.key === "Enter") {
+      const opt = filtered[active];
+      if (opt) {
+        e.preventDefault();
+        choose(opt.value);
+      }
+    }
+  }
+
+  const activeDescendant =
+    open && filtered[active] ? optionDomId(filtered[active]!.value) : undefined;
 
   return (
     <Popover
@@ -126,11 +181,11 @@ export function Combobox({
           disabled={disabled}
           aria-label={`${label}: ${summary}`}
           className={cn(
-            "inline-flex h-[42px] items-center justify-between gap-2 rounded-control border bg-surface px-3 text-base font-sans",
+            "inline-flex h-[42px] items-center justify-between gap-2 rounded-control border border-strong bg-surface px-3 text-base font-sans",
             "transition-[box-shadow,border-color] duration-[var(--wh-dur-fast)] ease-[var(--wh-ease-swift)]",
             "outline-none focus-visible:border-focus focus-visible:shadow-[var(--wh-focus-ring)]",
             "disabled:cursor-not-allowed disabled:opacity-60",
-            selected ? "border-strong text-fg" : "border-strong text-fg-secondary",
+            selected ? "text-fg" : "text-fg-secondary",
             className,
           )}
         >
@@ -152,26 +207,43 @@ export function Combobox({
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={onSearchKeyDown}
               placeholder={searchPlaceholder}
               aria-label={searchPlaceholder}
+              role="combobox"
+              aria-expanded={open}
+              aria-controls={listboxId}
+              aria-autocomplete="list"
+              aria-activedescendant={activeDescendant}
               className="h-10 rounded-b-none border-0 pl-9 focus-visible:shadow-none"
             />
           </div>
         ) : null}
-        <div role="listbox" aria-label={label} className="max-h-64 overflow-y-auto p-1">
+        <div
+          role="listbox"
+          id={listboxId}
+          aria-label={label}
+          className="max-h-64 overflow-y-auto p-1"
+        >
           {filtered.length === 0 ? (
             <p className="px-2.5 py-2 text-sm text-fg-muted">No matches</p>
           ) : (
-            filtered.map((option) => {
+            filtered.map((option, index) => {
               const isSelected = option.value === value;
+              const isActive = index === active;
               return (
                 <button
                   key={option.value}
+                  id={optionDomId(option.value)}
                   type="button"
                   role="option"
                   aria-selected={isSelected}
                   onClick={() => choose(option.value)}
-                  className="flex w-full cursor-pointer items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left text-sm text-fg-secondary outline-none hover:bg-surface-sunken hover:text-fg focus-visible:bg-surface-sunken focus-visible:text-fg"
+                  onMouseEnter={() => setActive(index)}
+                  className={cn(
+                    "flex w-full cursor-pointer items-center gap-2.5 rounded-control px-2.5 py-1.5 text-left text-sm outline-none",
+                    isActive ? "bg-surface-sunken text-fg" : "text-fg-secondary",
+                  )}
                 >
                   {option.icon ? (
                     <span className="flex shrink-0 items-center">{option.icon}</span>

@@ -99,4 +99,50 @@ describe("Combobox (single-select searchable dropdown)", () => {
     expect(screen.queryByRole("option")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /provider: github/i })).toBeInTheDocument();
   });
+
+  it("is keyboard-operable: Arrow to highlight, Enter to select", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} />);
+    await user.click(screen.getByRole("button", { name: /provider:/i }));
+    const search = screen.getByLabelText("Search providers…");
+    search.focus();
+    await user.keyboard("{ArrowDown}{Enter}"); // Stripe(0) → GitHub(1) → select
+    expect(onChange).toHaveBeenCalledExactlyOnceWith("github");
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  });
+
+  it("re-selecting the current value closes without firing onChange (parity with <select>)", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <Combobox label="Provider" options={OPTIONS} value="stripe" onChange={onChange} searchable />,
+    );
+    await user.click(screen.getByRole("button", { name: /provider: stripe/i }));
+    await user.click(screen.getByRole("option", { name: "Stripe" }));
+    expect(onChange).not.toHaveBeenCalled();
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+  });
+
+  it("searches the value/slug and keywords, not just the label", async () => {
+    const user = userEvent.setup();
+    const opts: ComboboxOption[] = [
+      { value: "ms_graph", label: "Microsoft Graph" },
+      { value: "meta", label: "Meta", keywords: ["facebook"] },
+    ];
+    render(
+      <Combobox label="Provider" options={opts} value="ms_graph" onChange={vi.fn()} searchable />,
+    );
+    await user.click(screen.getByRole("button", { name: /provider:/i }));
+    const search = screen.getByLabelText("Search…");
+    // A brand alias (keyword) matches even though the label doesn't contain it.
+    await user.type(search, "facebook");
+    expect(screen.getByRole("option", { name: "Meta" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Microsoft Graph" })).not.toBeInTheDocument();
+    // The technical slug matches even though the label doesn't contain it.
+    await user.clear(search);
+    await user.type(search, "ms_graph");
+    expect(screen.getByRole("option", { name: "Microsoft Graph" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Meta" })).not.toBeInTheDocument();
+  });
 });
