@@ -55,8 +55,91 @@ jobs:
           echo "${DBMATE_SHA256}  /usr/local/bin/dbmate" | sha256sum -c -
           chmod +x /usr/local/bin/dbmate
           dbmate --version
-      - name: RLS / tenant-leak suite vs Neon branch
+      - name: RLS / tenant-leak suite vs Neon branch (retry once on TRANSIENT failure)
         if: steps.guard.outputs.enabled == 'true'
         env:
           TEST_DATABASE_URL: ${{ secrets.NEON_TEST_DATABASE_URL }}
-        run: pnpm test:db
+        # The suite is latency-sensitive against the real Neon branch (a globalSetup
+        # pre-warms the compute and the remote-path timeouts are widened), but a rare
+        # transient Neon blip can still fail a run. Retry the whole suite once — but ONLY
+        # when the failure looks transient (a timeout / connection error). A deterministic
+        # failure (e.g. an assertion or a type error) is re-run for nothing and just delays
+        # the alert, so fail fast on it instead.
+        run: |
+          # Markers of a transient Neon/network failure worth one retry. A plain
+          # AssertionError / TypeError / syntax error matches none of these -> fail fast.
+          transient='CONNECT_TIMEOUT|Test timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|Connection terminated|terminating connection|the database system is (starting up|shutting down)|too many clients|Client has encountered a connection error|fetch failed'
+          for attempt in 1 2; do
+            echo "::group::pnpm test:db (attempt ${attempt}/2)"
+            set +e
+            pnpm test:db 2>&1 | tee test-db.out
+            status="${PIPESTATUS[0]}"
+            set -e
+            echo "::endgroup::"
+            if [ "${status}" -eq 0 ]; then
+              exit 0
+            fi
+            if [ "${attempt}" -eq 2 ]; then
+              echo "::error title=nightly-rls::test:db failed after 2 attempts (exit ${status})"
+              exit "${status}"
+            fi
+            if grep -qiE "${transient}" test-db.out; then
+              echo "::warning title=nightly-rls::attempt ${attempt} failed (exit ${status}) with a transient-looking error; retrying once"
+              sleep 15
+            else
+              echo "::error title=nightly-rls::attempt ${attempt} failed (exit ${status}) with a non-transient error; not retrying"
+              exit "${status}"
+            fi
+          done
+
+  # On a real failure (not the clean skip when the secret is unset — that leaves rls-neon
+  # green), reuse a single rolling issue so a multi-night outage doesn't file duplicates.
+  # The issue is left un-tagged on purpose: a human comments @claude on it to investigate.
+  open-issue-on-failure:
+    name: open-issue-on-failure
+    needs: rls-neon
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Find, reopen, or create the rolling failure issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          LABEL="nightly-rls-failure"
+          TITLE="nightly-rls is failing"
+
+          # Idempotent: create the label if it does not exist yet.
+          gh label create "$LABEL" --repo "$REPO" --color "B60205" \
+            --description "Automated: the nightly RLS/tenant-leak suite failed" \
+            --force >/dev/null 2>&1 || true
+
+          run_line="Run: ${RUN_URL} ($(date -u +'%Y-%m-%d %H:%M') UTC)"
+          # Single-quoted so the markdown backticks stay literal. One line — the body is
+          # assembled with printf below, which keeps YAML indentation out of the string.
+          note='This suite runs the RLS / tenant-leak tests against the real Neon branch. Failures are often transient Neon latency (a cold-start `CONNECT_TIMEOUT`, or a `Test timed out` on a round-trip-heavy test) rather than an isolation regression — open the failing run above and check the step log to tell which. To have it investigated, comment `@claude` on this issue describing what to look at.'
+
+          num="$(gh issue list --repo "$REPO" --state all --label "$LABEL" \
+                   --limit 1 --json number --jq '.[0].number // empty')"
+
+          if [ -n "$num" ]; then
+            state="$(gh issue view "$num" --repo "$REPO" --json state --jq '.state')"
+            if [ "$state" = "CLOSED" ]; then
+              gh issue reopen "$num" --repo "$REPO"
+            fi
+            body="$(printf '%s\n\n%s\n\n%s\n' \
+              'The `nightly-rls` workflow failed again.' "$run_line" "$note")"
+            gh issue comment "$num" --repo "$REPO" --body "$body"
+            echo "updated rolling issue #${num} (was ${state})"
+          else
+            body="$(printf '%s\n\n%s\n\n%s\n' \
+              'Tracking issue for failures of the scheduled `nightly-rls` workflow. It is reused (reopened + commented) on each failure rather than filed anew.' \
+              "$run_line" "$note")"
+            gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --body "$body"
+            echo "created rolling issue"
+          fi
