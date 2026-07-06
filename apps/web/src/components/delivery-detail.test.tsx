@@ -83,6 +83,13 @@ describe("DeliveryDetail", () => {
     expect(screen.getByText(/without a signature/i)).toBeInTheDocument();
   });
 
+  it("shows NO signature indicator for a not-yet-dispatched (queued) delivery — never premature", () => {
+    render(<DeliveryDetail delivery={del({ status: "queued", statusCode: null })} />);
+    expect(screen.queryByText("Signature")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^signed$/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^unsigned$/i)).not.toBeInTheDocument();
+  });
+
   it("a verification-failure block reads about the signature, not the SSRF guard (ADR-0103)", () => {
     render(
       <DeliveryDetail

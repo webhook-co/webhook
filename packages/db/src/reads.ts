@@ -256,10 +256,18 @@ interface EventRow {
   order_key?: string;
 }
 
+// The verification quad-state CASE over `<prefix>verified` + `<prefix>verification` — the ONE SQL source
+// mirrored by deriveVerificationState() (entities.ts). `prefix` is a trusted, CODE-supplied table alias
+// ("" for an unqualified column; "e." inside the deliveries source-event subquery), never user input.
+function verificationStateCase(tx: TenantTx, prefix: "" | "e.") {
+  const p = tx.unsafe(prefix);
+  return tx`case when ${p}verified and ${p}verification->>'authenticity' is not null then 'authenticated' when ${p}verified then 'verified' when ${p}verification is not null then 'failed' else 'unattempted' end`;
+}
+
 // The truthful verification tri-state, projected in SQL so the lean summary carries it WITHOUT shipping
-// the `verification` jsonb. Mirrors deriveVerificationState(). Used by listEvents + tailEvents.
+// the `verification` jsonb. Used by listEvents + tailEvents.
 function verificationStateColumn(tx: TenantTx) {
-  return tx`case when verified and verification->>'authenticity' is not null then 'authenticated' when verified then 'verified' when verification is not null then 'failed' else 'unattempted' end as verification_state`;
+  return tx`${verificationStateCase(tx, "")} as verification_state`;
 }
 
 // One verification-state bucket's predicate. MIRRORS its verificationStateColumn() CASE bucket EXACTLY
@@ -552,11 +560,11 @@ const DELIVERY_COLS =
 // The SOURCE event's verification state as a correlated subquery — so a delivery carries whether it was
 // signed (verified/authenticated) or unsigned (unattempted), and lets a verification-failure block be told
 // apart from an SSRF block (ADR-0103). A correlated subquery (not a join) keeps the bare-column selects +
-// keyset cursor + orderKeyCol untouched (a join would make `id`/`created_at` ambiguous). The CASE MIRRORS
-// deriveVerificationState()/verificationStateColumn EXACTLY. The `events` PK on (id, org_id) makes this an
-// index lookup; the org_id predicate is defense-in-depth alongside RLS (mirrors listDueDeliveries).
+// keyset cursor + orderKeyCol untouched (a join would make `id`/`created_at` ambiguous). Reuses the shared
+// verificationStateCase so it can't drift from the events summary. The `events` PK on (id, org_id) makes
+// this an index lookup; the org_id predicate is defense-in-depth alongside RLS (mirrors listDueDeliveries).
 function sourceVerificationStateCol(tx: TenantTx) {
-  return tx`(select case when e.verified and e.verification->>'authenticity' is not null then 'authenticated' when e.verified then 'verified' when e.verification is not null then 'failed' else 'unattempted' end from events e where e.id = delivery_attempts.event_id and e.org_id = delivery_attempts.org_id) as source_verification_state`;
+  return tx`(select ${verificationStateCase(tx, "e.")} from events e where e.id = delivery_attempts.event_id and e.org_id = delivery_attempts.org_id) as source_verification_state`;
 }
 
 function toDelivery(r: DeliveryRow): Delivery {

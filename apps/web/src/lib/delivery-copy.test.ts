@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deliveryCopy, deliverySignatureCopy } from "./delivery-copy";
+import { deliveryCopy, deliverySignatureCopy, deliveryWasDispatched } from "./delivery-copy";
 
 // A fixed "now" so relative-time hints are deterministic.
 const NOW = new Date("2026-07-01T12:00:00.000Z");
@@ -90,6 +90,28 @@ describe("deliverySignatureCopy — was this delivery signed by webhook.co?", ()
     expect(c.tone).toBe("neutral");
     expect(c.label).toBe("Unsigned");
     expect(c.hint).toMatch(/wasn't verified/i);
+  });
+
+  it("failed source → Unsigned, but the hint says the signature was REJECTED (not 'never verified')", () => {
+    const c = deliverySignatureCopy("failed");
+    expect(c.label).toBe("Unsigned");
+    expect(c.hint).toMatch(/signature was rejected/i);
+    // Must not misdescribe a checked-and-rejected source as never-verified.
+    expect(c.hint).not.toMatch(/wasn't verified/i);
+  });
+});
+
+describe("deliveryWasDispatched — did a request actually leave for the destination?", () => {
+  it("true only for statuses where a request was sent (delivered/failed/dead/forwarded)", () => {
+    for (const s of ["delivered", "failed", "dead", "forwarded"] as const) {
+      expect(deliveryWasDispatched(s)).toBe(true);
+    }
+  });
+
+  it("false for not-yet-sent (queued/pending) and never-sent (blocked/cancelled) — no premature 'Signed'", () => {
+    for (const s of ["queued", "pending", "blocked", "cancelled"] as const) {
+      expect(deliveryWasDispatched(s)).toBe(false);
+    }
   });
 
   it("dead → danger 'Undelivered' + gave-up hint", () => {

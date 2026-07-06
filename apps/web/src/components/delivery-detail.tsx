@@ -10,16 +10,9 @@ import {
   StatusPill,
 } from "@webhook-co/ui";
 
-import { deliveryCopy, deliverySignatureCopy } from "@/lib/delivery-copy";
+import { deliveryCopy, deliverySignatureCopy, deliveryWasDispatched } from "@/lib/delivery-copy";
 import { formatDateTime } from "@/lib/format";
 import type { DeliveryItem } from "@/server/deliveries";
-
-// A delivery that reached (or is on its way to) the destination carries a signing decision; a `blocked` or
-// `cancelled` row never left, so a signed/unsigned indicator would be meaningless (and misleading for an
-// SSRF-blocked row whose source WAS verified). Only these dispatched states show the signature indicator.
-function isDispatched(status: DeliveryItem["status"]): boolean {
-  return status !== "blocked" && status !== "cancelled";
-}
 
 // One delivery — the tenant-facing read view of a delivery attempt. The status pill + hint come from the
 // single `deliveryCopy` source (never the raw enum); the retry clock, status code, routing links, and the
@@ -35,7 +28,7 @@ export function DeliveryDetail({ delivery }: DeliveryDetailProps) {
     nextRetryAt: delivery.nextRetryAt,
     sourceVerificationState: delivery.sourceVerificationState,
   });
-  const dispatched = isDispatched(delivery.status);
+  const dispatched = deliveryWasDispatched(delivery.status);
   const signature = deliverySignatureCopy(delivery.sourceVerificationState);
 
   return (
