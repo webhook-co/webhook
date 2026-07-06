@@ -110,4 +110,4 @@ jobs:
             Report blocking issues (injection, XSS, secrets, authz/SSRF, PII in logs,
             missing/weak tests, skipped tests, lowered coverage) with file:line and a
             concrete fix. If there are no blocking issues, say so explicitly.
-          claude_args: "--max-turns 15"
+          claude_args: "--model claude-sonnet-5 --max-turns 15"
