@@ -81,6 +81,32 @@ describe("createCredentialResolver — hot/cold path", () => {
     expect(cold).toHaveBeenCalledTimes(1); // garbage entry was not trusted
   });
 
+  it("accepts a cached principal carrying a valid dedupConfig", async () => {
+    const cache = new InMemoryCredentialCache();
+    const p = principal({
+      endpointId: "22222222-2222-7222-8222-222222222222",
+      dedupConfig: { mode: "identifier", windowSeconds: 86_400 },
+    });
+    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(p));
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+    const result = await resolver.resolve("tok");
+    expect(result?.dedupConfig).toEqual({ mode: "identifier", windowSeconds: 86_400 });
+    expect(cold).toHaveBeenCalledTimes(0); // valid entry served from KV, no cold lookup
+  });
+
+  it("treats a cached principal with a POISONED dedupConfig as a miss (cold path re-resolves)", async () => {
+    const cache = new InMemoryCredentialCache();
+    // Unknown mode + out-of-range window: a poisoned/legacy entry must never drive key derivation.
+    const poisoned = { orgId: ORG, scopes: [], dedupConfig: { mode: "evil", windowSeconds: 1 } };
+    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(poisoned));
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+    const result = await resolver.resolve("tok");
+    expect(result?.orgId).toBe(ORG);
+    expect(cold).toHaveBeenCalledTimes(1); // poisoned dedupConfig rejected -> cold path
+  });
+
   it("treats a NON-JSON cache entry as a miss, not an unhandled throw", async () => {
     // A truncated/partial KV write or an externally poisoned entry is not valid JSON at
     // all. The resolver must fall through to the cold path, never let JSON.parse throw out

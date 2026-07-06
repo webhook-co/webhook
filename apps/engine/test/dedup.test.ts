@@ -383,3 +383,32 @@ describe("deriveDedup — fields mode", () => {
     expect(d.dedupStrategy).toBe("content_hash");
   });
 });
+
+describe("resolveDedupParams", () => {
+  it("NULL config → the identifier default (24h window)", async () => {
+    const { resolveDedupParams } = await import("../src/dedup");
+    expect(resolveDedupParams(null)).toEqual({ mode: "identifier", windowMs: 86_400_000 });
+  });
+
+  it("maps each mode to its params", async () => {
+    const { resolveDedupParams } = await import("../src/dedup");
+    expect(resolveDedupParams({ mode: "off", windowSeconds: 3600 })).toEqual({ mode: "off" });
+    expect(resolveDedupParams({ mode: "content", windowSeconds: 300 })).toEqual({
+      mode: "content",
+      windowMs: 300_000,
+    });
+    expect(
+      resolveDedupParams({ mode: "fields", windowSeconds: 60, fields: { include: ["body.id"] } }),
+    ).toEqual({ mode: "fields", windowMs: 60_000, include: ["body.id"], exclude: [] });
+  });
+
+  it("DEFENSE-IN-DEPTH: a garbled/out-of-enum mode falls back to the default (never undefined)", async () => {
+    const { resolveDedupParams } = await import("../src/dedup");
+    // Simulates a DB-compromise-only garbled row reaching the resolver; must not return undefined
+    // (which would throw in deriveDedup and 500 the ingest).
+    const garbled = { mode: "evil", windowSeconds: 1 } as unknown as Parameters<
+      typeof resolveDedupParams
+    >[0];
+    expect(resolveDedupParams(garbled)).toEqual({ mode: "identifier", windowMs: 86_400_000 });
+  });
+});

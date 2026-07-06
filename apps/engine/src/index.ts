@@ -21,6 +21,7 @@ import {
 import {
   AwsKmsProvider,
   b64ToBytes,
+  DEFAULT_DEDUP_WINDOW_SECONDS,
   type EncryptionContext,
   importAuditKey,
   importListenTicketKey,
@@ -137,7 +138,9 @@ export interface Env {
  * (so a redelivery inside the window collapses; a legitimately-identical body in a later bucket
  * does not). Only used by the content_hash fallback strategy.
  */
-const DEDUP_BUCKET_WIDTH_MS = 24 * 60 * 60 * 1000;
+// Single source of truth with resolveDedupParams' NULL-config default, so a NULL-config endpoint and
+// an endpoint explicitly set to identifier+default-window always bucket on the SAME width.
+const DEDUP_BUCKET_WIDTH_MS = DEFAULT_DEDUP_WINDOW_SECONDS * 1000;
 
 // Isolate-scoped DEK handle cache (ADR-0007): unwrapped, non-extractable CryptoKey handles, bounded
 // and org-scoped, reused across requests in this isolate so the KMS unwrap is amortized off the hot
@@ -282,6 +285,7 @@ function toResolvedEndpoint(principal: ResolvedPrincipal | null): ResolvedEndpoi
     endpointId: principal.endpointId,
     paused: principal.paused ?? false,
     sealedSecrets: principal.sealedSecrets ?? [],
+    dedupConfig: principal.dedupConfig ?? null,
   };
 }
 

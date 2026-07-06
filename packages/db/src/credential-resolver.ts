@@ -17,6 +17,12 @@
 // NOT cached (caching negatives would let a just-created key 404 for the TTL window, and
 // would let an attacker pin a negative). Only positive resolutions are cached.
 
+import {
+  DEDUP_MODES,
+  MAX_DEDUP_WINDOW_SECONDS,
+  MIN_DEDUP_WINDOW_SECONDS,
+} from "@webhook-co/shared";
+
 import { credentialCacheKey, type CredentialHasher } from "./credential";
 import {
   CREDENTIAL_CACHE_TTL_SECONDS,
@@ -93,6 +99,24 @@ function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
   // later throw mid-unseal. Validate every element fully.
   if (v.sealedSecrets !== undefined) {
     if (!Array.isArray(v.sealedSecrets) || !v.sealedSecrets.every(isCachedSealedSecret))
+      return false;
+  }
+  // dedupConfig drives the ingest key derivation. This runs on every KV hit (the hot path), so it is a
+  // CHEAP structural check — a wrong `mode` or a non-numeric `windowSeconds` (an obviously-poisoned or
+  // legacy entry) falls through to the cold path, which re-runs the FULL DedupConfigSchema. Malformed
+  // field paths are not re-parsed here: the ingest-time evaluator is fail-safe (an unresolvable path
+  // yields a per-request unique key, never an over-collapse), so a corrupt selector can't drop events.
+  if (v.dedupConfig !== undefined && v.dedupConfig !== null) {
+    if (typeof v.dedupConfig !== "object") return false;
+    const dc = v.dedupConfig as Record<string, unknown>;
+    if (typeof dc.mode !== "string" || !(DEDUP_MODES as readonly string[]).includes(dc.mode))
+      return false;
+    if (
+      typeof dc.windowSeconds !== "number" ||
+      !Number.isFinite(dc.windowSeconds) ||
+      dc.windowSeconds < MIN_DEDUP_WINDOW_SECONDS ||
+      dc.windowSeconds > MAX_DEDUP_WINDOW_SECONDS
+    )
       return false;
   }
   return true;
