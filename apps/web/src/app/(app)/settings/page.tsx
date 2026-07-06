@@ -40,8 +40,10 @@ export default async function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Deliberate product choice: log out is the red danger button (like "Delete endpoint"), not a
+          neutral secondary — it's the most consequential control on this page and reads as session-ending. */}
       <form action={logout}>
-        <Button type="submit" variant="secondary">
+        <Button type="submit" variant="danger">
           Log out
         </Button>
       </form>

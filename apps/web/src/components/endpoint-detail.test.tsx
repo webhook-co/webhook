@@ -55,6 +55,21 @@ describe("EndpointDetail", () => {
     expect(screen.queryByText(/shown only once/i)).not.toBeInTheDocument();
   });
 
+  it("vertically centers each label with its value (the tall Copy button must not offset the labels)", () => {
+    // Regression guard: the rows are a two-column grid whose height is set by the Copy button; without
+    // `items-center` the label text sat ~7px above its centered value. jsdom has no layout, so this
+    // asserts the load-bearing class rather than pixel positions.
+    const { container } = render(
+      <EndpointDetail
+        endpoint={ep}
+        ingestUrl={URL}
+        rotateEndpoint={vi.fn()}
+        deleteEndpoint={vi.fn()}
+      />,
+    );
+    expect(container.querySelector("dl")).toHaveClass("items-center");
+  });
+
   it("shows a rotate-to-reveal hint for a legacy endpoint with no recoverable URL (null)", () => {
     render(
       <EndpointDetail
@@ -67,7 +82,7 @@ describe("EndpointDetail", () => {
     expect(screen.getByText(/rotate to mint a fresh ingest url/i)).toBeInTheDocument();
   });
 
-  it("warns about the hard cutover, then rotates and reveals the new one-time URL", async () => {
+  it("warns about the hard cutover, then rotates and reveals the new ingest URL", async () => {
     const user = userEvent.setup();
     const rotateEndpoint = vi.fn(async () => ({
       ok: true as const,
@@ -90,11 +105,10 @@ describe("EndpointDetail", () => {
 
     expect(rotateEndpoint).toHaveBeenCalledWith("ep_1");
     await waitFor(() =>
-      expect(screen.getByText(/only time you'll see this url/i)).toBeInTheDocument(),
+      expect(screen.getByText("https://wbhk.my/whep_rotated")).toBeInTheDocument(),
     );
-    expect(screen.getByText("https://wbhk.my/whep_rotated")).toBeInTheDocument();
 
-    // Dismissing the one-time dialog refreshes the page so the ALWAYS-SHOWN URL re-reveals the new token.
+    // Dismissing the reveal dialog refreshes the page so the ALWAYS-SHOWN URL re-reveals the new token.
     await user.click(screen.getByRole("button", { name: /done/i }));
     expect(refresh).toHaveBeenCalled();
   });
@@ -138,6 +152,6 @@ describe("EndpointDetail", () => {
     await user.click(within(dialog).getByRole("button", { name: /rotate url/i }));
 
     await waitFor(() => expect(screen.getByText(/endpoint not found/i)).toBeInTheDocument());
-    expect(screen.queryByText(/only time you'll see this url/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Copy your new webhook URL")).not.toBeInTheDocument();
   });
 });
