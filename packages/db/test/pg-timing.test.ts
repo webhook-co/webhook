@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { isRemoteTestDatabase, remoteTestTimeouts, waitForDatabase } from "./pg-timing";
+import {
+  isRemoteTestDatabase,
+  orphanTestDatabases,
+  remoteTestTimeouts,
+  waitForDatabase,
+} from "./pg-timing";
 
 describe("isRemoteTestDatabase", () => {
   // The function defaults its arg to process.env.TEST_DATABASE_URL, so the omitted-arg
@@ -59,6 +64,33 @@ describe("remoteTestTimeouts", () => {
     const t = remoteTestTimeouts("postgres://owner:secret@ep-x.neon.tech/db?sslmode=require");
     expect(t.testTimeout).toBeGreaterThanOrEqual(120_000);
     expect(t.hookTimeout).toBeGreaterThanOrEqual(t.testTimeout);
+  });
+});
+
+describe("orphanTestDatabases", () => {
+  it("selects only the per-run test databases, excluding the maintenance/connection db", () => {
+    const all = ["neondb", "postgres", "webhook_test_abc123", "webhook_test_def456"];
+    expect(orphanTestDatabases(all, "neondb")).toEqual([
+      "webhook_test_abc123",
+      "webhook_test_def456",
+    ]);
+  });
+
+  it("never returns the current connection database even if it matches the prefix", () => {
+    // Defensive: the sweep must not try to drop the database it is connected through.
+    const all = ["webhook_test_current", "webhook_test_stale"];
+    expect(orphanTestDatabases(all, "webhook_test_current")).toEqual(["webhook_test_stale"]);
+  });
+
+  it("does not match the harness's default base name or unrelated databases", () => {
+    // `webhook_test` (no suffix) is the local default DB name; only the suffixed per-run
+    // databases are swept. Real app databases must never match.
+    const all = ["webhook_test", "webhook_prod", "webhook", "template1"];
+    expect(orphanTestDatabases(all, "postgres")).toEqual([]);
+  });
+
+  it("returns an empty list when there is nothing to sweep", () => {
+    expect(orphanTestDatabases([], "neondb")).toEqual([]);
   });
 });
 

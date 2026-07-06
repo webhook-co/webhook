@@ -41,6 +41,26 @@ export function remoteTestTimeouts(url = process.env.TEST_DATABASE_URL): TestTim
   return isRemoteTestDatabase(url) ? REMOTE_TIMEOUTS : LOCAL_TIMEOUTS;
 }
 
+// The harness names each per-run test database `webhook_test_<hex>` (test/pg.ts). The
+// trailing underscore is required so the bare local default `webhook_test`, and real app
+// databases (`webhook`, `webhook_prod`, `neondb`, …), can never match.
+const TEST_DATABASE_PREFIX = "webhook_test_";
+
+/**
+ * From a list of database names, pick the per-run test databases safe to drop — i.e. those
+ * matching the harness prefix, excluding the connection's own (maintenance) database.
+ *
+ * Roles are cluster-global on the shared nightly Neon compute, so a database orphaned by a
+ * crashed/cancelled/timed-out prior run still pins those roles via its grants/policies and
+ * can block a later run's migration-down `DROP ROLE`. Sweeping these at startup prevents
+ * that. Pure + exhaustively tested; the destructive drop lives in the globalSetup shell.
+ */
+export function orphanTestDatabases(datnames: string[], currentDatabase: string): string[] {
+  return datnames.filter(
+    (name) => name.startsWith(TEST_DATABASE_PREFIX) && name !== currentDatabase,
+  );
+}
+
 export interface WaitForDatabaseOptions {
   /** One readiness probe; must throw/reject when the DB is not yet accepting queries. */
   probe: () => Promise<void>;
