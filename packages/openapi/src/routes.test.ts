@@ -61,7 +61,7 @@ describe("ROUTES manifest — the single source of HTTP truth", () => {
     for (const r of ROUTES) {
       expect(r.successStatus).toBe(200);
       expect(VALID_DISPATCH).toContain(r.dispatch);
-      expect(["GET", "POST", "DELETE"]).toContain(r.method);
+      expect(["GET", "POST", "PATCH", "DELETE"]).toContain(r.method);
       expect(r.path.startsWith("/v1/")).toBe(true);
       expect(r.summary.length).toBeGreaterThan(0);
     }

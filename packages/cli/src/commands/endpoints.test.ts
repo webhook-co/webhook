@@ -59,6 +59,7 @@ const endpoint = (id: string, name: string, paused = false) => ({
   name,
   paused,
   createdAt: "2026-05-01T00:00:00.000Z",
+  dedupConfig: null,
 });
 
 describe("wbhk endpoints list", () => {
@@ -197,6 +198,7 @@ describe("wbhk endpoints create", () => {
     name: "orders-prod",
     paused: false,
     createdAt: "2026-05-01T00:00:00.000Z",
+    dedupConfig: null,
     ingestUrl: "https://wbhk.my/whep_one_time_secret_token_value_aaaaaaaaaaaa",
   };
 
@@ -302,6 +304,7 @@ describe("wbhk endpoints rotate", () => {
     name: "orders-prod",
     paused: false,
     createdAt: "2026-05-01T00:00:00.000Z",
+    dedupConfig: null,
     ingestUrl: "https://wbhk.my/whep_rotated_secret_token_value_bbbbbbbbbbbb",
   };
 

@@ -792,6 +792,7 @@ describe("handleRequest — POST /v1/endpoints (endpoints.create)", () => {
     name: "stripe prod",
     paused: false,
     createdAt: "2026-06-25T00:00:00.000Z",
+    dedupConfig: null,
     ingestUrl: "https://wbhk.my/whep_one_time_secret",
   };
 

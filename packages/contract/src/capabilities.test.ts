@@ -30,6 +30,7 @@ const EXPECTED_NAMES = [
   "endpoints.create",
   "endpoints.delete",
   "endpoints.rotate",
+  "endpoints.update",
   "endpoints.revealIngestUrl",
   "endpoints.addProviderSecret",
   "endpoints.listProviderSecrets",
@@ -293,6 +294,7 @@ describe("endpoints.create", () => {
       name: "stripe prod",
       paused: false,
       createdAt: "2026-06-25T00:00:00.000Z",
+      dedupConfig: null,
       ingestUrl: "https://wbhk.my/whep_abc",
     });
     expect(ok.success).toBe(true);
@@ -357,6 +359,7 @@ describe("endpoints.rotate", () => {
       name: "stripe prod",
       paused: false,
       createdAt: "2026-06-25T00:00:00.000Z",
+      dedupConfig: null,
       ingestUrl: "https://wbhk.my/whep_new",
     });
     expect(ok.success).toBe(true);

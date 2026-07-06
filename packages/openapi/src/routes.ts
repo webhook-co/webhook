@@ -12,7 +12,7 @@
 
 import type { CapabilityError } from "@webhook-co/contract";
 
-export type HttpMethod = "GET" | "POST" | "DELETE";
+export type HttpMethod = "GET" | "POST" | "PATCH" | "DELETE";
 
 /**
  * The canonical capability-error → HTTP status map. SINGLE-SOURCED here so the runtime router
@@ -180,6 +180,16 @@ export const ROUTES: readonly RouteDef[] = [
     dispatch: "shared",
     body: false,
     summary: "Rotate an endpoint's ingest token (returns a new one-time ingest URL)",
+    buildInput: pathParam("endpointId", "endpointId"),
+  },
+  {
+    method: "PATCH",
+    path: "/v1/endpoints/{endpointId}",
+    capability: "endpoints.update",
+    successStatus: 200,
+    dispatch: "shared",
+    body: true,
+    summary: "Update an endpoint's deduplication config (null resets to the default)",
     buildInput: pathParam("endpointId", "endpointId"),
   },
   {

@@ -87,7 +87,8 @@ export interface paths {
         delete: operations["endpointsDelete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /** Update an endpoint's deduplication config (null resets to the default) */
+        patch: operations["endpointsUpdate"];
         trace?: never;
     };
     "/v1/endpoints/{endpointId}/events": {
@@ -433,6 +434,16 @@ export interface components {
         CreatedEndpoint: {
             /** Format: date-time */
             createdAt: string;
+            /** @default null */
+            dedupConfig: {
+                fields?: {
+                    exclude?: string[];
+                    include: string[];
+                };
+                /** @enum {string} */
+                mode: "identifier" | "content" | "fields" | "off";
+                windowSeconds: number;
+            } | null;
             /** Format: uuid */
             id: string;
             /** Format: uri */
@@ -505,6 +516,16 @@ export interface components {
         Endpoint: {
             /** Format: date-time */
             createdAt: string;
+            /** @default null */
+            dedupConfig: {
+                fields?: {
+                    exclude?: string[];
+                    include: string[];
+                };
+                /** @enum {string} */
+                mode: "identifier" | "content" | "fields" | "off";
+                windowSeconds: number;
+            } | null;
             /** Format: uuid */
             id: string;
             name: string;
@@ -525,6 +546,15 @@ export interface components {
             secret: string;
         };
         EndpointsCreateRequest: {
+            dedupConfig?: {
+                fields?: {
+                    exclude?: string[];
+                    include: string[];
+                };
+                /** @enum {string} */
+                mode: "identifier" | "content" | "fields" | "off";
+                windowSeconds: number;
+            } | null;
             name: string;
         };
         EndpointsListProviderSecretsResponse: {
@@ -536,6 +566,17 @@ export interface components {
         };
         EndpointsRevealIngestUrlResponse: {
             ingestUrl: string | null;
+        };
+        EndpointsUpdateRequest: {
+            dedupConfig: {
+                fields?: {
+                    exclude?: string[];
+                    include: string[];
+                };
+                /** @enum {string} */
+                mode: "identifier" | "content" | "fields" | "off";
+                windowSeconds: number;
+            } | null;
         };
         /** @description The JSON error envelope for capability faults. */
         Error: {
@@ -1069,6 +1110,38 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeletedEndpoint"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    endpointsUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                endpointId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EndpointsUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Endpoint"];
                 };
             };
             400: components["responses"]["BadRequest"];
