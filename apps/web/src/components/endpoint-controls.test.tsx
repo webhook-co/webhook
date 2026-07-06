@@ -14,7 +14,7 @@ const ep: EndpointItem = {
 };
 
 describe("EndpointControls (menu variant)", () => {
-  it("rotates from the ⋯ menu and reveals the new one-time URL", async () => {
+  it("rotates from the ⋯ menu and reveals the new ingest URL", async () => {
     const user = userEvent.setup();
     const rotateEndpoint = vi.fn(async () => ({
       ok: true as const,
@@ -39,9 +39,8 @@ describe("EndpointControls (menu variant)", () => {
 
     expect(rotateEndpoint).toHaveBeenCalledWith("ep_1");
     await waitFor(() =>
-      expect(screen.getByText(/only time you'll see this url/i)).toBeInTheDocument(),
+      expect(screen.getByText("https://wbhk.my/whep_rotated")).toBeInTheDocument(),
     );
-    expect(screen.getByText("https://wbhk.my/whep_rotated")).toBeInTheDocument();
   });
 
   it("deletes from the ⋯ menu and calls onDeleted (the list removes the row)", async () => {

@@ -33,7 +33,7 @@ import type {
 import type { EndpointItem, EndpointsResult } from "@/server/endpoints";
 
 import { EndpointControls } from "./endpoint-controls";
-import { OneTimeUrlDialog } from "./one-time-url-dialog";
+import { IngestUrlDialog } from "./ingest-url-dialog";
 
 export interface EndpointsManagerProps {
   initialResult: EndpointsResult;
@@ -42,7 +42,7 @@ export interface EndpointsManagerProps {
   nameFilter?: string;
   /** The create-endpoint server action, injected by the gated page. */
   createEndpoint: (input: { name: string }) => Promise<CreateEndpointResult>;
-  /** Rotate an endpoint's ingest token (hard cutover) → its NEW one-time URL. Injected by the page. */
+  /** Rotate an endpoint's ingest token (hard cutover) → its NEW ingest URL. Injected by the page. */
   rotateEndpoint: (endpointId: string) => Promise<RotateEndpointResult>;
   /** Soft-delete an endpoint. Injected by the page. */
   deleteEndpoint: (endpointId: string) => Promise<EndpointActionResult>;
@@ -58,8 +58,8 @@ export function EndpointsManager({
   const liveEndpoints = initialResult.status === "ok" ? initialResult.endpoints : [];
   const [endpoints, setEndpoints] = React.useState<readonly EndpointItem[]>(liveEndpoints);
   // Re-sync the list to a freshly server-filtered `initialResult` WITHOUT remounting — the manager
-  // stays mounted so a one-time ingest URL (the transient `revealed` below) survives a search-debounce
-  // navigation that would otherwise discard it. (Replaces the page-level `key` remount.)
+  // stays mounted so the just-revealed ingest URL (the transient `revealed` below) survives a
+  // search-debounce navigation that would otherwise discard it. (Replaces the page-level `key` remount.)
   const [seededResult, setSeededResult] = React.useState(initialResult);
   if (seededResult !== initialResult) {
     setSeededResult(initialResult);
@@ -73,7 +73,8 @@ export function EndpointsManager({
   // frame later), so this ref reliably prevents a double-mint (two endpoints/tokens, the first URL lost).
   const pendingRef = React.useRef(false);
   const [formError, setFormError] = React.useState<string | null>(null);
-  // The just-minted ingest URL, held transiently for the one-time reveal — never re-displayed after.
+  // The just-minted ingest URL, held transiently for the post-create copy dialog. It's not secret — the
+  // URL is viewable any time on the endpoint's page (ADR-0101) — this is just a convenience copy prompt.
   const [revealed, setRevealed] = React.useState<{ name: string; ingestUrl: string } | null>(null);
 
   if (initialResult.status !== "ok") {
@@ -103,7 +104,7 @@ export function EndpointsManager({
       }
       // Only show the new endpoint in the list if it matches the active name filter — otherwise it
       // would appear in a filtered view it doesn't belong to (it's server-persisted and surfaces once
-      // the filter is cleared). The reveal dialog still confirms creation + shows the one-time URL.
+      // the filter is cleared). The reveal dialog still confirms creation + shows the ingest URL.
       const matchesFilter =
         !isFiltered ||
         result.endpoint.name.toLowerCase().includes(nameFilter!.trim().toLowerCase());
@@ -137,7 +138,8 @@ export function EndpointsManager({
               <DialogHeader>
                 <DialogTitle>Create endpoint</DialogTitle>
                 <DialogDescription>
-                  You&apos;ll get a signed webhook URL — shown once, right after it&apos;s created.
+                  You&apos;ll get a signed webhook URL, viewable any time on the endpoint&apos;s
+                  page.
                 </DialogDescription>
               </DialogHeader>
 
@@ -222,7 +224,7 @@ export function EndpointsManager({
         </TableBody>
       </Table>
 
-      <OneTimeUrlDialog
+      <IngestUrlDialog
         open={revealed !== null}
         onClose={() => setRevealed(null)}
         title="Copy your webhook URL"
