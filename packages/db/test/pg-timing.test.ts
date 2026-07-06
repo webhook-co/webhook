@@ -1,12 +1,27 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { isRemoteTestDatabase, remoteTestTimeouts, waitForDatabase } from "./pg-timing";
 
 describe("isRemoteTestDatabase", () => {
-  it("is false when no url is given (local ephemeral cluster)", () => {
-    expect(isRemoteTestDatabase(undefined)).toBe(false);
+  // The function defaults its arg to process.env.TEST_DATABASE_URL, so the omitted-arg
+  // cases MUST control the env explicitly — otherwise the ambient CI value (a real Neon
+  // URL on the nightly) leaks in and flips the result. Restore env after each case.
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("is false for an explicitly empty or blank url (no target)", () => {
     expect(isRemoteTestDatabase("")).toBe(false);
     expect(isRemoteTestDatabase("   ")).toBe(false);
+  });
+
+  it("falls back to TEST_DATABASE_URL when the url arg is omitted", () => {
+    vi.stubEnv("TEST_DATABASE_URL", "");
+    expect(isRemoteTestDatabase()).toBe(false);
+    // A passwordless trust-auth CI service URL is still local, not remote.
+    vi.stubEnv("TEST_DATABASE_URL", "postgres://postgres@127.0.0.1:5432/webhook_test");
+    expect(isRemoteTestDatabase()).toBe(false);
+    // A managed engine URL (password + TLS) is remote.
+    vi.stubEnv("TEST_DATABASE_URL", "postgres://owner:secret@ep-x.neon.tech/db?sslmode=require");
+    expect(isRemoteTestDatabase()).toBe(true);
   });
 
   it("is false for a trust-auth CI service container (no password, no ssl)", () => {
