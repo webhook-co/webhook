@@ -77,9 +77,10 @@ describe("EndpointsManager", () => {
     await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
     expect(createEndpoint).toHaveBeenCalledWith({ name: "GitHub" });
-    // The reveal dialog shows the full ingest URL + the always-viewable reassurance.
-    await waitFor(() => expect(screen.getByText(/view this url any time/i)).toBeInTheDocument());
-    expect(screen.getByText("https://wbhk.my/whep_secret123")).toBeInTheDocument();
+    // The reveal dialog shows the full ingest URL to copy.
+    await waitFor(() =>
+      expect(screen.getByText("https://wbhk.my/whep_secret123")).toBeInTheDocument(),
+    );
   });
 
   it("surfaces the action error in the form without revealing a URL", async () => {
@@ -102,7 +103,7 @@ describe("EndpointsManager", () => {
     await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
     await waitFor(() => expect(screen.getByText(/endpoint limit reached/i)).toBeInTheDocument());
-    expect(screen.queryByText(/view this url any time/i)).not.toBeInTheDocument();
+    expect(screen.queryByText("Copy your webhook URL")).not.toBeInTheDocument();
   });
 
   it("re-syncs the list to a new initialResult WITHOUT remounting (server-filtered search)", () => {

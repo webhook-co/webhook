@@ -38,8 +38,9 @@ describe("EndpointControls (menu variant)", () => {
     await user.click(within(dialog).getByRole("button", { name: /rotate url/i }));
 
     expect(rotateEndpoint).toHaveBeenCalledWith("ep_1");
-    await waitFor(() => expect(screen.getByText(/view this url any time/i)).toBeInTheDocument());
-    expect(screen.getByText("https://wbhk.my/whep_rotated")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByText("https://wbhk.my/whep_rotated")).toBeInTheDocument(),
+    );
   });
 
   it("deletes from the ⋯ menu and calls onDeleted (the list removes the row)", async () => {
