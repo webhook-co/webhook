@@ -18,7 +18,8 @@ describe("SettingsPage", () => {
     expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(screen.getByText("Dana Kessler")).toBeInTheDocument();
     expect(screen.getByText("dana@acme.co")).toBeInTheDocument();
-    // Log out is a destructive action → the red danger button (matches "Delete endpoint").
+    // Log out is styled with the red danger button by deliberate product choice (matches "Delete
+    // endpoint") — asserting the token class locks that intent, since it's the requirement's whole point.
     expect(screen.getByRole("button", { name: "Log out" })).toHaveClass("bg-danger");
   });
 });
