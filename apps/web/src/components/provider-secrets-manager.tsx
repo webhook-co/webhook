@@ -20,7 +20,6 @@ import {
   Label,
   ProviderLogo,
   providerDisplayName,
-  Select,
   StatusPill,
   type StatusTone,
   Table,
@@ -157,6 +156,13 @@ export function ProviderSecretsManager({
     [],
   );
 
+  // The secret-type options for the SELECTED provider (always signing_secret; + verify_token /
+  // braintree_public_key where valid). No logos + few options, so the combobox shows no search box.
+  const kindOptions: ComboboxOption[] = availableKinds.map((k) => ({
+    value: k,
+    label: KIND_LABELS[k],
+  }));
+
   function handleProviderChange(next: Provider) {
     setProvider(next);
     if (formError) setFormError(null);
@@ -269,21 +275,18 @@ export function ProviderSecretsManager({
             </div>
             <div className="flex flex-1 flex-col gap-1.5">
               <Label htmlFor="provider-secret-kind">Secret type</Label>
-              <Select
+              <Combobox
                 id="provider-secret-kind"
+                label="Secret type"
+                options={kindOptions}
                 value={kind}
                 disabled={creating}
-                onChange={(e) => {
-                  setKind(e.target.value as ProviderSecretKind);
+                onChange={(v) => {
+                  setKind(v as ProviderSecretKind);
                   if (formError) setFormError(null);
                 }}
-              >
-                {availableKinds.map((k) => (
-                  <option key={k} value={k}>
-                    {KIND_LABELS[k]}
-                  </option>
-                ))}
-              </Select>
+                className="w-full"
+              />
             </div>
           </div>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
