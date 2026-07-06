@@ -2120,7 +2120,9 @@
             "enum": [
               "sw_webhook_id",
               "provider_event_id",
-              "content_hash"
+              "content_hash",
+              "fields",
+              "unique"
             ]
           },
           "verified": {
@@ -2182,7 +2184,9 @@
             "enum": [
               "sw_webhook_id",
               "provider_event_id",
-              "content_hash"
+              "content_hash",
+              "fields",
+              "unique"
             ]
           },
           "verified": {
