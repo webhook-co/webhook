@@ -64,9 +64,19 @@ content-hash** (too big / too many values — bounded, collapses identical); or 
 (a missing/unresolvable field → a distinct event). Over-collapse (silently dropping a real event) is
 the failure mode we design against, so unresolved fields never share a key.
 
-**Content-addressed R2 keys (hardening).** The payload object is named by `sha256(body)`, not the
-dedup key. Distinct payloads never share an object (no forged-collision overwrite); identical retries
-still coalesce. Per-event `payloadR2Key` is stored, so existing objects and reads are unaffected.
+**Bounded content-hash key (no unbounded key material).** The `identifier`-fallback / `content` key
+folds a canonical path+query, but the canonical target is **hashed** into the key (`method:hash(body):
+hash(target):bucket`), never inlined — a multi-KB query string can't blow the Postgres unique-index
+btree tuple limit and lose the event on insert.
+
+**R2 forged-overwrite hardening — sequenced to its own slice.** The dedup key is attacker-influenceable
+and the R2 PUT precedes the ON CONFLICT gate, so keying the object by the dedup key alone lets a forged
+same-dedup-key request with a different body overwrite a legit payload (a pre-existing residual). The
+fix — key the object on `dedup_key ∥ content_hash` (a forged different-body request then writes a
+prunable orphan, not an overwrite; distinct events keep distinct keys so per-event-delete stays safe) —
+**also requires every reader (delivery dispatcher, replay) to use the STORED `payloadR2Key` rather than
+re-derive it from the dedup key**, and is therefore done as its own slice with that reader change, not
+folded into the engine-core slice (where it would break delivery). Tracked in the threat-model residual.
 
 ## alternatives rejected
 

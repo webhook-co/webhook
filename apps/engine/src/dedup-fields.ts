@@ -16,8 +16,6 @@ import { findHeader, parseFieldPath, type PathSegment } from "@webhook-co/shared
 export const MAX_FIELD_BODY_BYTES = 64 * 1024;
 /** Total scalar values folded into one key. Beyond this we degrade to content-hash (bounded). */
 export const MAX_EXTRACTED_VALUES = 256;
-/** Each scalar value is truncated to this many UTF-8 bytes before framing. */
-export const MAX_VALUE_BYTES = 256;
 /** Body traversal depth guard (independent of the config-time segment cap). */
 export const MAX_PARSE_DEPTH = 32;
 /** Total node visits during body traversal — bounds work regardless of array size / match rate. */
@@ -129,9 +127,14 @@ function frame(pairs: readonly Extracted[]): Uint8Array {
     let v: string;
     if (typeof e.value === "string") {
       tag = "s";
-      v = e.value.length > MAX_VALUE_BYTES ? e.value.slice(0, MAX_VALUE_BYTES) : e.value;
+      // NOT truncated: the body-size gate already bounds every extracted value (a substring of a
+      // <=64KiB body), and truncating would over-collapse two distinct values sharing a long prefix.
+      v = e.value;
     } else if (typeof e.value === "number") {
       tag = "n";
+      // Numbers follow JSON/IEEE-754 semantics: two integer ids above 2^53 can already be
+      // indistinguishable after JSON.parse. Operators keying on such ids should select the STRING id
+      // field (providers virtually always send ids as strings); documented in ADR-0104.
       v = String(e.value);
     } else if (typeof e.value === "boolean") {
       tag = "b";

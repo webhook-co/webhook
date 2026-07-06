@@ -144,16 +144,11 @@ export function resolveDedupParams(cfg: DedupConfig | null): DedupParams {
   }
 }
 
-/** Query params that vary per delivery/attempt or are pure tracking — never part of request identity. */
-const VOLATILE_QUERY_PARAMS = new Set([
-  "_",
-  "cachebust",
-  "ts",
-  "nonce",
-  "signature",
-  "sig",
-  "attempt",
-]);
+// Only params that are UNAMBIGUOUSLY tracking / cache-busting are dropped. Params that could carry
+// real request identity (e.g. `ts`, `nonce`, `attempt`, `sig`) are deliberately NOT stripped — stripping
+// them would over-collapse two legitimately-distinct events that share a body and differ only in that
+// param, and over-collapse (dropping a real event) is worse than under-dedup.
+const VOLATILE_QUERY_PARAMS = new Set(["_", "cachebust", "cache_bust"]);
 const MAX_CANONICAL_QUERY_PARAMS = 512;
 
 function isVolatileParam(key: string): boolean {
@@ -181,19 +176,26 @@ function canonicalTarget(url: URL): string {
   return q ? `${path}?${q}` : path;
 }
 
-function contentHashResult(
+const canonicalTargetEncoder = new TextEncoder();
+
+async function contentHashResult(
   contentHash: Uint8Array,
   method: string,
   url: URL,
   bucket: number,
   provider: Provider | null,
-): DerivedDedup {
-  // method + canonical-target + content hash + coarse bucket, all folded into the key. The method keeps
-  // different verbs with the same (often empty) body distinct; the canonical target keeps requests that
+): Promise<DerivedDedup> {
+  // method + hash(canonical-target) + content hash + coarse bucket, all folded into the key. The method
+  // keeps different verbs with the same (often empty) body distinct; the target hash keeps requests that
   // differ only by URL/query distinct; the bucket keeps a legitimately-identical request in a LATER window
-  // distinct. Same (method, target, body, bucket) is a retry and collapses.
+  // distinct. The canonical target is HASHED (not inlined) so a multi-KB query string can't blow the
+  // Postgres unique-index btree tuple limit and lose the event on insert. Same (method, target, body,
+  // bucket) is a retry and collapses.
+  const targetHash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", canonicalTargetEncoder.encode(canonicalTarget(url))),
+  );
   return {
-    dedupKey: `${method}:${bytesToHex(contentHash)}:${canonicalTarget(url)}:${bucket}`,
+    dedupKey: `${method}:${bytesToHex(contentHash)}:${bytesToHex(targetHash)}:${bucket}`,
     dedupStrategy: "content_hash",
     provider,
     providerEventId: null,
@@ -246,7 +248,7 @@ export async function deriveDedup(
     if (evaluated.kind === "unique") return uniqueResult(eventId, contentHash, provider);
     const bucket = Math.floor(now.getTime() / params.windowMs);
     if (evaluated.kind === "content")
-      return contentHashResult(contentHash, method, url, bucket, provider);
+      return await contentHashResult(contentHash, method, url, bucket, provider);
     const fieldsHash = new Uint8Array(await crypto.subtle.digest("SHA-256", evaluated.bytes));
     return {
       dedupKey: `fields:${bytesToHex(fieldsHash)}:${bucket}`,
@@ -286,5 +288,5 @@ export async function deriveDedup(
 
   // content mode, or the identifier fallback: canonical content hash + a coarse time bucket.
   const bucket = Math.floor(now.getTime() / params.windowMs);
-  return contentHashResult(contentHash, method, url, bucket, provider);
+  return await contentHashResult(contentHash, method, url, bucket, provider);
 }

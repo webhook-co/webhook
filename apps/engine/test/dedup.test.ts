@@ -102,9 +102,10 @@ describe("deriveDedup — identifier mode (default ladder: sw_webhook_id -> prov
     const d = await deriveDedup(body, [], "POST", U(), EVENT_ID, NOW, IDENT);
     expect(d.dedupStrategy).toBe("content_hash");
     const h = await sha256hex(body);
+    const targetH = await sha256hex(new TextEncoder().encode("/whep_tok")); // canonical target is HASHED (bounded key)
     const bucket = Math.floor(NOW.getTime() / BUCKET_WIDTH_MS);
     expect(d.dedupBucket).toBe(bucket);
-    expect(d.dedupKey).toBe(`POST:${h}:/whep_tok:${bucket}`);
+    expect(d.dedupKey).toBe(`POST:${h}:${targetH}:${bucket}`);
     expect(d.provider).toBeNull();
   });
 
@@ -255,7 +256,7 @@ describe("deriveDedup — canonical path+query fold (the query-blindness fix)", 
       body,
       [],
       "GET",
-      U("https://wbhk.my/t?id=1&utm_source=x&cachebust=99&attempt=3"),
+      U("https://wbhk.my/t?id=1&utm_source=x&cachebust=99&_=1699"),
       EVENT_ID,
       NOW,
       IDENT,

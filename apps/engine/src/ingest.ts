@@ -18,7 +18,6 @@
 
 import { type CachedSealedSecret } from "@webhook-co/db";
 import {
-  bytesToHex,
   deliveryVerificationDecision,
   newId,
   payloadR2Key,
@@ -414,18 +413,11 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
 
   // R2 PUT FIRST: the body is durable before any metadata row can point at it. A PUT failure means
   // the body isn't durable -> 500, and we never write the row (never ACK an undurable event).
-  //
-  // CONTENT-ADDRESSED KEY: the object is named by the content hash, NOT the dedup key. The dedup key
-  // is derived from UNVERIFIED, attacker-influenceable input; naming the object by it would let a forged
-  // key-collision overwrite a legitimate payload (the PUT precedes the ON CONFLICT gate). Content
-  // addressing means two distinct payloads never share an object (distinct hash), while byte-identical
-  // retries still coalesce onto one object. Per-event `payloadR2Key` is stored, so existing objects and
-  // reads are unaffected.
-  const key = await payloadR2Key(
-    endpoint.orgId,
-    endpoint.endpointId,
-    bytesToHex(derived.contentHash),
-  );
+  // The object is named deterministically by (endpoint, dedup_key) so a retry re-PUTs the same object
+  // and every reader (dispatcher/replay) re-derives the same key. Hardening the forged-overwrite
+  // residual (fold content_hash into the key material AND switch readers to the STORED key rather than
+  // re-derive) is tracked as its own slice - see ADR-0104 and docs/threat-model.md.
+  const key = await payloadR2Key(endpoint.orgId, endpoint.endpointId, derived.dedupKey);
   try {
     await deps.putPayload(key, raw, contentType);
   } catch (err) {
