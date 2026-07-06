@@ -7,6 +7,7 @@ import type {
   RevokedProviderSecret,
   SubscriptionDeleted,
 } from "@webhook-co/contract";
+import { DEFAULT_DEDUP_WINDOW_SECONDS } from "@webhook-co/shared";
 import type {
   Delivery,
   Endpoint,
@@ -63,10 +64,11 @@ function fmtDateTime(d: Date): string {
 
 export function renderEndpointsTable(items: readonly Endpoint[], color: boolean): string {
   return renderTable(
-    ["NAME", "STATUS", "CREATED", "ID"],
+    ["NAME", "STATUS", "DEDUP", "CREATED", "ID"],
     items.map((e) => [
       field(e.name),
       statusWord(e.paused, color),
+      dedupMode(e.dedupConfig),
       fmtDate(e.createdAt),
       field(e.id),
     ]),
@@ -92,12 +94,29 @@ function block(rows: readonly (readonly [string, string])[]): string {
   return rows.map(([key, value]) => `${`${key}:`.padEnd(width + 1)} ${value}`).join("\n");
 }
 
+/** A compact one-line summary of an endpoint's dedup config (ADR-0104); "default" when unset. */
+function dedupSummary(cfg: Endpoint["dedupConfig"]): string {
+  if (cfg == null) return field(`default (identifier, ${DEFAULT_DEDUP_WINDOW_SECONDS}s)`);
+  if (cfg.mode === "off") return field("off");
+  const win = `${cfg.windowSeconds}s`;
+  if (cfg.mode === "fields") {
+    return field(`fields [${cfg.fields?.include?.join(", ") ?? ""}] (${win})`);
+  }
+  return field(`${cfg.mode} (${win})`);
+}
+
+/** The dedup MODE only, for the compact list table. */
+function dedupMode(cfg: Endpoint["dedupConfig"]): string {
+  return field(cfg == null ? "default" : cfg.mode);
+}
+
 export function renderEndpoint(e: Endpoint, color: boolean): string {
   return block([
     ["id", field(e.id)],
     ["name", field(e.name)],
     ["status", statusWord(e.paused, color)],
     ["created", fmtDateTime(e.createdAt)],
+    ["dedup", dedupSummary(e.dedupConfig)],
   ]);
 }
 
@@ -111,6 +130,7 @@ export function renderCreatedEndpoint(e: CreatedEndpoint, color: boolean): strin
     ["name", field(e.name)],
     ["status", statusWord(e.paused, color)],
     ["created", fmtDateTime(e.createdAt)],
+    ["dedup", dedupSummary(e.dedupConfig)],
     ["ingest url", field(e.ingestUrl)],
   ]);
 }
