@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { deliveryCopy } from "./delivery-copy";
+import { deliveryCopy, deliverySignatureCopy, deliveryWasDispatched } from "./delivery-copy";
 
 // A fixed "now" so relative-time hints are deterministic.
 const NOW = new Date("2026-07-01T12:00:00.000Z");
@@ -57,6 +57,61 @@ describe("deliveryCopy — honest tone + label + hint per delivery state", () =>
     // Covers both the structural-URL reject and the resolves-to-private refusal; the detail view's per-row
     // `error` carries the exact reason.
     expect(c.hint).toBe("Refused by the delivery guard — the destination isn't allowed");
+  });
+
+  it("blocked from an SSRF refusal (source verified/unattempted) keeps the guard hint", () => {
+    for (const s of ["verified", "authenticated", "unattempted"] as const) {
+      const c = deliveryCopy("blocked", { now: NOW, sourceVerificationState: s });
+      expect(c.hint).toBe("Refused by the delivery guard — the destination isn't allowed");
+    }
+  });
+
+  it("blocked from a VERIFICATION FAILURE (source failed) reads about the signature, not SSRF (ADR-0103)", () => {
+    const c = deliveryCopy("blocked", { now: NOW, sourceVerificationState: "failed" });
+    expect(c.tone).toBe("danger");
+    expect(c.label).toBe("Blocked");
+    expect(c.hint).toBe("Not delivered — the source event's signature was rejected");
+    // Must NOT show the (wrong) SSRF hint for this case.
+    expect(c.hint).not.toMatch(/destination isn't allowed/i);
+  });
+});
+
+describe("deliverySignatureCopy — was this delivery signed by webhook.co?", () => {
+  it("verified / authenticated source → Signed (ok tone)", () => {
+    for (const s of ["verified", "authenticated"] as const) {
+      const c = deliverySignatureCopy(s);
+      expect(c.tone).toBe("ok");
+      expect(c.label).toBe("Signed");
+    }
+  });
+
+  it("unattempted source → Unsigned (neutral tone) — delivered without our signature (ADR-0103)", () => {
+    const c = deliverySignatureCopy("unattempted");
+    expect(c.tone).toBe("neutral");
+    expect(c.label).toBe("Unsigned");
+    expect(c.hint).toMatch(/wasn't verified/i);
+  });
+
+  it("failed source → Unsigned, but the hint says the signature was REJECTED (not 'never verified')", () => {
+    const c = deliverySignatureCopy("failed");
+    expect(c.label).toBe("Unsigned");
+    expect(c.hint).toMatch(/signature was rejected/i);
+    // Must not misdescribe a checked-and-rejected source as never-verified.
+    expect(c.hint).not.toMatch(/wasn't verified/i);
+  });
+});
+
+describe("deliveryWasDispatched — did a request actually leave for the destination?", () => {
+  it("true only for statuses where a request was sent (delivered/failed/dead/forwarded)", () => {
+    for (const s of ["delivered", "failed", "dead", "forwarded"] as const) {
+      expect(deliveryWasDispatched(s)).toBe(true);
+    }
+  });
+
+  it("false for not-yet-sent (queued/pending) and never-sent (blocked/cancelled) — no premature 'Signed'", () => {
+    for (const s of ["queued", "pending", "blocked", "cancelled"] as const) {
+      expect(deliveryWasDispatched(s)).toBe(false);
+    }
   });
 
   it("dead → danger 'Undelivered' + gave-up hint", () => {

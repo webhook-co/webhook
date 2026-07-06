@@ -1,3 +1,4 @@
+import type { VerificationState } from "@webhook-co/shared";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -42,12 +43,14 @@ function renderDialog(
   destinations: readonly DestinationItem[],
   replay: (eventId: string, destinationId: string) => Promise<ReplayResult>,
   destinationsError = false,
+  verificationState: VerificationState = "verified",
 ) {
   return render(
     <ReplayDialog
       open
       onClose={vi.fn()}
       eventId={EVENT_ID}
+      verificationState={verificationState}
       destinations={destinations}
       destinationsError={destinationsError}
       replay={replay}
@@ -150,6 +153,31 @@ describe("ReplayDialog", () => {
     // Still on the picker — the Replay button is present so they can retry.
     expect(screen.getByRole("button", { name: /^replay$/i })).toBeInTheDocument();
     expect(screen.getByRole("combobox")).toBeInTheDocument();
+  });
+
+  it("says the delivery is SIGNED for a verified event", () => {
+    renderDialog([destination()], vi.fn(), false, "verified");
+    expect(
+      screen.getByText(/we sign the delivery so the destination can verify it/i),
+    ).toBeInTheDocument();
+  });
+
+  it("says the delivery is UNSIGNED for an unattempted event (ADR-0103)", () => {
+    renderDialog([destination()], vi.fn(), false, "unattempted");
+    expect(screen.getByText(/we deliver it unsigned/i)).toBeInTheDocument();
+    expect(screen.queryByText(/we sign the delivery/i)).not.toBeInTheDocument();
+    // Still replayable (unsigned), so the picker + Replay stay.
+    expect(screen.getByRole("combobox")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^replay$/i })).toBeInTheDocument();
+  });
+
+  it("BLOCKS replay for a failed event — banner, no picker, no Replay (ADR-0103)", () => {
+    const replay = vi.fn();
+    renderDialog([destination()], replay, false, "failed");
+    expect(screen.getByText(/signature was rejected/i)).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^replay$/i })).not.toBeInTheDocument();
+    expect(replay).not.toHaveBeenCalled();
   });
 
   it("fires replay only once for a same-tick double-click", async () => {

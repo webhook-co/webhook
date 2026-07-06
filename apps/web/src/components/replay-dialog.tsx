@@ -15,6 +15,7 @@ import {
   Spinner,
   StatusPill,
 } from "@webhook-co/ui";
+import type { VerificationState } from "@webhook-co/shared";
 import Link from "next/link";
 import * as React from "react";
 
@@ -26,6 +27,10 @@ export interface ReplayDialogProps {
   open: boolean;
   onClose: () => void;
   eventId: string;
+  /** The source event's verification state (ADR-0103). Gates whether replay is offered and whether the
+   *  delivery is signed: `failed` → blocked (a rejected signature must never be re-signed); `unattempted`
+   *  → delivered UNSIGNED; `verified`/`authenticated` → signed. */
+  verificationState: VerificationState;
   destinations: readonly DestinationItem[];
   /** True when the destinations load faulted — rendered as an error, NEVER as the "you have none" state. */
   destinationsError?: boolean;
@@ -52,10 +57,17 @@ export function ReplayDialog({
   open,
   onClose,
   eventId,
+  verificationState,
   destinations,
   destinationsError,
   replay,
 }: ReplayDialogProps) {
+  // A `failed` event (signature checked + rejected) is never replayable — replaying re-signs forged content
+  // (ADR-0103). We block it here too (defense in depth: the caller also disables the trigger button).
+  const blocked = verificationState === "failed";
+  // We only re-sign what we authenticated; an `unattempted` event is delivered UNSIGNED.
+  const signed = verificationState === "verified" || verificationState === "authenticated";
+
   // Only enabled destinations are sensible replay targets — an auto-disabled row shouldn't be pickable.
   const targets = React.useMemo(
     () => destinations.filter((d) => d.disabledAt === null),
@@ -117,12 +129,20 @@ export function ReplayDialog({
         <DialogHeader>
           <DialogTitle>Replay to a destination</DialogTitle>
           <DialogDescription>
-            Send this captured event to one of your registered destinations. We sign the delivery so
-            the destination can verify it.
+            {blocked
+              ? "This event can't be replayed to a destination."
+              : signed
+                ? "Send this captured event to one of your registered destinations. We sign the delivery so the destination can verify it."
+                : "Send this captured event to one of your registered destinations. This event wasn't verified, so we deliver it unsigned."}
           </DialogDescription>
         </DialogHeader>
 
-        {destinationsError ? (
+        {blocked ? (
+          // A rejected signature is forged/tampered — re-signing it would vouch for attacker content (ADR-0103).
+          <Banner tone="danger">
+            This event&apos;s signature was rejected, so it can&apos;t be replayed to a destination.
+          </Banner>
+        ) : destinationsError ? (
           // A load fault must read as an error, NEVER as "you have none" — an org that HAS destinations would
           // otherwise be wrongly told to register one and couldn't replay. No picker on an error.
           <Banner tone="danger">
@@ -166,7 +186,7 @@ export function ReplayDialog({
         )}
 
         <DialogFooter>
-          {destinationsError || targets.length === 0 ? (
+          {blocked || destinationsError || targets.length === 0 ? (
             <DialogClose asChild>
               <Button type="button" variant="secondary">
                 Close

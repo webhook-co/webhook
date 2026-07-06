@@ -1,4 +1,4 @@
-import type { DeliveryStatus } from "@webhook-co/shared";
+import type { DeliveryStatus, VerificationState } from "@webhook-co/shared";
 import type { StatusTone } from "@webhook-co/ui";
 
 /**
@@ -20,6 +20,9 @@ export interface DeliveryCopyOptions {
   readonly nextRetryAt?: Date | null;
   /** Injectable "now" for deterministic relative-time hints (tests). Defaults to the real clock. */
   readonly now?: Date;
+  /** The SOURCE event's verification state — disambiguates a `blocked` row (ADR-0103): a verification
+   *  failure (`failed`) blocks for a very different reason than the SSRF guard, so its hint must differ. */
+  readonly sourceVerificationState?: VerificationState;
 }
 
 /** A coarse, honest relative-time string ("in 4m" / "in 2h"); undefined once the due time has passed. */
@@ -62,5 +65,52 @@ export function deliveryCopy(status: DeliveryStatus, opts: DeliveryCopyOptions =
       ? { tone: "neutral", label: "Retrying", hint }
       : { tone: "neutral", label: "In progress" };
   }
+  // A `blocked` status covers two very different refusals: the SSRF delivery guard (the default hint) AND a
+  // verification-failure block (ADR-0103 — the source event's signature was checked and rejected, so we
+  // never re-sign/forward it). We key on the un-forgeable source state, NOT the free-text `error` (which
+  // would be fragile to match). This is sound because ADR-0103's drain re-check terminally blocks a `failed`
+  // event BEFORE the SSRF guard runs — so a `failed` source never reaches an SSRF block, making
+  // `blocked` + source `failed` ⟺ a verification block. (On the detail view the raw `error` is also shown,
+  // so even a hypothetical mismatch is self-correcting there.)
+  if (status === "blocked" && opts.sourceVerificationState === "failed") {
+    return {
+      tone: "danger",
+      label: "Blocked",
+      hint: "Not delivered — the source event's signature was rejected",
+    };
+  }
   return STATIC_COPY[status];
+}
+
+// The delivery statuses that mean a request actually LEFT for the destination — the only ones where a
+// signed/unsigned indicator is meaningful and past-tense-honest. `queued`/`pending` haven't been sent yet
+// (so "Signed" would overstate); `blocked`/`cancelled` never leave. Single source shared by list + detail.
+const DISPATCHED_STATUSES: ReadonlySet<DeliveryStatus> = new Set([
+  "delivered",
+  "failed",
+  "dead",
+  "forwarded",
+]);
+
+/** Did this delivery actually send an HTTP request to the destination? Gates the signed/unsigned
+ *  indicator so it only shows once a request has left (never for queued/pending/blocked/cancelled). */
+export function deliveryWasDispatched(status: DeliveryStatus): boolean {
+  return DISPATCHED_STATUSES.has(status);
+}
+
+/** Was this delivery signed with the destination's secret? Signed only when the source was verified —
+ *  an unverified event is forwarded UNSIGNED (ADR-0103), so a downstream that requires a webhook.co
+ *  signature will reject it. Only meaningful for a dispatched delivery (see deliveryWasDispatched). */
+export function deliverySignatureCopy(sourceState: VerificationState): DeliveryCopy {
+  if (sourceState === "verified" || sourceState === "authenticated") {
+    return { tone: "ok", label: "Signed", hint: "Signed with your destination's secret" };
+  }
+  // Unsigned — but the reason differs: an `unattempted` source was never checked, whereas a `failed`
+  // source WAS checked and its signature rejected (a should-not-happen backlog row, since ADR-0103 blocks
+  // failed events before delivery — but if one exists, don't misdescribe it as "never verified").
+  const hint =
+    sourceState === "failed"
+      ? "Delivered without a signature — the source event's signature was rejected"
+      : "Delivered without a signature — the source event wasn't verified";
+  return { tone: "neutral", label: "Unsigned", hint };
 }

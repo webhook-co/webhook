@@ -29,16 +29,22 @@ let epB: string;
 let destA: string;
 let subA: string;
 
-async function seedEvent(org: string, endpoint: string): Promise<string> {
+async function seedEvent(
+  org: string,
+  endpoint: string,
+  over: { verified?: boolean; verification?: unknown } = {},
+): Promise<string> {
   const id = newId();
+  const verified = over.verified ?? true;
   await withTenant(app, org, async (tx) => {
     await tx`
       insert into events
         (id, org_id, endpoint_id, payload_r2_key, payload_bytes, content_type, headers,
-         dedup_key, dedup_strategy, provider, verified)
+         dedup_key, dedup_strategy, provider, verified, verification)
       values
         (${id}, ${org}, ${endpoint}, ${`org/${org}/ep/${endpoint}/${id}`}, ${10}, ${"application/json"},
-         ${tx.json([["webhook-id", "in"]])}, ${newId()}, ${"content_hash"}, ${"stripe"}, ${true})`;
+         ${tx.json([["webhook-id", "in"]])}, ${newId()}, ${"content_hash"}, ${"stripe"}, ${verified},
+         ${over.verification === undefined ? null : tx.json(over.verification as never)})`;
   });
   return id;
 }
@@ -120,7 +126,36 @@ describe("getDelivery", () => {
       error: null,
       nextRetryAt: null,
       createdAt: at,
+      // The seeded event is verified=true / verification=null → "verified" (ADR-0103 signed source).
+      sourceVerificationState: "verified",
     });
+  });
+
+  it("projects the SOURCE EVENT's verification state (ADR-0103 signed/unsigned provenance)", async () => {
+    // A delivery carries its source event's verification state so the UI can show whether it was signed
+    // (verified/authenticated) or delivered unsigned (unattempted). `failed` never delivers, but a pre-gate
+    // backlog row could exist, so we project it too. Isolated in a fresh org so it doesn't perturb orgA's
+    // global delivery set (the org-wide pagination test below counts on a bounded orgA set).
+    const org = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org VS" })).id;
+    const ep = (await createEndpoint(app, { orgId: org, name: "ep-vs" }, hasher)).id;
+    const dest = (
+      await createReplayDestination(app, { orgId: org, url: "https://vs.example.com/in" })
+    ).id;
+    const cases = [
+      { over: { verified: true, verification: undefined }, expected: "verified" },
+      {
+        over: { verified: true, verification: { authenticity: "token" } },
+        expected: "authenticated",
+      },
+      { over: { verified: false, verification: undefined }, expected: "unattempted" },
+      { over: { verified: false, verification: { ok: false } }, expected: "failed" },
+    ] as const;
+    for (const { over, expected } of cases) {
+      const eventId = await seedEvent(org, ep, over);
+      const id = await seedDelivery(org, { eventId, destinationId: dest });
+      const got = await withTenant(app, org, (tx) => getDelivery(tx, id));
+      expect(got?.sourceVerificationState).toBe(expected);
+    }
   });
 
   it("returns null for an unknown id and for a cross-org id (RLS hides it — no existence oracle)", async () => {
