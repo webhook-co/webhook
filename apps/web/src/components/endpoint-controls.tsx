@@ -165,7 +165,7 @@ export function EndpointControls({
             <DialogDescription>
               The current webhook URL for &quot;{endpoint.name}&quot; stops working the moment you
               rotate — there&apos;s no grace window. Update it everywhere it&apos;s configured
-              first. You&apos;ll see the new URL once.
+              first.
             </DialogDescription>
           </DialogHeader>
           {rotateError ? <Banner tone="danger">{rotateError}</Banner> : null}
