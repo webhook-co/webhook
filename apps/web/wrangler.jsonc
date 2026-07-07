@@ -24,6 +24,10 @@
   // fail-closed (a bad value throws before any mint, never returning a broken URL). Must match wbhk.my.
   "vars": {
     "INGEST_BASE_URL": "https://wbhk.my",
+    // FREE_EVENT_CAP (S4.3b): the usage view shows a rowless org the cap it is enforced at. The
+    // `<FREE_EVENT_CAP>` placeholder is DEPLOY-INJECTED by the overlay (optional FREE_EVENT_CAP GH var);
+    // unset → "" → uncapped (fail-safe). Must equal the engine's FREE_EVENT_CAP. `next dev` → uncapped.
+    "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
   },
   // OpenNext emits the client/static assets under `.open-next/assets`; the worker serves them via this
   // binding (run-time-handled by the OpenNext server). No `account_id`/`routes` here — app.webhook.co is

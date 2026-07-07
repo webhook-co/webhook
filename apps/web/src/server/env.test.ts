@@ -6,6 +6,7 @@ vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext }));
 import {
   getAuthBaseUrl,
   getDeliveryDispatcher,
+  getFreeEventCap,
   getListenWsUrl,
   getProviderSecretSealer,
   getSessionSecret,
@@ -109,6 +110,33 @@ describe("getListenWsUrl", () => {
     });
     vi.stubEnv("INGEST_BASE_URL", "http://localhost:8787");
     expect(getListenWsUrl()).toBe("ws://localhost:8787/listen");
+  });
+});
+
+describe("getFreeEventCap", () => {
+  it("parses a positive integer from the Worker binding", () => {
+    getCloudflareContext.mockReturnValue({ env: { FREE_EVENT_CAP: "500000" } });
+    expect(getFreeEventCap()).toBe(500000);
+  });
+
+  it("falls back to process.env outside a bound worker request", () => {
+    getCloudflareContext.mockImplementation(() => {
+      throw new Error("no cf context");
+    });
+    vi.stubEnv("FREE_EVENT_CAP", "12345");
+    expect(getFreeEventCap()).toBe(12345);
+  });
+
+  it("returns null (uncapped) when unset, blank, or invalid — the fail-safe", () => {
+    // Unset/blank binding + no process.env → uncapped.
+    getCloudflareContext.mockReturnValue({ env: { FREE_EVENT_CAP: "" } });
+    vi.stubEnv("FREE_EVENT_CAP", "");
+    expect(getFreeEventCap()).toBeNull();
+    // A garbage/non-positive value must NOT enable enforcement (delegates to strict parseFreeEventCap).
+    getCloudflareContext.mockReturnValue({ env: { FREE_EVENT_CAP: "0" } });
+    expect(getFreeEventCap()).toBeNull();
+    getCloudflareContext.mockReturnValue({ env: { FREE_EVENT_CAP: "10k" } });
+    expect(getFreeEventCap()).toBeNull();
   });
 });
 

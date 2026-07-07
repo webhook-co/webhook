@@ -18,6 +18,10 @@
   // broken `undefined/<token>` URL). Must match the engine route apex (wbhk.my).
   "vars": {
     "INGEST_BASE_URL": "https://wbhk.my",
+    // FREE_EVENT_CAP (S4.3b): usage.get shows a rowless org the cap it is enforced at. The `<FREE_EVENT_CAP>`
+    // placeholder is DEPLOY-INJECTED by the overlay (from the optional FREE_EVENT_CAP GH var); unset → "" →
+    // uncapped (fail-safe). Must equal the engine's FREE_EVENT_CAP. For `wrangler dev`, "" parses to uncapped.
+    "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
   },
   // The public REST API on api.webhook.co (bearer-token, cookieless). Consumed server-to-server
   // today (the CLI + the MCP server), so NO CORS is set. The PRD's "CORS allowlist = app only"

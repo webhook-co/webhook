@@ -2,7 +2,12 @@ import "server-only";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
-import type { DeliveryDispatcherRpc, IngestUrlRevealerRpc, SecretSealer } from "@webhook-co/shared";
+import {
+  parseFreeEventCap,
+  type DeliveryDispatcherRpc,
+  type IngestUrlRevealerRpc,
+  type SecretSealer,
+} from "@webhook-co/shared";
 
 import type { SessionExchangeBinding } from "./session-exchange";
 
@@ -188,6 +193,22 @@ export function getListenWsUrl(): string {
       ? `ws://${base.slice("http://".length)}`
       : base;
   return `${wsBase}/listen`;
+}
+
+/**
+ * The injected Free-tier event cap (FREE_EVENT_CAP) the usage view shows a rowless (Free) org — the SAME
+ * tier figure the engine cap producer enforces at (S4.3b), so the dashboard never renders "uncapped" while
+ * the org would be paused at it. A deploy-injected var (a tier figure, kept out of the repo); unset/invalid
+ * → null (uncapped, the fail-safe). Parsed via the shared strict `parseFreeEventCap`. MUST match every
+ * other worker's FREE_EVENT_CAP (the same GH var into engine/api/mcp/web).
+ */
+export function getFreeEventCap(): number | null {
+  const fromBinding = workerEnv().FREE_EVENT_CAP;
+  const raw =
+    (typeof fromBinding === "string" && fromBinding.length > 0 ? fromBinding : null) ??
+    process.env.FREE_EVENT_CAP ??
+    null;
+  return parseFreeEventCap(raw);
 }
 
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */

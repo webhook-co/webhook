@@ -105,6 +105,44 @@ describe("readUsageSummary", () => {
     });
   });
 
+  it("shows a rowless (Free) org the injected default cap it is enforced at, not 'uncapped' (S4.3b)", async () => {
+    // A Free org has NO org_limits row but IS enforced at FREE_EVENT_CAP by the producer — the surface must
+    // reflect that same cap (display == enforcement), never a bare uncapped while it would be paused at it.
+    const orgId = await seedOrg("usage-free-default");
+    const summary = await withTenant(app, orgId, (tx) => readUsageSummary(tx, NOW, 500));
+    expect(summary.eventCap).toBe(500);
+    expect(summary.pausePolicy).toBe("pause"); // Free default
+  });
+
+  it("lets an explicit org_limits row WIN over the injected default (cap and explicit-null uncapped)", async () => {
+    const capped = await seedOrg("usage-explicit-cap");
+    await withTenant(
+      app,
+      capped,
+      (tx) => tx`insert into org_limits (org_id, event_cap) values (${capped}, ${999})`,
+    );
+    expect((await withTenant(app, capped, (tx) => readUsageSummary(tx, NOW, 500))).eventCap).toBe(
+      999,
+    );
+
+    // An explicit row with a NULL event_cap = deliberately uncapped — the default must NOT override it.
+    const uncapped = await seedOrg("usage-explicit-null");
+    await withTenant(
+      app,
+      uncapped,
+      (tx) => tx`insert into org_limits (org_id, event_cap) values (${uncapped}, ${null})`,
+    );
+    expect(
+      (await withTenant(app, uncapped, (tx) => readUsageSummary(tx, NOW, 500))).eventCap,
+    ).toBeNull();
+  });
+
+  it("defaults to uncapped when no default cap is passed (unset FREE_EVENT_CAP = fail-safe)", async () => {
+    const orgId = await seedOrg("usage-no-default");
+    // No third arg → defaultEventCap null → a rowless org is uncapped (the dark/fail-safe default).
+    expect((await withTenant(app, orgId, (tx) => readUsageSummary(tx, NOW))).eventCap).toBeNull();
+  });
+
   it("reflects the org's cap, pause policy, and org-level pause state", async () => {
     const orgId = await seedOrg("usage-limits");
     await withTenant(app, orgId, async (tx) => {

@@ -64,6 +64,9 @@ jobs:
       HYPERDRIVE_NOTIFIER_ID: ${{ vars.HYPERDRIVE_NOTIFIER_ID }}
       KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}
       KV_AUTHZ_ID: ${{ vars.KV_AUTHZ_ID }}
+      # FREE_EVENT_CAP (S4.3b) — optional; this workflow emits every app's config via the generator, so it
+      # carries the var too (unset → "" → uncapped) to keep api/mcp/web configs identical across workflows.
+      FREE_EVENT_CAP: ${{ vars.FREE_EVENT_CAP }}
       AUTH_OAUTH_KV_ID: ${{ vars.AUTH_OAUTH_KV_ID }}
       AUTH_DEVICE_KV_ID: ${{ vars.AUTH_DEVICE_KV_ID }}
       AUTH_RATELIMIT_KV_ID: ${{ vars.AUTH_RATELIMIT_KV_ID }}

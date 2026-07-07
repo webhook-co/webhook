@@ -64,6 +64,10 @@ export interface ReadHandlerDeps {
   /** Engine PayloadReader RPC (S5 C2) — triggers.wait fetches the bounded inline body through it. Optional:
    *  absent → triggers.wait returns summary-only (body null). Threaded to createAgentTriggerHandlers. */
   readonly payloadReader?: PayloadReaderRpc;
+  /** The injected Free-tier default event cap (FREE_EVENT_CAP) for usage.get on a rowless org — the SAME
+   *  value the engine cap producer enforces at, so the surface shows the real cap not "uncapped" (S4.3b).
+   *  Optional; absent/null → uncapped (unset = no Free enforcement, the fail-safe default). */
+  readonly defaultEventCap?: number | null;
 }
 
 // A bound capability handler — the shared shape for BOTH reads (createReadHandlers) and writes
@@ -299,7 +303,9 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
   handlers.set(usageGet.name, async (ctx, input) => {
     ensureScope(ctx, usageGet);
     parse(usageGet, input); // input is {} — validate shape
-    return withTenant(deps.tenant, ctx.orgId, (tx) => readUsageSummary(tx, Date.now()));
+    return withTenant(deps.tenant, ctx.orgId, (tx) =>
+      readUsageSummary(tx, Date.now(), deps.defaultEventCap ?? null),
+    );
   });
 
   return handlers;

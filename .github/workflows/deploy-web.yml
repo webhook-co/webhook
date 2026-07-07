@@ -68,6 +68,9 @@ jobs:
       HYPERDRIVE_NOTIFIER_ID: ${{ vars.HYPERDRIVE_NOTIFIER_ID }}
       KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}
       KV_AUTHZ_ID: ${{ vars.KV_AUTHZ_ID }}
+      # FREE_EVENT_CAP (S4.3b) — optional Free-tier cap the usage view shows a rowless org (same GH var as
+      # the engine; unset → "" → uncapped). Must equal every other worker's value.
+      FREE_EVENT_CAP: ${{ vars.FREE_EVENT_CAP }}
       # auth.webhook.co ids — the generator emits every app each run + reqEnv()s its ids (web deploys only web).
       AUTH_OAUTH_KV_ID: ${{ vars.AUTH_OAUTH_KV_ID }}
       AUTH_DEVICE_KV_ID: ${{ vars.AUTH_DEVICE_KV_ID }}
