@@ -62,7 +62,9 @@ grant select on billing_subscriptions to webhook_app;
 create table stripe_meter_reports (
   org_id uuid not null references orgs (id) on delete cascade,
   day date not null,
-  event_count bigint not null,
+  -- event_count is the value reported to Stripe — it must never be negative (a negative meter event would
+  -- corrupt the org's billed usage). Guard it at the DB, not just the reporter code.
+  event_count bigint not null check (event_count >= 0),
   -- identifier is Stripe's idempotency key = {org}:{day}. It is UNIQUE, but RLS only checks org_id on an
   -- insert — so WITHOUT the binding CHECK below a tenant could insert '{otherOrg}:{day}' under its OWN
   -- context and pre-claim (unique) another org's outbox slot, a cross-tenant metering-sabotage vector. The
