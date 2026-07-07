@@ -385,9 +385,9 @@ describe("deriveDedup — fields mode", () => {
 });
 
 describe("resolveDedupParams", () => {
-  it("NULL config → the identifier default (24h window)", async () => {
+  it("NULL config → OFF (no auto-dedup: log every request). Dedup is opt-in.", async () => {
     const { resolveDedupParams } = await import("../src/dedup");
-    expect(resolveDedupParams(null)).toEqual({ mode: "identifier", windowMs: 86_400_000 });
+    expect(resolveDedupParams(null)).toEqual({ mode: "off" });
   });
 
   it("maps each mode to its params", async () => {
@@ -409,6 +409,6 @@ describe("resolveDedupParams", () => {
     const garbled = { mode: "evil", windowSeconds: 1 } as unknown as Parameters<
       typeof resolveDedupParams
     >[0];
-    expect(resolveDedupParams(garbled)).toEqual({ mode: "identifier", windowMs: 86_400_000 });
+    expect(resolveDedupParams(garbled)).toEqual({ mode: "off" });
   });
 });

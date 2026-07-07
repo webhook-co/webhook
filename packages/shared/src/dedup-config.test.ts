@@ -106,6 +106,19 @@ describe("DedupConfigSchema", () => {
     }
   });
 
+  it("`off` needs no windowSeconds (it never collapses); every other mode requires one", () => {
+    // off without a window is valid (matches the docs) — so a windowless off can't be silently downgraded.
+    expect(DedupConfigSchema.safeParse({ mode: "off" }).success).toBe(true);
+    // ...and a windowSeconds on off is still accepted (the dashboard/CLI always send one).
+    expect(DedupConfigSchema.safeParse({ mode: "off", windowSeconds: 3600 }).success).toBe(true);
+    // The collapsing modes still require windowSeconds.
+    expect(DedupConfigSchema.safeParse({ mode: "identifier" }).success).toBe(false);
+    expect(DedupConfigSchema.safeParse({ mode: "content" }).success).toBe(false);
+    expect(
+      DedupConfigSchema.safeParse({ mode: "fields", fields: { include: ["body.id"] } }).success,
+    ).toBe(false);
+  });
+
   it("bounds windowSeconds to [60, 604800]", () => {
     expect(DedupConfigSchema.safeParse({ mode: "identifier", windowSeconds: 59 }).success).toBe(
       false,

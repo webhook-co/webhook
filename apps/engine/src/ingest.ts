@@ -162,8 +162,6 @@ export interface IngestDeps {
   log(event: string, fields: Record<string, unknown>): void;
   /** Max captured body bytes (default MAX_VERIFIABLE_BODY_BYTES). Oversized -> 413. */
   maxBodyBytes: number;
-  /** content_hash dedup-bucket width in ms. */
-  dedupBucketWidthMs: number;
 }
 
 const PAUSED_RETRY_AFTER_SECONDS = 60;
@@ -371,12 +369,11 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   // per-request-unique dedup key, and it is the events row id below. Minting it once keeps the key,
   // the row, and the auto-delivery routing all agreed on the same identity.
   const eventId = newId();
-  // Resolve the endpoint's dedup params: its stored config (content/fields/off/identifier + window),
-  // or the default (identifier ladder, deps window) when unset. NULL config reproduces today's behavior
-  // exactly — the deps window IS the default window — so existing endpoints are unchanged.
-  const dedupParams = endpoint.dedupConfig
-    ? resolveDedupParams(endpoint.dedupConfig)
-    : ({ mode: "identifier", windowMs: deps.dedupBucketWidthMs } as const);
+  // Resolve the endpoint's dedup params from its stored config (content/fields/off/identifier + window).
+  // A NULL config resolves to the DEFAULT — which is now OFF (no auto-dedup: every request is a distinct
+  // event; dedup is opt-in). Route through resolveDedupParams so `defaultDedupParams()` is the single source
+  // of truth for what "no config" means (no inline duplicate of the default to drift).
+  const dedupParams = resolveDedupParams(endpoint.dedupConfig ?? null);
   const derived = await deriveDedup(
     raw,
     headers,

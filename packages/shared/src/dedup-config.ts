@@ -156,10 +156,25 @@ export type FieldSelector = z.infer<typeof FieldSelectorSchema>;
 export const DedupConfigSchema = z
   .object({
     mode: DedupModeSchema,
-    windowSeconds: z.number().int().min(MIN_DEDUP_WINDOW_SECONDS).max(MAX_DEDUP_WINDOW_SECONDS),
+    // Optional so `off` (which never collapses) needs no window — required for every OTHER mode via the
+    // superRefine below. Keeps the docs/API consistent (`off` takes no windowSeconds) and prevents a
+    // windowless `off` from failing validation and being silently downgraded on the cold-path read.
+    windowSeconds: z
+      .number()
+      .int()
+      .min(MIN_DEDUP_WINDOW_SECONDS)
+      .max(MAX_DEDUP_WINDOW_SECONDS)
+      .optional(),
     fields: FieldSelectorSchema.optional(),
   })
   .superRefine((cfg, ctx) => {
+    if (cfg.mode !== "off" && cfg.windowSeconds === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "`windowSeconds` is required for this mode",
+        path: ["windowSeconds"],
+      });
+    }
     if (cfg.mode === "fields" && !cfg.fields) {
       ctx.addIssue({
         code: "custom",

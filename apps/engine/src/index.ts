@@ -23,7 +23,6 @@ import {
 import {
   AwsKmsProvider,
   b64ToBytes,
-  DEFAULT_DEDUP_WINDOW_SECONDS,
   type EncryptionContext,
   importAuditKey,
   importListenTicketKey,
@@ -142,15 +141,6 @@ export interface Env {
    */
   DASHBOARD_ORIGIN?: string;
 }
-
-/**
- * content_hash dedup-bucket width. 24h ≥ the documented provider retry windows we bucket against
- * (so a redelivery inside the window collapses; a legitimately-identical body in a later bucket
- * does not). Only used by the content_hash fallback strategy.
- */
-// Single source of truth with resolveDedupParams' NULL-config default, so a NULL-config endpoint and
-// an endpoint explicitly set to identifier+default-window always bucket on the SAME width.
-const DEDUP_BUCKET_WIDTH_MS = DEFAULT_DEDUP_WINDOW_SECONDS * 1000;
 
 // Isolate-scoped DEK handle cache (ADR-0007): unwrapped, non-extractable CryptoKey handles, bounded
 // and org-scoped, reused across requests in this isolate so the KMS unwrap is amortized off the hot
@@ -385,7 +375,6 @@ export async function buildIngestDeps(env: Env, ctx: ExecutionContext): Promise<
     now: () => new Date(),
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
     maxBodyBytes: MAX_VERIFIABLE_BODY_BYTES,
-    dedupBucketWidthMs: DEDUP_BUCKET_WIDTH_MS,
   };
 
   return {

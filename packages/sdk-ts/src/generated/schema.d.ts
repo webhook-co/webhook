@@ -442,7 +442,7 @@ export interface components {
                 };
                 /** @enum {string} */
                 mode: "identifier" | "content" | "fields" | "off";
-                windowSeconds: number;
+                windowSeconds?: number;
             } | null;
             /** Format: uuid */
             id: string;
@@ -524,7 +524,7 @@ export interface components {
                 };
                 /** @enum {string} */
                 mode: "identifier" | "content" | "fields" | "off";
-                windowSeconds: number;
+                windowSeconds?: number;
             } | null;
             /** Format: uuid */
             id: string;
@@ -553,7 +553,7 @@ export interface components {
                 };
                 /** @enum {string} */
                 mode: "identifier" | "content" | "fields" | "off";
-                windowSeconds: number;
+                windowSeconds?: number;
             } | null;
             name: string;
         };
@@ -575,7 +575,7 @@ export interface components {
                 };
                 /** @enum {string} */
                 mode: "identifier" | "content" | "fields" | "off";
-                windowSeconds: number;
+                windowSeconds?: number;
             } | null;
         };
         /** @description The JSON error envelope for capability faults. */

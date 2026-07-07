@@ -108,8 +108,9 @@ export const endpointsGetCommand = buildCommand<GetFlags, [string], AppContext>(
 
 // Shared dedup-config flags for `endpoints create` / `endpoints update` (ADR-0104). `--dedup-mode`
 // selects the mode; `--dedup-window` the bucket seconds; `--dedup-field` / `--dedup-exclude` are
-// comma-separated field paths for `fields` mode. Absent `--dedup-mode` = no config (create: default;
-// update: nothing to set — use --dedup-reset). buildDedupConfig validates against the shared schema
+// comma-separated field paths for `fields` mode. Absent `--dedup-mode` = no config (create: the
+// default, which is `off` / log every request; update: nothing to set — use --dedup-reset).
+// buildDedupConfig validates against the shared schema
 // (the same one the api enforces) so a bad combo fails at the CLI, before the request.
 const dedupFlags = {
   dedupMode: {
@@ -194,6 +195,14 @@ function buildDedupConfig(flags: DedupFlagValues): DedupConfig | undefined {
       "--dedup-field / --dedup-exclude are only valid with --dedup-mode fields",
     );
   }
+  // `off` collapses nothing, so it carries no window. Reject an explicit --dedup-window with off
+  // rather than silently dropping it (the same reject-don't-drop rule as the field flags above).
+  if (flags.dedupMode === "off") {
+    if (flags.dedupWindow !== undefined) {
+      throw new MissingInputError("--dedup-window is not valid with --dedup-mode off");
+    }
+    return { mode: "off" };
+  }
   const windowSeconds = flags.dedupWindow ?? DEFAULT_DEDUP_WINDOW_SECONDS;
   const candidate =
     flags.dedupMode === "fields"
@@ -264,7 +273,7 @@ export const endpointsUpdateCommand = buildCommand<UpdateFlags, [string], AppCon
           "--dedup-reset cannot be combined with --dedup-mode / --dedup-window / --dedup-field / --dedup-exclude",
         );
       }
-      dedupConfig = null; // reset to the default
+      dedupConfig = null; // reset to the default (off / log every request)
     } else {
       const built = buildDedupConfig(flags);
       if (built === undefined) {
@@ -293,7 +302,7 @@ export const endpointsUpdateCommand = buildCommand<UpdateFlags, [string], AppCon
       ...dedupFlags,
       dedupReset: {
         kind: "boolean",
-        brief: `reset the dedup config to the default (identifier, ${DEFAULT_DEDUP_WINDOW_SECONDS}s)`,
+        brief: "reset the dedup config to the default (off — log every request)",
         default: false,
       },
     },

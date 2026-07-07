@@ -14,34 +14,29 @@ into the event you already captured, instead of showing up (and metering) twice.
 
 ## The default
 
-Every endpoint starts on the **`identifier`** mode with a **24-hour** window. It keys each request on the
-first stable signal it finds:
+Every endpoint starts with deduplication **off** — we log **every** request as a distinct event, and
+nothing is collapsed. That's the safe default for an inspection tool: you see exactly what a sender sends,
+retries and all. Deduplication is **opt-in** — turn on a mode per endpoint when a sender's retries get noisy.
 
-1. a Standard Webhooks `webhook-id` header,
-2. a recognized provider's event id (header- or body-borne), then
-3. a content hash of the request — the HTTP method, a canonicalized path + query, and the body, within
-   the time window.
-
-Two identical retries collapse; two genuinely different requests stay distinct. This default needs no
-configuration.
+<Warning>
+  With dedup off, **every** request is a distinct, billable event — including retries and any
+  non-webhook traffic (uptime checks, link previews) that reaches the URL. Enable a dedup mode to
+  collapse retries; your soft cap pauses ingestion before a runaway bill.
+</Warning>
 
 ## Modes
 
-Set a per-endpoint `dedupConfig` to change how the key is derived:
+Set a per-endpoint `dedupConfig` to turn on deduplication and choose how the key is derived:
 
-| Mode                   | Keys on                                                      | Use it when                                                          |
-| ---------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
-| `identifier` (default) | id ladder, then content hash                                 | the sender supplies a stable id, or you want the safe default        |
-| `content`              | the canonical request content (method + path + query + body) | the sender's ids are unreliable or reused across distinct events     |
-| `fields`               | operator-selected field paths                                | the sender has no stable id but a stable field (e.g. `body.data.id`) |
-| `off`                  | nothing — every request is its own event                     | you want to capture every request (testing, debugging)               |
+| Mode            | Keys on                                                                                                         | Use it when                                                          |
+| --------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `off` (default) | nothing — every request is its own event                                                                        | you want to capture every request (the default; testing, debugging)  |
+| `identifier`    | id ladder (a Standard Webhooks `webhook-id` header, then a recognized provider's event id), then a content hash | the sender supplies a stable id                                      |
+| `content`       | the canonical request content (method + path + query + body)                                                    | the sender's ids are unreliable or reused across distinct events     |
+| `fields`        | operator-selected field paths                                                                                   | the sender has no stable id but a stable field (e.g. `body.data.id`) |
 
-Each mode (except `off`) takes a `windowSeconds` (60–604800). `off` disables collapsing entirely.
-
-<Warning>
-  `off` means **every** request is a distinct, billable event — including retries and any
-  non-webhook traffic (uptime checks, link previews) that reaches the URL. Use it deliberately.
-</Warning>
+Every mode **except `off`** takes a `windowSeconds` (60–604800), the window within which repeats collapse.
+`off` takes no window — it never collapses.
 
 ## Field paths
 

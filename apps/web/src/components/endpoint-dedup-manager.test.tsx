@@ -26,23 +26,28 @@ async function pickMode(user: ReturnType<typeof userEvent.setup>, optionLabel: R
 describe("EndpointDedupManager", () => {
   it("renders the current mode from the stored config", () => {
     renderManager({ mode: "content", windowSeconds: 3600 });
-    expect(screen.getByRole("button", { name: /deduplication mode: match on full content/i }));
+    expect(
+      screen.getByRole("button", { name: /deduplication mode: collapse identical payloads/i }),
+    );
     // The window is shown for a non-off mode, seeded from the stored value.
     expect(screen.getByLabelText(/deduplication window/i)).toHaveValue(3600);
   });
 
-  it("defaults a null config to the automatic mode with the 24h window", () => {
+  it("defaults a null config to OFF (log every request — no auto-dedup)", () => {
     renderManager(null);
-    expect(screen.getByRole("button", { name: /deduplication mode: automatic/i }));
-    expect(screen.getByLabelText(/deduplication window/i)).toHaveValue(86400);
+    expect(screen.getByRole("button", { name: /deduplication mode: log every request/i }));
+    // off carries no window and shows the log-everything note.
+    expect(screen.queryByLabelText(/deduplication window/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/counts toward usage/i)).toBeInTheDocument();
   });
 
-  it("shows the billing warning and hides the window when switched to off", async () => {
+  it("shows window + no warning for a collapsing mode; the billing warning + no window for off", async () => {
     const user = userEvent.setup();
-    renderManager(null);
+    renderManager({ mode: "content", windowSeconds: 3600 }); // a collapsing mode: window shown, no warning
     expect(screen.getByLabelText(/deduplication window/i)).toBeInTheDocument();
+    expect(screen.queryByText(/counts toward usage/i)).not.toBeInTheDocument();
 
-    await pickMode(user, /off — record every request/i);
+    await pickMode(user, /log every request/i); // → off
 
     expect(screen.getByText(/counts toward usage/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/deduplication window/i)).not.toBeInTheDocument();
@@ -53,7 +58,7 @@ describe("EndpointDedupManager", () => {
     renderManager(null);
     expect(screen.queryByLabelText(/^include fields/i)).not.toBeInTheDocument();
 
-    await pickMode(user, /match on specific fields/i);
+    await pickMode(user, /collapse on specific fields/i);
     expect(screen.getByLabelText(/^include fields/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/^exclude fields/i)).toBeInTheDocument();
   });
@@ -103,7 +108,7 @@ describe("EndpointDedupManager", () => {
     update.mockResolvedValue({ ok: true, dedupConfig: { mode: "content", windowSeconds: 120 } });
     renderManager(null);
 
-    await pickMode(user, /match on full content/i);
+    await pickMode(user, /collapse identical payloads/i);
     await user.clear(screen.getByLabelText(/deduplication window/i));
     await user.type(screen.getByLabelText(/deduplication window/i), "120");
     await user.click(screen.getByRole("button", { name: /save changes/i }));
@@ -147,7 +152,7 @@ describe("EndpointDedupManager", () => {
     update.mockResolvedValue({ ok: false, error: "That deduplication config isn't valid." });
     renderManager(null);
 
-    await pickMode(user, /match on full content/i);
+    await pickMode(user, /collapse identical payloads/i);
     await user.click(screen.getByRole("button", { name: /save changes/i }));
 
     await waitFor(() =>
@@ -194,7 +199,7 @@ describe("EndpointDedupManager", () => {
     const { rerender } = render(
       <EndpointDedupManager endpointId={ENDPOINT} initial={null} update={update} />,
     );
-    await pickMode(user, /match on full content/i);
+    await pickMode(user, /collapse identical payloads/i);
     await user.clear(screen.getByLabelText(/deduplication window/i));
     await user.type(screen.getByLabelText(/deduplication window/i), "120");
     await user.click(screen.getByRole("button", { name: /save changes/i }));
@@ -222,7 +227,7 @@ describe("EndpointDedupManager", () => {
     );
     renderManager(null);
 
-    await pickMode(user, /match on full content/i);
+    await pickMode(user, /collapse identical payloads/i);
     await user.dblClick(screen.getByRole("button", { name: /save changes/i }));
     expect(update).toHaveBeenCalledTimes(1);
 
