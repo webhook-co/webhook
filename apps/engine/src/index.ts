@@ -8,6 +8,7 @@ import {
   DEFAULT_CAP_PRODUCER_LIMIT,
   DEFAULT_METERING_ROLLUP_LIMIT,
   DEFAULT_RECONCILE_LIMIT,
+  makeCapTransitionEvictor,
   makeIngestHashEvictor,
   runCapProducer,
   enqueueAutoDeliveries,
@@ -906,18 +907,9 @@ async function runMeteringRollupCron(env: Env): Promise<void> {
       defaultEventCap,
       limit: DEFAULT_CAP_PRODUCER_LIMIT,
       log,
-      onTransition: async (orgId) => {
-        // Evict every live endpoint's ingest-token cache entry for this org, so the flipped pause state
-        // is picked up on the next cold miss. Read the token hashes under the org's RLS (webhook_app).
-        const hashes = await withTenant(
-          app,
-          orgId,
-          (tx) =>
-            tx<{ ingest_token_hash: Uint8Array }[]>`
-            select ingest_token_hash from endpoints where deleted_at is null`,
-        );
-        await Promise.all(hashes.map((h) => evict(h.ingest_token_hash)));
-      },
+      // On each transition, evict every live endpoint's ingest-token cache entry for this org so the
+      // flipped pause state is picked up on the next cold miss (extracted + integration-tested seam).
+      onTransition: makeCapTransitionEvictor(app, evict),
     });
     log("metering.cap.done", { ...cap });
   } finally {

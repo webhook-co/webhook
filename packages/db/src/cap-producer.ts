@@ -52,6 +52,31 @@ export interface CapProducerResult {
   readonly capped: boolean;
 }
 
+/**
+ * The `onTransition` edge-eviction callback the metering cron passes to {@link runCapProducer}: on an
+ * org's pause↔resume transition, evict EVERY live endpoint's ingest-token cache entry for that org (the
+ * pause flag is per-org, the KV cache is per-endpoint-token-hash — so one org transition must fan out to
+ * all its endpoints, or a missed hash leaves a stale principal on that endpoint until the TTL backstop).
+ * Extracted here (where the ephemeral-Postgres harness lives) so the fan-out is integration-tested, not
+ * just wired inline in the Worker. Reads the token hashes under the org's RLS (webhook_app). Eviction
+ * direction-agnostic: pause AND resume both need the cached principal refreshed, so `paused` is unused.
+ */
+export function makeCapTransitionEvictor(
+  app: Sql,
+  evict: (tokenHash: Uint8Array) => Promise<void>,
+): (orgId: string) => Promise<void> {
+  return async (orgId) => {
+    const hashes = await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx<{ ingest_token_hash: Uint8Array }[]>`
+          select ingest_token_hash from endpoints where deleted_at is null`,
+    );
+    await Promise.all(hashes.map((h) => evict(h.ingest_token_hash)));
+  };
+}
+
 export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducerResult> {
   const period = currentBillingPeriod(deps.now);
 

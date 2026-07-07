@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { runCapProducer } from "../src/cap-producer";
+import { makeCapTransitionEvictor, runCapProducer } from "../src/cap-producer";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
@@ -19,6 +19,7 @@ const DEFAULT_CAP = 100; // injected Free default (test value; never hardcoded i
 let pg: EphemeralPostgres;
 let app: Sql;
 let meter: Sql;
+let admin: Sql; // superuser (bypasses RLS) — for cross-org cleanup between tests
 
 async function seedOrg(slug: string): Promise<string> {
   const orgId = randomUUID();
@@ -48,13 +49,14 @@ interface RunOpts {
   onTransition?: (orgId: string, paused: boolean) => Promise<void>;
   log?: (m: string, f?: Record<string, unknown>) => void;
   limit?: number;
+  defaultEventCap?: number | null;
 }
 async function run(opts: RunOpts = {}) {
   return runCapProducer({
     meter,
     app,
     now: NOW,
-    defaultEventCap: DEFAULT_CAP,
+    defaultEventCap: opts.defaultEventCap === undefined ? DEFAULT_CAP : opts.defaultEventCap,
     limit: opts.limit ?? 1000,
     onTransition: opts.onTransition,
     log: opts.log,
@@ -66,11 +68,26 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
+  admin = createClient(pg.ownerUrl); // the postgres superuser — bypasses RLS for cleanup
 }, 90_000);
+
+// Per-test isolation: runCapProducer enumerates ALL orgs cross-tenant, so state seeded by one test
+// would otherwise perturb another's global transition counts. Clear the mutable tables before each test
+// (as owner, bypassing RLS) so every test starts clean and its counters are exact. DELETE (not TRUNCATE
+// CASCADE) — cascade would hit audit_log's append-only guard; child→parent order respects the FKs.
+beforeEach(async () => {
+  await admin`delete from events`;
+  await admin`delete from usage`;
+  await admin`delete from ingest_paused`;
+  await admin`delete from org_limits`;
+  await admin`delete from endpoints`;
+  await admin`delete from orgs`;
+});
 
 afterAll(async () => {
   await app?.end();
   await meter?.end();
+  await admin?.end();
   await pg?.stop();
 });
 
@@ -119,6 +136,21 @@ describe("runCapProducer", () => {
     const result = await run();
     expect(result.pausedTransitions).toBe(0);
     expect(await pausedState(orgId)).toBeNull();
+  });
+
+  it("NEVER pauses a Free org when the default cap is null (FREE_EVENT_CAP unset/invalid = uncapped)", async () => {
+    // The fail-safe: a huge-usage Free org with no injected cap must not pause. A regression here would
+    // mass-pause every Free org whenever FREE_EVENT_CAP is unset — the exact outage the guard prevents.
+    const orgId = await seedOrg("cap-free-uncapped");
+    await seedUsage(orgId, 10_000_000); // >> any tier cap
+    const evicted: string[] = [];
+    const result = await run({
+      defaultEventCap: null,
+      onTransition: async (o) => void evicted.push(o),
+    });
+    expect(result.pausedTransitions).toBe(0);
+    expect(await pausedState(orgId)).toBeNull();
+    expect(evicted).toEqual([]); // no transition → no eviction
   });
 
   it("respects an explicit org_limits cap over the default", async () => {
@@ -183,5 +215,47 @@ describe("runCapProducer", () => {
     expect(result.pausedTransitions).toBe(1);
     expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" }); // durable write survived
     expect(logs).toContain("metering.cap.evict_failed");
+  });
+});
+
+describe("makeCapTransitionEvictor (the onTransition edge-eviction fan-out)", () => {
+  async function seedEndpoint(orgId: string, name: string, deleted = false): Promise<Uint8Array> {
+    const hash = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, ""); // 64 hex chars
+    const bytes = Buffer.from(hash, "hex"); // 32-byte token hash
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into endpoints (id, org_id, ingest_token_hash, name, deleted_at)
+               values (${randomUUID()}, ${orgId}, ${bytes}, ${name}, ${deleted ? new Date().toISOString() : null})`;
+    });
+    return new Uint8Array(bytes);
+  }
+
+  it("evicts EVERY live endpoint's ingest-token hash for the org, skipping soft-deleted ones", async () => {
+    const orgId = await seedOrg("evict-fanout");
+    const h1 = await seedEndpoint(orgId, "ep-1");
+    const h2 = await seedEndpoint(orgId, "ep-2");
+    await seedEndpoint(orgId, "ep-deleted", true); // must NOT be evicted
+
+    const evicted: string[] = [];
+    const evict = async (h: Uint8Array) => void evicted.push(Buffer.from(h).toString("hex"));
+    const onTransition = makeCapTransitionEvictor(app, evict);
+    await onTransition(orgId);
+
+    const hex = (h: Uint8Array) => Buffer.from(h).toString("hex");
+    expect(evicted.sort()).toEqual([hex(h1), hex(h2)].sort());
+    expect(evicted).toHaveLength(2); // the deleted endpoint's hash is excluded
+  });
+
+  it("is RLS-scoped — evicts only the target org's endpoints, never another org's", async () => {
+    const a = await seedOrg("evict-iso-a");
+    const b = await seedOrg("evict-iso-b");
+    const ha = await seedEndpoint(a, "a-ep");
+    await seedEndpoint(b, "b-ep");
+
+    const evicted: string[] = [];
+    await makeCapTransitionEvictor(
+      app,
+      async (h) => void evicted.push(Buffer.from(h).toString("hex")),
+    )(a);
+    expect(evicted).toEqual([Buffer.from(ha).toString("hex")]);
   });
 });
