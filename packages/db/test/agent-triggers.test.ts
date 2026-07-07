@@ -584,6 +584,38 @@ describe("triggers.wait inline body (C2 — PayloadReader attachment)", () => {
     expect(ev.bodyTruncated).toBe(false);
   });
 
+  it("forwards maxBodyBytes as maxBytesEach and the caller's orgId to the RPC (default = 64 KiB)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-body-cap" }, hasher)).id;
+    await seedEvent(orgA, ep, { at: at(1000) });
+    const t = await createAgentTrigger(app, { orgId: orgA, endpointId: ep });
+    // A spy reader capturing exactly what the handler passes down (orgId must be the pinned ctx principal).
+    const seen: { orgId: string; maxBytesEach: number }[] = [];
+    const spy = {
+      readBoundedBodies: async (a: {
+        orgId: string;
+        eventIds: readonly string[];
+        maxBytesEach: number;
+      }) => {
+        seen.push({ orgId: a.orgId, maxBytesEach: a.maxBytesEach });
+        return a.eventIds.map((eventId) => ({
+          eventId,
+          found: false,
+          body: null,
+          encoding: "utf8" as const,
+          byteLength: 0,
+          truncated: false,
+          contentType: null,
+        }));
+      },
+    };
+    await waitWith(spy, ctx(["events:read"]), { triggerId: t.id, maxBodyBytes: 512 });
+    await waitWith(spy, ctx(["events:read"]), { triggerId: t.id }); // omitted → server default
+    expect(seen).toEqual([
+      { orgId: orgA, maxBytesEach: 512 },
+      { orgId: orgA, maxBytesEach: 65536 },
+    ]);
+  });
+
   it("degrades to summary-only (body null) when the PayloadReader RPC THROWS — never fails the poll", async () => {
     const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-body-5" }, hasher)).id;
     const e1 = await seedEvent(orgA, ep, { at: at(1000) });

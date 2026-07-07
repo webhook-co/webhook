@@ -41,9 +41,6 @@ import {
   parseFreeEventCap,
   parseSince,
   readSecretBinding,
-  boundedBodyFromBytes,
-  MAX_INLINE_BODY_BYTES,
-  readPayloadKey,
   type BoundedPayloadBody,
   type ReadBoundedBodiesArgs,
   type RevealedIngestToken,
@@ -76,6 +73,7 @@ import {
   type VerifyIngestInput,
 } from "./ingest";
 import { makeKeyFetcher } from "./key-fetch";
+import { readBoundedBodiesCore, type PayloadEventRow } from "./payload-reader";
 import { makeVerifyIngest } from "./verify";
 
 // The per-session listen-tunnel Durable Object (Slice 11b, ADR-0014); wrangler binds it via
@@ -789,82 +787,35 @@ export class IngestUrlRevealer extends WorkerEntrypoint<Env> {
  */
 export class PayloadReader extends WorkerEntrypoint<Env> {
   async readBoundedBodies(args: ReadBoundedBodiesArgs): Promise<BoundedPayloadBody[]> {
-    const { orgId, eventIds } = args;
-    if (eventIds.length === 0) return [];
-    const cap = Math.max(1, Math.min(args.maxBytesEach, MAX_INLINE_BODY_BYTES));
-    const notFound = (eventId: string): BoundedPayloadBody => ({
-      eventId,
-      found: false,
-      body: null,
-      encoding: "utf8",
-      byteLength: 0,
-      truncated: false,
-      contentType: null,
-    });
-    // Hold the tenant connection ONLY for the RLS id lookup, then release it (the rows are already
-    // materialized). The R2 body reads run AFTER — parallel and connection-free — so a slow/large fetch
-    // never pins a Postgres connection across N round-trips.
-    const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
-    let rows: {
-      id: string;
-      endpoint_id: string;
-      payload_r2_key: string;
-      // `bigint` column: postgres.js returns it as a JS string, so type it honestly + Number() it below.
-      payload_bytes: string | number;
-      content_type: string | null;
-    }[];
-    try {
-      // RLS-scoped read: only this org's events resolve; a cross-org / unknown id is simply absent.
-      rows = await withTenant(
-        tenant,
-        orgId,
-        (tx) =>
-          tx<typeof rows>`
-          select id, endpoint_id, payload_r2_key, payload_bytes, content_type
-          from events where id in ${tx([...eventIds])}`,
-      );
-    } finally {
-      await tenant.end({ timeout: 5 }).catch(() => {});
-    }
-    const byId = new Map(rows.map((r) => [r.id, r]));
-    // Fetch each event's bounded body CONCURRENTLY (one round-trip wide, not N deep). A per-event failure
-    // (missing/fenced key, R2 hiccup, unsatisfiable range) degrades THAT ONE event to found:false — it never
-    // rejects the whole page (the caller further degrades a total RPC failure to summary-only).
-    return Promise.all(
-      eventIds.map(async (eventId): Promise<BoundedPayloadBody> => {
-        const row = byId.get(eventId);
-        if (row === undefined) return notFound(eventId);
-        const key = readPayloadKey(orgId, row.endpoint_id, row.payload_r2_key);
-        if (key === null) return notFound(eventId);
-        const storedBytes = Number(row.payload_bytes);
-        // A 0-byte captured body is stored as an empty R2 object; an offset-0 range read on it is an
-        // unsatisfiable range (R2 can 416/throw). Short-circuit to an explicit empty body — honest
-        // (found:true, the event exists and its body is empty) and never issues the doomed range GET.
-        if (storedBytes === 0) {
-          return {
-            eventId,
-            found: true,
-            body: "",
-            encoding: "utf8",
-            byteLength: 0,
-            truncated: false,
-            contentType: row.content_type,
-          };
-        }
-        try {
+    // The isolation + bounded-read logic (RLS lookup → key fence → capped range read → per-event failure
+    // isolation → 0-byte short-circuit) lives in the injected-deps core (apps/engine/src/payload-reader.ts),
+    // so it's provable with fakes. Here we just wire the real deps.
+    return readBoundedBodiesCore(
+      {
+        // Hold the tenant connection ONLY for the RLS id lookup, then release it (the rows are already
+        // materialized) — the core's R2 reads run AFTER, connection-free, so a slow/large fetch never pins a
+        // Postgres connection across N round-trips.
+        lookupEvents: async (orgId, eventIds) => {
+          const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+          try {
+            return await withTenant(
+              tenant,
+              orgId,
+              (tx) =>
+                tx<PayloadEventRow[]>`
+                select id, endpoint_id, payload_r2_key, payload_bytes, content_type
+                from events where id in ${tx([...eventIds])}`,
+            );
+          } finally {
+            await tenant.end({ timeout: 5 }).catch(() => {});
+          }
+        },
+        readObject: async (key, cap) => {
           const obj = await this.env.R2_PAYLOADS.get(key, { range: { offset: 0, length: cap } });
-          if (obj === null) return notFound(eventId);
-          const bytes = new Uint8Array(await obj.arrayBuffer());
-          return {
-            eventId,
-            found: true,
-            contentType: row.content_type,
-            ...boundedBodyFromBytes(bytes, storedBytes),
-          };
-        } catch {
-          return notFound(eventId);
-        }
-      }),
+          return obj === null ? null : new Uint8Array(await obj.arrayBuffer());
+        },
+      },
+      args,
     );
   }
 }
