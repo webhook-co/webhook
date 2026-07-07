@@ -78,6 +78,13 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/setup
+      # apps/web reads the tenant DB, so it must not auto-deploy past an un-applied migration either. Blocks
+      # when HEAD is ahead of the global prod-schema tag by a migration; recovery is applying the migration
+      # (scripts/apply-prod-migrations.sh advances the tag) then pushing, or a workflow_dispatch override.
+      - name: Migration guard (auto-deploy must not outrun a manual migration)
+        id: migguard
+        if: github.event_name == 'push'
+        uses: ./.github/actions/migration-guard
       # apps/web's OpenNext build type-checks against the workspace deps' built .d.ts (the tsconfig
       # dist-redirects for the WebCrypto/KVNamespace helpers), so build their dist first.
       - name: Build workspace deps
@@ -89,7 +96,9 @@ jobs:
       - name: Deploy production (app.webhook.co)
         # main-only: a push to main, or a workflow_dispatch with main selected. Without the ref guard a
         # dispatch from a feature branch would ship unreviewed code straight to prod — keep the gate real.
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        # The migration guard blocks a PUSH that added a migration since prod last deployed (workflow_dispatch
+        # bypasses it — the operator runs that after applying the migration).
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.migguard.outputs.blocked != 'true'
         run: pnpm --filter @webhook-co/web exec wrangler deploy -c wrangler.prod.jsonc
       - name: Validate deploy (dry-run)
         if: github.event_name == 'pull_request'

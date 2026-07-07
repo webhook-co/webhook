@@ -1,0 +1,85 @@
+name: Migration guard
+description: >
+  Block an AUTO deploy when a migration exists at HEAD that isn't applied to prod, so new code never runs
+  against an un-applied migration (migrations are applied manually, decoupled from CD). The base is the global
+  `prod-schema` git tag — advanced ONLY by scripts/apply-prod-migrations.sh after a real `dbmate up` — so it is
+  a truthful record of prod's schema (unlike deploy-success). The tested decision logic lives in
+  scripts/migration-guard.mjs. Recovery from a block: apply the migration (advances the tag), then push; or an
+  explicit workflow_dispatch override (which does not move the tag, so it can never blind the guard).
+
+outputs:
+  blocked:
+    description: "'true' when the auto-deploy must be skipped (an unapplied migration); else 'false'."
+    value: ${{ steps.guard.outputs.blocked }}
+
+runs:
+  using: composite
+  steps:
+    - id: guard
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      with:
+        script: |
+          const path = require('path');
+          const { pathToFileURL } = require('url');
+          // Single, unit-tested source of the decision logic (scripts/migration-guard.test.mjs), so the
+          // three deploy workflows and their tests never drift.
+          const { guardDecision } = await import(
+            pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'scripts/migration-guard.mjs')).href
+          );
+          const { owner, repo } = context.repo;
+          const MIGRATIONS_DIR = 'packages/db/db/migrations';
+
+          // List the migration dir entries {name, sha} at a ref. We compare the (name, blob-sha) SET at
+          // prod-schema vs HEAD (not a commit-range diff): the tag moves only on apply, so the range can
+          // exceed GitHub's 250-commit / 300-file compare limits and truncate — listing just the dir is
+          // bounded, exact, and (via the blob sha) also catches an in-place edit to an applied migration.
+          // NB one GLOBAL tag ⇒ an unapplied migration for ANY app pauses ALL apps' auto-deploys until it is
+          // applied (the safe stance for a shared DB; recovery = apply it, or workflow_dispatch to override).
+          const listMigrations = async (ref) => {
+            const res = await github.rest.repos.getContent({ owner, repo, path: MIGRATIONS_DIR, ref });
+            if (!Array.isArray(res.data)) throw new Error(`${MIGRATIONS_DIR} did not resolve to a directory`);
+            // getContent returns up to 1000 dir entries; if we ever exceed that, fail closed (see catch) via
+            // this sentinel rather than silently comparing a truncated set.
+            if (res.data.length >= 1000) throw new Error('migrations dir listing hit the 1000-entry cap');
+            return res.data.map((e) => ({ name: e.name, sha: e.sha }));
+          };
+
+          try {
+            // Fetch both listings concurrently; preserve the precise 404-on-base → bootstrap message.
+            const [baseRes, headRes] = await Promise.allSettled([
+              listMigrations('prod-schema'),
+              listMigrations(context.sha),
+            ]);
+            if (baseRes.status === 'rejected') {
+              if (baseRes.reason && baseRes.reason.status === 404) {
+                // No marker yet (or its ref is gone) ⇒ can't prove the schema is current → FAIL CLOSED.
+                // One-time bootstrap: run scripts/apply-prod-migrations.sh (creates/advances the tag).
+                core.setOutput('blocked', 'true');
+                core.warning(
+                  'Auto-deploy blocked: the `prod-schema` tag is missing. Apply pending migrations with ' +
+                    'scripts/apply-prod-migrations.sh (which creates/advances the tag), then deploy via Run ' +
+                    'workflow (workflow_dispatch).',
+                );
+                return;
+              }
+              throw baseRes.reason;
+            }
+            if (headRes.status === 'rejected') throw headRes.reason;
+            const { blocked, reason, migrations } = guardDecision(baseRes.value, headRes.value);
+            core.setOutput('blocked', blocked ? 'true' : 'false');
+            if (blocked) {
+              core.warning(
+                `Auto-deploy skipped (${reason}): migration(s) not applied to prod — ` +
+                  `${migrations.join(', ') || '(unable to enumerate)'}. Apply with ` +
+                  'scripts/apply-prod-migrations.sh (advances the prod-schema tag) then push, or ' +
+                  'workflow_dispatch to override.',
+              );
+            }
+          } catch (e) {
+            // FAIL CLOSED: a transient API error must never let a migration-bearing change auto-deploy.
+            core.setOutput('blocked', 'true');
+            core.warning(
+              `Auto-deploy skipped (migration check failed: ${e.message}). Confirm prod migrations are ` +
+                'applied, then deploy via Run workflow (workflow_dispatch).',
+            );
+          }

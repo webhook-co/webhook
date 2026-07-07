@@ -28,6 +28,20 @@ Never do a breaking change in one step. Split across releases:
 - [ ] **Audit log untouched** — never rewrite or delete hash-chained audit history.
 - [ ] Metering data integrity preserved (event counts stay accurate, single-dimension, dedup-safe).
 
+## Applying to prod (schema-before-deploy)
+
+Migrations are applied **manually**, decoupled from CD, and **before** the code that depends on them
+deploys. Apply with **`scripts/apply-prod-migrations.sh`** (with `DATABASE_URL` set to the prod
+`webhook_owner` connection) — **not** a bare `dbmate up`. The script runs the migration **and** advances
+the global `prod-schema` git tag to the applied commit.
+
+That tag is the deploy **migration-guard**'s source of truth: the three deploy workflows
+(`deploy.yml` / `deploy-web.yml` / `deploy-auth.yml`) block an **auto** deploy whenever `HEAD` is ahead of
+`prod-schema` by a migration — so new code can never auto-deploy against an un-applied schema. If you apply
+with a bare `dbmate up`, the tag doesn't move and the next migration-bearing push will be blocked with a
+message telling you to run the script. Recovery from a block: run the script (applies + advances the tag),
+then push — or `workflow_dispatch` to override (which does **not** move the tag, so it can't blind the guard).
+
 ## Guardrails
 
 - Forward-only in spirit; reversible in practice. No destructive change in the same release that
