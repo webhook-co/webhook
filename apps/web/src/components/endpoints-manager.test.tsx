@@ -12,11 +12,18 @@ const ep: EndpointItem = {
   name: "Stripe prod",
   paused: false,
   createdAt: new Date("2026-06-25T00:00:00Z"),
+  dedupConfig: null,
 };
 
 const created: CreateEndpointResult = {
   ok: true,
-  endpoint: { id: "ep_new", name: "GitHub", paused: false, createdAt: new Date() },
+  endpoint: {
+    id: "ep_new",
+    name: "GitHub",
+    paused: false,
+    createdAt: new Date(),
+    dedupConfig: null,
+  },
   ingestUrl: "https://wbhk.my/whep_secret123",
 };
 
@@ -83,6 +90,74 @@ describe("EndpointsManager", () => {
     );
   });
 
+  it("threads a non-default dedup mode into the create action", async () => {
+    const user = userEvent.setup();
+    const createEndpoint = vi.fn(async () => created);
+    render(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [] }}
+        createEndpoint={createEndpoint}
+        {...noopActions}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /create endpoint/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
+    // Switch the dedup mode from the default "Automatic" to "Match on full content".
+    await user.click(within(dialog).getByRole("button", { name: /deduplication: automatic/i }));
+    await user.click(screen.getByRole("option", { name: /match on full content/i }));
+    await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
+
+    expect(createEndpoint).toHaveBeenCalledWith({
+      name: "GitHub",
+      dedupConfig: { mode: "content", windowSeconds: 86400 },
+    });
+  });
+
+  it("blocks create and shows a range error for an out-of-range dedup window (never silently clamps)", async () => {
+    const user = userEvent.setup();
+    const createEndpoint = vi.fn(async () => created);
+    render(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [] }}
+        createEndpoint={createEndpoint}
+        {...noopActions}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /create endpoint/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
+    const window = within(dialog).getByLabelText(/deduplication window/i);
+    await user.clear(window);
+    await user.type(window, "10"); // below the 60s minimum
+
+    expect(within(dialog).getByText(/between 60 and 604800/i)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: /^create$/i })).toBeDisabled();
+    expect(createEndpoint).not.toHaveBeenCalled();
+  });
+
+  it("omits the dedup config when the create keeps the automatic default", async () => {
+    const user = userEvent.setup();
+    const createEndpoint = vi.fn(async () => created);
+    render(
+      <EndpointsManager
+        initialResult={{ status: "ok", endpoints: [] }}
+        createEndpoint={createEndpoint}
+        {...noopActions}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /create endpoint/i }));
+    const dialog = screen.getByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
+    await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
+
+    // The automatic default sends NO dedupConfig — the endpoint keeps the null default.
+    expect(createEndpoint).toHaveBeenCalledWith({ name: "GitHub" });
+  });
+
   it("surfaces the action error in the form without revealing a URL", async () => {
     const user = userEvent.setup();
     const createEndpoint = vi.fn(async () => ({
@@ -120,6 +195,7 @@ describe("EndpointsManager", () => {
       name: "GitHub prod",
       paused: false,
       createdAt: new Date("2026-06-26T00:00:00Z"),
+      dedupConfig: null,
     };
     rerender(
       <EndpointsManager

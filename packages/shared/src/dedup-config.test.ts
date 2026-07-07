@@ -2,10 +2,15 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import {
+  clampDedupWindow,
   DEDUP_MODES,
   DedupConfigSchema,
+  DEFAULT_DEDUP_WINDOW_SECONDS,
+  isDedupWindowInRange,
+  MAX_DEDUP_WINDOW_SECONDS,
   MAX_FIELD_PATHS,
   MAX_PATH_SEGMENTS,
+  MIN_DEDUP_WINDOW_SECONDS,
   parseFieldPath,
 } from "./dedup-config";
 
@@ -157,5 +162,29 @@ describe("DedupConfigSchema", () => {
   it("stays JSON-Schema-serializable (no coerce/transform in the input)", () => {
     // Mirrors the contract build-gate: a coerce/transform would throw here.
     expect(() => z.toJSONSchema(DedupConfigSchema)).not.toThrow();
+  });
+});
+
+describe("dedup window helpers (shared by every UI surface)", () => {
+  it("isDedupWindowInRange accepts whole seconds inside [60, 604800] only", () => {
+    expect(isDedupWindowInRange(MIN_DEDUP_WINDOW_SECONDS)).toBe(true);
+    expect(isDedupWindowInRange(MAX_DEDUP_WINDOW_SECONDS)).toBe(true);
+    expect(isDedupWindowInRange("3600")).toBe(true);
+    // out of range, empty, fractional, non-numeric → false (so a form rejects rather than silently clamps)
+    expect(isDedupWindowInRange(10)).toBe(false);
+    expect(isDedupWindowInRange(MAX_DEDUP_WINDOW_SECONDS + 1)).toBe(false);
+    expect(isDedupWindowInRange("")).toBe(false);
+    expect(isDedupWindowInRange("  ")).toBe(false);
+    expect(isDedupWindowInRange("60.5")).toBe(false);
+    expect(isDedupWindowInRange("abc")).toBe(false);
+  });
+
+  it("clampDedupWindow rounds + clamps into range, defaulting a blank/non-numeric entry", () => {
+    expect(clampDedupWindow("3600")).toBe(3600);
+    expect(clampDedupWindow(10)).toBe(MIN_DEDUP_WINDOW_SECONDS);
+    expect(clampDedupWindow(MAX_DEDUP_WINDOW_SECONDS + 100)).toBe(MAX_DEDUP_WINDOW_SECONDS);
+    expect(clampDedupWindow("120.4")).toBe(120);
+    expect(clampDedupWindow("")).toBe(DEFAULT_DEDUP_WINDOW_SECONDS);
+    expect(clampDedupWindow("abc")).toBe(DEFAULT_DEDUP_WINDOW_SECONDS);
   });
 });

@@ -3,7 +3,7 @@ import "server-only";
 import { withTenant, type Sql } from "@webhook-co/db/client";
 import { DEFAULT_MAX_ENDPOINTS_PER_ORG } from "@webhook-co/db/endpoints";
 import { getEndpoint, listEndpoints } from "@webhook-co/db/reads";
-import type { Cursor, Endpoint } from "@webhook-co/shared";
+import type { Cursor, DedupConfig, Endpoint } from "@webhook-co/shared";
 
 import { getTenantDb } from "./db";
 
@@ -18,6 +18,8 @@ export interface EndpointItem {
   readonly name: string;
   readonly paused: boolean;
   readonly createdAt: Date;
+  /** The endpoint's deduplication config, or null when it uses the default (identifier ladder, 24h). */
+  readonly dedupConfig: DedupConfig | null;
 }
 
 export type EndpointsResult =
@@ -45,7 +47,13 @@ export function isUuid(value: string): boolean {
 
 /** Project the db `Endpoint` to the browser-safe `EndpointItem` (drops orgId — never serialized to props). */
 function toItem(e: Endpoint): EndpointItem {
-  return { id: e.id, name: e.name, paused: e.paused, createdAt: e.createdAt };
+  return {
+    id: e.id,
+    name: e.name,
+    paused: e.paused,
+    createdAt: e.createdAt,
+    dedupConfig: e.dedupConfig,
+  };
 }
 
 interface ItemPage {

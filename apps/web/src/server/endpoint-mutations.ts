@@ -11,7 +11,9 @@ import {
   DEFAULT_MAX_ENDPOINTS_PER_ORG,
   deleteEndpointWithAudit,
   rotateEndpointWithAudit,
+  updateEndpointDedupWithAudit,
 } from "@webhook-co/db/endpoints";
+import type { DedupConfig } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
@@ -63,11 +65,20 @@ export interface CreateEndpointInput {
   readonly orgId: string;
   readonly userId: string;
   readonly name: string;
+  /** The endpoint's initial dedup config; null (or omitted) uses the default identifier ladder. */
+  readonly dedupConfig?: DedupConfig | null;
 }
 export interface MutateEndpointInput {
   readonly orgId: string;
   readonly userId: string;
   readonly endpointId: string;
+}
+/** Inputs to a dedup-config update: the target endpoint + the new config (null resets to the default). */
+export interface MutateDedupInput {
+  readonly orgId: string;
+  readonly userId: string;
+  readonly endpointId: string;
+  readonly dedupConfig: DedupConfig | null;
 }
 
 /** A created or rotated endpoint plus its one-time ingest URL (the token is revealed ONCE). */
@@ -76,6 +87,8 @@ export interface MintedEndpoint {
   readonly name: string;
   readonly paused: boolean;
   readonly createdAt: Date;
+  /** The endpoint's dedup config, or null when it uses the default (identifier ladder, 24h). */
+  readonly dedupConfig: DedupConfig | null;
   /** `${apex}/<token>` — shown once, never persisted or logged. */
   readonly ingestUrl: string;
 }
@@ -90,7 +103,15 @@ export interface EndpointMutationDeps {
     orgId: string,
     name: string,
     actor: string,
-  ): Promise<{ id: string; name: string; paused: boolean; createdAt: Date; plaintext: string }>;
+    dedupConfig: DedupConfig | null,
+  ): Promise<{
+    id: string;
+    name: string;
+    paused: boolean;
+    createdAt: Date;
+    dedupConfig: DedupConfig | null;
+    plaintext: string;
+  }>;
   rotate(
     orgId: string,
     endpointId: string,
@@ -100,12 +121,21 @@ export interface EndpointMutationDeps {
     name: string;
     paused: boolean;
     createdAt: Date;
+    dedupConfig: DedupConfig | null;
     oldTokenHash: Buffer;
     plaintext: string;
   }>;
+  /** UPDATE the endpoint's dedup config + audit; returns its current ingest-token hash so the caller evicts
+   *  the KV entry (the cached principal carries the config, ADR-0104) and the applied config (echoed). */
+  update(
+    orgId: string,
+    endpointId: string,
+    dedupConfig: DedupConfig | null,
+    actor: string,
+  ): Promise<{ tokenHash: Buffer; dedupConfig: DedupConfig | null }>;
   remove(orgId: string, endpointId: string, actor: string): Promise<{ tokenHash: Buffer }>;
   /** Best-effort evict of an ingest-token hash from KV_CONFIG; never throws (logs scrubbed + swallows). */
-  evict(tokenHash: Buffer, verb: "rotate" | "delete"): Promise<void>;
+  evict(tokenHash: Buffer, verb: "rotate" | "delete" | "update"): Promise<void>;
   apex(): string;
 }
 
@@ -113,7 +143,7 @@ export interface EndpointMutationDeps {
 async function evictBestEffort(
   cache: { delete(key: string): Promise<void> } | null,
   tokenHash: Buffer,
-  ctx: { verb: "rotate" | "delete" },
+  ctx: { verb: "rotate" | "delete" | "update" },
 ): Promise<void> {
   if (cache === null) {
     // KV_CONFIG is bound in prod (wrangler + overlay) — a null here means a binding regression. Surface it
@@ -159,10 +189,10 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
     (hasherP ??= getCredentialPepper().then(createCredentialHasherFromBase64));
   return {
     deps: {
-      create: async (orgId, name, actor) => {
+      create: async (orgId, name, actor, dedupConfig) => {
         const r = await createEndpointWithAudit(
           app,
-          { orgId, name, actor, maxEndpoints: DEFAULT_MAX_ENDPOINTS_PER_ORG },
+          { orgId, name, actor, maxEndpoints: DEFAULT_MAX_ENDPOINTS_PER_ORG, dedupConfig },
           await getHasher(),
           auditKey,
           sealer,
@@ -172,6 +202,8 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
           name: r.name,
           paused: r.paused,
           createdAt: r.createdAt,
+          // createEndpointWithAudit persists but doesn't echo the config back — return the applied input.
+          dedupConfig,
           plaintext: r.plaintext,
         };
       },
@@ -188,9 +220,18 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
           name: r.name,
           paused: r.paused,
           createdAt: r.createdAt,
+          dedupConfig: r.dedupConfig,
           oldTokenHash: r.oldTokenHash,
           plaintext: r.plaintext,
         };
+      },
+      update: async (orgId, endpointId, dedupConfig, actor) => {
+        const r = await updateEndpointDedupWithAudit(
+          app,
+          { orgId, endpointId, dedupConfig, actor },
+          auditKey,
+        );
+        return { tokenHash: r.tokenHash, dedupConfig: r.dedupConfig };
       },
       remove: async (orgId, endpointId, actor) => {
         const r = await deleteEndpointWithAudit(app, { orgId, endpointId, actor }, auditKey);
@@ -218,12 +259,13 @@ export async function createEndpoint(
     : await defaultDeps();
   try {
     const apex = deps.apex(); // validate BEFORE the mint (fail-closed) — mirrors the db write handler
-    const r = await deps.create(input.orgId, input.name, input.userId);
+    const r = await deps.create(input.orgId, input.name, input.userId, input.dedupConfig ?? null);
     return {
       id: r.id,
       name: r.name,
       paused: r.paused,
       createdAt: r.createdAt,
+      dedupConfig: input.dedupConfig ?? null,
       ingestUrl: `${apex}/${r.plaintext}`,
     };
   } finally {
@@ -252,8 +294,40 @@ export async function rotateEndpoint(
       name: r.name,
       paused: r.paused,
       createdAt: r.createdAt,
+      dedupConfig: r.dedupConfig,
       ingestUrl: `${apex}/${r.plaintext}`,
     };
+  } finally {
+    await close();
+  }
+}
+
+/**
+ * UPDATE an endpoint's dedup config (ADR-0104) + audit, then evict its ingest-token hash from KV_CONFIG so
+ * the engine picks up the new config (the cached principal carries it). null resets to the default. Mirrors
+ * rotate: the evict runs AFTER the committed update and is best-effort — a KV blip must NOT fail a committed
+ * mutation (the config still lands; the old cached principal self-heals on its TTL). Returns the applied config.
+ */
+export async function updateEndpointDedup(
+  input: MutateDedupInput,
+  injected?: EndpointMutationDeps,
+): Promise<{ dedupConfig: DedupConfig | null }> {
+  const { deps, close } = injected
+    ? { deps: injected, close: async () => {} }
+    : await defaultDeps();
+  try {
+    const r = await deps.update(input.orgId, input.endpointId, input.dedupConfig, input.userId);
+    // The evict runs AFTER the committed update and is purely an optimization: the engine's cached principal
+    // self-heals to the new config on its KV TTL regardless, so a KV blip must NEVER surface as a failed
+    // config update (that would tell the user their change was lost while it is, in fact, persisted). The
+    // default evict (evictBestEffort) already swallows; guard here too so the guarantee holds for any evict.
+    try {
+      await deps.evict(r.tokenHash, "update");
+    } catch (err) {
+      const e = err as { name?: string };
+      console.warn(JSON.stringify({ message: "endpoint.dedup_evict_failed", name: e?.name }));
+    }
+    return { dedupConfig: r.dedupConfig };
   } finally {
     await close();
   }

@@ -14,6 +14,7 @@ const ep: EndpointItem = {
   name: "Stripe prod",
   paused: false,
   createdAt: new Date("2026-06-25T00:00:00Z"),
+  dedupConfig: null,
 };
 
 function readers(over: Partial<EndpointReaders> = {}): EndpointReaders {
@@ -88,6 +89,7 @@ describe("collectAllEndpoints", () => {
     name,
     paused: false,
     createdAt: new Date("2026-06-25T00:00:00Z"),
+    dedupConfig: null,
   });
 
   it("pages through EVERY page until nextCursor is null (no live endpoint dropped)", async () => {

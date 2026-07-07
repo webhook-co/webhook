@@ -161,7 +161,7 @@ export const endpointsRotate = defineCapability({
 // result). Gated on endpoints:write (a key that can rotate can already tune dedup); each change writes a
 // tamper-evident `endpoint.dedup_config_updated` audit row and EVICTS the endpoint's KV ingest-cache
 // entry so the engine reads the new config within the propagation window (never claims exactly-once
-// across the change). CLI + web are surface-deferred to their own slices; api + mcp bind now.
+// across the change). Bound on every surface — api + mcp (slice 3), cli (slice 3b), web (slice 4).
 export const endpointsUpdate = defineCapability({
   name: "endpoints.update",
   input: z.object({ endpointId: uuid, dedupConfig: DedupConfigSchema.nullable() }),
@@ -169,7 +169,6 @@ export const endpointsUpdate = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "endpoints:write" },
   semantics: { idempotent: true },
-  surfaceExempt: { web: WEB_DEFERRED },
 });
 
 // endpoints.revealIngestUrl RE-DISPLAYS the always-shown wbhk.my/<token> ingest URL for an endpoint

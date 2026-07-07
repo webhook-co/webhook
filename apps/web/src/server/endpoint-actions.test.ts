@@ -13,12 +13,20 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 // The DB-touching mutations (Lane B over the tenant pool + KV_CONFIG eviction) — mocked here; the glue is
 // unit-tested in endpoint-mutations.test.ts and the db fns in the db package's integration suite.
-const { createEndpoint, rotateEndpoint, deleteEndpoint } = vi.hoisted(() => ({
+const { createEndpoint, rotateEndpoint, deleteEndpoint, updateEndpointDedup } = vi.hoisted(() => ({
   createEndpoint: vi.fn(),
   rotateEndpoint: vi.fn(),
   deleteEndpoint: vi.fn(),
+  updateEndpointDedup: vi.fn(),
 }));
-vi.mock("./endpoint-mutations", () => ({ createEndpoint, rotateEndpoint, deleteEndpoint }));
+vi.mock("./endpoint-mutations", () => ({
+  createEndpoint,
+  rotateEndpoint,
+  deleteEndpoint,
+  updateEndpointDedup,
+}));
+
+import type { DedupConfig } from "@webhook-co/shared";
 
 import { revalidatePath } from "next/cache";
 
@@ -26,6 +34,7 @@ import {
   createEndpointAction,
   deleteEndpointAction,
   rotateEndpointAction,
+  updateEndpointDedupAction,
 } from "./endpoint-actions";
 
 const minted = {
@@ -33,6 +42,7 @@ const minted = {
   name: "Stripe prod",
   paused: false,
   createdAt: new Date("2026-06-25T00:00:00Z"),
+  dedupConfig: null,
   ingestUrl: "https://wbhk.my/whep_abc",
 };
 
@@ -80,15 +90,131 @@ describe("createEndpointAction", () => {
     expect(createEndpoint).toHaveBeenCalledWith({ orgId: "o", userId: "u", name: "Stripe prod" });
     expect(result).toEqual({
       ok: true,
-      endpoint: { id: "ep_1", name: "Stripe prod", paused: false, createdAt: minted.createdAt },
+      endpoint: {
+        id: "ep_1",
+        name: "Stripe prod",
+        paused: false,
+        createdAt: minted.createdAt,
+        dedupConfig: null,
+      },
       ingestUrl: "https://wbhk.my/whep_abc",
     });
+  });
+
+  it("threads a valid dedup config through to the mutation", async () => {
+    const dedupConfig: DedupConfig = { mode: "content", windowSeconds: 3600 };
+    await createEndpointAction({ name: "GitHub", dedupConfig });
+    expect(createEndpoint).toHaveBeenCalledWith({
+      orgId: "o",
+      userId: "u",
+      name: "GitHub",
+      dedupConfig,
+    });
+  });
+
+  it("rejects an invalid dedup config without creating", async () => {
+    // fields mode with no include list is rejected by the schema's superRefine — a crafted payload must not
+    // reach the db.
+    const result = await createEndpointAction({
+      name: "GitHub",
+      dedupConfig: { mode: "fields", windowSeconds: 3600 } as unknown as DedupConfig,
+    });
+    expect(result.ok).toBe(false);
+    expect(createEndpoint).not.toHaveBeenCalled();
   });
 
   it("surfaces a generic error (no throw) when the create fails", async () => {
     createEndpoint.mockRejectedValue(new Error("db down"));
     const result = await createEndpointAction({ name: "k" });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("updateEndpointDedupAction", () => {
+  const config: DedupConfig = { mode: "content", windowSeconds: 3600 };
+
+  beforeEach(() => {
+    updateEndpointDedup.mockReset();
+    updateEndpointDedup.mockResolvedValue({ dedupConfig: config });
+    vi.mocked(revalidatePath).mockReset();
+  });
+
+  it("rejects a missing id without mutating", async () => {
+    expect((await updateEndpointDedupAction({ endpointId: "  ", dedupConfig: config })).ok).toBe(
+      false,
+    );
+    expect(updateEndpointDedup).not.toHaveBeenCalled();
+  });
+
+  it("rejects a non-uuid id as gone, without mutating", async () => {
+    expect(
+      await updateEndpointDedupAction({ endpointId: "not-a-uuid", dedupConfig: config }),
+    ).toEqual({ ok: false, error: expect.stringMatching(/no longer exists/i) });
+    expect(updateEndpointDedup).not.toHaveBeenCalled();
+  });
+
+  it("rejects an invalid dedup config (crafted payload) without mutating", async () => {
+    const result = await updateEndpointDedupAction({
+      endpointId: ID,
+      // fields mode requires a non-empty include list — the schema rejects this.
+      dedupConfig: { mode: "fields", windowSeconds: 3600 } as unknown as DedupConfig,
+    });
+    expect(result.ok).toBe(false);
+    expect(updateEndpointDedup).not.toHaveBeenCalled();
+  });
+
+  it("accepts a null config (reset to default) and revalidates the detail page", async () => {
+    updateEndpointDedup.mockResolvedValue({ dedupConfig: null });
+    const result = await updateEndpointDedupAction({ endpointId: ID, dedupConfig: null });
+    expect(updateEndpointDedup).toHaveBeenCalledWith({
+      orgId: "o",
+      userId: "u",
+      endpointId: ID,
+      dedupConfig: null,
+    });
+    expect(revalidatePath).toHaveBeenCalledWith(`/endpoints/${ID}`);
+    expect(result).toEqual({ ok: true, dedupConfig: null });
+  });
+
+  it("updates with the session principal and returns the applied config", async () => {
+    const result = await updateEndpointDedupAction({ endpointId: ID, dedupConfig: config });
+    expect(updateEndpointDedup).toHaveBeenCalledWith({
+      orgId: "o",
+      userId: "u",
+      endpointId: ID,
+      dedupConfig: config,
+    });
+    expect(result).toEqual({ ok: true, dedupConfig: config });
+  });
+
+  it("surfaces NOT_FOUND distinctly when the endpoint is gone", async () => {
+    updateEndpointDedup.mockRejectedValue(
+      Object.assign(new Error("endpoint not found"), {
+        name: "CapabilityFault",
+        code: "NOT_FOUND",
+      }),
+    );
+    expect(await updateEndpointDedupAction({ endpointId: ID, dedupConfig: config })).toEqual({
+      ok: false,
+      error: expect.stringMatching(/no longer exists/i),
+    });
+  });
+
+  it("still returns ok when the post-update revalidation throws (best-effort)", async () => {
+    vi.mocked(revalidatePath).mockImplementationOnce(() => {
+      throw new Error("revalidate boom");
+    });
+    expect(await updateEndpointDedupAction({ endpointId: ID, dedupConfig: config })).toEqual({
+      ok: true,
+      dedupConfig: config,
+    });
+  });
+
+  it("surfaces a generic error (no throw) when the update fails", async () => {
+    updateEndpointDedup.mockRejectedValue(new Error("db down"));
+    expect((await updateEndpointDedupAction({ endpointId: ID, dedupConfig: config })).ok).toBe(
+      false,
+    );
   });
 });
 
