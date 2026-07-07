@@ -9,6 +9,13 @@
 
 -- billing_customers: the org ↔ Stripe customer link (one customer per org). stripe_customer_id is unique so
 -- an inbound webhook can resolve org from the customer id; we NEVER key on email.
+--
+-- webhook_app (the tenant role) gets SELECT ONLY. stripe_customer_id is a GLOBALLY-UNIQUE, EXTERNAL
+-- (Stripe-assigned) id that can't be bound to org_id by a CHECK — so if a tenant could INSERT/UPDATE it,
+-- it could pre-claim another org's 'cus_…' under its OWN org_id (RLS only checks org_id) and either block
+-- the victim from linking or mis-route the victim's billing events (the webhook resolves org by this id).
+-- The WRITE path is therefore verified-Stripe-only, added in S4.4b via a dedicated writer (a billing role
+-- / SECURITY DEFINER upsert) that resolves org from the SIGNED metadata.org_id — never a tenant write.
 create table billing_customers (
   org_id uuid primary key references orgs (id) on delete cascade,
   stripe_customer_id text not null unique,
@@ -17,10 +24,7 @@ create table billing_customers (
 alter table billing_customers enable row level security;
 alter table billing_customers force row level security;
 create policy billing_customers_select on billing_customers for select using (org_id = current_org_id());
-create policy billing_customers_insert on billing_customers for insert with check (org_id = current_org_id());
-create policy billing_customers_update on billing_customers for update using (org_id = current_org_id()) with check (org_id = current_org_id());
-create policy billing_customers_delete on billing_customers for delete using (org_id = current_org_id());
-grant select, insert, update, delete on billing_customers to webhook_app;
+grant select on billing_customers to webhook_app;
 
 -- billing_subscriptions: the org's CURRENT subscription state, synced from Stripe by the inbound webhook
 -- (S4.5). One current subscription per org (org_id PK); history lives in Stripe. `status` is Stripe's
@@ -43,11 +47,11 @@ create table billing_subscriptions (
 );
 alter table billing_subscriptions enable row level security;
 alter table billing_subscriptions force row level security;
+-- SELECT ONLY for webhook_app (tenant reads its own plan/status). stripe_subscription_id is the same
+-- globally-unique external-id pre-claim risk as billing_customers.stripe_customer_id — a tenant write could
+-- squat another org's 'sub_…'. Writes are verified-Stripe-only (S4.4b writer role resolving signed org_id).
 create policy billing_subscriptions_select on billing_subscriptions for select using (org_id = current_org_id());
-create policy billing_subscriptions_insert on billing_subscriptions for insert with check (org_id = current_org_id());
-create policy billing_subscriptions_update on billing_subscriptions for update using (org_id = current_org_id()) with check (org_id = current_org_id());
-create policy billing_subscriptions_delete on billing_subscriptions for delete using (org_id = current_org_id());
-grant select, insert, update, delete on billing_subscriptions to webhook_app;
+grant select on billing_subscriptions to webhook_app;
 
 -- stripe_meter_reports: the outbox ledger (money-correctness guard F5) for reporting metered usage to
 -- Stripe. One row per (org, UTC day) — the meter-reporter cron (S4.4c) marks a finalized day pending →
