@@ -11,13 +11,15 @@ name: AI review
 #   3. If no provider is configured, the job emits a notice and exits successfully.
 #
 # Whichever provider runs writes its full review to `ai-review-output.md`, ending with a
-# machine-readable final line `VERDICT: BLOCK` or `VERDICT: PASS`. A final gate step then:
+# machine-readable final line `VERDICT: BLOCK` or `VERDICT: PASS`. A final gate step
+# (parsing via the unit-tested scripts/ai-review-verdict.mjs) then:
 #   - posts (or updates) a sticky PR comment with the review, and
 #   - FAILS the check when the verdict is BLOCK — so blocking findings are visible on the PR
 #     instead of buried in the job log.
-# A reviewer that errors or gets cut off (e.g. Claude's --max-turns cap stops gracefully)
-# emits no verdict line, which the gate treats as advisory: the check stays green. So only a
-# clean BLOCK verdict fails the check; infra/cut-off failures never wedge a PR.
+# `ai-review` is a required check, so the gate FAILS CLOSED: if a provider was configured but
+# no verdict was emitted (timeout, --max-turns cutoff, provider error, malformed output), or
+# the PR is from a fork (no reviewer secrets), the check goes red rather than passing without
+# a review. It stays green only when no reviewer credential is configured at all (not set up).
 #
 # Claude credentials (either works; the OAuth token is checked first):
 #   - `CLAUDE_CODE_OAUTH_TOKEN` — mint locally with `claude setup-token` on a Claude
@@ -137,53 +139,45 @@ jobs:
             --allowedTools "Write,Read,Grep,Glob"
 
       # --- Gate: surface the verdict as a PR comment + pass/fail signal ---
+      # Runs even when no provider is configured so a fork PR (which gets no
+      # reviewer secrets) can't satisfy the required check without a review.
       - name: Surface AI-review verdict
         id: verdict
-        if: steps.gate.outputs.cursor == 'true' || steps.gate.outputs.claude == 'true'
+        if: ${{ always() }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          CURSOR_CONFIGURED: ${{ steps.gate.outputs.cursor }}
+          CLAUDE_CONFIGURED: ${{ steps.gate.outputs.claude }}
         with:
           script: |
             const fs = require('fs');
+            const path = require('path');
+            const { pathToFileURL } = require('url');
             const MARKER = '<!-- ai-review -->';
+
+            // Import the single, unit-tested source of the parse logic
+            // (scripts/ai-review-verdict.test.mjs), so the gate and its tests never drift.
+            const { parseVerdict } = await import(
+              pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'scripts/ai-review-verdict.mjs')).href
+            );
 
             let raw = '';
             try {
-              raw = fs.readFileSync('ai-review-output.md', 'utf8').trim();
+              raw = fs.readFileSync('ai-review-output.md', 'utf8');
             } catch (e) {
-              /* no file — provider errored or wrote nothing */
+              /* no file — provider errored, was skipped, or wrote nothing */
             }
 
-            // Take the LAST verdict line, so trailing prose can't fool the parser.
-            const matches = [...raw.matchAll(/^VERDICT:\s*(BLOCK|PASS)\s*$/gim)];
-            const last = matches[matches.length - 1];
-
-            if (!raw || !last) {
-              core.notice('AI review did not complete (no verdict emitted) — advisory, not blocking.');
-              return;
-            }
-
-            const verdict = last[1].toUpperCase();
-            const { owner, repo } = context.repo;
+            const verdict = parseVerdict(raw); // 'BLOCK' | 'PASS' | null
+            const providersConfigured =
+              process.env.CURSOR_CONFIGURED === 'true' || process.env.CLAUDE_CONFIGURED === 'true';
+            const pr = context.payload.pull_request;
+            const isFork = Boolean(pr && pr.head && pr.head.repo && pr.head.repo.fork);
             const issue_number = context.issue.number;
+            const { owner, repo } = context.repo;
 
-            if (issue_number) {
-              const emoji = verdict === 'BLOCK' ? '🔴' : '🟢';
-              const heading = verdict === 'BLOCK'
-                ? '**Blocking issues found.** Resolve them (or re-run once addressed) before merge.'
-                : 'No blocking issues.';
-              const body = [
-                MARKER,
-                `## ${emoji} AI review — VERDICT: ${verdict}`,
-                '',
-                heading,
-                '',
-                '<details><summary>Full review</summary>',
-                '',
-                raw,
-                '',
-                '</details>',
-              ].join('\n');
-
+            async function upsertComment(body) {
+              if (!issue_number) return;
               const { data: comments } = await github.rest.issues.listComments({
                 owner, repo, issue_number, per_page: 100,
               });
@@ -195,6 +189,55 @@ jobs:
               }
             }
 
-            if (verdict === 'BLOCK') {
-              core.setFailed('AI review flagged blocking issues — see the PR comment.');
+            // A completed review: post the findings and pass/fail on the verdict.
+            if (verdict === 'BLOCK' || verdict === 'PASS') {
+              const emoji = verdict === 'BLOCK' ? '🔴' : '🟢';
+              const heading = verdict === 'BLOCK'
+                ? '**Blocking issues found.** Resolve them (or re-run once addressed) before merge.'
+                : 'No blocking issues.';
+              await upsertComment([
+                MARKER,
+                `## ${emoji} AI review — VERDICT: ${verdict}`,
+                '',
+                heading,
+                '',
+                '<details><summary>Full review</summary>',
+                '',
+                raw.trim(),
+                '',
+                '</details>',
+              ].join('\n'));
+              if (verdict === 'BLOCK') {
+                core.setFailed('AI review flagged blocking issues — see the PR comment.');
+              }
+              return;
             }
+
+            // No parseable verdict. Fail closed when a review was expected, so a required
+            // check can't pass without one; stay green only when the feature isn't set up.
+            if (providersConfigured) {
+              await upsertComment([
+                MARKER,
+                '## 🔴 AI review — did not complete',
+                '',
+                'A reviewer was configured but produced no `VERDICT: BLOCK|PASS` line — a timeout, ' +
+                  '`--max-turns` cutoff, provider error, or malformed output. This required gate ' +
+                  'fails closed; re-run the check once a full review completes.',
+              ].join('\n'));
+              core.setFailed('AI review did not complete — required gate fails closed. Re-run once a full review completes.');
+              return;
+            }
+
+            if (isFork) {
+              await upsertComment([
+                MARKER,
+                '## 🔴 AI review — cannot run on a fork PR',
+                '',
+                'Reviewer credentials are not shared with fork PRs, so the AI review could not run. ' +
+                  'A maintainer must review these changes and re-run from a trusted context before merge.',
+              ].join('\n'));
+              core.setFailed('AI review cannot run on a fork PR — a maintainer must review from a trusted context.');
+              return;
+            }
+
+            core.notice('No AI reviewer credential configured — AI review skipped. Add CURSOR_API_KEY and/or CLAUDE_CODE_OAUTH_TOKEN to enable it.');
