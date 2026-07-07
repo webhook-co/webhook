@@ -45,9 +45,9 @@ then push — or `workflow_dispatch` to override (which does **not** move the ta
 **Trust anchor.** Because the guard trusts `prod-schema` as prod's applied-through marker, force-pushing it
 without actually applying the migration would blind the guard (allow a deploy against an un-migrated schema).
 The guard defends against *accidental* fail-opens, not a malicious repo-writer (who could edit the workflow
-anyway). Recommended defense-in-depth: a GitHub **tag ruleset** restricting create/update/delete of
-`refs/tags/prod-schema` to repo admins (break-glass), so only an authorized operator running this script can
-move it. (Not enforced by this repo yet — a one-time settings change.)
+anyway). Defense-in-depth is **enforced**: a GitHub **tag ruleset** restricts create/update/delete of
+`refs/tags/prod-schema` to repo admins (break-glass), so only an authorized admin running this script can
+move it — a non-admin push to the tag is rejected.
 
 ## Guardrails
 
