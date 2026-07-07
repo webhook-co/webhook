@@ -12,8 +12,9 @@ name: AI review
 #
 # Whichever provider runs writes its full review to `ai-review-output.md`, ending with a
 # machine-readable final line `VERDICT: BLOCK` or `VERDICT: PASS`. A final gate step
-# (parsing via the unit-tested scripts/ai-review-verdict.mjs) then posts (or updates) a
-# sticky PR comment with the review and turns the check RED on a BLOCK verdict.
+# (parsing via the unit-tested scripts/ai-review-verdict.mjs) turns the check RED on a BLOCK
+# verdict and posts the review as a sticky PR comment. A PASS (or any non-BLOCK outcome) is
+# silent — no comment — and clears any prior sticky comment so it lingers only while failing.
 #
 # This check is ADVISORY, not a required merge gate: a `pull_request` workflow is mutable by
 # the PR under review and the LLM verdict is non-deterministic + prompt-injectable, so it
@@ -220,47 +221,49 @@ jobs:
             const issue_number = context.issue.number;
             const { owner, repo } = context.repo;
 
-            async function upsertComment(body) {
-              if (!issue_number) return;
+            async function findSticky() {
+              if (!issue_number) return null;
               const { data: comments } = await github.rest.issues.listComments({
                 owner, repo, issue_number, per_page: 100,
               });
-              const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+              return comments.find((c) => c.body && c.body.includes(MARKER)) || null;
+            }
+            async function upsertComment(body) {
+              const existing = await findSticky();
               if (existing) {
                 await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
-              } else {
+              } else if (issue_number) {
                 await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              }
+            }
+            // A comment is posted only for a BLOCK; every other outcome removes a prior sticky
+            // comment so it lingers ONLY while the latest run is failing.
+            async function clearComment() {
+              const existing = await findSticky();
+              if (existing) {
+                await github.rest.issues.deleteComment({ owner, repo, comment_id: existing.id });
               }
             }
 
             // Silence hatch: a `skip-ai-review` label keeps the advisory check green even on
             // a BLOCK (e.g. a false-positive). Providers are skipped when labeled.
             if (skipped) {
-              await upsertComment([
-                MARKER,
-                '## 🟡 AI review — silenced via `skip-ai-review` label',
-                '',
-                'The advisory check is held green by a label. Remove the label to re-run the review.',
-              ].join('\n'));
+              await clearComment();
               core.notice('AI review silenced via the skip-ai-review label.');
               return;
             }
 
-            // A completed review: post the findings. This check is ADVISORY — a BLOCK turns it
-            // red as a loud signal, but doesn't gate merge (deterministic checks — gitleaks,
-            // codeql, tests — are authoritative). Only trust a verdict when a provider actually
-            // ran, so a forged verdict file can't masquerade as a real review.
-            if (providerRan && (verdict === 'BLOCK' || verdict === 'PASS')) {
-              const emoji = verdict === 'BLOCK' ? '🔴' : '🟢';
-              const heading = verdict === 'BLOCK'
-                ? '**Blocking issues found** (advisory — review before merging; add the ' +
-                  '`skip-ai-review` label to silence).'
-                : 'No blocking issues.';
+            // A completed review. This check is ADVISORY — a BLOCK turns it red and posts the
+            // findings as a loud signal; a PASS is silent (no comment). It doesn't gate merge
+            // (deterministic checks — gitleaks, codeql, tests — are authoritative). Only trust a
+            // verdict when a provider actually ran, so a forged file can't masquerade as a review.
+            if (providerRan && verdict === 'BLOCK') {
               await upsertComment([
                 MARKER,
-                `## ${emoji} AI review — VERDICT: ${verdict}`,
+                '## 🔴 AI review — VERDICT: BLOCK',
                 '',
-                heading,
+                '**Blocking issues found** (advisory — review before merging; add the ' +
+                  '`skip-ai-review` label to silence).',
                 '',
                 '<details><summary>Full review</summary>',
                 '',
@@ -268,15 +271,19 @@ jobs:
                 '',
                 '</details>',
               ].join('\n'));
-              if (verdict === 'BLOCK') {
-                core.setFailed('AI review flagged blocking issues (advisory) — see the PR comment.');
-              }
+              core.setFailed('AI review flagged blocking issues (advisory) — see the PR comment.');
+              return;
+            }
+            if (providerRan && verdict === 'PASS') {
+              await clearComment();
+              core.notice('AI review passed — no blocking issues.');
               return;
             }
 
             // No trusted verdict (timeout, --max-turns cutoff, provider error, fork with no
             // secrets, or not configured). Advisory: don't cry wolf — leave the check green
             // with a notice rather than failing on an incomplete review.
+            await clearComment();
             if (providersConfigured) {
               core.notice('AI review did not complete (no verdict emitted) — advisory, not failing. Re-run for a full review.');
             } else if (isFork) {
