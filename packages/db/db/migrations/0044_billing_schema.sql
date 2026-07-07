@@ -59,7 +59,13 @@ create table stripe_meter_reports (
   org_id uuid not null references orgs (id) on delete cascade,
   day date not null,
   event_count bigint not null,
-  identifier text not null unique,
+  -- identifier is Stripe's idempotency key = {org}:{day}. It is UNIQUE, but RLS only checks org_id on an
+  -- insert — so WITHOUT the binding CHECK below a tenant could insert '{otherOrg}:{day}' under its OWN
+  -- context and pre-claim (unique) another org's outbox slot, a cross-tenant metering-sabotage vector. The
+  -- CHECK pins identifier to THIS row's (org_id, day), so a tenant can only ever write its own key. (A
+  -- GENERATED column would be even stronger but `day::text` isn't IMMUTABLE, which generated columns require;
+  -- a CHECK permits the stable cast and the app writes the SAME value the reporter uses for Stripe.)
+  identifier text not null unique check (identifier = org_id::text || ':' || day::text),
   status text not null default 'pending' check (status in ('pending', 'sending', 'sent')),
   stripe_meter_event_id text,
   attempts int not null default 0,

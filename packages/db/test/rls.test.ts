@@ -141,7 +141,7 @@ async function seedOrg(slug: string): Promise<Seeded> {
              values (${orgId}, ${"sub_" + slug}, ${"seed-plan"}, ${"active"}, ${1000},
                      date_trunc('month', now()), date_trunc('month', now()) + interval '1 month')`;
     await tx`insert into stripe_meter_reports (org_id, day, event_count, identifier)
-             values (${orgId}, date_trunc('day', now())::date, ${1}, ${orgId + ":seed"})`;
+             values (${orgId}, current_date, ${1}, ${orgId} || ':' || current_date::text)`;
     // Genesis row: prev_hash is omitted (defaults to NULL) — a genesis row has no prior.
     await tx`insert into audit_log (org_id, seq, actor, action, row_hash)
              values (${orgId}, ${1}, ${userId}, ${"org.created"}, ${deterministicBuffer(32)})`;
