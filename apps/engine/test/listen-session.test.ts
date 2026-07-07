@@ -4,6 +4,7 @@ import {
   encodeCursor,
   importCursorKey,
   readSecretBinding,
+  WATERMARK_DELTA_MS,
   type Cursor,
   type EventSummary,
 } from "@webhook-co/shared";
@@ -159,7 +160,7 @@ describe("ListenSession — connect + stream", () => {
     expect(msgs[0]).toMatchObject({
       type: "ready",
       sessionId: b.sessionId,
-      watermarkDeltaMs: 5000,
+      watermarkDeltaMs: WATERMARK_DELTA_MS,
     });
     // The connect-time cursor-contract status precedes the event frames (ADR-0017).
     expect(msgs[1]).toMatchObject({ type: "status" });
