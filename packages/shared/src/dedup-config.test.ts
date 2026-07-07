@@ -98,10 +98,13 @@ describe("parseFieldPath — grammar", () => {
 describe("DedupConfigSchema", () => {
   it("accepts each mode", () => {
     for (const mode of DEDUP_MODES) {
+      // `off` takes no window (it collapses nothing); every collapsing mode requires one.
       const base =
-        mode === "fields"
-          ? { mode, windowSeconds: 3600, fields: { include: ["body.id"] } }
-          : { mode, windowSeconds: 3600 };
+        mode === "off"
+          ? { mode }
+          : mode === "fields"
+            ? { mode, windowSeconds: 3600, fields: { include: ["body.id"] } }
+            : { mode, windowSeconds: 3600 };
       expect(DedupConfigSchema.safeParse(base).success).toBe(true);
     }
   });
@@ -109,8 +112,9 @@ describe("DedupConfigSchema", () => {
   it("`off` needs no windowSeconds (it never collapses); every other mode requires one", () => {
     // off without a window is valid (matches the docs) — so a windowless off can't be silently downgraded.
     expect(DedupConfigSchema.safeParse({ mode: "off" }).success).toBe(true);
-    // ...and a windowSeconds on off is still accepted (the dashboard/CLI always send one).
-    expect(DedupConfigSchema.safeParse({ mode: "off", windowSeconds: 3600 }).success).toBe(true);
+    // ...and a windowSeconds on off is REJECTED (not merely ignored) so every surface — CLI, API, MCP,
+    // web — treats `{ mode: "off", windowSeconds }` identically. A window is meaningless for off.
+    expect(DedupConfigSchema.safeParse({ mode: "off", windowSeconds: 3600 }).success).toBe(false);
     // The collapsing modes still require windowSeconds.
     expect(DedupConfigSchema.safeParse({ mode: "identifier" }).success).toBe(false);
     expect(DedupConfigSchema.safeParse({ mode: "content" }).success).toBe(false);

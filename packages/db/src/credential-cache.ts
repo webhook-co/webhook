@@ -62,8 +62,8 @@ export interface ResolvedPrincipal {
   readonly sealedSecrets?: readonly CachedSealedSecret[];
   /**
    * The endpoint's dedup config (ADR-0104), carried so the ingest hot path resolves the dedup mode
-   * from the one KV read. NULL/absent = the default (identifier ladder, 24h). Populated by the
-   * ingest-token resolver only; unused by api keys.
+   * from the one KV read. NULL/absent = the default (off — log every request, no collapsing).
+   * Populated by the ingest-token resolver only; unused by api keys.
    */
   readonly dedupConfig?: DedupConfig | null;
   /**

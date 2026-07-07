@@ -192,7 +192,7 @@ export interface ApiClient {
   endpointsCreate(input: { name: string; dedupConfig?: DedupConfig }): Promise<CreatedEndpoint>;
   /**
    * Update an endpoint's dedup config (`PATCH /v1/endpoints/:id`, ADR-0104). Idempotent — sets the config
-   * to a fixed value, or `null` to reset to the default (identifier/24h). Returns the updated endpoint.
+   * to a fixed value, or `null` to reset to the default (off — log every request). Returns the updated endpoint.
    */
   endpointsUpdate(input: {
     endpointId: string;

@@ -39,7 +39,7 @@ export interface ResolvedEndpoint {
   readonly paused: boolean;
   /** The endpoint's sealed provider signing secrets, delivered on the principal for verify. */
   readonly sealedSecrets: readonly CachedSealedSecret[];
-  /** The endpoint's dedup config (ADR-0104); NULL = the default (identifier ladder, deps window). */
+  /** The endpoint's dedup config (ADR-0104); NULL = the default (off — log every request). */
   readonly dedupConfig: DedupConfig | null;
 }
 

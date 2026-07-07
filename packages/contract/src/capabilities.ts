@@ -108,7 +108,7 @@ export const endpointsCreate = defineCapability({
   name: "endpoints.create",
   input: z.object({
     name: z.string().trim().min(1).max(200),
-    // Optional per-endpoint dedup config (ADR-0104). Absent = the default (identifier ladder, 24h).
+    // Optional per-endpoint dedup config (ADR-0104). Absent = the default (off — log every request).
     dedupConfig: DedupConfigSchema.nullable().optional(),
   }),
   output: CreatedEndpointSchema,
@@ -156,7 +156,7 @@ export const endpointsRotate = defineCapability({
 });
 
 // endpoints.update MUTATES an endpoint's per-endpoint dedup config (ADR-0104) in place. dedupConfig is
-// REQUIRED: a config object SETS it; explicit `null` RESETS to the default (identifier/24h). It is the
+// REQUIRED: a config object SETS it; explicit `null` RESETS to the default (off — log every request). It is the
 // first mutable-config capability (name/paused stay immutable in v1). Idempotent (same config -> same
 // result). Gated on endpoints:write (a key that can rotate can already tune dedup); each change writes a
 // tamper-evident `endpoint.dedup_config_updated` audit row and EVICTS the endpoint's KV ingest-cache
