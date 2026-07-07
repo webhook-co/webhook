@@ -25,6 +25,14 @@ risk. Run under explicit prod authorization for the session.
 4. **HSTS** ships in `_headers` (www-only, `max-age=63072000`, **no** `includeSubDomains`/`preload`)
    — the zone-wide HSTS toggle is **not** used, because this zone also fronts `api.`/`mcp.`.
 
+> **Not the same as the `wbhk.my` root redirect.** The apex→www hop above is a **zone Redirect Rule**
+> on the `webhook.co` zone (that apex has no worker). The `wbhk.my` bare root, by contrast, 302-redirects
+> to `https://www.webhook.co/` **in the engine worker code** (`apps/engine` `handleFetch`, webhook
+> ADR-0105) — because a worker already owns that apex and an in-code exact-path match can't swallow
+> `/{token}` ingest. **Do not** add a `wbhk.my` zone Redirect Rule for this; if one is ever added it MUST
+> be scoped `http.host eq "wbhk.my" and http.request.uri.path eq "/"` (path *equals*, never `starts_with`,
+> which would 301 every inbound webhook to marketing = total ingest loss).
+
 ## Ongoing CD
 
 `deploy-www.yml`: push to `main` touching `apps/www/**` or `packages/ui/**` rebuilds and runs
