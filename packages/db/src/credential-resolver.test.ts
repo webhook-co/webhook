@@ -95,6 +95,22 @@ describe("createCredentialResolver — hot/cold path", () => {
     expect(cold).toHaveBeenCalledTimes(0); // valid entry served from KV, no cold lookup
   });
 
+  it("serves a cached off dedupConfig (no windowSeconds) straight from KV — no cold-path fallback", async () => {
+    // `off` is the default mode and carries NO window (it collapses nothing). The hot-path check must
+    // NOT demand a windowSeconds for off, or every off endpoint would miss the KV cache on every ingest.
+    const cache = new InMemoryCredentialCache();
+    const p = principal({
+      endpointId: "22222222-2222-7222-8222-222222222222",
+      dedupConfig: { mode: "off" },
+    });
+    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(p));
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+    const result = await resolver.resolve("tok");
+    expect(result?.dedupConfig).toEqual({ mode: "off" });
+    expect(cold).toHaveBeenCalledTimes(0); // off served from KV, no cold lookup
+  });
+
   it("treats a cached principal with a POISONED dedupConfig as a miss (cold path re-resolves)", async () => {
     const cache = new InMemoryCredentialCache();
     // Unknown mode + out-of-range window: a poisoned/legacy entry must never drive key derivation.
