@@ -222,8 +222,25 @@ export function plain(
 /** The standard verbs wbhk.my accepts. A non-standard verb (TRACE/CONNECT/…) is rejected uniformly,
  *  BEFORE token resolution, so the rejection still leaks no token validity (the original no-oracle
  *  property, now scoped to the verbs we reject rather than to all-but-POST). */
-const SUPPORTED_METHODS = new Set(["GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"]);
-const ALLOW_METHODS = "GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE";
+export const SUPPORTED_METHODS = new Set([
+  "GET",
+  "HEAD",
+  "OPTIONS",
+  "POST",
+  "PUT",
+  "PATCH",
+  "DELETE",
+]);
+export const ALLOW_METHODS = "GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE";
+
+/**
+ * The ingest path token: the FIRST path segment (the `wbhk.my/<token>` routing token), leading slashes
+ * stripped. `""` for the bare apex. Single source of truth so the router's pre-filter and the resolver
+ * below can't drift on what "the token" is (trailing slash / sub-path handling stays identical).
+ */
+export function ingestPathToken(url: URL): string {
+  return url.pathname.replace(/^\/+/, "").split("/")[0] ?? "";
+}
 
 // Browser-facing liveness for the non-bodied verbs: a paste-in-browser GET should say the endpoint is
 // live, not throw a scary 405. no-referrer + noindex keep the token URL out of referer logs + search
@@ -297,9 +314,9 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
   if (!SUPPORTED_METHODS.has(request.method))
     return plain(405, "method not allowed", { allow: ALLOW_METHODS });
 
-  // Path-token routing: the first path segment is the ingest token.
+  // Path-token routing: the first path segment is the ingest token (shared parser — see ingestPathToken).
   const url = new URL(request.url);
-  const token = url.pathname.replace(/^\/+/, "").split("/")[0];
+  const token = ingestPathToken(url);
   if (!token) return plain(404, "not found");
 
   const endpoint = await deps.resolve(token);

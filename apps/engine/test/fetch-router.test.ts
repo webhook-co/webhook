@@ -121,6 +121,22 @@ describe("handleFetch routing + lifecycle", () => {
     expect(built).toBe(0);
   });
 
+  it("an unsupported verb gets a UNIFORM 405 + Allow — on a junk path AND a real token (no oracle)", async () => {
+    // The verb gate runs BEFORE the token pre-filter, so a non-standard method is answered identically
+    // whether or not the path looks like a token — preserving the no-token-validity-leak property.
+    for (const path of ["/.env", "/whep_good"]) {
+      let built = 0;
+      const req = new Request(`https://wbhk.my${path}`, { method: "PROPFIND" });
+      const res = await handleFetch(req, bindings, ctx, () => {
+        built += 1;
+        return Promise.resolve(fakeHandle().handle);
+      });
+      expect(res.status, path).toBe(405);
+      expect(res.headers.get("allow"), path).toBe("GET, HEAD, OPTIONS, POST, PUT, PATCH, DELETE");
+      expect(built, path).toBe(0); // rejected before any DB pool opens
+    }
+  });
+
   it("a GET on a token path is NOT the bare-apex health probe — it routes to ingest (per-token liveness 200)", async () => {
     const f = fakeHandle();
     const res = await handleFetch(get("/whep_good"), bindings, ctx, () =>
