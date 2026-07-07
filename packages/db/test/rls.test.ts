@@ -132,6 +132,16 @@ async function seedOrg(slug: string): Promise<Seeded> {
     await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, date_trunc('day', now()), ${1})`;
     await tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${1000}, ${"pause"})`;
     await tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${false})`;
+    // Billing rows (S4.4a) — seeded so the cross-org isolation checks on these tables are NON-vacuous
+    // (an org-B row must exist for org A's "sees 0 of B's rows" assertion to actually bite). Test values,
+    // no real tier figure. stripe_* ids + the outbox identifier are org-unique (uniqueness constraints).
+    await tx`insert into billing_customers (org_id, stripe_customer_id) values (${orgId}, ${"cus_" + slug})`;
+    await tx`insert into billing_subscriptions
+             (org_id, stripe_subscription_id, plan, status, event_cap, current_period_start, current_period_end)
+             values (${orgId}, ${"sub_" + slug}, ${"seed-plan"}, ${"active"}, ${1000},
+                     date_trunc('month', now()), date_trunc('month', now()) + interval '1 month')`;
+    await tx`insert into stripe_meter_reports (org_id, day, event_count, identifier)
+             values (${orgId}, date_trunc('day', now())::date, ${1}, ${orgId + ":seed"})`;
     // Genesis row: prev_hash is omitted (defaults to NULL) — a genesis row has no prior.
     await tx`insert into audit_log (org_id, seq, actor, action, row_hash)
              values (${orgId}, ${1}, ${userId}, ${"org.created"}, ${deterministicBuffer(32)})`;

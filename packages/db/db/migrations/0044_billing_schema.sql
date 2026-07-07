@@ -59,7 +59,7 @@ create table stripe_meter_reports (
   org_id uuid not null references orgs (id) on delete cascade,
   day date not null,
   event_count bigint not null,
-  identifier text not null,
+  identifier text not null unique,
   status text not null default 'pending' check (status in ('pending', 'sending', 'sent')),
   stripe_meter_event_id text,
   attempts int not null default 0,
@@ -79,6 +79,6 @@ create index stripe_meter_reports_unsent_idx on stripe_meter_reports (org_id, da
 
 -- migrate:down
 
-drop table stripe_meter_reports;
-drop table billing_subscriptions;
-drop table billing_customers;
+drop table if exists stripe_meter_reports;
+drop table if exists billing_subscriptions;
+drop table if exists billing_customers;
