@@ -108,6 +108,9 @@ const APPS = {
       // KV_CONFIG: the engine's ingest cache, bound into api ONLY to evict on endpoints.delete/rotate
       // (ADR-0076). Reuses the existing KV_CONFIG_ID GH repo var (no new var) — same namespace as engine.
       "<KV_CONFIG_ID>",
+      // FREE_EVENT_CAP (S4.3b) — usage.get shows a rowless org the cap it is enforced at; same optional GH
+      // var as engine (unset → "" → uncapped). Kept identical across every worker that renders usage.
+      "<FREE_EVENT_CAP>",
       "webhook-payloads-dev",
     ],
     // Service bindings to the engine's WorkerEntrypoints — deploy-injected (NOT committed), exactly like
@@ -156,6 +159,9 @@ const APPS = {
       "<HYPERDRIVE_TENANT_ID>",
       "<KV_AUTHZ_ID>",
       "<KV_CONFIG_ID>",
+      // FREE_EVENT_CAP (S4.3b) — the usage.get tool shows a rowless org the cap it is enforced at; same
+      // optional GH var as engine (unset → "" → uncapped). Identical across every worker rendering usage.
+      "<FREE_EVENT_CAP>",
     ],
     // AUTH_ISSUER (A8) — the service binding to auth.'s IssuerIntrospect WorkerEntrypoint, so mcp validates
     // opaque OAuth provider tokens by introspection. Deploy-injected here (NOT committed) because of the
@@ -210,6 +216,9 @@ const APPS = {
       "<HYPERDRIVE_TENANT_ID>",
       "<KV_AUTHZ_ID>",
       "<KV_CONFIG_ID>",
+      // FREE_EVENT_CAP (S4.3b) — the usage view shows a rowless org the cap it is enforced at; same optional
+      // GH var as engine (unset → "" → uncapped). Identical across every worker rendering usage.
+      "<FREE_EVENT_CAP>",
       "webhook-payloads-dev",
     ],
     // AUTH_SESSION_EXCHANGE — the web→auth service binding to auth.'s SessionExchange WorkerEntrypoint, so the

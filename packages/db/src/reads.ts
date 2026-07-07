@@ -679,11 +679,20 @@ export async function listDeliveries(
  * The usage-surface projection (usage.get, S4.2) for the caller's org + current billing period. Runs
  * under the tenant RLS context (webhook_app), so every read is org-scoped without an org_id filter —
  * an unset context returns the empty/default shape (deny-by-default). Single dimension = events; NO
- * prices. `eventCap`/`pausePolicy` come from org_limits (defaults when unseeded: uncapped + 'pause',
- * the constitution default); `paused` from ingest_paused (false when unset). The period is the UTC
- * calendar month until a Stripe subscription anchors it (S4.4).
+ * prices. `eventCap`/`pausePolicy` come from org_limits; `paused` from ingest_paused (false when unset).
+ * The period is the UTC calendar month until a Stripe subscription anchors it (S4.4).
+ *
+ * `defaultEventCap` (S4.3b coherence) is the injected Free-tier cap (FREE_EVENT_CAP) an org with NO
+ * org_limits row is ACTUALLY enforced at by the cap producer — the caller passes the SAME value the
+ * engine enforces with, so a Free org never shows a bare "uncapped" while the producer would pause it at
+ * that cap. It must match the cap producer's `eventCap` derivation exactly (an explicit row wins, an
+ * explicit null = uncapped, a rowless org = this default). `null` (unset) = uncapped, the fail-safe.
  */
-export async function readUsageSummary(tx: TenantTx, nowMs: number): Promise<UsageSummary> {
+export async function readUsageSummary(
+  tx: TenantTx,
+  nowMs: number,
+  defaultEventCap: number | null = null,
+): Promise<UsageSummary> {
   const period = currentBillingPeriod(nowMs);
   // The SAME period-usage basis the soft-cap producer enforces on (sumPeriodEventUsage) — rolled prior
   // days + live today — so what the surface shows can't drift from what enforcement decides.
@@ -692,11 +701,17 @@ export async function readUsageSummary(tx: TenantTx, nowMs: number): Promise<Usa
     select event_cap, pause_policy from org_limits`;
   const [pauseRow] = await tx<{ paused: boolean }[]>`
     select paused from ingest_paused`;
+  // Mirror runCapProducer's effective-cap derivation exactly (packages/db/src/cap-producer.ts).
+  const eventCap = limits
+    ? limits.event_cap != null
+      ? Number(limits.event_cap)
+      : null
+    : defaultEventCap;
   return {
     periodStart: new Date(period.start),
     periodEnd: new Date(period.end),
     events,
-    eventCap: limits?.event_cap != null ? Number(limits.event_cap) : null,
+    eventCap,
     pausePolicy: limits?.pause_policy ?? "pause",
     paused: pauseRow?.paused ?? false,
   };

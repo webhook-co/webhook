@@ -6,6 +6,7 @@ import type { UsageSummary } from "@webhook-co/shared";
 
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
+import { getFreeEventCap } from "./env";
 
 // The usage surface for the dashboard (usage.get). Reads the org's metering usage for the current
 // billing period via the shared Lane read under withTenant(orgId) as webhook_app; RLS (the session
@@ -19,8 +20,10 @@ export type UsageResult =
  *  error state (the page renders a banner) rather than a 500. */
 export async function loadUsage(orgId: string): Promise<UsageResult> {
   try {
+    // Pass the injected Free cap so a rowless org shows the cap it is enforced at, not "uncapped" (S4.3b).
+    const defaultEventCap = getFreeEventCap();
     const usage = await withTenantDb((app) =>
-      withTenant(app, orgId, (tx) => readUsageSummary(tx, Date.now())),
+      withTenant(app, orgId, (tx) => readUsageSummary(tx, Date.now(), defaultEventCap)),
     );
     return { status: "ok", usage };
   } catch (error) {

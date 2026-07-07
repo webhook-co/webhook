@@ -24,6 +24,7 @@ import {
   type PayloadReaderRpc,
   importAuditKey,
   importCursorKey,
+  parseFreeEventCap,
   readSecretBinding,
   type SecretSealer,
   SERVICE_NAME,
@@ -115,6 +116,13 @@ export interface Env {
    * garbage value 500s only the create path, never minting `undefined/<token>` and never breaking reads.
    */
   INGEST_BASE_URL: string;
+  /**
+   * The Free-tier event cap (FREE_EVENT_CAP) usage.get shows a rowless org — the SAME tier figure the
+   * engine cap producer enforces at, so the surface never shows "uncapped" while the producer would
+   * pause at it (S4.3b). Optional deploy-injected var (a tier figure, kept out of the repo); unset/blank
+   * → uncapped (fail-safe). MUST match the engine's FREE_EVENT_CAP (same GH var into every worker).
+   */
+  FREE_EVENT_CAP?: string;
 }
 
 // Built once at module load (pure); served on the public PRM route with no tenant deps.
@@ -182,6 +190,9 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
       secretSealer: env.PROVIDER_SECRET_SEALER,
       revealIngestUrl: env.INGEST_URL_REVEALER,
       payloadReader: env.PAYLOAD_READER,
+      // usage.get shows a rowless (Free) org the cap it is ACTUALLY enforced at (S4.3b) — the SAME
+      // injected FREE_EVENT_CAP the engine cap producer uses. Unset/invalid → null (uncapped, fail-safe).
+      defaultEventCap: parseFreeEventCap(env.FREE_EVENT_CAP),
     }),
     payloads: env.R2_PAYLOADS,
     // events.replay routes by target kind: a `localhost-tunnel` target RECORDS a forwarded attempt (the CLI

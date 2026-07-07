@@ -8,7 +8,13 @@ import {
   makeIngestHashEvictor,
   type CredentialHasher,
 } from "@webhook-co/db";
-import { b64ToBytes, importAuditKey, importCursorKey, readSecretBinding } from "@webhook-co/shared";
+import {
+  b64ToBytes,
+  importAuditKey,
+  importCursorKey,
+  parseFreeEventCap,
+  readSecretBinding,
+} from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import type { z } from "zod";
 
@@ -177,6 +183,9 @@ export class WebhookMcp extends McpAgent<McpEnv> {
         revealIngestUrl: this.env.INGEST_URL_REVEALER,
         // triggers.wait fetches the bounded inline body via the engine (the McpAgent has no R2 binding).
         payloadReader: this.env.PAYLOAD_READER,
+        // usage.get shows a rowless (Free) org the cap it is enforced at (S4.3b) — same FREE_EVENT_CAP
+        // the engine cap producer uses. Unset/invalid → null (uncapped, fail-safe).
+        defaultEventCap: parseFreeEventCap(this.env.FREE_EVENT_CAP),
       });
       return await runCapabilityTool(handlers, capabilityName, ctx, args, (event, fields) =>
         this.log(event, fields),

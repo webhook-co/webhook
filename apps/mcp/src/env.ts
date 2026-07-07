@@ -57,6 +57,13 @@ export interface McpEnv {
    * engine route apex.
    */
   INGEST_BASE_URL: string;
+  /**
+   * The Free-tier event cap (FREE_EVENT_CAP) the usage.get tool shows a rowless org — the SAME tier figure
+   * the engine cap producer enforces at (S4.3b), so the surface never shows "uncapped" while the org would
+   * be paused at it. Optional deploy-injected var (kept out of the repo); unset/blank → uncapped (fail-safe).
+   * MUST match the engine + api FREE_EVENT_CAP (same GH var into every worker).
+   */
+  FREE_EVENT_CAP?: string;
   // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
   // below is ONE account secret each, shared byte-identically with engine + api. Never DB columns.
   /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */
