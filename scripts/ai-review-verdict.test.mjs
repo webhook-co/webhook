@@ -50,3 +50,15 @@ test("a VERDICT line that is not the last non-empty line → null", () => {
 test("unknown verdict value → null", () => {
   assert.equal(parseVerdict("VERDICT: MAYBE"), null);
 });
+
+test("CRLF line endings are handled", () => {
+  assert.equal(parseVerdict("## Review\r\nfine\r\n\r\nVERDICT: PASS\r\n"), "PASS");
+});
+
+test("extra spacing after the colon is tolerated", () => {
+  assert.equal(parseVerdict("VERDICT:   BLOCK"), "BLOCK");
+});
+
+test("an indented verdict line is tolerated", () => {
+  assert.equal(parseVerdict("review\n    VERDICT: PASS"), "PASS");
+});

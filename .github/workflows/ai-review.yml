@@ -84,6 +84,9 @@ jobs:
           (steps.gate.outputs.cursor == 'true' || steps.gate.outputs.claude == 'true') &&
           !contains(github.event.pull_request.labels.*.name, 'skip-ai-review')
         run: |
+          # Drop any ai-review-output.md committed in the PR tree so a fake verdict can't
+          # survive into the gate; only a provider run may (re)create it.
+          rm -f ai-review-output.md
           git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
           echo "Diff size: $(wc -l < pr.diff) lines"
 
@@ -122,6 +125,7 @@ jobs:
 
       # --- Provider 2: Claude (fallback when Cursor is absent or failed) ---
       - name: Run security + QA reviewers on the diff (Claude fallback)
+        id: claude
         if: >
           steps.gate.outputs.claude == 'true' &&
           (steps.gate.outputs.cursor != 'true' || steps.cursor.outcome == 'failure') &&
@@ -166,6 +170,11 @@ jobs:
         env:
           CURSOR_CONFIGURED: ${{ steps.gate.outputs.cursor }}
           CLAUDE_CONFIGURED: ${{ steps.gate.outputs.claude }}
+          # Whether a provider actually ran and succeeded THIS run — a verdict is only
+          # trusted when one did, so a committed/forged ai-review-output.md (or a swapped
+          # parser) on a fork PR can't satisfy the gate without a real review.
+          CURSOR_OUTCOME: ${{ steps.cursor.outcome }}
+          CLAUDE_OUTCOME: ${{ steps.claude.outcome }}
           SKIP_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-ai-review') }}
         with:
           script: |
@@ -199,6 +208,9 @@ jobs:
             const verdict = parseVerdict(raw); // 'BLOCK' | 'PASS' | null
             const providersConfigured =
               process.env.CURSOR_CONFIGURED === 'true' || process.env.CLAUDE_CONFIGURED === 'true';
+            // A verdict is only trustworthy if a provider actually ran and succeeded this run.
+            const providerRan =
+              process.env.CURSOR_OUTCOME === 'success' || process.env.CLAUDE_OUTCOME === 'success';
             const skipped = process.env.SKIP_LABEL === 'true';
             const pr = context.payload.pull_request;
             const isFork = Boolean(pr && pr.head && pr.head.repo && pr.head.repo.fork);
@@ -232,8 +244,9 @@ jobs:
               return;
             }
 
-            // A completed review: post the findings and pass/fail on the verdict.
-            if (verdict === 'BLOCK' || verdict === 'PASS') {
+            // A completed review: post the findings and pass/fail on the verdict — but only
+            // when a provider genuinely ran, so a forged verdict file can't satisfy the gate.
+            if (providerRan && (verdict === 'BLOCK' || verdict === 'PASS')) {
               const emoji = verdict === 'BLOCK' ? '🔴' : '🟢';
               const heading = verdict === 'BLOCK'
                 ? '**Blocking issues found.** Resolve them (or re-run once addressed) before merge. ' +
