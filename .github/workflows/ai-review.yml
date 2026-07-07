@@ -21,6 +21,10 @@ name: AI review
 # the PR is from a fork (no reviewer secrets), the check goes red rather than passing without
 # a review. It stays green only when no reviewer credential is configured at all (not set up).
 #
+# Escape hatch: add the `skip-ai-review` label to a PR to override the gate to green (e.g. an
+# AI false-positive). `labeled`/`unlabeled` are trigger types so toggling the label re-runs
+# the check; when labeled, the providers are skipped entirely (no review cost).
+#
 # Claude credentials (either works; the OAuth token is checked first):
 #   - `CLAUDE_CODE_OAUTH_TOKEN` — mint locally with `claude setup-token` on a Claude
 #     Pro or Max subscription (no separate pay-as-you-go API account needed).
@@ -33,6 +37,9 @@ name: AI review
 on:
   pull_request:
     branches: [main]
+    # `labeled`/`unlabeled` so toggling the `skip-ai-review` escape label re-runs the
+    # check (adding a label doesn't fire `synchronize`).
+    types: [opened, synchronize, reopened, labeled, unlabeled]
 
 permissions:
   contents: read
@@ -73,21 +80,27 @@ jobs:
           fi
 
       - name: Compute PR diff
-        if: steps.gate.outputs.cursor == 'true' || steps.gate.outputs.claude == 'true'
+        if: >
+          (steps.gate.outputs.cursor == 'true' || steps.gate.outputs.claude == 'true') &&
+          !contains(github.event.pull_request.labels.*.name, 'skip-ai-review')
         run: |
           git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
           echo "Diff size: $(wc -l < pr.diff) lines"
 
       # --- Provider 1: Cursor (tried first) ---
       - name: Install Cursor CLI
-        if: steps.gate.outputs.cursor == 'true'
+        if: >
+          steps.gate.outputs.cursor == 'true' &&
+          !contains(github.event.pull_request.labels.*.name, 'skip-ai-review')
         run: |
           curl https://cursor.com/install -fsS | bash
           echo "$HOME/.cursor/bin" >> "$GITHUB_PATH"
 
       - name: Run security + QA reviewers on the diff (Cursor)
         id: cursor
-        if: steps.gate.outputs.cursor == 'true'
+        if: >
+          steps.gate.outputs.cursor == 'true' &&
+          !contains(github.event.pull_request.labels.*.name, 'skip-ai-review')
         # Don't abort the job if Cursor fails — let the Claude fallback take over. The
         # verdict gate step (not this step) decides pass/fail.
         continue-on-error: true
@@ -100,16 +113,19 @@ jobs:
              Apply the security-reviewer and qa-test-reviewer sub-agents defined in \
              .cursor/agents/. Report blocking issues (injection, XSS, secrets, authz/SSRF, \
              PII in logs, missing/weak tests, skipped tests, lowered coverage) with file:line \
-             and a concrete fix. If there are no blocking issues, say so explicitly. \
-             End your review with a final line that is EXACTLY 'VERDICT: BLOCK' (if there is \
-             any blocking issue) or 'VERDICT: PASS' (if there are none) — nothing after it." \
+             and a concrete fix. Cite findings by file:line only; NEVER quote secret values, \
+             tokens, or credentials in your output. If there are no blocking issues, say so \
+             explicitly. End your review with a final line that is EXACTLY 'VERDICT: BLOCK' \
+             (if there is any blocking issue) or 'VERDICT: PASS' (if there are none) — nothing \
+             after it." \
             < pr.diff | tee ai-review-output.md
 
       # --- Provider 2: Claude (fallback when Cursor is absent or failed) ---
       - name: Run security + QA reviewers on the diff (Claude fallback)
         if: >
           steps.gate.outputs.claude == 'true' &&
-          (steps.gate.outputs.cursor != 'true' || steps.cursor.outcome == 'failure')
+          (steps.gate.outputs.cursor != 'true' || steps.cursor.outcome == 'failure') &&
+          !contains(github.event.pull_request.labels.*.name, 'skip-ai-review')
         # Don't fail the check if Claude errors — including hitting the --max-turns cap.
         # A cut-off review writes no verdict line, so the gate step skips it silently.
         continue-on-error: true
@@ -126,7 +142,9 @@ jobs:
             security-reviewer and qa-test-reviewer sub-agents defined in `.claude/agents/`.
             Report blocking issues (injection, XSS, secrets, authz/SSRF, PII in logs,
             missing/weak tests, skipped tests, lowered coverage) with file:line and a
-            concrete fix. If there are no blocking issues, say so explicitly.
+            concrete fix. Cite findings by file:line only; NEVER quote secret values,
+            tokens, or credentials in your output. If there are no blocking issues, say
+            so explicitly.
 
             Then use the Write tool to write your complete review as Markdown to the file
             `ai-review-output.md` at the repo root. The FINAL line of that file must be
@@ -148,6 +166,7 @@ jobs:
         env:
           CURSOR_CONFIGURED: ${{ steps.gate.outputs.cursor }}
           CLAUDE_CONFIGURED: ${{ steps.gate.outputs.claude }}
+          SKIP_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'skip-ai-review') }}
         with:
           script: |
             const fs = require('fs');
@@ -161,6 +180,15 @@ jobs:
               pathToFileURL(path.join(process.env.GITHUB_WORKSPACE, 'scripts/ai-review-verdict.mjs')).href
             );
 
+            // Best-effort defense-in-depth: mask well-known token shapes and URL basic-auth
+            // creds before echoing the review into a PR comment. The primary control is the
+            // prompt (cite file:line, never quote secrets); this is the backstop.
+            function redactSecrets(text) {
+              return String(text)
+                .replace(/\b(?:sk-[A-Za-z0-9-]{16,}|sk_[A-Za-z0-9]{16,}|whsec_[A-Za-z0-9+/=]{16,}|whk_[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{12,})\b/g, '[redacted-secret]')
+                .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s/:@]+:[^\s/@]+@/gi, '$1[redacted]@');
+            }
+
             let raw = '';
             try {
               raw = fs.readFileSync('ai-review-output.md', 'utf8');
@@ -171,6 +199,7 @@ jobs:
             const verdict = parseVerdict(raw); // 'BLOCK' | 'PASS' | null
             const providersConfigured =
               process.env.CURSOR_CONFIGURED === 'true' || process.env.CLAUDE_CONFIGURED === 'true';
+            const skipped = process.env.SKIP_LABEL === 'true';
             const pr = context.payload.pull_request;
             const isFork = Boolean(pr && pr.head && pr.head.repo && pr.head.repo.fork);
             const issue_number = context.issue.number;
@@ -189,11 +218,26 @@ jobs:
               }
             }
 
+            // Escape hatch: a `skip-ai-review` label overrides the gate to green. Providers
+            // are skipped when labeled, so `verdict` is usually null here — report it anyway.
+            if (skipped) {
+              await upsertComment([
+                MARKER,
+                '## 🟡 AI review — skipped via `skip-ai-review` label',
+                '',
+                'The gate was overridden by a label, so this check passes regardless of findings. ' +
+                  'Remove the label to re-enforce the AI review.',
+              ].join('\n'));
+              core.notice('AI review skipped via the skip-ai-review label.');
+              return;
+            }
+
             // A completed review: post the findings and pass/fail on the verdict.
             if (verdict === 'BLOCK' || verdict === 'PASS') {
               const emoji = verdict === 'BLOCK' ? '🔴' : '🟢';
               const heading = verdict === 'BLOCK'
-                ? '**Blocking issues found.** Resolve them (or re-run once addressed) before merge.'
+                ? '**Blocking issues found.** Resolve them (or re-run once addressed) before merge. ' +
+                  'To override, add the `skip-ai-review` label.'
                 : 'No blocking issues.';
               await upsertComment([
                 MARKER,
@@ -203,7 +247,7 @@ jobs:
                 '',
                 '<details><summary>Full review</summary>',
                 '',
-                raw.trim(),
+                redactSecrets(raw.trim()),
                 '',
                 '</details>',
               ].join('\n'));
@@ -222,7 +266,8 @@ jobs:
                 '',
                 'A reviewer was configured but produced no `VERDICT: BLOCK|PASS` line — a timeout, ' +
                   '`--max-turns` cutoff, provider error, or malformed output. This required gate ' +
-                  'fails closed; re-run the check once a full review completes.',
+                  'fails closed; re-run the check once a full review completes, or add the ' +
+                  '`skip-ai-review` label to override.',
               ].join('\n'));
               core.setFailed('AI review did not complete — required gate fails closed. Re-run once a full review completes.');
               return;
@@ -234,7 +279,8 @@ jobs:
                 '## 🔴 AI review — cannot run on a fork PR',
                 '',
                 'Reviewer credentials are not shared with fork PRs, so the AI review could not run. ' +
-                  'A maintainer must review these changes and re-run from a trusted context before merge.',
+                  'A maintainer must review these changes and re-run from a trusted context, or add ' +
+                  'the `skip-ai-review` label to override, before merge.',
               ].join('\n'));
               core.setFailed('AI review cannot run on a fork PR — a maintainer must review from a trusted context.');
               return;
