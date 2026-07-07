@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   importAuditKey,
   importCursorKey,
+  msToOrderKey,
   newId,
   parseSince,
   type Cursor,
@@ -18,6 +19,7 @@ import { createEndpoint } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
 import { createReadHandlers, type CapabilityHandlers } from "../src/read-handlers";
 import {
+  cursorBelowOldest,
   getEndpoint,
   getEvent,
   latestTailCursor,
@@ -774,8 +776,9 @@ describe("tailEvents (forward, watermark-bounded)", () => {
 
   it("withholds events newer than the Postgres-side watermark (now() - δ)", async () => {
     // The watermark is computed DB-side, so position rows relative to the DB clock: a row ~2s old is
-    // inside the 5s window (withheld); a row ~30s old has cleared it (returned). δ = WATERMARK_DELTA_MS
-    // (5s), so these offsets sit ~3s / ~25s from the boundary — no timing flakiness.
+    // inside the δ window (withheld); a row ~30s old has cleared it (returned). δ = WATERMARK_DELTA_MS
+    // (6s = 5s statement_timeout + 1s commit margin), so these offsets sit ~4s / ~24s from the boundary
+    // — no timing flakiness.
     const epWm = (await createEndpoint(app, { orgId: orgA, name: "ep-watermark" }, hasher)).id;
     const recent = await seedEvent(orgA, epWm, { provider: "stripe" });
     const old = await seedEvent(orgA, epWm, { provider: "stripe" });
@@ -857,6 +860,53 @@ describe("tailEvents (forward, watermark-bounded)", () => {
     expect(seen.length).toBe(2); // each exactly once — no boundary duplicate
     expect([...seen].sort()).toEqual([p1, p2].sort()); // both surfaced (id orders within the ms)
     expect(pages).toBe(2);
+  });
+});
+
+describe("cursorBelowOldest (CURSOR_EXPIRED guard for future retention)", () => {
+  it("is false for the endpoint's newest cursor (everything after it is retained)", async () => {
+    const newest = await withTenant(app, orgA, (tx) =>
+      latestTailCursor(tx, { endpointId: epTail }),
+    );
+    expect(newest).not.toBeNull();
+    const expired = await withTenant(app, orgA, (tx) =>
+      cursorBelowOldest(tx, { endpointId: epTail, cursor: newest! }),
+    );
+    expect(expired).toBe(false);
+  });
+
+  it("is false for a cursor exactly at the oldest surviving event", async () => {
+    // epTail's oldest is eTail1 at tailAt(1000); a cursor at that exact µs position is not below min.
+    const atOldest: Cursor = { orderKey: msToOrderKey(tailAt(1000).getTime()), id: eTail1 };
+    const expired = await withTenant(app, orgA, (tx) =>
+      cursorBelowOldest(tx, { endpointId: epTail, cursor: atOldest }),
+    );
+    expect(expired).toBe(false);
+  });
+
+  it("is TRUE for a cursor strictly older than the oldest surviving event (pruned gap)", async () => {
+    // Simulates a retention job having deleted every event up to some horizon: the agent's cursor now
+    // sits below the endpoint's min(received_at), so resuming would skip the pruned rows.
+    const ancient: Cursor = {
+      orderKey: msToOrderKey(new Date("2020-01-01T00:00:00.000Z").getTime()),
+      id: randomUUID(),
+    };
+    const expired = await withTenant(app, orgA, (tx) =>
+      cursorBelowOldest(tx, { endpointId: epTail, cursor: ancient }),
+    );
+    expect(expired).toBe(true);
+  });
+
+  it("is false for an endpoint with no events (empty tail, not a gap)", async () => {
+    const epEmpty = (await createEndpoint(app, { orgId: orgA, name: "ep-empty-cbo" }, hasher)).id;
+    const anyCursor: Cursor = {
+      orderKey: msToOrderKey(new Date("2020-01-01T00:00:00.000Z").getTime()),
+      id: randomUUID(),
+    };
+    const expired = await withTenant(app, orgA, (tx) =>
+      cursorBelowOldest(tx, { endpointId: epEmpty, cursor: anyCursor }),
+    );
+    expect(expired).toBe(false);
   });
 });
 
