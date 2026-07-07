@@ -759,7 +759,10 @@ export const usageGet = defineCapability({
   name: "usage.get",
   input: z.object({}),
   output: UsageSummarySchema,
-  errors: ["UNAUTHORIZED", "RATE_LIMITED"],
+  // FORBIDDEN: a bearer lacking the (brand-new) billing:read scope — the api edge 403s before dispatch,
+  // and on mcp the handler's ensureScope is the sole gate. More reachable here than for events reads
+  // since most existing keys don't yet carry billing:read.
+  errors: ["UNAUTHORIZED", "FORBIDDEN", "RATE_LIMITED"],
   auth: { scope: "billing:read" },
   semantics: {},
 });

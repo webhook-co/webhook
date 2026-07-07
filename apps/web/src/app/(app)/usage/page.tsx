@@ -45,8 +45,10 @@ export default async function UsagePage() {
 
 function UsageCard({ usage }: { usage: UsageSummary }) {
   const { events, eventCap, pausePolicy, paused, periodStart, periodEnd } = usage;
-  const pct =
-    eventCap && eventCap > 0 ? Math.min(100, Math.round((events / eventCap) * 100)) : null;
+  // The TRUE percentage (uncapped) is shown as text so an over-cap 'allow' org reads its real overage
+  // (e.g. 150%) — matching `wbhk usage`. The BAR is a fill gauge, so its width + aria clamp to 100%.
+  const pct = eventCap && eventCap > 0 ? Math.round((events / eventCap) * 100) : null;
+  const barPct = pct === null ? 0 : Math.min(100, pct);
   // Meter fill tone tracks headroom: comfortable → ok, ≥80% → warn (approaching the cap).
   const meterTone = pct !== null && pct >= 80 ? "bg-warn" : "bg-ok";
 
@@ -86,12 +88,12 @@ function UsageCard({ usage }: { usage: UsageSummary }) {
             <div
               className="h-2 w-full overflow-hidden rounded-full bg-surface-sunken"
               role="progressbar"
-              aria-valuenow={pct}
+              aria-valuenow={barPct}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-label="Events used this period"
             >
-              <div className={`h-full rounded-full ${meterTone}`} style={{ width: `${pct}%` }} />
+              <div className={`h-full rounded-full ${meterTone}`} style={{ width: `${barPct}%` }} />
             </div>
           )}
         </div>
