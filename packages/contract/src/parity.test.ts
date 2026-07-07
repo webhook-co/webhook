@@ -102,7 +102,8 @@ describe("capability parity — current GA surfaces conformance", () => {
     "audit.verify",
     // triggers.* (S5): webhook→agent trigger subscriptions. MCP-BOUND (unlike the egress subscriptions.*
     // above) — a trigger is a read-consumption registration, not egress, so an agent may manage its own.
-    // Web is deferred to the S5 dashboard slice (surfaceExempt in capabilities.ts), so NOT in WEB_BOUND.
+    // create/list/revoke are ALSO web-bound (S5 dashboard slice — DB-direct server actions, see WEB_BOUND
+    // below); only triggers.wait stays web-exempt (the dashboard streams live events over its own WebSocket).
     "triggers.create",
     "triggers.list",
     "triggers.revoke",
@@ -131,6 +132,11 @@ describe("capability parity — current GA surfaces conformance", () => {
     "events.getPayload",
     // usage.get (S4.2): the dashboard usage view — a DB-direct server read (usage.ts), like events.list.
     "usage.get",
+    // triggers.* (S5 web slice): the dashboard agent-triggers view (list + create + revoke) via DB-direct
+    // server actions (agent-trigger-actions.ts). triggers.wait is NOT web-bound (see the note above).
+    "triggers.create",
+    "triggers.list",
+    "triggers.revoke",
   ];
   function liveBindings() {
     const b = emptyBindings();

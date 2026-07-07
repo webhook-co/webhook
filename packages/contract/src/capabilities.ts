@@ -704,8 +704,6 @@ export const deliveriesList = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED },
 });
 
-// The dashboard trigger-management view ships in a follow-up S5 web slice; api/cli/mcp parity lands first.
-const TRIGGERS_WEB_DEFERRED = "dashboard trigger-management view ships in the S5 web slice";
 // triggers.wait is an agent long-poll consumption primitive; the dashboard consumes live events via its
 // own WebSocket (LISTEN_SESSION), so there is no web binding for the wait tool.
 const TRIGGERS_WAIT_WEB_EXEMPT =
@@ -733,7 +731,6 @@ export const triggersCreate = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "triggers:write" },
   semantics: {},
-  surfaceExempt: { web: TRIGGERS_WEB_DEFERRED },
 });
 export const triggersList = defineCapability({
   name: "triggers.list",
@@ -743,7 +740,6 @@ export const triggersList = defineCapability({
   errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "events:read" },
   semantics: {},
-  surfaceExempt: { web: TRIGGERS_WEB_DEFERRED },
 });
 export const triggersRevoke = defineCapability({
   name: "triggers.revoke",
@@ -754,7 +750,6 @@ export const triggersRevoke = defineCapability({
   errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
   auth: { scope: "triggers:write" },
   semantics: { idempotent: true },
-  surfaceExempt: { web: TRIGGERS_WEB_DEFERRED },
 });
 // triggers.wait — the CONSUMPTION primitive: short-poll the next events for a trigger subscription. Returns
 // immediately with whatever is past `cursor` up to the gapless watermark; the caller re-invokes with the
