@@ -12,18 +12,21 @@ name: AI review
 #
 # Whichever provider runs writes its full review to `ai-review-output.md`, ending with a
 # machine-readable final line `VERDICT: BLOCK` or `VERDICT: PASS`. A final gate step
-# (parsing via the unit-tested scripts/ai-review-verdict.mjs) then:
-#   - posts (or updates) a sticky PR comment with the review, and
-#   - FAILS the check when the verdict is BLOCK — so blocking findings are visible on the PR
-#     instead of buried in the job log.
-# `ai-review` is a required check, so the gate FAILS CLOSED: if a provider was configured but
-# no verdict was emitted (timeout, --max-turns cutoff, provider error, malformed output), or
-# the PR is from a fork (no reviewer secrets), the check goes red rather than passing without
-# a review. It stays green only when no reviewer credential is configured at all (not set up).
+# (parsing via the unit-tested scripts/ai-review-verdict.mjs) then posts (or updates) a
+# sticky PR comment with the review and turns the check RED on a BLOCK verdict.
 #
-# Escape hatch: add the `skip-ai-review` label to a PR to override the gate to green (e.g. an
-# AI false-positive). `labeled`/`unlabeled` are trigger types so toggling the label re-runs
-# the check; when labeled, the providers are skipped entirely (no review cost).
+# This check is ADVISORY, not a required merge gate: a `pull_request` workflow is mutable by
+# the PR under review and the LLM verdict is non-deterministic + prompt-injectable, so it
+# can't be a hard security boundary. The deterministic checks (gitleaks, codeql, tests) remain
+# authoritative; `ai-review` is a loud, visible signal only. Accordingly it fails ONLY on a
+# genuine BLOCK (from a real provider run); an incomplete review (timeout, --max-turns cutoff,
+# provider error) or a fork PR (no reviewer secrets) leaves the check green with a notice
+# rather than crying wolf. A verdict is trusted only when a provider step actually succeeded,
+# so a committed/forged ai-review-output.md can't masquerade as a review.
+#
+# Silence hatch: add the `skip-ai-review` label to hold the advisory check green even on a
+# BLOCK (e.g. a false-positive). `labeled`/`unlabeled` are trigger types so toggling the label
+# re-runs the check; when labeled, the providers are skipped entirely (no review cost).
 #
 # Claude credentials (either works; the OAuth token is checked first):
 #   - `CLAUDE_CODE_OAUTH_TOKEN` — mint locally with `claude setup-token` on a Claude
@@ -230,27 +233,28 @@ jobs:
               }
             }
 
-            // Escape hatch: a `skip-ai-review` label overrides the gate to green. Providers
-            // are skipped when labeled, so `verdict` is usually null here — report it anyway.
+            // Silence hatch: a `skip-ai-review` label keeps the advisory check green even on
+            // a BLOCK (e.g. a false-positive). Providers are skipped when labeled.
             if (skipped) {
               await upsertComment([
                 MARKER,
-                '## 🟡 AI review — skipped via `skip-ai-review` label',
+                '## 🟡 AI review — silenced via `skip-ai-review` label',
                 '',
-                'The gate was overridden by a label, so this check passes regardless of findings. ' +
-                  'Remove the label to re-enforce the AI review.',
+                'The advisory check is held green by a label. Remove the label to re-run the review.',
               ].join('\n'));
-              core.notice('AI review skipped via the skip-ai-review label.');
+              core.notice('AI review silenced via the skip-ai-review label.');
               return;
             }
 
-            // A completed review: post the findings and pass/fail on the verdict — but only
-            // when a provider genuinely ran, so a forged verdict file can't satisfy the gate.
+            // A completed review: post the findings. This check is ADVISORY — a BLOCK turns it
+            // red as a loud signal, but doesn't gate merge (deterministic checks — gitleaks,
+            // codeql, tests — are authoritative). Only trust a verdict when a provider actually
+            // ran, so a forged verdict file can't masquerade as a real review.
             if (providerRan && (verdict === 'BLOCK' || verdict === 'PASS')) {
               const emoji = verdict === 'BLOCK' ? '🔴' : '🟢';
               const heading = verdict === 'BLOCK'
-                ? '**Blocking issues found.** Resolve them (or re-run once addressed) before merge. ' +
-                  'To override, add the `skip-ai-review` label.'
+                ? '**Blocking issues found** (advisory — review before merging; add the ' +
+                  '`skip-ai-review` label to silence).'
                 : 'No blocking issues.';
               await upsertComment([
                 MARKER,
@@ -265,38 +269,18 @@ jobs:
                 '</details>',
               ].join('\n'));
               if (verdict === 'BLOCK') {
-                core.setFailed('AI review flagged blocking issues — see the PR comment.');
+                core.setFailed('AI review flagged blocking issues (advisory) — see the PR comment.');
               }
               return;
             }
 
-            // No parseable verdict. Fail closed when a review was expected, so a required
-            // check can't pass without one; stay green only when the feature isn't set up.
+            // No trusted verdict (timeout, --max-turns cutoff, provider error, fork with no
+            // secrets, or not configured). Advisory: don't cry wolf — leave the check green
+            // with a notice rather than failing on an incomplete review.
             if (providersConfigured) {
-              await upsertComment([
-                MARKER,
-                '## 🔴 AI review — did not complete',
-                '',
-                'A reviewer was configured but produced no `VERDICT: BLOCK|PASS` line — a timeout, ' +
-                  '`--max-turns` cutoff, provider error, or malformed output. This required gate ' +
-                  'fails closed; re-run the check once a full review completes, or add the ' +
-                  '`skip-ai-review` label to override.',
-              ].join('\n'));
-              core.setFailed('AI review did not complete — required gate fails closed. Re-run once a full review completes.');
-              return;
+              core.notice('AI review did not complete (no verdict emitted) — advisory, not failing. Re-run for a full review.');
+            } else if (isFork) {
+              core.notice('AI review does not run on fork PRs (no reviewer credentials) — advisory, not failing.');
+            } else {
+              core.notice('No AI reviewer credential configured — AI review skipped. Add CURSOR_API_KEY and/or CLAUDE_CODE_OAUTH_TOKEN to enable it.');
             }
-
-            if (isFork) {
-              await upsertComment([
-                MARKER,
-                '## 🔴 AI review — cannot run on a fork PR',
-                '',
-                'Reviewer credentials are not shared with fork PRs, so the AI review could not run. ' +
-                  'A maintainer must review these changes and re-run from a trusted context, or add ' +
-                  'the `skip-ai-review` label to override, before merge.',
-              ].join('\n'));
-              core.setFailed('AI review cannot run on a fork PR — a maintainer must review from a trusted context.');
-              return;
-            }
-
-            core.notice('No AI reviewer credential configured — AI review skipped. Add CURSOR_API_KEY and/or CLAUDE_CODE_OAUTH_TOKEN to enable it.');
