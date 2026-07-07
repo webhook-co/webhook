@@ -28,6 +28,7 @@ import {
 } from "@webhook-co/shared";
 
 import type { TenantTx } from "./client";
+import { sumPeriodEventUsage } from "./period-usage";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -684,10 +685,9 @@ export async function listDeliveries(
  */
 export async function readUsageSummary(tx: TenantTx, nowMs: number): Promise<UsageSummary> {
   const period = currentBillingPeriod(nowMs);
-  const [usageRow] = await tx<{ events: string }[]>`
-    select coalesce(sum(event_count), 0)::bigint as events
-    from usage
-    where window_start >= ${period.start} and window_start < ${period.end}`;
+  // The SAME period-usage basis the soft-cap producer enforces on (sumPeriodEventUsage) — rolled prior
+  // days + live today — so what the surface shows can't drift from what enforcement decides.
+  const events = await sumPeriodEventUsage(tx, period, nowMs);
   const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
     select event_cap, pause_policy from org_limits`;
   const [pauseRow] = await tx<{ paused: boolean }[]>`
@@ -695,7 +695,7 @@ export async function readUsageSummary(tx: TenantTx, nowMs: number): Promise<Usa
   return {
     periodStart: new Date(period.start),
     periodEnd: new Date(period.end),
-    events: Number(usageRow?.events ?? 0),
+    events,
     eventCap: limits?.event_cap != null ? Number(limits.event_cap) : null,
     pausePolicy: limits?.pause_policy ?? "pause",
     paused: pauseRow?.paused ?? false,

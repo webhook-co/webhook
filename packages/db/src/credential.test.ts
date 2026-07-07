@@ -184,6 +184,18 @@ describe("credentialCacheKey", () => {
     expect(key).toBe(keyHash.toString("hex"));
     expect(key).not.toContain(plaintext.slice(4)); // the secret body
   });
+
+  it("hexes a PLAIN Uint8Array identically to a Buffer (the Workers wire path)", () => {
+    // The engine passes the token hash straight off the wire as a plain Uint8Array (no Node Buffer).
+    // `Uint8Array.prototype.toString('hex')` is a silent no-op, so the manual byte loop is load-bearing:
+    // the evictor MUST compute the same key the resolver cached under, or a resume never clears.
+    const bytes = new Uint8Array([0x00, 0x0f, 0xff, 0xa0, 0x7b]);
+    expect(credentialCacheKey(bytes)).toBe("000fffa07b");
+    expect(credentialCacheKey(bytes)).toBe(Buffer.from(bytes).toString("hex"));
+    // Byte-identical for a real 32-byte hash whether it arrives as a Buffer or a plain Uint8Array copy.
+    const { keyHash } = mintCredential("whk", hasherA);
+    expect(credentialCacheKey(new Uint8Array(keyHash))).toBe(credentialCacheKey(keyHash));
+  });
 });
 
 describe("mintChecksummedCredential", () => {

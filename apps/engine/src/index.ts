@@ -5,8 +5,12 @@ import {
   createCredentialHasherFromBase64,
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
+  DEFAULT_CAP_PRODUCER_LIMIT,
   DEFAULT_METERING_ROLLUP_LIMIT,
   DEFAULT_RECONCILE_LIMIT,
+  makeCapTransitionEvictor,
+  makeIngestHashEvictor,
+  runCapProducer,
   enqueueAutoDeliveries,
   fromCachedSealedSecret,
   getEndpoint,
@@ -34,6 +38,7 @@ import {
   type ListenTicketGrant,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
+  parseFreeEventCap,
   parseSince,
   readSecretBinding,
   type RevealedIngestToken,
@@ -144,6 +149,12 @@ export interface Env {
    * the committed prod origin. Unset in prod. A committed VAR, not a secret.
    */
   DASHBOARD_ORIGIN?: string;
+  /**
+   * The Free-tier event cap for orgs WITHOUT an explicit org_limits row (S4.3 soft-cap). A tier figure,
+   * so it is INJECTED at deploy (not committed) and kept out of the repo. Unset/blank = uncapped (no
+   * Free-pause enforcement) — a fail-safe default; setting it is the enable-Free-enforcement switch.
+   */
+  FREE_EVENT_CAP?: string;
 }
 
 // Isolate-scoped DEK handle cache (ADR-0007): unwrapped, non-extractable CryptoKey handles, bounded
@@ -855,16 +866,52 @@ const USAGE_SETTLE_DAYS = 2;
 async function runMeteringRollupCron(env: Env): Promise<void> {
   const meter = createClient(env.HYPERDRIVE_METER.connectionString);
   const app = createClient(env.HYPERDRIVE_TENANT.connectionString);
+  const log = (message: string, fields?: Record<string, unknown>) =>
+    console.log(JSON.stringify({ message, ...fields }));
   try {
-    const result = await runUsageRollup({
+    const rollup = await runUsageRollup({
       meter,
       app,
       now: Date.now(),
       settleDays: USAGE_SETTLE_DAYS,
       limit: DEFAULT_METERING_ROLLUP_LIMIT,
-      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+      log,
     });
-    console.log(JSON.stringify({ message: "metering.rollup.done", ...result }));
+    log("metering.rollup.done", { ...rollup });
+
+    // Soft-cap enforcement (S4.3): after the rollup, flip ingest_paused on any pause/resume transition,
+    // then evict the org's ingest-token cache entries so it takes effect on the next cold miss (a stale
+    // positive principal on resume would be a paying-customer outage). The Free default cap is INJECTED
+    // (a tier figure, never in the repo); unset/blank → uncapped (fail-safe, no Free enforcement).
+    //
+    // Parse fail-safe: ONLY a strict positive integer enables Free enforcement. `0`/negative would make
+    // `shouldPauseForCap` (usage >= cap) always true → pause EVERY Free org — a mass outage from one
+    // fat-fingered deploy var. `Number.parseInt` is also lenient ("10k"→10, "1e6"→1), so we reject any
+    // string that isn't a clean integer. Anything invalid (unset, blank, non-positive, partial) → null
+    // (uncapped), and a SET-but-invalid value logs loudly (a silent mass-pause is the worst outcome).
+    const defaultEventCap = parseFreeEventCap(env.FREE_EVENT_CAP);
+    if (defaultEventCap === null) {
+      if (env.FREE_EVENT_CAP && env.FREE_EVENT_CAP.trim() !== "") {
+        log("metering.cap.free_cap_invalid", { raw: env.FREE_EVENT_CAP });
+      } else {
+        log("metering.cap.free_cap_unset");
+      }
+    }
+    const evict = makeIngestHashEvictor(kvCredentialCache(env.KV_CONFIG), (err) =>
+      log("metering.cap.kv_evict_error", { error: String(err) }),
+    );
+    const cap = await runCapProducer({
+      meter,
+      app,
+      now: Date.now(),
+      defaultEventCap,
+      limit: DEFAULT_CAP_PRODUCER_LIMIT,
+      log,
+      // On each transition, evict every live endpoint's ingest-token cache entry for this org so the
+      // flipped pause state is picked up on the next cold miss (extracted + integration-tested seam).
+      onTransition: makeCapTransitionEvictor(app, evict),
+    });
+    log("metering.cap.done", { ...cap });
   } finally {
     await Promise.all([meter.end(), app.end()]);
   }

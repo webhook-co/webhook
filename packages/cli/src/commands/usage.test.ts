@@ -58,6 +58,19 @@ describe("wbhk usage", () => {
     expect(out).toContain("paused");
   });
 
+  it("treats a cap of 0 as a real cap (not uncapped), with no divide-by-zero percentage", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ ...CAPPED, events: 5, eventCap: 0 }),
+    });
+    await run(app, ["usage"], t.ctx);
+    const out = t.stdout();
+    expect(out).toContain("5 of 0 events");
+    expect(out).not.toContain("uncapped");
+    expect(out).not.toContain("NaN");
+    expect(out).not.toContain("Infinity");
+  });
+
   it("emits the raw UsageSummary as JSON", async () => {
     const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(CAPPED) });
     await run(app, ["usage", "--output", "json"], t.ctx);

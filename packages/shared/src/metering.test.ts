@@ -4,10 +4,52 @@ import {
   currentBillingPeriod,
   finalizeCutoff,
   ingestAllowed,
+  parseFreeEventCap,
   rollupWindows,
   shouldPauseForCap,
   type IngestGuardSignal,
 } from "./metering";
+
+describe("parseFreeEventCap (Free-tier default cap, fail-safe)", () => {
+  it("accepts a clean positive integer", () => {
+    expect(parseFreeEventCap("500000")).toBe(500000);
+    expect(parseFreeEventCap("1")).toBe(1);
+  });
+
+  it("treats unset / blank / whitespace as uncapped (null)", () => {
+    expect(parseFreeEventCap(undefined)).toBeNull();
+    expect(parseFreeEventCap(null)).toBeNull();
+    expect(parseFreeEventCap("")).toBeNull();
+    expect(parseFreeEventCap("   ")).toBeNull();
+  });
+
+  it("treats 0 and negatives as uncapped, NEVER as cap-at-0 (would mass-pause every Free org)", () => {
+    // shouldPauseForCap(usage, 0, 'pause') is usage >= 0 = always true — a 0 cap must fail safe.
+    expect(parseFreeEventCap("0")).toBeNull();
+    expect(parseFreeEventCap("-1")).toBeNull();
+    expect(parseFreeEventCap("-500000")).toBeNull();
+  });
+
+  it("rejects lenient/partial strings instead of taking a parseInt prefix", () => {
+    expect(parseFreeEventCap("10k")).toBeNull();
+    expect(parseFreeEventCap("1e6")).toBeNull();
+    expect(parseFreeEventCap("1_000")).toBeNull();
+    expect(parseFreeEventCap("100abc")).toBeNull();
+    expect(parseFreeEventCap("1.5")).toBeNull();
+    expect(parseFreeEventCap("+500")).toBeNull();
+    expect(parseFreeEventCap("0x10")).toBeNull();
+    expect(parseFreeEventCap("NaN")).toBeNull();
+    expect(parseFreeEventCap("Infinity")).toBeNull();
+  });
+
+  it("rejects a value beyond the safe-integer range", () => {
+    expect(parseFreeEventCap("9".repeat(30))).toBeNull();
+  });
+
+  it("tolerates surrounding whitespace on an otherwise-clean integer", () => {
+    expect(parseFreeEventCap("  500000  ")).toBe(500000);
+  });
+});
 
 describe("ingestAllowed", () => {
   const base: IngestGuardSignal = { orgId: "o", paused: false, eventCap: 1000 };

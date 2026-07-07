@@ -7,6 +7,13 @@
   "observability": {
     "enabled": true,
   },
+  // Non-secret runtime vars. FREE_EVENT_CAP is the Free-tier event ceiling for orgs without an explicit
+  // org_limits row (S4.3 soft-cap) — a TIER FIGURE, so its VALUE is injected at deploy (the `<...>`
+  // placeholder is replaced by the FREE_EVENT_CAP GH var; unset → "" → uncapped/no-Free-enforcement, the
+  // fail-safe default). The literal placeholder is what `wrangler dev` sees locally (parses to uncapped).
+  "vars": {
+    "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
+  },
   // Two Hyperdrive bindings (ADR-0002 / review finding C1):
   //   HYPERDRIVE_TENANT  — query caching DISABLED. ALL tenant-scoped reads use this.
   //     Hyperdrive's query cache is keyed on SQL+params and is blind to the RLS

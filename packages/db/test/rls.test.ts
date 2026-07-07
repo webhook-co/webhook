@@ -804,31 +804,42 @@ describe("catalog-driven RLS coverage", () => {
   });
 
   it("the meter role holds SELECT on ONLY the enumeration columns, and no write anywhere", async () => {
-    // SELECT: only (org_id, received_at) on events and (org_id, window_start, finalized_at) on usage.
+    // SELECT: only the enumeration columns — (org_id, received_at) on events, (org_id, window_start,
+    // finalized_at) on usage (S4.1), and the soft-cap enumeration columns (org_id, event_cap,
+    // pause_policy) on org_limits + (org_id, paused) on ingest_paused (S4.3 / migration 0042).
     const selects: Array<[string, string]> = [
       ["events", "org_id"],
       ["events", "received_at"],
       ["usage", "org_id"],
       ["usage", "window_start"],
       ["usage", "finalized_at"],
+      ["org_limits", "org_id"],
+      ["org_limits", "event_cap"],
+      ["org_limits", "pause_policy"],
+      ["ingest_paused", "org_id"],
+      ["ingest_paused", "paused"],
     ];
     for (const [t, c] of selects) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meter}, ${t}, ${c}, 'SELECT') as ok`;
       expect(p.ok).toBe(true);
     }
-    // It must NEVER read a payload / header / dedup column, nor the usage count itself.
+    // It must NEVER read a payload / header / dedup column, nor the usage count itself, nor the
+    // pause NARRATIVE columns (reason/since) — the producer needs the flag + cap, never the prose.
     for (const [t, c] of [
       ["events", "payload_r2_key"],
       ["events", "headers"],
       ["events", "dedup_key"],
       ["usage", "event_count"],
+      ["ingest_paused", "reason"],
+      ["ingest_paused", "since"],
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meter}, ${t}, ${c}, 'SELECT') as ok`;
       expect(p.ok).toBe(false);
     }
-    // No write anywhere: not on events/usage, not on the pause/limits tables.
+    // No write anywhere: not on events/usage, not on the pause/limits tables. The producer READS the
+    // cap + usage as webhook_meter and flips ingest_paused only as webhook_app under withTenant.
     for (const t of ["events", "usage", "org_limits", "ingest_paused"] as const) {
       const [p] = await owner<{ any: boolean }[]>`
         select (has_table_privilege(${DB_ROLES.meter}, ${t}, 'INSERT')
@@ -840,8 +851,34 @@ describe("catalog-driven RLS coverage", () => {
     // the role's reach to writes the column grants happen not to cover.
     const policies = await owner<{ policyname: string; cmd: string }[]>`
       select policyname, cmd from pg_policies
-      where schemaname = 'public' and policyname in ('events_meter_select', 'usage_meter_select')`;
-    expect(policies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT"]);
+      where schemaname = 'public' and policyname in
+        ('events_meter_select', 'usage_meter_select', 'org_limits_meter_select', 'ingest_paused_meter_select')`;
+    expect(policies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT", "SELECT", "SELECT"]);
+  });
+
+  it("the authn role reads ONLY (org_id, paused) on ingest_paused for the cold-lookup OR-in — never the reason note, never a write", async () => {
+    // The ingest cold lookup (webhook_authn) LEFT JOINs ingest_paused to OR org-level pause into the
+    // resolved endpoint's paused flag (S4.3, migration 0042). That grant must be the boolean flag only:
+    // authn never needs the pause NARRATIVE (reason/since), and must not write pause state.
+    for (const c of ["org_id", "paused"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.authn}, 'ingest_paused', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    for (const c of ["reason", "since", "updated_at"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.authn}, 'ingest_paused', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    const [w] = await owner<{ any: boolean }[]>`
+      select (has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'INSERT')
+           or has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'UPDATE')
+           or has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'DELETE')) as any`;
+    expect(w.any).toBe(false);
+    const [pol] = await owner<{ cmd: string }[]>`
+      select cmd from pg_policies
+      where schemaname = 'public' and policyname = 'ingest_paused_authn_select'`;
+    expect(pol.cmd).toBe("SELECT");
   });
 
   it("the sweeper role holds DELETE — and ONLY delete — on the two token tables, nothing elsewhere", async () => {

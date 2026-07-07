@@ -84,7 +84,7 @@ export function createIngestResolver(opts: IngestResolverOptions): CredentialRes
 export function makeIngestHashEvictor(
   cache: CredentialCache,
   onError?: (err: unknown) => void,
-): (keyHash: Buffer) => Promise<void> {
+): (keyHash: Uint8Array) => Promise<void> {
   return async (keyHash) => {
     try {
       await cache.delete(credentialCacheKey(keyHash));
