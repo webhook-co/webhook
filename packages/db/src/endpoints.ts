@@ -44,7 +44,7 @@ const ENDPOINT_CREATE_LOCK_NAMESPACE = 0x454e4450;
 export interface CreateEndpointInput {
   readonly orgId: string;
   readonly name: string;
-  /** Optional per-endpoint dedup config (ADR-0104); null/absent = the default (identifier ladder, 24h). */
+  /** Optional per-endpoint dedup config (ADR-0104); null/absent = the default (off — log every request). */
   readonly dedupConfig?: DedupConfig | null;
 }
 
@@ -341,7 +341,7 @@ export async function rotateEndpointWithAudit(
 export interface UpdateEndpointDedupInput {
   readonly orgId: string;
   readonly endpointId: string;
-  /** The new dedup config; null RESETS to the default (identifier/24h). */
+  /** The new dedup config; null RESETS to the default (off — log every request). */
   readonly dedupConfig: DedupConfig | null;
   /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
   readonly actor: string | null;

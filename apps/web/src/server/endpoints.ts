@@ -18,7 +18,7 @@ export interface EndpointItem {
   readonly name: string;
   readonly paused: boolean;
   readonly createdAt: Date;
-  /** The endpoint's deduplication config, or null when it uses the default (identifier ladder, 24h). */
+  /** The endpoint's deduplication config, or null when it uses the default (off — log every request). */
   readonly dedupConfig: DedupConfig | null;
 }
 

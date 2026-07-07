@@ -1,4 +1,4 @@
-import { serializeVerifyTokenSecret } from "@webhook-co/shared";
+import { serializeVerifyTokenSecret, type DedupConfig } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -22,12 +22,17 @@ interface Calls {
   autoDeliver: AutoDeliverArgs[];
 }
 
-function makeDeps(over: Partial<IngestDeps> = {}): { deps: IngestDeps; calls: Calls } {
+// The default endpoint carries `dedupConfig: null` → the OFF default (no auto-dedup). Tests that exercise
+// the opt-in identifier ladder / content-hash derivation pass an explicit config via the 2nd arg.
+function makeDeps(
+  over: Partial<IngestDeps> = {},
+  dedupConfig: DedupConfig | null = null,
+): { deps: IngestDeps; calls: Calls } {
   const calls: Calls = { put: [], ingest: [], verify: [], logs: [], order: [], autoDeliver: [] };
   const deps: IngestDeps = {
     resolve: async (token) =>
       token === GOOD
-        ? { orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [], dedupConfig: null }
+        ? { orgId: ORG, endpointId: EP, paused: false, sealedSecrets: [], dedupConfig }
         : null,
     verify: async (input) => {
       calls.order.push("verify");
@@ -51,7 +56,6 @@ function makeDeps(over: Partial<IngestDeps> = {}): { deps: IngestDeps; calls: Ca
     now: () => new Date("2026-06-14T12:00:00Z"),
     log: (event, fields) => calls.logs.push({ event, fields }),
     maxBodyBytes: 1024 * 1024,
-    dedupBucketWidthMs: 24 * 60 * 60 * 1000,
     ...over,
   };
   return { deps, calls };
@@ -245,7 +249,8 @@ describe("handleIngest — the wbhk.my write path", () => {
   });
 
   it("PUT-first durable-before-ACK: R2 PUT happens BEFORE the metadata insert, then ACK 200", async () => {
-    const { deps, calls } = makeDeps();
+    // identifier config so this durability test still exercises the provider-id ladder (default is now off).
+    const { deps, calls } = makeDeps({}, { mode: "identifier", windowSeconds: 86_400 });
     const res = await handleIngest(
       req(GOOD, {
         body: `{"id":"evt_abc"}`,
@@ -616,7 +621,8 @@ describe("handleIngest — Slack url_verification handshake (Slice C)", () => {
 
   it("a slack event_callback carrying an event_id is captured (the handshake parse is skipped)", async () => {
     // event_id present -> deriveDedup sets providerEventId -> the handshake branch is skipped entirely.
-    const { deps, calls } = makeDeps();
+    // identifier config so the provider-id ladder runs (the default is now off → unique).
+    const { deps, calls } = makeDeps({}, { mode: "identifier", windowSeconds: 86_400 });
     const res = await handleIngest(
       req(GOOD, {
         body: `{"type":"event_callback","event_id":"Ev0001","event":{"type":"message"}}`,
@@ -1029,9 +1035,13 @@ describe("handleIngest — per-endpoint dedup config threads to the key (Slice 2
     expect(calls.ingest[0]?.dedupStrategy).toBe("content_hash");
   });
 
-  it("NULL config reproduces the identifier default (content_hash for a generic body)", async () => {
-    const { deps, calls } = makeDeps(); // default fake carries dedupConfig: null
+  it("NULL config → OFF (per-request unique key: log every request, no auto-dedup)", async () => {
+    const { deps, calls } = makeDeps(); // default fake carries dedupConfig: null → the OFF default
     await handleIngest(req(GOOD, { body: `no recognized id` }), deps);
-    expect(calls.ingest[0]?.dedupStrategy).toBe("content_hash");
+    // Two identical requests to a null-config endpoint each get a distinct key (never collapse).
+    await handleIngest(req(GOOD, { body: `no recognized id` }), deps);
+    expect(calls.ingest[0]?.dedupStrategy).toBe("unique");
+    expect(calls.ingest[1]?.dedupStrategy).toBe("unique");
+    expect(calls.ingest[0]?.dedupKey).not.toBe(calls.ingest[1]?.dedupKey);
   });
 });

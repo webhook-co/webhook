@@ -26,7 +26,7 @@ export const MAX_ARRAY_INDEX = 100;
 /** Window bounds: 1 minute .. 7 days (comfortably exceeds known sender retry windows at the top end). */
 export const MIN_DEDUP_WINDOW_SECONDS = 60;
 export const MAX_DEDUP_WINDOW_SECONDS = 604_800;
-export const DEFAULT_DEDUP_WINDOW_SECONDS = 86_400; // 24h — today's global default
+export const DEFAULT_DEDUP_WINDOW_SECONDS = 86_400; // 24h — the default window a collapsing mode seeds with (dedup itself is off by default)
 
 /**
  * Whether a raw window entry (from a UI number field) is a whole number of seconds INSIDE the accepted
@@ -156,10 +156,35 @@ export type FieldSelector = z.infer<typeof FieldSelectorSchema>;
 export const DedupConfigSchema = z
   .object({
     mode: DedupModeSchema,
-    windowSeconds: z.number().int().min(MIN_DEDUP_WINDOW_SECONDS).max(MAX_DEDUP_WINDOW_SECONDS),
+    // Optional so `off` (which never collapses) needs no window — required for every OTHER mode via the
+    // superRefine below. Keeps the docs/API consistent (`off` takes no windowSeconds) and prevents a
+    // windowless `off` from failing validation and being silently downgraded on the cold-path read.
+    windowSeconds: z
+      .number()
+      .int()
+      .min(MIN_DEDUP_WINDOW_SECONDS)
+      .max(MAX_DEDUP_WINDOW_SECONDS)
+      .optional(),
     fields: FieldSelectorSchema.optional(),
   })
   .superRefine((cfg, ctx) => {
+    if (cfg.mode !== "off" && cfg.windowSeconds === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "`windowSeconds` is required for this mode",
+        path: ["windowSeconds"],
+      });
+    }
+    // `off` collapses nothing, so a window is meaningless — forbid it (not merely ignore it) so every
+    // surface rejects `{ mode: "off", windowSeconds }` identically. Without this the API/MCP would
+    // silently accept + store a stray window that the CLI rejects, breaking CLI/API/web/MCP parity.
+    if (cfg.mode === "off" && cfg.windowSeconds !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: "`windowSeconds` is not valid for off mode",
+        path: ["windowSeconds"],
+      });
+    }
     if (cfg.mode === "fields" && !cfg.fields) {
       ctx.addIssue({
         code: "custom",

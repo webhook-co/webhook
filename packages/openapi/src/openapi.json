@@ -2127,8 +2127,7 @@
                   }
                 },
                 "required": [
-                  "mode",
-                  "windowSeconds"
+                  "mode"
                 ],
                 "additionalProperties": false
               },
@@ -2221,8 +2220,7 @@
                   }
                 },
                 "required": [
-                  "mode",
-                  "windowSeconds"
+                  "mode"
                 ],
                 "additionalProperties": false
               },
@@ -4481,8 +4479,7 @@
                   }
                 },
                 "required": [
-                  "mode",
-                  "windowSeconds"
+                  "mode"
                 ]
               },
               {
@@ -4546,8 +4543,7 @@
                   }
                 },
                 "required": [
-                  "mode",
-                  "windowSeconds"
+                  "mode"
                 ]
               },
               {

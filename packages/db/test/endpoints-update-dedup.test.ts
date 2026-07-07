@@ -47,7 +47,7 @@ afterAll(async () => {
   await pg?.stop();
 });
 
-const OFF = { mode: "off" as const, windowSeconds: 3600 };
+const OFF = { mode: "off" as const }; // off takes no window (it collapses nothing)
 const FIELDS = { mode: "fields" as const, windowSeconds: 300, fields: { include: ["body.id"] } };
 
 describe("endpoints.update — dedup config round-trip", () => {

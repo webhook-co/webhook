@@ -48,12 +48,13 @@ import { IngestUrlDialog } from "./ingest-url-dialog";
 
 // The create dialog offers the three modes that need no extra input — the `fields` editor lives on the
 // endpoint's detail page (a fresh endpoint has no payloads to pick fields against yet). Labels are the plain,
-// user-facing wording, never the raw enum.
-type CreateDedupMode = "identifier" | "content" | "off";
+// user-facing wording, never the raw enum. The DEFAULT is off (log every request, no auto-dedup) — dedup is
+// opt-in; off is listed first so it reads as the default.
+type CreateDedupMode = "off" | "identifier" | "content";
 const CREATE_DEDUP_OPTIONS: ComboboxOption[] = [
-  { value: "identifier", label: "Automatic (recommended)" },
-  { value: "content", label: "Match on full content" },
-  { value: "off", label: "Off — record every request" },
+  { value: "off", label: "Log every request (default)" },
+  { value: "identifier", label: "Collapse retries automatically" },
+  { value: "content", label: "Collapse identical payloads" },
 ];
 
 export interface EndpointsManagerProps {
@@ -92,9 +93,9 @@ export function EndpointsManager({
   const isFiltered = Boolean(nameFilter && nameFilter.trim() !== "");
   const [createOpen, setCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
-  // Dedup config for the new endpoint. Defaults to the automatic ladder + 24h — the same as an untouched
-  // (null) config — so a create that doesn't touch these sends no dedupConfig at all (keeps the null default).
-  const [dedupMode, setDedupMode] = React.useState<CreateDedupMode>("identifier");
+  // Dedup config for the new endpoint. Defaults to OFF (log every request) — the same as an untouched (null)
+  // config — so a create that doesn't touch these sends no dedupConfig at all (keeps the null = off default).
+  const [dedupMode, setDedupMode] = React.useState<CreateDedupMode>("off");
   const [dedupWindow, setDedupWindow] = React.useState(String(DEFAULT_DEDUP_WINDOW_SECONDS));
   const [pending, setPending] = React.useState(false);
   // A synchronous in-flight latch: `pending` state can't block a same-tick double-submit (it re-renders a
@@ -122,7 +123,7 @@ export function EndpointsManager({
 
   function resetForm() {
     setName("");
-    setDedupMode("identifier");
+    setDedupMode("off");
     setDedupWindow(String(DEFAULT_DEDUP_WINDOW_SECONDS));
     setFormError(null);
   }
@@ -135,16 +136,12 @@ export function EndpointsManager({
     setPending(true);
     try {
       // Assemble the dedup config. The Create button is gated on an in-range window (windowInRange), so the
-      // shared clamp only ever rounds an already-valid entry — the server is still authoritative. Omit the
-      // config entirely when it's the default (automatic + 24h) so a plain create keeps the null default
-      // rather than persisting an explicit equivalent. `off` hides the window field, so it just carries the
-      // default value.
+      // shared clamp only ever rounds an already-valid entry — the server is still authoritative. The DEFAULT
+      // is off, and a null config already means off, so an off create sends NO dedupConfig (keeps the null
+      // default rather than persisting an explicit equivalent). Opt-in modes send their explicit config.
       const windowSeconds = clampDedupWindow(dedupWindow);
-      const isDefault =
-        dedupMode === "identifier" && windowSeconds === DEFAULT_DEDUP_WINDOW_SECONDS;
-      const dedupConfig: DedupConfig | undefined = isDefault
-        ? undefined
-        : { mode: dedupMode, windowSeconds };
+      const dedupConfig: DedupConfig | undefined =
+        dedupMode === "off" ? undefined : { mode: dedupMode, windowSeconds };
       const result = await createEndpoint({
         name: name.trim(),
         ...(dedupConfig ? { dedupConfig } : {}),
@@ -214,8 +211,9 @@ export function EndpointsManager({
                   className="w-full"
                 />
                 <p className="text-sm text-fg-secondary">
-                  How we collapse repeat deliveries. You can tune this — including matching on
-                  specific fields — any time on the endpoint&apos;s page.
+                  By default we log every request. Optionally collapse repeat deliveries into one
+                  event — you can tune this, including matching on specific fields, any time on the
+                  endpoint&apos;s page.
                 </p>
               </div>
 

@@ -7,7 +7,6 @@ import type {
   RevokedProviderSecret,
   SubscriptionDeleted,
 } from "@webhook-co/contract";
-import { DEFAULT_DEDUP_WINDOW_SECONDS } from "@webhook-co/shared";
 import type {
   Delivery,
   Endpoint,
@@ -94,9 +93,10 @@ function block(rows: readonly (readonly [string, string])[]): string {
   return rows.map(([key, value]) => `${`${key}:`.padEnd(width + 1)} ${value}`).join("\n");
 }
 
-/** A compact one-line summary of an endpoint's dedup config (ADR-0104); "default" when unset. */
+/** A compact one-line summary of an endpoint's dedup config (ADR-0104). The default (unset) is off —
+ *  log every request, no collapsing (ADR-0104 § default reversal). */
 function dedupSummary(cfg: Endpoint["dedupConfig"]): string {
-  if (cfg == null) return field(`default (identifier, ${DEFAULT_DEDUP_WINDOW_SECONDS}s)`);
+  if (cfg == null) return field("off (default — log every request)");
   if (cfg.mode === "off") return field("off");
   const win = `${cfg.windowSeconds}s`;
   if (cfg.mode === "fields") {
@@ -105,9 +105,9 @@ function dedupSummary(cfg: Endpoint["dedupConfig"]): string {
   return field(`${cfg.mode} (${win})`);
 }
 
-/** The dedup MODE only, for the compact list table. */
+/** The dedup MODE only, for the compact list table. The default (unset) is off. */
 function dedupMode(cfg: Endpoint["dedupConfig"]): string {
-  return field(cfg == null ? "default" : cfg.mode);
+  return field(cfg == null ? "off" : cfg.mode);
 }
 
 export function renderEndpoint(e: Endpoint, color: boolean): string {

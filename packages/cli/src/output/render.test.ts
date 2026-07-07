@@ -101,6 +101,22 @@ describe("renderEndpoint (single record)", () => {
     expect(out).toContain("status:");
     expect(out).toContain("active");
   });
+
+  it("renders a null (unset) dedup config as the off default — never the old identifier default", () => {
+    // The default is off / log every request (ADR-0104 § default reversal). A null config must NOT
+    // claim identifier+24h collapsing, or the CLI would misreport usage/billing to the user.
+    const out = renderEndpoint(endpoint, false); // endpoint fixture has dedupConfig: null
+    expect(out).toMatch(/dedup:\s+off \(default — log every request\)/);
+    expect(out).not.toContain("identifier");
+  });
+
+  it("renders an explicit collapsing config with its mode + window", () => {
+    const out = renderEndpoint(
+      { ...endpoint, dedupConfig: { mode: "identifier", windowSeconds: 3600 } },
+      false,
+    );
+    expect(out).toContain("identifier (3600s)");
+  });
 });
 
 describe("renderEvent (single record)", () => {

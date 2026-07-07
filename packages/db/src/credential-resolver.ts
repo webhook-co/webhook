@@ -111,13 +111,18 @@ function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
     const dc = v.dedupConfig as Record<string, unknown>;
     if (typeof dc.mode !== "string" || !(DEDUP_MODES as readonly string[]).includes(dc.mode))
       return false;
-    if (
-      typeof dc.windowSeconds !== "number" ||
-      !Number.isFinite(dc.windowSeconds) ||
-      dc.windowSeconds < MIN_DEDUP_WINDOW_SECONDS ||
-      dc.windowSeconds > MAX_DEDUP_WINDOW_SECONDS
-    )
-      return false;
+    // `off` collapses nothing and carries no window (the default mode), so it must NOT be gated on a
+    // windowSeconds — requiring one here would make every off endpoint miss the KV cache and hit the
+    // cold path on every ingest. Only the collapsing modes need a bounded window.
+    if (dc.mode !== "off") {
+      if (
+        typeof dc.windowSeconds !== "number" ||
+        !Number.isFinite(dc.windowSeconds) ||
+        dc.windowSeconds < MIN_DEDUP_WINDOW_SECONDS ||
+        dc.windowSeconds > MAX_DEDUP_WINDOW_SECONDS
+      )
+        return false;
+    }
   }
   return true;
 }

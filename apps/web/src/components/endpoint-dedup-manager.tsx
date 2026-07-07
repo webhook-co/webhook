@@ -35,29 +35,30 @@ import type { UpdateEndpointDedupResult } from "@/server/endpoint-actions";
 // (no toast), and design-system tokens only. The server is authoritative — it re-validates the assembled
 // config against the same schema api/mcp use — so this form validates just enough to keep the UI coherent.
 
-/** The user-facing mode labels (never the raw enum) + a one-line, end-user description of each mode. */
+// The user-facing mode labels (never the raw enum) + a one-line, end-user description of each mode. Off is
+// the DEFAULT (no auto-dedup: log every request) and is listed first; the collapsing modes are opt-in.
 const MODE_OPTIONS: readonly { value: DedupMode; label: string; description: string }[] = [
   {
+    value: "off",
+    label: "Log every request (default)",
+    description: "Captures every delivery as a distinct event — nothing is collapsed.",
+  },
+  {
     value: "identifier",
-    label: "Automatic (recommended)",
+    label: "Collapse retries automatically",
     description:
       "Collapses repeat deliveries using the sender's own event id, falling back to the full payload when there isn't one.",
   },
   {
     value: "content",
-    label: "Match on full content",
+    label: "Collapse identical payloads",
     description: "Collapses deliveries only when the entire payload is identical.",
   },
   {
     value: "fields",
-    label: "Match on specific fields",
+    label: "Collapse on specific fields",
     description:
       "Collapses deliveries that match on just the fields you choose — useful when a sender adds a timestamp or nonce to each retry.",
-  },
-  {
-    value: "off",
-    label: "Off — record every request",
-    description: "Captures every delivery, even exact repeats.",
   },
 ];
 
@@ -74,11 +75,11 @@ interface DedupDraft {
   readonly exclude: readonly string[];
 }
 
-/** Seed the editable draft from the endpoint's stored config; null (the default) → identifier + 24h. */
+/** Seed the editable draft from the endpoint's stored config; null (the default) → OFF (log every request). */
 function fromConfig(cfg: DedupConfig | null): DedupDraft {
   if (!cfg) {
     return {
-      mode: "identifier",
+      mode: "off",
       window: String(DEFAULT_DEDUP_WINDOW_SECONDS),
       include: [],
       exclude: [],
@@ -86,20 +87,21 @@ function fromConfig(cfg: DedupConfig | null): DedupDraft {
   }
   return {
     mode: cfg.mode,
-    window: String(cfg.windowSeconds),
+    // off carries no windowSeconds; seed the picker with the default so switching to a collapsing mode has one.
+    window: String(cfg.windowSeconds ?? DEFAULT_DEDUP_WINDOW_SECONDS),
     include: cfg.fields?.include ? [...cfg.fields.include] : [],
     exclude: cfg.fields?.exclude ? [...cfg.fields.exclude] : [],
   };
 }
 
 /**
- * Assemble the wire config from the draft. The schema requires `windowSeconds` for every mode (including
- * `off`, where the UI hides it) and `fields` ONLY for `fields` mode, so we mirror that exactly. The window
- * uses the shared clamp (the server-safe floor); Save is gated on {@link isDedupWindowInRange} first, so
- * clamping only ever rounds an already-in-range entry — a user's out-of-range value is rejected, not
- * silently coerced.
+ * Assemble the wire config from the draft. `off` never collapses, so it carries NO windowSeconds; every
+ * other mode requires one (and `fields` its selectors). The window uses the shared clamp (the server-safe
+ * floor); Save is gated on {@link isDedupWindowInRange} first, so clamping only ever rounds an already-in-
+ * range entry — a user's out-of-range value is rejected, not silently coerced.
  */
 function assemble(d: DedupDraft): DedupConfig {
+  if (d.mode === "off") return { mode: "off" };
   const windowSeconds = clampDedupWindow(d.window);
   if (d.mode === "fields") {
     return {
@@ -247,8 +249,9 @@ export function EndpointDedupManager({ endpointId, initial, update }: EndpointDe
       <CardHeader>
         <CardTitle>Deduplication</CardTitle>
         <CardDescription>
-          Choose how we collapse repeat deliveries to this endpoint into a single event. Duplicates
-          that collapse aren&apos;t captured again, so they don&apos;t count toward usage.
+          By default we log every request to this endpoint. Optionally collapse repeat deliveries
+          into a single event — collapsed duplicates aren&apos;t captured again, so they don&apos;t
+          count toward usage.
         </CardDescription>
       </CardHeader>
 

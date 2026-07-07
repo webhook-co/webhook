@@ -73,7 +73,7 @@ export async function createEndpointAction(input: {
     return { ok: false, error: `Keep the name under ${MAX_NAME_LEN} characters.` };
   }
   // Validate the dedup config (untrusted, like the name) ONLY when supplied — an omitted config keeps the
-  // default (identifier ladder, 24h). The server is authoritative even though the dialog sends structured data.
+  // default (off — log every request). The server is authoritative even though the dialog sends structured data.
   let dedupConfig: DedupConfig | null | undefined;
   if (input?.dedupConfig !== undefined) {
     const parsed = DedupConfigSchema.nullable().safeParse(input.dedupConfig);
@@ -130,7 +130,7 @@ export async function rotateEndpointAction(endpointId: string): Promise<RotateEn
 }
 
 /**
- * Update an endpoint's deduplication config (ADR-0104). null resets to the default (identifier ladder, 24h).
+ * Update an endpoint's deduplication config (ADR-0104). null resets to the default (off — log every request).
  * The change persists + audits, then evicts the endpoint's KV ingest-cache entry so the engine reads the new
  * config within the propagation window. The config is UNTRUSTED (a crafted POST can send any shape), so it is
  * re-validated against the same schema the api/mcp surfaces use before it reaches the db.

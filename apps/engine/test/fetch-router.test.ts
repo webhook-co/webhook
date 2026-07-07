@@ -33,7 +33,6 @@ function fakeHandle(over: Partial<IngestDeps> = {}): {
     now: () => new Date("2026-06-14T12:00:00Z"),
     log: () => undefined,
     maxBodyBytes: 1024 * 1024,
-    dedupBucketWidthMs: 24 * 60 * 60 * 1000,
     ...over,
   };
   return {

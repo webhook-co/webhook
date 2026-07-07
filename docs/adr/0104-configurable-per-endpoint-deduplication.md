@@ -34,16 +34,21 @@ Prior-art and threat analysis: `internal/research/ingest-deduplication.md`.
 
 ## decision
 
-**A per-endpoint `dedup_config` with four modes + a bounded window.** NULL config = the default
-(identifier ladder, 24h) so existing endpoints are unchanged except the query-fold (below).
+> **Superseded in part (2026-07-07), see [§ default reversal](#default-reversal-2026-07-07).** The
+> original decision made NULL config resolve to `identifier`+24h ("dedup on by default"). That default
+> is now **`off` / log every request** — dedup is strictly opt-in. Everything else here stands.
 
-- **`identifier`** (default): the id ladder — `webhook-id` header → provider event id → content-hash
-  fallback. The fallback now folds a **canonical path+query** so distinct URLs are distinct events.
+**A per-endpoint `dedup_config` with four modes + a bounded window.** ~~NULL config = the default
+(identifier ladder, 24h)~~ **NULL config = `off`** (log every request); the query-fold below applies
+only when an operator opts into `identifier`/`content`.
+
+- **`identifier`**: the id ladder — `webhook-id` header → provider event id → content-hash
+  fallback. The fallback folds a **canonical path+query** so distinct URLs are distinct events.
 - **`content`**: always the canonical content hash (skip the id ladder) — for senders whose ids are
   unreliable or reused across distinct events.
 - **`fields`**: key from operator-selected field paths (`headers|body|query|path`, dot + array
   accessors) — for senders with no stable id but a stable payload field.
-- **`off`**: a per-request-unique key (every request is a distinct, billable event). Opt-in, warned.
+- **`off`** (default): a per-request-unique key (every request is a distinct, billable event).
 
 **Canonical path+query fold (a deliberate, announced default change).** Volatile params
 (`utm_*`, `_`, `cachebust`, `ts`, `nonce`, `signature`, `sig`, `attempt`) are dropped, the rest are
@@ -87,8 +92,10 @@ read). This preserves the original "never trust a handed key" (H1) guarantee wit
 
 - **Fold query into the key but keep it billing-coupled with no config** — rejected: makes a
   best-effort mechanism financially load-bearing with no operator control.
-- **Flip the global default to log-everything** (peer inbound-gateway norm) — rejected: a silent
-  behavior + billing change for every existing endpoint; the safe default stays dedup-on.
+- ~~**Flip the global default to log-everything** (peer inbound-gateway norm) — rejected: a silent
+  behavior + billing change for every existing endpoint; the safe default stays dedup-on.~~
+  **Reversed 2026-07-07 — see [§ default reversal](#default-reversal-2026-07-07).** This is now the
+  chosen default.
 - **A general JSONPath evaluator** — rejected: unbounded work over untrusted payloads on the metered
   hot path. The bounded grammar + runtime caps above deliver the capability without the DoS surface.
 
@@ -140,3 +147,38 @@ read). This preserves the original "never trust a handed key" (H1) guarantee wit
   another intra-endpoint object. The fence catches cross-tenant/malformed keys; a future content-hash
   post-read check could additionally bind the read to the event's own body if a mis-population path ever
   emerges, but none exists today.
+
+## default reversal (2026-07-07)
+
+**Decision: the default (NULL `dedup_config`) is now `off` / log every request. Deduplication is
+strictly opt-in.** This supersedes the original "dedup on by default" (identifier+24h) above and the
+matching rejected alternative.
+
+**Why the reversal.** webhook.co's wedge is an **inspection** tool — "receive, inspect, replay". The
+honest default for an inspection surface is to show a developer *exactly* what a sender sent, retries
+and all, not to silently collapse requests behind their back. The original default optimized for a
+delivery-pipeline mental model (collapse provider retries) that doesn't match how the product is first
+used (watching raw traffic land). Concretely, a founder created an endpoint expecting every request to
+appear live and was surprised when identical GETs collapsed — the default was doing something the user
+didn't ask for. Opt-in dedup (turn on a mode when retries get noisy) removes the surprise.
+
+**This also aligns the default with the constitution's stated billable unit** — "every captured
+request to an endpoint" — rather than "every distinct dedup key". Metering stays `count(*)` over
+`events`; with default-off, that count equals captured requests, which is exactly what the pricing page
+discloses.
+
+**Billing consequence (accepted, disclosed).** Default-off means **every** captured request — including
+sender retries and any non-webhook traffic (uptime checks, link previews) — is a distinct, billable
+event. For an existing NULL-config endpoint that was silently relying on the identifier default to
+collapse retries, this is a **behavior + billing increase**. It is bounded by the **soft-cap-pause**
+(ingestion pauses, it doesn't surprise-bill), disclosed in the docs `off`/default warning, and an
+operator who wants collapsing turns on a mode. No hidden counters, single-dimension metering intact.
+
+**No migration / no data change.** The reversal is purely in the resolver default: `defaultDedupParams()`
+returns `{ mode: "off" }`, and the single ingest fallback now always routes NULL through
+`resolveDedupParams(null)`. Existing rows and existing explicit configs are untouched; only NULL-config
+endpoints change behavior, from the next captured request forward.
+
+**Schema honesty (paired change).** `DedupConfigSchema` no longer requires `windowSeconds` for `off`
+(it never used one), matching the docs — so a windowless `off` from the SDK/API/docs round-trips
+instead of failing validation and being null-dropped. OpenAPI + SDK goldens regenerated.

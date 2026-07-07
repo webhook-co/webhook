@@ -441,14 +441,28 @@ function capturingReq(body: unknown): {
 }
 
 describe("wbhk endpoints update", () => {
-  it("PATCHes the endpoint with the built dedup config for --dedup-mode", async () => {
+  it("PATCHes the endpoint with the built dedup config for --dedup-mode off (no window)", async () => {
     const cap = capturingReq(endpoint(EP1, "orders-prod"));
     const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
     await run(app, ["endpoints", "update", EP1, "--dedup-mode", "off"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
     expect(cap.calls[0]?.method).toBe("PATCH");
     expect(cap.calls[0]?.url).toContain(`/v1/endpoints/${EP1}`);
-    expect(cap.calls[0]?.body).toEqual({ dedupConfig: { mode: "off", windowSeconds: 86400 } });
+    // off collapses nothing, so it carries no window at all.
+    expect(cap.calls[0]?.body).toEqual({ dedupConfig: { mode: "off" } });
+  });
+
+  it("errors on --dedup-window with --dedup-mode off (no silent drop)", async () => {
+    const cap = capturingReq(endpoint(EP1, "orders-prod"));
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(
+      app,
+      ["endpoints", "update", EP1, "--dedup-mode", "off", "--dedup-window", "300"],
+      t.ctx,
+    );
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).not.toBe(EXIT.SUCCESS);
+    expect(t.stderr().toLowerCase()).toMatch(/dedup-window.*off|off.*window/);
+    expect(cap.calls).toHaveLength(0);
   });
 
   it("builds a fields config from --dedup-field + --dedup-window", async () => {

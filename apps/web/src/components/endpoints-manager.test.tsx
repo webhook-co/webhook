@@ -104,9 +104,11 @@ describe("EndpointsManager", () => {
     await user.click(screen.getByRole("button", { name: /create endpoint/i }));
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
-    // Switch the dedup mode from the default "Automatic" to "Match on full content".
-    await user.click(within(dialog).getByRole("button", { name: /deduplication: automatic/i }));
-    await user.click(screen.getByRole("option", { name: /match on full content/i }));
+    // Switch the dedup mode from the default (off / log every request) to a collapsing mode.
+    await user.click(
+      within(dialog).getByRole("button", { name: /deduplication: log every request/i }),
+    );
+    await user.click(screen.getByRole("option", { name: /collapse identical payloads/i }));
     await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
     expect(createEndpoint).toHaveBeenCalledWith({
@@ -129,6 +131,11 @@ describe("EndpointsManager", () => {
     await user.click(screen.getByRole("button", { name: /create endpoint/i }));
     const dialog = screen.getByRole("dialog");
     await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
+    // The window only appears for a collapsing mode (off — the default — has none), so pick one first.
+    await user.click(
+      within(dialog).getByRole("button", { name: /deduplication: log every request/i }),
+    );
+    await user.click(screen.getByRole("option", { name: /collapse identical payloads/i }));
     const window = within(dialog).getByLabelText(/deduplication window/i);
     await user.clear(window);
     await user.type(window, "10"); // below the 60s minimum
@@ -138,7 +145,7 @@ describe("EndpointsManager", () => {
     expect(createEndpoint).not.toHaveBeenCalled();
   });
 
-  it("omits the dedup config when the create keeps the automatic default", async () => {
+  it("omits the dedup config when the create keeps the off default (null = off)", async () => {
     const user = userEvent.setup();
     const createEndpoint = vi.fn(async () => created);
     render(
@@ -154,7 +161,7 @@ describe("EndpointsManager", () => {
     await user.type(within(dialog).getByLabelText(/endpoint name/i), "GitHub");
     await user.click(within(dialog).getByRole("button", { name: /^create$/i }));
 
-    // The automatic default sends NO dedupConfig — the endpoint keeps the null default.
+    // The off default sends NO dedupConfig — the endpoint keeps the null default (= off / log everything).
     expect(createEndpoint).toHaveBeenCalledWith({ name: "GitHub" });
   });
 

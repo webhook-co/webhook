@@ -65,7 +65,7 @@ export interface CreateEndpointInput {
   readonly orgId: string;
   readonly userId: string;
   readonly name: string;
-  /** The endpoint's initial dedup config; null (or omitted) uses the default identifier ladder. */
+  /** The endpoint's initial dedup config; null (or omitted) uses the default (off — log every request). */
   readonly dedupConfig?: DedupConfig | null;
 }
 export interface MutateEndpointInput {
@@ -87,7 +87,7 @@ export interface MintedEndpoint {
   readonly name: string;
   readonly paused: boolean;
   readonly createdAt: Date;
-  /** The endpoint's dedup config, or null when it uses the default (identifier ladder, 24h). */
+  /** The endpoint's dedup config, or null when it uses the default (off — log every request). */
   readonly dedupConfig: DedupConfig | null;
   /** `${apex}/<token>` — shown once, never persisted or logged. */
   readonly ingestUrl: string;

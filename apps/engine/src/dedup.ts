@@ -122,28 +122,37 @@ export type DedupParams =
     }
   | { readonly mode: "off" };
 
-/** The default params (identifier ladder, 24h window) — a NULL/garbled config resolves to this. */
+/**
+ * The default params — a NULL/garbled config resolves to this. The default is OFF (no auto-dedup): every
+ * request is captured as a distinct event. Deduplication is strictly OPT-IN per endpoint (identifier /
+ * content / fields). (Founder decision: don't auto-dedupe — an inspection tool logs everything by default;
+ * the soft-cap-pause is the billing backstop. Supersedes ADR-0104's original dedup-on-by-default.)
+ */
 export function defaultDedupParams(): DedupParams {
-  return { mode: "identifier", windowMs: DEFAULT_DEDUP_WINDOW_SECONDS * 1000 };
+  return { mode: "off" };
 }
 
-/** NULL config → today's default (identifier ladder, 24h window). Never changes existing behavior. */
+/** NULL config → the default (OFF / log-everything). An explicit config selects opt-in dedup. */
 export function resolveDedupParams(cfg: DedupConfig | null): DedupParams {
   if (cfg === null) return defaultDedupParams();
+  // windowSeconds is schema-required for every mode EXCEPT off, but its TYPE is optional (off omits it),
+  // so coalesce to the default window for the collapsing modes — defensive + type-safe (the `??` branch is
+  // unreachable for a validated non-off config).
+  const windowMs = (cfg.windowSeconds ?? DEFAULT_DEDUP_WINDOW_SECONDS) * 1000;
   switch (cfg.mode) {
     case "off":
       return { mode: "off" };
     case "content":
-      return { mode: "content", windowMs: cfg.windowSeconds * 1000 };
+      return { mode: "content", windowMs };
     case "fields":
       return {
         mode: "fields",
-        windowMs: cfg.windowSeconds * 1000,
+        windowMs,
         include: cfg.fields?.include ?? [],
         exclude: cfg.fields?.exclude ?? [],
       };
     case "identifier":
-      return { mode: "identifier", windowMs: cfg.windowSeconds * 1000 };
+      return { mode: "identifier", windowMs };
     default:
       // Defense-in-depth: config is validated at write time AND on the DB/KV read boundaries, so an
       // out-of-enum mode is unreachable without a DB compromise. Fall back to the safe default rather
