@@ -57,6 +57,7 @@ import {
   ALLOW_METHODS,
   handleIngest,
   ingestPathToken,
+  LIVENESS_HEADERS,
   plain,
   SUPPORTED_METHODS,
   type IngestDeps,
@@ -593,10 +594,9 @@ export async function handleListenUpgrade(
 // The bare apex is a machine-ingest surface, not a landing page: a human who pastes wbhk.my into a
 // browser is bounced to the marketing homepage, while GET /healthz stays as the service liveness probe.
 // 302 (temporary) — reversible if the root's behaviour ever changes; browsers cache a 301 ~forever.
-// x-robots-tag/referrer-policy mirror LIVENESS_HEADERS (ingest.ts) so the ingest apex stays out of
-// search indexes and leaks no referrer. Root-only: /{token} ingest and /listen are matched below.
+// Both reuse ingest.ts's LIVENESS_HEADERS (noindex + no-referrer) so the apex hygiene can't drift.
+// Root-only: /{token} ingest and /listen are matched below.
 const ROOT_REDIRECT_TARGET = "https://www.webhook.co/";
-const NOINDEX_HEADERS = { "x-robots-tag": "noindex", "referrer-policy": "no-referrer" } as const;
 
 /**
  * The wbhk.my router. GET / 302-redirects to the marketing homepage and GET /healthz is the SERVICE
@@ -616,13 +616,13 @@ export async function handleFetch(
   if (request.method === "GET" && url.pathname === "/healthz") {
     return new Response("ok", {
       status: 200,
-      headers: { "content-type": "text/plain; charset=utf-8", ...NOINDEX_HEADERS },
+      headers: { "content-type": "text/plain; charset=utf-8", ...LIVENESS_HEADERS },
     });
   }
   if (request.method === "GET" && url.pathname === "/") {
     return new Response(null, {
       status: 302,
-      headers: { location: ROOT_REDIRECT_TARGET, ...NOINDEX_HEADERS },
+      headers: { location: ROOT_REDIRECT_TARGET, ...LIVENESS_HEADERS },
     });
   }
 

@@ -245,7 +245,13 @@ export function ingestPathToken(url: URL): string {
 // indexes. The body is a CONSTANT — it reflects NOTHING resolved (no endpoint id/org/name, no paused
 // flag, no count, no captured payload), so a GET leaks only the same token-existence signal the capture
 // path already does (a known token -> 2xx vs an unknown token -> 404), never a finer oracle.
-const LIVENESS_HEADERS = { "referrer-policy": "no-referrer", "x-robots-tag": "noindex" } as const;
+// The apex-hygiene headers for every non-ingest wbhk.my browser surface (per-token liveness here, plus
+// the bare-apex GET / bounce + /healthz in index.ts): keep the cookieless ingest apex out of search
+// indexes and strip the referrer. Exported as the single source of truth so those surfaces can't drift.
+export const LIVENESS_HEADERS = {
+  "referrer-policy": "no-referrer",
+  "x-robots-tag": "noindex",
+} as const;
 const LIVENESS_BODY = "this webhook endpoint is live. POST your events here.\n";
 
 /** The non-bodied verbs that get a browser liveness response (the others are write verbs → "ok"). Single
