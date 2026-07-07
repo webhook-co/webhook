@@ -22,6 +22,7 @@ import {
 } from "@webhook-co/contract";
 import { type IngestUrlRevealerRpc, type SecretSealer } from "@webhook-co/shared";
 
+import { createAgentTriggerHandlers } from "./agent-triggers";
 import type { Sql } from "./client";
 import type { CredentialHasher } from "./credential";
 import {
@@ -372,5 +373,11 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
 export function buildCapabilityHandlers(
   deps: ReadHandlerDeps & WriteHandlerDeps,
 ): CapabilityHandlers {
-  return new Map([...createReadHandlers(deps), ...createWriteHandlers(deps)]);
+  // triggers.* (S5) ride the SHARED map so MCP auto-binds them (they need only { tenant, auditKey },
+  // both in WriteHandlerDeps). Their consumption tool (triggers.wait) is added to the read map in Slice C.
+  return new Map([
+    ...createReadHandlers(deps),
+    ...createWriteHandlers(deps),
+    ...createAgentTriggerHandlers(deps),
+  ]);
 }

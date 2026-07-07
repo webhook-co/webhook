@@ -383,6 +383,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/triggers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List agent trigger subscriptions */
+        get: operations["triggersList"];
+        put?: never;
+        /** Create an agent trigger subscription */
+        post: operations["triggersCreate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/triggers/{triggerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke an agent trigger subscription */
+        delete: operations["triggersRevoke"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the org's metering usage for the current billing period */
+        get: operations["usageGet"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/whoami": {
         parameters: {
             query?: never;
@@ -762,6 +814,41 @@ export interface components {
         };
         SubscriptionsListResponse: {
             items: components["schemas"]["Subscription"][];
+        };
+        TriggersCreateRequest: {
+            /** Format: uuid */
+            endpointId: string;
+            name?: string;
+        };
+        TriggersCreateResponse: {
+            /** Format: date-time */
+            createdAt: string;
+            /** Format: uuid */
+            endpointId: string;
+            /** Format: uuid */
+            id: string;
+            name: string | null;
+            /** Format: uuid */
+            orgId: string;
+            revokedAt: string | null;
+        };
+        TriggersListResponse: {
+            items: components["schemas"]["TriggersCreateResponse"][];
+        };
+        TriggersRevokeResponse: {
+            /** Format: uuid */
+            id: string;
+        };
+        UsageGetResponse: {
+            eventCap: number | null;
+            events: number;
+            paused: boolean;
+            /** @enum {string} */
+            pausePolicy: "pause" | "allow";
+            /** Format: date-time */
+            periodEnd: string;
+            /** Format: date-time */
+            periodStart: string;
         };
         VerificationResult: {
             /** @enum {string} */
@@ -1741,6 +1828,116 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    triggersList: {
+        parameters: {
+            query?: {
+                /** @description Filter by endpoint (empty = no filter). */
+                endpointId?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggersListResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    triggersCreate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TriggersCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggersCreateResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    triggersRevoke: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                triggerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggersRevokeResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    usageGet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageGetResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             429: components["responses"]["TooManyRequests"];
             500: components["responses"]["InternalError"];
         };

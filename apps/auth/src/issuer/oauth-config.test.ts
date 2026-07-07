@@ -32,10 +32,12 @@ describe("oauthIssuerConfig", () => {
     // the distinct CAPABILITY_REGISTRY scopes; `keys:manage` (reserved, never granted) is absent.
     expect(oauthIssuerConfig.scopesSupported).toEqual([
       "audit:read",
+      "billing:read",
       "endpoints:read",
       "endpoints:write",
       "events:read",
       "events:replay",
+      "triggers:write",
     ]);
     // The PRM scope list is the same SoT (discovery + PRM cannot disagree).
     expect(oauthIssuerConfig.resourceMetadata.scopes_supported).toEqual(

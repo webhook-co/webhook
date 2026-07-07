@@ -15,6 +15,7 @@ import {
   eventsGet,
   eventsList,
   eventsTail,
+  usageGet,
   type AnyCapability,
   type AuthContext,
 } from "@webhook-co/contract";
@@ -39,6 +40,7 @@ import {
   listDeliveries,
   listEndpoints,
   listEvents,
+  readUsageSummary,
   resolveSince,
   tailEvents,
   tailMeta,
@@ -285,6 +287,15 @@ export function createReadHandlers(deps: ReadHandlerDeps): CapabilityHandlers {
     parse(auditVerify, input); // input is {} — validate it's shaped right
     const rows = await withTenant(deps.tenant, ctx.orgId, (tx) => readAuditChain(tx, ctx.orgId));
     return verifyAuditChain(deps.auditKey, ctx.orgId, rows);
+  });
+
+  // usage.get (S4.2): the metering usage surface for the caller's org + current billing period. Empty
+  // input; RLS scopes the reads to the org. Now() is the wall clock (the period is the UTC month until
+  // Stripe anchors it in S4.4).
+  handlers.set(usageGet.name, async (ctx, input) => {
+    ensureScope(ctx, usageGet);
+    parse(usageGet, input); // input is {} — validate shape
+    return withTenant(deps.tenant, ctx.orgId, (tx) => readUsageSummary(tx, Date.now()));
   });
 
   return handlers;

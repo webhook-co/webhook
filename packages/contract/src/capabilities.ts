@@ -1,4 +1,5 @@
 import {
+  AgentTriggerSchema,
   canonicalizeAndValidateUrl,
   DedupConfigSchema,
   DeliveryAttemptSchema,
@@ -11,6 +12,7 @@ import {
   ProviderSchema,
   ReplayDestinationSchema,
   SubscriptionSchema,
+  UsageSummarySchema,
   validateProviderSecretShape,
   VerificationStateSchema,
   WATERMARK_DELTA_MS,
@@ -700,6 +702,71 @@ export const deliveriesList = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED },
 });
 
+// The dashboard trigger-management view ships in a follow-up S5 web slice; api/cli/mcp parity lands first.
+const TRIGGERS_WEB_DEFERRED = "dashboard trigger-management view ships in the S5 web slice";
+
+// ── triggers.* (S5): webhook→agent trigger subscriptions ──────────────────────────────────────────
+// Unlike the egress subscriptions.* above (mcp-EXEMPT for confused-deputy reasons), triggers.* are
+// MCP-BOUND: a trigger is a READ-consumption registration — the caller subscribes to be woken
+// (triggers.wait, Slice C) when an endpoint it can already read captures an event; it creates NO egress
+// to a third party, so an agent can safely manage its own. Scoping: the MUTATIONS (create/revoke) gate on
+// the dedicated `triggers:write` scope so the read scopes stay side-effect-free (a passive events:read
+// consumer key can list + wait but cannot mutate trigger state); the read (list) gates on `events:read`.
+// These are ORG-scoped resources like every other (endpoints/subscriptions/events): any principal in the
+// org with the scope manages them — the load-bearing isolation guarantee is cross-ORG, enforced by RLS.
+export const triggersCreate = defineCapability({
+  name: "triggers.create",
+  // `name` is an optional human/agent label. No z.coerce/.transform — keeps the input toJSONSchema-clean
+  // for the MCP tool schema (an unrepresentable transform would break the mcp inputSchema).
+  input: z.object({
+    endpointId: uuid,
+    name: z.string().min(1).max(100).optional(),
+  }),
+  output: AgentTriggerSchema,
+  // NOT_FOUND: the endpoint is missing / soft-deleted / cross-org (don't bind a dead target, don't leak).
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "triggers:write" },
+  semantics: {},
+  surfaceExempt: { web: TRIGGERS_WEB_DEFERRED },
+});
+export const triggersList = defineCapability({
+  name: "triggers.list",
+  // Optional endpoint filter. NOT paginated — an org's active triggers are a managed handful.
+  input: z.object({ endpointId: uuid.optional() }),
+  output: z.object({ items: z.array(AgentTriggerSchema) }),
+  errors: ["UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "events:read" },
+  semantics: {},
+  surfaceExempt: { web: TRIGGERS_WEB_DEFERRED },
+});
+export const triggersRevoke = defineCapability({
+  name: "triggers.revoke",
+  input: z.object({ triggerId: uuid }),
+  output: z.object({ id: uuid }),
+  // Soft-revoke (sets revoked_at). IDEMPOTENT: revoking an already-revoked trigger succeeds (returns its
+  // id, no re-audit); only an unknown / cross-org id is NOT_FOUND (don't leak existence).
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "triggers:write" },
+  semantics: { idempotent: true },
+  surfaceExempt: { web: TRIGGERS_WEB_DEFERRED },
+});
+
+// usage.get — the metering usage surface (S4.2), at CLI/API/web/MCP parity. Reads the caller's org
+// usage for the current billing period (single dimension = events; the billable unit is disclosed).
+// No input: it's the caller's own org (RLS-scoped) + current period. Empty object keeps the MCP tool
+// inputSchema JSON-Schema-clean. NO prices/tiers in the output — cap + pause behavior only.
+export const usageGet = defineCapability({
+  name: "usage.get",
+  input: z.object({}),
+  output: UsageSummarySchema,
+  // FORBIDDEN: a bearer lacking the (brand-new) billing:read scope — the api edge 403s before dispatch,
+  // and on mcp the handler's ensureScope is the sole gate. More reachable here than for events reads
+  // since most existing keys don't yet carry billing:read.
+  errors: ["UNAUTHORIZED", "FORBIDDEN", "RATE_LIMITED"],
+  auth: { scope: "billing:read" },
+  semantics: {},
+});
+
 /**
  * The capability surface every binding implements. The six wedge capabilities
  * plus `audit.verify` — the compliance-by-design audit-chain verifier (ADR-0004),
@@ -734,6 +801,10 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   subscriptionsDelete,
   deliveriesGet,
   deliveriesList,
+  triggersCreate,
+  triggersList,
+  triggersRevoke,
+  usageGet,
 ];
 
 /** Registry keyed by stable capability name. */

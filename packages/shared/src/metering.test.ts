@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { ingestAllowed, shouldPauseForCap, type IngestGuardSignal } from "./metering";
+import {
+  currentBillingPeriod,
+  finalizeCutoff,
+  ingestAllowed,
+  rollupWindows,
+  shouldPauseForCap,
+  type IngestGuardSignal,
+} from "./metering";
 
 describe("ingestAllowed", () => {
   const base: IngestGuardSignal = { orgId: "o", paused: false, eventCap: 1000 };
@@ -27,5 +34,84 @@ describe("shouldPauseForCap (soft-cap)", () => {
 
   it("never pauses an uncapped org", () => {
     expect(shouldPauseForCap(1_000_000, null, "pause")).toBe(false);
+  });
+});
+
+// The rollup scheduler must (F2) re-roll the just-closed day, not only "today", or it
+// loses the pre-midnight tail every day. And (F4) all windows are UTC-day-aligned so the
+// bucket key can't drift with server TZ. These pure helpers decide WHICH day-windows a
+// run touches and WHEN a day is frozen — off the hot path, deterministic, unit-tested.
+
+describe("rollupWindows", () => {
+  const now = Date.UTC(2026, 6, 7, 10, 30, 0); // 2026-07-07T10:30:00Z
+
+  it("returns today plus `settleDays` prior UTC-midnight windows, oldest→newest", () => {
+    expect(rollupWindows(now, 2)).toEqual([
+      "2026-07-05T00:00:00.000Z",
+      "2026-07-06T00:00:00.000Z",
+      "2026-07-07T00:00:00.000Z",
+    ]);
+  });
+
+  it("with settleDays=1 rolls yesterday + today (the F2 minimum)", () => {
+    expect(rollupWindows(now, 1)).toEqual(["2026-07-06T00:00:00.000Z", "2026-07-07T00:00:00.000Z"]);
+  });
+
+  it("aligns to UTC midnight regardless of the intra-day time", () => {
+    const lateNight = Date.UTC(2026, 6, 7, 23, 59, 59, 999);
+    expect(rollupWindows(lateNight, 1)).toEqual([
+      "2026-07-06T00:00:00.000Z",
+      "2026-07-07T00:00:00.000Z",
+    ]);
+  });
+
+  it("crosses a month boundary correctly", () => {
+    const firstOfMonth = Date.UTC(2026, 7, 1, 3, 0, 0); // 2026-08-01T03:00Z
+    expect(rollupWindows(firstOfMonth, 1)).toEqual([
+      "2026-07-31T00:00:00.000Z",
+      "2026-08-01T00:00:00.000Z",
+    ]);
+  });
+});
+
+describe("currentBillingPeriod", () => {
+  it("returns the UTC calendar-month bounds containing `now` (the default anchor)", () => {
+    expect(currentBillingPeriod(Date.UTC(2026, 6, 7, 12, 0, 0))).toEqual({
+      start: "2026-07-01T00:00:00.000Z",
+      end: "2026-08-01T00:00:00.000Z",
+    });
+  });
+
+  it("is half-open [start, end): the last instant of the month is still this period", () => {
+    expect(currentBillingPeriod(Date.UTC(2026, 6, 31, 23, 59, 59, 999))).toEqual({
+      start: "2026-07-01T00:00:00.000Z",
+      end: "2026-08-01T00:00:00.000Z",
+    });
+  });
+
+  it("rolls the year at December", () => {
+    expect(currentBillingPeriod(Date.UTC(2026, 11, 15, 8, 0, 0))).toEqual({
+      start: "2026-12-01T00:00:00.000Z",
+      end: "2027-01-01T00:00:00.000Z",
+    });
+  });
+});
+
+describe("finalizeCutoff", () => {
+  const now = Date.UTC(2026, 6, 7, 10, 30, 0); // 2026-07-07T10:30:00Z
+
+  it("freezes days strictly older than settleDays before today (UTC midnight)", () => {
+    // settleDays=2 → cutoff = start-of-today − 2 days = 2026-07-05T00:00Z.
+    // Days with window_start < cutoff (07-04 and earlier) finalize; 07-05/06/07 stay open.
+    expect(finalizeCutoff(now, 2)).toBe("2026-07-05T00:00:00.000Z");
+  });
+
+  it("the finalize cutoff equals the oldest still-rolled window (no open-but-unrolled gap)", () => {
+    // Invariant: every day at-or-after the cutoff is still being rolled, so a day is only
+    // frozen once it has stopped being recounted. Cutoff == rollupWindows(...)[0].
+    for (const settleDays of [1, 2, 3, 7]) {
+      const windows = rollupWindows(now, settleDays);
+      expect(finalizeCutoff(now, settleDays)).toBe(windows[0]);
+    }
   });
 });

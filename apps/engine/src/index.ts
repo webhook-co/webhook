@@ -5,6 +5,7 @@ import {
   createCredentialHasherFromBase64,
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
+  DEFAULT_METERING_ROLLUP_LIMIT,
   DEFAULT_RECONCILE_LIMIT,
   enqueueAutoDeliveries,
   fromCachedSealedSecret,
@@ -17,6 +18,7 @@ import {
   readAuditChainHeads,
   readSealedIngestToken,
   revealIngestTokenCore,
+  runUsageRollup,
   withTenant,
   type ResolvedPrincipal,
 } from "@webhook-co/db";
@@ -113,6 +115,8 @@ export interface Env {
   HYPERDRIVE_ANCHOR: Hyperdrive;
   /** Hyperdrive config for the webhook_reconciler cross-org due-delivery read (query caching off). */
   HYPERDRIVE_RECONCILER: Hyperdrive;
+  /** Hyperdrive config for the webhook_meter cross-org metering-enumeration read (query caching off). */
+  HYPERDRIVE_METER: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
   R2_AUDIT_ANCHOR: R2Bucket;
   /** Base64 audit-chain HMAC key — the same key the chain rows are signed with (shared across surfaces). */
@@ -677,6 +681,14 @@ export default {
         ),
       ),
     );
+    // Metering rollup: derive per-org usage from the exactly-once events rows (no hot-path
+    // counter) and freeze aged days into immutable billing snapshots. Independent of the
+    // other crons — one failing must not sink the others.
+    ctx.waitUntil(
+      runMeteringRollupCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "metering rollup cron failed", error: String(err) })),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -816,6 +828,34 @@ async function runAuditAnchorCron(env: Env): Promise<void> {
 /** Max destinations one reconciler pass re-wakes (the db default — well under the Workers subrequest cap). A
  *  capped pass is logged; the next hourly pass continues, with fair random ordering so none is starved. */
 const RECONCILE_LIMIT = DEFAULT_RECONCILE_LIMIT;
+
+/** Days of lookback each metering pass re-rolls before a day is frozen (F2: the just-closed day must be
+ *  re-counted so the pre-midnight tail isn't lost). 2 gives margin for late-committed events / a skipped run. */
+const USAGE_SETTLE_DAYS = 2;
+
+/**
+ * Wire the real deps and run one metering-rollup pass. Two short-lived connections: webhook_meter
+ * (cross-org enumeration — role-targeted SELECT policies + column grants scope it to the enumeration
+ * keys) and webhook_app via HYPERDRIVE_TENANT (the per-org rollup + freeze run under RLS). The pure,
+ * money-correctness-tested core lives in @webhook-co/db (runUsageRollup).
+ */
+async function runMeteringRollupCron(env: Env): Promise<void> {
+  const meter = createClient(env.HYPERDRIVE_METER.connectionString);
+  const app = createClient(env.HYPERDRIVE_TENANT.connectionString);
+  try {
+    const result = await runUsageRollup({
+      meter,
+      app,
+      now: Date.now(),
+      settleDays: USAGE_SETTLE_DAYS,
+      limit: DEFAULT_METERING_ROLLUP_LIMIT,
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+    });
+    console.log(JSON.stringify({ message: "metering.rollup.done", ...result }));
+  } finally {
+    await Promise.all([meter.end(), app.end()]);
+  }
+}
 
 /** Wire the real deps (a webhook_reconciler cross-org connection + the DO waker) and run the reconciler. */
 async function runReconcilerCron(env: Env): Promise<void> {

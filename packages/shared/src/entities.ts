@@ -267,6 +267,19 @@ export const SubscriptionSchema = z.object({
 });
 export type Subscription = z.infer<typeof SubscriptionSchema>;
 
+// The management view of an agent trigger (S5): an org-scoped registration that an agent creates to be
+// woken (triggers.wait) when `endpointId` captures a new event. `revokedAt` non-null = revoked (a dead
+// registration; triggers.wait no longer resolves it). Carries no secret and no payload.
+export const AgentTriggerSchema = z.object({
+  id: uuid,
+  orgId: uuid,
+  endpointId: uuid,
+  name: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  revokedAt: z.coerce.date().nullable(),
+});
+export type AgentTrigger = z.infer<typeof AgentTriggerSchema>;
+
 /** Soft-cap limits view (org_limits). No prices — cap + behavior only. */
 export const OrgLimitsSchema = z.object({
   orgId: uuid,
@@ -275,3 +288,19 @@ export const OrgLimitsSchema = z.object({
   updatedAt: z.coerce.date(),
 });
 export type OrgLimits = z.infer<typeof OrgLimitsSchema>;
+
+/**
+ * The usage-surface projection (usage.get) for the caller's org + current billing period. Single
+ * dimension (events); NO prices/tiers — the billable unit is disclosed, the cap + pause behavior are
+ * shown, and the surface renders "X of Y events" + a percentage. `eventCap` null = uncapped display.
+ * `paused` is the org-level ingest pause (soft-cap or operator), independent of any per-endpoint pause.
+ */
+export const UsageSummarySchema = z.object({
+  periodStart: z.coerce.date(),
+  periodEnd: z.coerce.date(),
+  events: z.number().int().nonnegative(),
+  eventCap: z.number().int().nonnegative().nullable(),
+  pausePolicy: PausePolicySchema,
+  paused: z.boolean(),
+});
+export type UsageSummary = z.infer<typeof UsageSummarySchema>;

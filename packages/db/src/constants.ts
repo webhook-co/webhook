@@ -78,4 +78,16 @@ export const DB_ROLES = {
    * links to the dashboard by destination id). Password injected out of band.
    */
   notifier: "webhook_notifier",
+  /**
+   * Cross-org metering-rollup enumeration role (S4 / migration 0040). Non-owner, no BYPASSRLS; the
+   * engine's metering cron enumerates which orgs have recent events (or a stale-open usage day that
+   * still needs freezing) so it can roll each up PER-ORG under webhook_app RLS. Holds SELECT-ONLY via
+   * role-targeted `FOR SELECT TO webhook_meter USING (true)` policies on events + usage, with COLUMN
+   * grants scoped to the enumeration keys only (org_id/received_at on events; org_id/window_start/
+   * finalized_at on usage) — enough to FIND work across tenants, never any payload/header/dedup
+   * content, and no write anywhere. The rollup + freeze mutations run under webhook_app RLS; this role
+   * only reads which orgs to process. The cross-org read is RLS-native (FORCE RLS defeats an
+   * owner/SECURITY-DEFINER bypass; BYPASSRLS is forbidden). Password injected out of band.
+   */
+  meter: "webhook_meter",
 } as const;

@@ -44,7 +44,7 @@ describe("CredentialsManager", () => {
     expect(screen.getByRole("button", { name: /create key/i })).toBeInTheDocument();
   });
 
-  it("offers exactly the five grantable scopes — never the reserved keys:manage", async () => {
+  it("offers exactly the grantable scopes — never the reserved keys:manage", async () => {
     const user = userEvent.setup();
     render(
       <CredentialsManager
@@ -57,13 +57,16 @@ describe("CredentialsManager", () => {
     const checkboxes = within(dialog).getAllByRole("checkbox");
     // endpoints:write (ADR-0075) is now a grantable scope, so the create-key form renders it too. A key
     // carrying it can create endpoints via api/cli/mcp; the dashboard endpoint-create UI is still S1.
-    expect(checkboxes).toHaveLength(5);
+    // triggers:write (S5) + billing:read (S4.2) are the newest grantable scopes.
+    expect(checkboxes).toHaveLength(7);
     for (const scope of [
       "endpoints:read",
       "endpoints:write",
       "events:read",
       "events:replay",
       "audit:read",
+      "triggers:write",
+      "billing:read",
     ]) {
       expect(within(dialog).getByText(scope)).toBeInTheDocument();
     }

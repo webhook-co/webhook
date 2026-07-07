@@ -67,6 +67,14 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   "deliveries.get":
     "Get a single outbound delivery by id — its status, attempt, retry clock, HTTP statusCode/error, and the event (+ destination/subscription, when set) it links.",
   "audit.verify": "Verify the org's tamper-evident audit chain; reports the first break, if any.",
+  "triggers.create":
+    "Register a webhook→agent trigger subscription for `endpointId` (optional `name` label): a durable subscription to be woken when that endpoint captures a new event. Returns the trigger id. Creates NO outbound delivery — it only subscribes you to events the org can already read.",
+  "triggers.list":
+    "List the org's active agent trigger subscriptions (optional `endpointId` filter). Each item is a trigger id + its endpoint, name, and created time.",
+  "triggers.revoke":
+    "Revoke an agent trigger subscription by id — the subscription stops firing. Idempotent: revoking an already-revoked trigger succeeds.",
+  "usage.get":
+    "Get the org's metering usage for the current billing period — events used, included cap, and pause state.",
   "endpoints.addProviderSecret":
     "Register an inbound-verification secret on an endpoint. `kind` is `signing_secret` (default — the provider's signing/auth secret, so received webhooks are cryptographically verified) or `verify_token` (a user-chosen GET-handshake compare-token, e.g. Meta's hub.verify_token, used to complete a subscription verification). Provide `provider`, the plaintext `secret`, and optional `kind`/`label`; it is sealed server-side and NEVER returned. Treat the secret as sensitive — confirm with the user before storing one on their behalf.",
   "endpoints.listProviderSecrets":

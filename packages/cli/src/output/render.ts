@@ -8,12 +8,14 @@ import type {
   SubscriptionDeleted,
 } from "@webhook-co/contract";
 import type {
+  AgentTrigger,
   Delivery,
   Endpoint,
   Event,
   EventSummary,
   ReplayDestination,
   Subscription,
+  UsageSummary,
 } from "@webhook-co/shared";
 
 import type { AuditVerifyResult } from "../api-client.js";
@@ -59,6 +61,32 @@ function fmtDate(d: Date): string {
 /** Full ISO timestamp — events' receivedAt (exactness matters for a webhook/audit tool). */
 function fmtDateTime(d: Date): string {
   return d.toISOString();
+}
+
+/** A fixed-locale thousands separator so the usage view is deterministic (not host-locale dependent). */
+function fmtCount(n: number): string {
+  return n.toLocaleString("en-US");
+}
+
+/**
+ * The `wbhk usage` view: the org's metering usage for the current billing period. Single dimension
+ * (events) — the billable unit is "every captured request to an endpoint". No prices; shows usage vs
+ * the included cap (+ %), the cap behavior (pause vs continue), and the org's ingest state.
+ */
+export function renderUsageSummary(u: UsageSummary, color: boolean): string {
+  const period = `${fmtDate(u.periodStart)} — ${fmtDate(u.periodEnd)}`;
+  const used =
+    u.eventCap && u.eventCap > 0
+      ? `${fmtCount(u.events)} of ${fmtCount(u.eventCap)} events (${Math.round((u.events / u.eventCap) * 100)}%)`
+      : `${fmtCount(u.events)} events`;
+  const cap =
+    u.eventCap === null
+      ? "uncapped"
+      : `${fmtCount(u.eventCap)} included · ${u.pausePolicy === "pause" ? "pauses at cap" : "continues past cap"}`;
+  const state = u.paused ? colorize("paused", "yellow", color) : colorize("active", "green", color);
+  return [`period:  ${period}`, `usage:   ${used}`, `cap:     ${cap}`, `state:   ${state}`].join(
+    "\n",
+  );
 }
 
 export function renderEndpointsTable(items: readonly Endpoint[], color: boolean): string {
@@ -259,6 +287,39 @@ export function renderRemovedSubscription(s: SubscriptionDeleted): string {
   return block([
     ["id", field(s.id)],
     ["removed", "yes"],
+  ]);
+}
+
+/** A single agent trigger (webhook→agent subscription). */
+export function renderTrigger(t: AgentTrigger): string {
+  return block([
+    ["id", field(t.id)],
+    ["endpoint", field(t.endpointId)],
+    ["name", t.name === null ? NONE : field(t.name)],
+    ["status", t.revokedAt === null ? "active" : "revoked"],
+    ["created", fmtDateTime(t.createdAt)],
+  ]);
+}
+
+/** The org's active agent triggers as a table. */
+export function renderTriggersTable(items: readonly AgentTrigger[]): string {
+  return renderTable(
+    ["ENDPOINT", "NAME", "STATUS", "CREATED", "ID"],
+    items.map((t) => [
+      field(t.endpointId),
+      t.name === null ? NONE : field(t.name),
+      t.revokedAt === null ? "active" : "revoked",
+      fmtDateTime(t.createdAt),
+      field(t.id),
+    ]),
+  );
+}
+
+/** A just-revoked agent trigger: its id. */
+export function renderRevokedTrigger(t: { readonly id: string }): string {
+  return block([
+    ["id", field(t.id)],
+    ["revoked", "yes"],
   ]);
 }
 

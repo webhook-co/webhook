@@ -37,6 +37,7 @@ const TENANT_TABLES = [
   { table: "org_policy", col: "org_id" },
   { table: "auth_audit_event", col: "org_id" },
   { table: "notification_intents", col: "org_id" },
+  { table: "agent_triggers", col: "org_id" },
 ] as const;
 
 // Better Auth identity tables are GLOBAL (text ids, per-user / api-key), intentionally
@@ -782,6 +783,65 @@ describe("catalog-driven RLS coverage", () => {
              or has_table_privilege(${DB_ROLES.notifier}, ${t}, 'DELETE')) as any`;
       expect(p.any).toBe(false);
     }
+  });
+
+  it("the meter role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
+    // webhook_meter is the cross-org metering-rollup enumeration role (migration 0040): it reads which
+    // orgs have recent events / a stale-open usage day so the cron can roll each up per-org under
+    // webhook_app RLS. Like every job-path role it must never be a superuser, never BYPASSRLS, never own a table.
+    const [role] = await owner<{ rolname: string; super: boolean; bypass: boolean }[]>`
+      select rolname, rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.meter}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+
+    const ownedByMeter = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.meter}`;
+    expect(ownedByMeter[0]?.n).toBe(0);
+  });
+
+  it("the meter role holds SELECT on ONLY the enumeration columns, and no write anywhere", async () => {
+    // SELECT: only (org_id, received_at) on events and (org_id, window_start, finalized_at) on usage.
+    const selects: Array<[string, string]> = [
+      ["events", "org_id"],
+      ["events", "received_at"],
+      ["usage", "org_id"],
+      ["usage", "window_start"],
+      ["usage", "finalized_at"],
+    ];
+    for (const [t, c] of selects) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.meter}, ${t}, ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    // It must NEVER read a payload / header / dedup column, nor the usage count itself.
+    for (const [t, c] of [
+      ["events", "payload_r2_key"],
+      ["events", "headers"],
+      ["events", "dedup_key"],
+      ["usage", "event_count"],
+    ] as Array<[string, string]>) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.meter}, ${t}, ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // No write anywhere: not on events/usage, not on the pause/limits tables.
+    for (const t of ["events", "usage", "org_limits", "ingest_paused"] as const) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.meter}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.meter}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.meter}, ${t}, 'DELETE')) as any`;
+      expect(p.any).toBe(false);
+    }
+    // The role-targeted policies must be FOR SELECT (not ALL) — a stray ALL policy would extend
+    // the role's reach to writes the column grants happen not to cover.
+    const policies = await owner<{ policyname: string; cmd: string }[]>`
+      select policyname, cmd from pg_policies
+      where schemaname = 'public' and policyname in ('events_meter_select', 'usage_meter_select')`;
+    expect(policies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT"]);
   });
 
   it("the sweeper role holds DELETE — and ONLY delete — on the two token tables, nothing elsewhere", async () => {

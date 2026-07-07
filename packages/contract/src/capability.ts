@@ -64,6 +64,11 @@ export const CAPABILITY_SCOPES = [
   "events:read",
   "events:replay",
   "audit:read",
+  // triggers:write (S5) — manage (create/revoke) webhook→agent trigger subscriptions. A dedicated write
+  // scope keeps the read scopes side-effect-free: a passive event-consumer key holds only events:read
+  // (it can list + wait on triggers) and cannot mutate trigger state; managing triggers requires this.
+  "triggers:write",
+  "billing:read",
 ] as const;
 export type CapabilityScope = (typeof CAPABILITY_SCOPES)[number];
 
