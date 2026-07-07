@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
@@ -30,8 +30,29 @@ async function seedOrg(slug: string): Promise<string> {
 }
 
 async function seedUsage(orgId: string, count: number): Promise<void> {
+  await seedUsageAt(orgId, IN_PERIOD, count);
+}
+
+async function seedUsageAt(orgId: string, windowIso: string, count: number): Promise<void> {
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, ${IN_PERIOD}, ${count})`;
+    await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, ${windowIso}, ${count})`;
+  });
+}
+
+// Seed `n` raw events on NOW's UTC day (today), so the producer's LIVE today-count picks them up.
+// received_at is trigger-stamped to now() on INSERT, so UPDATE it to a today instant after.
+async function seedEventsToday(orgId: string, n: number): Promise<void> {
+  const endpointId = randomUUID();
+  const at = "2026-07-15T06:00:00.000Z"; // within NOW's day (2026-07-15)
+  await withTenant(app, orgId, async (tx) => {
+    await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
+             values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
+    for (let i = 0; i < n; i++) {
+      const id = randomUUID();
+      await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+               values (${id}, ${orgId}, ${endpointId}, ${"k" + i}, ${10}, ${"d" + i}, ${"content_hash"})`;
+      await tx`update events set received_at = ${at} where id = ${id}`;
+    }
   });
 }
 
@@ -151,6 +172,44 @@ describe("runCapProducer", () => {
     expect(result.pausedTransitions).toBe(0);
     expect(await pausedState(orgId)).toBeNull();
     expect(evicted).toEqual([]); // no transition → no eviction
+  });
+
+  it("counts TODAY's live events toward the cap, not just rolled usage (prior 99 + 7 live = 106 > 100)", async () => {
+    // Enforcement uses the SAME rolled-prior + live-today basis the surface shows. Rolled alone (99) is
+    // under the cap; only WITH today's 7 live events does the org cross it — proving live events enforce.
+    const orgId = await seedOrg("cap-live-today");
+    await seedUsage(orgId, 99); // prior day, rolled — under the cap by itself
+    await seedEventsToday(orgId, 7); // today, live — pushes it to 106
+    const result = await run(); // default cap 100
+    expect(result.pausedTransitions).toBe(1);
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
+  });
+
+  it("does not WRONGFULLY RESUME a paused org still over cap via today's live events", async () => {
+    // A paused org at 99 rolled + 7 live = 106 (> cap 100) must STAY paused. If enforcement ignored the
+    // live today-count it would see only 99, resume, and re-open capture over the cap.
+    const orgId = await seedOrg("cap-no-wrong-resume");
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into ingest_paused (org_id, paused, reason, since) values (${orgId}, ${true}, ${"cap"}, now())`;
+    });
+    await seedUsage(orgId, 99);
+    await seedEventsToday(orgId, 7);
+    const result = await run();
+    expect(result.resumedTransitions).toBe(0);
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
+  });
+
+  it("never DOUBLE-COUNTS a rolled TODAY usage row against the live today-count", async () => {
+    // 50 prior rolled + a today `usage` row of 99 (the rollup already ran today) + 4 live events today.
+    // Correct usage = 50 + 4 = 54 (the today-rolled 99 is excluded in favor of the live count) < cap 100
+    // → NO pause. A double-count (50 + 99 + 4 = 153) would pause — this pins that it doesn't.
+    const orgId = await seedOrg("cap-no-double");
+    await seedUsage(orgId, 50); // prior day (07-10), rolled
+    await seedUsageAt(orgId, "2026-07-15T00:00:00.000Z", 99); // TODAY rolled row — must be ignored
+    await seedEventsToday(orgId, 4); // today live — the authoritative today figure
+    const result = await run(); // default cap 100
+    expect(result.pausedTransitions).toBe(0);
+    expect(await pausedState(orgId)).toBeNull();
   });
 
   it("respects an explicit org_limits cap over the default", async () => {

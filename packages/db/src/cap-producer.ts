@@ -8,6 +8,7 @@
 import { currentBillingPeriod, shouldPauseForCap, type PausePolicy } from "@webhook-co/shared";
 
 import { withTenant, type Sql } from "./client";
+import { sumPeriodEventUsage } from "./period-usage";
 
 /** Default cap on orgs one producer pass processes (bounded + fairly ordered — mirrors the rollup). */
 export const DEFAULT_CAP_PRODUCER_LIMIT = 1000;
@@ -113,14 +114,15 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
   for (const orgId of orgIds) {
     try {
       const desired = await withTenant(deps.app, orgId, async (tx): Promise<boolean | null> => {
-        const [usageRow] = await tx<{ events: string }[]>`
-          select coalesce(sum(event_count), 0)::bigint as events
-          from usage where window_start >= ${period.start}`;
+        // The SAME period-usage basis the surface displays (sumPeriodEventUsage: rolled prior days +
+        // live today) — so enforcement can't lag or diverge from what the dashboard shows. Not tied to
+        // whether the rollup already ran today (it counts today's events live), so reordering the cron
+        // can't silently undercount today.
+        const periodUsage = await sumPeriodEventUsage(tx, period, deps.now);
         const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
           select event_cap, pause_policy from org_limits`;
         const [pauseRow] = await tx<{ paused: boolean }[]>`select paused from ingest_paused`;
 
-        const periodUsage = Number(usageRow?.events ?? 0);
         // No org_limits row → Free default (injected); a row → its own cap/policy (event_cap null = uncapped).
         const eventCap = limits
           ? limits.event_cap != null

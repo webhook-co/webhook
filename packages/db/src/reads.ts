@@ -28,6 +28,7 @@ import {
 } from "@webhook-co/shared";
 
 import type { TenantTx } from "./client";
+import { sumPeriodEventUsage } from "./period-usage";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -684,25 +685,9 @@ export async function listDeliveries(
  */
 export async function readUsageSummary(tx: TenantTx, nowMs: number): Promise<UsageSummary> {
   const period = currentBillingPeriod(nowMs);
-  // Period usage = the rolled-up `usage` windows for the period's PRIOR days + a LIVE count of TODAY's
-  // events. The async rollup re-rolls today only hourly, so summing `usage` alone reads today's events
-  // low (or 0) until the next tick — the surface must reflect them now. today >= period.start always
-  // (today is within the current period), so the ranges don't overlap and can't double-count.
-  const d = new Date(nowMs);
-  const todayStart = new Date(
-    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
-  ).toISOString();
-  const [rolledRow] = await tx<{ events: string }[]>`
-    select coalesce(sum(event_count), 0)::bigint as events
-    from usage
-    where window_start >= ${period.start} and window_start < ${todayStart}`;
-  const [todayRow] = await tx<{ events: string }[]>`
-    select count(*)::bigint as events
-    from events
-    where received_at >= ${todayStart} and received_at < ${period.end}`;
-  const usageRow = {
-    events: String(Number(rolledRow?.events ?? 0) + Number(todayRow?.events ?? 0)),
-  };
+  // The SAME period-usage basis the soft-cap producer enforces on (sumPeriodEventUsage) — rolled prior
+  // days + live today — so what the surface shows can't drift from what enforcement decides.
+  const events = await sumPeriodEventUsage(tx, period, nowMs);
   const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
     select event_cap, pause_policy from org_limits`;
   const [pauseRow] = await tx<{ paused: boolean }[]>`
@@ -710,7 +695,7 @@ export async function readUsageSummary(tx: TenantTx, nowMs: number): Promise<Usa
   return {
     periodStart: new Date(period.start),
     periodEnd: new Date(period.end),
-    events: Number(usageRow?.events ?? 0),
+    events,
     eventCap: limits?.event_cap != null ? Number(limits.event_cap) : null,
     pausePolicy: limits?.pause_policy ?? "pause",
     paused: pauseRow?.paused ?? false,
