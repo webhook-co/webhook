@@ -35,6 +35,10 @@ const TOKEN = {
   // SELECT-only cross-org Neon role. The operator provisions the role + Hyperdrive and sets the
   // HYPERDRIVE_RECONCILER_ID GH repo var; the deploy workflow must provide it like every other id here.
   "<HYPERDRIVE_RECONCILER_ID>": reqEnv("HYPERDRIVE_RECONCILER_ID"),
+  // The metering-rollup cron's webhook_meter Hyperdrive (S4.1) — a least-privilege, SELECT-only cross-org Neon
+  // role (enumerate orgs with recent events / a stale-open usage day). The operator provisions the role +
+  // Hyperdrive and sets the HYPERDRIVE_METER_ID GH repo var; every workflow that runs this generator must provide it.
+  "<HYPERDRIVE_METER_ID>": reqEnv("HYPERDRIVE_METER_ID"),
   "<HYPERDRIVE_AUTHN_ID>": reqEnv("HYPERDRIVE_AUTHN_ID"),
   "<HYPERDRIVE_INGEST_ID>": reqEnv("HYPERDRIVE_INGEST_ID"),
   "<KV_CONFIG_ID>": reqEnv("KV_CONFIG_ID"),
@@ -80,6 +84,7 @@ const APPS = {
       "<HYPERDRIVE_CACHED_ID>",
       "<HYPERDRIVE_ANCHOR_ID>",
       "<HYPERDRIVE_RECONCILER_ID>",
+      "<HYPERDRIVE_METER_ID>",
       "<HYPERDRIVE_AUTHN_ID>",
       "<HYPERDRIVE_INGEST_ID>",
       "<KV_CONFIG_ID>",

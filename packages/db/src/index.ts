@@ -44,3 +44,4 @@ export * from "./notifier";
 export * from "./replay-destinations";
 export * from "./signing-keys";
 export * from "./subscriptions";
+export * from "./usage-rollup";
