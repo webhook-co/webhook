@@ -39,7 +39,6 @@ import {
   type RevealedIngestToken,
   type SealedRecord,
   SecretStore,
-  SERVICE_NAME,
   verifyListenTicket,
 } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
@@ -591,13 +590,21 @@ export async function handleListenUpgrade(
   }
 }
 
+// The bare apex is a machine-ingest surface, not a landing page: a human who pastes wbhk.my into a
+// browser is bounced to the marketing homepage, while GET /healthz stays as the service liveness probe.
+// 302 (temporary) — reversible if the root's behaviour ever changes; browsers cache a 301 ~forever.
+// x-robots-tag/referrer-policy mirror LIVENESS_HEADERS (ingest.ts) so the ingest apex stays out of
+// search indexes and leaks no referrer. Root-only: /{token} ingest and /listen are matched below.
+const ROOT_REDIRECT_TARGET = "https://www.webhook.co/";
+const NOINDEX_HEADERS = { "x-robots-tag": "noindex", "referrer-policy": "no-referrer" } as const;
+
 /**
- * The wbhk.my router. GET / is the SERVICE liveness probe (the bare apex, no token); the /listen
- * WebSocket upgrade is the CLI tunnel; every other request is the ingest write path. handleIngest now
- * accepts ALL standard verbs (accept-all-verbs, ADR-0085) — it captures each (recording the method) and
- * answers a per-token GET/HEAD/OPTIONS with its own browser liveness response, distinct from this
- * bare-apex GET /. Owns per-request DB-client lifecycle: build deps, delegate, and close() in a finally
- * so a thrown handler error never leaks a connection.
+ * The wbhk.my router. GET / 302-redirects to the marketing homepage and GET /healthz is the SERVICE
+ * liveness probe (both the bare apex, no token); the /listen WebSocket upgrade is the CLI tunnel; every
+ * other request is the ingest write path. handleIngest now accepts ALL standard verbs (accept-all-verbs,
+ * ADR-0085) — it captures each (recording the method) and answers a per-token GET/HEAD/OPTIONS with its
+ * own browser liveness response, distinct from this bare-apex GET /. Owns per-request DB-client lifecycle:
+ * build deps, delegate, and close() in a finally so a thrown handler error never leaks a connection.
  */
 export async function handleFetch(
   request: Request,
@@ -606,10 +613,16 @@ export async function handleFetch(
   makeDeps: MakeIngestDeps = buildIngestDeps,
 ): Promise<Response> {
   const url = new URL(request.url);
-  if (request.method === "GET" && url.pathname === "/") {
-    return new Response(`${SERVICE_NAME}:engine ok`, {
+  if (request.method === "GET" && url.pathname === "/healthz") {
+    return new Response("ok", {
       status: 200,
-      headers: { "content-type": "text/plain; charset=utf-8" },
+      headers: { "content-type": "text/plain; charset=utf-8", ...NOINDEX_HEADERS },
+    });
+  }
+  if (request.method === "GET" && url.pathname === "/") {
+    return new Response(null, {
+      status: 302,
+      headers: { location: ROOT_REDIRECT_TARGET, ...NOINDEX_HEADERS },
     });
   }
 

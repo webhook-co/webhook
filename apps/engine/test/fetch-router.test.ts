@@ -58,15 +58,42 @@ function post(path: string, body = `{"hello":"world"}`): Request {
 }
 
 describe("handleFetch routing + lifecycle", () => {
-  it("GET / is the liveness probe (200), and does NOT build ingest deps", async () => {
+  it("GET / 302-redirects to the marketing homepage, and does NOT build ingest deps", async () => {
     let built = 0;
     const res = await handleFetch(get("/"), bindings, ctx, () => {
       built += 1;
       return Promise.resolve(fakeHandle().handle);
     });
+    expect(res.status).toBe(302); // temporary/reversible bounce to www.webhook.co (not the old 200 probe)
+    expect(res.headers.get("location")).toBe("https://www.webhook.co/");
+    expect(res.headers.get("x-robots-tag")).toBe("noindex"); // keep the ingest apex out of search indexes
+    expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(built).toBe(0); // the bounce never touches the DB path
+  });
+
+  it("GET /healthz is a 200 liveness probe, and does NOT build ingest deps", async () => {
+    let built = 0;
+    const res = await handleFetch(get("/healthz"), bindings, ctx, () => {
+      built += 1;
+      return Promise.resolve(fakeHandle().handle);
+    });
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe("webhook:engine ok");
+    expect(await res.text()).toBe("ok");
+    expect(res.headers.get("x-robots-tag")).toBe("noindex");
     expect(built).toBe(0); // health never touches the DB path
+  });
+
+  it("a token path is NEVER caught by the root redirect — GET/POST /whep_good route to ingest (no 3xx)", async () => {
+    // The isolation guard: the bare-root bounce must not swallow ingest. A token path is resolved by the
+    // ingest write path, never redirected — so it carries no Location and is not a 3xx.
+    for (const req of [get("/whep_good"), post("/whep_good")]) {
+      const f = fakeHandle();
+      const res = await handleFetch(req, bindings, ctx, () => Promise.resolve(f.handle));
+      expect(res.status, req.method).toBe(200); // routed to ingest (known token → captured)
+      expect(res.status, req.method).toBeLessThan(300); // definitively not a redirect
+      expect(res.headers.get("location"), req.method).toBeNull();
+      expect(f.closed(), req.method).toBe(1);
+    }
   });
 
   it("routes a POST token path to ingest and closes the deps afterward", async () => {
@@ -136,15 +163,15 @@ describe("handleFetch routing + lifecycle", () => {
     }
   });
 
-  it("a GET on a token path is NOT the bare-apex health probe — it routes to ingest (per-token liveness 200)", async () => {
+  it("a GET on a token path is the per-token ingest liveness (200), not the bare-apex bounce", async () => {
     const f = fakeHandle();
     const res = await handleFetch(get("/whep_good"), bindings, ctx, () =>
       Promise.resolve(f.handle),
     );
     expect(res.status).toBe(200); // accept-all-verbs: a token-path GET is captured + answered with liveness
     const body = await res.text();
-    expect(body).toMatch(/live/i); // the per-token ingest liveness…
-    expect(body).not.toBe("webhook:engine ok"); // …NOT the bare-apex GET / health probe
+    expect(body).toMatch(/live/i); // the per-token ingest liveness (its own body, distinct from GET /)
+    expect(res.headers.get("location")).toBeNull(); // …never the bare-apex redirect
     expect(f.closed()).toBe(1);
   });
 
