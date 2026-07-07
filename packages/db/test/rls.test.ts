@@ -30,6 +30,9 @@ const TENANT_TABLES = [
   { table: "org_limits", col: "org_id" },
   { table: "ingest_paused", col: "org_id" },
   { table: "usage_alerts", col: "org_id" },
+  { table: "billing_customers", col: "org_id" },
+  { table: "billing_subscriptions", col: "org_id" },
+  { table: "stripe_meter_reports", col: "org_id" },
   { table: "audit_log", col: "org_id" },
   { table: "api_keys", col: "org_id" },
   { table: "auth_grant", col: "org_id" },
@@ -129,6 +132,10 @@ async function seedOrg(slug: string): Promise<Seeded> {
     await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, date_trunc('day', now()), ${1})`;
     await tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${1000}, ${"pause"})`;
     await tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${false})`;
+    // stripe_meter_reports (S4.4a outbox) is INSERT-able by webhook_app; seed it here so the cross-org
+    // isolation check on it is NON-vacuous. identifier is CHECK-bound to (org_id, day).
+    await tx`insert into stripe_meter_reports (org_id, day, event_count, identifier)
+             values (${orgId}, current_date, ${1}, ${orgId} || ':' || current_date::text)`;
     // Genesis row: prev_hash is omitted (defaults to NULL) — a genesis row has no prior.
     await tx`insert into audit_log (org_id, seq, actor, action, row_hash)
              values (${orgId}, ${1}, ${userId}, ${"org.created"}, ${deterministicBuffer(32)})`;
@@ -141,6 +148,15 @@ async function seedOrg(slug: string): Promise<Seeded> {
     await tx`insert into auth_audit_event (org_id, seq, actor, event_type, row_hash)
              values (${orgId}, ${1}, ${userId}, ${"grant_created"}, ${deterministicBuffer(32)})`;
   });
+
+  // billing_customers + billing_subscriptions are SELECT-only for webhook_app (S4.4a — writes are
+  // verified-Stripe-only, added in S4.4b), so seed them as the SUPERUSER (bypasses RLS) — enough for the
+  // cross-org READ isolation checks to bite (org B has rows; org A must still see 0). stripe_* ids org-unique.
+  await root`insert into billing_customers (org_id, stripe_customer_id) values (${orgId}, ${"cus_" + slug})`;
+  await root`insert into billing_subscriptions
+             (org_id, stripe_subscription_id, plan, status, event_cap, current_period_start, current_period_end)
+             values (${orgId}, ${"sub_" + slug}, ${"seed-plan"}, ${"active"}, ${1000},
+                     date_trunc('month', now()), date_trunc('month', now()) + interval '1 month')`;
 
   return { orgId, userId, endpointId, eventId };
 }
@@ -189,14 +205,23 @@ describe("cross-org isolation (every tenant table)", () => {
     });
   }
 
-  // audit_log + auth_audit_event are append-only (no UPDATE/DELETE grant or policy); usage_alerts is the
-  // metering dedup ledger — the producer only INSERTs (ON CONFLICT DO NOTHING) + SELECTs, so webhook_app
-  // holds NO UPDATE/DELETE on it (least privilege). All three throw a privilege error (not 0-rows) on an
-  // UPDATE/DELETE, so exclude them from the generic mutate-other-org checks; their write denial is asserted
-  // separately (the append-only describes + the usage_alerts privilege test below).
-  for (const { table, col } of TENANT_TABLES.filter(
-    (t) => t.table !== "audit_log" && t.table !== "auth_audit_event" && t.table !== "usage_alerts",
-  )) {
+  // Some tables withhold UPDATE and/or DELETE from webhook_app (least privilege), so a mutate attempt throws
+  // a PRIVILEGE error instead of returning 0-rows — the generic cross-org mutate check (which asserts
+  // 0-rows-affected) can't run against those. Their write denial is asserted separately (the append-only
+  // describes + the per-table privilege tests). audit_log + auth_audit_event are fully append-only (no
+  // UPDATE/DELETE); usage_alerts is INSERT+SELECT only; stripe_meter_reports is INSERT+SELECT+UPDATE (an
+  // outbox row is durable evidence — no DELETE), so it's excluded from the DELETE check but KEPT in UPDATE.
+  // billing_customers/billing_subscriptions are SELECT-only for webhook_app (writes are verified-Stripe-only,
+  // S4.4b) — so they too throw a privilege error on UPDATE/DELETE and are excluded from the generic checks.
+  const NO_UPDATE = new Set([
+    "audit_log",
+    "auth_audit_event",
+    "usage_alerts",
+    "billing_customers",
+    "billing_subscriptions",
+  ]);
+  const NO_DELETE = new Set([...NO_UPDATE, "stripe_meter_reports"]);
+  for (const { table, col } of TENANT_TABLES.filter((t) => !NO_UPDATE.has(t.table))) {
     it(`org A context cannot update org B rows in ${table}`, async () => {
       const affected = await withTenant(app, orgA.orgId, async (tx) => {
         const res =
@@ -205,7 +230,9 @@ describe("cross-org isolation (every tenant table)", () => {
       });
       expect(affected).toBe(0);
     });
+  }
 
+  for (const { table, col } of TENANT_TABLES.filter((t) => !NO_DELETE.has(t.table))) {
     it(`org A context cannot delete org B rows in ${table}`, async () => {
       const affected = await withTenant(app, orgA.orgId, async (tx) => {
         const res = await tx`delete from ${tx(table)} where ${tx(col)} = ${orgB.orgId}`;
@@ -233,6 +260,36 @@ describe("cross-org isolation (every tenant table)", () => {
     const [ins] = await owner<{ ok: boolean }[]>`
       select has_table_privilege(${DB_ROLES.app}, 'usage_alerts', 'INSERT') as ok`;
     expect(ins.ok).toBe(true);
+  });
+
+  it("stripe_meter_reports is an outbox for webhook_app (SELECT+INSERT+UPDATE, but NO DELETE)", async () => {
+    // The Stripe meter-report outbox: rows transition pending→sending→sent (UPDATE), but a reported row is
+    // durable evidence of what was metered — webhook_app holds no DELETE (least privilege), so a delete is a
+    // hard privilege error, while insert/select/update are granted.
+    for (const priv of ["SELECT", "INSERT", "UPDATE"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.app}, 'stripe_meter_reports', ${priv}) as ok`;
+      expect(p.ok).toBe(true);
+    }
+    const [del] = await owner<{ ok: boolean }[]>`
+      select has_table_privilege(${DB_ROLES.app}, 'stripe_meter_reports', 'DELETE') as ok`;
+    expect(del.ok).toBe(false);
+  });
+
+  it("billing_customers + billing_subscriptions are SELECT-ONLY for webhook_app (no tenant writes)", async () => {
+    // Their stripe_customer_id / stripe_subscription_id are globally-unique EXTERNAL ids that can't be
+    // CHECK-bound to org_id — so a tenant write could pre-claim another org's id. webhook_app therefore
+    // holds SELECT only; the write path is verified-Stripe-only (S4.4b). Any INSERT/UPDATE/DELETE is denied.
+    for (const table of ["billing_customers", "billing_subscriptions"] as const) {
+      const [sel] = await owner<{ ok: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.app}, ${table}, 'SELECT') as ok`;
+      expect(sel.ok).toBe(true);
+      for (const priv of ["INSERT", "UPDATE", "DELETE"] as const) {
+        const [p] = await owner<{ ok: boolean }[]>`
+          select has_table_privilege(${DB_ROLES.app}, ${table}, ${priv}) as ok`;
+        expect(p.ok).toBe(false);
+      }
+    }
   });
 });
 
@@ -593,12 +650,21 @@ describe("catalog-driven RLS coverage", () => {
       select tablename, cmd from pg_policies where schemaname = 'public'`;
     for (const { table } of TENANT_TABLES) {
       const cmds = new Set(rows.filter((r) => r.tablename === table).map((r) => r.cmd));
-      // audit_log + auth_audit_event + usage_alerts are deliberately INSERT+SELECT only (no UPDATE/DELETE
-      // policy) — the first two are append-only WORM ledgers, usage_alerts is the metering dedup ledger.
-      const expected =
-        table === "audit_log" || table === "auth_audit_event" || table === "usage_alerts"
+      // Policy sets by table posture:
+      //  - billing_customers/billing_subscriptions: SELECT-only (writes are verified-Stripe-only, S4.4b).
+      //  - audit_log + auth_audit_event (append-only WORM) + usage_alerts (metering dedup): INSERT+SELECT.
+      //  - stripe_meter_reports (outbox): INSERT+SELECT+UPDATE (pending→sending→sent), no DELETE.
+      //  - everything else: full CRUD.
+      const selectOnly = table === "billing_customers" || table === "billing_subscriptions";
+      const insertSelectOnly =
+        table === "audit_log" || table === "auth_audit_event" || table === "usage_alerts";
+      const expected = selectOnly
+        ? ["SELECT"]
+        : insertSelectOnly
           ? ["INSERT", "SELECT"]
-          : ["DELETE", "INSERT", "SELECT", "UPDATE"];
+          : table === "stripe_meter_reports"
+            ? ["INSERT", "SELECT", "UPDATE"]
+            : ["DELETE", "INSERT", "SELECT", "UPDATE"];
       expect([...cmds].sort()).toEqual(expected);
     }
   });
