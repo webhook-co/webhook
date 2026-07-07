@@ -155,3 +155,66 @@ describe("wbhk triggers revoke", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.UNAUTHORIZED);
   });
 });
+
+const triggerEvent = (over: Record<string, unknown> = {}) => ({
+  id: "01920000-0000-7000-8000-000000000001",
+  orgId: ORG,
+  endpointId: ENDPOINT,
+  receivedAt: "2026-07-07T00:00:00.000Z",
+  provider: "stripe",
+  dedupKey: "dk",
+  dedupStrategy: "content_hash",
+  verified: true,
+  verificationState: "verified",
+  vouched: true,
+  ...over,
+});
+
+describe("wbhk triggers wait", () => {
+  it("prints the events table + cursor footer for a trigger", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ events: [triggerEvent()], nextCursor: "cur_next", caughtUp: true }),
+    });
+    await run(app, ["triggers", "wait", TRIGGER], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain("stripe");
+    expect(t.stdout()).toContain("cur_next");
+  });
+
+  it("passes --cursor and --limit as query params", async () => {
+    const cap = capturingFetch({ events: [], nextCursor: null, caughtUp: true });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["triggers", "wait", TRIGGER, "--cursor", "cur0", "--limit", "10"], t.ctx);
+    expect(cap.urls[0]).toContain(`/v1/triggers/${TRIGGER}/wait`);
+    expect(cap.urls[0]).toContain("cursor=cur0");
+    expect(cap.urls[0]).toContain("limit=10");
+  });
+
+  it("emits the result as JSON with --output json (no stderr)", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ events: [triggerEvent()], nextCursor: "cur_next", caughtUp: false }),
+    });
+    await run(app, ["triggers", "wait", TRIGGER, "--output", "json"], t.ctx);
+    const parsed = JSON.parse(t.stdout()) as { nextCursor: string; caughtUp: boolean };
+    expect(parsed.nextCursor).toBe("cur_next");
+    expect(parsed.caughtUp).toBe(false);
+    expect(t.stderr()).toBe("");
+  });
+
+  it("prints a friendly message when caught up with no events", async () => {
+    const t = makeTestContext({
+      store: loggedInStore(),
+      fetch: okFetch({ events: [], nextCursor: null, caughtUp: true }),
+    });
+    await run(app, ["triggers", "wait", TRIGGER], t.ctx);
+    expect(t.stdout().toLowerCase()).toContain("no new events");
+  });
+
+  it("maps a 404 (unknown/revoked trigger) to the NOT_FOUND exit", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: statusFetch(404) });
+    await run(app, ["triggers", "wait", TRIGGER], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(CAPABILITY_EXIT.NOT_FOUND);
+  });
+});

@@ -418,6 +418,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/triggers/{triggerId}/wait": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Consume the next events for an agent trigger subscription (short-poll) */
+        get: operations["triggersWait"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/usage": {
         parameters: {
             query?: never;
@@ -838,6 +855,27 @@ export interface components {
         TriggersRevokeResponse: {
             /** Format: uuid */
             id: string;
+        };
+        TriggersWaitResponse: {
+            caughtUp: boolean;
+            events: {
+                dedupKey: string;
+                /** @enum {string} */
+                dedupStrategy: "sw_webhook_id" | "provider_event_id" | "content_hash" | "fields" | "unique";
+                /** Format: uuid */
+                endpointId: string;
+                /** Format: uuid */
+                id: string;
+                /** Format: uuid */
+                orgId: string;
+                provider: components["schemas"]["Provider"] | null;
+                /** Format: date-time */
+                receivedAt: string;
+                verificationState?: components["schemas"]["VerificationState"];
+                verified: boolean;
+                vouched: boolean;
+            }[];
+            nextCursor: string | null;
         };
         UsageGetResponse: {
             eventCap: number | null;
@@ -1908,6 +1946,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TriggersRevokeResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    triggersWait: {
+        parameters: {
+            query?: {
+                /** @description Opaque resume cursor from a prior call's nextCursor. */
+                cursor?: string | null;
+                /** @description Max events to return (1–200). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                triggerId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TriggersWaitResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

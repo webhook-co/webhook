@@ -2127,6 +2127,89 @@
         ]
       }
     },
+    "/v1/triggers/{triggerId}/wait": {
+      "get": {
+        "operationId": "triggersWait",
+        "summary": "Consume the next events for an agent trigger subscription (short-poll)",
+        "tags": [
+          "triggers"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriggersWaitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        },
+        "parameters": [
+          {
+            "name": "triggerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque resume cursor from a prior call's nextCursor.",
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Max events to return (1–200).",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 200
+            }
+          }
+        ]
+      }
+    },
     "/v1/whoami": {
       "get": {
         "operationId": "whoami",
@@ -4752,6 +4835,101 @@
           "eventCap",
           "pausePolicy",
           "paused"
+        ],
+        "additionalProperties": false
+      },
+      "TriggersWaitResponse": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "orgId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "endpointId": {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                "receivedAt": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "provider": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Provider"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "dedupKey": {
+                  "type": "string"
+                },
+                "dedupStrategy": {
+                  "type": "string",
+                  "enum": [
+                    "sw_webhook_id",
+                    "provider_event_id",
+                    "content_hash",
+                    "fields",
+                    "unique"
+                  ]
+                },
+                "verified": {
+                  "type": "boolean"
+                },
+                "verificationState": {
+                  "$ref": "#/components/schemas/VerificationState"
+                },
+                "vouched": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "id",
+                "orgId",
+                "endpointId",
+                "receivedAt",
+                "provider",
+                "dedupKey",
+                "dedupStrategy",
+                "verified",
+                "vouched"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "caughtUp": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "events",
+          "nextCursor",
+          "caughtUp"
         ],
         "additionalProperties": false
       },

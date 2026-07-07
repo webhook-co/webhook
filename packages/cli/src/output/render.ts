@@ -9,6 +9,7 @@ import type {
 } from "@webhook-co/contract";
 import type {
   AgentTrigger,
+  AgentTriggerEvent,
   Delivery,
   Endpoint,
   Event,
@@ -321,6 +322,39 @@ export function renderRevokedTrigger(t: { readonly id: string }): string {
     ["id", field(t.id)],
     ["revoked", "yes"],
   ]);
+}
+
+/** A triggers.wait page: the new events + the resume cursor / caughtUp footer. */
+export function renderTriggerWait(
+  r: {
+    readonly events: readonly AgentTriggerEvent[];
+    readonly nextCursor: string | null;
+    readonly caughtUp: boolean;
+  },
+  color: boolean,
+): string {
+  const table =
+    r.events.length === 0
+      ? "no new events."
+      : renderTable(
+          ["RECEIVED", "PROVIDER", "VERIFICATION", "VOUCHED", "EVENT ID"],
+          r.events.map((e) => [
+            fmtDateTime(e.receivedAt),
+            e.provider === null ? NONE : field(e.provider),
+            // Same colored verification word as `wbhk events list` (renderEventsTable) — never `failed`
+            // here (those are filtered out of triggers.wait per ADR-0103).
+            e.verificationState === "authenticated"
+              ? authnWord(color)
+              : verifiedWord(e.verified, color),
+            e.vouched ? "yes" : "no",
+            field(e.id),
+          ]),
+        );
+  const footer = block([
+    ["caughtUp", r.caughtUp ? "yes" : "no"],
+    ["nextCursor", r.nextCursor === null ? NONE : field(r.nextCursor)],
+  ]);
+  return `${table}\n${footer}`;
 }
 
 /** The org's outbound deliveries as a newest-first table. */

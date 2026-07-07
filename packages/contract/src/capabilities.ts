@@ -1,4 +1,5 @@
 import {
+  AgentTriggerEventSchema,
   AgentTriggerSchema,
   canonicalizeAndValidateUrl,
   DedupConfigSchema,
@@ -704,6 +705,10 @@ export const deliveriesList = defineCapability({
 
 // The dashboard trigger-management view ships in a follow-up S5 web slice; api/cli/mcp parity lands first.
 const TRIGGERS_WEB_DEFERRED = "dashboard trigger-management view ships in the S5 web slice";
+// triggers.wait is an agent long-poll consumption primitive; the dashboard consumes live events via its
+// own WebSocket (LISTEN_SESSION), so there is no web binding for the wait tool.
+const TRIGGERS_WAIT_WEB_EXEMPT =
+  "agent long-poll consumption; the dashboard streams live events over its own WebSocket, not this tool";
 
 // ── triggers.* (S5): webhook→agent trigger subscriptions ──────────────────────────────────────────
 // Unlike the egress subscriptions.* above (mcp-EXEMPT for confused-deputy reasons), triggers.* are
@@ -749,6 +754,38 @@ export const triggersRevoke = defineCapability({
   auth: { scope: "triggers:write" },
   semantics: { idempotent: true },
   surfaceExempt: { web: TRIGGERS_WEB_DEFERRED },
+});
+// triggers.wait — the CONSUMPTION primitive: short-poll the next events for a trigger subscription. Returns
+// immediately with whatever is past `cursor` up to the gapless watermark; the caller re-invokes with the
+// returned nextCursor (promptly while !caughtUp to drain a backlog, then on its own cadence once caughtUp).
+// This is the webhook→agent trigger delivery path: at-least-once via the durable events log + ack-by-cursor
+// (a crash before persisting nextCursor re-reads, never loses; dedup on the event id). `failed`-verification
+// events are NEVER surfaced (ADR-0103) yet the cursor still advances past them, so they are read exactly once
+// and never re-scanned. Ordering is per-endpoint by capture-completion time (received_at), NOT send order.
+export const triggersWait = defineCapability({
+  name: "triggers.wait",
+  input: z.object({
+    triggerId: uuid,
+    // Opaque resume cursor from a prior call's nextCursor. Omit OR pass null to start from the oldest
+    // retained event — nullable so the null `nextCursor` a caught-up caller receives round-trips cleanly
+    // back in (the tool tells callers to "pass nextCursor back"; a caught-up page returns null).
+    cursor: cursor.nullable().optional(),
+    limit: z.number().int().positive().max(200).optional(),
+  }),
+  output: z.object({
+    events: z.array(AgentTriggerEventSchema),
+    // Position past EVERY event scanned this call (incl. filtered-out failed ones). Pass back to continue.
+    nextCursor: cursor.nullable(),
+    // True when this page reached the watermark head (no more events available right now).
+    caughtUp: z.boolean(),
+  }),
+  // NOT_FOUND: unknown / revoked / cross-org trigger. VALIDATION_ERROR: a malformed cursor, OR a cursor
+  // below the retained window (events before it were pruned — restart from beginning). events:read is the
+  // correct scope: the tool surfaces exactly events:read-shaped data for a subscription the caller owns.
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "events:read" },
+  semantics: { streaming: true, watermark: { deltaMs: WATERMARK_DELTA_MS } },
+  surfaceExempt: { web: TRIGGERS_WAIT_WEB_EXEMPT },
 });
 
 // usage.get — the metering usage surface (S4.2), at CLI/API/web/MCP parity. Reads the caller's org
@@ -805,6 +842,7 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   triggersList,
   triggersRevoke,
   usageGet,
+  triggersWait,
 ];
 
 /** Registry keyed by stable capability name. */

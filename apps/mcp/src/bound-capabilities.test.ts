@@ -32,6 +32,7 @@ describe("MCP bound capabilities", () => {
         "triggers.list",
         "triggers.revoke",
         "usage.get",
+        "triggers.wait",
       ].sort(),
     );
   });

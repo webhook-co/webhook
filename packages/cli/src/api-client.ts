@@ -31,6 +31,7 @@ import {
   triggersList as triggersListCap,
   triggersRevoke as triggersRevokeCap,
   usageGet as usageGetCap,
+  triggersWait as triggersWaitCap,
   type AddedProviderSecret,
   type AuthContext,
   type CapabilityError,
@@ -49,6 +50,7 @@ import {
 import {
   b64ToBytes,
   type AgentTrigger,
+  type AgentTriggerEvent,
   type Delivery,
   type DeliveryAttempt,
   type DedupConfig,
@@ -313,6 +315,15 @@ export interface ApiClient {
   triggersList(endpointId?: string): Promise<readonly AgentTrigger[]>;
   /** Revoke an agent trigger subscription (`DELETE /v1/triggers/:id`). */
   triggersRevoke(triggerId: string): Promise<{ id: string }>;
+  /** Consume the next events for a trigger subscription (`GET /v1/triggers/:id/wait`). */
+  triggersWait(
+    triggerId: string,
+    opts?: { cursor?: string; limit?: number },
+  ): Promise<{
+    events: readonly AgentTriggerEvent[];
+    nextCursor: string | null;
+    caughtUp: boolean;
+  }>;
 }
 
 export interface ApiClientDeps {
@@ -680,6 +691,14 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         await deleteJson(path, true),
         "revoked trigger",
       );
+    },
+    async triggersWait(triggerId, opts) {
+      const q = new URLSearchParams();
+      if (opts?.cursor !== undefined) q.set("cursor", opts.cursor);
+      if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
+      const qs = q.toString();
+      const path = `/v1/triggers/${encodeURIComponent(triggerId)}/wait${qs ? `?${qs}` : ""}`;
+      return parseOrThrow(triggersWaitCap.output, await getJson(path), "trigger events");
     },
     async eventsGetPayload(eventId): Promise<{ contentType: string | null; body: Uint8Array }> {
       const path = `/v1/events/${encodeURIComponent(eventId)}/payload`;

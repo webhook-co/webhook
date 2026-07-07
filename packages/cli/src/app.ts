@@ -46,6 +46,7 @@ import {
   triggersAddCommand,
   triggersListCommand,
   triggersRevokeCommand,
+  triggersWaitCommand,
 } from "./commands/triggers.js";
 import { telemetryRoute } from "./commands/telemetry.js";
 import { upgradeCommand } from "./commands/upgrade.js";
@@ -96,6 +97,7 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "triggers.list": ["triggers", "list"],
   "triggers.revoke": ["triggers", "revoke"],
   "usage.get": ["usage"],
+  "triggers.wait": ["triggers", "wait"],
 };
 
 const endpointsRoute = buildRouteMap({
@@ -167,6 +169,7 @@ const triggersRoute = buildRouteMap({
     add: triggersAddCommand,
     list: triggersListCommand,
     revoke: triggersRevokeCommand,
+    wait: triggersWaitCommand,
   },
   docs: {
     brief: "manage webhook→agent trigger subscriptions (get woken over MCP when an endpoint fires)",

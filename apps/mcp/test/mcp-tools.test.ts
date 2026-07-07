@@ -41,6 +41,7 @@ const BOUND_TOOLS = [
   "triggers.list",
   "triggers.revoke",
   "usage.get",
+  "triggers.wait",
 ];
 
 /** Seed the KV credential-cache hot path so the api-key validator resolves TOKEN without Postgres. */

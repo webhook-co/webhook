@@ -4,12 +4,18 @@ import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
-import { renderRevokedTrigger, renderTrigger, renderTriggersTable } from "../output/render.js";
-import { authedClient } from "./shared.js";
+import {
+  renderRevokedTrigger,
+  renderTrigger,
+  renderTriggersTable,
+  renderTriggerWait,
+} from "../output/render.js";
+import { authedClient, parseLimit } from "./shared.js";
 
-// `wbhk triggers add|list|revoke` — webhook→agent trigger subscriptions (S5). A trigger registers this
-// principal to be woken (via the MCP triggers.wait tool) when an endpoint captures a new event. It creates
-// no outbound delivery; it only lets you consume events you can already read.
+// `wbhk triggers add|list|revoke|wait` — webhook→agent trigger subscriptions (S5). A trigger registers
+// this principal to be woken when an endpoint captures a new event; `wait` consumes those events (a
+// short-poll: returns immediately with what's past the cursor, call again to continue). It creates no
+// outbound delivery; it only lets you consume events you can already read.
 
 interface AddFlags extends GlobalFlags {
   name?: string;
@@ -79,6 +85,48 @@ export const triggersListCommand = buildCommand<ListFlags, [], AppContext>({
     },
   },
   docs: { brief: "list the org's active agent triggers" },
+});
+
+interface WaitFlags extends GlobalFlags {
+  cursor?: string;
+  limit?: number;
+}
+
+export const triggersWaitCommand = buildCommand<WaitFlags, [string], AppContext>({
+  async func(this: AppContext, flags, triggerId) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format, color } = resolveGlobals(this, flags);
+    const result = await client.triggersWait(triggerId, {
+      cursor: flags.cursor,
+      limit: flags.limit,
+    });
+    this.process.stdout.write(
+      format === "json" ? `${renderJson(result)}\n` : `${renderTriggerWait(result, color)}\n`,
+    );
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [{ parse: (v: string) => v, brief: "the trigger id", placeholder: "triggerId" }],
+    },
+    flags: {
+      ...globalFlags,
+      cursor: {
+        kind: "parsed",
+        parse: (v: string) => v,
+        brief: "resume from a prior call's nextCursor",
+        optional: true,
+      },
+      limit: {
+        kind: "parsed",
+        parse: parseLimit,
+        brief: "max events to return (1–200)",
+        optional: true,
+      },
+    },
+  },
+  docs: { brief: "consume the next events for a trigger subscription (short-poll)" },
 });
 
 export const triggersRevokeCommand = buildCommand<GlobalFlags, [string], AppContext>({

@@ -109,6 +109,7 @@ describe("capability parity — current GA surfaces conformance", () => {
     // usage.get (S4.2): the metering usage surface — full api+mcp+cli+web parity (a read that steers
     // nothing; single-dimension events, no prices in the output).
     "usage.get",
+    "triggers.wait",
   ];
   // The dashboard surface: endpoints.* (slice 2) + events.list/get (slice 3a) + events.getPayload (slice 3b —
   // the R2 payload viewer + download), all DB-direct server reads. events.tail / events.replay / audit.verify
