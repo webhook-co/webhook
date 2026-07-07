@@ -15,11 +15,20 @@ import {
   triggersCreate,
   triggersList,
   triggersRevoke,
+  triggersWait,
 } from "@webhook-co/contract";
-import { newId } from "@webhook-co/shared";
+import {
+  decodeCursor,
+  encodeCursor,
+  newId,
+  type AgentTriggerEvent,
+  type Cursor,
+  type EventSummary,
+} from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
+import { tailEventsWithCursors, type ItemWithCursor } from "./reads";
 import { ensureScope, type CapabilityHandlers } from "./read-handlers";
 
 /** Thrown by createAgentTrigger when the endpoint is missing / soft-deleted / cross-org. The cap handler
@@ -201,10 +210,37 @@ export async function revokeAgentTrigger(
 
 /** Deps for the trigger handlers — no sealer (a trigger mints no secret). */
 export interface TriggerHandlerDeps {
-  /** webhook_app over the cache-disabled tenant binding — all mutations run here under RLS. */
+  /** webhook_app over the cache-disabled tenant binding — all mutations + the wait tail run here under RLS. */
   readonly tenant: Sql;
   /** Audit-chain HMAC key — signs the in-tx audit_log row on each mutation. */
   readonly auditKey: CryptoKey;
+  /** HMAC key for the opaque resume cursors used by triggers.wait (import of CURSOR_KEY). */
+  readonly cursorKey: CryptoKey;
+}
+
+/**
+ * Project a scanned tail page into the events triggers.wait delivers (PURE). Two ADR-0103 rules:
+ *   1. Drop `failed`-verification events entirely — a rejected signature is forged/tampered and must never
+ *      be surfaced to an agent as a trigger.
+ *   2. Stamp `vouched` = we authenticated the source (verified | authenticated); `unattempted` is forwarded
+ *      with `vouched:false` (delivered, but explicitly not vouched-for).
+ * The resume cursor is the LAST scanned item's cursor — good OR failed — so failed events are read exactly
+ * once and the cursor never gets stuck on (or re-scans) them. `resumeCursor` is undefined only for an empty
+ * page (caller keeps its prior cursor).
+ */
+export function projectTriggerPage(items: readonly ItemWithCursor<EventSummary>[]): {
+  readonly events: AgentTriggerEvent[];
+  readonly resumeCursor: Cursor | undefined;
+} {
+  const events: AgentTriggerEvent[] = [];
+  let resumeCursor: Cursor | undefined;
+  for (const { item, cursor } of items) {
+    resumeCursor = cursor; // advance past EVERY scanned row (good or failed)
+    const state = item.verificationState;
+    if (state === "failed") continue; // never surface a checked-and-rejected (forged) event
+    events.push({ ...item, vouched: state === "verified" || state === "authenticated" });
+  }
+  return { events, resumeCursor };
 }
 
 export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): CapabilityHandlers {
@@ -251,6 +287,55 @@ export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): Capability
     });
     if (revoked === null) throw new CapabilityFault("NOT_FOUND", "trigger not found");
     return revoked;
+  });
+
+  // triggers.wait — the CONSUMPTION path (short-poll). Resolves the ACTIVE trigger to its endpoint under
+  // RLS, then tails events past the cursor up to the gapless watermark, drops `failed` events (ADR-0103),
+  // and returns { events, nextCursor, caughtUp }. Connection-safe: ONE fast withTenant scan per call (no
+  // held connection, no server-side sleep) — the caller drives the poll cadence.
+  handlers.set(triggersWait.name, async (ctx, input) => {
+    ensureScope(ctx, triggersWait);
+    const parsed = triggersWait.input.safeParse(input);
+    if (!parsed.success) {
+      throw new CapabilityFault(
+        "VALIDATION_ERROR",
+        parsed.error.issues[0]?.message ?? "invalid input",
+      );
+    }
+    const { triggerId, cursor: cursorStr, limit } = parsed.data;
+    let cursor: Cursor | undefined;
+    // `!= null` treats an omitted OR null cursor the same — start from the oldest retained event. (A
+    // caught-up page returns nextCursor:null; the caller passes it straight back per the tool contract.)
+    if (cursorStr != null) {
+      try {
+        cursor = await decodeCursor(cursorStr, deps.cursorKey);
+      } catch {
+        throw new CapabilityFault("VALIDATION_ERROR", "invalid cursor");
+      }
+    }
+    return withTenant(deps.tenant, ctx.orgId, async (tx) => {
+      // Resolve the trigger under RLS — an unknown / revoked / cross-org id is NOT_FOUND (no existence
+      // oracle). The endpoint comes from the RLS-resolved row, NEVER from client input; the composite FK
+      // guarantees it is same-org, so the subsequent tail can only ever read this org's events.
+      const [trig] = await tx<{ endpoint_id: string }[]>`
+        select endpoint_id from agent_triggers where id = ${triggerId} and revoked_at is null`;
+      if (trig === undefined) throw new CapabilityFault("NOT_FOUND", "trigger not found");
+      const endpointId = trig.endpoint_id;
+      // NOTE: retention is INFINITE today (no prune/TTL job), so a resume cursor can never point below the
+      // oldest surviving event — the CURSOR_EXPIRED guard (cursorBelowOldest, packages/db/src/reads.ts)
+      // cannot fire yet, so it is deliberately NOT called on this hot poll path (it would add a min()
+      // aggregate scan per poll for a throw that can't happen). WHEN a retention/TTL job is added, wire
+      // cursorBelowOldest here (→ VALIDATION_ERROR "cursor expired") so a pruned-gap fails loud instead of
+      // silently resuming from the oldest survivor. The function + its tests already exist for that.
+      const page = await tailEventsWithCursors(tx, { endpointId, sinceCursor: cursor, limit });
+      const { events, resumeCursor } = projectTriggerPage(page.items);
+      const nextCursor =
+        resumeCursor !== undefined
+          ? await encodeCursor(resumeCursor, deps.cursorKey)
+          : (cursorStr ?? null);
+      // caughtUp = this page reached the watermark head (no lookahead row) — the caller can back off.
+      return { events, nextCursor, caughtUp: page.nextCursor === null };
+    });
   });
 
   return handlers;

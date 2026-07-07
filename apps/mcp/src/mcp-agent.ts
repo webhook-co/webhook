@@ -75,6 +75,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
     "Revoke an agent trigger subscription by id — the subscription stops firing. Idempotent: revoking an already-revoked trigger succeeds.",
   "usage.get":
     "Get the org's metering usage for the current billing period — events used, included cap, and pause state.",
+  "triggers.wait":
+    "Consume the next webhook→agent events for a trigger subscription (by triggerId). Returns { events, nextCursor, caughtUp }: `events` are new events oldest-first (each with its verification state + `vouched` — true only when we authenticated the source; forged/rejected events are NEVER returned); pass `nextCursor` back to continue. Re-call promptly while `caughtUp` is false to drain a backlog, then poll on your own cadence once caught up. At-least-once: a crash before you persist nextCursor just re-delivers (dedup on the event id). Optional `cursor` (resume) and `limit`.",
   "endpoints.addProviderSecret":
     "Register an inbound-verification secret on an endpoint. `kind` is `signing_secret` (default — the provider's signing/auth secret, so received webhooks are cryptographically verified) or `verify_token` (a user-chosen GET-handshake compare-token, e.g. Meta's hub.verify_token, used to complete a subscription verification). Provide `provider`, the plaintext `secret`, and optional `kind`/`label`; it is sealed server-side and NEVER returned. Treat the secret as sensitive — confirm with the user before storing one on their behalf.",
   "endpoints.listProviderSecrets":

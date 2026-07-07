@@ -280,6 +280,16 @@ export const AgentTriggerSchema = z.object({
 });
 export type AgentTrigger = z.infer<typeof AgentTriggerSchema>;
 
+// One event delivered to an agent by triggers.wait (S5) — the event summary PLUS the honest
+// authenticity flag. `vouched` = we authenticated the source (verificationState verified|authenticated,
+// ADR-0103); false = the event is forwarded UNVOUCHED (unattempted — no signature was checked). A
+// `failed`-verification event (signature checked and REJECTED) is NEVER surfaced as a trigger, so
+// `verificationState` here is only ever verified|authenticated|unattempted, never failed.
+export const AgentTriggerEventSchema = EventSummarySchema.extend({
+  vouched: z.boolean(),
+});
+export type AgentTriggerEvent = z.infer<typeof AgentTriggerEventSchema>;
+
 /** Soft-cap limits view (org_limits). No prices — cap + behavior only. */
 export const OrgLimitsSchema = z.object({
   orgId: uuid,

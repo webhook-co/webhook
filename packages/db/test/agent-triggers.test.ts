@@ -1,13 +1,21 @@
 import { randomUUID } from "node:crypto";
 
 import { type AuthContext } from "@webhook-co/contract";
-import { importAuditKey } from "@webhook-co/shared";
+import {
+  encodeCursor,
+  importAuditKey,
+  importCursorKey,
+  msToOrderKey,
+  newId,
+  type Cursor,
+} from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   createAgentTrigger,
   createAgentTriggerHandlers,
   listAgentTriggers,
+  projectTriggerPage,
   revokeAgentTrigger,
   TriggerEndpointNotFoundError,
 } from "../src/agent-triggers";
@@ -30,10 +38,42 @@ const hasher = createCredentialHasher({ current: Buffer.alloc(CREDENTIAL_PEPPER_
 let pg: EphemeralPostgres;
 let app: Sql;
 let auditKey: CryptoKey;
+let cursorKey: CryptoKey;
 let orgA: string;
 let orgB: string;
 let epA: string; // org A endpoint
 let epB: string; // org B endpoint (cross-org target)
+
+// Deterministic, far-past receive times so seeded events sit well below the gapless watermark.
+const WAIT_BASE = new Date("2026-06-01T00:00:00.000Z");
+const at = (ms: number): Date => new Date(WAIT_BASE.getTime() + ms);
+
+/** Seed an event on an endpoint with a chosen verification state, backdated below the watermark. */
+async function seedEvent(
+  orgId: string,
+  endpointId: string,
+  opts: { at: Date; state?: "verified" | "authenticated" | "failed" | "unattempted" },
+): Promise<string> {
+  const id = newId();
+  const state = opts.state ?? "verified";
+  const verified = state === "verified" || state === "authenticated";
+  const verification =
+    state === "verified"
+      ? { ok: true }
+      : state === "authenticated"
+        ? { ok: true, authenticity: "token" }
+        : state === "failed"
+          ? { ok: false }
+          : null; // unattempted
+  await withTenant(app, orgId, async (tx) => {
+    await tx`
+      insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy, verified, verification)
+      values (${id}, ${orgId}, ${endpointId}, ${`org/${orgId}/ep/${endpointId}/${id}`}, ${64},
+              ${newId()}, ${"content_hash"}, ${verified}, ${verification === null ? null : tx.json(verification)})`;
+    await tx`update events set received_at = ${opts.at} where id = ${id}`;
+  });
+  return id;
+}
 
 beforeAll(async () => {
   pg = await startEphemeralPostgres();
@@ -41,6 +81,9 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 5) % 256)),
+  );
+  cursorKey = await importCursorKey(
+    new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 3 + 1) % 256)),
   );
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
@@ -159,7 +202,7 @@ describe("revokeAgentTrigger", () => {
 
 describe("triggers.* capability handlers", () => {
   const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
-  const h = () => createAgentTriggerHandlers({ tenant: app, auditKey });
+  const h = () => createAgentTriggerHandlers({ tenant: app, auditKey, cursorKey });
   const create = (c: AuthContext, input: unknown) => h().get("triggers.create")!(c, input);
   const list = (c: AuthContext, input: unknown) => h().get("triggers.list")!(c, input);
   const revoke = (c: AuthContext, input: unknown) => h().get("triggers.revoke")!(c, input);
@@ -257,5 +300,173 @@ describe("agent_triggers RLS + grants (isolation red-team)", () => {
     } finally {
       await owner.end();
     }
+  });
+});
+
+describe("projectTriggerPage (pure — failed-drop + vouched + resume cursor)", () => {
+  const c = (n: number): Cursor => ({ orderKey: msToOrderKey(at(n).getTime()), id: newId() });
+  const summary = (state: "verified" | "authenticated" | "failed" | "unattempted") =>
+    ({
+      id: newId(),
+      orgId: orgA,
+      endpointId: epA,
+      receivedAt: at(1),
+      provider: "stripe",
+      dedupKey: "d",
+      dedupStrategy: "content_hash",
+      verified: state === "verified" || state === "authenticated",
+      verificationState: state,
+    }) as const;
+
+  it("drops failed events, stamps vouched, advances resume past EVERY scanned row", () => {
+    const items = [
+      { item: summary("verified"), cursor: c(1) },
+      { item: summary("failed"), cursor: c(2) },
+      { item: summary("unattempted"), cursor: c(3) },
+    ];
+    const { events, resumeCursor } = projectTriggerPage(items);
+    expect(events.map((e) => e.verificationState)).toEqual(["verified", "unattempted"]); // failed gone
+    expect(events.map((e) => e.vouched)).toEqual([true, false]); // verified vouched, unattempted not
+    expect(resumeCursor).toEqual(items[2]!.cursor); // resume = the LAST scanned row (an unattempted here)
+  });
+
+  it("authenticated is vouched; an empty page yields no resume cursor", () => {
+    const { events } = projectTriggerPage([{ item: summary("authenticated"), cursor: c(1) }]);
+    expect(events[0]?.vouched).toBe(true);
+    expect(projectTriggerPage([]).resumeCursor).toBeUndefined();
+  });
+
+  it("a page of ONLY failed events surfaces nothing but still advances the cursor past them", () => {
+    const items = [
+      { item: summary("failed"), cursor: c(1) },
+      { item: summary("failed"), cursor: c(2) },
+    ];
+    const { events, resumeCursor } = projectTriggerPage(items);
+    expect(events).toEqual([]);
+    expect(resumeCursor).toEqual(items[1]!.cursor); // advanced past the trailing failed run — never re-scanned
+  });
+});
+
+describe("triggers.wait handler (consumption / delivery guarantee)", () => {
+  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
+  const wait = (c: AuthContext, input: unknown) =>
+    createAgentTriggerHandlers({ tenant: app, auditKey, cursorKey }).get("triggers.wait")!(
+      c,
+      input,
+    );
+  type WaitResult = {
+    events: { id: string; vouched: boolean; verificationState?: string }[];
+    nextCursor: string | null;
+    caughtUp: boolean;
+  };
+
+  async function newTrigger(orgId: string, endpointId: string): Promise<string> {
+    return (await createAgentTrigger(app, { orgId, endpointId })).id;
+  }
+
+  it("requires events:read (FORBIDDEN without it, incl. a triggers:write-only key)", async () => {
+    const t = await newTrigger(orgA, epA);
+    await expect(wait(ctx([]), { triggerId: t })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(wait(ctx(["triggers:write"]), { triggerId: t })).rejects.toMatchObject({
+      code: "FORBIDDEN",
+    });
+  });
+
+  it("resolves an active trigger and returns its endpoint's events oldest-first, then caughtUp", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-wait-1" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const e2 = await seedEvent(orgA, ep, { at: at(2000) });
+    const t = await newTrigger(orgA, ep);
+    const r = (await wait(ctx(["events:read"]), { triggerId: t })) as WaitResult;
+    expect(r.events.map((e) => e.id)).toEqual([e1, e2]);
+    expect(r.events.every((e) => e.vouched)).toBe(true); // seeded verified
+    expect(r.caughtUp).toBe(true);
+    expect(r.nextCursor).not.toBeNull();
+  });
+
+  it("NEVER surfaces failed events, advances the cursor past them, and never re-scans (limit-1 drain)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-wait-failed" }, hasher)).id;
+    const good1 = await seedEvent(orgA, ep, { at: at(1000), state: "verified" });
+    await seedEvent(orgA, ep, { at: at(2000), state: "failed" });
+    const good2 = await seedEvent(orgA, ep, { at: at(3000), state: "unattempted" });
+    const t = await newTrigger(orgA, ep);
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    for (;;) {
+      const r = (await wait(ctx(["events:read"]), {
+        triggerId: t,
+        cursor,
+        limit: 1,
+      })) as WaitResult;
+      for (const e of r.events) seen.push(e.id);
+      pages += 1;
+      if (r.caughtUp) break;
+      cursor = r.nextCursor ?? undefined;
+      expect(pages).toBeLessThan(8); // a stall on the un-returnable failed row would spin here
+    }
+    expect(seen).toEqual([good1, good2]); // failed never surfaced
+    // vouched honesty: good1 verified → true, good2 unattempted → false
+    const all = (await wait(ctx(["events:read"]), { triggerId: t })) as WaitResult;
+    expect(all.events.find((e) => e.id === good1)?.vouched).toBe(true);
+    expect(all.events.find((e) => e.id === good2)?.vouched).toBe(false);
+  });
+
+  it("at-least-once: re-calling with the PRIOR cursor re-delivers (crash-before-ack), never loses", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-wait-alo" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const e2 = await seedEvent(orgA, ep, { at: at(2000) });
+    const t = await newTrigger(orgA, ep);
+    const first = (await wait(ctx(["events:read"]), { triggerId: t, limit: 1 })) as WaitResult;
+    expect(first.events.map((e) => e.id)).toEqual([e1]);
+    // "crash" before persisting first.nextCursor → re-call from the SAME (undefined) start cursor
+    const replay = (await wait(ctx(["events:read"]), { triggerId: t, limit: 1 })) as WaitResult;
+    expect(replay.events.map((e) => e.id)).toEqual([e1]); // re-delivered, not skipped
+    // acking (passing nextCursor) advances to e2
+    const next = (await wait(ctx(["events:read"]), {
+      triggerId: t,
+      cursor: first.nextCursor,
+      limit: 1,
+    })) as WaitResult;
+    expect(next.events.map((e) => e.id)).toEqual([e2]);
+  });
+
+  it("a revoked trigger → NOT_FOUND; a cross-org trigger → NOT_FOUND (no leak)", async () => {
+    const t = await newTrigger(orgA, epA);
+    await revokeAgentTrigger(app, orgA, t);
+    await expect(wait(ctx(["events:read"]), { triggerId: t })).rejects.toMatchObject({
+      code: "NOT_FOUND",
+    });
+    const bT = await createAgentTrigger(app, { orgId: orgB, endpointId: epB });
+    await expect(wait(ctx(["events:read"]), { triggerId: bT.id })).rejects.toMatchObject({
+      code: "NOT_FOUND", // org A cannot resolve org B's trigger (RLS)
+    });
+  });
+
+  it("a below-window cursor RESUMES from the oldest survivor (no CURSOR_EXPIRED guard while retention is infinite); a garbage cursor → VALIDATION_ERROR", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-wait-expired" }, hasher)).id;
+    const e = await seedEvent(orgA, ep, { at: at(5000) });
+    const t = await newTrigger(orgA, ep);
+    // A validly-signed cursor far below the endpoint's oldest event. With infinite retention nothing was
+    // pruned, so this safely resumes from the oldest survivor (not an error).
+    const ancient = await encodeCursor(
+      { orderKey: msToOrderKey(new Date("2020-01-01T00:00:00Z").getTime()), id: newId() },
+      cursorKey,
+    );
+    const r = (await wait(ctx(["events:read"]), { triggerId: t, cursor: ancient })) as WaitResult;
+    expect(r.events.map((x) => x.id)).toEqual([e]);
+    // A malformed cursor still fails fast.
+    await expect(
+      wait(ctx(["events:read"]), { triggerId: t, cursor: "not-a-cursor" }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("treats a null cursor the same as omitted (a caught-up nextCursor:null round-trips, not an error)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-wait-null-cursor" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const t = await newTrigger(orgA, ep);
+    const r = (await wait(ctx(["events:read"]), { triggerId: t, cursor: null })) as WaitResult;
+    expect(r.events.map((x) => x.id)).toEqual([e1]); // null → start from oldest, NOT a VALIDATION_ERROR
   });
 });

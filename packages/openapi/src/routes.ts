@@ -576,6 +576,31 @@ export const ROUTES: readonly RouteDef[] = [
     summary: "Revoke an agent trigger subscription",
     buildInput: pathParam("triggerId", "triggerId"),
   },
+  {
+    method: "GET",
+    path: "/v1/triggers/{triggerId}/wait",
+    capability: "triggers.wait",
+    successStatus: 200,
+    dispatch: "shared",
+    body: false,
+    summary: "Consume the next events for an agent trigger subscription (short-poll)",
+    query: [
+      {
+        name: "cursor",
+        description: "Opaque resume cursor from a prior call's nextCursor.",
+        schemaFrom: "cursor",
+      },
+      { name: "limit", description: "Max events to return (1–200).", schemaFrom: "limit" },
+    ],
+    buildInput: (params, q) => {
+      const input: Record<string, unknown> = { triggerId: params.triggerId };
+      const cursor = q.get("cursor");
+      if (cursor !== null) input.cursor = cursor;
+      const limit = numParam(q.get("limit"));
+      if (limit !== undefined) input.limit = limit;
+      return input;
+    },
+  },
   // ── whoami (scope-free identity — not a capability) ─────────────────────────────────────────────
   {
     method: "GET",
