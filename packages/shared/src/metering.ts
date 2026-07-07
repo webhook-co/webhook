@@ -38,6 +38,30 @@ export function shouldPauseForCap(
   return usage >= eventCap;
 }
 
+/**
+ * Parse the INJECTED Free-tier default event cap (the `FREE_EVENT_CAP` deploy var) into the cap the
+ * producer applies to orgs with no explicit `org_limits` row. This is a FAIL-SAFE gate: enforcement
+ * turns on ONLY for a clean, strictly-positive integer. Everything else → null (uncapped, no Free
+ * enforcement):
+ *  - unset / blank → uncapped (the default posture; enabling Free-pause is a deliberate act).
+ *  - `0` or negative → uncapped, NOT "cap at 0" — `shouldPauseForCap(usage, 0, 'pause')` is `usage >= 0`
+ *    = always true, which would pause EVERY Free org. A fat-fingered `0` must never mass-pause the tier.
+ *  - lenient/partial strings ("10k", "1e6", "1_000", "100abc") → uncapped, not their `parseInt` prefix.
+ * Returning null for a set-but-invalid value lets the caller log it loudly (a silent mass-pause is the
+ * worst outcome). Pure + deterministic so it is exhaustively unit-testable off the Worker.
+ */
+export function parseFreeEventCap(raw: string | undefined | null): number | null {
+  if (raw == null) return null;
+  const trimmed = raw.trim();
+  if (trimmed === "") return null;
+  // Strict: an optional sign is disallowed (we only accept positives) — digits only, no decimal, no
+  // exponent, no separators, no unit suffix. Then bound to a safe integer.
+  if (!/^[0-9]+$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  if (!Number.isSafeInteger(n) || n <= 0) return null;
+  return n;
+}
+
 const DAY_MS = 86_400_000;
 
 /** UTC midnight (ms) of the day containing `ms`. UTC has no DST, so day arithmetic by

@@ -47,6 +47,7 @@ async function pausedState(
 interface RunOpts {
   onTransition?: (orgId: string, paused: boolean) => Promise<void>;
   log?: (m: string, f?: Record<string, unknown>) => void;
+  limit?: number;
 }
 async function run(opts: RunOpts = {}) {
   return runCapProducer({
@@ -54,7 +55,7 @@ async function run(opts: RunOpts = {}) {
     app,
     now: NOW,
     defaultEventCap: DEFAULT_CAP,
-    limit: 1000,
+    limit: opts.limit ?? 1000,
     onTransition: opts.onTransition,
     log: opts.log,
   });
@@ -86,6 +87,30 @@ describe("runCapProducer", () => {
     expect(result.pausedTransitions).toBe(1);
     expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
     expect(evicted).toContainEqual({ orgId, paused: true });
+  });
+
+  it("reports capped=false on a normal pass and capped=true when the enumeration hits the limit", async () => {
+    // A pass under the limit is not truncated.
+    const under = await run({ limit: 1000 });
+    expect(under.capped).toBe(false);
+    // Force truncation: two candidate orgs (org_limits rows) with limit 1 → capped, tail deferred.
+    await seedOrg("cap-trunc-a").then((o) =>
+      withTenant(
+        app,
+        o,
+        (tx) => tx`insert into org_limits (org_id, event_cap) values (${o}, ${100})`,
+      ),
+    );
+    await seedOrg("cap-trunc-b").then((o) =>
+      withTenant(
+        app,
+        o,
+        (tx) => tx`insert into org_limits (org_id, event_cap) values (${o}, ${100})`,
+      ),
+    );
+    const capped = await run({ limit: 1 });
+    expect(capped.capped).toBe(true);
+    expect(capped.orgsProcessed).toBe(1);
   });
 
   it("does not pause a Free org under the default cap (no ingest_paused row created)", async () => {

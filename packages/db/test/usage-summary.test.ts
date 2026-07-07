@@ -81,6 +81,19 @@ describe("readUsageSummary", () => {
     expect(summary.events).toBe(7);
   });
 
+  it("ignores a rolled `usage` row for TODAY in favor of the live count (no double-count at the boundary)", async () => {
+    // The rollup re-rolls today hourly, so a `usage` row at window_start = todayStart CAN coexist with
+    // today's raw events. The rolled query is strict (`window_start < todayStart`), so today's usage row
+    // must be EXCLUDED and today counted live only — never both. A regression to `<=`/`< period.end`
+    // here would double-count today (rolled + live); this pins the exact boundary.
+    const orgId = await seedOrg("usage-today-boundary");
+    await seedUsage(orgId, "2026-07-02T00:00:00.000Z", 100); // prior day, rolled — counts
+    await seedUsage(orgId, "2026-07-15T00:00:00.000Z", 99); // TODAY, rolled — must be ignored
+    await seedEventsToday(orgId, 4); // today live — counts
+    const summary = await withTenant(app, orgId, (tx) => readUsageSummary(tx, NOW));
+    expect(summary.events).toBe(104); // 100 prior + 4 live; the 99 today-rolled row is NOT added
+  });
+
   it("defaults to uncapped + 'pause' + not-paused when org_limits / ingest_paused are unseeded", async () => {
     const orgId = await seedOrg("usage-default");
     const summary = await withTenant(app, orgId, (tx) => readUsageSummary(tx, NOW));

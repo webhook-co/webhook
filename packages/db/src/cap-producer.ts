@@ -43,6 +43,13 @@ export interface CapProducerResult {
   readonly resumedTransitions: number;
   /** Orgs whose pass threw (logged + counted, non-fatal; a next pass retries — idempotent). */
   readonly orgsFailed: number;
+  /**
+   * True when the candidate set hit `limit` (enumeration truncated) — enforcement for the unprocessed
+   * tail lags to a later pass. An operability signal: a persistently-`capped` producer means `limit`
+   * (or the cron cadence) needs raising. Enforcement stays correct (idempotent, eventually consistent);
+   * this just makes truncation visible rather than silent.
+   */
+  readonly capped: boolean;
 }
 
 export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducerResult> {
@@ -50,6 +57,16 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
 
   // Enumerate orgs that could need a transition: usage this period (may cross the cap), OR an active
   // pause (may need to RESUME even with no usage row this period), OR an explicit org_limits row.
+  //
+  // Ordering: `random()`. A staleness-aware order (least-recently-transitioned first, the tighter
+  // worst-case bound) would need `order by ingest_paused.updated_at`, but the least-privilege meter
+  // grant (migration 0042) exposes only (org_id, paused) on ingest_paused — no `updated_at` — so that
+  // ordering isn't available without widening the grant. `random()` is the right choice among what's
+  // grantable: unlike a fixed `order by org_id` (which would permanently starve every org past position
+  // `limit`), random gives every candidate an equal per-pass chance, so expected pause latency stays
+  // bounded and no org is starved forever. When the candidate set exceeds `limit`, `capped` is returned
+  // true so a persistently-truncated producer is visible (raise `limit` / cadence, or grant updated_at
+  // for a deterministic bound). At current scale the set is far below `limit`, so this is moot in practice.
   const rows = await deps.meter<Array<{ org_id: string }>>`
     select org_id from (
       select org_id from usage where window_start >= ${period.start}
@@ -61,6 +78,7 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
     order by random()
     limit ${deps.limit}`;
   const orgIds = rows.map((r) => r.org_id);
+  const capped = orgIds.length >= deps.limit;
 
   let pausedTransitions = 0;
   let resumedTransitions = 0;
@@ -123,5 +141,11 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
     }
   }
 
-  return { orgsProcessed: orgIds.length, pausedTransitions, resumedTransitions, orgsFailed };
+  return {
+    orgsProcessed: orgIds.length,
+    pausedTransitions,
+    resumedTransitions,
+    orgsFailed,
+    capped,
+  };
 }

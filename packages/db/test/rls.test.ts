@@ -856,6 +856,31 @@ describe("catalog-driven RLS coverage", () => {
     expect(policies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT", "SELECT", "SELECT"]);
   });
 
+  it("the authn role reads ONLY (org_id, paused) on ingest_paused for the cold-lookup OR-in — never the reason note, never a write", async () => {
+    // The ingest cold lookup (webhook_authn) LEFT JOINs ingest_paused to OR org-level pause into the
+    // resolved endpoint's paused flag (S4.3, migration 0042). That grant must be the boolean flag only:
+    // authn never needs the pause NARRATIVE (reason/since), and must not write pause state.
+    for (const c of ["org_id", "paused"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.authn}, 'ingest_paused', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    for (const c of ["reason", "since", "updated_at"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.authn}, 'ingest_paused', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    const [w] = await owner<{ any: boolean }[]>`
+      select (has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'INSERT')
+           or has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'UPDATE')
+           or has_table_privilege(${DB_ROLES.authn}, 'ingest_paused', 'DELETE')) as any`;
+    expect(w.any).toBe(false);
+    const [pol] = await owner<{ cmd: string }[]>`
+      select cmd from pg_policies
+      where schemaname = 'public' and policyname = 'ingest_paused_authn_select'`;
+    expect(pol.cmd).toBe("SELECT");
+  });
+
   it("the sweeper role holds DELETE — and ONLY delete — on the two token tables, nothing elsewhere", async () => {
     // DELETE-only least privilege: the cron can't read any handle row (no SELECT), can't mint or rotate
     // (no INSERT/UPDATE), and the role-targeted USING (expires_at < now()) policy bounds its bare DELETE to

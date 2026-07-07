@@ -37,6 +37,7 @@ import {
   type ListenTicketGrant,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
+  parseFreeEventCap,
   parseSince,
   readSecretBinding,
   type RevealedIngestToken,
@@ -881,9 +882,20 @@ async function runMeteringRollupCron(env: Env): Promise<void> {
     // then evict the org's ingest-token cache entries so it takes effect on the next cold miss (a stale
     // positive principal on resume would be a paying-customer outage). The Free default cap is INJECTED
     // (a tier figure, never in the repo); unset/blank → uncapped (fail-safe, no Free enforcement).
-    const parsedCap = env.FREE_EVENT_CAP ? Number.parseInt(env.FREE_EVENT_CAP, 10) : Number.NaN;
-    const defaultEventCap = Number.isFinite(parsedCap) ? parsedCap : null;
-    if (defaultEventCap === null) log("metering.cap.free_cap_unset");
+    //
+    // Parse fail-safe: ONLY a strict positive integer enables Free enforcement. `0`/negative would make
+    // `shouldPauseForCap` (usage >= cap) always true → pause EVERY Free org — a mass outage from one
+    // fat-fingered deploy var. `Number.parseInt` is also lenient ("10k"→10, "1e6"→1), so we reject any
+    // string that isn't a clean integer. Anything invalid (unset, blank, non-positive, partial) → null
+    // (uncapped), and a SET-but-invalid value logs loudly (a silent mass-pause is the worst outcome).
+    const defaultEventCap = parseFreeEventCap(env.FREE_EVENT_CAP);
+    if (defaultEventCap === null) {
+      if (env.FREE_EVENT_CAP && env.FREE_EVENT_CAP.trim() !== "") {
+        log("metering.cap.free_cap_invalid", { raw: env.FREE_EVENT_CAP });
+      } else {
+        log("metering.cap.free_cap_unset");
+      }
+    }
     const evict = makeIngestHashEvictor(kvCredentialCache(env.KV_CONFIG), (err) =>
       log("metering.cap.kv_evict_error", { error: String(err) }),
     );
