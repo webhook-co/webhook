@@ -28,6 +28,9 @@ describe("MCP bound capabilities", () => {
         "events.get",
         "events.list",
         "events.tail",
+        "triggers.create",
+        "triggers.list",
+        "triggers.revoke",
       ].sort(),
     );
   });

@@ -37,6 +37,7 @@ const TENANT_TABLES = [
   { table: "org_policy", col: "org_id" },
   { table: "auth_audit_event", col: "org_id" },
   { table: "notification_intents", col: "org_id" },
+  { table: "agent_triggers", col: "org_id" },
 ] as const;
 
 // Better Auth identity tables are GLOBAL (text ids, per-user / api-key), intentionally

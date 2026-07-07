@@ -42,6 +42,11 @@ import {
   subscriptionsListCommand,
   subscriptionsRemoveCommand,
 } from "./commands/subscriptions.js";
+import {
+  triggersAddCommand,
+  triggersListCommand,
+  triggersRevokeCommand,
+} from "./commands/triggers.js";
 import { telemetryRoute } from "./commands/telemetry.js";
 import { upgradeCommand } from "./commands/upgrade.js";
 import { whoamiCommand } from "./commands/whoami.js";
@@ -86,6 +91,9 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "subscriptions.create": ["subscriptions", "add"],
   "subscriptions.list": ["subscriptions", "list"],
   "subscriptions.delete": ["subscriptions", "remove"],
+  "triggers.create": ["triggers", "add"],
+  "triggers.list": ["triggers", "list"],
+  "triggers.revoke": ["triggers", "revoke"],
 };
 
 const endpointsRoute = buildRouteMap({
@@ -152,6 +160,17 @@ const subscriptionsRoute = buildRouteMap({
   },
 });
 
+const triggersRoute = buildRouteMap({
+  routes: {
+    add: triggersAddCommand,
+    list: triggersListCommand,
+    revoke: triggersRevokeCommand,
+  },
+  docs: {
+    brief: "manage webhook→agent trigger subscriptions (get woken over MCP when an endpoint fires)",
+  },
+});
+
 const root = buildRouteMap({
   routes: {
     login: loginCommand,
@@ -165,6 +184,7 @@ const root = buildRouteMap({
     audit: auditRoute,
     "replay-destinations": replayDestinationsRoute,
     subscriptions: subscriptionsRoute,
+    triggers: triggersRoute,
     listen: listenCommand,
     replay: replayCommand,
     upgrade: upgradeCommand,
