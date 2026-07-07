@@ -71,12 +71,13 @@ interface RunOpts {
   log?: (m: string, f?: Record<string, unknown>) => void;
   limit?: number;
   defaultEventCap?: number | null;
+  now?: number;
 }
 async function run(opts: RunOpts = {}) {
   return runCapProducer({
     meter,
     app,
-    now: NOW,
+    now: opts.now ?? NOW,
     defaultEventCap: opts.defaultEventCap === undefined ? DEFAULT_CAP : opts.defaultEventCap,
     limit: opts.limit ?? 1000,
     onTransition: opts.onTransition,
@@ -341,6 +342,38 @@ describe("runCapProducer", () => {
       const result = await run({ defaultEventCap: null }); // no cap → no percentage → no alert
       expect(result.thresholdAlerts).toBe(0);
       expect(await usageAlertIntents(orgId)).toEqual([]);
+    });
+
+    it("emits the 100% alert on a LATER pass once usage climbs past it (80% already deduped)", async () => {
+      // Incremental crossing across passes: 80% now, then 100% next pass. The 80 row is already there
+      // (deduped), so only the 100 intent is newly enqueued — no re-80.
+      const orgId = await seedOrg("alert-incremental");
+      await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 80); // 80% of 100
+      const first = await run();
+      expect(first.thresholdAlerts).toBe(1);
+      await seedUsageAt(orgId, "2026-07-11T00:00:00.000Z", 20); // → 100 total in the July period
+      const second = await run();
+      expect(second.thresholdAlerts).toBe(1); // only 100; 80 already deduped
+      expect(await usageAlertIntents(orgId)).toEqual([
+        { threshold: 80, usage: 80 },
+        { threshold: 100, usage: 100 },
+      ]);
+    });
+
+    it("re-alerts in a NEW billing period (dedup is per-period, not permanent)", async () => {
+      // July: 90 → 80% → alert. August (a fresh period_start): 90 again → 80% → a NEW alert, because the
+      // usage_alerts PK includes period_start. Pins that a new month re-arms the warn-before-pause emails.
+      const AUG = Date.UTC(2026, 7, 15, 12, 0, 0); // 2026-08-15 → period [2026-08-01, 2026-09-01)
+      const orgId = await seedOrg("alert-new-period");
+      await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 90);
+      expect((await run()).thresholdAlerts).toBe(1); // July, now = NOW (July)
+      expect((await run()).thresholdAlerts).toBe(0); // same period → deduped
+      await seedUsageAt(orgId, "2026-08-10T00:00:00.000Z", 90);
+      expect((await run({ now: AUG })).thresholdAlerts).toBe(1); // August → fresh alert
+      // Two ledger rows: (July, 80) and (August, 80).
+      const [{ n }] = await admin<{ n: number }[]>`
+        select count(*)::int as n from usage_alerts where org_id = ${orgId} and threshold = 80`;
+      expect(n).toBe(2);
     });
   });
 });
