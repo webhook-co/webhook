@@ -30,6 +30,9 @@ const TENANT_TABLES = [
   { table: "org_limits", col: "org_id" },
   { table: "ingest_paused", col: "org_id" },
   { table: "usage_alerts", col: "org_id" },
+  { table: "billing_customers", col: "org_id" },
+  { table: "billing_subscriptions", col: "org_id" },
+  { table: "stripe_meter_reports", col: "org_id" },
   { table: "audit_log", col: "org_id" },
   { table: "api_keys", col: "org_id" },
   { table: "auth_grant", col: "org_id" },
@@ -189,14 +192,15 @@ describe("cross-org isolation (every tenant table)", () => {
     });
   }
 
-  // audit_log + auth_audit_event are append-only (no UPDATE/DELETE grant or policy); usage_alerts is the
-  // metering dedup ledger — the producer only INSERTs (ON CONFLICT DO NOTHING) + SELECTs, so webhook_app
-  // holds NO UPDATE/DELETE on it (least privilege). All three throw a privilege error (not 0-rows) on an
-  // UPDATE/DELETE, so exclude them from the generic mutate-other-org checks; their write denial is asserted
-  // separately (the append-only describes + the usage_alerts privilege test below).
-  for (const { table, col } of TENANT_TABLES.filter(
-    (t) => t.table !== "audit_log" && t.table !== "auth_audit_event" && t.table !== "usage_alerts",
-  )) {
+  // Some tables withhold UPDATE and/or DELETE from webhook_app (least privilege), so a mutate attempt throws
+  // a PRIVILEGE error instead of returning 0-rows — the generic cross-org mutate check (which asserts
+  // 0-rows-affected) can't run against those. Their write denial is asserted separately (the append-only
+  // describes + the per-table privilege tests). audit_log + auth_audit_event are fully append-only (no
+  // UPDATE/DELETE); usage_alerts is INSERT+SELECT only; stripe_meter_reports is INSERT+SELECT+UPDATE (an
+  // outbox row is durable evidence — no DELETE), so it's excluded from the DELETE check but KEPT in UPDATE.
+  const NO_UPDATE = new Set(["audit_log", "auth_audit_event", "usage_alerts"]);
+  const NO_DELETE = new Set([...NO_UPDATE, "stripe_meter_reports"]);
+  for (const { table, col } of TENANT_TABLES.filter((t) => !NO_UPDATE.has(t.table))) {
     it(`org A context cannot update org B rows in ${table}`, async () => {
       const affected = await withTenant(app, orgA.orgId, async (tx) => {
         const res =
@@ -205,7 +209,9 @@ describe("cross-org isolation (every tenant table)", () => {
       });
       expect(affected).toBe(0);
     });
+  }
 
+  for (const { table, col } of TENANT_TABLES.filter((t) => !NO_DELETE.has(t.table))) {
     it(`org A context cannot delete org B rows in ${table}`, async () => {
       const affected = await withTenant(app, orgA.orgId, async (tx) => {
         const res = await tx`delete from ${tx(table)} where ${tx(col)} = ${orgB.orgId}`;
@@ -233,6 +239,20 @@ describe("cross-org isolation (every tenant table)", () => {
     const [ins] = await owner<{ ok: boolean }[]>`
       select has_table_privilege(${DB_ROLES.app}, 'usage_alerts', 'INSERT') as ok`;
     expect(ins.ok).toBe(true);
+  });
+
+  it("stripe_meter_reports is an outbox for webhook_app (SELECT+INSERT+UPDATE, but NO DELETE)", async () => {
+    // The Stripe meter-report outbox: rows transition pending→sending→sent (UPDATE), but a reported row is
+    // durable evidence of what was metered — webhook_app holds no DELETE (least privilege), so a delete is a
+    // hard privilege error, while insert/select/update are granted.
+    for (const priv of ["SELECT", "INSERT", "UPDATE"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.app}, 'stripe_meter_reports', ${priv}) as ok`;
+      expect(p.ok).toBe(true);
+    }
+    const [del] = await owner<{ ok: boolean }[]>`
+      select has_table_privilege(${DB_ROLES.app}, 'stripe_meter_reports', 'DELETE') as ok`;
+    expect(del.ok).toBe(false);
   });
 });
 
@@ -595,9 +615,14 @@ describe("catalog-driven RLS coverage", () => {
       const cmds = new Set(rows.filter((r) => r.tablename === table).map((r) => r.cmd));
       // audit_log + auth_audit_event + usage_alerts are deliberately INSERT+SELECT only (no UPDATE/DELETE
       // policy) — the first two are append-only WORM ledgers, usage_alerts is the metering dedup ledger.
-      const expected =
-        table === "audit_log" || table === "auth_audit_event" || table === "usage_alerts"
-          ? ["INSERT", "SELECT"]
+      // stripe_meter_reports is an outbox: INSERT+SELECT+UPDATE (pending→sending→sent) but no DELETE (a
+      // reported row is durable evidence). Everything else has full CRUD policies.
+      const insertSelectOnly =
+        table === "audit_log" || table === "auth_audit_event" || table === "usage_alerts";
+      const expected = insertSelectOnly
+        ? ["INSERT", "SELECT"]
+        : table === "stripe_meter_reports"
+          ? ["INSERT", "SELECT", "UPDATE"]
           : ["DELETE", "INSERT", "SELECT", "UPDATE"];
       expect([...cmds].sort()).toEqual(expected);
     }
