@@ -10,6 +10,15 @@ name: AI review
 #      anthropics/claude-code-action, provided a Claude credential is present.
 #   3. If no provider is configured, the job emits a notice and exits successfully.
 #
+# Whichever provider runs writes its full review to `ai-review-output.md`, ending with a
+# machine-readable final line `VERDICT: BLOCK` or `VERDICT: PASS`. A final gate step then:
+#   - posts (or updates) a sticky PR comment with the review, and
+#   - FAILS the check when the verdict is BLOCK — so blocking findings are visible on the PR
+#     instead of buried in the job log.
+# A reviewer that errors or gets cut off (e.g. Claude's --max-turns cap stops gracefully)
+# emits no verdict line, which the gate treats as advisory: the check stays green. So only a
+# clean BLOCK verdict fails the check; infra/cut-off failures never wedge a PR.
+#
 # Claude credentials (either works; the OAuth token is checked first):
 #   - `CLAUDE_CODE_OAUTH_TOKEN` — mint locally with `claude setup-token` on a Claude
 #     Pro or Max subscription (no separate pay-as-you-go API account needed).
@@ -17,8 +26,7 @@ name: AI review
 # Add whichever you use in Settings -> Secrets and variables -> Actions.
 #
 # Headless `cursor-agent` requires `--trust` to skip the interactive workspace-trust
-# prompt; without it the CLI exits non-zero in CI. The whole job is non-blocking, so a
-# reviewer failure never wedges a PR.
+# prompt; without it the CLI exits non-zero in CI.
 
 on:
   pull_request:
@@ -36,8 +44,6 @@ jobs:
   ai-review:
     name: ai-review
     runs-on: ubuntu-latest
-    # Non-blocking: never wedge a PR on the AI reviewer.
-    continue-on-error: true
     env:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -80,24 +86,30 @@ jobs:
       - name: Run security + QA reviewers on the diff (Cursor)
         id: cursor
         if: steps.gate.outputs.cursor == 'true'
-        # Don't abort the job if Cursor fails — let the Claude fallback take over.
+        # Don't abort the job if Cursor fails — let the Claude fallback take over. The
+        # verdict gate step (not this step) decides pass/fail.
         continue-on-error: true
         run: |
+          # pipefail so a cursor-agent failure propagates through `tee` (otherwise tee's
+          # exit 0 would mask it and the Claude fallback would never trigger).
+          set -o pipefail
           cursor-agent --print --trust --output-format text \
             "You are running in CI on a pull request. Review ONLY the changes in pr.diff. \
              Apply the security-reviewer and qa-test-reviewer sub-agents defined in \
              .cursor/agents/. Report blocking issues (injection, XSS, secrets, authz/SSRF, \
              PII in logs, missing/weak tests, skipped tests, lowered coverage) with file:line \
-             and a concrete fix. If there are no blocking issues, say so explicitly." \
-            < pr.diff
+             and a concrete fix. If there are no blocking issues, say so explicitly. \
+             End your review with a final line that is EXACTLY 'VERDICT: BLOCK' (if there is \
+             any blocking issue) or 'VERDICT: PASS' (if there are none) — nothing after it." \
+            < pr.diff | tee ai-review-output.md
 
       # --- Provider 2: Claude (fallback when Cursor is absent or failed) ---
       - name: Run security + QA reviewers on the diff (Claude fallback)
         if: >
           steps.gate.outputs.claude == 'true' &&
           (steps.gate.outputs.cursor != 'true' || steps.cursor.outcome == 'failure')
-        # Don't fail the check if Claude errors — including hitting the --max-turns
-        # cap (exit 1). The reviewer is advisory; a cut-off review skips silently.
+        # Don't fail the check if Claude errors — including hitting the --max-turns cap.
+        # A cut-off review writes no verdict line, so the gate step skips it silently.
         continue-on-error: true
         uses: anthropics/claude-code-action@558b1d6cab4085c7753fe402c10bef0fbb92ac7a # v1
         with:
@@ -113,4 +125,76 @@ jobs:
             Report blocking issues (injection, XSS, secrets, authz/SSRF, PII in logs,
             missing/weak tests, skipped tests, lowered coverage) with file:line and a
             concrete fix. If there are no blocking issues, say so explicitly.
-          claude_args: "--model claude-sonnet-5 --max-turns 15"
+
+            Then use the Write tool to write your complete review as Markdown to the file
+            `ai-review-output.md` at the repo root. The FINAL line of that file must be
+            EXACTLY `VERDICT: BLOCK` if you found any blocking issue, or `VERDICT: PASS`
+            if there are none — with nothing after it.
+          # Write lets Claude produce ai-review-output.md; the others are read-only helpers.
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 15
+            --allowedTools "Write,Read,Grep,Glob"
+
+      # --- Gate: surface the verdict as a PR comment + pass/fail signal ---
+      - name: Surface AI-review verdict
+        id: verdict
+        if: steps.gate.outputs.cursor == 'true' || steps.gate.outputs.claude == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const fs = require('fs');
+            const MARKER = '<!-- ai-review -->';
+
+            let raw = '';
+            try {
+              raw = fs.readFileSync('ai-review-output.md', 'utf8').trim();
+            } catch (e) {
+              /* no file — provider errored or wrote nothing */
+            }
+
+            // Take the LAST verdict line, so trailing prose can't fool the parser.
+            const matches = [...raw.matchAll(/^VERDICT:\s*(BLOCK|PASS)\s*$/gim)];
+            const last = matches[matches.length - 1];
+
+            if (!raw || !last) {
+              core.notice('AI review did not complete (no verdict emitted) — advisory, not blocking.');
+              return;
+            }
+
+            const verdict = last[1].toUpperCase();
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+
+            if (issue_number) {
+              const emoji = verdict === 'BLOCK' ? '🔴' : '🟢';
+              const heading = verdict === 'BLOCK'
+                ? '**Blocking issues found.** Resolve them (or re-run once addressed) before merge.'
+                : 'No blocking issues.';
+              const body = [
+                MARKER,
+                `## ${emoji} AI review — VERDICT: ${verdict}`,
+                '',
+                heading,
+                '',
+                '<details><summary>Full review</summary>',
+                '',
+                raw,
+                '',
+                '</details>',
+              ].join('\n');
+
+              const { data: comments } = await github.rest.issues.listComments({
+                owner, repo, issue_number, per_page: 100,
+              });
+              const existing = comments.find((c) => c.body && c.body.includes(MARKER));
+              if (existing) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number, body });
+              }
+            }
+
+            if (verdict === 'BLOCK') {
+              core.setFailed('AI review flagged blocking issues — see the PR comment.');
+            }
