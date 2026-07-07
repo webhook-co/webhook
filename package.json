@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run adr-no-dup",
+    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run adr-no-dup && pnpm run test:scripts",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -23,6 +23,7 @@
     "tsconfig-boundary": "node scripts/tsconfig-boundary.mjs",
     "dal-gate-guard": "node scripts/dal-gate-guard.mjs",
     "adr-no-dup": "node scripts/adr-no-dup.mjs",
+    "test:scripts": "node --test 'scripts/**/*.test.mjs'",
     "prepare": "husky"
   },
   "devDependencies": {
