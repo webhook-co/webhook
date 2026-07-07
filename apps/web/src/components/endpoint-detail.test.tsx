@@ -32,7 +32,7 @@ describe("EndpointDetail", () => {
     render(
       <EndpointDetail
         endpoint={ep}
-        ingestUrl={URL}
+        ingestUrlSlot={<code>{URL}</code>}
         rotateEndpoint={vi.fn()}
         deleteEndpoint={vi.fn()}
       />,
@@ -42,18 +42,16 @@ describe("EndpointDetail", () => {
     expect(screen.getByText("Active")).toBeInTheDocument();
   });
 
-  it("ALWAYS shows the ingest URL with a copy affordance (decision-0018 / ADR-0101)", () => {
+  it("renders the ingest-URL slot (the reveal streams into it via Suspense — see IngestUrlReveal)", () => {
     render(
       <EndpointDetail
         endpoint={ep}
-        ingestUrl={URL}
+        ingestUrlSlot={<code>{URL}</code>}
         rotateEndpoint={vi.fn()}
         deleteEndpoint={vi.fn()}
       />,
     );
     expect(screen.getByText(URL)).toBeInTheDocument();
-    // No "shown only once" copy anymore — the URL is retrievable any time.
-    expect(screen.queryByText(/shown only once/i)).not.toBeInTheDocument();
   });
 
   it("vertically centers each label with its value (the tall Copy button must not offset the labels)", () => {
@@ -63,24 +61,12 @@ describe("EndpointDetail", () => {
     const { container } = render(
       <EndpointDetail
         endpoint={ep}
-        ingestUrl={URL}
+        ingestUrlSlot={<code>{URL}</code>}
         rotateEndpoint={vi.fn()}
         deleteEndpoint={vi.fn()}
       />,
     );
     expect(container.querySelector("dl")).toHaveClass("items-center");
-  });
-
-  it("shows a rotate-to-reveal hint for a legacy endpoint with no recoverable URL (null)", () => {
-    render(
-      <EndpointDetail
-        endpoint={ep}
-        ingestUrl={null}
-        rotateEndpoint={vi.fn()}
-        deleteEndpoint={vi.fn()}
-      />,
-    );
-    expect(screen.getByText(/rotate to mint a fresh ingest url/i)).toBeInTheDocument();
   });
 
   it("warns about the hard cutover, then rotates and reveals the new ingest URL", async () => {
@@ -92,7 +78,7 @@ describe("EndpointDetail", () => {
     render(
       <EndpointDetail
         endpoint={ep}
-        ingestUrl={URL}
+        ingestUrlSlot={<code>{URL}</code>}
         rotateEndpoint={rotateEndpoint}
         deleteEndpoint={vi.fn()}
       />,
@@ -120,7 +106,7 @@ describe("EndpointDetail", () => {
     render(
       <EndpointDetail
         endpoint={ep}
-        ingestUrl={URL}
+        ingestUrlSlot={<code>{URL}</code>}
         rotateEndpoint={vi.fn()}
         deleteEndpoint={deleteEndpoint}
       />,
@@ -142,7 +128,7 @@ describe("EndpointDetail", () => {
     render(
       <EndpointDetail
         endpoint={ep}
-        ingestUrl={URL}
+        ingestUrlSlot={<code>{URL}</code>}
         rotateEndpoint={rotateEndpoint}
         deleteEndpoint={vi.fn()}
       />,

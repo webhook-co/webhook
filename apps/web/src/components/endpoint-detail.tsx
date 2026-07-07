@@ -2,6 +2,7 @@
 
 import { Badge, Card, CardContent, CardHeader, CardTitle, CopyButton } from "@webhook-co/ui";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 
 import { formatDateTime } from "@/lib/format";
 import type { EndpointActionResult, RotateEndpointResult } from "@/server/endpoint-actions";
@@ -12,11 +13,11 @@ import { EndpointControls } from "./endpoint-controls";
 export interface EndpointDetailProps {
   endpoint: EndpointItem;
   /**
-   * The always-shown wbhk.my/<token> ingest URL (S8-remainder / ADR-0101), unsealed engine-side. `null` for
-   * an endpoint created before sealed storage (its token is one-way-hashed and gone) → the rotate-to-reveal
-   * hint. Refreshes to the new URL after a rotate (the page re-reveals on navigation).
+   * The always-shown wbhk.my/<token> ingest URL cell (S8-remainder / ADR-0101), rendered as a server-composed
+   * SLOT so the reveal (a cross-cloud engine RPC) streams in behind its own <Suspense> boundary instead of
+   * blocking this render. The page passes `<Suspense fallback={…}><IngestUrlReveal …/></Suspense>`.
    */
-  ingestUrl: string | null;
+  ingestUrlSlot: ReactNode;
   /** Rotate the ingest token (hard cutover) → the NEW one-time URL. Injected by the gated page. */
   rotateEndpoint: (endpointId: string) => Promise<RotateEndpointResult>;
   /** Soft-delete the endpoint. Injected by the gated page. */
@@ -25,7 +26,7 @@ export interface EndpointDetailProps {
 
 export function EndpointDetail({
   endpoint,
-  ingestUrl,
+  ingestUrlSlot,
   rotateEndpoint,
   deleteEndpoint,
 }: EndpointDetailProps) {
@@ -43,18 +44,7 @@ export function EndpointDetail({
         <CardContent className="flex flex-col gap-4">
           <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-2 text-sm">
             <dt className="text-fg-secondary">Ingest URL</dt>
-            <dd className="flex min-w-0 items-center gap-2">
-              {ingestUrl ? (
-                <>
-                  <code className="min-w-0 flex-1 truncate font-mono text-fg">{ingestUrl}</code>
-                  <CopyButton value={ingestUrl} size="sm" />
-                </>
-              ) : (
-                <span className="text-fg-secondary">
-                  Unavailable — rotate to mint a fresh ingest URL.
-                </span>
-              )}
-            </dd>
+            <dd className="flex min-w-0 items-center gap-2">{ingestUrlSlot}</dd>
             <dt className="text-fg-secondary">Endpoint ID</dt>
             <dd className="flex min-w-0 items-center gap-2">
               <code className="min-w-0 flex-1 truncate font-mono text-fg">{endpoint.id}</code>
