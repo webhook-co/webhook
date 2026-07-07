@@ -49,6 +49,7 @@ import {
 } from "./commands/triggers.js";
 import { telemetryRoute } from "./commands/telemetry.js";
 import { upgradeCommand } from "./commands/upgrade.js";
+import { usageGetCommand } from "./commands/usage.js";
 import { whoamiCommand } from "./commands/whoami.js";
 import type { AppContext } from "./context.js";
 import { CliError } from "./errors.js";
@@ -94,6 +95,7 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "triggers.create": ["triggers", "add"],
   "triggers.list": ["triggers", "list"],
   "triggers.revoke": ["triggers", "revoke"],
+  "usage.get": ["usage"],
 };
 
 const endpointsRoute = buildRouteMap({
@@ -185,6 +187,7 @@ const root = buildRouteMap({
     "replay-destinations": replayDestinationsRoute,
     subscriptions: subscriptionsRoute,
     triggers: triggersRoute,
+    usage: usageGetCommand,
     listen: listenCommand,
     replay: replayCommand,
     upgrade: upgradeCommand,

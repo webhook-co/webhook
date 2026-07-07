@@ -106,6 +106,9 @@ describe("capability parity — current GA surfaces conformance", () => {
     "triggers.create",
     "triggers.list",
     "triggers.revoke",
+    // usage.get (S4.2): the metering usage surface — full api+mcp+cli+web parity (a read that steers
+    // nothing; single-dimension events, no prices in the output).
+    "usage.get",
   ];
   // The dashboard surface: endpoints.* (slice 2) + events.list/get (slice 3a) + events.getPayload (slice 3b —
   // the R2 payload viewer + download), all DB-direct server reads. events.tail / events.replay / audit.verify
@@ -125,6 +128,8 @@ describe("capability parity — current GA surfaces conformance", () => {
     "events.list",
     "events.get",
     "events.getPayload",
+    // usage.get (S4.2): the dashboard usage view — a DB-direct server read (usage.ts), like events.list.
+    "usage.get",
   ];
   function liveBindings() {
     const b = emptyBindings();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  currentBillingPeriod,
   finalizeCutoff,
   ingestAllowed,
   rollupWindows,
@@ -70,6 +71,29 @@ describe("rollupWindows", () => {
       "2026-07-31T00:00:00.000Z",
       "2026-08-01T00:00:00.000Z",
     ]);
+  });
+});
+
+describe("currentBillingPeriod", () => {
+  it("returns the UTC calendar-month bounds containing `now` (the default anchor)", () => {
+    expect(currentBillingPeriod(Date.UTC(2026, 6, 7, 12, 0, 0))).toEqual({
+      start: "2026-07-01T00:00:00.000Z",
+      end: "2026-08-01T00:00:00.000Z",
+    });
+  });
+
+  it("is half-open [start, end): the last instant of the month is still this period", () => {
+    expect(currentBillingPeriod(Date.UTC(2026, 6, 31, 23, 59, 59, 999))).toEqual({
+      start: "2026-07-01T00:00:00.000Z",
+      end: "2026-08-01T00:00:00.000Z",
+    });
+  });
+
+  it("rolls the year at December", () => {
+    expect(currentBillingPeriod(Date.UTC(2026, 11, 15, 8, 0, 0))).toEqual({
+      start: "2026-12-01T00:00:00.000Z",
+      end: "2027-01-01T00:00:00.000Z",
+    });
   });
 });
 

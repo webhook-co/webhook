@@ -288,3 +288,19 @@ export const OrgLimitsSchema = z.object({
   updatedAt: z.coerce.date(),
 });
 export type OrgLimits = z.infer<typeof OrgLimitsSchema>;
+
+/**
+ * The usage-surface projection (usage.get) for the caller's org + current billing period. Single
+ * dimension (events); NO prices/tiers — the billable unit is disclosed, the cap + pause behavior are
+ * shown, and the surface renders "X of Y events" + a percentage. `eventCap` null = uncapped display.
+ * `paused` is the org-level ingest pause (soft-cap or operator), independent of any per-endpoint pause.
+ */
+export const UsageSummarySchema = z.object({
+  periodStart: z.coerce.date(),
+  periodEnd: z.coerce.date(),
+  events: z.number().int().nonnegative(),
+  eventCap: z.number().int().nonnegative().nullable(),
+  pausePolicy: PausePolicySchema,
+  paused: z.boolean(),
+});
+export type UsageSummary = z.infer<typeof UsageSummarySchema>;

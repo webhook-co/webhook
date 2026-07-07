@@ -56,6 +56,7 @@ const EXPECTED_NAMES = [
   "triggers.create",
   "triggers.list",
   "triggers.revoke",
+  "usage.get",
 ];
 
 describe("capability registry", () => {

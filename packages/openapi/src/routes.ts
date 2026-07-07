@@ -363,6 +363,17 @@ export const ROUTES: readonly RouteDef[] = [
     summary: "Verify the org's tamper-evident audit chain",
     buildInput: noInput,
   },
+  // ── usage ─────────────────────────────────────────────────────────────────────────────────────
+  {
+    method: "GET",
+    path: "/v1/usage",
+    capability: "usage.get",
+    successStatus: 200,
+    dispatch: "shared",
+    body: false,
+    summary: "Get the org's metering usage for the current billing period",
+    buildInput: noInput,
+  },
   // ── deliveries.* ──────────────────────────────────────────────────────────────────────────────
   {
     method: "GET",

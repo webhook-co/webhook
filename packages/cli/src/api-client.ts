@@ -30,6 +30,7 @@ import {
   triggersCreate as triggersCreateCap,
   triggersList as triggersListCap,
   triggersRevoke as triggersRevokeCap,
+  usageGet as usageGetCap,
   type AddedProviderSecret,
   type AuthContext,
   type CapabilityError,
@@ -57,6 +58,7 @@ import {
   type Provider,
   type ReplayDestination,
   type Subscription,
+  type UsageSummary,
 } from "@webhook-co/shared";
 import type { z } from "zod";
 
@@ -255,6 +257,8 @@ export interface ApiClient {
   deliveriesGet(deliveryId: string): Promise<Delivery>;
   /** Verify the org's tamper-evident audit chain (`POST /v1/audit/verify`). */
   auditVerify(): Promise<AuditVerifyResult>;
+  /** The org's metering usage for the current billing period (`GET /v1/usage`). */
+  usageGet(): Promise<UsageSummary>;
   /** Record a replay-to-localhost delivery attempt (`POST /v1/events/:id/replay`) — idempotent. */
   eventsReplay(input: {
     eventId: string;
@@ -693,6 +697,9 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       // A read (verifies the chain, no mutation) → safe to retry a transient failure.
       const json = await postJson("/v1/audit/verify", undefined, true);
       return parseOrThrow(auditVerifyCap.output, json, "audit");
+    },
+    async usageGet(): Promise<UsageSummary> {
+      return parseOrThrow(usageGetCap.output, await getJson("/v1/usage"), "usage");
     },
   };
 }

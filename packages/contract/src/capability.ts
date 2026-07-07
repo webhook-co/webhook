@@ -68,6 +68,7 @@ export const CAPABILITY_SCOPES = [
   // scope keeps the read scopes side-effect-free: a passive event-consumer key holds only events:read
   // (it can list + wait on triggers) and cannot mutate trigger state; managing triggers requires this.
   "triggers:write",
+  "billing:read",
 ] as const;
 export type CapabilityScope = (typeof CAPABILITY_SCOPES)[number];
 
