@@ -42,6 +42,13 @@ with a bare `dbmate up`, the tag doesn't move and the next migration-bearing pus
 message telling you to run the script. Recovery from a block: run the script (applies + advances the tag),
 then push — or `workflow_dispatch` to override (which does **not** move the tag, so it can't blind the guard).
 
+**Trust anchor.** Because the guard trusts `prod-schema` as prod's applied-through marker, force-pushing it
+without actually applying the migration would blind the guard (allow a deploy against an un-migrated schema).
+The guard defends against *accidental* fail-opens, not a malicious repo-writer (who could edit the workflow
+anyway). Recommended defense-in-depth: a GitHub **tag ruleset** restricting create/update/delete of
+`refs/tags/prod-schema` to repo admins (break-glass), so only an authorized operator running this script can
+move it. (Not enforced by this repo yet — a one-time settings change.)
+
 ## Guardrails
 
 - Forward-only in spirit; reversible in practice. No destructive change in the same release that
