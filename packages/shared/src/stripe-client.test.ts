@@ -154,6 +154,28 @@ describe("makeStripeClient hosted flows", () => {
     expect(p.get("subscription_data[metadata][org_id]")).toBe("org-7");
     expect(p.get("line_items[0][price]")).toBe("price_base");
     expect(p.get("line_items[1][price]")).toBe("price_overage");
+    // No idempotency key by default (a Checkout Session charges nothing until completed; a permanent
+    // org-scoped key would return a stale session on a legit re-checkout — it's caller-supplied per attempt).
+    expect((calls[0].init.headers as Record<string, string>)["Idempotency-Key"]).toBeUndefined();
+  });
+
+  it("forwards a caller-supplied idempotency key on Checkout (collapse a double-submit)", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: { id: "cs_2", url: "https://checkout" },
+    });
+    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    await client.createCheckoutSession({
+      customer: "cus_1",
+      lineItems: [{ price: "price_base", quantity: 1 }],
+      successUrl: "https://app/ok",
+      cancelUrl: "https://app/no",
+      orgId: "org-7",
+      idempotencyKey: "checkout-attempt-abc",
+    });
+    expect((calls[0].init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      "checkout-attempt-abc",
+    );
   });
 
   it("createPortalSession sends the customer + return_url", async () => {

@@ -82,6 +82,14 @@ export interface CreateCheckoutArgs {
   /** OUR org id — set as client_reference_id AND on the subscription's metadata so the inbound webhook
    *  resolves org from a SIGNED value we control, never email. */
   readonly orgId: string;
+  /**
+   * OPTIONAL retry-dedup key for a double-submit within Stripe's ~24h idempotency window. Deliberately
+   * caller-supplied (not a fixed `checkout:{org}`): a Checkout Session is a hosted page that charges
+   * NOTHING until the user completes it, so a duplicate session is harmless — and a PERMANENT org-scoped
+   * key would wrongly return a stale/expired session on a legitimate later re-checkout. The caller passes a
+   * per-ATTEMPT token (e.g. a nonce it just minted) when it wants to collapse a fast double-click.
+   */
+  readonly idempotencyKey?: string;
 }
 
 export interface StripeClient {
@@ -95,8 +103,12 @@ export interface StripeClient {
   createCustomer(args: { orgId: string; email?: string }): Promise<{ id: string }>;
   /** Create a hosted Checkout Session (mode=subscription) for the base + overage prices. */
   createCheckoutSession(args: CreateCheckoutArgs): Promise<StripeHostedSession>;
-  /** Create a hosted Customer Portal session (manage/cancel the subscription). */
-  createPortalSession(args: { customer: string; returnUrl: string }): Promise<StripeHostedSession>;
+  /** Create a hosted Customer Portal session (manage/cancel the subscription). `idempotencyKey` optional. */
+  createPortalSession(args: {
+    customer: string;
+    returnUrl: string;
+    idempotencyKey?: string;
+  }): Promise<StripeHostedSession>;
 }
 
 export function makeStripeClient(opts: StripeClientOptions): StripeClient {
@@ -146,24 +158,36 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         `customer:${orgId}`,
       );
     },
-    async createCheckoutSession({ customer, lineItems, successUrl, cancelUrl, orgId }) {
-      return request<StripeHostedSession>("/checkout/sessions", {
-        mode: "subscription",
-        customer,
-        success_url: successUrl,
-        cancel_url: cancelUrl,
-        client_reference_id: orgId,
-        line_items: lineItems.map((li) => ({ price: li.price, quantity: li.quantity })),
-        // Stamp our org id on the subscription so every downstream subscription.* webhook carries it.
-        subscription_data: { metadata: { org_id: orgId } },
-        metadata: { org_id: orgId },
-      });
+    async createCheckoutSession({
+      customer,
+      lineItems,
+      successUrl,
+      cancelUrl,
+      orgId,
+      idempotencyKey,
+    }) {
+      return request<StripeHostedSession>(
+        "/checkout/sessions",
+        {
+          mode: "subscription",
+          customer,
+          success_url: successUrl,
+          cancel_url: cancelUrl,
+          client_reference_id: orgId,
+          line_items: lineItems.map((li) => ({ price: li.price, quantity: li.quantity })),
+          // Stamp our org id on the subscription so every downstream subscription.* webhook carries it.
+          subscription_data: { metadata: { org_id: orgId } },
+          metadata: { org_id: orgId },
+        },
+        idempotencyKey,
+      );
     },
-    async createPortalSession({ customer, returnUrl }) {
-      return request<StripeHostedSession>("/billing_portal/sessions", {
-        customer,
-        return_url: returnUrl,
-      });
+    async createPortalSession({ customer, returnUrl, idempotencyKey }) {
+      return request<StripeHostedSession>(
+        "/billing_portal/sessions",
+        { customer, return_url: returnUrl },
+        idempotencyKey,
+      );
     },
   };
 }
