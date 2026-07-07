@@ -18,32 +18,24 @@ const deps = (revealer: IngestUrlRevealerRpc | undefined): EndpointRevealDeps =>
 const input = { orgId: "org-1", endpointId: "ep-1" };
 
 describe("revealEndpointIngestUrl", () => {
-  it("builds ${apex}/<token> when the engine returns a token", async () => {
+  it("returns { url } = ${apex}/<token> when the engine returns a token", async () => {
     const out = await revealEndpointIngestUrl(
       input,
       deps(revealerOf(async () => ({ found: true, token: "whep_live" }))),
     );
-    expect(out).toBe("https://wbhk.my/whep_live");
+    expect(out).toEqual({ kind: "url", url: "https://wbhk.my/whep_live" });
   });
 
-  it("returns null for an endpoint with no recoverable copy (rotate to reveal)", async () => {
+  it("returns { no-copy } for an endpoint with no recoverable copy (rotate IS the fix)", async () => {
     const out = await revealEndpointIngestUrl(
       input,
       deps(revealerOf(async () => ({ found: true, token: null }))),
     );
-    expect(out).toBeNull();
+    expect(out).toEqual({ kind: "no-copy" });
   });
 
-  it("returns null when the endpoint isn't found (deleted racing the metadata load)", async () => {
-    const out = await revealEndpointIngestUrl(
-      input,
-      deps(revealerOf(async () => ({ found: false, token: null }))),
-    );
-    expect(out).toBeNull();
-  });
-
-  it("returns null (degrades) when the revealer binding is not provisioned", async () => {
-    expect(await revealEndpointIngestUrl(input, deps(undefined))).toBeNull();
+  it("returns { unavailable } (NOT no-copy) when the revealer binding is not provisioned — the token exists, don't advise a rotate", async () => {
+    expect(await revealEndpointIngestUrl(input, deps(undefined))).toEqual({ kind: "unavailable" });
   });
 
   it("retries ONCE and recovers when the first attempt throws (transient cold-path fault)", async () => {
@@ -58,11 +50,11 @@ describe("revealEndpointIngestUrl", () => {
         }),
       ),
     );
-    expect(out).toBe("https://wbhk.my/whep_warm");
+    expect(out).toEqual({ kind: "url", url: "https://wbhk.my/whep_warm" });
     expect(calls).toBe(2); // one retry
   });
 
-  it("degrades to null only after BOTH attempts fail — never blanks the endpoint page", async () => {
+  it("degrades to { unavailable } only after BOTH attempts throw — never blanks the endpoint page", async () => {
     let calls = 0;
     const out = await revealEndpointIngestUrl(
       input,
@@ -73,11 +65,11 @@ describe("revealEndpointIngestUrl", () => {
         }),
       ),
     );
-    expect(out).toBeNull();
+    expect(out).toEqual({ kind: "unavailable" });
     expect(calls).toBe(2); // retried once, then degraded
   });
 
-  it("does NOT retry a no-recoverable-copy result (found:true, token:null is terminal, not transient)", async () => {
+  it("does NOT retry a no-copy result (found:true, token:null is terminal, not transient)", async () => {
     let calls = 0;
     const out = await revealEndpointIngestUrl(
       input,
@@ -88,23 +80,34 @@ describe("revealEndpointIngestUrl", () => {
         }),
       ),
     );
-    expect(out).toBeNull();
+    expect(out).toEqual({ kind: "no-copy" });
     expect(calls).toBe(1); // no retry for a terminal (non-throw) result
   });
 
-  it("times out a hung reveal, then retries (recovers on the warm attempt)", async () => {
+  it("does NOT retry a TIMEOUT (a hang → single attempt → { unavailable }, no doubled RPC load)", async () => {
     let calls = 0;
     const out = await revealEndpointIngestUrl(input, {
       apex: "https://wbhk.my",
       timeoutMs: 20,
       revealer: revealerOf(() => {
         calls += 1;
-        return calls === 1
-          ? new Promise(() => {}) // first attempt hangs → times out
-          : Promise.resolve({ found: true, token: "whep_afterhang" });
+        return new Promise(() => {}); // hangs → times out
       }),
     });
-    expect(out).toBe("https://wbhk.my/whep_afterhang");
-    expect(calls).toBe(2);
+    expect(out).toEqual({ kind: "unavailable" });
+    expect(calls).toBe(1); // a timeout is not retried
+  });
+
+  it("NEVER throws — a misconfigured apex degrades to { unavailable } instead of crashing the page", async () => {
+    const out = await revealEndpointIngestUrl(input, {
+      apex: "https://wbhk.my",
+      // A revealer whose call itself throws synchronously is caught by the outer guard.
+      revealer: {
+        revealIngestToken: () => {
+          throw new Error("boom");
+        },
+      },
+    });
+    expect(out).toEqual({ kind: "unavailable" });
   });
 });

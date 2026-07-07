@@ -44,7 +44,10 @@ export function EndpointDetail({
         <CardContent className="flex flex-col gap-4">
           <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-2 text-sm">
             <dt className="text-fg-secondary">Ingest URL</dt>
-            <dd className="flex min-w-0 items-center gap-2">{ingestUrlSlot}</dd>
+            {/* aria-live so assistive tech announces the URL when it streams in behind the Suspense slot. */}
+            <dd className="flex min-w-0 items-center gap-2" aria-live="polite">
+              {ingestUrlSlot}
+            </dd>
             <dt className="text-fg-secondary">Endpoint ID</dt>
             <dd className="flex min-w-0 items-center gap-2">
               <code className="min-w-0 flex-1 truncate font-mono text-fg">{endpoint.id}</code>

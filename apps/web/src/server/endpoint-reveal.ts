@@ -18,9 +18,21 @@ import { getIngestBaseUrl, getIngestUrlRevealer } from "./env";
 // IngestUrlRevealer, which reads the sealed blob itself under the org's RLS and returns the plaintext token
 // — web never holds the KEK or supplies a blob. So this seam needs no tenant DB pool of its own.
 
-/** Per-attempt timeout for the reveal RPC. Bounds the cold path (Hyperdrive connect + a KMS Decrypt,
- *  itself ~5s-bounded) so a hung reveal resolves the Suspense boundary to the hint instead of hanging. */
-const REVEAL_TIMEOUT_MS = 6_000;
+/** Per-attempt timeout for the reveal RPC — bounds a HUNG cold call (Hyperdrive connect + a KMS Decrypt) so
+ *  the Suspense boundary resolves to a hint instead of hanging. A timeout is NOT retried (see below). */
+const REVEAL_TIMEOUT_MS = 5_000;
+
+/**
+ * The reveal outcome. The two non-URL states are deliberately DISTINCT so the UI never advises a destructive
+ * action for a merely-slow reveal:
+ *  - `no-copy`     — the endpoint has no recoverable token (it predates sealed storage). Rotating IS the fix.
+ *  - `unavailable` — a TRANSIENT failure (a cold-path fault after the retry, a timeout, or an unprovisioned
+ *                    binding in dev/preview). The token still exists; the user should refresh, NOT rotate.
+ */
+export type IngestUrlRevealResult =
+  | { readonly kind: "url"; readonly url: string }
+  | { readonly kind: "no-copy" }
+  | { readonly kind: "unavailable" };
 
 /** Injectable seam for tests (the default binds the live INGEST_URL_REVEALER service binding). */
 export interface EndpointRevealDeps {
@@ -30,10 +42,14 @@ export interface EndpointRevealDeps {
   readonly timeoutMs?: number;
 }
 
-/** Resolve `p`, or reject once `ms` elapses. The abandoned promise keeps running harmlessly (Worker). */
+/** A timed-out attempt — distinct from a real RPC throw so the caller can choose NOT to retry a hang. */
+class RevealTimeout extends Error {}
+
+/** Resolve `p`, or reject with a {@link RevealTimeout} once `ms` elapses. The abandoned promise keeps
+ *  running harmlessly (its rejection is muted by the caller) — a Worker discards it when the request ends. */
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("reveal timed out")), ms);
+    const timer = setTimeout(() => reject(new RevealTimeout("reveal timed out")), ms);
     p.then(
       (v) => {
         clearTimeout(timer);
@@ -47,57 +63,63 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-/** One reveal attempt: the engine RPC (timeout-bounded) → `${apex}/<token>`, or null for a no-recoverable-copy
- *  / not-found result (NOT a throw, so it never triggers a retry). A transient fault throws (→ retry). */
+/** Log a reveal fault (class ONLY — never the token / err.message / String(err)). */
+function logRevealFault(message: string, err: unknown): void {
+  console.warn(JSON.stringify({ message, error: err instanceof Error ? err.name : "unknown" }));
+}
+
+/** One reveal attempt: the engine RPC (timeout-bounded) → the URL, or `no-copy` for a token-less result
+ *  (NOT a throw, so it never triggers a retry). A transient fault / timeout throws (handled by the caller). */
 async function revealOnce(
   revealer: IngestUrlRevealerRpc,
   apex: string,
   input: { orgId: string; endpointId: string },
   timeoutMs: number,
-): Promise<string | null> {
+): Promise<IngestUrlRevealResult> {
   const rpc = revealer.revealIngestToken(input.orgId, input.endpointId);
-  rpc.catch(() => {}); // if a timed-out attempt later rejects, don't surface it as an unhandled rejection
+  rpc.catch(() => {}); // a timed-out attempt that later rejects must not surface as an unhandled rejection
   const result = await withTimeout(rpc, timeoutMs);
-  if (!result.found || result.token === null) return null;
-  return `${apex}/${result.token}`;
+  if (!result.found || result.token === null) return { kind: "no-copy" };
+  return { kind: "url", url: `${apex}/${result.token}` };
 }
 
 /**
- * Reveal an endpoint's always-shown ingest URL for the dashboard. Returns the `${apex}/<token>` URL, or
- * `null` when there is no recoverable copy (the endpoint predates sealed storage → "rotate to reveal"), the
- * revealer binding isn't provisioned (dev/preview), or a transient reveal fault persists — the endpoint-detail
- * page shows the rotate-to-reveal hint rather than failing the whole view. `found:false` (a deleted endpoint
- * racing the metadata load) also degrades to null.
+ * Reveal an endpoint's always-shown ingest URL for the dashboard. NEVER throws — the reveal is fail-soft by
+ * contract (it renders inside a <Suspense> with no error boundary, so a throw would blank the whole endpoint
+ * page). Any fault degrades to `unavailable` (or `no-copy` for a genuinely token-less endpoint).
  *
- * RETRY-ONCE: the reveal's cold path (a cold Hyperdrive connection + a first-call KMS Decrypt) can throw a
- * transient "Network connection lost"-class fault or time out on the first call after an engine isolate spins
- * up. A single retry recovers it — the second attempt reuses the now-warm isolate (the DEK cache is warmed, so
- * no second KMS round-trip; the Hyperdrive connection is warmer), so the URL appears on the FIRST page load
- * instead of only after a manual reload. Only a second failure degrades to the hint.
+ * RETRY-ONCE: the cold path (a cold Hyperdrive connection + a first-call KMS Decrypt) can throw a transient
+ * "Network connection lost"-class fault on the first call after an engine isolate spins up. A single retry
+ * recovers it — the second attempt reuses the now-warm isolate (the DEK cache is warmed, so no second KMS
+ * round-trip; the connection is warmer) — so the URL appears on the FIRST page load instead of only after a
+ * manual reload. A TIMEOUT is NOT retried: a hung attempt suggests sustained slowness where a retry would
+ * only double engine/KMS load (and leave two RPCs in flight), so it degrades to `unavailable` immediately.
  */
 export async function revealEndpointIngestUrl(
   input: { orgId: string; endpointId: string },
   injected?: EndpointRevealDeps,
-): Promise<string | null> {
-  const revealer = injected?.revealer ?? getIngestUrlRevealer();
-  if (!revealer) return null; // unprovisioned binding → degrade to "rotate to reveal", never crash
-  const apex = injected?.apex ?? normalizeIngestApex(getIngestBaseUrl());
-  const timeoutMs = injected?.timeoutMs ?? REVEAL_TIMEOUT_MS;
+): Promise<IngestUrlRevealResult> {
   try {
-    return await revealOnce(revealer, apex, input, timeoutMs);
-  } catch {
-    // First attempt threw/timed out — retry ONCE against the now-warm isolate before degrading.
+    const revealer = injected?.revealer ?? getIngestUrlRevealer();
+    if (!revealer) return { kind: "unavailable" }; // unprovisioned (dev/preview) — token exists, don't rotate
+    const apex = injected?.apex ?? normalizeIngestApex(getIngestBaseUrl());
+    const timeoutMs = injected?.timeoutMs ?? REVEAL_TIMEOUT_MS;
     try {
       return await revealOnce(revealer, apex, input, timeoutMs);
-    } catch (err) {
-      // Both attempts failed. Log the class only (never the token / String(err)) and degrade to the hint.
-      console.warn(
-        JSON.stringify({
-          message: "endpoint.reveal_failed",
-          error: err instanceof Error ? err.name : "unknown",
-        }),
-      );
-      return null;
+    } catch (first) {
+      logRevealFault("endpoint.reveal_retry", first); // observability: first-attempt fault (recoverable)
+      if (first instanceof RevealTimeout) return { kind: "unavailable" }; // don't retry a hang
+      try {
+        return await revealOnce(revealer, apex, input, timeoutMs);
+      } catch (second) {
+        logRevealFault("endpoint.reveal_failed", second);
+        return { kind: "unavailable" };
+      }
     }
+  } catch (fatal) {
+    // Belt-and-suspenders: anything unexpected (e.g. a misconfigured INGEST_BASE_URL throwing in
+    // normalizeIngestApex, or a binding-lookup fault) must NEVER crash the endpoint page. Degrade to the hint.
+    logRevealFault("endpoint.reveal_failed", fatal);
+    return { kind: "unavailable" };
   }
 }

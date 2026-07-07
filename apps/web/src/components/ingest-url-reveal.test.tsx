@@ -17,16 +17,25 @@ beforeEach(() => reveal.mockReset());
 
 describe("IngestUrlReveal", () => {
   it("renders the ingest URL with a copy affordance when a token is revealed", async () => {
-    reveal.mockResolvedValue("https://wbhk.my/whep_shown");
+    reveal.mockResolvedValue({ kind: "url", url: "https://wbhk.my/whep_shown" });
     render(await IngestUrlReveal(props));
     expect(screen.getByText("https://wbhk.my/whep_shown")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /copy/i })).toBeInTheDocument();
   });
 
-  it("shows the rotate-to-reveal hint when there's no recoverable URL (null)", async () => {
-    reveal.mockResolvedValue(null);
+  it("advises rotate ONLY for a genuinely token-less endpoint (no-copy)", async () => {
+    reveal.mockResolvedValue({ kind: "no-copy" });
     render(await IngestUrlReveal(props));
-    expect(screen.getByText(/rotate to mint a fresh ingest url/i)).toBeInTheDocument();
+    expect(screen.getByText(/rotate to mint a fresh one/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /copy/i })).not.toBeInTheDocument();
+  });
+
+  it("advises REFRESH (not rotate) on a transient reveal failure — rotating would break a working URL", async () => {
+    reveal.mockResolvedValue({ kind: "unavailable" });
+    render(await IngestUrlReveal(props));
+    expect(screen.getByText(/refresh to try again/i)).toBeInTheDocument();
+    // Critically: NO rotate advice for a transient failure (the token still exists).
+    expect(screen.queryByText(/rotate/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /copy/i })).not.toBeInTheDocument();
   });
 });
