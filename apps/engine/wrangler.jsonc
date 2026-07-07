@@ -57,6 +57,15 @@
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
     {
+      // HYPERDRIVE_METER — query caching DISABLED. The metering-rollup cron's cross-org enumeration of orgs
+      // with recent events / a stale-open usage day, as webhook_meter (role-targeted SELECT policies + column
+      // grants scoped to the enumeration keys). Same posture as HYPERDRIVE_RECONCILER: no cache so a live
+      // control-plane read reflects current activity. The per-org rollup + freeze use HYPERDRIVE_TENANT (app).
+      "binding": "HYPERDRIVE_METER",
+      "id": "<HYPERDRIVE_METER_ID>",
+      "localConnectionString": "postgres://webhook_meter:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    {
       "binding": "HYPERDRIVE_AUTHN",
       "id": "<HYPERDRIVE_AUTHN_ID>",
       "localConnectionString": "postgres://webhook_authn:postgres@127.0.0.1:5432/webhook_dev",
