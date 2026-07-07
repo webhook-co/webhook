@@ -136,6 +136,26 @@ export function mintCredential(prefix: string, hasher: CredentialHasher): Minted
   };
 }
 
+/** base64url alphabet only (no padding): A–Z a–z 0–9 - _. Linear, no backtracking. */
+const BASE64URL_BODY = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Cheap STRUCTURAL pre-filter: does `candidate` sit in the `<prefix>_<base64url…>` namespace
+ * mintCredential produces? Pure — no hashing, no DB. It is NOT an authentication check (the secret is
+ * the 32 random bytes, verified only by the peppered-HMAC lookup); it exists so a caller can reject an
+ * obviously-impossible path token — a vuln-scanner probe like `/.env`, `/config.js`, `/terraform.tfstate`
+ * — with a fast 404 BEFORE the metered cold lookup, keeping scanner bursts off the DB (they were
+ * surfacing as transient 500s / worker hangs when the cold-lookup connection dropped under load). It
+ * checks the prefix + a non-empty base64url body rather than an exact length, so it stays correct if the
+ * secret width/encoding changes and never over-rejects a real token. Leaks no oracle beyond the token
+ * FORMAT, which is already public (every issued ingest URL shows it).
+ */
+export function looksLikeCredential(prefix: string, candidate: string): boolean {
+  const marker = `${prefix}_`;
+  if (!candidate.startsWith(marker)) return false;
+  return BASE64URL_BODY.test(candidate.slice(marker.length));
+}
+
 /**
  * Mint a SELF-DESCRIBING-CHECKSUM credential (ADR-0073) — the api-key format:
  *   `<prefix>_<43 base62: 256-bit CSPRNG body><6 base62: CRC32 of the body>`

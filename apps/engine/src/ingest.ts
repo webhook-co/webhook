@@ -201,7 +201,11 @@ export async function readCappedBody(
   return out;
 }
 
-function plain(status: number, body: string, headers: Record<string, string> = {}): Response {
+export function plain(
+  status: number,
+  body: string,
+  headers: Record<string, string> = {},
+): Response {
   // No Set-Cookie, no Access-Control-* — wbhk.my is cookieless + no-CORS by construction. nosniff:
   // wbhk.my now answers browser-facing GET/HEAD/OPTIONS (accept-all-verbs), so pin the declared
   // content-type against MIME sniffing on every text response.

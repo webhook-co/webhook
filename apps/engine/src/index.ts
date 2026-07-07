@@ -9,8 +9,10 @@ import {
   enqueueAutoDeliveries,
   fromCachedSealedSecret,
   getEndpoint,
+  INGEST_TOKEN_PREFIX,
   insertIngestEvent,
   listDestinationsWithDueDeliveries,
+  looksLikeCredential,
   makeApiKeyAuthDeps,
   readAuditChainHeads,
   readSealedIngestToken,
@@ -53,6 +55,7 @@ import {
 } from "./delivery-dispatcher";
 import {
   handleIngest,
+  plain,
   type IngestDeps,
   type ResolvedEndpoint,
   type VerificationOutcome,
@@ -63,7 +66,11 @@ import { makeVerifyIngest } from "./verify";
 
 // The per-session listen-tunnel Durable Object (Slice 11b, ADR-0014); wrangler binds it via
 // LISTEN_SESSION. Re-exported here so the class is registered on the engine Worker entrypoint.
-export { ListenSession, POLL_INTERVAL_MS } from "./listen-session";
+// NOTE: export ONLY the DO class from the worker entry. workerd validates every named export of the
+// entry module as a potential entrypoint/handler, so re-exporting a NON-class value here (e.g. the
+// numeric POLL_INTERVAL_MS) crashes `wrangler dev` with "Incorrect type for map entry …: not a function
+// or ExportedHandler". POLL_INTERVAL_MS stays exported from ./listen-session for its own tests.
+export { ListenSession } from "./listen-session";
 export { DeliveryDO } from "./delivery-do";
 
 // The webhook engine Worker. `fetch` is the wbhk.my write path (cookieless, path-token ingest);
@@ -617,6 +624,15 @@ export async function handleFetch(
     }
     return handleListenUpgrade(request, env);
   }
+
+  // Path-token routing: the first path segment is the ingest token. Reject anything that can't be a token
+  // in our namespace (vuln-scanner probes — `/.env`, `/config.js`, `/terraform.tfstate`, multi-segment
+  // filesystem probes) with a fast 404 BEFORE opening any DB pool / cold lookup. This keeps scanner bursts
+  // off the metered cold-lookup path, which was surfacing as transient 500s / worker hangs when the
+  // Hyperdrive connection dropped under that junk load. Same 404 (nosniff, no breadcrumbs) an unknown but
+  // well-formed token gets — no oracle beyond the already-public token FORMAT (every issued URL shows it).
+  const pathToken = url.pathname.replace(/^\/+/, "").split("/")[0] ?? "";
+  if (!looksLikeCredential(INGEST_TOKEN_PREFIX, pathToken)) return plain(404, "not found");
 
   // ctx backs deps.waitUntil — native auto-delivery runs AFTER this response is sent (post-ACK best-effort).
   const handle = await makeDeps(env, ctx);

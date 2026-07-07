@@ -9,6 +9,7 @@ import {
   credentialHashEquals,
   CREDENTIAL_PEPPER_MIN_BYTES,
   CREDENTIAL_SECRET_BYTES,
+  looksLikeCredential,
   mintChecksummedCredential,
   mintCredential,
 } from "./credential";
@@ -57,6 +58,43 @@ describe("mintCredential", () => {
     const seen = new Set<string>();
     for (let i = 0; i < 200; i++) seen.add(mintCredential("whk", hasherA).plaintext);
     expect(seen.size).toBe(200);
+  });
+});
+
+describe("looksLikeCredential — cheap routing pre-filter (no hashing, no DB)", () => {
+  it("accepts a real mintCredential plaintext for the same prefix", () => {
+    const { plaintext } = mintCredential("whep", hasherA);
+    expect(looksLikeCredential("whep", plaintext)).toBe(true);
+  });
+
+  it("accepts a well-formed prefixed base64url token (short bodies included — not an exact-length check)", () => {
+    expect(looksLikeCredential("whep", "whep_good")).toBe(true);
+    expect(looksLikeCredential("whep", "whep_good-token_A9")).toBe(true);
+  });
+
+  it("rejects vuln-scanner junk paths that could never be a token (the 404-not-500 fix)", () => {
+    for (const junk of [
+      "config",
+      "config.js",
+      "application.yml",
+      "terraform.tfstate",
+      ".env",
+      "wp-login.php",
+      ".git",
+      "app",
+    ]) {
+      expect(looksLikeCredential("whep", junk), junk).toBe(false);
+    }
+  });
+
+  it("rejects a wrong/empty prefix, an empty body, and non-base64url chars", () => {
+    expect(looksLikeCredential("whep", "whk_abcdef")).toBe(false); // wrong prefix namespace
+    expect(looksLikeCredential("whep", "whep_")).toBe(false); // prefix but empty body
+    expect(looksLikeCredential("whep", "whep")).toBe(false); // no separator
+    expect(looksLikeCredential("whep", "")).toBe(false);
+    expect(looksLikeCredential("whep", "whep_has.dot")).toBe(false); // '.' isn't base64url
+    expect(looksLikeCredential("whep", "whep_has/slash")).toBe(false);
+    expect(looksLikeCredential("whep", "whep_has space")).toBe(false);
   });
 });
 

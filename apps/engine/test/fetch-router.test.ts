@@ -79,13 +79,46 @@ describe("handleFetch routing + lifecycle", () => {
     expect(f.closed()).toBe(1); // per-request clients torn down
   });
 
-  it("an unknown token still routes to ingest (404), and deps are closed", async () => {
+  it("an unknown but WELL-FORMED token still routes to ingest (404), and deps are closed", async () => {
     const f = fakeHandle();
     const res = await handleFetch(post("/whep_nope"), bindings, ctx, () =>
       Promise.resolve(f.handle),
     );
     expect(res.status).toBe(404);
     expect(f.closed()).toBe(1);
+  });
+
+  it("a path that can't be a token (scanner junk) is a fast 404 WITHOUT building ingest deps (no cold lookup)", async () => {
+    // These are real vuln-scanner probes seen in prod. None sit in the `whep_` token namespace, so they
+    // must 404 before any DB pool / cold lookup opens — otherwise a scanner burst pounds the metered
+    // cold-lookup path and surfaces as transient 500s / worker hangs when the connection drops.
+    for (const junk of [
+      "/config.js",
+      "/application.yml",
+      "/app/config/parameters.yml",
+      "/terraform.tfstate",
+      "/.env",
+      "/wp-login.php",
+    ]) {
+      let built = 0;
+      const res = await handleFetch(post(junk), bindings, ctx, () => {
+        built += 1;
+        return Promise.resolve(fakeHandle().handle);
+      });
+      expect(res.status, junk).toBe(404);
+      expect(res.headers.get("x-content-type-options"), junk).toBe("nosniff"); // same no-oracle shape
+      expect(built, junk).toBe(0); // never touched the DB path
+    }
+  });
+
+  it("the bare apex (no token) is a 404 without building deps", async () => {
+    let built = 0;
+    const res = await handleFetch(post("/"), bindings, ctx, () => {
+      built += 1;
+      return Promise.resolve(fakeHandle().handle);
+    });
+    expect(res.status).toBe(404);
+    expect(built).toBe(0);
   });
 
   it("a GET on a token path is NOT the bare-apex health probe — it routes to ingest (per-token liveness 200)", async () => {
