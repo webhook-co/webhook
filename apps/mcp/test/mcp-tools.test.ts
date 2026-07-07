@@ -37,6 +37,9 @@ const BOUND_TOOLS = [
   "events.get",
   "events.list",
   "events.tail",
+  "triggers.create",
+  "triggers.list",
+  "triggers.revoke",
 ];
 
 /** Seed the KV credential-cache hot path so the api-key validator resolves TOKEN without Postgres. */
@@ -145,7 +148,7 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     await seedApiKey(["endpoints:read", "events:read", "audit:read"]);
   });
 
-  it("lists exactly the 13 bound tools after the initialize handshake", async () => {
+  it("lists exactly the bound tools after the initialize handshake", async () => {
     const { sessionId, protocolVersion } = await handshake();
     const res = await rpc(
       { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },

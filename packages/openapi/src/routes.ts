@@ -524,6 +524,47 @@ export const ROUTES: readonly RouteDef[] = [
     summary: "Delete an auto-delivery subscription",
     buildInput: pathParam("subscriptionId", "subscriptionId"),
   },
+  // ── triggers.* (S5: webhook→agent trigger subscriptions; MCP-bound, shared handler dispatch) ─────
+  {
+    method: "GET",
+    path: "/v1/triggers",
+    capability: "triggers.list",
+    successStatus: 200,
+    dispatch: "shared",
+    body: false,
+    summary: "List agent trigger subscriptions",
+    query: [
+      {
+        name: "endpointId",
+        description: "Filter by endpoint (empty = no filter).",
+        schemaFrom: "endpointId",
+      },
+    ],
+    buildInput: (_params, q) => {
+      const endpointId = q.get("endpointId");
+      return endpointId ? { endpointId } : {};
+    },
+  },
+  {
+    method: "POST",
+    path: "/v1/triggers",
+    capability: "triggers.create",
+    successStatus: 200,
+    dispatch: "shared",
+    body: true,
+    summary: "Create an agent trigger subscription",
+    buildInput: noInput,
+  },
+  {
+    method: "DELETE",
+    path: "/v1/triggers/{triggerId}",
+    capability: "triggers.revoke",
+    successStatus: 200,
+    dispatch: "shared",
+    body: false,
+    summary: "Revoke an agent trigger subscription",
+    buildInput: pathParam("triggerId", "triggerId"),
+  },
   // ── whoami (scope-free identity — not a capability) ─────────────────────────────────────────────
   {
     method: "GET",

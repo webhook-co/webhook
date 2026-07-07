@@ -27,6 +27,9 @@ import {
   subscriptionsCreate as subscriptionsCreateCap,
   subscriptionsDelete as subscriptionsDeleteCap,
   subscriptionsList as subscriptionsListCap,
+  triggersCreate as triggersCreateCap,
+  triggersList as triggersListCap,
+  triggersRevoke as triggersRevokeCap,
   type AddedProviderSecret,
   type AuthContext,
   type CapabilityError,
@@ -44,6 +47,7 @@ import {
 } from "@webhook-co/contract";
 import {
   b64ToBytes,
+  type AgentTrigger,
   type Delivery,
   type DeliveryAttempt,
   type DedupConfig,
@@ -299,6 +303,12 @@ export interface ApiClient {
   subscriptionsList(sourceEndpointId?: string): Promise<readonly Subscription[]>;
   /** Remove a delivery subscription (`DELETE /v1/subscriptions/:id`). */
   subscriptionsDelete(subscriptionId: string): Promise<SubscriptionDeleted>;
+  /** Create an agent trigger subscription (`POST /v1/triggers`). */
+  triggersCreate(input: { endpointId: string; name?: string }): Promise<AgentTrigger>;
+  /** The org's active agent triggers (`GET /v1/triggers`), optionally filtered by endpoint. */
+  triggersList(endpointId?: string): Promise<readonly AgentTrigger[]>;
+  /** Revoke an agent trigger subscription (`DELETE /v1/triggers/:id`). */
+  triggersRevoke(triggerId: string): Promise<{ id: string }>;
 }
 
 export interface ApiClientDeps {
@@ -640,6 +650,31 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         subscriptionsDeleteCap.output,
         await deleteJson(path, false),
         "removed subscription",
+      );
+    },
+    async triggersCreate(input): Promise<AgentTrigger> {
+      const body: Record<string, unknown> = { endpointId: input.endpointId };
+      if (input.name !== undefined) body.name = input.name;
+      // idempotent=false: create INSERTs a fresh row + appends an audit entry each call, so a blind retry
+      // after a lost response would register a phantom duplicate trigger. Surface the failure instead.
+      const json = await postJson("/v1/triggers", body, false);
+      return parseOrThrow(triggersCreateCap.output, json, "trigger");
+    },
+    async triggersList(endpointId): Promise<readonly AgentTrigger[]> {
+      const path = endpointId
+        ? `/v1/triggers?endpointId=${encodeURIComponent(endpointId)}`
+        : "/v1/triggers";
+      const { items } = parseOrThrow(triggersListCap.output, await getJson(path), "triggers");
+      return items;
+    },
+    async triggersRevoke(triggerId): Promise<{ id: string }> {
+      const path = `/v1/triggers/${encodeURIComponent(triggerId)}`;
+      // idempotent=true: triggers.revoke is idempotent server-side (a re-revoke of an already-revoked
+      // trigger succeeds with the same {id}), so a blind retry after a lost response is safe.
+      return parseOrThrow(
+        triggersRevokeCap.output,
+        await deleteJson(path, true),
+        "revoked trigger",
       );
     },
     async eventsGetPayload(eventId): Promise<{ contentType: string | null; body: Uint8Array }> {

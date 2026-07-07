@@ -100,6 +100,12 @@ describe("capability parity — current GA surfaces conformance", () => {
     "deliveries.get",
     "deliveries.list",
     "audit.verify",
+    // triggers.* (S5): webhook→agent trigger subscriptions. MCP-BOUND (unlike the egress subscriptions.*
+    // above) — a trigger is a read-consumption registration, not egress, so an agent may manage its own.
+    // Web is deferred to the S5 dashboard slice (surfaceExempt in capabilities.ts), so NOT in WEB_BOUND.
+    "triggers.create",
+    "triggers.list",
+    "triggers.revoke",
   ];
   // The dashboard surface: endpoints.* (slice 2) + events.list/get (slice 3a) + events.getPayload (slice 3b —
   // the R2 payload viewer + download), all DB-direct server reads. events.tail / events.replay / audit.verify

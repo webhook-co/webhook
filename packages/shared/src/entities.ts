@@ -267,6 +267,19 @@ export const SubscriptionSchema = z.object({
 });
 export type Subscription = z.infer<typeof SubscriptionSchema>;
 
+// The management view of an agent trigger (S5): an org-scoped registration that an agent creates to be
+// woken (triggers.wait) when `endpointId` captures a new event. `revokedAt` non-null = revoked (a dead
+// registration; triggers.wait no longer resolves it). Carries no secret and no payload.
+export const AgentTriggerSchema = z.object({
+  id: uuid,
+  orgId: uuid,
+  endpointId: uuid,
+  name: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  revokedAt: z.coerce.date().nullable(),
+});
+export type AgentTrigger = z.infer<typeof AgentTriggerSchema>;
+
 /** Soft-cap limits view (org_limits). No prices — cap + behavior only. */
 export const OrgLimitsSchema = z.object({
   orgId: uuid,

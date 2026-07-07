@@ -36,6 +36,7 @@ describe("oauthIssuerConfig", () => {
       "endpoints:write",
       "events:read",
       "events:replay",
+      "triggers:write",
     ]);
     // The PRM scope list is the same SoT (discovery + PRM cannot disagree).
     expect(oauthIssuerConfig.resourceMetadata.scopes_supported).toEqual(

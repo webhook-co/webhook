@@ -53,6 +53,9 @@ const EXPECTED_NAMES = [
   "subscriptions.delete",
   "deliveries.get",
   "deliveries.list",
+  "triggers.create",
+  "triggers.list",
+  "triggers.revoke",
 ];
 
 describe("capability registry", () => {
