@@ -62,6 +62,25 @@ export function parseFreeEventCap(raw: string | undefined | null): number | null
   return n;
 }
 
+/**
+ * The usage-threshold alert points (percent of the effective cap) — a WARN-BEFORE-PAUSE heads-up so an org
+ * sees it approaching (and hitting) its cap before capture is ever paused. 80% = approaching, 100% = at the
+ * cap (a 'pause' org is paused here). Ordered ascending. No prices — a percent of the org's own cap.
+ */
+export const USAGE_ALERT_THRESHOLDS = [80, 100] as const;
+
+/**
+ * The alert thresholds (percent) an org's period usage has reached, given its effective cap. Pure so the
+ * producer's emit decision is deterministic + unit-tested. An UNCAPPED org (null or non-positive cap) has no
+ * percentage → no thresholds (you can't be "80% of uncapped"). `Math.ceil` pins the exact event count each
+ * threshold triggers at (e.g. cap 100 → 80% at 80 events, 100% at 100) so it matches the pause boundary
+ * (shouldPauseForCap's `usage >= cap`). Returns ascending, so the caller emits at most one intent per point.
+ */
+export function crossedUsageThresholds(usage: number, eventCap: number | null): number[] {
+  if (eventCap === null || eventCap <= 0) return [];
+  return USAGE_ALERT_THRESHOLDS.filter((t) => usage >= Math.ceil((t / 100) * eventCap));
+}
+
 const DAY_MS = 86_400_000;
 
 /** UTC midnight (ms) of the day containing `ms`. UTC has no DST, so day arithmetic by

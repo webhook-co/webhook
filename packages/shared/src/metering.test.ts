@@ -1,14 +1,44 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  crossedUsageThresholds,
   currentBillingPeriod,
   finalizeCutoff,
   ingestAllowed,
   parseFreeEventCap,
   rollupWindows,
   shouldPauseForCap,
+  USAGE_ALERT_THRESHOLDS,
   type IngestGuardSignal,
 } from "./metering";
+
+describe("crossedUsageThresholds (warn-before-pause alert points)", () => {
+  it("returns no thresholds for an uncapped org (can't be a % of uncapped)", () => {
+    expect(crossedUsageThresholds(1_000_000, null)).toEqual([]);
+    expect(crossedUsageThresholds(50, 0)).toEqual([]); // non-positive cap = uncapped
+  });
+
+  it("returns thresholds at their exact ceil(pct*cap) event boundary", () => {
+    // cap 100 → 80% at 80 events, 100% at 100.
+    expect(crossedUsageThresholds(79, 100)).toEqual([]);
+    expect(crossedUsageThresholds(80, 100)).toEqual([80]);
+    expect(crossedUsageThresholds(99, 100)).toEqual([80]);
+    expect(crossedUsageThresholds(100, 100)).toEqual([80, 100]);
+    expect(crossedUsageThresholds(150, 100)).toEqual([80, 100]); // over cap still just [80,100]
+  });
+
+  it("uses ceil so the boundary matches the pause point (shouldPauseForCap usage >= cap)", () => {
+    // cap 7 → 80% = ceil(5.6) = 6; 100% = 7.
+    expect(crossedUsageThresholds(5, 7)).toEqual([]);
+    expect(crossedUsageThresholds(6, 7)).toEqual([80]);
+    expect(crossedUsageThresholds(7, 7)).toEqual([80, 100]);
+    expect(shouldPauseForCap(7, 7, "pause")).toBe(true); // the 100% point IS the pause point
+  });
+
+  it("exposes the thresholds as a stable ascending tuple", () => {
+    expect([...USAGE_ALERT_THRESHOLDS]).toEqual([80, 100]);
+  });
+});
 
 describe("parseFreeEventCap (Free-tier default cap, fail-safe)", () => {
   it("accepts a clean positive integer", () => {

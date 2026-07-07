@@ -89,6 +89,36 @@ describe("drainNotifications", () => {
     expect(sends).toEqual([]);
   });
 
+  const USAGE_CTX = {
+    usage: 8_000,
+    eventCap: 10_000,
+    threshold: 80,
+    pausePolicy: "pause" as const,
+    periodEndIso: "2026-08-01T00:00:00.000Z",
+  };
+
+  it("routes a usage_threshold intent to the usage renderer and sends it", async () => {
+    const subjects: string[] = [];
+    const list = [pending({ kind: "usage_threshold", destinationId: null, context: USAGE_CTX })];
+    const res = await drainNotifications({
+      listPending: async () => list,
+      claim: async () => true,
+      send: async (_to, email) => void subjects.push(email.subject),
+    });
+    expect(res).toMatchObject({ claimed: 1, sent: 1, skipped: 0 });
+    // The usage renderer's subject (not the destination one) — proves kind-dispatch picked the right renderer.
+    expect(subjects).toEqual(["You've used 80% of your included events"]);
+  });
+
+  it("claims but does NOT send a usage_threshold intent with no context (unrenderable)", async () => {
+    const { deps: d, sends } = deps([
+      pending({ kind: "usage_threshold", destinationId: null, context: null }),
+    ]);
+    const res = await drainNotifications(d);
+    expect(res).toMatchObject({ claimed: 1, sent: 0, skipped: 1 });
+    expect(sends).toEqual([]);
+  });
+
   it("counts a per-owner send failure and continues (no throw, at-most-once)", async () => {
     const p1 = pending({ ownerEmails: ["boom@x.test", "ok@x.test"] });
     const p2 = pending({ ownerEmails: ["next@x.test"] });

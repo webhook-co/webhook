@@ -13,7 +13,7 @@
 // backlog — without sending anything.
 
 import type { Sql } from "./client";
-import type { NotificationContext } from "./delivery";
+import type { NotificationIntentContext } from "./delivery";
 
 /** A pending notification resolved to its recipients — one row per intent, with every org OWNER's email. */
 export interface PendingNotification {
@@ -24,7 +24,7 @@ export interface PendingNotification {
   readonly destinationId: string | null;
   /** The engine's context snapshot for the email (destination URL, failure count, last error); null for
    *  context-less kinds or pre-0035 intents. */
-  readonly context: NotificationContext | null;
+  readonly context: NotificationIntentContext | null;
   /** When the intent was queued — i.e. when the destination was disabled (the email's "paused" time). */
   readonly createdAt: Date;
   /** Every owner of the org (an org can have several) — the email is sent to all of them. */
@@ -59,7 +59,7 @@ export async function listPendingNotifications(
       org_id: string;
       kind: string;
       destination_id: string | null;
-      context: NotificationContext | null;
+      context: NotificationIntentContext | null;
       created_at: Date;
       email: string | null;
     }[]

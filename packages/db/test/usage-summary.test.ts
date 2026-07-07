@@ -126,11 +126,12 @@ describe("readUsageSummary", () => {
     );
 
     // An explicit row with a NULL event_cap = deliberately uncapped — the default must NOT override it.
+    // Write the SQL NULL literal directly (not an interpolated `${null}`) so the intent is explicit.
     const uncapped = await seedOrg("usage-explicit-null");
     await withTenant(
       app,
       uncapped,
-      (tx) => tx`insert into org_limits (org_id, event_cap) values (${uncapped}, ${null})`,
+      (tx) => tx`insert into org_limits (org_id, event_cap) values (${uncapped}, NULL)`,
     );
     expect(
       (await withTenant(app, uncapped, (tx) => readUsageSummary(tx, NOW, 500))).eventCap,

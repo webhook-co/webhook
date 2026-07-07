@@ -5,10 +5,23 @@
 // itself is the pure `shouldPauseForCap` (packages/shared/metering) — deterministic, unit-tested. The
 // cap is a soft cap: enforcement is eventually-consistent (rollup lag + cache), never a hot-path count.
 
-import { currentBillingPeriod, shouldPauseForCap, type PausePolicy } from "@webhook-co/shared";
+import {
+  crossedUsageThresholds,
+  currentBillingPeriod,
+  shouldPauseForCap,
+  type PausePolicy,
+} from "@webhook-co/shared";
 
 import { withTenant, type Sql } from "./client";
+import { insertNotificationIntent, type UsageThresholdContext } from "./delivery";
 import { sumPeriodEventUsage } from "./period-usage";
+
+/** The per-org result of one producer pass: the pause transition (null = none) + how many threshold
+ *  alerts were newly enqueued this pass. Kept internal to runCapProducer. */
+interface OrgOutcome {
+  readonly transition: boolean | null;
+  readonly alerts: number;
+}
 
 /** Default cap on orgs one producer pass processes (bounded + fairly ordered — mirrors the rollup). */
 export const DEFAULT_CAP_PRODUCER_LIMIT = 1000;
@@ -44,6 +57,8 @@ export interface CapProducerResult {
   readonly resumedTransitions: number;
   /** Orgs whose pass threw (logged + counted, non-fatal; a next pass retries — idempotent). */
   readonly orgsFailed: number;
+  /** Usage-threshold notification intents newly enqueued this pass (S4.3b) — deduped per org/period/%. */
+  readonly thresholdAlerts: number;
   /**
    * True when the candidate set hit `limit` (enumeration truncated) — enforcement for the unprocessed
    * tail lags to a later pass. An operability signal: a persistently-`capped` producer means `limit`
@@ -109,11 +124,12 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
   let pausedTransitions = 0;
   let resumedTransitions = 0;
   let orgsFailed = 0;
+  let thresholdAlerts = 0;
   const transitions: Array<{ orgId: string; paused: boolean }> = [];
 
   for (const orgId of orgIds) {
     try {
-      const desired = await withTenant(deps.app, orgId, async (tx): Promise<boolean | null> => {
+      const outcome = await withTenant(deps.app, orgId, async (tx): Promise<OrgOutcome> => {
         // The SAME period-usage basis the surface displays (sumPeriodEventUsage: rolled prior days +
         // live today) — so enforcement can't lag or diverge from what the dashboard shows. Not tied to
         // whether the rollup already ran today (it counts today's events live), so reordering the cron
@@ -131,9 +147,38 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
           : deps.defaultEventCap;
         const pausePolicy: PausePolicy = limits ? limits.pause_policy : "pause";
 
+        // Threshold alerts (S4.3b, warn-before-pause) FIRST — before the no-transition early return below,
+        // because the 80% alert fires while the org is NOT yet paused (want === current === false). Emit at
+        // most one intent per (org, period, threshold): the usage_alerts PK + ON CONFLICT DO NOTHING makes
+        // the hourly producer idempotent (a row already there = already alerted this period → no re-email).
+        // Uncapped orgs cross nothing (no % of uncapped), so this is naturally dark until a cap exists.
+        let alerts = 0;
+        for (const threshold of crossedUsageThresholds(periodUsage, eventCap)) {
+          const [won] = await tx<{ org_id: string }[]>`
+            insert into usage_alerts (org_id, period_start, threshold)
+            values (${orgId}, ${period.start}, ${threshold})
+            on conflict (org_id, period_start, threshold) do nothing
+            returning org_id`;
+          if (!won) continue; // already alerted this threshold this period
+          const context: UsageThresholdContext = {
+            usage: periodUsage,
+            eventCap: eventCap as number, // crossedUsageThresholds only returns for a non-null cap
+            threshold,
+            pausePolicy,
+            periodEndIso: period.end,
+          };
+          await insertNotificationIntent(tx, {
+            orgId,
+            kind: "usage_threshold",
+            destinationId: null,
+            context,
+          });
+          alerts += 1;
+        }
+
         const want = shouldPauseForCap(periodUsage, eventCap, pausePolicy);
         const current = pauseRow?.paused ?? false;
-        if (want === current) return null; // no transition
+        if (want === current) return { transition: null, alerts }; // no pause transition
 
         const since = want ? new Date(deps.now).toISOString() : null;
         const reason = want ? "cap" : null;
@@ -142,12 +187,13 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
           values (${orgId}, ${want}, ${reason}, ${since}, now())
           on conflict (org_id) do update
             set paused = ${want}, reason = ${reason}, since = ${since}, updated_at = now()`;
-        return want;
+        return { transition: want, alerts };
       });
 
-      if (desired !== null) {
-        transitions.push({ orgId, paused: desired });
-        if (desired) pausedTransitions += 1;
+      thresholdAlerts += outcome.alerts;
+      if (outcome.transition !== null) {
+        transitions.push({ orgId, paused: outcome.transition });
+        if (outcome.transition) pausedTransitions += 1;
         else resumedTransitions += 1;
       }
     } catch (err) {
@@ -173,6 +219,7 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
     pausedTransitions,
     resumedTransitions,
     orgsFailed,
+    thresholdAlerts,
     capped,
   };
 }
