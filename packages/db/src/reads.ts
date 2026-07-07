@@ -104,8 +104,10 @@ function buildPageWithCursors<R, T>(
 // operator, dropping a cast) reintroduces a gap without failing an obvious test, so they live in one
 // place under one comment.
 
-// The gapless watermark, bound on the RAW received_at (µs). δ must be EXACTLY the ingest
-// statement_timeout, so this stays un-truncated (unlike the keyset) — see the precision note above.
+// The gapless watermark, bound on the RAW received_at (µs). δ = ingest statement_timeout + a
+// commit-visibility margin (WATERMARK_DELTA_MS, see watermark.ts), so this stays un-truncated (unlike
+// the keyset) — see the precision note above. The margin is load-bearing: do NOT reduce δ to the bare
+// statement_timeout (it reopens the WAL-flush/read-visibility gap the watermark exists to close).
 function belowWatermark(tx: TenantTx) {
   return tx`received_at <= now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')`;
 }
@@ -375,15 +377,17 @@ export interface TailEventsOptions {
 // The forward sibling of listEvents: a watermark-bounded tail. Where listEvents browses newest-first
 // (received_at DESC, < cursor), the tail reads oldest-first (received_at ASC, > cursor) so a consumer
 // advances chronologically, and it only returns rows at or before the gapless watermark `now() - δ`.
-// The watermark is what makes the tail gapless on resume: an in-flight ingest (statement_timeout =
-// WATERMARK_DELTA_MS) cannot commit a row with a received_at older than now() - δ, so once a cursor
-// passes the watermark no later-committed row can fall behind it.
+// The watermark is what makes the tail gapless on resume: an in-flight ingest (bounded by
+// statement_timeout) cannot become visible with a received_at older than now() - δ once δ also covers
+// the post-statement commit-visibility lag, so once a cursor passes the watermark no later-visible row
+// can fall behind it.
 //
 // The cutoff is computed Postgres-side (`now()`), NOT from a caller-supplied Date: received_at is
-// stamped by the events trigger with the DB clock, so comparing it to the DB's own now() keeps δ
-// exactly the statement_timeout with no Worker↔Postgres clock skew eroding the safety margin. The
-// filter stays on the RAW received_at (µs) — the gapless proof needs δ to be exactly the timeout. The keyset
-// is now ALSO on the raw received_at (the cursor carries exact µs), so both ride events_tunnel_idx
+// stamped by the events trigger with the DB clock, so comparing it to the DB's own now() removes any
+// Worker↔Postgres clock skew from the safety margin. δ = statement_timeout + a commit-visibility margin
+// (WATERMARK_DELTA_MS); the margin is what makes the proof hold against WAL-flush/read-visibility lag,
+// so do not collapse δ back to the bare timeout. The filter stays on the RAW received_at (µs). The
+// keyset is ALSO on the raw received_at (the cursor carries exact µs), so both ride events_tunnel_idx
 // (endpoint_id, received_at, id) — a forward scan for this ASC tail.
 async function tailEventRows(tx: TenantTx, opts: TailEventsOptions): Promise<EventRow[]> {
   const limit = clampLimit(opts.limit);
@@ -450,6 +454,33 @@ export async function latestTailCursor(
     order by received_at desc, id desc
     limit 1`;
   return r ? { orderKey: r.order_key, id: r.id } : null;
+}
+
+/**
+ * Whether a resume cursor points strictly BELOW the oldest event still retained for an endpoint —
+ * i.e. one or more events between the cursor position and the current oldest surviving row are gone,
+ * so resuming from the cursor would SILENTLY skip them. Retention deletes oldest-first, so the
+ * retained set is a contiguous `[min(received_at), max]` window: a cursor at/above `min` has every
+ * later event still present (no loss); a cursor strictly below `min` means the row it pointed at (and
+ * possibly successors) were pruned before being read (loss).
+ *
+ * Today retention is INFINITE (no prune/TTL job anywhere), so this is always false for a cursor minted
+ * from a real prior read. It exists as a fail-LOUD guard: the day a retention job is added, the
+ * trigger tail can raise CURSOR_EXPIRED instead of silently resuming from the oldest survivor — which
+ * is what keeps the at-least-once guarantee honest. A null/absent cursor (fresh / from-beginning) is
+ * never expired. Backed by events_tunnel_idx (endpoint_id, received_at) — an index-only min.
+ */
+export async function cursorBelowOldest(
+  tx: TenantTx,
+  opts: { readonly endpointId: string; readonly cursor: Cursor },
+): Promise<boolean> {
+  const { endpointId, cursor } = opts;
+  const [row] = await tx<{ expired: boolean | null }[]>`
+    select (${cursor.orderKey}::text::timestamptz) < min(received_at) as expired
+    from events
+    where endpoint_id = ${endpointId}`;
+  // min() is null for an endpoint with no events → `< null` is null → not expired (empty tail).
+  return row?.expired === true;
 }
 
 /**
