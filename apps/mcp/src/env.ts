@@ -5,7 +5,7 @@
 // The McpAgent tools run inside the MCP_OBJECT Durable Object; bearer resolution runs out here on the Worker.
 
 import type { TokenIntrospector } from "@webhook-co/contract";
-import type { IngestUrlRevealerRpc, SecretSealer } from "@webhook-co/shared";
+import type { IngestUrlRevealerRpc, PayloadReaderRpc, SecretSealer } from "@webhook-co/shared";
 
 export interface McpEnv {
   /** The McpAgent Durable Object namespace. `WebhookMcp.serve("/mcp")` looks it up by this name. */
@@ -44,6 +44,12 @@ export interface McpEnv {
    * the engine unseals); identifier-only. Deploy-injected by the overlay generator — NOT committed.
    */
   INGEST_URL_REVEALER: IngestUrlRevealerRpc;
+  /**
+   * RPC to the engine's PayloadReader WorkerEntrypoint (S5 Slice C2): triggers.wait fetches the bounded
+   * inline event body via `env.PAYLOAD_READER.readBoundedBodies(...)`. The McpAgent has NO R2 binding (the
+   * bucket never leaves the engine); org-scoped + size-capped. Deploy-injected by the overlay — NOT committed.
+   */
+  PAYLOAD_READER: PayloadReaderRpc;
   /**
    * The cookieless ingest apex the endpoints.create tool builds its one-time ingest URL from (prod:
    * https://wbhk.my). A plain wrangler `vars` value (NOT a secret, NOT deploy-injected — the overlay

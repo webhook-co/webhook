@@ -136,6 +136,13 @@ const APPS = {
         service: "webhook-engine",
         entrypoint: "IngestUrlRevealer",
       },
+      // PAYLOAD_READER (S5 Slice C2) — triggers.wait fetches the bounded inline event body via the engine's
+      // PayloadReader entrypoint (this worker holds no R2 binding); org-scoped + size-capped.
+      {
+        binding: "PAYLOAD_READER",
+        service: "webhook-engine",
+        entrypoint: "PayloadReader",
+      },
     ],
   },
   mcp: {
@@ -169,6 +176,13 @@ const APPS = {
         binding: "INGEST_URL_REVEALER",
         service: "webhook-engine",
         entrypoint: "IngestUrlRevealer",
+      },
+      // PAYLOAD_READER (S5 Slice C2) — triggers.wait fetches the bounded inline event body via the engine's
+      // PayloadReader entrypoint (this worker holds no R2 binding); org-scoped + size-capped.
+      {
+        binding: "PAYLOAD_READER",
+        service: "webhook-engine",
+        entrypoint: "PayloadReader",
       },
     ],
   },

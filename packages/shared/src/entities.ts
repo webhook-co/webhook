@@ -287,6 +287,15 @@ export type AgentTrigger = z.infer<typeof AgentTriggerSchema>;
 // `verificationState` here is only ever verified|authenticated|unattempted, never failed.
 export const AgentTriggerEventSchema = EventSummarySchema.extend({
   vouched: z.boolean(),
+  // The bounded inline payload body (S5 Slice C2), present when triggers.wait is called with includeBody
+  // (the default). `body` is null when the body couldn't be read (unavailable / not requested). `bodyEncoding`
+  // says how to read it: "utf8" = verbatim string; "base64" = binary (or a truncated multibyte tail). Fields
+  // are optional so a body-less consumer + older responses still validate.
+  body: z.string().nullable().optional(),
+  bodyEncoding: z.enum(["utf8", "base64"]).optional(),
+  /** True when the returned body is a prefix of a larger stored payload (clipped to the byte cap). */
+  bodyTruncated: z.boolean().optional(),
+  contentType: z.string().nullable().optional(),
 });
 export type AgentTriggerEvent = z.infer<typeof AgentTriggerEventSchema>;
 

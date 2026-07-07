@@ -10,6 +10,7 @@ import {
   EventSchema,
   EventSummarySchema,
   LagSchema,
+  MAX_INLINE_BODY_BYTES,
   ProviderSchema,
   ReplayDestinationSchema,
   SubscriptionSchema,
@@ -771,6 +772,11 @@ export const triggersWait = defineCapability({
     // back in (the tool tells callers to "pass nextCursor back"; a caught-up page returns null).
     cursor: cursor.nullable().optional(),
     limit: z.number().int().positive().max(200).optional(),
+    // Include the bounded inline payload body on each event (DEFAULT true). false = summary-only (skips the
+    // R2 fetch — use it when you only need to be woken and will fetch the body elsewhere). The body is read
+    // via the engine's org-scoped PayloadReader RPC and clamped to `maxBodyBytes` (≤ 64 KiB).
+    includeBody: z.boolean().optional(),
+    maxBodyBytes: z.number().int().positive().max(MAX_INLINE_BODY_BYTES).optional(),
   }),
   output: z.object({
     events: z.array(AgentTriggerEventSchema),

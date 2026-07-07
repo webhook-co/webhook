@@ -175,6 +175,8 @@ export class WebhookMcp extends McpAgent<McpEnv> {
         secretSealer: this.env.PROVIDER_SECRET_SEALER,
         // endpoints.revealIngestUrl unseals the always-shown ingest URL via the engine (KEK stays there).
         revealIngestUrl: this.env.INGEST_URL_REVEALER,
+        // triggers.wait fetches the bounded inline body via the engine (the McpAgent has no R2 binding).
+        payloadReader: this.env.PAYLOAD_READER,
       });
       return await runCapabilityTool(handlers, capabilityName, ctx, args, (event, fields) =>
         this.log(event, fields),

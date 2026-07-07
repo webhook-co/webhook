@@ -859,6 +859,11 @@ export interface components {
         TriggersWaitResponse: {
             caughtUp: boolean;
             events: {
+                body?: string | null;
+                /** @enum {string} */
+                bodyEncoding?: "utf8" | "base64";
+                bodyTruncated?: boolean;
+                contentType?: string | null;
                 dedupKey: string;
                 /** @enum {string} */
                 dedupStrategy: "sw_webhook_id" | "provider_event_id" | "content_hash" | "fields" | "unique";
@@ -1961,8 +1966,12 @@ export interface operations {
             query?: {
                 /** @description Opaque resume cursor from a prior call's nextCursor. */
                 cursor?: string | null;
+                /** @description Attach the bounded inline event body to each event (default true). */
+                includeBody?: boolean;
                 /** @description Max events to return (1–200). */
                 limit?: number;
+                /** @description Per-event inline body byte cap (server-capped at 65536). */
+                maxBodyBytes?: number;
             };
             header?: never;
             path: {

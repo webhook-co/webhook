@@ -41,6 +41,8 @@ import {
   parseFreeEventCap,
   parseSince,
   readSecretBinding,
+  type BoundedPayloadBody,
+  type ReadBoundedBodiesArgs,
   type RevealedIngestToken,
   type SealedRecord,
   SecretStore,
@@ -71,6 +73,7 @@ import {
   type VerifyIngestInput,
 } from "./ingest";
 import { makeKeyFetcher } from "./key-fetch";
+import { readBoundedBodiesCore, type PayloadEventRow } from "./payload-reader";
 import { makeVerifyIngest } from "./verify";
 
 // The per-session listen-tunnel Durable Object (Slice 11b, ADR-0014); wrangler binds it via
@@ -766,6 +769,54 @@ export class IngestUrlRevealer extends WorkerEntrypoint<Env> {
     } finally {
       await tenant.end({ timeout: 5 }).catch(() => {});
     }
+  }
+}
+
+/**
+ * BOUNDED payload-body read over a service binding (S5 Slice C2). triggers.wait RPCs
+ * `env.PAYLOAD_READER.readBoundedBodies({orgId, eventIds, maxBytesEach})` to attach an inline body to each
+ * agent-trigger event. The MCP worker has NO R2 binding by design (ADR-0015), so — exactly like
+ * IngestUrlRevealer keeps the KEK inside the engine — the R2 bucket never leaves the engine. IDENTIFIER-ONLY:
+ * the caller passes its authenticated orgId + event ids; the engine reads each event's stored payload_r2_key
+ * UNDER THE ORG'S RLS itself (webhook_app on HYPERDRIVE_TENANT — an independent tenant check, never a
+ * cross-org role), fences the key with readPayloadKey (the org/endpoint prefix — a poisoned column can't
+ * point at another tenant), then range-reads at most min(maxBytesEach, MAX_INLINE_BODY_BYTES) bytes from R2.
+ * A cross-org / unknown event id resolves to found:false (no leak, no oracle). Reads ONLY the R2 payload
+ * object — never a sealed column. WorkerEntrypoint methods aren't publicly fetchable; the binding is
+ * worker-to-worker, deploy-injected into mcp + api via the prod overlay.
+ */
+export class PayloadReader extends WorkerEntrypoint<Env> {
+  async readBoundedBodies(args: ReadBoundedBodiesArgs): Promise<BoundedPayloadBody[]> {
+    // The isolation + bounded-read logic (RLS lookup → key fence → capped range read → per-event failure
+    // isolation → 0-byte short-circuit) lives in the injected-deps core (apps/engine/src/payload-reader.ts),
+    // so it's provable with fakes. Here we just wire the real deps.
+    return readBoundedBodiesCore(
+      {
+        // Hold the tenant connection ONLY for the RLS id lookup, then release it (the rows are already
+        // materialized) — the core's R2 reads run AFTER, connection-free, so a slow/large fetch never pins a
+        // Postgres connection across N round-trips.
+        lookupEvents: async (orgId, eventIds) => {
+          const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+          try {
+            return await withTenant(
+              tenant,
+              orgId,
+              (tx) =>
+                tx<PayloadEventRow[]>`
+                select id, endpoint_id, payload_r2_key, payload_bytes, content_type
+                from events where id in ${tx([...eventIds])}`,
+            );
+          } finally {
+            await tenant.end({ timeout: 5 }).catch(() => {});
+          }
+        },
+        readObject: async (key, cap) => {
+          const obj = await this.env.R2_PAYLOADS.get(key, { range: { offset: 0, length: cap } });
+          return obj === null ? null : new Uint8Array(await obj.arrayBuffer());
+        },
+      },
+      args,
+    );
   }
 }
 

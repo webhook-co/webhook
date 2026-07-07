@@ -20,10 +20,13 @@ import {
 import {
   decodeCursor,
   encodeCursor,
+  MAX_INLINE_BODY_BYTES,
   newId,
   type AgentTriggerEvent,
+  type BoundedPayloadBody,
   type Cursor,
   type EventSummary,
+  type PayloadReaderRpc,
 } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
@@ -216,6 +219,10 @@ export interface TriggerHandlerDeps {
   readonly auditKey: CryptoKey;
   /** HMAC key for the opaque resume cursors used by triggers.wait (import of CURSOR_KEY). */
   readonly cursorKey: CryptoKey;
+  /** The engine's PayloadReader service binding — triggers.wait fetches the bounded inline body through it
+   *  (the MCP worker has no R2). OPTIONAL: absent → triggers.wait returns summary-only (body null), which is
+   *  also the graceful path in tests / on a surface without the binding. */
+  readonly payloadReader?: PayloadReaderRpc;
 }
 
 /**
@@ -302,7 +309,7 @@ export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): Capability
         parsed.error.issues[0]?.message ?? "invalid input",
       );
     }
-    const { triggerId, cursor: cursorStr, limit } = parsed.data;
+    const { triggerId, cursor: cursorStr, limit, includeBody, maxBodyBytes } = parsed.data;
     let cursor: Cursor | undefined;
     // `!= null` treats an omitted OR null cursor the same — start from the oldest retained event. (A
     // caught-up page returns nextCursor:null; the caller passes it straight back per the tool contract.)
@@ -313,7 +320,7 @@ export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): Capability
         throw new CapabilityFault("VALIDATION_ERROR", "invalid cursor");
       }
     }
-    return withTenant(deps.tenant, ctx.orgId, async (tx) => {
+    const result = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
       // Resolve the trigger under RLS — an unknown / revoked / cross-org id is NOT_FOUND (no existence
       // oracle). The endpoint comes from the RLS-resolved row, NEVER from client input; the composite FK
       // guarantees it is same-org, so the subsequent tail can only ever read this org's events.
@@ -336,6 +343,51 @@ export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): Capability
       // caughtUp = this page reached the watermark head (no lookahead row) — the caller can back off.
       return { events, nextCursor, caughtUp: page.nextCursor === null };
     });
+
+    // Attach the bounded inline body to each event via the engine's org-scoped PayloadReader RPC (a separate
+    // call — the MCP worker has no R2 binding). Runs AFTER the tenant tx closes. Skipped (body-less) when the
+    // caller passes includeBody:false, there are no events, or no binding is wired (tests / body-less surface).
+    const wantBody =
+      (includeBody ?? true) && deps.payloadReader !== undefined && result.events.length > 0;
+    if (!wantBody) return result;
+    // GRACEFUL DEGRADATION: the inline body is best-effort. The tail read already succeeded, so a transient
+    // engine/R2 failure (a thrown RPC, a rolling-deploy skew where PayloadReader is momentarily down) must
+    // NOT fail the whole poll — that would stall the agent's ack cursor. On any RPC error we fall back to
+    // summary-only (every body null); the agent still consumes its events and advances.
+    let bodyById = new Map<string, BoundedPayloadBody>();
+    try {
+      const bodies = await deps.payloadReader!.readBoundedBodies({
+        orgId: ctx.orgId,
+        eventIds: result.events.map((e) => e.id),
+        maxBytesEach: maxBodyBytes ?? MAX_INLINE_BODY_BYTES,
+      });
+      bodyById = new Map(bodies.map((b) => [b.eventId, b]));
+    } catch {
+      // fall through with an empty map → every event degrades to body:null below.
+    }
+    return {
+      ...result,
+      // ONE event shape across the whole page: a body-absent event still carries bodyEncoding + contentType
+      // (nulled), exactly like a found event, so a consumer never sees fields flicker in/out within a page.
+      events: result.events.map((e) => {
+        const b = bodyById.get(e.id);
+        return b?.found
+          ? {
+              ...e,
+              body: b.body,
+              bodyEncoding: b.encoding,
+              bodyTruncated: b.truncated,
+              contentType: b.contentType,
+            }
+          : {
+              ...e,
+              body: null,
+              bodyEncoding: "utf8" as const,
+              bodyTruncated: false,
+              contentType: null,
+            };
+      }),
+    };
   });
 
   return handlers;

@@ -191,6 +191,22 @@ describe("wbhk triggers wait", () => {
     expect(cap.urls[0]).toContain("limit=10");
   });
 
+  it("--no-body sends includeBody=false; --max-body-bytes rides as maxBodyBytes", async () => {
+    const cap = capturingFetch({ events: [], nextCursor: null, caughtUp: true });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["triggers", "wait", TRIGGER, "--no-body", "--max-body-bytes", "512"], t.ctx);
+    expect(cap.urls[0]).toContain("includeBody=false");
+    expect(cap.urls[0]).toContain("maxBodyBytes=512");
+  });
+
+  it("omits includeBody when --no-body is absent (server default applies)", async () => {
+    const cap = capturingFetch({ events: [], nextCursor: null, caughtUp: true });
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["triggers", "wait", TRIGGER], t.ctx);
+    expect(cap.urls[0]).not.toContain("includeBody");
+    expect(cap.urls[0]).not.toContain("maxBodyBytes");
+  });
+
   it("emits the result as JSON with --output json (no stderr)", async () => {
     const t = makeTestContext({
       store: loggedInStore(),
