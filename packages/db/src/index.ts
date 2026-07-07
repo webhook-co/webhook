@@ -46,3 +46,4 @@ export * from "./replay-destinations";
 export * from "./signing-keys";
 export * from "./subscriptions";
 export * from "./usage-rollup";
+export * from "./cap-producer";
