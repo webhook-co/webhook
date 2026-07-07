@@ -2,16 +2,17 @@ import { Banner } from "@webhook-co/ui";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Suspense } from "react";
 
 import { EndpointDedupManager } from "@/components/endpoint-dedup-manager";
 import { EndpointDetail } from "@/components/endpoint-detail";
+import { IngestUrlReveal, IngestUrlRevealSkeleton } from "@/components/ingest-url-reveal";
 import { ProviderSecretsManager } from "@/components/provider-secrets-manager";
 import {
   deleteEndpointAction,
   rotateEndpointAction,
   updateEndpointDedupAction,
 } from "@/server/endpoint-actions";
-import { revealEndpointIngestUrl } from "@/server/endpoint-reveal";
 import { loadEndpoint } from "@/server/endpoints";
 import {
   addProviderSecretAction,
@@ -32,14 +33,13 @@ export const dynamic = "force-dynamic";
 export default async function EndpointDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const session = await verifySession();
   const { id } = await params;
-  // The endpoint detail, its provider (inbound-verification) secrets, and its always-shown ingest URL are
-  // independent org+id reads — run them concurrently. Secrets are metadata only (the sealed bytes never
-  // leave the DB); the ingest URL is unsealed engine-side (identifier-only). A loader fault renders a
-  // Banner / the rotate-to-reveal hint but must not block the endpoint view.
-  const [result, secrets, ingestUrl] = await Promise.all([
+  // The endpoint detail + its provider (inbound-verification) secrets are independent org+id reads — run
+  // them concurrently. The always-shown ingest URL is NOT awaited here: its reveal is a cross-cloud engine
+  // RPC (a cold Hyperdrive read + a KMS unseal) that used to block the whole page render, so it now streams
+  // in on its own <Suspense> boundary (IngestUrlReveal) — the page paints immediately.
+  const [result, secrets] = await Promise.all([
     loadEndpoint(session.orgId, id),
     loadProviderSecrets(session.orgId, id),
-    revealEndpointIngestUrl({ orgId: session.orgId, endpointId: id }),
   ]);
 
   if (result.status === "not_found") notFound();
@@ -69,7 +69,11 @@ export default async function EndpointDetailPage({ params }: { params: Promise<{
         <>
           <EndpointDetail
             endpoint={result.endpoint}
-            ingestUrl={ingestUrl}
+            ingestUrlSlot={
+              <Suspense fallback={<IngestUrlRevealSkeleton />}>
+                <IngestUrlReveal orgId={session.orgId} endpointId={id} />
+              </Suspense>
+            }
             rotateEndpoint={rotateEndpointAction}
             deleteEndpoint={deleteEndpointAction}
           />
