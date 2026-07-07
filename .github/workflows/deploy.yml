@@ -61,6 +61,8 @@ jobs:
       HYPERDRIVE_ANCHOR_ID: ${{ vars.HYPERDRIVE_ANCHOR_ID }}
       HYPERDRIVE_RECONCILER_ID: ${{ vars.HYPERDRIVE_RECONCILER_ID }}
       HYPERDRIVE_METER_ID: ${{ vars.HYPERDRIVE_METER_ID }}
+      # Free-tier event cap (S4.3 soft-cap) — optional; unset = uncapped (no Free-pause enforcement).
+      FREE_EVENT_CAP: ${{ vars.FREE_EVENT_CAP }}
       HYPERDRIVE_AUTHN_ID: ${{ vars.HYPERDRIVE_AUTHN_ID }}
       HYPERDRIVE_INGEST_ID: ${{ vars.HYPERDRIVE_INGEST_ID }}
       KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}

@@ -106,6 +106,28 @@ describe("paused endpoint", () => {
     expect(principal?.paused).toBe(true);
   });
 
+  it("ORs the org-level metering soft-cap pause into a non-paused endpoint (S4.3)", async () => {
+    // A dedicated org so the org-level pause doesn't pollute orgA's other cold-lookup tests.
+    const org = await createOrg(app, { slug: randomUUID().slice(0, 8), name: "softcap" });
+    const ep = await createEndpoint(app, { orgId: org.id, name: "org-paused" }, hasher);
+    // The ENDPOINT is not paused, but the ORG is soft-capped (ingest_paused) — the cold lookup must OR
+    // the two so ingest 429s the whole org.
+    await withTenant(app, org.id, async (tx) => {
+      await tx`insert into ingest_paused (org_id, paused, reason, since) values (${org.id}, ${true}, ${"cap"}, now())`;
+    });
+    const cold = makeEndpointTokenColdLookup(authn);
+    const principal = await cold(hasher.hash(ep.plaintext));
+    expect(principal?.paused).toBe(true);
+  });
+
+  it("resolves paused=false when neither the endpoint nor the org is paused", async () => {
+    const org = await createOrg(app, { slug: randomUUID().slice(0, 8), name: "unpaused" });
+    const ep = await createEndpoint(app, { orgId: org.id, name: "clean" }, hasher);
+    const cold = makeEndpointTokenColdLookup(authn);
+    const principal = await cold(hasher.hash(ep.plaintext));
+    expect(principal?.paused).toBe(false);
+  });
+
   it("an unknown token resolves to null (no row -> no principal)", async () => {
     const cold = makeEndpointTokenColdLookup(authn);
     const principal = await cold(hasher.hash(`${INGEST_TOKEN_PREFIX}_does-not-exist`));

@@ -19,7 +19,19 @@ create policy ingest_paused_meter_select on ingest_paused
 grant select (org_id, event_cap, pause_policy) on org_limits to webhook_meter;
 grant select (org_id, paused) on ingest_paused to webhook_meter;
 
+-- The ingest COLD lookup (webhook_authn, org-discovery-by-token-hash) must OR the org-level pause into
+-- the endpoint's resolved `paused` so a soft-capped org's captures are refused at the edge. Grant it the
+-- same role-targeted, column-scoped read it already holds on endpoints (migration 0009/0021 pattern):
+-- SELECT (org_id, paused) on ingest_paused, cross-org (USING(true)) — it resolves the org from the token,
+-- so RLS tenant context isn't set on this path. Never the reason note; no write.
+create policy ingest_paused_authn_select on ingest_paused
+  for select to webhook_authn using (true);
+grant select (org_id, paused) on ingest_paused to webhook_authn;
+
 -- migrate:down
+
+revoke select (org_id, paused) on ingest_paused from webhook_authn;
+drop policy if exists ingest_paused_authn_select on ingest_paused;
 
 revoke select (org_id, paused) on ingest_paused from webhook_meter;
 revoke select (org_id, event_cap, pause_policy) on org_limits from webhook_meter;

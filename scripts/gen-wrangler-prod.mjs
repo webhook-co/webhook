@@ -59,6 +59,10 @@ const TOKEN = {
   // (read pending intents + owner email, flip pending→sent). Operator provisions the role + Hyperdrive + sets
   // the HYPERDRIVE_NOTIFIER_ID GH repo var; every workflow that runs this generator must provide it.
   "<HYPERDRIVE_NOTIFIER_ID>": reqEnv("HYPERDRIVE_NOTIFIER_ID"),
+  // The Free-tier event cap (S4.3 soft-cap) — a tier figure kept out of the repo. OPTIONAL (not reqEnv):
+  // unset → "" → the engine cron treats it as uncapped (fail-safe, no Free-pause enforcement). Set the
+  // FREE_EVENT_CAP GH repo var + this workflow env to ENABLE Free enforcement.
+  "<FREE_EVENT_CAP>": process.env.FREE_EVENT_CAP ?? "",
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
 };
@@ -89,6 +93,7 @@ const APPS = {
       "<HYPERDRIVE_INGEST_ID>",
       "<KV_CONFIG_ID>",
       "<KV_AUTHZ_ID>",
+      "<FREE_EVENT_CAP>",
       "webhook-payloads-dev",
       "webhook-audit-anchors-dev",
     ],

@@ -222,6 +222,11 @@ export function credentialHashEquals(a: Buffer, b: Buffer): boolean {
 }
 
 /** A credential's display key for a cache (hex of the hash — never the plaintext). */
-export function credentialCacheKey(keyHash: Buffer): string {
-  return keyHash.toString("hex");
+export function credentialCacheKey(keyHash: Uint8Array): string {
+  // Manual hex (not Buffer.toString("hex")) so a Workers caller can pass a plain Uint8Array off the wire —
+  // Uint8Array.toString ignores the "hex" arg. Byte-identical to the old Buffer path (a Buffer IS a
+  // Uint8Array), so existing cache keys are unchanged.
+  let hex = "";
+  for (const byte of keyHash) hex += byte.toString(16).padStart(2, "0");
+  return hex;
 }

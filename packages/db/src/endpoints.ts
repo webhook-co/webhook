@@ -503,10 +503,17 @@ export function makeEndpointTokenColdLookup(authn: Sql) {
     // eviction would be undone by the very next cold miss re-caching the still-present row; with it,
     // the system also SELF-HEALS within the KV TTL if an eviction is ever missed. (webhook_authn was
     // granted select(deleted_at) in migration 0021 so this column read is permitted.)
+    // paused = the per-endpoint pause OR the org-level metering soft-cap pause (ingest_paused, S4.3).
+    // The LEFT JOIN is a single-row PK lookup by org_id, only on a cold MISS; the ORed flag is then
+    // cached on the principal, so the KV hot path reads one boolean (never this query). The cap
+    // producer evicts the org's token-hash cache entries on a pause/resume transition, so the next
+    // cold miss re-reads the new state (self-heals within the KV TTL if an eviction is ever missed).
     const rows = await authn<EndpointResolveRow[]>`
-      select id, org_id, ingest_token_hash, paused, dedup_config
-      from endpoints
-      where ingest_token_hash = ${tokenHash} and deleted_at is null`;
+      select e.id, e.org_id, e.ingest_token_hash,
+             (e.paused or coalesce(ip.paused, false)) as paused, e.dedup_config
+      from endpoints e
+      left join ingest_paused ip on ip.org_id = e.org_id
+      where e.ingest_token_hash = ${tokenHash} and e.deleted_at is null`;
     const row = rows[0];
     if (!row) return null;
     if (!credentialHashEquals(Buffer.from(row.ingest_token_hash), tokenHash)) return null;

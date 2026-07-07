@@ -76,10 +76,14 @@ function fmtCount(n: number): string {
  */
 export function renderUsageSummary(u: UsageSummary, color: boolean): string {
   const period = `${fmtDate(u.periodStart)} — ${fmtDate(u.periodEnd)}`;
+  // null cap = uncapped; a cap of 0 is a real cap (fully-capped org), NOT uncapped — only show the % when
+  // the cap is > 0 (avoid a divide-by-zero).
+  const pct =
+    u.eventCap !== null && u.eventCap > 0 ? Math.round((u.events / u.eventCap) * 100) : null;
   const used =
-    u.eventCap && u.eventCap > 0
-      ? `${fmtCount(u.events)} of ${fmtCount(u.eventCap)} events (${Math.round((u.events / u.eventCap) * 100)}%)`
-      : `${fmtCount(u.events)} events`;
+    u.eventCap === null
+      ? `${fmtCount(u.events)} events`
+      : `${fmtCount(u.events)} of ${fmtCount(u.eventCap)} events${pct !== null ? ` (${pct}%)` : ""}`;
   const cap =
     u.eventCap === null
       ? "uncapped"
