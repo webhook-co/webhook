@@ -22,20 +22,49 @@ import { readSecretBinding } from "@webhook-co/shared";
 
 import {
   renderDestinationDisabledEmail,
-  type DestinationDisabledEmail,
+  type DestinationDisabledContext,
 } from "./destination-disabled-email";
 import { readNotifyEnv, type NotifyEnv } from "./env";
 import { NOTIFICATIONS_FROM } from "./urls";
+import { renderUsageThresholdEmail, type UsageThresholdContext } from "./usage-threshold-email";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
+
+/** The common shape every notification renderer produces (subject + HTML + text). The two families
+ *  (destination_disabled, usage_threshold) both emit this, so the sender is kind-agnostic. */
+export interface RenderedEmail {
+  readonly subject: string;
+  readonly html: string;
+  readonly text: string;
+}
+
+/**
+ * Render the email for a pending intent by its `kind`, or null if it isn't sendable (an unknown kind, or a
+ * usage_threshold with no context snapshot). `p.context` is the discriminated jsonb union; each case casts to
+ * its family's shape (structurally identical to the db type). destination_disabled degrades gracefully on a
+ * null context; usage_threshold REQUIRES its snapshot (no usable email without the numbers).
+ */
+function renderIntent(p: PendingNotification): RenderedEmail | null {
+  if (p.kind === "destination_disabled") {
+    return renderDestinationDisabledEmail(
+      (p.context as DestinationDisabledContext | null) ?? null,
+      p.createdAt,
+    );
+  }
+  if (p.kind === "usage_threshold") {
+    if (!p.context) return null;
+    return renderUsageThresholdEmail(p.context as UsageThresholdContext);
+  }
+  return null;
+}
 
 export interface NotificationDrainDeps {
   /** Read pending intents (as webhook_notifier, cross-org). */
   listPending: () => Promise<PendingNotification[]>;
   /** Claim one intent (flip pending→sent, single-flight). Returns whether THIS call won the claim. */
   claim: (intentId: string) => Promise<boolean>;
-  /** Send the rendered email to ONE recipient (per-owner — never a shared To header). */
-  send: (to: string, email: DestinationDisabledEmail) => Promise<void>;
+  /** Send the rendered email to ONE recipient (per-owner — never a shared To header). Kind-agnostic. */
+  send: (to: string, email: RenderedEmail) => Promise<void>;
   /** Optional structured logger — only intent ids + counts (no PII). */
   log?: (message: string, fields?: Record<string, unknown>) => void;
 }
@@ -63,10 +92,11 @@ export async function drainNotifications(
     if (!(await deps.claim(p.intentId))) continue;
     claimed++;
 
-    // Sendable = a destination_disabled intent with at least one recipient. A context-less intent still emails
-    // (renderDestinationDisabledEmail degrades gracefully); only an unknown kind or an ownerless org is claimed
-    // to clear it, then skipped.
-    if (p.kind !== "destination_disabled" || p.ownerEmails.length === 0) {
+    // Sendable = a known-kind intent we can render (renderIntent) AND at least one recipient. Anything else
+    // — an unknown kind, an unrenderable usage_threshold (no context), or an ownerless org — is claimed to
+    // clear it, then skipped (never left pending to retry-loop forever).
+    const email = renderIntent(p);
+    if (email === null || p.ownerEmails.length === 0) {
       skipped++;
       deps.log?.("notify.claimed_no_send", {
         intentId: p.intentId,
@@ -75,8 +105,6 @@ export async function drainNotifications(
       });
       continue;
     }
-
-    const email = renderDestinationDisabledEmail(p.context, p.createdAt);
     // ONE email per owner — never place multiple owners in a shared To header (that would leak each owner's
     // address to the others). Already claimed → a per-owner send failure is logged, not retried (at-most-once).
     for (const owner of p.ownerEmails) {
@@ -99,7 +127,7 @@ export async function drainNotifications(
 async function sendViaResend(
   apiKey: string,
   to: string,
-  email: DestinationDisabledEmail,
+  email: RenderedEmail,
   fetchImpl: typeof fetch = fetch,
 ): Promise<void> {
   const res = await fetchImpl(RESEND_ENDPOINT, {

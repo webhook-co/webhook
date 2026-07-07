@@ -97,6 +97,8 @@ beforeAll(async () => {
 // (as owner, bypassing RLS) so every test starts clean and its counters are exact. DELETE (not TRUNCATE
 // CASCADE) — cascade would hit audit_log's append-only guard; child→parent order respects the FKs.
 beforeEach(async () => {
+  await admin`delete from notification_intents`;
+  await admin`delete from usage_alerts`;
   await admin`delete from events`;
   await admin`delete from usage`;
   await admin`delete from ingest_paused`;
@@ -104,6 +106,16 @@ beforeEach(async () => {
   await admin`delete from endpoints`;
   await admin`delete from orgs`;
 });
+
+/** Count the usage_threshold notification intents queued for an org (as owner, bypassing RLS). */
+async function usageAlertIntents(
+  orgId: string,
+): Promise<Array<{ threshold: number; usage: number }>> {
+  const rows = await admin<{ context: { threshold: number; usage: number } }[]>`
+    select context from notification_intents
+    where org_id = ${orgId} and kind = 'usage_threshold' order by (context->>'threshold')::int`;
+  return rows.map((r) => ({ threshold: r.context.threshold, usage: r.context.usage }));
+}
 
 afterAll(async () => {
   await app?.end();
@@ -274,6 +286,62 @@ describe("runCapProducer", () => {
     expect(result.pausedTransitions).toBe(1);
     expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" }); // durable write survived
     expect(logs).toContain("metering.cap.evict_failed");
+  });
+
+  describe("usage-threshold alerts (S4.3b warn-before-pause)", () => {
+    it("emits an 80% alert for a capped org approaching its cap — with NO pause transition", async () => {
+      // 80 of DEFAULT_CAP (100) = 80% → crosses 80, NOT 100. It is NOT paused (80 < 100) — this pins that
+      // the alert fires even when want === current === false (the early-return-before-emit bug this guards).
+      const orgId = await seedOrg("alert-approaching");
+      await seedUsage(orgId, 80);
+      const result = await run();
+      expect(result.thresholdAlerts).toBe(1);
+      expect(result.pausedTransitions).toBe(0);
+      expect(await pausedState(orgId)).toBeNull();
+      expect(await usageAlertIntents(orgId)).toEqual([{ threshold: 80, usage: 80 }]);
+    });
+
+    it("emits BOTH 80% and 100% when an org lands at/over its cap in one pass (and pauses)", async () => {
+      const orgId = await seedOrg("alert-at-cap");
+      await seedUsage(orgId, 100); // 100% of DEFAULT_CAP
+      const result = await run();
+      expect(result.thresholdAlerts).toBe(2);
+      expect(result.pausedTransitions).toBe(1); // 100% is also the pause point
+      expect(await usageAlertIntents(orgId)).toEqual([
+        { threshold: 80, usage: 100 },
+        { threshold: 100, usage: 100 },
+      ]);
+    });
+
+    it("is idempotent per period — a second pass emits no duplicate alert", async () => {
+      const orgId = await seedOrg("alert-dedup");
+      await seedUsage(orgId, 90);
+      const first = await run();
+      expect(first.thresholdAlerts).toBe(1);
+      const second = await run();
+      expect(second.thresholdAlerts).toBe(0); // usage_alerts dedup — already alerted this period
+      expect(await usageAlertIntents(orgId)).toHaveLength(1); // still just the one intent
+    });
+
+    it("emits threshold alerts for an 'allow' org too (over cap but never paused)", async () => {
+      const orgId = await seedOrg("alert-allow");
+      await seedUsage(orgId, 100);
+      await withTenant(app, orgId, async (tx) => {
+        await tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${100}, ${"allow"})`;
+      });
+      const result = await run();
+      expect(result.thresholdAlerts).toBe(2);
+      expect(result.pausedTransitions).toBe(0); // allow never pauses
+      expect(await pausedState(orgId)).toBeNull();
+    });
+
+    it("emits NO threshold alert for an uncapped org (can't be a % of uncapped)", async () => {
+      const orgId = await seedOrg("alert-uncapped");
+      await seedUsage(orgId, 10_000_000);
+      const result = await run({ defaultEventCap: null }); // no cap → no percentage → no alert
+      expect(result.thresholdAlerts).toBe(0);
+      expect(await usageAlertIntents(orgId)).toEqual([]);
+    });
   });
 });
 

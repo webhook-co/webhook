@@ -36,14 +36,32 @@ export interface NotificationContext {
   readonly lastStatusCode: number | null;
 }
 
+/**
+ * The snapshot on a `usage_threshold` intent (S4.3b): the metering producer writes it when an org's period
+ * usage crosses an alert threshold, so the notifier can render a warn-before-pause email WITHOUT recomputing
+ * usage. NO prices — the org's own numbers. `threshold` is the percent-of-cap point (80 | 100); `pausePolicy`
+ * tells the renderer whether hitting the cap PAUSES capture ('pause') or continues into overage ('allow');
+ * `periodEndIso` is when the cap resets (the next period start).
+ */
+export interface UsageThresholdContext {
+  readonly usage: number;
+  readonly eventCap: number;
+  readonly threshold: number;
+  readonly pausePolicy: "pause" | "allow";
+  readonly periodEndIso: string;
+}
+
+/** The jsonb `context` on an intent — a union across the notification families, discriminated by `kind`. */
+export type NotificationIntentContext = NotificationContext | UsageThresholdContext;
+
 export interface NotificationIntentInput {
   readonly orgId: string;
-  /** The notification kind (v1: `destination_disabled`). */
+  /** The notification kind (`destination_disabled` | `usage_threshold`). */
   readonly kind: string;
-  /** The destination the notification is about (null for future kinds without one). */
+  /** The destination the notification is about (null for kinds without one, e.g. usage_threshold). */
   readonly destinationId: string | null;
   /** Optional context snapshot for the email (migration 0035). Null for context-less kinds. */
-  readonly context?: NotificationContext | null;
+  readonly context?: NotificationIntentContext | null;
 }
 
 /**

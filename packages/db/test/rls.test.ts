@@ -29,6 +29,7 @@ const TENANT_TABLES = [
   { table: "usage", col: "org_id" },
   { table: "org_limits", col: "org_id" },
   { table: "ingest_paused", col: "org_id" },
+  { table: "usage_alerts", col: "org_id" },
   { table: "audit_log", col: "org_id" },
   { table: "api_keys", col: "org_id" },
   { table: "auth_grant", col: "org_id" },
@@ -188,11 +189,13 @@ describe("cross-org isolation (every tenant table)", () => {
     });
   }
 
-  // audit_log + auth_audit_event are append-only (no UPDATE/DELETE grant or policy) — their
-  // write denial is covered by the dedicated append-only describes, so exclude them from the
-  // generic mutate-other-org checks (which assert 0-rows-affected, not a privilege error).
+  // audit_log + auth_audit_event are append-only (no UPDATE/DELETE grant or policy); usage_alerts is the
+  // metering dedup ledger — the producer only INSERTs (ON CONFLICT DO NOTHING) + SELECTs, so webhook_app
+  // holds NO UPDATE/DELETE on it (least privilege). All three throw a privilege error (not 0-rows) on an
+  // UPDATE/DELETE, so exclude them from the generic mutate-other-org checks; their write denial is asserted
+  // separately (the append-only describes + the usage_alerts privilege test below).
   for (const { table, col } of TENANT_TABLES.filter(
-    (t) => t.table !== "audit_log" && t.table !== "auth_audit_event",
+    (t) => t.table !== "audit_log" && t.table !== "auth_audit_event" && t.table !== "usage_alerts",
   )) {
     it(`org A context cannot update org B rows in ${table}`, async () => {
       const affected = await withTenant(app, orgA.orgId, async (tx) => {
@@ -217,6 +220,19 @@ describe("cross-org isolation (every tenant table)", () => {
       return tx<{ id: string }[]>`select id from orgs`;
     });
     expect(rows.map((r) => r.id)).toEqual([orgA.orgId]);
+  });
+
+  it("usage_alerts is append-only for webhook_app (SELECT + INSERT only — no UPDATE/DELETE grant)", async () => {
+    // The metering dedup ledger: the producer inserts (ON CONFLICT DO NOTHING) + selects, never mutates.
+    // Least privilege = webhook_app holds no UPDATE/DELETE, so either attempt is a hard privilege error.
+    for (const priv of ["UPDATE", "DELETE"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.app}, 'usage_alerts', ${priv}) as ok`;
+      expect(p.ok).toBe(false);
+    }
+    const [ins] = await owner<{ ok: boolean }[]>`
+      select has_table_privilege(${DB_ROLES.app}, 'usage_alerts', 'INSERT') as ok`;
+    expect(ins.ok).toBe(true);
   });
 });
 
@@ -577,9 +593,10 @@ describe("catalog-driven RLS coverage", () => {
       select tablename, cmd from pg_policies where schemaname = 'public'`;
     for (const { table } of TENANT_TABLES) {
       const cmds = new Set(rows.filter((r) => r.tablename === table).map((r) => r.cmd));
-      // audit_log + auth_audit_event are deliberately INSERT+SELECT only (no UPDATE/DELETE policy).
+      // audit_log + auth_audit_event + usage_alerts are deliberately INSERT+SELECT only (no UPDATE/DELETE
+      // policy) — the first two are append-only WORM ledgers, usage_alerts is the metering dedup ledger.
       const expected =
-        table === "audit_log" || table === "auth_audit_event"
+        table === "audit_log" || table === "auth_audit_event" || table === "usage_alerts"
           ? ["INSERT", "SELECT"]
           : ["DELETE", "INSERT", "SELECT", "UPDATE"];
       expect([...cmds].sort()).toEqual(expected);
