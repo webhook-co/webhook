@@ -470,3 +470,155 @@ describe("triggers.wait handler (consumption / delivery guarantee)", () => {
     expect(r.events.map((x) => x.id)).toEqual([e1]); // null → start from oldest, NOT a VALIDATION_ERROR
   });
 });
+
+describe("triggers.wait inline body (C2 — PayloadReader attachment)", () => {
+  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
+  // A fake PayloadReader: returns a canned body for known event ids, found:false otherwise.
+  type Body = {
+    body: string;
+    encoding: "utf8" | "base64";
+    truncated: boolean;
+    contentType: string | null;
+  };
+  function fakeReader(bodies: Record<string, Body>) {
+    return {
+      readBoundedBodies: async ({ eventIds }: { eventIds: readonly string[] }) =>
+        eventIds.map((eventId) => {
+          const b = bodies[eventId];
+          return b
+            ? { eventId, found: true, byteLength: b.body.length, ...b }
+            : {
+                eventId,
+                found: false,
+                body: null,
+                encoding: "utf8" as const,
+                byteLength: 0,
+                truncated: false,
+                contentType: null,
+              };
+        }),
+    };
+  }
+  const waitWith = (
+    reader: ReturnType<typeof fakeReader> | undefined,
+    c: AuthContext,
+    input: unknown,
+  ) =>
+    createAgentTriggerHandlers({ tenant: app, auditKey, cursorKey, payloadReader: reader }).get(
+      "triggers.wait",
+    )!(c, input);
+  type WaitResult = {
+    events: {
+      id: string;
+      body?: string | null;
+      bodyEncoding?: string;
+      bodyTruncated?: boolean;
+      contentType?: string | null;
+    }[];
+  };
+
+  it("attaches the bounded body (default includeBody) via the PayloadReader RPC", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-body-1" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const t = await createAgentTrigger(app, { orgId: orgA, endpointId: ep });
+    const reader = fakeReader({
+      [e1]: {
+        body: '{"ok":true}',
+        encoding: "utf8",
+        truncated: false,
+        contentType: "application/json",
+      },
+    });
+    const r = (await waitWith(reader, ctx(["events:read"]), { triggerId: t.id })) as WaitResult;
+    const ev = r.events.find((e) => e.id === e1)!;
+    expect(ev.body).toBe('{"ok":true}');
+    expect(ev.bodyEncoding).toBe("utf8");
+    expect(ev.bodyTruncated).toBe(false);
+    expect(ev.contentType).toBe("application/json");
+  });
+
+  it("includeBody:false skips the RPC entirely (body null, reader NOT called)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-body-2" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const t = await createAgentTrigger(app, { orgId: orgA, endpointId: ep });
+    let called = false;
+    const reader = {
+      readBoundedBodies: async (a: { eventIds: readonly string[] }) => {
+        called = true;
+        return a.eventIds.map((eventId) => ({
+          eventId,
+          found: true,
+          body: "x",
+          encoding: "utf8" as const,
+          byteLength: 1,
+          truncated: false,
+          contentType: null,
+        }));
+      },
+    };
+    const r = (await waitWith(reader, ctx(["events:read"]), {
+      triggerId: t.id,
+      includeBody: false,
+    })) as WaitResult;
+    expect(called).toBe(false);
+    expect(r.events.find((e) => e.id === e1)!.body ?? null).toBeNull();
+  });
+
+  it("returns body:null when no PayloadReader is wired (graceful degradation)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-body-3" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const t = await createAgentTrigger(app, { orgId: orgA, endpointId: ep });
+    const r = (await waitWith(undefined, ctx(["events:read"]), { triggerId: t.id })) as WaitResult;
+    expect(r.events.find((e) => e.id === e1)!.body ?? null).toBeNull();
+  });
+
+  it("sets body:null for an event the reader reports found:false (no oracle)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-body-4" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const t = await createAgentTrigger(app, { orgId: orgA, endpointId: ep });
+    const r = (await waitWith(fakeReader({}), ctx(["events:read"]), {
+      triggerId: t.id,
+    })) as WaitResult;
+    const ev = r.events.find((e) => e.id === e1)!;
+    expect(ev.body ?? null).toBeNull();
+    expect(ev.bodyTruncated).toBe(false);
+  });
+
+  it("degrades to summary-only (body null) when the PayloadReader RPC THROWS — never fails the poll", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-body-5" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const t = await createAgentTrigger(app, { orgId: orgA, endpointId: ep });
+    // A transient engine/R2 hiccup makes the RPC throw. The tail read already succeeded, so the poll MUST
+    // still return its events (body absent) — else the agent can't advance its ack cursor and the loop stalls.
+    const throwingReader = {
+      readBoundedBodies: async () => {
+        throw new Error("transient engine/R2 failure");
+      },
+    };
+    const r = (await waitWith(throwingReader, ctx(["events:read"]), {
+      triggerId: t.id,
+    })) as WaitResult;
+    const ev = r.events.find((e) => e.id === e1)!;
+    expect(ev.body ?? null).toBeNull();
+    expect(ev.bodyEncoding).toBe("utf8");
+    expect(ev.contentType ?? null).toBeNull();
+    expect(ev.bodyTruncated).toBe(false);
+  });
+
+  it("a body-absent event carries the SAME keys as a found event (no field flicker within a page)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-body-6" }, hasher)).id;
+    const e1 = await seedEvent(orgA, ep, { at: at(1000) });
+    const t = await createAgentTrigger(app, { orgId: orgA, endpointId: ep });
+    // found:false → the event still gets body/bodyEncoding/bodyTruncated/contentType keys (nulled), exactly
+    // like a found event, so a consumer never sees a key present on some page events and absent on others.
+    const r = (await waitWith(fakeReader({}), ctx(["events:read"]), {
+      triggerId: t.id,
+    })) as WaitResult;
+    const ev = r.events.find((e) => e.id === e1)!;
+    expect(Object.keys(ev)).toEqual(
+      expect.arrayContaining(["body", "bodyEncoding", "bodyTruncated", "contentType"]),
+    );
+    expect(ev.bodyEncoding).toBe("utf8");
+    expect(ev.contentType).toBeNull();
+  });
+});

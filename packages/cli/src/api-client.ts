@@ -318,7 +318,7 @@ export interface ApiClient {
   /** Consume the next events for a trigger subscription (`GET /v1/triggers/:id/wait`). */
   triggersWait(
     triggerId: string,
-    opts?: { cursor?: string; limit?: number },
+    opts?: { cursor?: string; limit?: number; includeBody?: boolean; maxBodyBytes?: number },
   ): Promise<{
     events: readonly AgentTriggerEvent[];
     nextCursor: string | null;
@@ -696,6 +696,8 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
       const q = new URLSearchParams();
       if (opts?.cursor !== undefined) q.set("cursor", opts.cursor);
       if (opts?.limit !== undefined) q.set("limit", String(opts.limit));
+      if (opts?.includeBody !== undefined) q.set("includeBody", String(opts.includeBody));
+      if (opts?.maxBodyBytes !== undefined) q.set("maxBodyBytes", String(opts.maxBodyBytes));
       const qs = q.toString();
       const path = `/v1/triggers/${encodeURIComponent(triggerId)}/wait${qs ? `?${qs}` : ""}`;
       return parseOrThrow(triggersWaitCap.output, await getJson(path), "trigger events");

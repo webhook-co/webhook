@@ -1,3 +1,5 @@
+import { MAX_INLINE_BODY_BYTES } from "@webhook-co/shared";
+
 import {
   createApiClient,
   ENV_API_URL_VAR,
@@ -50,6 +52,15 @@ export function parseLimit(value: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1 || n > 200) {
     throw new Error("limit must be an integer between 1 and 200");
+  }
+  return n;
+}
+
+/** Validate `--max-body-bytes`: a positive integer up to the server's inline-body cap (a throw → usage error). */
+export function parseMaxBodyBytes(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1 || n > MAX_INLINE_BODY_BYTES) {
+    throw new Error(`max-body-bytes must be an integer between 1 and ${MAX_INLINE_BODY_BYTES}`);
   }
   return n;
 }

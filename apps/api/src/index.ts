@@ -21,6 +21,7 @@ import {
   b64ToBytes,
   type DeliveryDispatcherRpc,
   type IngestUrlRevealerRpc,
+  type PayloadReaderRpc,
   importAuditKey,
   importCursorKey,
   readSecretBinding,
@@ -96,6 +97,8 @@ export interface Env {
    * Deploy-injected by the overlay generator — NOT in the committed wrangler.jsonc, like the sealer.
    */
   INGEST_URL_REVEALER: IngestUrlRevealerRpc;
+  /** Engine PayloadReader RPC (S5 C2) — triggers.wait fetches the bounded inline body; org-scoped, size-capped. */
+  PAYLOAD_READER: PayloadReaderRpc;
   // Secrets are Cloudflare Secrets Store bindings (read via `await readSecretBinding(env.X)`); the trio
   // below is ONE account secret each, shared byte-identically with engine + mcp. Never DB columns.
   /** Base64 credential pepper: keys the api-key HMAC (same pepper across surfaces). */
@@ -178,6 +181,7 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
       // endpoints.addProviderSecret seals via the engine (api never holds the KEK — B0/D1).
       secretSealer: env.PROVIDER_SECRET_SEALER,
       revealIngestUrl: env.INGEST_URL_REVEALER,
+      payloadReader: env.PAYLOAD_READER,
     }),
     payloads: env.R2_PAYLOADS,
     // events.replay routes by target kind: a `localhost-tunnel` target RECORDS a forwarded attempt (the CLI

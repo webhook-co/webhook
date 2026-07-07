@@ -10,7 +10,7 @@ import {
   renderTriggersTable,
   renderTriggerWait,
 } from "../output/render.js";
-import { authedClient, parseLimit } from "./shared.js";
+import { authedClient, parseLimit, parseMaxBodyBytes } from "./shared.js";
 
 // `wbhk triggers add|list|revoke|wait` — webhook→agent trigger subscriptions (S5). A trigger registers
 // this principal to be woken when an endpoint captures a new event; `wait` consumes those events (a
@@ -90,6 +90,8 @@ export const triggersListCommand = buildCommand<ListFlags, [], AppContext>({
 interface WaitFlags extends GlobalFlags {
   cursor?: string;
   limit?: number;
+  noBody: boolean;
+  maxBodyBytes?: number;
 }
 
 export const triggersWaitCommand = buildCommand<WaitFlags, [string], AppContext>({
@@ -100,6 +102,9 @@ export const triggersWaitCommand = buildCommand<WaitFlags, [string], AppContext>
     const result = await client.triggersWait(triggerId, {
       cursor: flags.cursor,
       limit: flags.limit,
+      // --no-body opts out of the inline body fetch (summary-only). Omitted → server default (body included).
+      includeBody: flags.noBody === true ? false : undefined,
+      maxBodyBytes: flags.maxBodyBytes,
     });
     this.process.stdout.write(
       format === "json" ? `${renderJson(result)}\n` : `${renderTriggerWait(result, color)}\n`,
@@ -122,6 +127,17 @@ export const triggersWaitCommand = buildCommand<WaitFlags, [string], AppContext>
         kind: "parsed",
         parse: parseLimit,
         brief: "max events to return (1–200)",
+        optional: true,
+      },
+      noBody: {
+        kind: "boolean",
+        brief: "skip the inline event body (summary-only, cheaper poll)",
+        default: false,
+      },
+      maxBodyBytes: {
+        kind: "parsed",
+        parse: parseMaxBodyBytes,
+        brief: "per-event inline body byte cap (1–65536)",
         optional: true,
       },
     },

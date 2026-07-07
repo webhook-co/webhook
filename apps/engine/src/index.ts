@@ -41,6 +41,11 @@ import {
   parseFreeEventCap,
   parseSince,
   readSecretBinding,
+  boundedBodyFromBytes,
+  MAX_INLINE_BODY_BYTES,
+  readPayloadKey,
+  type BoundedPayloadBody,
+  type ReadBoundedBodiesArgs,
   type RevealedIngestToken,
   type SealedRecord,
   SecretStore,
@@ -766,6 +771,101 @@ export class IngestUrlRevealer extends WorkerEntrypoint<Env> {
     } finally {
       await tenant.end({ timeout: 5 }).catch(() => {});
     }
+  }
+}
+
+/**
+ * BOUNDED payload-body read over a service binding (S5 Slice C2). triggers.wait RPCs
+ * `env.PAYLOAD_READER.readBoundedBodies({orgId, eventIds, maxBytesEach})` to attach an inline body to each
+ * agent-trigger event. The MCP worker has NO R2 binding by design (ADR-0015), so — exactly like
+ * IngestUrlRevealer keeps the KEK inside the engine — the R2 bucket never leaves the engine. IDENTIFIER-ONLY:
+ * the caller passes its authenticated orgId + event ids; the engine reads each event's stored payload_r2_key
+ * UNDER THE ORG'S RLS itself (webhook_app on HYPERDRIVE_TENANT — an independent tenant check, never a
+ * cross-org role), fences the key with readPayloadKey (the org/endpoint prefix — a poisoned column can't
+ * point at another tenant), then range-reads at most min(maxBytesEach, MAX_INLINE_BODY_BYTES) bytes from R2.
+ * A cross-org / unknown event id resolves to found:false (no leak, no oracle). Reads ONLY the R2 payload
+ * object — never a sealed column. WorkerEntrypoint methods aren't publicly fetchable; the binding is
+ * worker-to-worker, deploy-injected into mcp + api via the prod overlay.
+ */
+export class PayloadReader extends WorkerEntrypoint<Env> {
+  async readBoundedBodies(args: ReadBoundedBodiesArgs): Promise<BoundedPayloadBody[]> {
+    const { orgId, eventIds } = args;
+    if (eventIds.length === 0) return [];
+    const cap = Math.max(1, Math.min(args.maxBytesEach, MAX_INLINE_BODY_BYTES));
+    const notFound = (eventId: string): BoundedPayloadBody => ({
+      eventId,
+      found: false,
+      body: null,
+      encoding: "utf8",
+      byteLength: 0,
+      truncated: false,
+      contentType: null,
+    });
+    // Hold the tenant connection ONLY for the RLS id lookup, then release it (the rows are already
+    // materialized). The R2 body reads run AFTER — parallel and connection-free — so a slow/large fetch
+    // never pins a Postgres connection across N round-trips.
+    const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+    let rows: {
+      id: string;
+      endpoint_id: string;
+      payload_r2_key: string;
+      // `bigint` column: postgres.js returns it as a JS string, so type it honestly + Number() it below.
+      payload_bytes: string | number;
+      content_type: string | null;
+    }[];
+    try {
+      // RLS-scoped read: only this org's events resolve; a cross-org / unknown id is simply absent.
+      rows = await withTenant(
+        tenant,
+        orgId,
+        (tx) =>
+          tx<typeof rows>`
+          select id, endpoint_id, payload_r2_key, payload_bytes, content_type
+          from events where id in ${tx([...eventIds])}`,
+      );
+    } finally {
+      await tenant.end({ timeout: 5 }).catch(() => {});
+    }
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    // Fetch each event's bounded body CONCURRENTLY (one round-trip wide, not N deep). A per-event failure
+    // (missing/fenced key, R2 hiccup, unsatisfiable range) degrades THAT ONE event to found:false — it never
+    // rejects the whole page (the caller further degrades a total RPC failure to summary-only).
+    return Promise.all(
+      eventIds.map(async (eventId): Promise<BoundedPayloadBody> => {
+        const row = byId.get(eventId);
+        if (row === undefined) return notFound(eventId);
+        const key = readPayloadKey(orgId, row.endpoint_id, row.payload_r2_key);
+        if (key === null) return notFound(eventId);
+        const storedBytes = Number(row.payload_bytes);
+        // A 0-byte captured body is stored as an empty R2 object; an offset-0 range read on it is an
+        // unsatisfiable range (R2 can 416/throw). Short-circuit to an explicit empty body — honest
+        // (found:true, the event exists and its body is empty) and never issues the doomed range GET.
+        if (storedBytes === 0) {
+          return {
+            eventId,
+            found: true,
+            body: "",
+            encoding: "utf8",
+            byteLength: 0,
+            truncated: false,
+            contentType: row.content_type,
+          };
+        }
+        try {
+          const obj = await this.env.R2_PAYLOADS.get(key, { range: { offset: 0, length: cap } });
+          if (obj === null) return notFound(eventId);
+          const bytes = new Uint8Array(await obj.arrayBuffer());
+          return {
+            eventId,
+            found: true,
+            contentType: row.content_type,
+            ...boundedBodyFromBytes(bytes, storedBytes),
+          };
+        } catch {
+          return notFound(eventId);
+        }
+      }),
+    );
   }
 }
 

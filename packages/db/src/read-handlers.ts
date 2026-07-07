@@ -28,6 +28,7 @@ import {
   type Cursor,
   type Since,
   type VerificationState,
+  type PayloadReaderRpc,
 } from "@webhook-co/shared";
 
 import { readAuditChain } from "./audit-append";
@@ -60,6 +61,9 @@ export interface ReadHandlerDeps {
   readonly cursorKey: CryptoKey;
   /** Audit-chain HMAC key (import of AUDIT_CHAIN_HMAC_KEY) for audit.verify. */
   readonly auditKey: CryptoKey;
+  /** Engine PayloadReader RPC (S5 C2) — triggers.wait fetches the bounded inline body through it. Optional:
+   *  absent → triggers.wait returns summary-only (body null). Threaded to createAgentTriggerHandlers. */
+  readonly payloadReader?: PayloadReaderRpc;
 }
 
 // A bound capability handler — the shared shape for BOTH reads (createReadHandlers) and writes

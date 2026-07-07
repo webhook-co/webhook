@@ -87,6 +87,13 @@ function numParam(value: string | null): number | undefined {
   return value === null ? undefined : Number(value);
 }
 
+/** A tri-state boolean query flag: `true`/`1` → true, `false`/`0` → false, absent/anything-else → undefined. */
+function boolParam(value: string | null): boolean | undefined {
+  if (value === "true" || value === "1") return true;
+  if (value === "false" || value === "0") return false;
+  return undefined;
+}
+
 /** The optional pagination input shared by list capabilities (omit absent keys). */
 function listInput(query: URLSearchParams, base: Record<string, unknown>): Record<string, unknown> {
   const input = { ...base };
@@ -591,6 +598,16 @@ export const ROUTES: readonly RouteDef[] = [
         schemaFrom: "cursor",
       },
       { name: "limit", description: "Max events to return (1–200).", schemaFrom: "limit" },
+      {
+        name: "includeBody",
+        description: "Attach the bounded inline event body to each event (default true).",
+        schemaFrom: "includeBody",
+      },
+      {
+        name: "maxBodyBytes",
+        description: "Per-event inline body byte cap (server-capped at 65536).",
+        schemaFrom: "maxBodyBytes",
+      },
     ],
     buildInput: (params, q) => {
       const input: Record<string, unknown> = { triggerId: params.triggerId };
@@ -598,6 +615,10 @@ export const ROUTES: readonly RouteDef[] = [
       if (cursor !== null) input.cursor = cursor;
       const limit = numParam(q.get("limit"));
       if (limit !== undefined) input.limit = limit;
+      const includeBody = boolParam(q.get("includeBody"));
+      if (includeBody !== undefined) input.includeBody = includeBody;
+      const maxBodyBytes = numParam(q.get("maxBodyBytes"));
+      if (maxBodyBytes !== undefined) input.maxBodyBytes = maxBodyBytes;
       return input;
     },
   },

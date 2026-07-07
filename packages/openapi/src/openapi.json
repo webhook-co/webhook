@@ -2206,6 +2206,26 @@
               "exclusiveMinimum": 0,
               "maximum": 200
             }
+          },
+          {
+            "name": "includeBody",
+            "in": "query",
+            "required": false,
+            "description": "Attach the bounded inline event body to each event (default true).",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "maxBodyBytes",
+            "in": "query",
+            "required": false,
+            "description": "Per-event inline body byte cap (server-capped at 65536).",
+            "schema": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 65536
+            }
           }
         ]
       }
@@ -4896,6 +4916,36 @@
                 },
                 "vouched": {
                   "type": "boolean"
+                },
+                "body": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "bodyEncoding": {
+                  "type": "string",
+                  "enum": [
+                    "utf8",
+                    "base64"
+                  ]
+                },
+                "bodyTruncated": {
+                  "type": "boolean"
+                },
+                "contentType": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
