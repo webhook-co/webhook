@@ -12,6 +12,7 @@ import {
   ProviderSchema,
   ReplayDestinationSchema,
   SubscriptionSchema,
+  UsageSummarySchema,
   validateProviderSecretShape,
   VerificationStateSchema,
   WATERMARK_DELTA_MS,
@@ -750,6 +751,19 @@ export const triggersRevoke = defineCapability({
   surfaceExempt: { web: TRIGGERS_WEB_DEFERRED },
 });
 
+// usage.get — the metering usage surface (S4.2), at CLI/API/web/MCP parity. Reads the caller's org
+// usage for the current billing period (single dimension = events; the billable unit is disclosed).
+// No input: it's the caller's own org (RLS-scoped) + current period. Empty object keeps the MCP tool
+// inputSchema JSON-Schema-clean. NO prices/tiers in the output — cap + pause behavior only.
+export const usageGet = defineCapability({
+  name: "usage.get",
+  input: z.object({}),
+  output: UsageSummarySchema,
+  errors: ["UNAUTHORIZED", "RATE_LIMITED"],
+  auth: { scope: "billing:read" },
+  semantics: {},
+});
+
 /**
  * The capability surface every binding implements. The six wedge capabilities
  * plus `audit.verify` — the compliance-by-design audit-chain verifier (ADR-0004),
@@ -787,6 +801,7 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   triggersCreate,
   triggersList,
   triggersRevoke,
+  usageGet,
 ];
 
 /** Registry keyed by stable capability name. */

@@ -32,6 +32,7 @@ describe("oauthIssuerConfig", () => {
     // the distinct CAPABILITY_REGISTRY scopes; `keys:manage` (reserved, never granted) is absent.
     expect(oauthIssuerConfig.scopesSupported).toEqual([
       "audit:read",
+      "billing:read",
       "endpoints:read",
       "endpoints:write",
       "events:read",

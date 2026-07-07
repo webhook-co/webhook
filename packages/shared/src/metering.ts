@@ -76,6 +76,29 @@ export function finalizeCutoff(nowMs: number, settleDays: number): string {
   return new Date(startOfUtcDayMs(nowMs) - settleDays * DAY_MS).toISOString();
 }
 
+/** A billing period as half-open [start, end) UTC instants. */
+export interface BillingPeriod {
+  readonly start: string;
+  readonly end: string;
+}
+
+/**
+ * The org's current billing period. Until a Stripe subscription anchors it (S4.4), the default is the
+ * UTC calendar month containing `now`, half-open [start, end) — Free/unsubscribed orgs stay on this
+ * anchor. Pure so the usage surface and the cap→pause producer agree on exactly which window "this
+ * period's usage" sums over.
+ */
+export function currentBillingPeriod(nowMs: number): BillingPeriod {
+  const d = new Date(nowMs);
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth();
+  return {
+    start: new Date(Date.UTC(y, m, 1)).toISOString(),
+    // Date.UTC normalizes month 12 → January of the next year, so December rolls correctly.
+    end: new Date(Date.UTC(y, m + 1, 1)).toISOString(),
+  };
+}
+
 /**
  * The abuse rate-limit seam. The concrete implementations land on the ingest path:
  * Cloudflare Rate Limiting at the edge + a per-token Durable Object token-bucket. This

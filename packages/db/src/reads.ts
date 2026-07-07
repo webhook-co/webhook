@@ -5,6 +5,7 @@
 // shared camelCase entity schemas, which also validate the row shape.
 
 import {
+  currentBillingPeriod,
   DedupConfigSchema,
   deriveVerificationState,
   DeliverySchema,
@@ -20,7 +21,9 @@ import {
   type Endpoint,
   type Event,
   type EventSummary,
+  type PausePolicy,
   type Since,
+  type UsageSummary,
   type VerificationState,
 } from "@webhook-co/shared";
 
@@ -669,4 +672,32 @@ export async function listDeliveries(
     order by created_at desc, id desc
     limit ${limit + 1}`;
   return buildPage(rows, limit, toDelivery, (r) => ({ orderKey: r.order_key!, id: r.id }));
+}
+
+/**
+ * The usage-surface projection (usage.get, S4.2) for the caller's org + current billing period. Runs
+ * under the tenant RLS context (webhook_app), so every read is org-scoped without an org_id filter —
+ * an unset context returns the empty/default shape (deny-by-default). Single dimension = events; NO
+ * prices. `eventCap`/`pausePolicy` come from org_limits (defaults when unseeded: uncapped + 'pause',
+ * the constitution default); `paused` from ingest_paused (false when unset). The period is the UTC
+ * calendar month until a Stripe subscription anchors it (S4.4).
+ */
+export async function readUsageSummary(tx: TenantTx, nowMs: number): Promise<UsageSummary> {
+  const period = currentBillingPeriod(nowMs);
+  const [usageRow] = await tx<{ events: string }[]>`
+    select coalesce(sum(event_count), 0)::bigint as events
+    from usage
+    where window_start >= ${period.start} and window_start < ${period.end}`;
+  const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
+    select event_cap, pause_policy from org_limits`;
+  const [pauseRow] = await tx<{ paused: boolean }[]>`
+    select paused from ingest_paused`;
+  return {
+    periodStart: new Date(period.start),
+    periodEnd: new Date(period.end),
+    events: Number(usageRow?.events ?? 0),
+    eventCap: limits?.event_cap != null ? Number(limits.event_cap) : null,
+    pausePolicy: limits?.pause_policy ?? "pause",
+    paused: pauseRow?.paused ?? false,
+  };
 }
