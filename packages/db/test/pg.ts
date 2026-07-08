@@ -61,6 +61,7 @@ const MANAGED_ROLES = [
   DB_ROLES.reconciler,
   DB_ROLES.notifier,
   DB_ROLES.meter,
+  DB_ROLES.meterAudit,
 ] as const;
 
 function freePort(): Promise<number> {

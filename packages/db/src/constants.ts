@@ -90,4 +90,15 @@ export const DB_ROLES = {
    * owner/SECURITY-DEFINER bypass; BYPASSRLS is forbidden). Password injected out of band.
    */
   meter: "webhook_meter",
+  /**
+   * Cross-org metering-RECONCILIATION role (S4.4d / migration 0046, money guard F6). A read-only
+   * cross-org reader, DISTINCT from webhook_meter, that recounts raw `events` per finalized day from
+   * scratch and compares to the frozen `usage.event_count` — an INDEPENDENT cross-check on the rollup
+   * (a shared role/path would hide a shared bug). Holds SELECT-only via role-targeted `FOR SELECT TO
+   * webhook_meter_audit USING(true)` policies on events + usage, column-scoped to (org_id, received_at)
+   * on events + (org_id, window_start, event_count, finalized_at) on usage — it reads the frozen COUNT
+   * (which webhook_meter is deliberately denied) but never payload/header/dedup content, and no write
+   * anywhere. Password injected out of band.
+   */
+  meterAudit: "webhook_meter_audit",
 } as const;

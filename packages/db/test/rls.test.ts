@@ -964,6 +964,60 @@ describe("catalog-driven RLS coverage", () => {
     ]);
   });
 
+  it("the meter-AUDIT role is non-owner/no-BYPASSRLS, reads the frozen count (which webhook_meter can't), and can never write", async () => {
+    // webhook_meter_audit (S4.4d / migration 0046, money guard F6) recounts raw events cross-org and
+    // compares to the frozen usage.event_count. It must be a non-privileged reader like every job role.
+    const [role] = await owner<{ super: boolean; bypass: boolean }[]>`
+      select rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.meterAudit}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+    const owned = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.meterAudit}`;
+    expect(owned[0]?.n).toBe(0);
+
+    // SELECT on exactly its columns: (org_id, received_at) on events + (org_id, window_start,
+    // event_count, finalized_at) on usage. Crucially it reads usage.event_count — the frozen billing
+    // count that webhook_meter is DELIBERATELY denied — because reconciliation must compare it.
+    for (const [t, c] of [
+      ["events", "org_id"],
+      ["events", "received_at"],
+      ["usage", "org_id"],
+      ["usage", "window_start"],
+      ["usage", "event_count"],
+      ["usage", "finalized_at"],
+    ] as Array<[string, string]>) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.meterAudit}, ${t}, ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    // Never a payload / header / dedup column — it counts rows, it must not read content.
+    for (const [t, c] of [
+      ["events", "payload_r2_key"],
+      ["events", "headers"],
+      ["events", "dedup_key"],
+    ] as Array<[string, string]>) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.meterAudit}, ${t}, ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // No write anywhere on events/usage; the role-targeted policies are FOR SELECT only.
+    for (const t of ["events", "usage"] as const) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.meterAudit}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.meterAudit}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.meterAudit}, ${t}, 'DELETE')) as any`;
+      expect(p.any).toBe(false);
+    }
+    const auditPolicies = await owner<{ cmd: string }[]>`
+      select cmd from pg_policies where schemaname = 'public'
+      and policyname in ('events_meter_audit_select', 'usage_meter_audit_select')`;
+    expect(auditPolicies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT"]);
+  });
+
   it("the authn role reads ONLY (org_id, paused) on ingest_paused for the cold-lookup OR-in — never the reason note, never a write", async () => {
     // The ingest cold lookup (webhook_authn) LEFT JOINs ingest_paused to OR org-level pause into the
     // resolved endpoint's paused flag (S4.3, migration 0042). That grant must be the boolean flag only:
