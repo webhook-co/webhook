@@ -6,6 +6,7 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // api_keys DB-layer suite (ADR-0008 Option B). Runs against a REAL Postgres
 // with REAL non-owner roles so RLS, the column-level grant to webhook_authn, and the
@@ -108,7 +109,7 @@ beforeAll(async () => {
       await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
     });
   }
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

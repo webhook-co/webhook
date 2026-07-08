@@ -4,6 +4,7 @@ import {
   isRemoteTestDatabase,
   orphanTestDatabases,
   remoteTestTimeouts,
+  setupHookTimeoutMs,
   waitForDatabase,
 } from "./pg-timing";
 
@@ -64,6 +65,29 @@ describe("remoteTestTimeouts", () => {
     const t = remoteTestTimeouts("postgres://owner:secret@ep-x.neon.tech/db?sslmode=require");
     expect(t.testTimeout).toBeGreaterThanOrEqual(120_000);
     expect(t.hookTimeout).toBeGreaterThanOrEqual(t.testTimeout);
+  });
+});
+
+describe("setupHookTimeoutMs", () => {
+  // Same env-default caveat as isRemoteTestDatabase: the omitted-arg case must pin the env.
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("keeps the local budget for a local/ephemeral target (no regression vs the prior 90s literal)", () => {
+    expect(setupHookTimeoutMs("postgres://postgres@127.0.0.1:5432/webhook_test")).toBe(90_000);
+  });
+
+  it("widens the budget for a remote Neon target so a slow provisioning beforeAll does not tip over", () => {
+    const remote = setupHookTimeoutMs("postgres://owner:secret@ep-x.neon.tech/db?sslmode=require");
+    expect(remote).toBe(180_000);
+    // The remote setup budget must exceed the local one (that is the whole point).
+    expect(remote).toBeGreaterThan(setupHookTimeoutMs("postgres://postgres@127.0.0.1:5432/db"));
+  });
+
+  it("falls back to TEST_DATABASE_URL when the url arg is omitted", () => {
+    vi.stubEnv("TEST_DATABASE_URL", "");
+    expect(setupHookTimeoutMs()).toBe(90_000);
+    vi.stubEnv("TEST_DATABASE_URL", "postgres://owner:secret@ep-x.neon.tech/db?sslmode=require");
+    expect(setupHookTimeoutMs()).toBe(180_000);
   });
 });
 

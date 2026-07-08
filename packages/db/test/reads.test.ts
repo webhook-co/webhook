@@ -32,6 +32,7 @@ import {
 } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The read repos + the shared capability read-handlers, against a REAL Postgres with the
 // non-owner webhook_app role under RLS. Proves: tenant scoping (RLS), keyset pagination,
@@ -171,7 +172,7 @@ beforeAll(async () => {
       target: epA,
     });
   });
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

@@ -15,6 +15,7 @@ import {
 } from "../src/refresh-token";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Lane C A2b-2a — the auth_refresh_token store against a REAL Postgres. The opaque ~90d refresh handle
 // embeds its org (rtk_<orgId>_<secret>) so the issuer resolves the tenant WITHOUT a cross-org role; the
@@ -89,7 +90,7 @@ beforeAll(async () => {
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 13) % 256)),
   );
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

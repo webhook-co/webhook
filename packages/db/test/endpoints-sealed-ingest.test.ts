@@ -25,6 +25,7 @@ import { parseIngestToken, revealIngestTokenCore } from "../src/ingest-token-sea
 import { createOrg } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The SEALED, recoverable copy of the ingest token (S8-remainder, decision-0018). createEndpointWithAudit /
 // rotateEndpointWithAudit seal a typed-wrapped copy of the freshly-minted token under the KMS envelope, in
@@ -95,7 +96,7 @@ beforeAll(async () => {
   store = new SecretStore(await LocalKmsProvider.generate());
   auditKey = await importAuditKey(new Uint8Array(32).fill(7));
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

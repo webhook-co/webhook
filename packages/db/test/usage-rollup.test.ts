@@ -7,6 +7,7 @@ import { DB_ROLES } from "../src/constants";
 import { runUsageRollup } from "../src/usage-rollup";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The rollup ORCHESTRATION (S4.1): a cron enumerates orgs with recent activity (as the
 // least-privilege cross-org webhook_meter role), then per-org, under webhook_app RLS,
@@ -83,7 +84,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

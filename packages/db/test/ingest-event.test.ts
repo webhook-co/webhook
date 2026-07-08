@@ -15,6 +15,7 @@ import { createOrg } from "../src/orgs";
 import { getEvent } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // insertIngestEvent is the PRODUCTION ingest write — the wbhk.my path's `SELECT ingest_event(...)`
 // run as the dedicated webhook_ingest role (statement_timeout=5s, INSERT+SELECT on events only,
@@ -37,7 +38,7 @@ beforeAll(async () => {
   ingest = createClient(pg.urlFor({ role: DB_ROLES.ingest }));
   orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Ingest Org" })).id;
   endpointId = (await createEndpoint(app, { orgId, name: "ingest-ep" }, hasher)).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

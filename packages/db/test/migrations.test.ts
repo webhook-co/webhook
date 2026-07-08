@@ -4,6 +4,7 @@ import { createClient, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { bootstrapOwner, migrateDownAll, migrateUp, migrationCount } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Migration reversibility (plan "Testing": apply up -> down -> up cleanly in CI).
 // A clean down leaves only dbmate's schema_migrations and removes the created non-owner
@@ -57,7 +58,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await bootstrapOwner(pg);
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await owner?.end();

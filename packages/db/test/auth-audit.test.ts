@@ -13,6 +13,7 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The aae1 auth-audit append-service against a REAL Postgres: the per-org advisory lock, the
 // chain trigger's structural enforcement, the jsonb round-trip (geo/metadata must canonicalize back
@@ -49,7 +50,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   key = await importAuditKey(new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 11) % 256)));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

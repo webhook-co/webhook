@@ -7,6 +7,7 @@ import { DB_ROLES } from "../src/constants";
 import { getAuthUserProfile } from "../src/auth-user";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Lane C A-SX-2a — getAuthUserProfile reads a better-auth user's display fields (name/email/image) for the
 // session-exchange redeem. The `user` table is the GLOBAL identity realm (no tenant RLS); webhook_auth has
@@ -21,7 +22,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   auth = createClient(pg.urlFor({ role: DB_ROLES.auth }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await auth?.end();

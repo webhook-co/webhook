@@ -6,6 +6,7 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // S4.4a billing schema constraints — the security-relevant ones (the RLS isolation is covered by rls.test).
 // Focus: the stripe_meter_reports outbox's identifier CHECK (identifier = org_id::text || ':' || day::text —
@@ -27,7 +28,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

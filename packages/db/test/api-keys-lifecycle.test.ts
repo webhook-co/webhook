@@ -24,6 +24,7 @@ import { InMemoryCredentialCache } from "../src/credential-cache";
 import { createCredentialResolver } from "../src/credential-resolver";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 /** Revoke a key by id under the org's RLS context (the tx-level primitive). Returns whether it flipped. */
 async function revokeApiKey(app: Sql, orgId: string, id: string): Promise<boolean> {
@@ -99,7 +100,7 @@ beforeAll(async () => {
   orgB = randomUUID();
   await seedOrg(orgA);
   await seedOrg(orgB);
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

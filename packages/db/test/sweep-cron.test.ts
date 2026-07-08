@@ -7,6 +7,7 @@ import { DB_ROLES } from "../src/constants";
 import { pruneAllExpiredAuthTokens } from "../src/sweep";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Cross-org expiry cron-sweep (migration 0020, ADR cron-sweep). The webhook_sweeper role is a
 // least-privilege, NON-OWNER, NOSUPERUSER, NOBYPASSRLS control-plane housekeeping role: DELETE-only on
@@ -105,7 +106,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
   sweeper = createClient(pg.urlFor({ role: DB_ROLES.sweeper }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

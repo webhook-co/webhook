@@ -26,6 +26,7 @@ import { createEndpoint } from "../src/endpoints";
 import { createOrg } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // agent_triggers CRUD + the triggers.* capability handlers (S5), against a REAL Postgres under the
 // non-owner webhook_app role + RLS. Proves: create binds only a live same-org endpoint, list is
@@ -89,7 +90,7 @@ beforeAll(async () => {
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
   epB = (await createEndpoint(app, { orgId: orgB, name: "ep-b" }, hasher)).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
@@ -292,11 +293,26 @@ describe("agent_triggers RLS + grants (isolation red-team)", () => {
   it("grants DML on agent_triggers to webhook_app only (no cross-org role)", async () => {
     const owner = createClient(pg.ownerUrl);
     try {
-      const grants = await owner<{ grantee: string }[]>`
-        select distinct grantee from information_schema.role_table_grants
-        where table_name = 'agent_triggers' and table_schema = 'public'`;
-      const nonOwner = grants.map((g) => g.grantee).filter((g) => g !== DB_ROLES.owner);
-      expect(nonOwner.sort()).toEqual([DB_ROLES.app]);
+      // Which non-owner roles hold ANY privilege on agent_triggers? Probe each via
+      // has_table_privilege (owner excluded — it owns the table, so it holds everything).
+      // Deliberately NOT information_schema.role_table_grants: that view only lists grants
+      // where the QUERYING session's role is the grantor or grantee (or a member of one), so
+      // on the nightly Neon branch — where this connection is Neon's provider role, a member of
+      // neither webhook_owner (the grantor) nor webhook_app (the grantee) — it returns [] and
+      // this assertion false-fails. has_table_privilege reads the ACL directly, independent of
+      // the querying role (the same remote-safe pattern as the sweep-cron and rls suites), and
+      // also catches access via role membership, not just a direct grant.
+      const nonOwnerRoles = Object.values(DB_ROLES).filter((r) => r !== DB_ROLES.owner);
+      const withAccess: string[] = [];
+      for (const role of nonOwnerRoles) {
+        const [p] = await owner<{ any: boolean }[]>`
+          select (has_table_privilege(${role}, 'agent_triggers', 'SELECT')
+               or has_table_privilege(${role}, 'agent_triggers', 'INSERT')
+               or has_table_privilege(${role}, 'agent_triggers', 'UPDATE')
+               or has_table_privilege(${role}, 'agent_triggers', 'DELETE')) as any`;
+        if (p.any) withAccess.push(role);
+      }
+      expect(withAccess.sort()).toEqual([DB_ROLES.app]);
     } finally {
       await owner.end();
     }

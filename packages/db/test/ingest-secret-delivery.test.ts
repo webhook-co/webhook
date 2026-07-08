@@ -13,6 +13,7 @@ import { createOrg } from "../src/orgs";
 import { addProviderSecret, fromCachedSealedSecret } from "../src/provider-secrets";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The ingest resolver must deliver the endpoint's SEALED provider secrets ON the resolved principal,
 // so the synchronous verify path reads them from ONE KV read (no extra DB round-trip on a cache hit).
@@ -34,7 +35,7 @@ beforeAll(async () => {
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
   store = new SecretStore(await LocalKmsProvider.generate());
   orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

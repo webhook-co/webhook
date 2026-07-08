@@ -7,6 +7,7 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The soft-cap producer: per-org, compare current-period usage to the effective cap and flip
 // ingest_paused ONLY on a transition, firing edge eviction. Free (no org_limits row) uses the injected
@@ -91,7 +92,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
   admin = createClient(pg.ownerUrl); // the postgres superuser — bypasses RLS for cleanup
-}, 90_000);
+}, setupHookTimeoutMs());
 
 // Per-test isolation: runCapProducer enumerates ALL orgs cross-tenant, so state seeded by one test
 // would otherwise perturb another's global transition counts. Clear the mutable tables before each test

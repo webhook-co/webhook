@@ -26,6 +26,7 @@ import { getEndpoint, listEndpoints } from "../src/reads";
 import { createWriteHandlers } from "../src/write-handlers";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The endpoints.delete (SOFT) + endpoints.rotate (HARD cutover) WRITE paths against a REAL Postgres
 // under the non-owner webhook_app + webhook_authn roles (RLS), ADR-0076. Proves: soft-delete stops the
@@ -81,7 +82,7 @@ beforeAll(async () => {
   );
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

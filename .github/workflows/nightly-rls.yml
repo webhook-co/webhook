@@ -68,7 +68,7 @@ jobs:
         run: |
           # Markers of a transient Neon/network failure worth one retry. A plain
           # AssertionError / TypeError / syntax error matches none of these -> fail fast.
-          transient='CONNECT_TIMEOUT|Test timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|Connection terminated|terminating connection|the database system is (starting up|shutting down)|too many clients|Client has encountered a connection error|fetch failed'
+          transient='CONNECT_TIMEOUT|Test timed out|Hook timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|Connection terminated|terminating connection|the database system is (starting up|shutting down)|too many clients|Client has encountered a connection error|fetch failed'
           for attempt in 1 2; do
             echo "::group::pnpm test:db (attempt ${attempt}/2)"
             set +e

@@ -21,6 +21,7 @@ import {
 } from "../src/signing-keys";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // signing_keys storage (S3 Slice 2): the per-DESTINATION outbound Standard Webhooks signing secret.
 // createSigningSecret MINTS a whsec_ secret (webhook.co-generated, not user-supplied — unlike provider
@@ -50,7 +51,7 @@ beforeAll(async () => {
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
   destA = (await createReplayDestination(app, { orgId: orgA, url: "https://a.example.com/in" })).id;
   destB = (await createReplayDestination(app, { orgId: orgB, url: "https://b.example.com/in" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

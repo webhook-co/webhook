@@ -21,6 +21,7 @@ import { getEndpointProviderSecrets } from "../src/provider-secrets";
 import { createWriteHandlers } from "../src/write-handlers";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The provider-secret WRITE handlers (ADR-0078) against a REAL Postgres under webhook_app (RLS): the
 // add/list/revoke dispatch in createWriteHandlers. Proves the handler orchestration the db-function
@@ -69,7 +70,7 @@ beforeAll(async () => {
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
   epB = (await createEndpoint(app, { orgId: orgB, name: "ep-b" }, hasher)).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

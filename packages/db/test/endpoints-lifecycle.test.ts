@@ -10,6 +10,7 @@ import { createOrg } from "../src/orgs";
 import { expectNoSecretInSerialized } from "./secret-leak";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // createOrg + createEndpoint + the webhook_authn endpoint-token COLD lookup, exercised
 // against a REAL Postgres with REAL non-owner roles. This validates the bootstrap
@@ -33,7 +34,7 @@ beforeAll(async () => {
 
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

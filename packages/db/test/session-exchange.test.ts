@@ -12,6 +12,7 @@ import {
 } from "../src/session-exchange";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Lane C A-SX-1 — the auth_session_exchange store against a REAL Postgres. The single-use opaque ticket
 // embeds its org (sxt_<orgId>_<secret>) so the redeem resolves the tenant WITHOUT a cross-org role; consume
@@ -48,7 +49,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
