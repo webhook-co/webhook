@@ -96,8 +96,13 @@ export function makeCapTransitionEvictor(
 export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducerResult> {
   const period = currentBillingPeriod(deps.now);
 
-  // Enumerate orgs that could need a transition: usage this period (may cross the cap), OR an active
-  // pause (may need to RESUME even with no usage row this period), OR an explicit org_limits row.
+  // Enumerate orgs that could need a transition: usage this UTC month (candidate floor — the per-org
+  // effective period may extend earlier for a paid cycle), OR an active pause (may need to RESUME even
+  // with no usage this month), OR an explicit org_limits row, OR a non-canceled SUBSCRIPTION. The last is
+  // essential: a PAID org is metered over its Stripe cycle (which can start in the PRIOR UTC month), and a
+  // fail-closed subscription (unspecified price cap → no org_limits row) would otherwise be invisible to
+  // the usage/ingest_paused/org_limits floors and never be enforced. webhook_meter reads (org_id, status)
+  // on billing_subscriptions via the 0045 grant.
   //
   // Ordering: `random()`. A staleness-aware order (least-recently-transitioned first, the tighter
   // worst-case bound) would need `order by ingest_paused.updated_at`, but the least-privilege meter
@@ -115,6 +120,8 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
       select org_id from ingest_paused where paused = true
       union
       select org_id from org_limits
+      union
+      select org_id from billing_subscriptions where status <> 'canceled'
     ) t
     order by random()
     limit ${deps.limit}`;

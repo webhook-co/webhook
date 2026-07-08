@@ -34,7 +34,22 @@ export async function effectiveBillingPeriod(tx: TenantTx, nowMs: number): Promi
   const [sub] = await tx<{ start: Date; end: Date }[]>`
     select current_period_start as start, current_period_end as end
     from billing_subscriptions where status <> 'canceled'`;
-  if (sub) return { start: sub.start.toISOString(), end: sub.end.toISOString() };
+  if (sub) {
+    const startMs = sub.start.getTime();
+    const endMs = sub.end.getTime();
+    // Only anchor to the Stripe cycle while `now` is actually WITHIN it. A lapsed cycle (now past
+    // current_period_end — a late/missing renewal webhook) falls back to the UTC month, so a paid org is
+    // never measured over a stale/ended window (which could strand it paused into a fresh cycle).
+    if (nowMs >= startMs && nowMs < endMs) {
+      // FLOOR the start to UTC midnight. `usage` is UTC-day-bucketed (rollup_usage date_trunc('day')), so a
+      // non-midnight Stripe start would exclude the start-day bucket (window_start = midnight < start) and
+      // persistently UNDER-count. Flooring includes the whole start day — a bounded, one-day-per-cycle,
+      // CONSERVATIVE over-count on the start day only. (The exact-instant boundary split is the outbound
+      // meter-reporter's F4 job — the soft-cap accepts day granularity.) The end stays the raw instant: it
+      // only bounds the LIVE half (raw events), which is instant-precise, and `now < end` here.
+      return { start: utcDayStartIso(startMs), end: sub.end.toISOString() };
+    }
+  }
   return currentBillingPeriod(nowMs);
 }
 
@@ -48,10 +63,15 @@ export async function sumPeriodEventUsage(
   nowMs: number,
 ): Promise<number> {
   const todayStart = utcDayStartIso(nowMs);
+  // The rolled half is upper-bounded by BOTH todayStart (today is counted live below) AND period.end — the
+  // latter so a period that ended before now (a lapsed cycle a caller didn't clamp) can't accumulate usage
+  // from days past its end. In the normal in-period case now < period.end, so todayStart is the tighter bound.
   const [rolledRow] = await tx<{ events: string }[]>`
     select coalesce(sum(event_count), 0)::bigint as events
     from usage
-    where window_start >= ${period.start} and window_start < ${todayStart}`;
+    where window_start >= ${period.start}
+      and window_start < ${todayStart}
+      and window_start < ${period.end}`;
   const [todayRow] = await tx<{ events: string }[]>`
     select count(*)::bigint as events
     from events

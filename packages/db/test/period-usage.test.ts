@@ -66,15 +66,26 @@ describe("effectiveBillingPeriod", () => {
     });
   });
 
-  it("uses the SUBSCRIPTION's Stripe-anchored cycle for a paid (non-canceled) org", async () => {
+  it("uses the SUBSCRIPTION's Stripe cycle, flooring the start to UTC midnight (day-bucket aligned)", async () => {
     const org = await seedOrg();
-    // A signup-anchored cycle that straddles the UTC-month boundary — NOT the calendar month.
-    await seedSubscription(org, { start: "2026-06-18T00:00:00Z", end: "2026-07-18T00:00:00Z" });
+    // A signup-anchored cycle with a NON-midnight start that straddles the UTC-month boundary. The start is
+    // floored to midnight (so the UTC-day `usage` bucket for that day is included, no start-day undercount);
+    // the end stays the raw instant (it only bounds the instant-precise live half).
+    await seedSubscription(org, { start: "2026-06-18T14:30:00Z", end: "2026-07-18T09:00:00Z" });
     const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
     expect(period).toEqual({
-      start: "2026-06-18T00:00:00.000Z",
-      end: "2026-07-18T00:00:00.000Z",
+      start: "2026-06-18T00:00:00.000Z", // floored to midnight
+      end: "2026-07-18T09:00:00.000Z", // raw instant
     });
+  });
+
+  it("falls back to the UTC month when the Stripe cycle has LAPSED (now past current_period_end)", async () => {
+    const org = await seedOrg();
+    // A cycle that ended BEFORE now (a late/missing renewal webhook) must not anchor — a paid org would
+    // otherwise be measured over a stale/ended window and could stay stranded paused into the new cycle.
+    await seedSubscription(org, { start: "2026-06-05T00:00:00Z", end: "2026-07-05T00:00:00Z" }); // end < NOW
+    const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+    expect(period.start).toBe("2026-07-01T00:00:00.000Z"); // UTC month fallback
   });
 
   it("falls back to the UTC month for a CANCELED subscription (→ Free)", async () => {

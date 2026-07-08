@@ -105,9 +105,22 @@ beforeEach(async () => {
   await admin`delete from usage`;
   await admin`delete from ingest_paused`;
   await admin`delete from org_limits`;
+  await admin`delete from billing_subscriptions`;
   await admin`delete from endpoints`;
   await admin`delete from orgs`;
 });
+
+/** Seed a paid org's subscription (SELECT-only for webhook_app → as owner). */
+async function seedSubscription(
+  orgId: string,
+  opts: { status?: string; start: string; end: string },
+): Promise<void> {
+  await admin`
+    insert into billing_subscriptions
+      (org_id, stripe_subscription_id, plan, status, current_period_start, current_period_end)
+    values (${orgId}, ${"sub_" + orgId.slice(0, 6)}, ${"pro"}, ${opts.status ?? "active"},
+            ${opts.start}, ${opts.end})`;
+}
 
 /** Count the usage_threshold notification intents queued for an org (as owner, bypassing RLS). */
 async function usageAlertIntents(
@@ -375,6 +388,34 @@ describe("runCapProducer", () => {
       const [{ n }] = await admin<{ n: number }[]>`
         select count(*)::int as n from usage_alerts where org_id = ${orgId} and threshold = 80`;
       expect(n).toBe(2);
+    });
+  });
+
+  describe("subscription-period-aware enforcement", () => {
+    it("enumerates + PAUSES a paid org whose over-cap usage sits in its cycle's PRIOR-month portion", async () => {
+      // The org's Stripe cycle is 2026-06-18 → 2026-07-18 (straddles the month), with over-cap usage in
+      // JUNE — the prior UTC month, so the usage/org_limits/ingest_paused enumeration floors would MISS it.
+      // It's a paid subscription with NO org_limits row (fail-closed cap), enforced at the Free default.
+      // The billing_subscriptions enumeration union must still find it, and the effective period (its Stripe
+      // cycle) must count the June usage → over the Free cap → pause.
+      const orgId = await seedOrg("paid-prior-month");
+      await seedSubscription(orgId, { start: "2026-06-18T00:00:00Z", end: "2026-07-18T00:00:00Z" });
+      await seedUsageAt(orgId, "2026-06-20T00:00:00.000Z", 150); // in-cycle, prior UTC month, > Free cap 100
+
+      const res = await run({ defaultEventCap: DEFAULT_CAP }); // Free default = 100
+      expect(res.pausedTransitions).toBe(1);
+      expect((await pausedState(orgId))?.paused).toBe(true);
+    });
+
+    it("does NOT pause the same org when metered over the (wrong) UTC month would show zero usage", async () => {
+      // Control: with the cycle usage entirely in June and NONE in July, a UTC-month basis would see 0 and
+      // never pause. The subscription-period basis is what makes the pause correct — asserted above. Here we
+      // confirm a Free org (no subscription) with the same June usage is NOT paused (July UTC month = 0).
+      const orgId = await seedOrg("free-prior-month");
+      await seedUsageAt(orgId, "2026-06-20T00:00:00.000Z", 150); // June only, no subscription
+      const res = await run({ defaultEventCap: DEFAULT_CAP });
+      expect(res.pausedTransitions).toBe(0);
+      expect(await pausedState(orgId)).toBeNull();
     });
   });
 });
