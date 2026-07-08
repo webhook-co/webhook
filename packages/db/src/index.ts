@@ -47,3 +47,4 @@ export * from "./signing-keys";
 export * from "./subscriptions";
 export * from "./usage-rollup";
 export * from "./cap-producer";
+export * from "./meter-reporter";
