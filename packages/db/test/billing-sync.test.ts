@@ -275,6 +275,26 @@ describe("applySubscriptionUpsert (integration)", () => {
     expect(await readCap(org)).toBe(500000);
     expect((await readSub(org)).event_cap).toBe("100000");
   });
+
+  it("applies the DEFERRED decrease at the period boundary (a renewal advances the period)", async () => {
+    const org = await seedOrg();
+    const p1 = { currentPeriodStartIso: "2026-07-01T00:00:00.000Z" };
+    await applySubscriptionUpsert(billing, sub(org, { eventCap: 500000, ...p1 }), 1000);
+    // Mid-period downgrade → deferred (cap stays high).
+    await applySubscriptionUpsert(billing, sub(org, { eventCap: 100000, ...p1 }), 2000);
+    expect(await readCap(org)).toBe(500000);
+    // Renewal: the period ADVANCES (later current_period_start) → the deferred decrease lands now.
+    await applySubscriptionUpsert(
+      billing,
+      sub(org, {
+        eventCap: 100000,
+        currentPeriodStartIso: "2026-08-01T00:00:00.000Z",
+        currentPeriodEndIso: "2026-09-01T00:00:00.000Z",
+      }),
+      3000,
+    );
+    expect(await readCap(org)).toBe(100000);
+  });
 });
 
 describe("applySubscriptionDeleted (integration)", () => {

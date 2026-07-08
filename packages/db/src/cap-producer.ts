@@ -14,7 +14,7 @@ import {
 
 import { withTenant, type Sql } from "./client";
 import { insertNotificationIntent, type UsageThresholdContext } from "./delivery";
-import { sumPeriodEventUsage } from "./period-usage";
+import { effectiveBillingPeriod, sumPeriodEventUsage } from "./period-usage";
 
 /** The per-org result of one producer pass: the pause transition (null = none) + how many threshold
  *  alerts were newly enqueued this pass. Kept internal to runCapProducer. */
@@ -96,8 +96,13 @@ export function makeCapTransitionEvictor(
 export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducerResult> {
   const period = currentBillingPeriod(deps.now);
 
-  // Enumerate orgs that could need a transition: usage this period (may cross the cap), OR an active
-  // pause (may need to RESUME even with no usage row this period), OR an explicit org_limits row.
+  // Enumerate orgs that could need a transition: usage this UTC month (candidate floor — the per-org
+  // effective period may extend earlier for a paid cycle), OR an active pause (may need to RESUME even
+  // with no usage this month), OR an explicit org_limits row, OR a non-canceled SUBSCRIPTION. The last is
+  // essential: a PAID org is metered over its Stripe cycle (which can start in the PRIOR UTC month), and a
+  // fail-closed subscription (unspecified price cap → no org_limits row) would otherwise be invisible to
+  // the usage/ingest_paused/org_limits floors and never be enforced. webhook_meter reads (org_id, status)
+  // on billing_subscriptions via the 0045 grant.
   //
   // Ordering: `random()`. A staleness-aware order (least-recently-transitioned first, the tighter
   // worst-case bound) would need `order by ingest_paused.updated_at`, but the least-privilege meter
@@ -115,6 +120,8 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
       select org_id from ingest_paused where paused = true
       union
       select org_id from org_limits
+      union
+      select org_id from billing_subscriptions where status <> 'canceled'
     ) t
     order by random()
     limit ${deps.limit}`;
@@ -130,10 +137,12 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
   for (const orgId of orgIds) {
     try {
       const outcome = await withTenant(deps.app, orgId, async (tx): Promise<OrgOutcome> => {
-        // The SAME period-usage basis the surface displays (sumPeriodEventUsage: rolled prior days +
-        // live today) — so enforcement can't lag or diverge from what the dashboard shows. Not tied to
-        // whether the rollup already ran today (it counts today's events live), so reordering the cron
-        // can't silently undercount today.
+        // The org's EFFECTIVE period — a paid org's Stripe-anchored cycle, else the UTC month — read
+        // per-org under RLS (the outer `period` is only the cross-org enumeration candidate floor). The
+        // SAME basis the usage surface displays, so enforcement can't diverge from what the dashboard shows.
+        const period = await effectiveBillingPeriod(tx, deps.now);
+        // sumPeriodEventUsage: rolled prior days + live today; not tied to whether the rollup ran today, so
+        // reordering the cron can't silently undercount today.
         const periodUsage = await sumPeriodEventUsage(tx, period, deps.now);
         const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
           select event_cap, pause_policy from org_limits`;
