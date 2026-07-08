@@ -215,6 +215,46 @@ describe("makeStripeClient hosted flows", () => {
     );
   });
 
+  it("reportMeterEvent POSTs /billing/meter_events with the customer, value, timestamp + identifier dedup", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: { identifier: "org-7:2026-07-15", event_name: "webhook_events" },
+    });
+    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const out = await client.reportMeterEvent({
+      eventName: "webhook_events",
+      customer: "cus_1",
+      value: 4200,
+      identifier: "org-7:2026-07-15",
+      timestamp: 1752537600,
+    });
+    expect(out.identifier).toBe("org-7:2026-07-15");
+    const { url, init } = calls[0];
+    expect(url).toBe("https://api.stripe.com/v1/billing/meter_events");
+    const p = new URLSearchParams(init.body as string);
+    expect(p.get("event_name")).toBe("webhook_events");
+    expect(p.get("payload[stripe_customer_id]")).toBe("cus_1");
+    expect(p.get("payload[value]")).toBe("4200"); // Stripe wants the value as a string
+    expect(p.get("timestamp")).toBe("1752537600");
+    expect(p.get("identifier")).toBe("org-7:2026-07-15");
+    // The identifier is ALSO the HTTP Idempotency-Key: a retried report of the same {org}:{day} is a
+    // no-op at Stripe's native meter dedup AND the request layer — a day can never be double-billed.
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("org-7:2026-07-15");
+  });
+
+  it("reportMeterEvent omits an unset timestamp (Stripe defaults to ingest time)", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: { identifier: "org-7:2026-07-16" } });
+    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    await client.reportMeterEvent({
+      eventName: "webhook_events",
+      customer: "cus_1",
+      value: 1,
+      identifier: "org-7:2026-07-16",
+    });
+    const p = new URLSearchParams(calls[0].init.body as string);
+    expect(p.has("timestamp")).toBe(false);
+  });
+
   it("createPortalSession sends the customer + return_url", async () => {
     const { impl, calls } = fakeFetch({ status: 200, body: { id: "ps_1", url: "https://portal" } });
     const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
