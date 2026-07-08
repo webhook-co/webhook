@@ -107,6 +107,32 @@ describe("processStripeEvent (integration)", () => {
     expect(await ledgerCount(e.id)).toBe(1);
   });
 
+  it("a customer_mismatch is REJECTED, NOT deduped, and reprocessable after the data is corrected", async () => {
+    const org = await seedOrg();
+    // Link the org to cus_A, then send a subscription event carrying a DIFFERENT customer (cus_B).
+    await processStripeEvent(
+      billing,
+      ev("checkout.session.completed", { client_reference_id: org, customer: "cus_A" }),
+    );
+    const bad = ev("customer.subscription.created", {
+      ...subObject(org),
+      customer: "cus_B", // ≠ the linked cus_A
+    });
+    expect(await processStripeEvent(billing, bad)).toBe("rejected");
+    expect(await ledgerCount(bad.id)).toBe(0); // NOT deduped → a later fix + replay can reprocess
+    const [noSub] = await admin<{ n: number }[]>`
+      select count(*)::int as n from billing_subscriptions where org_id = ${org}`;
+    expect(noSub.n).toBe(0); // never mutated on a mismatch
+
+    // Correct the underlying data (re-link to cus_B), then the SAME event replays cleanly (it wasn't deduped).
+    await processStripeEvent(
+      billing,
+      ev("checkout.session.completed", { client_reference_id: org, customer: "cus_B" }),
+    );
+    expect(await processStripeEvent(billing, bad)).toBe("applied");
+    expect(await ledgerCount(bad.id)).toBe(1);
+  });
+
   it("MONEY-SAFETY: an apply FAILURE records NO ledger row, so a redelivery re-applies (no loss)", async () => {
     // A subscription event for an org that doesn't exist yet → the applier's FK insert throws. Because the
     // dedup marker is written only AFTER a successful apply, NOTHING is recorded — Stripe would 500 + retry.

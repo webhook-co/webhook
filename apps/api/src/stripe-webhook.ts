@@ -225,48 +225,61 @@ export async function handleStripeWebhook(
 export async function processStripeEvent(
   billing: Sql,
   event: StripeEvent,
-): Promise<"applied" | "replay"> {
+): Promise<"applied" | "replay" | "rejected"> {
   const [seen] = await billing<{ x: number }[]>`
     select 1 as x from processed_stripe_events where event_id = ${event.id}`;
   if (seen) return "replay"; // already fully processed
-  await applyStripeEvent(billing, event);
-  await recordStripeEventOnce(billing, {
-    eventId: event.id,
-    eventType: event.type,
-    eventCreated: event.created,
-  });
-  return "applied";
+  const outcome = await applyStripeEvent(billing, event);
+  // Record the dedup marker ONLY for an applied event. A "rejected" event (a customer/org identity mismatch)
+  // is deliberately NOT recorded: it is ACKed 200 (no Stripe retry-storm for a condition retries can't fix)
+  // but left out of the ledger so that, if the reject was a data anomaly we later correct, a manual Stripe
+  // replay can reprocess it — a reject is never permanently swallowed.
+  if (outcome === "applied") {
+    await recordStripeEventOnce(billing, {
+      eventId: event.id,
+      eventType: event.type,
+      eventCreated: event.created,
+    });
+    return "applied";
+  }
+  return "rejected";
 }
 
 /** Route a verified event to its state-sync applier. Unhandled types (invoice.*) are a no-op (S4.5b-2).
- *  Throws propagate (→ 500 → Stripe redelivers) — never swallowed, so a failed apply is never lost. */
-export async function applyStripeEvent(billing: Sql, event: StripeEvent): Promise<void> {
+ *  Returns "rejected" for a business reject that must NOT be deduped (see processStripeEvent); "applied"
+ *  otherwise. Throws propagate (→ 500 → Stripe redelivers) — a transient fault is never swallowed. */
+export async function applyStripeEvent(
+  billing: Sql,
+  event: StripeEvent,
+): Promise<"applied" | "rejected"> {
   const obj = event.data.object;
   switch (event.type) {
     case "checkout.session.completed": {
       const parsed = parseCheckoutSession(obj);
       if (parsed) await applyCustomerLink(billing, parsed);
-      return;
+      return "applied";
     }
     case "customer.subscription.created":
     case "customer.subscription.updated": {
       const sub = parseSubscriptionObject(obj);
-      if (!sub) return;
+      if (!sub) return "applied"; // unparseable → recorded as seen (no reprocessing helps a bad shape)
       const outcome = await applySubscriptionUpsert(billing, sub, event.created);
       if (outcome === "customer_mismatch") {
-        // A permanent reject (the subscription's customer isn't this org's) — record + ACK, don't retry.
+        // The subscription's customer isn't this org's — a bug/attack. Log + reject (NOT deduped, so a
+        // later data fix + replay can reprocess). Never mutate on a mismatch.
         console.log(
           JSON.stringify({ message: "stripe.webhook.customer_mismatch", type: event.type }),
         );
+        return "rejected";
       }
-      return;
+      return "applied";
     }
     case "customer.subscription.deleted": {
       const orgId = resolveOrgId(obj);
       if (orgId) await applySubscriptionDeleted(billing, { orgId, eventCreated: event.created });
-      return;
+      return "applied";
     }
     default:
-      return; // unhandled type — recorded + ACKed, no state change
+      return "applied"; // unhandled type — recorded + ACKed, no state change
   }
 }

@@ -305,4 +305,37 @@ describe("applyStripeEvent — routes each event type to its applier", () => {
       ),
     ).rejects.toThrow("db down");
   });
+
+  it("returns 'rejected' on a customer_mismatch (so processStripeEvent won't dedup it)", async () => {
+    sync.applySubscriptionUpsert.mockResolvedValueOnce("customer_mismatch");
+    const obj = {
+      id: "sub_1",
+      customer: "cus_wrong",
+      status: "active",
+      metadata: { org_id: "org-a" },
+      current_period_start: 1000,
+      current_period_end: 2000,
+      items: { data: [{ price: { id: "p", metadata: { event_cap: "1" } } }] },
+    };
+    expect(await applyStripeEvent(billing, ev("customer.subscription.updated", obj))).toBe(
+      "rejected",
+    );
+  });
+
+  it("returns 'applied' for a normal subscription + an unhandled type", async () => {
+    sync.applySubscriptionUpsert.mockResolvedValueOnce("applied");
+    const obj = {
+      id: "sub_1",
+      customer: "cus_1",
+      status: "active",
+      metadata: { org_id: "org-a" },
+      current_period_start: 1000,
+      current_period_end: 2000,
+      items: { data: [{ price: { id: "p", metadata: { event_cap: "1" } } }] },
+    };
+    expect(await applyStripeEvent(billing, ev("customer.subscription.updated", obj))).toBe(
+      "applied",
+    );
+    expect(await applyStripeEvent(billing, ev("invoice.paid", { id: "in_1" }))).toBe("applied");
+  });
 });
