@@ -21,7 +21,7 @@
     "@sigstore/bundle": "^5.0.0",
     "@sigstore/protobuf-specs": "^0.5.1",
     "@sigstore/verify": "^4.1.0",
-    "@stricli/core": "^1.2.8",
+    "@stricli/core": "^1.2.9",
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/shared": "workspace:*",
     "https-proxy-agent": "^9.1.0",
