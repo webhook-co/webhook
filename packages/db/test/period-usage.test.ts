@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { effectiveBillingPeriod } from "../src/period-usage";
+import { effectiveBillingPeriod, sumPeriodEventUsage } from "../src/period-usage";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -27,6 +27,12 @@ async function seedOrg(): Promise<string> {
   return orgId;
 }
 
+async function seedUsage(orgId: string, windowIso: string, count: number): Promise<void> {
+  await withTenant(app, orgId, async (tx) => {
+    await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, ${windowIso}, ${count})`;
+  });
+}
+
 async function seedSubscription(
   orgId: string,
   opts: { status?: string; start: string; end: string },
@@ -46,6 +52,7 @@ beforeAll(async () => {
 }, setupHookTimeoutMs());
 
 afterEach(async () => {
+  await admin`delete from usage`;
   await admin`delete from billing_subscriptions`;
   await admin`delete from orgs`;
 });
@@ -106,5 +113,18 @@ describe("effectiveBillingPeriod", () => {
     // A has no subscription → UTC month, unaffected by B's cycle.
     const period = await withTenant(app, a, (tx) => effectiveBillingPeriod(tx, NOW));
     expect(period.start).toBe("2026-07-01T00:00:00.000Z");
+  });
+});
+
+describe("sumPeriodEventUsage — period.end clamp on the rolled half", () => {
+  it("excludes rolled `usage` at/after period.end (a lapsed window can't accumulate past its end)", async () => {
+    const org = await seedOrg();
+    await seedUsage(org, "2026-07-02T00:00:00.000Z", 50); // before period.end → counted
+    await seedUsage(org, "2026-07-12T00:00:00.000Z", 70); // AT/AFTER period.end → clamped out
+    // A period that ended 2026-07-10, evaluated at NOW (2026-07-15, past the end): the rolled half must be
+    // bounded by period.end, not just todayStart, so the 07-12 usage does not leak in.
+    const period = { start: "2026-07-01T00:00:00.000Z", end: "2026-07-10T00:00:00.000Z" };
+    const total = await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW));
+    expect(total).toBe(50); // only the pre-end day; the 07-12 bucket is excluded by `< period.end`
   });
 });

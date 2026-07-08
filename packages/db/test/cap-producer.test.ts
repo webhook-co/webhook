@@ -417,6 +417,18 @@ describe("runCapProducer", () => {
       expect(res.pausedTransitions).toBe(0);
       expect(await pausedState(orgId)).toBeNull();
     });
+
+    it("a LAPSED cycle falls back to the UTC month — NOT paused over stale prior-cycle usage", async () => {
+      // The subscription's cycle ENDED 2026-07-05, before NOW (2026-07-15) — a late/missing renewal webhook.
+      // Its over-cap usage is in the lapsed cycle (June). effectiveBillingPeriod must fall back to the UTC
+      // month (July, usage = 0), so the org is NOT stranded paused over the stale/ended window.
+      const orgId = await seedOrg("paid-lapsed");
+      await seedSubscription(orgId, { start: "2026-06-05T00:00:00Z", end: "2026-07-05T00:00:00Z" }); // end < NOW
+      await seedUsageAt(orgId, "2026-06-20T00:00:00.000Z", 150); // in the lapsed cycle, > Free cap
+      const res = await run({ defaultEventCap: DEFAULT_CAP });
+      expect(res.pausedTransitions).toBe(0);
+      expect(await pausedState(orgId)).toBeNull();
+    });
   });
 });
 
