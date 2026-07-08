@@ -14,8 +14,13 @@ export interface ParsedSubscription {
   readonly customerId: string;
   readonly plan: string;
   readonly status: string;
-  /** The plan's included-event cap (from the price's metadata — config, never in the repo). null = unlimited. */
-  readonly eventCap: number | null;
+  /**
+   * The plan's included-event cap from the price metadata (config, never in the repo). A positive integer =
+   * that cap; `null` = EXPLICIT unlimited (`event_cap="unlimited"`); `undefined` = UNSPECIFIED (absent or
+   * unparseable) — treated fail-CLOSED: we don't mirror any cap change, so a misconfigured price can't
+   * silently grant unlimited usage (it leaves the org's existing/Free cap in place + logs).
+   */
+  readonly eventCap: number | null | undefined;
   readonly currentPeriodStartIso: string;
   readonly currentPeriodEndIso: string;
   readonly cancelAtPeriodEnd: boolean;
@@ -46,15 +51,20 @@ export function parseCheckoutSession(
   return { orgId, customerId: customer };
 }
 
-/** Read the plan's event cap from a Stripe price's metadata. A positive integer → the cap; anything else
- *  (absent / "unlimited" / non-numeric) → null (unlimited). The number lives in Stripe config, not the repo. */
-function parseCapFromPriceMetadata(metadata: unknown): number | null {
-  if (!metadata || typeof metadata !== "object") return null;
+/**
+ * Read the plan's event cap from a Stripe price's metadata (the number lives in Stripe config, not the repo).
+ * A positive integer → that cap; the literal "unlimited" → null (EXPLICIT unlimited); anything else — absent,
+ * non-string, "0"/negative, or garbage — → undefined (UNSPECIFIED). Fail-closed: undefined means "don't
+ * change the cap" (never silently grant unlimited from a misconfigured/absent value).
+ */
+function parseCapFromPriceMetadata(metadata: unknown): number | null | undefined {
+  if (!metadata || typeof metadata !== "object") return undefined;
   const raw = (metadata as Record<string, unknown>).event_cap;
-  if (typeof raw !== "string") return null;
-  if (!/^\d+$/.test(raw)) return null; // strict: only a clean non-negative integer
+  if (typeof raw !== "string") return undefined;
+  if (raw === "unlimited") return null; // explicit unlimited plan
+  if (!/^\d+$/.test(raw)) return undefined; // garbage → unspecified (fail-closed)
   const n = Number(raw);
-  return n > 0 ? n : null;
+  return n > 0 ? n : undefined; // 0/negative is not a valid cap
 }
 
 /** Parse a Stripe subscription object into the mirror fields, or null if a required field is missing. */
@@ -63,19 +73,24 @@ export function parseSubscriptionObject(obj: Record<string, unknown>): ParsedSub
   const id = obj.id;
   const customer = obj.customer;
   const status = obj.status;
-  const cps = obj.current_period_start;
-  const cpe = obj.current_period_end;
+  const firstItem = firstItemData(obj.items);
+  // Period bounds: top-level (older API) OR on the item (Stripe "Basil" 2025-03-31+ moved them to items).
+  const cps = pickNumber(obj.current_period_start, firstItem?.current_period_start);
+  const cpe = pickNumber(obj.current_period_end, firstItem?.current_period_end);
   if (
     !orgId ||
     typeof id !== "string" ||
     typeof customer !== "string" ||
     typeof status !== "string" ||
-    typeof cps !== "number" ||
-    typeof cpe !== "number"
+    cps === undefined ||
+    cpe === undefined
   ) {
     return null;
   }
-  const price = firstItemPrice(obj.items);
+  const price =
+    firstItem && typeof firstItem.price === "object"
+      ? (firstItem.price as Record<string, unknown>)
+      : null;
   return {
     orgId,
     stripeSubscriptionId: id,
@@ -89,14 +104,18 @@ export function parseSubscriptionObject(obj: Record<string, unknown>): ParsedSub
   };
 }
 
-function firstItemPrice(items: unknown): Record<string, unknown> | null {
+function firstItemData(items: unknown): Record<string, unknown> | null {
   if (!items || typeof items !== "object") return null;
   const data = (items as Record<string, unknown>).data;
   if (!Array.isArray(data) || data.length === 0) return null;
   const first = data[0];
-  if (!first || typeof first !== "object") return null;
-  const price = (first as Record<string, unknown>).price;
-  return price && typeof price === "object" ? (price as Record<string, unknown>) : null;
+  return first && typeof first === "object" ? (first as Record<string, unknown>) : null;
+}
+
+/** The first of the candidates that is a finite number, else undefined. */
+function pickNumber(...candidates: unknown[]): number | undefined {
+  for (const c of candidates) if (typeof c === "number" && Number.isFinite(c)) return c;
+  return undefined;
 }
 
 /**
@@ -134,25 +153,26 @@ export async function applyCustomerLink(
 
 /**
  * Upsert the subscription mirror + mirror the cap into org_limits (increase-now), guarded by the event
- * watermark. Returns "stale" (and writes nothing) when an older-or-equal event.created has already been
- * applied — the out-of-order guard.
+ * watermark. Returns "stale" (and writes nothing) when a STRICTLY-NEWER event.created has already been
+ * applied — the out-of-order guard. A same-second event still applies (event.created is second-granular).
  */
 export async function applySubscriptionUpsert(
   billing: Sql,
   sub: ParsedSubscription,
   eventCreated: number,
 ): Promise<"applied" | "stale"> {
+  const storedCap = sub.eventCap ?? null; // unspecified is stored as null in the mirror column
   return withTenant(billing, sub.orgId, async (tx): Promise<"applied" | "stale"> => {
-    const [existing] = await tx<{ last: string }[]>`
-      select last_stripe_event_created::text as last from billing_subscriptions`;
-    if (existing && Number(existing.last) >= eventCreated) return "stale";
-
-    await tx`
+    // Atomic watermark guard: the `where … <= excluded.last` on the conflict-update makes the stale check
+    // and the write ONE statement (the row lock serializes concurrent same-org events, and the re-check runs
+    // under the lock), so a strictly-older event can never overwrite a newer one — no read/write TOCTOU. A
+    // same-second (==) event still applies (last-write-wins) since event.created is only second-granular.
+    const applied = await tx<{ org_id: string }[]>`
       insert into billing_subscriptions
         (org_id, stripe_subscription_id, plan, status, event_cap,
          current_period_start, current_period_end, cancel_at_period_end, last_stripe_event_created)
       values
-        (${sub.orgId}, ${sub.stripeSubscriptionId}, ${sub.plan}, ${sub.status}, ${sub.eventCap},
+        (${sub.orgId}, ${sub.stripeSubscriptionId}, ${sub.plan}, ${sub.status}, ${storedCap},
          ${sub.currentPeriodStartIso}, ${sub.currentPeriodEndIso}, ${sub.cancelAtPeriodEnd}, ${eventCreated})
       on conflict (org_id) do update set
         stripe_subscription_id = excluded.stripe_subscription_id,
@@ -163,8 +183,14 @@ export async function applySubscriptionUpsert(
         current_period_end = excluded.current_period_end,
         cancel_at_period_end = excluded.cancel_at_period_end,
         last_stripe_event_created = excluded.last_stripe_event_created,
-        updated_at = now()`;
+        updated_at = now()
+      where billing_subscriptions.last_stripe_event_created <= excluded.last_stripe_event_created
+      returning org_id`;
+    if (applied.length === 0) return "stale"; // a strictly-newer event already applied
 
+    // Cap mirror — increase-now/decrease-defer — ONLY for a specified cap. Unspecified (undefined) is
+    // fail-closed: leave the existing/Free cap untouched rather than grant unlimited from a bad price config.
+    if (sub.eventCap === undefined) return "applied";
     const [limit] = await tx<{ event_cap: string | null }[]>`select event_cap from org_limits`;
     const current = limit ? (limit.event_cap === null ? null : Number(limit.event_cap)) : undefined;
     const decision = capMirrorDecision(current, sub.eventCap);
@@ -186,14 +212,20 @@ export async function applySubscriptionDeleted(
   args: { orgId: string; eventCreated: number },
 ): Promise<"applied" | "stale"> {
   return withTenant(billing, args.orgId, async (tx): Promise<"applied" | "stale"> => {
-    const [existing] = await tx<{ last: string }[]>`
-      select last_stripe_event_created::text as last from billing_subscriptions`;
-    if (!existing) return "applied"; // no subscription → nothing to downgrade
-    if (Number(existing.last) >= args.eventCreated) return "stale";
-    await tx`
+    // Atomic watermark guard on the UPDATE (same reasoning as the upsert). A row is returned only when the
+    // downgrade actually applied (stored watermark ≤ this event); then remove the paid cap mirror.
+    const applied = await tx<{ org_id: string }[]>`
       update billing_subscriptions
-      set status = 'canceled', last_stripe_event_created = ${args.eventCreated}, updated_at = now()`;
-    await tx`delete from org_limits`; // remove the paid cap → back to the Free default
-    return "applied";
+      set status = 'canceled', last_stripe_event_created = ${args.eventCreated}, updated_at = now()
+      where last_stripe_event_created <= ${args.eventCreated}
+      returning org_id`;
+    if (applied.length > 0) {
+      await tx`delete from org_limits`; // back to the injected Free default
+      return "applied";
+    }
+    // No row updated: either there is no subscription (nothing to downgrade → idempotent "applied"), or a
+    // strictly-newer event already advanced the watermark past this one ("stale").
+    const [exists] = await tx<{ x: number }[]>`select 1 as x from billing_subscriptions`;
+    return exists ? "stale" : "applied";
   });
 }

@@ -72,20 +72,39 @@ describe("parseSubscriptionObject (pure)", () => {
     });
   });
 
-  it("treats a missing/non-numeric cap as unlimited (null)", () => {
-    expect(
-      parseSubscriptionObject({ ...base, items: { data: [{ price: { id: "p" } }] } })?.eventCap,
-    ).toBeNull();
-    expect(
-      parseSubscriptionObject({
-        ...base,
-        items: { data: [{ price: { id: "p", metadata: { event_cap: "lots" } } }] },
-      })?.eventCap,
-    ).toBeNull();
+  it("cap: explicit 'unlimited' → null; absent/garbage → undefined (fail-closed, not unlimited)", () => {
+    const cap = (price: Record<string, unknown>) =>
+      parseSubscriptionObject({ ...base, items: { data: [{ price }] } })?.eventCap;
+    expect(cap({ id: "p", metadata: { event_cap: "unlimited" } })).toBeNull(); // explicit unlimited
+    expect(cap({ id: "p" })).toBeUndefined(); // no metadata → unspecified
+    expect(cap({ id: "p", metadata: { event_cap: "lots" } })).toBeUndefined(); // garbage → unspecified
+    expect(cap({ id: "p", metadata: { event_cap: "0" } })).toBeUndefined(); // non-positive → unspecified
   });
 
-  it("returns null when a required field is missing", () => {
-    expect(parseSubscriptionObject({ ...base, current_period_end: undefined })).toBeNull();
+  it("falls back to the ITEM's period bounds when the top-level ones are absent (newer Stripe API)", () => {
+    const noTop = { ...base } as Record<string, unknown>;
+    delete noTop.current_period_start;
+    delete noTop.current_period_end;
+    const s = parseSubscriptionObject({
+      ...noTop,
+      items: {
+        data: [
+          {
+            price: { id: "price_pro", metadata: { event_cap: "500000" } },
+            current_period_start: Math.floor(Date.UTC(2026, 6, 1) / 1000),
+            current_period_end: Math.floor(Date.UTC(2026, 7, 1) / 1000),
+          },
+        ],
+      },
+    });
+    expect(s?.currentPeriodStartIso).toBe("2026-07-01T00:00:00.000Z");
+    expect(s?.currentPeriodEndIso).toBe("2026-08-01T00:00:00.000Z");
+  });
+
+  it("returns null when a required field is missing (no period at top OR item level)", () => {
+    const noPeriod = { ...base } as Record<string, unknown>;
+    delete noPeriod.current_period_end;
+    expect(parseSubscriptionObject(noPeriod)).toBeNull();
     expect(parseSubscriptionObject({ ...base, metadata: {} })).toBeNull(); // no org
   });
 });
@@ -202,13 +221,32 @@ describe("applySubscriptionUpsert (integration)", () => {
     expect(await readCap(org)).toBe(500000);
   });
 
-  it("IGNORES an out-of-order (older-or-equal) event via the watermark", async () => {
+  it("IGNORES a strictly-older event via the watermark (out-of-order guard)", async () => {
     const org = await seedOrg();
     await applySubscriptionUpsert(billing, sub(org, { status: "active" }), 2000);
     // A stale 'canceled' with an older created must NOT overwrite the newer 'active'.
     const stale = await applySubscriptionUpsert(billing, sub(org, { status: "canceled" }), 1500);
     expect(stale).toBe("stale");
     expect((await readSub(org)).status).toBe("active");
+  });
+
+  it("APPLIES a same-second (equal created) event — last-write-wins (created is second-granular)", async () => {
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { status: "trialing" }), 1000);
+    // A distinct event in the same second (e.g. trialing→active) must still apply, not be dropped as stale.
+    const res = await applySubscriptionUpsert(billing, sub(org, { status: "active" }), 1000);
+    expect(res).toBe("applied");
+    expect((await readSub(org)).status).toBe("active");
+  });
+
+  it("FAIL-CLOSED: an UNSPECIFIED cap (bad/absent price metadata) never changes org_limits", async () => {
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { eventCap: 100000 }), 1000);
+    expect(await readCap(org)).toBe(100000);
+    // A later event whose price cap is unspecified must NOT grant unlimited — the cap stays put.
+    const res = await applySubscriptionUpsert(billing, sub(org, { eventCap: undefined }), 2000);
+    expect(res).toBe("applied"); // the subscription row still updates
+    expect(await readCap(org)).toBe(100000); // but the enforced cap is unchanged (not unlimited)
   });
 
   it("applies a cap INCREASE immediately but DEFERS a decrease", async () => {

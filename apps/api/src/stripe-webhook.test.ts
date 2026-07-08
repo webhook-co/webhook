@@ -16,7 +16,7 @@ vi.mock("@webhook-co/db", async (orig) => ({
 }));
 
 import {
-  dispatchStripeEvent,
+  applyStripeEvent,
   handleStripeWebhook,
   verifyAndParseStripeEvent,
   type StripeEvent,
@@ -176,95 +176,69 @@ const testEnv = {
   STRIPE_WEBHOOK_SIGNING_SECRET: secretEnv,
 } as StripeWebhookEnv;
 
-/** A fake ExecutionContext that collects (and lets us await) the scheduled waitUntil promises. */
-function fakeCtx() {
-  const pending: Promise<unknown>[] = [];
-  return { ctx: { waitUntil: (p: Promise<unknown>) => pending.push(p) }, pending };
-}
-
 describe("handleStripeWebhook", () => {
-  it("is dark (503) when BILLING_MODE is off/unset — no body read, no verify", async () => {
-    const { ctx } = fakeCtx();
+  it("is dark (503) when BILLING_MODE is off/unset — no body read, no process", async () => {
+    const process = vi.fn();
     const res = await handleStripeWebhook(
       webhookRequest(JSON.stringify(event())),
       { BILLING_MODE: "off", STRIPE_WEBHOOK_SIGNING_SECRET: secretEnv } as StripeWebhookEnv,
-      ctx,
-      { recordOnce: vi.fn(), dispatch: vi.fn() },
+      { process },
     );
     expect(res.status).toBe(503);
+    expect(process).not.toHaveBeenCalled();
   });
 
-  it("ACKs 200, records a fresh event, and DISPATCHES it via waitUntil", async () => {
-    const { ctx, pending } = fakeCtx();
-    const recordOnce = vi.fn().mockResolvedValue(true);
-    const dispatch = vi.fn().mockResolvedValue(undefined);
-    const res = await handleStripeWebhook(webhookRequest(JSON.stringify(event())), testEnv, ctx, {
-      recordOnce,
-      dispatch,
+  it("ACKs 200 after PROCESSING a verified event", async () => {
+    const process = vi.fn().mockResolvedValue("applied");
+    const res = await handleStripeWebhook(webhookRequest(JSON.stringify(event())), testEnv, {
+      process,
     });
     expect(res.status).toBe(200);
-    expect(recordOnce).toHaveBeenCalledWith({
-      eventId: "evt_1",
-      eventType: "checkout.session.completed",
-      eventCreated: TS,
-    });
-    expect(pending).toHaveLength(1); // dispatch scheduled in waitUntil
-    await Promise.all(pending);
-    expect(dispatch).toHaveBeenCalledOnce();
+    expect(process).toHaveBeenCalledWith(expect.objectContaining({ id: "evt_1" }));
   });
 
-  it("ACKs 200 on a REPLAY (dedup false) and does NOT dispatch", async () => {
-    const { ctx, pending } = fakeCtx();
-    const dispatch = vi.fn();
-    const res = await handleStripeWebhook(webhookRequest(JSON.stringify(event())), testEnv, ctx, {
-      recordOnce: vi.fn().mockResolvedValue(false),
-      dispatch,
+  it("ACKs 200 on a REPLAY (process short-circuits)", async () => {
+    const res = await handleStripeWebhook(webhookRequest(JSON.stringify(event())), testEnv, {
+      process: vi.fn().mockResolvedValue("replay"),
     });
     expect(res.status).toBe(200);
-    expect(pending).toHaveLength(0);
-    expect(dispatch).not.toHaveBeenCalled();
   });
 
-  it("returns 400 for an invalid signature (wrong secret) — never records or dispatches", async () => {
-    const { ctx } = fakeCtx();
-    const recordOnce = vi.fn();
-    const dispatch = vi.fn();
+  it("returns 500 when processing FAILS, so Stripe redelivers (nothing lost)", async () => {
+    const res = await handleStripeWebhook(webhookRequest(JSON.stringify(event())), testEnv, {
+      process: vi.fn().mockRejectedValue(new Error("db down")),
+    });
+    expect(res.status).toBe(500);
+  });
+
+  it("returns 400 for an invalid signature (wrong secret) — never processes", async () => {
+    const process = vi.fn();
     const res = await handleStripeWebhook(
       webhookRequest(JSON.stringify(event()), "whsec_attacker"),
       testEnv,
-      ctx,
-      { recordOnce, dispatch },
+      { process },
     );
     expect(res.status).toBe(400);
-    expect(recordOnce).not.toHaveBeenCalled();
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(process).not.toHaveBeenCalled();
   });
 
-  it("returns 503 when the billing Hyperdrive isn't provisioned (verified but can't dedup → fail closed)", async () => {
-    const { ctx } = fakeCtx();
-    const res = await handleStripeWebhook(
-      webhookRequest(JSON.stringify(event())),
-      testEnv,
-      ctx,
-      // no inject AND no HYPERDRIVE_BILLING → 503 after verify
-    );
+  it("returns 503 when the billing Hyperdrive isn't provisioned (verified but can't process → fail closed)", async () => {
+    const res = await handleStripeWebhook(webhookRequest(JSON.stringify(event())), testEnv);
     expect(res.status).toBe(503);
   });
 
   it("returns 413 for an oversized body", async () => {
-    const { ctx } = fakeCtx();
     const huge = "x".repeat(512 * 1024 + 10);
     const res = await handleStripeWebhook(
       new Request("https://api.test/v1/stripe/webhook", { method: "POST", body: huge }),
       testEnv,
-      ctx,
-      { recordOnce: vi.fn(), dispatch: vi.fn() },
+      { process: vi.fn() },
     );
     expect(res.status).toBe(413);
   });
 });
 
-describe("dispatchStripeEvent — routes each event type to its applier", () => {
+describe("applyStripeEvent — routes each event type to its applier", () => {
   afterEach(() => vi.clearAllMocks());
   const billing = {} as never; // the appliers are mocked; the connection is never touched
   const ev = (type: string, object: Record<string, unknown>): StripeEvent => ({
@@ -276,7 +250,7 @@ describe("dispatchStripeEvent — routes each event type to its applier", () => 
   });
 
   it("checkout.session.completed → applyCustomerLink(org, customer)", async () => {
-    await dispatchStripeEvent(
+    await applyStripeEvent(
       billing,
       ev("checkout.session.completed", { client_reference_id: "org-a", customer: "cus_1" }),
     );
@@ -296,7 +270,7 @@ describe("dispatchStripeEvent — routes each event type to its applier", () => 
       current_period_end: 2000,
       items: { data: [{ price: { id: "price_pro", metadata: { event_cap: "500000" } } }] },
     };
-    await dispatchStripeEvent(billing, ev("customer.subscription.updated", obj));
+    await applyStripeEvent(billing, ev("customer.subscription.updated", obj));
     expect(sync.applySubscriptionUpsert).toHaveBeenCalledWith(
       billing,
       expect.objectContaining({ orgId: "org-a", eventCap: 500000 }),
@@ -305,7 +279,7 @@ describe("dispatchStripeEvent — routes each event type to its applier", () => 
   });
 
   it("customer.subscription.deleted → applySubscriptionDeleted(org, created)", async () => {
-    await dispatchStripeEvent(
+    await applyStripeEvent(
       billing,
       ev("customer.subscription.deleted", { metadata: { org_id: "org-a" } }),
     );
@@ -316,19 +290,19 @@ describe("dispatchStripeEvent — routes each event type to its applier", () => 
   });
 
   it("an unhandled type (invoice.paid) is a no-op — no applier called", async () => {
-    await dispatchStripeEvent(billing, ev("invoice.paid", { id: "in_1" }));
+    await applyStripeEvent(billing, ev("invoice.paid", { id: "in_1" }));
     expect(sync.applyCustomerLink).not.toHaveBeenCalled();
     expect(sync.applySubscriptionUpsert).not.toHaveBeenCalled();
     expect(sync.applySubscriptionDeleted).not.toHaveBeenCalled();
   });
 
-  it("swallows an applier error (never throws out of waitUntil)", async () => {
+  it("PROPAGATES an applier error (→ handler 500 → Stripe redelivers; never silently swallowed)", async () => {
     sync.applyCustomerLink.mockRejectedValueOnce(new Error("db down"));
     await expect(
-      dispatchStripeEvent(
+      applyStripeEvent(
         billing,
         ev("checkout.session.completed", { client_reference_id: "org-a", customer: "cus_1" }),
       ),
-    ).resolves.toBeUndefined();
+    ).rejects.toThrow("db down");
   });
 });

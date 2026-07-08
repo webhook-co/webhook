@@ -249,7 +249,7 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     // Public, DB-free routes: served before any tenant deps are built.
     if (request.method === "GET" && url.pathname === PRM_PATH) {
@@ -292,7 +292,7 @@ export default {
     // and owns its own teardown. Ships DARK: BILLING_MODE off / unconfigured → a 503 no-op.
     if (request.method === "POST" && url.pathname === "/v1/stripe/webhook") {
       try {
-        return await handleStripeWebhook(request, env, ctx);
+        return await handleStripeWebhook(request, env);
       } catch (err) {
         console.log(JSON.stringify({ message: "stripe_webhook.unhandled", error: String(err) }));
         return new Response("internal error", {
