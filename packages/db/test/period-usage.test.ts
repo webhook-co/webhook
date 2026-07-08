@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
@@ -33,6 +33,19 @@ async function seedUsage(orgId: string, windowIso: string, count: number): Promi
   });
 }
 
+/** Seed a single raw event with an exact received_at (trigger-stamped on INSERT, then set). */
+async function seedEventAt(orgId: string, receivedAtIso: string): Promise<void> {
+  const endpointId = randomUUID();
+  const id = randomUUID();
+  await withTenant(app, orgId, async (tx) => {
+    await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
+             values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
+    await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+             values (${id}, ${orgId}, ${endpointId}, ${"k" + id}, ${10}, ${"d" + id}, ${"content_hash"})`;
+    await tx`update events set received_at = ${receivedAtIso} where id = ${id}`;
+  });
+}
+
 async function seedSubscription(
   orgId: string,
   opts: { status?: string; start: string; end: string },
@@ -52,7 +65,9 @@ beforeAll(async () => {
 }, setupHookTimeoutMs());
 
 afterEach(async () => {
+  await admin`delete from events`;
   await admin`delete from usage`;
+  await admin`delete from endpoints`;
   await admin`delete from billing_subscriptions`;
   await admin`delete from orgs`;
 });
@@ -126,5 +141,17 @@ describe("sumPeriodEventUsage — period.end clamp on the rolled half", () => {
     const period = { start: "2026-07-01T00:00:00.000Z", end: "2026-07-10T00:00:00.000Z" };
     const total = await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW));
     expect(total).toBe(50); // only the pre-end day; the 07-12 bucket is excluded by `< period.end`
+  });
+
+  it("the LIVE half excludes same-day events at/after a NON-midnight period.end (final cycle day)", async () => {
+    // now is on the final cycle day; period.end is mid-day (a raw Stripe instant). The live query
+    // `received_at < period.end` must exclude same-UTC-day events that occur AT/AFTER that instant.
+    const org = await seedOrg();
+    const NOW_LAST_DAY = Date.UTC(2026, 6, 18, 12, 0, 0); // 2026-07-18 12:00 (the final cycle day)
+    const period = { start: "2026-07-01T00:00:00.000Z", end: "2026-07-18T09:00:00.000Z" };
+    await seedEventAt(org, "2026-07-18T06:00:00.000Z"); // before period.end → counted (live)
+    await seedEventAt(org, "2026-07-18T10:00:00.000Z"); // AT/AFTER period.end → excluded
+    const total = await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW_LAST_DAY));
+    expect(total).toBe(1); // only the pre-end same-day event
   });
 });
