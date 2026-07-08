@@ -101,4 +101,12 @@ export const DB_ROLES = {
    * anywhere. Password injected out of band.
    */
   meterAudit: "webhook_meter_audit",
+  /**
+   * The VERIFIED-STRIPE-ONLY billing writer role (S4.5 / migration 0047). The Stripe inbound webhook runs
+   * as this role AFTER it verifies the Stripe signature and resolves org from signed metadata, to write
+   * state the tenant must never forge: the processed_stripe_events dedup ledger (S4.5a), and (S4.5b) the
+   * billing_customers/billing_subscriptions rows + the org_limits cap mirror — all SELECT-only for
+   * webhook_app, so this role is the sole writer. NON-OWNER, NOSUPERUSER, NOBYPASSRLS. Password out of band.
+   */
+  billing: "webhook_billing",
 } as const;

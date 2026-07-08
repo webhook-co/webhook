@@ -86,6 +86,9 @@ importers:
       '@webhook-co/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@webhook-co/webhooks-spec':
+        specifier: workspace:*
+        version: link:../../packages/webhooks-spec
     devDependencies:
       '@cloudflare/workers-types':
         specifier: ^5.20260708.1

@@ -34,6 +34,7 @@ import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { createRemoteReplayHandler } from "./remote-replay.js";
 import { handleRequest, type ApiDeps } from "./router.js";
 import { handleGithubSecretScanning } from "./secret-scanning.js";
+import { handleStripeWebhook } from "./stripe-webhook.js";
 
 // The api.webhook.co REST read server: a bearer-auth resource server over the contract's read
 // capabilities. It validates API keys (OAuth tokens are opaque + mcp-bound, ADR-0010) through the
@@ -123,6 +124,21 @@ export interface Env {
    * → uncapped (fail-safe). MUST match the engine's FREE_EVENT_CAP (same GH var into every worker).
    */
   FREE_EVENT_CAP?: string;
+  /**
+   * Billing mode (off|test|live) — gates the S4.5 Stripe inbound webhook. A committed var; unset/garbage →
+   * off (the webhook 503s dark). MUST match the engine's BILLING_MODE.
+   */
+  BILLING_MODE?: string;
+  /**
+   * The Stripe webhook SIGNING secret (whsec_…) — a Secrets Store binding, overlay-injected, never logged.
+   * Present only once Stripe is provisioned; absent → the inbound webhook can't verify and fails closed (503).
+   */
+  STRIPE_WEBHOOK_SIGNING_SECRET?: SecretsStoreSecret;
+  /**
+   * webhook_billing Hyperdrive (caching off) — the verified-Stripe-only writer connection for the inbound
+   * webhook's dedup ledger (S4.5a) + billing state (S4.5b). Present only once provisioned; absent → 503.
+   */
+  HYPERDRIVE_BILLING?: Hyperdrive;
 }
 
 // Built once at module load (pure); served on the public PRM route with no tenant deps.
@@ -265,6 +281,20 @@ export default {
         return await handleGithubSecretScanning(request, env);
       } catch (err) {
         console.log(JSON.stringify({ message: "secret_scanning.unhandled", error: String(err) }));
+        return new Response("internal error", {
+          status: 500,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      }
+    }
+    // Stripe INBOUND billing webhook (S4.5). Unauthenticated — the Stripe signature IS the auth; the handler
+    // verifies (via the audited Stripe adapter) BEFORE any parse or DB touch, dedups on processed_stripe_events,
+    // and owns its own teardown. Ships DARK: BILLING_MODE off / unconfigured → a 503 no-op.
+    if (request.method === "POST" && url.pathname === "/v1/stripe/webhook") {
+      try {
+        return await handleStripeWebhook(request, env);
+      } catch (err) {
+        console.log(JSON.stringify({ message: "stripe_webhook.unhandled", error: String(err) }));
         return new Response("internal error", {
           status: 500,
           headers: { "content-type": "text/plain; charset=utf-8" },
