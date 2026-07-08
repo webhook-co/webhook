@@ -6,11 +6,13 @@ import {
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
   DEFAULT_CAP_PRODUCER_LIMIT,
+  DEFAULT_METER_REPORTER_LIMIT,
   DEFAULT_METERING_ROLLUP_LIMIT,
   DEFAULT_RECONCILE_LIMIT,
   makeCapTransitionEvictor,
   makeIngestHashEvictor,
   runCapProducer,
+  runMeterReporter,
   enqueueAutoDeliveries,
   fromCachedSealedSecret,
   getEndpoint,
@@ -38,6 +40,9 @@ import {
   type ListenTicketGrant,
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
+  billingEnabled,
+  makeStripeClient,
+  parseBillingMode,
   parseFreeEventCap,
   parseSince,
   readSecretBinding,
@@ -158,6 +163,22 @@ export interface Env {
    * Free-pause enforcement) — a fail-safe default; setting it is the enable-Free-enforcement switch.
    */
   FREE_EVENT_CAP?: string;
+  /**
+   * Billing mode (off | test | live) — gates the S4.4 outbound Stripe flows (the meter-reporter cron).
+   * A committed VAR. Unset/garbage → off (fail-safe: no Stripe call, the reporter no-ops). `live` is the
+   * founder-gated real-charge mode; `test` hits Stripe's sandbox with identical code.
+   */
+  BILLING_MODE?: string;
+  /**
+   * The Stripe secret key (sk_test_ / sk_live_) — a Secrets Store binding, overlay-injected, never in
+   * source/wrangler/CI. Read via `readSecretBinding`, NEVER logged. Only present when billing is provisioned.
+   */
+  STRIPE_SECRET_KEY?: SecretsStoreSecret;
+  /**
+   * The Stripe Billing Meter's `event_name` (which meter the metered-overage usage counts against). A
+   * committed VAR (a config id, not a secret, not a price). Unset → the reporter has no meter to report to.
+   */
+  STRIPE_METER_EVENT_NAME?: string;
 }
 
 // Isolate-scoped DEK handle cache (ADR-0007): unwrapped, non-extractable CryptoKey handles, bounded
@@ -716,6 +737,14 @@ export default {
         console.log(JSON.stringify({ message: "metering rollup cron failed", error: String(err) })),
       ),
     );
+    // Outbound meter reporting (S4.4c): report each paying org's finalized daily usage to Stripe through
+    // the outbox. Gated on BILLING_MODE — a no-op when off (the default), so it ships dark. Independent of
+    // the rollup cron (it reads the frozen usage the rollup produces, but a failure must not sink it).
+    ctx.waitUntil(
+      runMeterReporterCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "meter reporter cron failed", error: String(err) })),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -963,6 +992,48 @@ async function runMeteringRollupCron(env: Env): Promise<void> {
       onTransition: makeCapTransitionEvictor(app, evict),
     });
     log("metering.cap.done", { ...cap });
+  } finally {
+    await Promise.all([meter.end(), app.end()]);
+  }
+}
+
+/**
+ * Wire the real deps and run one outbound meter-reporter pass (S4.4c). GATED on BILLING_MODE: off (the
+ * default) → return immediately, no Stripe client is built and no connection is opened, so this is fully
+ * dark until billing is deliberately enabled. When enabled it needs the Stripe secret (a Secrets Store
+ * binding, never logged) + the meter's event_name (a config VAR); a half-configured billing deploy (mode
+ * set but key/meter missing) logs and no-ops rather than erroring. Two short-lived connections mirror the
+ * rollup: webhook_meter (cross-org enumeration of paying orgs, migration 0045) + webhook_app via
+ * HYPERDRIVE_TENANT (per-org outbox read/write under RLS). The money-correctness core is @webhook-co/db.
+ */
+async function runMeterReporterCron(env: Env): Promise<void> {
+  const mode = parseBillingMode(env.BILLING_MODE ?? null);
+  if (!billingEnabled(mode)) return; // dark: BILLING_MODE off/unset → no Stripe, no-op
+
+  const log = (message: string, fields?: Record<string, unknown>) =>
+    console.log(JSON.stringify({ message, ...fields }));
+  const eventName = env.STRIPE_METER_EVENT_NAME?.trim();
+  const secretKey = env.STRIPE_SECRET_KEY ? await readSecretBinding(env.STRIPE_SECRET_KEY) : "";
+  if (!eventName || !secretKey) {
+    // Billing is switched on but not fully provisioned — don't error the cron, just skip (fail-safe).
+    log("metering.report.not_configured", { hasMeter: !!eventName, hasKey: !!secretKey });
+    return;
+  }
+
+  const stripe = makeStripeClient({ secretKey });
+  const meter = createClient(env.HYPERDRIVE_METER.connectionString);
+  const app = createClient(env.HYPERDRIVE_TENANT.connectionString);
+  try {
+    const result = await runMeterReporter({
+      meter,
+      app,
+      stripe,
+      eventName,
+      now: Date.now(),
+      limit: DEFAULT_METER_REPORTER_LIMIT,
+      log,
+    });
+    log("metering.report.done", { mode, ...result });
   } finally {
     await Promise.all([meter.end(), app.end()]);
   }

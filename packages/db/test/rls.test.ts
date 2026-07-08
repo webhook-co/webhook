@@ -902,6 +902,13 @@ describe("catalog-driven RLS coverage", () => {
       ["org_limits", "pause_policy"],
       ["ingest_paused", "org_id"],
       ["ingest_paused", "paused"],
+      // billing_subscriptions enumeration keys for the S4.4c meter-reporter (migration 0045): which orgs
+      // pay (org_id, status) + the period bounds + created_at (the meter floor). NOT the external id / plan.
+      ["billing_subscriptions", "org_id"],
+      ["billing_subscriptions", "status"],
+      ["billing_subscriptions", "current_period_start"],
+      ["billing_subscriptions", "current_period_end"],
+      ["billing_subscriptions", "created_at"],
     ];
     for (const [t, c] of selects) {
       const [p] = await owner<{ ok: boolean }[]>`
@@ -909,7 +916,8 @@ describe("catalog-driven RLS coverage", () => {
       expect(p.ok).toBe(true);
     }
     // It must NEVER read a payload / header / dedup column, nor the usage count itself, nor the
-    // pause NARRATIVE columns (reason/since) — the producer needs the flag + cap, never the prose.
+    // pause NARRATIVE columns (reason/since), nor the sensitive billing_subscriptions columns (the
+    // external subscription id, plan, or event_cap) — enumeration needs the org + status + bounds only.
     for (const [t, c] of [
       ["events", "payload_r2_key"],
       ["events", "headers"],
@@ -917,6 +925,9 @@ describe("catalog-driven RLS coverage", () => {
       ["usage", "event_count"],
       ["ingest_paused", "reason"],
       ["ingest_paused", "since"],
+      ["billing_subscriptions", "stripe_subscription_id"],
+      ["billing_subscriptions", "plan"],
+      ["billing_subscriptions", "event_cap"],
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meter}, ${t}, ${c}, 'SELECT') as ok`;
@@ -924,7 +935,13 @@ describe("catalog-driven RLS coverage", () => {
     }
     // No write anywhere: not on events/usage, not on the pause/limits tables. The producer READS the
     // cap + usage as webhook_meter and flips ingest_paused only as webhook_app under withTenant.
-    for (const t of ["events", "usage", "org_limits", "ingest_paused"] as const) {
+    for (const t of [
+      "events",
+      "usage",
+      "org_limits",
+      "ingest_paused",
+      "billing_subscriptions",
+    ] as const) {
       const [p] = await owner<{ any: boolean }[]>`
         select (has_table_privilege(${DB_ROLES.meter}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.meter}, ${t}, 'UPDATE')
@@ -936,8 +953,15 @@ describe("catalog-driven RLS coverage", () => {
     const policies = await owner<{ policyname: string; cmd: string }[]>`
       select policyname, cmd from pg_policies
       where schemaname = 'public' and policyname in
-        ('events_meter_select', 'usage_meter_select', 'org_limits_meter_select', 'ingest_paused_meter_select')`;
-    expect(policies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT", "SELECT", "SELECT"]);
+        ('events_meter_select', 'usage_meter_select', 'org_limits_meter_select',
+         'ingest_paused_meter_select', 'billing_subscriptions_meter_select')`;
+    expect(policies.map((p) => p.cmd).sort()).toEqual([
+      "SELECT",
+      "SELECT",
+      "SELECT",
+      "SELECT",
+      "SELECT",
+    ]);
   });
 
   it("the authn role reads ONLY (org_id, paused) on ingest_paused for the cold-lookup OR-in — never the reason note, never a write", async () => {
