@@ -66,6 +66,26 @@ export interface StripeHostedSession {
   readonly url: string;
 }
 
+/** One metered-usage report to a Stripe Billing Meter (the metered-overage counter). */
+export interface ReportMeterEventArgs {
+  /** The meter's `event_name` (config, e.g. "webhook_events") — which meter this usage counts against. */
+  readonly eventName: string;
+  /** The org's Stripe customer id (billing_customers) — Stripe attributes the usage to this customer. */
+  readonly customer: string;
+  /** The usage value for the period (an event count for a UTC day). Sent as a string, per Stripe. */
+  readonly value: number;
+  /** Stripe's native dedup key = `{org}:{day}`. ALSO the HTTP Idempotency-Key — a re-report is a no-op. */
+  readonly identifier: string;
+  /** Unix SECONDS placing the event in a billing period. Omit to let Stripe use ingest time. */
+  readonly timestamp?: number;
+}
+
+/** Stripe's echo of an accepted meter event — carries the `identifier` we can record as the ack. */
+export interface StripeMeterEventResult {
+  readonly identifier?: string;
+  readonly event_name?: string;
+}
+
 /** One Checkout line item: a Stripe price id + quantity (metered items omit quantity). No amounts here. */
 export interface CheckoutLineItem {
   readonly price: string;
@@ -113,6 +133,8 @@ export interface StripeClient {
     returnUrl: string;
     idempotencyKey?: string;
   }): Promise<StripeHostedSession>;
+  /** Report one metered-usage event to a Stripe Billing Meter (the outbox drainer's send step). */
+  reportMeterEvent(args: ReportMeterEventArgs): Promise<StripeMeterEventResult>;
 }
 
 export function makeStripeClient(opts: StripeClientOptions): StripeClient {
@@ -195,6 +217,20 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         "/billing_portal/sessions",
         { customer, return_url: returnUrl },
         idempotencyKey,
+      );
+    },
+    async reportMeterEvent({ eventName, customer, value, identifier, timestamp }) {
+      // identifier = {org}:{day} is BOTH Stripe's native meter-event dedup key and our HTTP Idempotency-Key,
+      // so a retried report of the same day is a no-op on both layers — a day is never double-billed (F5).
+      return request<StripeMeterEventResult>(
+        "/billing/meter_events",
+        {
+          event_name: eventName,
+          identifier,
+          timestamp,
+          payload: { stripe_customer_id: customer, value: String(value) },
+        },
+        identifier,
       );
     },
   };
