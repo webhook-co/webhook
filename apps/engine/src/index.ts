@@ -6,11 +6,14 @@ import {
   createIngestResolver,
   CREDENTIAL_CACHE_TTL_SECONDS,
   DEFAULT_CAP_PRODUCER_LIMIT,
+  DEFAULT_METER_RECONCILE_LIMIT,
+  DEFAULT_METER_RECONCILE_LOOKBACK_DAYS,
   DEFAULT_METER_REPORTER_LIMIT,
   DEFAULT_METERING_ROLLUP_LIMIT,
   DEFAULT_RECONCILE_LIMIT,
   makeCapTransitionEvictor,
   makeIngestHashEvictor,
+  reconcileMeteringUsage,
   runCapProducer,
   runMeterReporter,
   enqueueAutoDeliveries,
@@ -130,6 +133,12 @@ export interface Env {
   HYPERDRIVE_RECONCILER: Hyperdrive;
   /** Hyperdrive config for the webhook_meter cross-org metering-enumeration read (query caching off). */
   HYPERDRIVE_METER: Hyperdrive;
+  /**
+   * Hyperdrive config for the webhook_meter_audit cross-org RECONCILIATION read (S4.4d, F6 — query caching
+   * off). OPTIONAL: present only once the audit role + Hyperdrive are provisioned; while absent the
+   * reconciliation cron skips (dark), so this ships without blocking the deploy.
+   */
+  HYPERDRIVE_METER_AUDIT?: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
   R2_AUDIT_ANCHOR: R2Bucket;
   /** Base64 audit-chain HMAC key — the same key the chain rows are signed with (shared across surfaces). */
@@ -745,6 +754,14 @@ export default {
         console.log(JSON.stringify({ message: "meter reporter cron failed", error: String(err) })),
       ),
     );
+    // Metering reconciliation (S4.4d, money guard F6): independently recount raw events per finalized day
+    // and alarm on any drift vs the frozen usage count. Runs whenever the audit Hyperdrive is provisioned
+    // (independent of BILLING_MODE — it validates the live metering itself). Independent of the others.
+    ctx.waitUntil(
+      runMeteringReconcileCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "meter reconcile cron failed", error: String(err) })),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -1036,6 +1053,38 @@ async function runMeterReporterCron(env: Env): Promise<void> {
     log("metering.report.done", { mode, ...result });
   } finally {
     await Promise.all([meter.end(), app.end()]);
+  }
+}
+
+/**
+ * Wire the real deps and run one metering-reconciliation pass (S4.4d, F6). Skips (dark) unless the
+ * webhook_meter_audit Hyperdrive is provisioned — a metering-integrity check that runs independently of
+ * BILLING_MODE (it validates the live rollup, useful even before billing). One short-lived connection as
+ * webhook_meter_audit (its role-targeted SELECT policies + column grants scope it to the recount keys).
+ * The pure, money-correctness-tested comparison lives in @webhook-co/db (reconcileMeteringUsage); a drift
+ * is logged as `metering.reconcile.drift` (counts + opaque org id only) for an ops alarm to catch.
+ */
+async function runMeteringReconcileCron(env: Env): Promise<void> {
+  if (!env.HYPERDRIVE_METER_AUDIT) return; // dark until the audit role + Hyperdrive are provisioned
+  const audit = createClient(env.HYPERDRIVE_METER_AUDIT.connectionString);
+  const log = (message: string, fields?: Record<string, unknown>) =>
+    console.log(JSON.stringify({ message, ...fields }));
+  try {
+    const result = await reconcileMeteringUsage({
+      audit,
+      now: Date.now(),
+      lookbackDays: DEFAULT_METER_RECONCILE_LOOKBACK_DAYS,
+      limit: DEFAULT_METER_RECONCILE_LIMIT,
+      log,
+    });
+    // Summary line (the per-drift alarms are logged inside the core). driftCount > 0 is the alert signal.
+    log("metering.reconcile.done", {
+      daysChecked: result.daysChecked,
+      driftCount: result.mismatches.length,
+      capped: result.capped,
+    });
+  } finally {
+    await audit.end();
   }
 }
 
