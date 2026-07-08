@@ -1,11 +1,20 @@
-// S4.5a Stripe INBOUND webhook receiver — the security-critical shell (verify → dedup → ACK). Mirrors the
-// GitHub secret-scanning pre-router branch: raw body BEFORE any parse, a size cap, signature verification
-// via the AUDITED Stripe adapter (getAdapterForScheme("stripe") — never a hand-rolled HMAC), fail-closed,
-// and NO DB touch before the signature verifies. The state-sync HANDLERS (writing billing_customers/
-// subscriptions/org_limits) land in S4.5b, dispatched from the fresh-event branch below.
+// Stripe INBOUND webhook receiver. Mirrors the GitHub secret-scanning pre-router branch: raw body BEFORE any
+// parse, a size cap, signature verification via the AUDITED Stripe adapter (getAdapterForScheme("stripe") —
+// never a hand-rolled HMAC), fail-closed, NO DB touch before the signature verifies. After a verified+deduped
+// event, it ACKs 200 immediately and dispatches the state-sync (S4.5b) in ctx.waitUntil, so a slow apply can
+// never trip Stripe's own delivery-retry.
 
-import { createClient } from "@webhook-co/db";
-import { recordStripeEventOnce, type StripeEventRecord } from "@webhook-co/db";
+import {
+  applyCustomerLink,
+  applySubscriptionDeleted,
+  applySubscriptionUpsert,
+  createClient,
+  parseCheckoutSession,
+  parseSubscriptionObject,
+  recordStripeEventOnce,
+  resolveOrgId,
+  type Sql,
+} from "@webhook-co/db";
 import { billingEnabled, parseBillingMode, readSecretBinding } from "@webhook-co/shared";
 import { getAdapterForScheme } from "@webhook-co/webhooks-spec";
 
@@ -136,15 +145,22 @@ function outcomeToErrorResponse(outcome: Exclude<StripeReceiveOutcome, { kind: "
 
 /**
  * Handle POST /v1/stripe/webhook. Fail-closed at every step: dark when BILLING_MODE is off (503), can't
- * verify without the signing secret (503), rejects a bad signature before any parse/DB (400). After a
- * VERIFIED event, the dedup insert-wins on processed_stripe_events is the FIRST write — a replay ACKs 200
- * with no side effects. `injectedRecordOnce` is a test seam; in prod the dedup runs on the webhook_billing
- * Hyperdrive (503 if that isn't provisioned yet). Returns 200 for any verified event (Stripe wants a 2xx).
+ * verify without the signing secret (503), rejects a bad signature before any parse/DB (400). A VERIFIED
+ * event is processed SYNCHRONOUSLY then ACKed 200 (the handlers are fast DB writes, well inside Stripe's
+ * timeout). Crucially the state APPLY runs BEFORE the dedup is recorded: if the apply throws (a transient
+ * DB fault), nothing is marked processed and we return 500 so Stripe REDELIVERS — the appliers are
+ * idempotent + watermark-guarded, so a re-apply is safe and no event is ever silently lost. `inject` is a
+ * test seam; in prod the work runs on the webhook_billing Hyperdrive (503 if that isn't provisioned yet).
  */
+/** Test seam: a fake processor so the handler's gating + status mapping is unit-testable without a DB. */
+export interface StripeWebhookTestDeps {
+  readonly process: (event: StripeEvent) => Promise<"applied" | "replay">;
+}
+
 export async function handleStripeWebhook(
   request: Request,
   env: StripeWebhookEnv,
-  injectedRecordOnce?: (ev: StripeEventRecord) => Promise<boolean>,
+  inject?: StripeWebhookTestDeps,
 ): Promise<Response> {
   // Cheap header cap first (reject a lying/oversized declared length before reading the body).
   const declaredLen = request.headers.get("content-length");
@@ -169,28 +185,101 @@ export async function handleStripeWebhook(
   });
   if (outcome.kind !== "ok") return outcomeToErrorResponse(outcome);
   const event = outcome.event;
-  const rec: StripeEventRecord = {
-    eventId: event.id,
-    eventType: event.type,
-    eventCreated: event.created,
-  };
 
-  // Dedup + ACK. The insert-wins is the idempotency gate; a redelivery (fresh === false) is a no-op.
-  if (injectedRecordOnce) return ackAfterDedup(await injectedRecordOnce(rec), event);
-  if (!env.HYPERDRIVE_BILLING) return text(503, "not configured"); // can't dedup → fail closed
+  // Process synchronously; ACK 200 on success (applied OR replay), 500 on failure → Stripe redelivers.
+  if (inject) {
+    try {
+      await inject.process(event);
+      return text(200, "ok");
+    } catch {
+      return text(500, "processing failed");
+    }
+  }
+  if (!env.HYPERDRIVE_BILLING) return text(503, "not configured"); // can't process → fail closed
   const billing = createClient(env.HYPERDRIVE_BILLING.connectionString, { max: 1 });
   try {
-    return ackAfterDedup(await recordStripeEventOnce(billing, rec), event);
+    await processStripeEvent(billing, event);
+    return text(200, "ok");
+  } catch (err) {
+    // Nothing was durably marked processed (dedup is recorded only AFTER a successful apply), so a 500 lets
+    // Stripe redeliver → the idempotent appliers re-run. Log a sanitized type only (no payload/secret).
+    console.log(
+      JSON.stringify({
+        message: "stripe.webhook.process_failed",
+        type: event.type,
+        error: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+    return text(500, "processing failed");
   } finally {
     await billing.end();
   }
 }
 
-function ackAfterDedup(fresh: boolean, event: StripeEvent): Response {
-  if (fresh) {
-    // S4.5a: handler stub. S4.5b dispatches to the state-sync handlers here (ACK 200 first, then reconcile
-    // via waitUntil so a slow Stripe re-fetch can't trip Stripe's own delivery-retry).
-    console.log(JSON.stringify({ message: "stripe.webhook.received", type: event.type }));
+/**
+ * Process one verified event: short-circuit a replay we've already recorded, else APPLY the state change
+ * (idempotent), then record the dedup marker. Apply-before-record is deliberate — a failure before the
+ * marker is written lets Stripe redeliver and the idempotent appliers re-run, so no event is lost. Throws
+ * on an apply/DB fault (the handler maps that to 500 for redelivery).
+ */
+export async function processStripeEvent(
+  billing: Sql,
+  event: StripeEvent,
+): Promise<"applied" | "replay" | "rejected"> {
+  const [seen] = await billing<{ x: number }[]>`
+    select 1 as x from processed_stripe_events where event_id = ${event.id}`;
+  if (seen) return "replay"; // already fully processed
+  const outcome = await applyStripeEvent(billing, event);
+  // Record the dedup marker ONLY for an applied event. A "rejected" event (a customer/org identity mismatch)
+  // is deliberately NOT recorded: it is ACKed 200 (no Stripe retry-storm for a condition retries can't fix)
+  // but left out of the ledger so that, if the reject was a data anomaly we later correct, a manual Stripe
+  // replay can reprocess it — a reject is never permanently swallowed.
+  if (outcome === "applied") {
+    await recordStripeEventOnce(billing, {
+      eventId: event.id,
+      eventType: event.type,
+      eventCreated: event.created,
+    });
+    return "applied";
   }
-  return text(200, "ok"); // ACK any verified event — a replay is a no-op, not an error
+  return "rejected";
+}
+
+/** Route a verified event to its state-sync applier. Unhandled types (invoice.*) are a no-op (S4.5b-2).
+ *  Returns "rejected" for a business reject that must NOT be deduped (see processStripeEvent); "applied"
+ *  otherwise. Throws propagate (→ 500 → Stripe redelivers) — a transient fault is never swallowed. */
+export async function applyStripeEvent(
+  billing: Sql,
+  event: StripeEvent,
+): Promise<"applied" | "rejected"> {
+  const obj = event.data.object;
+  switch (event.type) {
+    case "checkout.session.completed": {
+      const parsed = parseCheckoutSession(obj);
+      if (parsed) await applyCustomerLink(billing, parsed);
+      return "applied";
+    }
+    case "customer.subscription.created":
+    case "customer.subscription.updated": {
+      const sub = parseSubscriptionObject(obj);
+      if (!sub) return "applied"; // unparseable → recorded as seen (no reprocessing helps a bad shape)
+      const outcome = await applySubscriptionUpsert(billing, sub, event.created);
+      if (outcome === "customer_mismatch") {
+        // The subscription's customer isn't this org's — a bug/attack. Log + reject (NOT deduped, so a
+        // later data fix + replay can reprocess). Never mutate on a mismatch.
+        console.log(
+          JSON.stringify({ message: "stripe.webhook.customer_mismatch", type: event.type }),
+        );
+        return "rejected";
+      }
+      return "applied";
+    }
+    case "customer.subscription.deleted": {
+      const orgId = resolveOrgId(obj);
+      if (orgId) await applySubscriptionDeleted(billing, { orgId, eventCreated: event.created });
+      return "applied";
+    }
+    default:
+      return "applied"; // unhandled type — recorded + ACKed, no state change
+  }
 }
