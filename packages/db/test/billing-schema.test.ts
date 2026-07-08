@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
+import { readBillingCustomerId } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -15,6 +16,7 @@ import { setupHookTimeoutMs } from "./pg-timing";
 
 let pg: EphemeralPostgres;
 let app: Sql;
+let root: Sql; // superuser — seeds the SELECT-only billing_customers (webhook_app can't write it)
 
 async function seedOrg(): Promise<string> {
   const orgId = randomUUID();
@@ -28,11 +30,30 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+  root = createClient(pg.ownerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
+  await root?.end();
   await pg?.stop();
+});
+
+describe("readBillingCustomerId", () => {
+  it("returns the org's own Stripe customer id, RLS-scoped (never another org's)", async () => {
+    const a = await seedOrg();
+    const b = await seedOrg();
+    await root`insert into billing_customers (org_id, stripe_customer_id) values (${a}, ${"cus_A"})`;
+    await root`insert into billing_customers (org_id, stripe_customer_id) values (${b}, ${"cus_B"})`;
+    expect(await withTenant(app, a, (tx) => readBillingCustomerId(tx))).toBe("cus_A");
+    // org A's context never sees org B's customer.
+    expect(await withTenant(app, b, (tx) => readBillingCustomerId(tx))).toBe("cus_B");
+  });
+
+  it("returns null when the org has no billing customer yet", async () => {
+    const orgId = await seedOrg();
+    expect(await withTenant(app, orgId, (tx) => readBillingCustomerId(tx))).toBeNull();
+  });
 });
 
 describe("stripe_meter_reports outbox constraints", () => {

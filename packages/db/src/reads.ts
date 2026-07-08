@@ -716,3 +716,14 @@ export async function readUsageSummary(
     paused: pauseRow?.paused ?? false,
   };
 }
+
+/**
+ * The org's existing Stripe customer id (S4.4b), or null if the org has never been through billing. Runs
+ * under the tenant RLS context (webhook_app has SELECT on billing_customers) — a checkout flow reads this
+ * to REUSE an existing customer, and the Portal needs it (no customer → no portal). Never a write path.
+ */
+export async function readBillingCustomerId(tx: TenantTx): Promise<string | null> {
+  const [row] = await tx<{ stripe_customer_id: string }[]>`
+    select stripe_customer_id from billing_customers limit 1`;
+  return row?.stripe_customer_id ?? null;
+}
