@@ -23,7 +23,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20260701.1",
-    "@redocly/cli": "^2.5.0"
+    "@cloudflare/workers-types": "^5.20260708.1",
+    "@redocly/cli": "^2.37.0"
   }
 }
