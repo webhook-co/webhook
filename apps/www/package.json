@@ -38,7 +38,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "axe-core": "^4.12.1",
     "jsdom": "^29.1.1",
-    "linkedom": "^0.18.12",
+    "linkedom": "^0.18.13",
     "tailwindcss": "^4.3.2",
     "vitest-axe": "^0.1.0"
   }

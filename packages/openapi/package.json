@@ -24,6 +24,6 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260701.1",
-    "@redocly/cli": "^2.5.0"
+    "@redocly/cli": "^2.37.0"
   }
 }
