@@ -656,20 +656,22 @@ describe("catalog-driven RLS coverage", () => {
     for (const { table } of TENANT_TABLES) {
       const cmds = new Set(rows.filter((r) => r.tablename === table).map((r) => r.cmd));
       // Policy sets by table posture:
-      //  - billing_customers/billing_subscriptions: SELECT-only (writes are verified-Stripe-only, S4.4b).
+      //  - billing_customers/billing_subscriptions: SELECT (tenant) + INSERT/UPDATE (verified-Stripe-only
+      //    writer, S4.5b), no DELETE — history lives in Stripe.
       //  - audit_log + auth_audit_event (append-only WORM) + usage_alerts (metering dedup): INSERT+SELECT.
       //  - stripe_meter_reports (outbox): INSERT+SELECT+UPDATE (pending→sending→sent), no DELETE.
       //  - everything else: full CRUD.
-      const selectOnly = table === "billing_customers" || table === "billing_subscriptions";
+      const insertSelectUpdate =
+        table === "billing_customers" ||
+        table === "billing_subscriptions" ||
+        table === "stripe_meter_reports";
       const insertSelectOnly =
         table === "audit_log" || table === "auth_audit_event" || table === "usage_alerts";
-      const expected = selectOnly
-        ? ["SELECT"]
+      const expected = insertSelectUpdate
+        ? ["INSERT", "SELECT", "UPDATE"]
         : insertSelectOnly
           ? ["INSERT", "SELECT"]
-          : table === "stripe_meter_reports"
-            ? ["INSERT", "SELECT", "UPDATE"]
-            : ["DELETE", "INSERT", "SELECT", "UPDATE"];
+          : ["DELETE", "INSERT", "SELECT", "UPDATE"];
       expect([...cmds].sort()).toEqual(expected);
     }
   });
@@ -1022,9 +1024,10 @@ describe("catalog-driven RLS coverage", () => {
     expect(auditPolicies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT"]);
   });
 
-  it("the billing writer role is non-owner/no-BYPASSRLS and (S4.5a) holds ONLY select+insert on the dedup ledger", async () => {
-    // webhook_billing (S4.5 / migration 0047) is the verified-Stripe-only writer. In S4.5a its ONLY grant is
-    // insert+select on the global processed_stripe_events dedup ledger; S4.5b widens it to the billing tables.
+  it("the billing writer role is non-owner/no-BYPASSRLS and holds exactly the verified-Stripe-writer grants", async () => {
+    // webhook_billing (S4.5, migrations 0047/0048) is the verified-Stripe-only writer: insert+select on the
+    // dedup ledger, and (S4.5b) the billing-state writes — insert/update on billing_customers/subscriptions,
+    // full mirror (incl. delete for the Free downgrade) on org_limits. It must never be privileged.
     const [role] = await owner<{ super: boolean; bypass: boolean }[]>`
       select rolsuper as super, rolbypassrls as bypass
       from pg_roles where rolname = ${DB_ROLES.billing}`;
@@ -1037,24 +1040,32 @@ describe("catalog-driven RLS coverage", () => {
         and pg_get_userbyid(relowner) = ${DB_ROLES.billing}`;
     expect(owned[0]?.n).toBe(0);
 
-    // select + insert on the ledger; NO update/delete (an event id, once recorded, is immutable evidence).
-    const [ins] = await owner<{ ok: boolean }[]>`
-      select has_table_privilege(${DB_ROLES.billing}, 'processed_stripe_events', 'INSERT') as ok`;
-    const [sel] = await owner<{ ok: boolean }[]>`
-      select has_table_privilege(${DB_ROLES.billing}, 'processed_stripe_events', 'SELECT') as ok`;
-    expect(ins.ok).toBe(true);
-    expect(sel.ok).toBe(true);
-    for (const priv of ["UPDATE", "DELETE"] as const) {
-      const [p] = await owner<{ ok: boolean }[]>`
-        select has_table_privilege(${DB_ROLES.billing}, 'processed_stripe_events', ${priv}) as ok`;
-      expect(p.ok).toBe(false);
+    // Assert the EXACT privilege set per table (has_table_privilege reads the ACL, remote-safe).
+    const expected: Record<string, string[]> = {
+      // dedup ledger: insert+select only (an event id, once recorded, is immutable evidence).
+      processed_stripe_events: ["INSERT", "SELECT"],
+      // billing state: insert/update/select, NO delete (history lives in Stripe).
+      billing_customers: ["INSERT", "SELECT", "UPDATE"],
+      billing_subscriptions: ["INSERT", "SELECT", "UPDATE"],
+      // cap mirror: full CRUD (delete removes the paid cap on a downgrade → Free default).
+      org_limits: ["DELETE", "INSERT", "SELECT", "UPDATE"],
+    };
+    for (const [t, want] of Object.entries(expected)) {
+      const got: string[] = [];
+      for (const priv of ["SELECT", "INSERT", "UPDATE", "DELETE"] as const) {
+        const [p] = await owner<{ ok: boolean }[]>`
+          select has_table_privilege(${DB_ROLES.billing}, ${t}, ${priv}) as ok`;
+        if (p.ok) got.push(priv);
+      }
+      expect(got.sort()).toEqual(want);
     }
-    // S4.5a scope: it must NOT yet touch the billing state tables (those grants arrive in S4.5b).
-    for (const t of ["billing_customers", "billing_subscriptions", "org_limits"] as const) {
+    // It must NOT reach unrelated tenant tables (e.g. events / endpoints / usage).
+    for (const t of ["events", "endpoints", "usage"] as const) {
       const [p] = await owner<{ any: boolean }[]>`
         select (has_table_privilege(${DB_ROLES.billing}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.billing}, ${t}, 'UPDATE')
-             or has_table_privilege(${DB_ROLES.billing}, ${t}, 'SELECT')) as any`;
+             or has_table_privilege(${DB_ROLES.billing}, ${t}, 'SELECT')
+             or has_table_privilege(${DB_ROLES.billing}, ${t}, 'DELETE')) as any`;
       expect(p.any).toBe(false);
     }
   });

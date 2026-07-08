@@ -1,11 +1,21 @@
-// S4.5a Stripe INBOUND webhook receiver — the security-critical shell (verify → dedup → ACK). Mirrors the
-// GitHub secret-scanning pre-router branch: raw body BEFORE any parse, a size cap, signature verification
-// via the AUDITED Stripe adapter (getAdapterForScheme("stripe") — never a hand-rolled HMAC), fail-closed,
-// and NO DB touch before the signature verifies. The state-sync HANDLERS (writing billing_customers/
-// subscriptions/org_limits) land in S4.5b, dispatched from the fresh-event branch below.
+// Stripe INBOUND webhook receiver. Mirrors the GitHub secret-scanning pre-router branch: raw body BEFORE any
+// parse, a size cap, signature verification via the AUDITED Stripe adapter (getAdapterForScheme("stripe") —
+// never a hand-rolled HMAC), fail-closed, NO DB touch before the signature verifies. After a verified+deduped
+// event, it ACKs 200 immediately and dispatches the state-sync (S4.5b) in ctx.waitUntil, so a slow apply can
+// never trip Stripe's own delivery-retry.
 
-import { createClient } from "@webhook-co/db";
-import { recordStripeEventOnce, type StripeEventRecord } from "@webhook-co/db";
+import {
+  applyCustomerLink,
+  applySubscriptionDeleted,
+  applySubscriptionUpsert,
+  createClient,
+  parseCheckoutSession,
+  parseSubscriptionObject,
+  recordStripeEventOnce,
+  resolveOrgId,
+  type Sql,
+  type StripeEventRecord,
+} from "@webhook-co/db";
 import { billingEnabled, parseBillingMode, readSecretBinding } from "@webhook-co/shared";
 import { getAdapterForScheme } from "@webhook-co/webhooks-spec";
 
@@ -141,10 +151,22 @@ function outcomeToErrorResponse(outcome: Exclude<StripeReceiveOutcome, { kind: "
  * with no side effects. `injectedRecordOnce` is a test seam; in prod the dedup runs on the webhook_billing
  * Hyperdrive (503 if that isn't provisioned yet). Returns 200 for any verified event (Stripe wants a 2xx).
  */
+/** The minimal waitUntil surface of a Worker ExecutionContext (so the handler is testable with a fake). */
+export interface WaitUntilCtx {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+/** Test seams: a fake dedup + dispatch so the handler's gating/ACK/waitUntil wiring is unit-testable. */
+export interface StripeWebhookTestDeps {
+  readonly recordOnce: (ev: StripeEventRecord) => Promise<boolean>;
+  readonly dispatch: (event: StripeEvent) => Promise<void>;
+}
+
 export async function handleStripeWebhook(
   request: Request,
   env: StripeWebhookEnv,
-  injectedRecordOnce?: (ev: StripeEventRecord) => Promise<boolean>,
+  ctx: WaitUntilCtx,
+  inject?: StripeWebhookTestDeps,
 ): Promise<Response> {
   // Cheap header cap first (reject a lying/oversized declared length before reading the body).
   const declaredLen = request.headers.get("content-length");
@@ -175,22 +197,65 @@ export async function handleStripeWebhook(
     eventCreated: event.created,
   };
 
-  // Dedup + ACK. The insert-wins is the idempotency gate; a redelivery (fresh === false) is a no-op.
-  if (injectedRecordOnce) return ackAfterDedup(await injectedRecordOnce(rec), event);
+  // Dedup FIRST (insert-wins is the idempotency gate), then ACK 200 immediately and dispatch the state-sync
+  // in waitUntil. A redelivery (fresh === false) ACKs 200 with no dispatch.
+  if (inject) {
+    if (await inject.recordOnce(rec)) ctx.waitUntil(inject.dispatch(event));
+    return text(200, "ok");
+  }
   if (!env.HYPERDRIVE_BILLING) return text(503, "not configured"); // can't dedup → fail closed
   const billing = createClient(env.HYPERDRIVE_BILLING.connectionString, { max: 1 });
+  let fresh: boolean;
   try {
-    return ackAfterDedup(await recordStripeEventOnce(billing, rec), event);
-  } finally {
+    fresh = await recordStripeEventOnce(billing, rec);
+  } catch (err) {
     await billing.end();
+    throw err; // → the pre-router 500 wrapper
   }
+  if (!fresh) {
+    await billing.end();
+    return text(200, "ok"); // replay → no-op
+  }
+  // The connection lives until the dispatch completes (it runs AFTER the ACK, in waitUntil), then closes.
+  ctx.waitUntil(dispatchStripeEvent(billing, event).finally(() => billing.end()));
+  return text(200, "ok");
 }
 
-function ackAfterDedup(fresh: boolean, event: StripeEvent): Response {
-  if (fresh) {
-    // S4.5a: handler stub. S4.5b dispatches to the state-sync handlers here (ACK 200 first, then reconcile
-    // via waitUntil so a slow Stripe re-fetch can't trip Stripe's own delivery-retry).
-    console.log(JSON.stringify({ message: "stripe.webhook.received", type: event.type }));
+/**
+ * Route a verified, first-seen Stripe event to its state-sync applier (S4.5b). Runs in waitUntil after the
+ * ACK. Unhandled types (invoice.*, etc.) are a recorded + ACKed no-op here (their handlers land in S4.5b-2).
+ * Never throws out of waitUntil — a fault is logged (a sanitized type only), never a payload/secret.
+ */
+export async function dispatchStripeEvent(billing: Sql, event: StripeEvent): Promise<void> {
+  const obj = event.data.object;
+  try {
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const parsed = parseCheckoutSession(obj);
+        if (parsed) await applyCustomerLink(billing, parsed);
+        break;
+      }
+      case "customer.subscription.created":
+      case "customer.subscription.updated": {
+        const sub = parseSubscriptionObject(obj);
+        if (sub) await applySubscriptionUpsert(billing, sub, event.created);
+        break;
+      }
+      case "customer.subscription.deleted": {
+        const orgId = resolveOrgId(obj);
+        if (orgId) await applySubscriptionDeleted(billing, { orgId, eventCreated: event.created });
+        break;
+      }
+      default:
+        break; // unhandled type — recorded (deduped) + ACKed; no state change
+    }
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        message: "stripe.webhook.dispatch_failed",
+        type: event.type,
+        error: err instanceof Error ? err.name : "unknown",
+      }),
+    );
   }
-  return text(200, "ok"); // ACK any verified event — a replay is a no-op, not an error
 }
