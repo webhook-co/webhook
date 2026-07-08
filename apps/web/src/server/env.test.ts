@@ -5,11 +5,14 @@ vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext }));
 
 import {
   getAuthBaseUrl,
+  getBillingMode,
   getDeliveryDispatcher,
   getFreeEventCap,
   getListenWsUrl,
   getProviderSecretSealer,
   getSessionSecret,
+  getStripePriceIds,
+  getStripeSecretKey,
 } from "./env";
 
 afterEach(() => {
@@ -137,6 +140,38 @@ describe("getFreeEventCap", () => {
     expect(getFreeEventCap()).toBeNull();
     getCloudflareContext.mockReturnValue({ env: { FREE_EVENT_CAP: "10k" } });
     expect(getFreeEventCap()).toBeNull();
+  });
+});
+
+describe("billing env accessors", () => {
+  it("getBillingMode parses the binding (fail-safe to off)", () => {
+    getCloudflareContext.mockReturnValue({ env: { BILLING_MODE: "test" } });
+    expect(getBillingMode()).toBe("test");
+    getCloudflareContext.mockReturnValue({ env: { BILLING_MODE: "nonsense" } });
+    expect(getBillingMode()).toBe("off");
+    getCloudflareContext.mockReturnValue({ env: {} });
+    vi.stubEnv("BILLING_MODE", "");
+    expect(getBillingMode()).toBe("off"); // unset → off
+  });
+
+  it("getStripeSecretKey resolves a Secrets Store binding, else null", async () => {
+    getCloudflareContext.mockReturnValue({
+      env: { STRIPE_SECRET_KEY: { get: async () => "sk_test_bound" } },
+    });
+    expect(await getStripeSecretKey()).toBe("sk_test_bound");
+    getCloudflareContext.mockReturnValue({ env: {} });
+    vi.stubEnv("STRIPE_SECRET_KEY", "");
+    expect(await getStripeSecretKey()).toBeNull();
+  });
+
+  it("getStripePriceIds needs BOTH ids, else null (fail-closed half-config)", () => {
+    getCloudflareContext.mockReturnValue({
+      env: { STRIPE_PRICE_BASE: "price_b", STRIPE_PRICE_OVERAGE: "price_o" },
+    });
+    expect(getStripePriceIds()).toEqual({ base: "price_b", overage: "price_o" });
+    getCloudflareContext.mockReturnValue({ env: { STRIPE_PRICE_BASE: "price_b" } }); // overage missing
+    vi.stubEnv("STRIPE_PRICE_OVERAGE", "");
+    expect(getStripePriceIds()).toBeNull();
   });
 });
 

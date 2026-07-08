@@ -73,8 +73,12 @@ export interface CheckoutLineItem {
 }
 
 export interface CreateCheckoutArgs {
-  /** The existing Stripe customer to attach the subscription to. */
-  readonly customer: string;
+  /** An EXISTING Stripe customer to attach the subscription to, if we already have one for this org
+   *  (billing_customers). Omit for a NEW subscriber — Checkout then creates the customer, and the inbound
+   *  webhook records it. Exactly one of customer / customerEmail is the typical shape. */
+  readonly customer?: string;
+  /** Prefill the email on the Checkout page when there's no existing customer (a new subscriber). */
+  readonly customerEmail?: string;
   /** Base licensed price + metered overage price items (ids from config — NO amounts in the repo). */
   readonly lineItems: readonly CheckoutLineItem[];
   readonly successUrl: string;
@@ -160,6 +164,7 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
     },
     async createCheckoutSession({
       customer,
+      customerEmail,
       lineItems,
       successUrl,
       cancelUrl,
@@ -170,7 +175,10 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         "/checkout/sessions",
         {
           mode: "subscription",
+          // Reuse the existing customer if we have one; otherwise let Checkout create it (email prefill).
+          // The encoder drops undefined, so exactly the provided one is sent.
           customer,
+          customer_email: customer ? undefined : customerEmail,
           success_url: successUrl,
           cancel_url: cancelUrl,
           client_reference_id: orgId,

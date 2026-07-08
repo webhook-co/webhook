@@ -159,6 +159,43 @@ describe("makeStripeClient hosted flows", () => {
     expect((calls[0].init.headers as Record<string, string>)["Idempotency-Key"]).toBeUndefined();
   });
 
+  it("for a NEW subscriber (no customer) sends customer_email and omits customer", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: { id: "cs_3", url: "https://checkout" },
+    });
+    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    await client.createCheckoutSession({
+      customerEmail: "new@x.test",
+      lineItems: [{ price: "price_base", quantity: 1 }],
+      successUrl: "https://app/ok",
+      cancelUrl: "https://app/no",
+      orgId: "org-7",
+    });
+    const p = new URLSearchParams(calls[0].init.body as string);
+    expect(p.get("customer_email")).toBe("new@x.test");
+    expect(p.has("customer")).toBe(false); // Checkout will create the customer
+  });
+
+  it("with an existing customer, sends customer and NOT customer_email", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: { id: "cs_4", url: "https://checkout" },
+    });
+    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    await client.createCheckoutSession({
+      customer: "cus_1",
+      customerEmail: "ignored@x.test",
+      lineItems: [{ price: "price_base", quantity: 1 }],
+      successUrl: "https://app/ok",
+      cancelUrl: "https://app/no",
+      orgId: "org-7",
+    });
+    const p = new URLSearchParams(calls[0].init.body as string);
+    expect(p.get("customer")).toBe("cus_1");
+    expect(p.has("customer_email")).toBe(false); // an existing customer wins; no email prefill
+  });
+
   it("forwards a caller-supplied idempotency key on Checkout (collapse a double-submit)", async () => {
     const { impl, calls } = fakeFetch({
       status: 200,

@@ -3,7 +3,9 @@ import "server-only";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 import {
+  parseBillingMode,
   parseFreeEventCap,
+  type BillingMode,
   type DeliveryDispatcherRpc,
   type IngestUrlRevealerRpc,
   type SecretSealer,
@@ -209,6 +211,52 @@ export function getFreeEventCap(): number | null {
     process.env.FREE_EVENT_CAP ??
     null;
   return parseFreeEventCap(raw);
+}
+
+/**
+ * BILLING_MODE (off | test | live) — gates every Stripe flow (S4.4). Fail-safe: unset/garbage → off, so
+ * the dashboard shows no billing UI and no Stripe call is made unless deliberately enabled. `live` is the
+ * founder-gated real-charge mode. Read from the same injected deploy var as the other workers.
+ */
+export function getBillingMode(): BillingMode {
+  const fromBinding = workerEnv().BILLING_MODE;
+  const raw =
+    (typeof fromBinding === "string" && fromBinding.length > 0 ? fromBinding : null) ??
+    process.env.BILLING_MODE ??
+    null;
+  return parseBillingMode(raw);
+}
+
+/**
+ * The Stripe secret key (sk_test_ / sk_live_) — a Secrets Store binding in prod, or process.env in dev.
+ * Null when unset (the caller treats that as "billing not configured" and no-ops). NEVER logged.
+ */
+export function getStripeSecretKey(): Promise<string | null> {
+  return readSecret((workerEnv() as Record<string, unknown>).STRIPE_SECRET_KEY).then(
+    (fromBinding) =>
+      fromBinding ??
+      (process.env.STRIPE_SECRET_KEY && process.env.STRIPE_SECRET_KEY.length > 0
+        ? process.env.STRIPE_SECRET_KEY
+        : null),
+  );
+}
+
+/**
+ * The base licensed + metered-overage Stripe PRICE IDs (committed-at-deploy vars — ids, NOT amounts, so no
+ * price figure enters the repo). Returns null unless BOTH are set, so a half-configured billing deploy
+ * fails closed (no Checkout) rather than sending a malformed line item.
+ */
+export function getStripePriceIds(): { base: string; overage: string } | null {
+  const read = (name: string): string | null => {
+    const v = workerEnv()[name];
+    return (
+      (typeof v === "string" && v.length > 0 ? v : null) ??
+      (process.env[name] && process.env[name]!.length > 0 ? process.env[name]! : null)
+    );
+  };
+  const base = read("STRIPE_PRICE_BASE");
+  const overage = read("STRIPE_PRICE_OVERAGE");
+  return base && overage ? { base, overage } : null;
 }
 
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */
