@@ -13,6 +13,7 @@ import { createReplayDestination } from "../src/replay-destinations";
 import { createSubscription } from "../src/subscriptions";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // deliveries.get/list db reads (S3 Slice 3 PR3a) — the auto-delivery OBSERVABILITY surface, against a REAL
 // Postgres under webhook_app + RLS. Newest-first keyset browse + destination/subscription/status filters +
@@ -92,7 +93,7 @@ beforeAll(async () => {
   subA = (
     await createSubscription(app, { orgId: orgA, sourceEndpointId: epA, destinationId: destA })
   ).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

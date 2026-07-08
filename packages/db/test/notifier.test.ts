@@ -12,6 +12,7 @@ import { listPendingNotifications, markNotificationSent } from "../src/notifier"
 import { createReplayDestination } from "../src/replay-destinations";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The notification notifier (S3 Slice 3 PR3c-3): the auth. worker's cron drains pending notification_intents
 // (written by the engine's auto-disable) → emails the org owner → marks them sent. This is the db half — a
@@ -59,7 +60,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
   notifier = createClient(pg.urlFor({ role: DB_ROLES.notifier }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

@@ -14,6 +14,7 @@ import {
 } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // bootstrapPersonalOrg + createMembership against a REAL Postgres: the atomic signup primitive
 // (org + owner membership + default endpoint in ONE tx), idempotent via a deterministic per-user org
@@ -37,7 +38,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

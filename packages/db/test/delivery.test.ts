@@ -19,6 +19,7 @@ import { createOrg } from "../src/orgs";
 import { createReplayDestination } from "../src/replay-destinations";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The delivery-attempt lifecycle the per-destination delivery DO drives (S3 Slice 3 PR1b): listing DUE
 // deliveries (queued / retry-arrived) with their delivery context, and the terminal/retry transitions.
@@ -97,7 +98,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
   endpointId = (await createEndpoint(app, { orgId, name: "ep" }, hasher)).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

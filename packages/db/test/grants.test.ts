@@ -28,6 +28,7 @@ import {
 } from "../src/grants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Grant + scoped-key ISSUANCE against a REAL Postgres: mintScopedKey (approval off / on-pending /
 // on-auto-approved), approveGrant, mintKeyForGrant (refresh), the atomic grant+key+aae1-audit tx,
@@ -106,7 +107,7 @@ beforeAll(async () => {
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 13) % 256)),
   );
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

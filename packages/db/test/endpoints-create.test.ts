@@ -22,6 +22,7 @@ import {
 } from "../src/write-handlers";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The endpoints.create WRITE path against a REAL Postgres under the non-owner webhook_app role (RLS):
 // the audited single-tx createEndpointWithAudit primitive and the shared createWriteHandlers dispatch.
@@ -62,7 +63,7 @@ beforeAll(async () => {
   );
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

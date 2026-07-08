@@ -30,15 +30,34 @@ export interface TestTimeouts {
 }
 
 // Tight budgets for the local/CI-service path (fast, fail early). The generous remote
-// budgets give Neon's variable latency headroom — the 120-round-trip reveal-rate-limit
-// test clocks ~16s on a good night and can exceed 30s on a slow one; the RLS suite's
-// multi-pool setup likewise needs room. These are ceilings, not expected durations.
+// budgets give Neon's variable latency headroom — the RLS suite's multi-pool setup and the
+// round-trip-heavy read suites sit near the local ceilings on a slow/contended Neon night.
+// These are ceilings, not expected durations.
 const LOCAL_TIMEOUTS: TestTimeouts = { testTimeout: 30_000, hookTimeout: 60_000 };
 const REMOTE_TIMEOUTS: TestTimeouts = { testTimeout: 120_000, hookTimeout: 180_000 };
 
 /** Pick vitest test/hook timeouts based on whether the target is a remote engine. */
 export function remoteTestTimeouts(url = process.env.TEST_DATABASE_URL): TestTimeouts {
   return isRemoteTestDatabase(url) ? REMOTE_TIMEOUTS : LOCAL_TIMEOUTS;
+}
+
+// Per-hook budgets for the provisioning `beforeAll` blocks (create per-file DB + apply all
+// migrations + seed). Those blocks pass an explicit timeout literal to vitest, which OVERRIDES
+// the config-level hookTimeout above — so the remote widening there never reaches them unless
+// they opt in via setupHookTimeoutMs(). Local stays at the historical 90s (a heavy seed on the
+// ephemeral cluster still wants headroom); remote gets 180s for Neon's slow/contended nights.
+const LOCAL_SETUP_HOOK_TIMEOUT_MS = 90_000;
+const REMOTE_SETUP_HOOK_TIMEOUT_MS = 180_000;
+
+/**
+ * Timeout (ms) for a suite's provisioning `beforeAll`, passed at the call site as
+ * `beforeAll(fn, setupHookTimeoutMs())`. Remote (Neon) gets a wider budget than the local/CI
+ * path — mirroring remoteTestTimeouts — because a per-hook literal overrides the config
+ * hookTimeout, so without this a slow Neon night tips an otherwise-green setup over the local
+ * ceiling (this is exactly what failed index-usage.test.ts on run 28932922311).
+ */
+export function setupHookTimeoutMs(url = process.env.TEST_DATABASE_URL): number {
+  return isRemoteTestDatabase(url) ? REMOTE_SETUP_HOOK_TIMEOUT_MS : LOCAL_SETUP_HOOK_TIMEOUT_MS;
 }
 
 // The harness names each per-run test database `webhook_test_<hex>` (test/pg.ts). The

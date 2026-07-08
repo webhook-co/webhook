@@ -12,6 +12,7 @@ import { createReplayDestination } from "../src/replay-destinations";
 import { listDestinationsWithDueDeliveries } from "../src/reconcile";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The delivery reconciler (S3 Slice 3 PR3c-2a): the engine's hourly cron re-wakes destinations whose
 // per-destination DO went idle while a due delivery sits unclaimed (a lost wake, or a just-re-enabled
@@ -100,7 +101,7 @@ beforeAll(async () => {
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "epA" }, hasher)).id;
   epB = (await createEndpoint(app, { orgId: orgB, name: "epB" }, hasher)).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

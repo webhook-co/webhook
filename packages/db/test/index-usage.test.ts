@@ -12,6 +12,7 @@ import { createReplayDestination } from "../src/replay-destinations";
 import { createSubscription } from "../src/subscriptions";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The repo's FIRST EXPLAIN-based test. It proves the migration-0036 covering indexes (and the reused
 // events_tunnel_idx) actually SERVE the keyset browse reads — i.e. the raw-column ORDER BY is an ordered
@@ -94,7 +95,7 @@ beforeAll(async () => {
                values (${newId()}, ${orgId}, ${Buffer.from(newId().replace(/-/g, ""), "hex")}, ${`e${i}`})`;
     }
   });
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

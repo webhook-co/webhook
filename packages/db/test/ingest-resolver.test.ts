@@ -20,6 +20,7 @@ import { createIngestResolver } from "../src/ingest-resolver";
 import { createOrg } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The ingest-token resolver (hot KV + cold webhook_authn lookup), exercised against a REAL
 // Postgres. The factory composes the SAME createCredentialResolver the api-key path uses
@@ -39,7 +40,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
   orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

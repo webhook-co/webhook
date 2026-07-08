@@ -7,6 +7,7 @@ import { DB_ROLES } from "../src/constants";
 import { readUsageSummary } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // readUsageSummary (usage.get): the caller's org usage for the CURRENT billing period (UTC month
 // until Stripe anchors it), plus the cap + pause behavior. RLS-scoped; single dimension = events.
@@ -51,7 +52,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

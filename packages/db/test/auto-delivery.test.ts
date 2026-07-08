@@ -13,6 +13,7 @@ import { createReplayDestination, softDeleteReplayDestination } from "../src/rep
 import { createSubscription, enqueueAutoDeliveries } from "../src/subscriptions";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // S3 Slice 3 PR2c — native auto-delivery wiring. After a genuinely-new event is durable, the ingest worker
 // resolves the source endpoint's matching subscriptions and durably enqueues a `queued` delivery_attempts
@@ -65,7 +66,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

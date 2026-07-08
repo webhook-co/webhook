@@ -16,6 +16,7 @@ import { createOrg } from "../src/orgs";
 import { getEndpoint } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // endpoints.update (dedup config, ADR-0104) against a REAL Postgres under webhook_app RLS + the
 // webhook_authn cold lookup. Proves the config round-trips DB -> read model AND DB -> ingest cold
@@ -39,7 +40,7 @@ beforeAll(async () => {
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 5) % 256)),
   );
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

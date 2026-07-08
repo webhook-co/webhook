@@ -21,6 +21,7 @@ import {
 } from "../src/replay-destinations";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The replay-destination allowlist (ADR-0081), exercised against a REAL Postgres with the REAL roles:
 // the org-scoped create/list/soft-delete, the idempotent live-url guard, soft-delete re-add, the in-tx
@@ -41,7 +42,7 @@ beforeAll(async () => {
   sealer = new SecretStore(await LocalKmsProvider.generate());
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

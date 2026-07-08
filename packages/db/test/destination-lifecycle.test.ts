@@ -18,6 +18,7 @@ import {
 } from "../src/replay-destinations";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Destination lifecycle (S3 Slice 3 PR3b): delete-cancels-open-deliveries + enable (clear auto-disable) +
 // the ordered (strict-FIFO) toggle. Against a REAL Postgres under webhook_app + RLS.
@@ -70,7 +71,7 @@ beforeAll(async () => {
   orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
   epId = (await createEndpoint(app, { orgId, name: "ep" }, hasher)).id;
   auditKey = await importAuditKey(Buffer.alloc(32, 0x7a));
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

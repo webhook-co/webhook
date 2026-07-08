@@ -27,6 +27,7 @@ import {
 } from "../src/provider-secrets";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // provider_secrets storage + retrieval: the SEALED (envelope-encrypted) provider signing secrets
 // the synchronous ingest verify path needs. addProviderSecret seals the plaintext under the KMS
@@ -60,7 +61,7 @@ beforeAll(async () => {
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
   orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "stripe-ep" }, hasher)).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

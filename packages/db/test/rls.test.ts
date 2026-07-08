@@ -6,6 +6,7 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Tenant-isolation leak suite (the "tenant-leak tests", rls-leak-tests todo).
 // Runs against a REAL Postgres with REAL non-owner roles — an in-memory/superuser PG
@@ -174,7 +175,7 @@ beforeAll(async () => {
   root = createClient(pg.ownerUrl);
   orgA = await seedOrg("aaa");
   orgB = await seedOrg("bbb");
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

@@ -5,16 +5,20 @@ import { importAuditKey } from "@webhook-co/shared";
 import type { IngestUrlRevealerRpc, RevealedIngestToken } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { readAuditChain } from "../src/audit-append";
+import { appendAuditEntry, readAuditChain } from "../src/audit-append";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
 import { createEndpointWithAudit } from "../src/endpoints";
-import { INGEST_URL_REVEAL_MAX_PER_WINDOW } from "../src/ingest-url-reveal";
+import {
+  INGEST_URL_REVEAL_AUDIT_ACTION,
+  INGEST_URL_REVEAL_MAX_PER_WINDOW,
+} from "../src/ingest-url-reveal";
 import { createOrg } from "../src/orgs";
 import { createWriteHandlers } from "../src/write-handlers";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // The endpoints.revealIngestUrl WRITE handler (S8-remainder / ADR-0101): scope-gated, engine-RPC-backed,
 // audited, rate-limited. The unseal itself is faked here (the engine RPC is tested separately); this proves
@@ -64,7 +68,7 @@ beforeAll(async () => {
       auditKey,
     )
   ).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
@@ -123,10 +127,24 @@ describe("endpoints.revealIngestUrl handler", () => {
     revealImpl = async () => ({ found: true, token: "whep_x" });
     const h = handlers().get("endpoints.revealIngestUrl")!;
     const ctx: AuthContext = { orgId: capOrg, scopes: ["endpoints:write"] };
-    // Each successful reveal writes one audit row (a disclosure); the cap counts those in the window.
-    for (let i = 0; i < INGEST_URL_REVEAL_MAX_PER_WINDOW; i++) {
-      await h(ctx, { endpointId: ep });
-    }
+    // Seed the window to the cap by appending the disclosure audit rows the limiter counts
+    // (action = endpoint.ingest_url_revealed) DIRECTLY, in a SINGLE transaction — instead of
+    // driving the cap via that many full handler reveals. The handler path (rate-limit query +
+    // reveal RPC + audit append, each its own round-trip × the cap) took ~100s on a slow Neon
+    // night, and the limiter's window is 60s WALL-CLOCK, so the earliest reveals aged out before
+    // the last landed and the cap was never observed — the test false-passed (resolved instead of
+    // RATE_LIMITED). One in-tx append loop is far faster than the window, so the count is real.
+    await withTenant(app, capOrg, async (tx) => {
+      for (let i = 0; i < INGEST_URL_REVEAL_MAX_PER_WINDOW; i++) {
+        await appendAuditEntry(tx, auditKey, {
+          orgId: capOrg,
+          actor: null,
+          action: INGEST_URL_REVEAL_AUDIT_ACTION,
+          target: ep,
+        });
+      }
+    });
+    // With the window already at the cap, the next real reveal must be throttled BEFORE the unseal.
     await expect(h(ctx, { endpointId: ep })).rejects.toMatchObject({
       name: "CapabilityFault",
       code: "RATE_LIMITED",

@@ -6,6 +6,7 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // Usage rollup: events-derived, exactly-once via the dedup unique, RLS-safe and
 // idempotent. No counter lives in ingest_event — usage is recomputed from events.
@@ -61,7 +62,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   orgA = await seedOrgWithEvents("rollup-a", 3);
   orgB = await seedOrgWithEvents("rollup-b", 5);
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();

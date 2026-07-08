@@ -21,6 +21,7 @@ import {
 } from "../src/subscriptions";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
+import { setupHookTimeoutMs } from "./pg-timing";
 
 // delivery_subscriptions CRUD + the per-endpoint ingest resolver (S3 Slice 3 PR2a), against a REAL Postgres
 // under the webhook_app role + RLS. The pure matcher itself is covered in subscriptions-match.test.ts.
@@ -46,7 +47,7 @@ beforeAll(async () => {
   orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
   destA = (await createReplayDestination(app, { orgId: orgA, url: "https://a.example.com/in" })).id;
-}, 90_000);
+}, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
