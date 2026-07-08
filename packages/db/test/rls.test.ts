@@ -61,6 +61,10 @@ const RLS_EXEMPT = new Set([
   "verification",
   "apikey",
   "schema_migrations",
+  // Global (non-org) Stripe inbound dedup ledger (S4.5a): a Stripe event.id is globally unique and not
+  // org-scoped until the handler resolves org from signed metadata, so there is no org_id to RLS on;
+  // access is by GRANT to the single webhook_billing writer role only.
+  "processed_stripe_events",
 ]);
 
 // Deterministic, seed-by-length Buffer for fixture bytea values (NOT random — stable
@@ -1016,6 +1020,43 @@ describe("catalog-driven RLS coverage", () => {
       select cmd from pg_policies where schemaname = 'public'
       and policyname in ('events_meter_audit_select', 'usage_meter_audit_select')`;
     expect(auditPolicies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT"]);
+  });
+
+  it("the billing writer role is non-owner/no-BYPASSRLS and (S4.5a) holds ONLY select+insert on the dedup ledger", async () => {
+    // webhook_billing (S4.5 / migration 0047) is the verified-Stripe-only writer. In S4.5a its ONLY grant is
+    // insert+select on the global processed_stripe_events dedup ledger; S4.5b widens it to the billing tables.
+    const [role] = await owner<{ super: boolean; bypass: boolean }[]>`
+      select rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.billing}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+    const owned = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.billing}`;
+    expect(owned[0]?.n).toBe(0);
+
+    // select + insert on the ledger; NO update/delete (an event id, once recorded, is immutable evidence).
+    const [ins] = await owner<{ ok: boolean }[]>`
+      select has_table_privilege(${DB_ROLES.billing}, 'processed_stripe_events', 'INSERT') as ok`;
+    const [sel] = await owner<{ ok: boolean }[]>`
+      select has_table_privilege(${DB_ROLES.billing}, 'processed_stripe_events', 'SELECT') as ok`;
+    expect(ins.ok).toBe(true);
+    expect(sel.ok).toBe(true);
+    for (const priv of ["UPDATE", "DELETE"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.billing}, 'processed_stripe_events', ${priv}) as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // S4.5a scope: it must NOT yet touch the billing state tables (those grants arrive in S4.5b).
+    for (const t of ["billing_customers", "billing_subscriptions", "org_limits"] as const) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.billing}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.billing}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.billing}, ${t}, 'SELECT')) as any`;
+      expect(p.any).toBe(false);
+    }
   });
 
   it("the authn role reads ONLY (org_id, paused) on ingest_paused for the cold-lookup OR-in — never the reason note, never a write", async () => {

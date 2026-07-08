@@ -14,7 +14,8 @@
     "@webhook-co/contract": "workspace:*",
     "@webhook-co/db": "workspace:*",
     "@webhook-co/openapi": "workspace:*",
-    "@webhook-co/shared": "workspace:*"
+    "@webhook-co/shared": "workspace:*",
+    "@webhook-co/webhooks-spec": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260708.1"
