@@ -11,7 +11,7 @@
 // live half — so a `usage` row that already exists for TODAY is never added on top of the live count
 // (no double-count at the boundary). `todayStart >= period.start` always (today is within the period).
 
-import type { BillingPeriod } from "@webhook-co/shared";
+import { currentBillingPeriod, type BillingPeriod } from "@webhook-co/shared";
 
 import type { TenantTx } from "./client";
 
@@ -20,6 +20,22 @@ import type { TenantTx } from "./client";
 export function utcDayStartIso(nowMs: number): string {
   const d = new Date(nowMs);
   return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())).toISOString();
+}
+
+/**
+ * The org's EFFECTIVE billing period: a PAID org's Stripe-anchored cycle (billing_subscriptions
+ * current_period_start/end) when it has a non-canceled subscription, else the UTC calendar month (the Free
+ * default). This is the ONE period basis for BOTH the soft-cap enforcement and the usage surface, so a paid
+ * org's usage/cap/pause is measured over its real billing cycle — not the wrong UTC month. Runs inside the
+ * tenant tx (webhook_app / RLS), so the subscription read is org-scoped. A canceled subscription falls back
+ * to the UTC month (its org_limits paid cap was removed → Free), keeping the period + cap consistent.
+ */
+export async function effectiveBillingPeriod(tx: TenantTx, nowMs: number): Promise<BillingPeriod> {
+  const [sub] = await tx<{ start: Date; end: Date }[]>`
+    select current_period_start as start, current_period_end as end
+    from billing_subscriptions where status <> 'canceled'`;
+  if (sub) return { start: sub.start.toISOString(), end: sub.end.toISOString() };
+  return currentBillingPeriod(nowMs);
 }
 
 /**

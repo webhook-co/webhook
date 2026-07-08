@@ -5,7 +5,6 @@
 // shared camelCase entity schemas, which also validate the row shape.
 
 import {
-  currentBillingPeriod,
   DedupConfigSchema,
   deriveVerificationState,
   DeliverySchema,
@@ -28,7 +27,7 @@ import {
 } from "@webhook-co/shared";
 
 import type { TenantTx } from "./client";
-import { sumPeriodEventUsage } from "./period-usage";
+import { effectiveBillingPeriod, sumPeriodEventUsage } from "./period-usage";
 
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -693,9 +692,10 @@ export async function readUsageSummary(
   nowMs: number,
   defaultEventCap: number | null = null,
 ): Promise<UsageSummary> {
-  const period = currentBillingPeriod(nowMs);
-  // The SAME period-usage basis the soft-cap producer enforces on (sumPeriodEventUsage) — rolled prior
-  // days + live today — so what the surface shows can't drift from what enforcement decides.
+  // The org's EFFECTIVE period (a paid org's Stripe cycle, else the UTC month) — the SAME basis the soft-cap
+  // producer enforces on, so the surface can't drift from enforcement; a paid org shows its real cycle.
+  const period = await effectiveBillingPeriod(tx, nowMs);
+  // sumPeriodEventUsage: rolled prior days + live today.
   const events = await sumPeriodEventUsage(tx, period, nowMs);
   const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
     select event_cap, pause_policy from org_limits`;

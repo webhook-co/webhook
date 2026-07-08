@@ -175,6 +175,14 @@ export async function applySubscriptionUpsert(
         select stripe_customer_id from billing_customers`;
       if (linked && linked.stripe_customer_id !== sub.customerId) return "customer_mismatch";
 
+      // Capture the stored period start BEFORE the upsert overwrites it — a strictly-later start means the
+      // billing period ADVANCED (a renewal). At a boundary a deferred cap DECREASE takes effect (the new
+      // period has begun); within a period we keep increase-now/decrease-defer (never instant-pause a payer).
+      const [prev] = await tx<{ ps: Date }[]>`
+        select current_period_start as ps from billing_subscriptions`;
+      const periodAdvanced =
+        !prev || new Date(sub.currentPeriodStartIso).getTime() > prev.ps.getTime();
+
       // Atomic watermark guard: the `where … <= excluded.last` on the conflict-update makes the stale check
       // and the write ONE statement (the row lock serializes concurrent same-org events, and the re-check runs
       // under the lock), so a strictly-older event can never overwrite a newer one — no read/write TOCTOU. A
@@ -209,7 +217,11 @@ export async function applySubscriptionUpsert(
           ? null
           : Number(limit.event_cap)
         : undefined;
-      const decision = capMirrorDecision(current, sub.eventCap);
+      // At a period boundary, apply the plan's cap FULLY (a deferred decrease lands now); within a period,
+      // increase-now / decrease-defer. Either way the mirror only writes when the value actually changes.
+      const decision = periodAdvanced
+        ? { apply: current !== sub.eventCap, value: sub.eventCap }
+        : capMirrorDecision(current, sub.eventCap);
       if (decision.apply) {
         await tx`
         insert into org_limits (org_id, event_cap) values (${sub.orgId}, ${decision.value})

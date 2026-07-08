@@ -16,6 +16,7 @@ const NOW = Date.UTC(2026, 6, 15, 12, 0, 0); // 2026-07-15T12:00Z → period [20
 
 let pg: EphemeralPostgres;
 let app: Sql;
+let admin: Sql; // seeds SELECT-only billing_subscriptions
 
 async function seedOrg(slug: string): Promise<string> {
   const orgId = randomUUID();
@@ -52,10 +53,12 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+  admin = createClient(pg.ownerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
+  await admin?.end();
   await pg?.stop();
 });
 
@@ -72,6 +75,25 @@ describe("readUsageSummary", () => {
     expect(summary.events).toBe(128); // 100 + 25 + 3 live
     expect(summary.periodStart.toISOString()).toBe("2026-07-01T00:00:00.000Z");
     expect(summary.periodEnd.toISOString()).toBe("2026-08-01T00:00:00.000Z");
+  });
+
+  it("measures over the SUBSCRIPTION's Stripe cycle for a paid org, not the UTC month", async () => {
+    const orgId = await seedOrg("usage-paid");
+    // A signup-anchored cycle 2026-06-18 → 2026-07-18 (straddles the month boundary).
+    await admin`
+      insert into billing_subscriptions
+        (org_id, stripe_subscription_id, plan, status, current_period_start, current_period_end)
+      values (${orgId}, ${"sub_paid"}, ${"pro"}, ${"active"},
+              ${"2026-06-18T00:00:00Z"}, ${"2026-07-18T00:00:00Z"})`;
+    // Late-June usage is INSIDE the sub cycle (the UTC month would wrongly exclude it).
+    await seedUsage(orgId, "2026-06-20T00:00:00.000Z", 40);
+    await seedUsage(orgId, "2026-07-02T00:00:00.000Z", 60);
+    await seedEventsToday(orgId, 5); // today (2026-07-15) is within the cycle
+
+    const summary = await withTenant(app, orgId, (tx) => readUsageSummary(tx, NOW));
+    expect(summary.periodStart.toISOString()).toBe("2026-06-18T00:00:00.000Z");
+    expect(summary.periodEnd.toISOString()).toBe("2026-07-18T00:00:00.000Z");
+    expect(summary.events).toBe(105); // 40 + 60 rolled + 5 live — the late-June usage IS counted
   });
 
   it("counts today's events live even before the rollup runs (no undercount)", async () => {

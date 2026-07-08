@@ -14,7 +14,7 @@ import {
 
 import { withTenant, type Sql } from "./client";
 import { insertNotificationIntent, type UsageThresholdContext } from "./delivery";
-import { sumPeriodEventUsage } from "./period-usage";
+import { effectiveBillingPeriod, sumPeriodEventUsage } from "./period-usage";
 
 /** The per-org result of one producer pass: the pause transition (null = none) + how many threshold
  *  alerts were newly enqueued this pass. Kept internal to runCapProducer. */
@@ -130,10 +130,12 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
   for (const orgId of orgIds) {
     try {
       const outcome = await withTenant(deps.app, orgId, async (tx): Promise<OrgOutcome> => {
-        // The SAME period-usage basis the surface displays (sumPeriodEventUsage: rolled prior days +
-        // live today) — so enforcement can't lag or diverge from what the dashboard shows. Not tied to
-        // whether the rollup already ran today (it counts today's events live), so reordering the cron
-        // can't silently undercount today.
+        // The org's EFFECTIVE period — a paid org's Stripe-anchored cycle, else the UTC month — read
+        // per-org under RLS (the outer `period` is only the cross-org enumeration candidate floor). The
+        // SAME basis the usage surface displays, so enforcement can't diverge from what the dashboard shows.
+        const period = await effectiveBillingPeriod(tx, deps.now);
+        // sumPeriodEventUsage: rolled prior days + live today; not tied to whether the rollup ran today, so
+        // reordering the cron can't silently undercount today.
         const periodUsage = await sumPeriodEventUsage(tx, period, deps.now);
         const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
           select event_cap, pause_policy from org_limits`;
