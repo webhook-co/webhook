@@ -429,6 +429,21 @@ describe("runCapProducer", () => {
       expect(res.pausedTransitions).toBe(0);
       expect(await pausedState(orgId)).toBeNull();
     });
+
+    it("RESUMES an org stranded paused from a lapsed cycle (the fallback un-pauses it)", async () => {
+      // An org already PAUSED (from its prior cycle being over cap) whose cycle has now lapsed. The UTC-month
+      // fallback sees no current-month usage → under cap → the producer must RESUME it (un-pause), not leave
+      // a paying customer stranded paused into the fresh cycle.
+      const orgId = await seedOrg("paid-lapsed-paused");
+      await seedSubscription(orgId, { start: "2026-06-05T00:00:00Z", end: "2026-07-05T00:00:00Z" }); // lapsed
+      await seedUsageAt(orgId, "2026-06-20T00:00:00.000Z", 150); // stale over-cap usage in the lapsed cycle
+      await admin`insert into ingest_paused (org_id, paused, reason, since)
+                  values (${orgId}, ${true}, ${"cap"}, now())`; // pre-paused
+
+      const res = await run({ defaultEventCap: DEFAULT_CAP });
+      expect(res.resumedTransitions).toBe(1);
+      expect(await pausedState(orgId)).toEqual({ paused: false, reason: null });
+    });
   });
 });
 
