@@ -251,7 +251,14 @@ export async function applyStripeEvent(billing: Sql, event: StripeEvent): Promis
     case "customer.subscription.created":
     case "customer.subscription.updated": {
       const sub = parseSubscriptionObject(obj);
-      if (sub) await applySubscriptionUpsert(billing, sub, event.created);
+      if (!sub) return;
+      const outcome = await applySubscriptionUpsert(billing, sub, event.created);
+      if (outcome === "customer_mismatch") {
+        // A permanent reject (the subscription's customer isn't this org's) — record + ACK, don't retry.
+        console.log(
+          JSON.stringify({ message: "stripe.webhook.customer_mismatch", type: event.type }),
+        );
+      }
       return;
     }
     case "customer.subscription.deleted": {

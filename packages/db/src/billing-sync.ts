@@ -160,14 +160,26 @@ export async function applySubscriptionUpsert(
   billing: Sql,
   sub: ParsedSubscription,
   eventCreated: number,
-): Promise<"applied" | "stale"> {
+): Promise<"applied" | "stale" | "customer_mismatch"> {
   const storedCap = sub.eventCap ?? null; // unspecified is stored as null in the mirror column
-  return withTenant(billing, sub.orgId, async (tx): Promise<"applied" | "stale"> => {
-    // Atomic watermark guard: the `where … <= excluded.last` on the conflict-update makes the stale check
-    // and the write ONE statement (the row lock serializes concurrent same-org events, and the re-check runs
-    // under the lock), so a strictly-older event can never overwrite a newer one — no read/write TOCTOU. A
-    // same-second (==) event still applies (last-write-wins) since event.created is only second-granular.
-    const applied = await tx<{ org_id: string }[]>`
+  return withTenant(
+    billing,
+    sub.orgId,
+    async (tx): Promise<"applied" | "stale" | "customer_mismatch"> => {
+      // Identity binding (defense-in-depth): the org is resolved from the signed metadata WE set at checkout,
+      // but additionally require the subscription's Stripe CUSTOMER to match the one already linked to this org
+      // (billing_customers). If the org has a recorded customer and it differs, refuse to mutate — a Stripe
+      // subscription never changes customer, so a mismatch is a bug/attack, not a legitimate update. When no
+      // customer is linked yet (the checkout event may not have landed), we can't cross-check, so we proceed.
+      const [linked] = await tx<{ stripe_customer_id: string }[]>`
+        select stripe_customer_id from billing_customers`;
+      if (linked && linked.stripe_customer_id !== sub.customerId) return "customer_mismatch";
+
+      // Atomic watermark guard: the `where … <= excluded.last` on the conflict-update makes the stale check
+      // and the write ONE statement (the row lock serializes concurrent same-org events, and the re-check runs
+      // under the lock), so a strictly-older event can never overwrite a newer one — no read/write TOCTOU. A
+      // same-second (==) event still applies (last-write-wins) since event.created is only second-granular.
+      const applied = await tx<{ org_id: string }[]>`
       insert into billing_subscriptions
         (org_id, stripe_subscription_id, plan, status, event_cap,
          current_period_start, current_period_end, cancel_at_period_end, last_stripe_event_created)
@@ -186,21 +198,26 @@ export async function applySubscriptionUpsert(
         updated_at = now()
       where billing_subscriptions.last_stripe_event_created <= excluded.last_stripe_event_created
       returning org_id`;
-    if (applied.length === 0) return "stale"; // a strictly-newer event already applied
+      if (applied.length === 0) return "stale"; // a strictly-newer event already applied
 
-    // Cap mirror — increase-now/decrease-defer — ONLY for a specified cap. Unspecified (undefined) is
-    // fail-closed: leave the existing/Free cap untouched rather than grant unlimited from a bad price config.
-    if (sub.eventCap === undefined) return "applied";
-    const [limit] = await tx<{ event_cap: string | null }[]>`select event_cap from org_limits`;
-    const current = limit ? (limit.event_cap === null ? null : Number(limit.event_cap)) : undefined;
-    const decision = capMirrorDecision(current, sub.eventCap);
-    if (decision.apply) {
-      await tx`
+      // Cap mirror — increase-now/decrease-defer — ONLY for a specified cap. Unspecified (undefined) is
+      // fail-closed: leave the existing/Free cap untouched rather than grant unlimited from a bad price config.
+      if (sub.eventCap === undefined) return "applied";
+      const [limit] = await tx<{ event_cap: string | null }[]>`select event_cap from org_limits`;
+      const current = limit
+        ? limit.event_cap === null
+          ? null
+          : Number(limit.event_cap)
+        : undefined;
+      const decision = capMirrorDecision(current, sub.eventCap);
+      if (decision.apply) {
+        await tx`
         insert into org_limits (org_id, event_cap) values (${sub.orgId}, ${decision.value})
         on conflict (org_id) do update set event_cap = ${decision.value}`;
-    }
-    return "applied";
-  });
+      }
+      return "applied";
+    },
+  );
 }
 
 /**

@@ -239,6 +239,19 @@ describe("applySubscriptionUpsert (integration)", () => {
     expect((await readSub(org)).status).toBe("active");
   });
 
+  it("REJECTS a subscription whose Stripe customer ≠ the org's linked customer (identity binding)", async () => {
+    const org = await seedOrg();
+    await applyCustomerLink(billing, { orgId: org, customerId: "cus_A" });
+    // A subscription event carrying a DIFFERENT customer for this org is a bug/attack — refuse to mutate.
+    const res = await applySubscriptionUpsert(billing, sub(org, { customerId: "cus_B" }), 1000);
+    expect(res).toBe("customer_mismatch");
+    expect(await readSub(org)).toBeUndefined(); // nothing written
+    // The matching customer applies normally.
+    expect(await applySubscriptionUpsert(billing, sub(org, { customerId: "cus_A" }), 1000)).toBe(
+      "applied",
+    );
+  });
+
   it("FAIL-CLOSED: an UNSPECIFIED cap (bad/absent price metadata) never changes org_limits", async () => {
     const org = await seedOrg();
     await applySubscriptionUpsert(billing, sub(org, { eventCap: 100000 }), 1000);
@@ -287,5 +300,52 @@ describe("applySubscriptionDeleted (integration)", () => {
     const org = await seedOrg();
     const res = await applySubscriptionDeleted(billing, { orgId: org, eventCreated: 1 });
     expect(res).toBe("applied");
+  });
+});
+
+describe("webhook_billing cross-tenant write rejection (behavioral RLS WITH CHECK)", () => {
+  it("cannot write ANOTHER org's billing rows, even under its own tenant context", async () => {
+    const a = await seedOrg();
+    const b = await seedOrg();
+    // As webhook_billing under org A's RLS context, every attempt to write org B's row must be rejected by
+    // the WITH CHECK (org_id = current_org_id()) — the writer is confined to the org it resolved from Stripe.
+    await expect(
+      withTenant(
+        billing,
+        a,
+        (tx) =>
+          tx`insert into billing_customers (org_id, stripe_customer_id) values (${b}, ${"cus_B"})`,
+      ),
+    ).rejects.toThrow(/row-level security|policy|violates/i);
+    await expect(
+      withTenant(
+        billing,
+        a,
+        (tx) => tx`
+          insert into billing_subscriptions
+            (org_id, stripe_subscription_id, plan, status, current_period_start, current_period_end)
+          values (${b}, ${"sub_B"}, ${"pro"}, ${"active"},
+                  ${"2026-07-01T00:00:00Z"}, ${"2026-08-01T00:00:00Z"})`,
+      ),
+    ).rejects.toThrow(/row-level security|policy|violates/i);
+    await expect(
+      withTenant(
+        billing,
+        a,
+        (tx) => tx`insert into org_limits (org_id, event_cap) values (${b}, ${100})`,
+      ),
+    ).rejects.toThrow(/row-level security|policy|violates/i);
+    // And an UPDATE of org B's existing row from org A's context is a silent no-op (RLS hides the row), not a
+    // cross-tenant mutation: seed B's customer as root, then try to overwrite it as billing under A.
+    await admin`insert into billing_customers (org_id, stripe_customer_id) values (${b}, ${"cus_owned"})`;
+    await withTenant(
+      billing,
+      a,
+      (tx) =>
+        tx`update billing_customers set stripe_customer_id = ${"cus_HIJACK"} where org_id = ${b}`,
+    );
+    const [{ stripe_customer_id }] = await admin<{ stripe_customer_id: string }[]>`
+      select stripe_customer_id from billing_customers where org_id = ${b}`;
+    expect(stripe_customer_id).toBe("cus_owned"); // untouched
   });
 });
