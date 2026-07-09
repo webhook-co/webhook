@@ -9,11 +9,16 @@
 // live today-count fixes that WITHOUT depending on when the rollup last ran. The split is half-open and
 // non-overlapping — `window_start < todayStart` for the rolled half, `received_at >= todayStart` for the
 // live half — so a `usage` row that already exists for TODAY is never added on top of the live count
-// (no double-count at the boundary). `todayStart >= period.start` always: a billing cycle contains today,
-// and the Free tier's lifetime window starts at org creation. A null `period.end` means OPEN-ENDED (the
-// one-time Free allowance), so the upper bounds below drop away rather than clamping.
+// (no double-count at the boundary). `todayStart >= period.start` always, because BOTH period starts are
+// floored to UTC midnight: a billing cycle contains today, and the lifetime window starts on the org's
+// creation DAY. A null `period.end` means OPEN-ENDED (the one-time Free allowance), so the upper bounds
+// below drop away rather than clamping.
 
-import { currentBillingPeriod, type EffectivePeriod } from "@webhook-co/shared";
+import {
+  BILLING_ACTIVE_STATUSES,
+  currentBillingPeriod,
+  type EffectivePeriod,
+} from "@webhook-co/shared";
 
 import type { TenantTx } from "./client";
 
@@ -29,22 +34,31 @@ export function utcDayStartIso(nowMs: number): string {
  * surface, so what an org is shown can never drift from what it is enforced at. Runs inside the tenant tx
  * (webhook_app / RLS), so both reads are org-scoped. Three cases (ADR-0004, amended 2026-07-09):
  *
- *   1. A non-canceled subscription AND `now` inside its cycle → the **Stripe cycle** (`billing_cycle`).
- *   2. A non-canceled subscription whose cycle has LAPSED (a late/missing renewal webhook) → the **UTC
+ *   1. An ENTITLED subscription (`isBillingActive` — active/trialing/past_due) AND `now` inside its cycle →
+ *      the **Stripe cycle** (`billing_cycle`).
+ *   2. An ENTITLED subscription whose cycle has LAPSED (a late/missing renewal webhook) → the **UTC
  *      month** (`billing_cycle`). Deliberately NOT lifetime: a paying customer's lifetime usage would
  *      instantly exceed any cap and strand them paused mid-subscription.
- *   3. No subscription, or a CANCELED one → the Free tier's **one-time lifetime allowance**: an
- *      open-ended `[orgs.created_at, ∞)` window (`lifetime`, `end === null`). It never resets, so a
- *      churned paid org falls back here with its allowance long spent and stays paused until it
- *      resubscribes (upgrading re-anchors it to a fresh Stripe cycle → usage ≈ 0 → auto-resume).
+ *   3. No subscription, or a NON-ENTITLED one (canceled/unpaid/incomplete/paused) → the Free tier's
+ *      **one-time lifetime allowance**: an open-ended `[org creation day, ∞)` window (`lifetime`,
+ *      `end === null`). It never resets, so a churned paid org falls back here with its allowance long
+ *      spent and stays paused until it resubscribes (upgrading re-anchors it to a fresh Stripe cycle →
+ *      usage ≈ 0 → auto-resume).
+ *
+ * Case 3 tests ENTITLEMENT, not `status <> 'canceled'`: Stripe only writes `canceled` on an explicit
+ * `subscription.deleted`, so a denylist would leave an `unpaid` (dunning exhausted) or `incomplete_expired`
+ * (never paid) org on the monthly-resetting paid basis forever — a free paid plan.
  */
 export async function effectiveBillingPeriod(
   tx: TenantTx,
   nowMs: number,
 ): Promise<EffectivePeriod> {
+  // The allowlist crosses as ONE text param split server-side (no status contains a comma) — the tenant-tx
+  // wrapper doesn't reach postgres.js's array serializer, and a literal `in (…)` list would inline the values.
   const [sub] = await tx<{ start: Date; end: Date }[]>`
     select current_period_start as start, current_period_end as end
-    from billing_subscriptions where status <> 'canceled'`;
+    from billing_subscriptions
+    where status = any(string_to_array(${BILLING_ACTIVE_STATUSES.join(",")}, ','))`;
   if (sub) {
     const startMs = sub.start.getTime();
     const endMs = sub.end.getTime();
@@ -64,8 +78,13 @@ export async function effectiveBillingPeriod(
   }
   // Free: the ONE-TIME lifetime allowance, anchored at org creation and never closed.
   const [org] = await tx<{ created_at: Date }[]>`select created_at from orgs`;
+  // FLOOR to UTC midnight, for the same day-bucket reason as the cycle start above: `usage.window_start` is
+  // the org's creation DAY at midnight, which sorts BEFORE a mid-day `created_at`. Anchoring at the raw
+  // instant would exclude the signup-day bucket from the rolled half forever (it's only counted live, on day
+  // 0), so every org's entire first-day volume would escape the lifetime cap — the whole allowance is
+  // trivially bypassed by bursting on signup day. Flooring costs nothing: no event can predate its org.
   return {
-    start: (org?.created_at ?? new Date(0)).toISOString(),
+    start: utcDayStartIso((org?.created_at ?? new Date(0)).getTime()),
     end: null,
     kind: "lifetime",
   };

@@ -31,3 +31,22 @@ export function billingEnabled(mode: BillingMode): boolean {
 export function billingLive(mode: BillingMode): boolean {
   return mode === "live";
 }
+
+/**
+ * The Stripe subscription statuses that ENTITLE an org to its paid plan — an ALLOWLIST, so a status Stripe
+ * adds later is fail-closed (not entitled) rather than silently granting a paid plan. `past_due` is included
+ * deliberately: dunning is a grace window, and ADR-0020 forbids instant-pausing a customer whose card just
+ * failed. `unpaid` is Stripe's END of dunning (retries exhausted), `incomplete*` never completed a first
+ * payment, and `paused` is a suspended trial — none are entitled.
+ *
+ * A non-entitled subscription is treated as FREE: `effectiveBillingPeriod` puts the org back on the one-time
+ * lifetime allowance, and the state-sync drops the mirrored paid cap. Without this, any non-`canceled` status
+ * (Stripe only writes `canceled` on an explicit `subscription.deleted`) would keep a monthly-resetting paid
+ * cap forever — an unpaid customer, or one who merely opened Checkout, on a free paid plan.
+ */
+export const BILLING_ACTIVE_STATUSES = ["active", "trialing", "past_due"] as const;
+
+/** Whether a raw Stripe subscription status entitles the org to its paid plan. Exact match, no coercion. */
+export function isBillingActive(status: string): boolean {
+  return (BILLING_ACTIVE_STATUSES as readonly string[]).includes(status);
+}

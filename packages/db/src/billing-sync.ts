@@ -5,6 +5,8 @@
 // idempotent per subscription. Cap changes are increase-NOW / decrease-DEFER (never instant-pause a paying
 // customer — a decrease is applied at the period boundary by S4.5b-2's invoice.paid handler).
 
+import { isBillingActive } from "@webhook-co/shared";
+
 import { withTenant, type Sql } from "./client";
 
 /** A Stripe subscription object parsed into the fields we mirror. */
@@ -207,6 +209,16 @@ export async function applySubscriptionUpsert(
       where billing_subscriptions.last_stripe_event_created <= excluded.last_stripe_event_created
       returning org_id`;
       if (applied.length === 0) return "stale"; // a strictly-newer event already applied
+
+      // A subscription that no longer ENTITLES the org (unpaid = dunning exhausted, incomplete* = never
+      // paid, paused) must lose its paid cap, exactly as `subscription.deleted` does — otherwise the org
+      // keeps a paid `org_limits` cap while `effectiveBillingPeriod` has already dropped it back to the Free
+      // lifetime basis, i.e. a large one-time allowance it never paid for. Re-entitlement (past_due → active,
+      // or a fresh subscribe) re-establishes the cap via the mirror below, since `current` is then undefined.
+      if (!isBillingActive(sub.status)) {
+        await tx`delete from org_limits`; // back to the injected Free default
+        return "applied";
+      }
 
       // Cap mirror — increase-now/decrease-defer — ONLY for a specified cap. Unspecified (undefined) is
       // fail-closed: leave the existing/Free cap untouched rather than grant unlimited from a bad price config.

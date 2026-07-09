@@ -138,10 +138,10 @@ describe("effectiveBillingPeriod", () => {
     expect(period).toEqual({ start: ORG_CREATED, end: null, kind: "lifetime" });
   });
 
-  it("anchors the lifetime window at THIS org's creation instant", async () => {
+  it("anchors the lifetime window at THIS org's creation DAY (floored, not the raw instant)", async () => {
     const org = await seedOrg("2026-03-07T08:15:00.000Z");
     const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
-    expect(period.start).toBe("2026-03-07T08:15:00.000Z");
+    expect(period.start).toBe("2026-03-07T00:00:00.000Z"); // floored — see the signup-day-bucket test below
     expect(period.end).toBeNull();
   });
 });
@@ -189,5 +189,49 @@ describe("sumPeriodEventUsage — period.end clamp on the rolled half", () => {
     await seedEventAt(org, "2026-07-18T10:00:00.000Z"); // AT/AFTER period.end → excluded
     const total = await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW_LAST_DAY));
     expect(total).toBe(1); // only the pre-end same-day event
+  });
+});
+
+describe("effectiveBillingPeriod — the lifetime start is floored to the org's creation DAY", () => {
+  it("counts the SIGNUP-DAY usage bucket (a mid-day created_at must not exclude it)", async () => {
+    // `usage` is UTC-day-bucketed, so the signup day's bucket is stamped at MIDNIGHT — before a mid-day
+    // created_at. Anchoring the lifetime window at the raw instant would drop that bucket from the rolled
+    // half forever, letting every org burst its whole first day for free. Flooring includes it.
+    const org = await seedOrg("2026-01-01T10:30:00.000Z");
+    await seedUsage(org, "2026-01-01T00:00:00.000Z", 900); // the signup-day bucket, at midnight
+    const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+    expect(period).toEqual({ start: "2026-01-01T00:00:00.000Z", end: null, kind: "lifetime" });
+    expect(await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW))).toBe(900);
+  });
+});
+
+describe("effectiveBillingPeriod — ENTITLEMENT, not just `status <> canceled`", () => {
+  const CYCLE = { start: "2026-07-10T00:00:00.000Z", end: "2026-08-10T00:00:00.000Z" }; // contains NOW
+
+  for (const status of ["active", "trialing", "past_due"] as const) {
+    it(`'${status}' is entitled → the Stripe cycle (past_due is a dunning GRACE window)`, async () => {
+      const org = await seedOrg();
+      await seedSubscription(org, { status, ...CYCLE });
+      const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+      expect(period).toEqual({ start: CYCLE.start, end: CYCLE.end, kind: "billing_cycle" });
+    });
+  }
+
+  for (const status of ["unpaid", "incomplete", "incomplete_expired", "paused"] as const) {
+    it(`'${status}' is NOT entitled → the Free one-time lifetime allowance`, async () => {
+      // Stripe only writes 'canceled' on an explicit subscription.deleted, so a denylist would leave these
+      // orgs on a monthly-RESETTING paid basis forever — a paid plan they never paid for.
+      const org = await seedOrg();
+      await seedSubscription(org, { status, ...CYCLE });
+      const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+      expect(period).toEqual({ start: ORG_CREATED, end: null, kind: "lifetime" });
+    });
+  }
+
+  it("an unknown future Stripe status is fail-closed to the lifetime allowance", async () => {
+    const org = await seedOrg();
+    await seedSubscription(org, { status: "some_future_status", ...CYCLE });
+    const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+    expect(period.kind).toBe("lifetime");
   });
 });
