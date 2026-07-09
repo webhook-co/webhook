@@ -551,3 +551,40 @@ describe("makeCapTransitionEvictor (the onTransition edge-eviction fan-out)", ()
     expect(evicted).toEqual([Buffer.from(ha).toString("hex")]);
   });
 });
+
+describe("the churn ↔ upgrade round trip (the lifetime allowance's escape hatch)", () => {
+  it("a Free org exhausted on its LIFETIME allowance RESUMES when it upgrades", async () => {
+    // The claim the lifetime basis rests on: the one-time allowance never resets, so the ONLY way out is to
+    // subscribe. Upgrading re-anchors the org to a fresh Stripe cycle whose usage is ~0, and the very next
+    // producer pass must resume it — AND fire edge eviction, or a paying customer keeps getting 429s until
+    // the ingest-token cache TTL expires.
+    const orgId = await seedOrg("lifetime-upgrade");
+    await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 150); // 150 > the 100 free cap → over, lifetime
+    expect((await run()).pausedTransitions).toBe(1);
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
+
+    // Upgrade: an ENTITLED subscription whose cycle starts AFTER the pre-upgrade usage, plus its paid cap.
+    await seedSubscription(orgId, { start: "2026-07-14T00:00:00Z", end: "2026-08-14T00:00:00Z" });
+    await admin`insert into org_limits (org_id, event_cap) values (${orgId}, ${1_000_000})`;
+
+    const evicted: Array<{ orgId: string; paused: boolean }> = [];
+    const result = await run({
+      onTransition: async (o, p) => void evicted.push({ orgId: o, paused: p }),
+    });
+    expect(result.resumedTransitions).toBe(1);
+    expect(await pausedState(orgId)).toEqual({ paused: false, reason: null });
+    expect(evicted).toContainEqual({ orgId, paused: false }); // no 429 tail for a paying customer
+  });
+
+  it("a paused Free org does NOT resume merely because a new UTC month began", async () => {
+    // The negative that makes the allowance one-time. The org is enumerated (its ingest_paused row is a
+    // candidate floor), re-evaluated on the lifetime basis, and stays paused — no calendar reset.
+    const AUG = Date.UTC(2026, 7, 15, 12, 0, 0);
+    const orgId = await seedOrg("lifetime-no-rollover");
+    await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 150);
+    expect((await run()).pausedTransitions).toBe(1);
+    const result = await run({ now: AUG }); // a whole new month, no new events
+    expect(result.resumedTransitions).toBe(0);
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
+  });
+});

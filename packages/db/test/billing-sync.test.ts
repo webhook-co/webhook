@@ -379,7 +379,7 @@ describe("applySubscriptionUpsert — a NON-ENTITLED status drops the paid cap m
     expect(await readCap(org)).toBe(500000); // still entitled — a failed card must not pause a customer
   });
 
-  for (const status of ["unpaid", "incomplete_expired", "paused"] as const) {
+  for (const status of ["unpaid", "incomplete", "incomplete_expired", "paused"] as const) {
     it(`removes the paid cap on '${status}' → the org falls back to the Free default`, async () => {
       // Stripe only writes 'canceled' on subscription.deleted, so without this the org would keep a paid
       // org_limits cap while effectiveBillingPeriod has already dropped it to the Free lifetime basis.
