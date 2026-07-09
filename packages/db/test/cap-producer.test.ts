@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeCapTransitionEvictor, runCapProducer } from "../src/cap-producer";
 import { createClient, withTenant, type Sql } from "../src/client";
+import type { UsageThresholdContext } from "../src/delivery";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -22,10 +23,13 @@ let app: Sql;
 let meter: Sql;
 let admin: Sql; // superuser (bypasses RLS) — for cross-org cleanup between tests
 
-async function seedOrg(slug: string): Promise<string> {
+/** `created_at` anchors a Free org's LIFETIME allowance window — default it before every seeded fixture date
+ *  (in prod an org's events can never predate it; the DB default `now()` is the real clock, not our fake NOW). */
+const ORG_CREATED = "2026-01-01T00:00:00.000Z";
+async function seedOrg(slug: string, createdAt = ORG_CREATED): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${slug}, ${slug})`;
+    await tx`insert into orgs (id, slug, name, created_at) values (${orgId}, ${slug}, ${slug}, ${createdAt})`;
   });
   return orgId;
 }
@@ -130,6 +134,17 @@ async function usageAlertIntents(
     select context from notification_intents
     where org_id = ${orgId} and kind = 'usage_threshold' order by (context->>'threshold')::int`;
   return rows.map((r) => ({ threshold: r.context.threshold, usage: r.context.usage }));
+}
+
+/** The FULL stored intent context — the exact JSON the notify-cron drain hands to the email renderer.
+ *  The renderer branches on `capKind`, so a snapshot that silently drops it would render a Free org a
+ *  billing-cycle email promising a reset date that will never come. Pin the whole shape, not just the
+ *  two fields the pause assertions read. */
+async function usageAlertContexts(orgId: string): Promise<UsageThresholdContext[]> {
+  const rows = await admin<{ context: UsageThresholdContext }[]>`
+    select context from notification_intents
+    where org_id = ${orgId} and kind = 'usage_threshold' order by (context->>'threshold')::int`;
+  return rows.map((r) => r.context);
 }
 
 afterAll(async () => {
@@ -374,20 +389,64 @@ describe("runCapProducer", () => {
       ]);
     });
 
-    it("re-alerts in a NEW billing period (dedup is per-period, not permanent)", async () => {
-      // July: 90 → 80% → alert. August (a fresh period_start): 90 again → 80% → a NEW alert, because the
-      // usage_alerts PK includes period_start. Pins that a new month re-arms the warn-before-pause emails.
-      const AUG = Date.UTC(2026, 7, 15, 12, 0, 0); // 2026-08-15 → period [2026-08-01, 2026-09-01)
-      const orgId = await seedOrg("alert-new-period");
-      await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 90);
-      expect((await run()).thresholdAlerts).toBe(1); // July, now = NOW (July)
-      expect((await run()).thresholdAlerts).toBe(0); // same period → deduped
-      await seedUsageAt(orgId, "2026-08-10T00:00:00.000Z", 90);
-      expect((await run({ now: AUG })).thresholdAlerts).toBe(1); // August → fresh alert
-      // Two ledger rows: (July, 80) and (August, 80).
+    it("a FREE org's LIFETIME allowance alerts ONCE EVER — a new month never re-arms it", async () => {
+      // The lifetime period_start is the org's creation instant, so it never changes: the usage_alerts PK
+      // (org, period_start, threshold) dedups a one-time allowance's warning FOREVER. A one-time allowance
+      // has no reset, so re-arming the email each month would be a lie.
+      const AUG = Date.UTC(2026, 7, 15, 12, 0, 0);
+      const orgId = await seedOrg("alert-lifetime");
+      await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 90); // 90 of the 100 cap → crosses 80%
+      expect((await run()).thresholdAlerts).toBe(1);
+      // The stored snapshot is what the notify-cron drain hands the email renderer. `capKind: "lifetime"`
+      // + a null periodEndIso are load-bearing: without them the renderer promises a reset that never comes.
+      expect(await usageAlertContexts(orgId)).toEqual([
+        {
+          threshold: 80,
+          usage: 90,
+          eventCap: 100,
+          pausePolicy: "pause",
+          capKind: "lifetime",
+          periodEndIso: null,
+        },
+      ]);
+      expect((await run()).thresholdAlerts).toBe(0); // same lifetime period → deduped
+      expect((await run({ now: AUG })).thresholdAlerts).toBe(0); // a new MONTH does not re-arm it
       const [{ n }] = await admin<{ n: number }[]>`
         select count(*)::int as n from usage_alerts where org_id = ${orgId} and threshold = 80`;
-      expect(n).toBe(2);
+      expect(n).toBe(1); // exactly one 80% alert, ever
+    });
+
+    it("a PAID org re-alerts when its billing CYCLE advances (per-cycle dedup, not permanent)", async () => {
+      // A paid plan's allowance DOES reset each cycle, so a fresh period_start must re-arm the warning.
+      const AUG = Date.UTC(2026, 7, 15, 12, 0, 0);
+      const orgId = await seedOrg("alert-new-cycle");
+      await seedSubscription(orgId, { start: "2026-07-01T00:00:00Z", end: "2026-08-01T00:00:00Z" });
+      await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 90); // 80% of the 100 cap
+      expect((await run()).thresholdAlerts).toBe(1); // July cycle
+      // The mirror image of the lifetime snapshot: a paid cycle carries capKind 'billing_cycle' and the
+      // subscription's real end instant, so the renderer prints an honest reset date.
+      expect(await usageAlertContexts(orgId)).toEqual([
+        {
+          threshold: 80,
+          usage: 90,
+          eventCap: 100,
+          pausePolicy: "pause",
+          capKind: "billing_cycle",
+          periodEndIso: "2026-08-01T00:00:00.000Z",
+        },
+      ]);
+      expect((await run()).thresholdAlerts).toBe(0); // same cycle → deduped
+
+      // Renewal: the cycle advances. July's usage falls outside it; August's 90 crosses 80% afresh.
+      await admin`update billing_subscriptions
+                  set current_period_start = ${"2026-08-01T00:00:00Z"},
+                      current_period_end = ${"2026-09-01T00:00:00Z"}
+                  where org_id = ${orgId}`;
+      await seedUsageAt(orgId, "2026-08-10T00:00:00.000Z", 90);
+      expect((await run({ now: AUG })).thresholdAlerts).toBe(1); // new cycle → fresh alert
+      const [{ n }] = await admin<{ n: number }[]>`
+        select count(*)::int as n from usage_alerts where org_id = ${orgId} and threshold = 80`;
+      expect(n).toBe(2); // (July cycle, 80) and (August cycle, 80)
     });
   });
 
@@ -407,15 +466,19 @@ describe("runCapProducer", () => {
       expect((await pausedState(orgId))?.paused).toBe(true);
     });
 
-    it("does NOT pause the same org when metered over the (wrong) UTC month would show zero usage", async () => {
-      // Control: with the cycle usage entirely in June and NONE in July, a UTC-month basis would see 0 and
-      // never pause. The subscription-period basis is what makes the pause correct — asserted above. Here we
-      // confirm a Free org (no subscription) with the same June usage is NOT paused (July UTC month = 0).
-      const orgId = await seedOrg("free-prior-month");
-      await seedUsageAt(orgId, "2026-06-20T00:00:00.000Z", 150); // June only, no subscription
-      const res = await run({ defaultEventCap: DEFAULT_CAP });
-      expect(res.pausedTransitions).toBe(0);
+    it("a FREE org over its LIFETIME allowance is paused as soon as it is enumerated (lazy pause)", async () => {
+      // The Free allowance is lifetime, so June usage still counts against it. But the producer's candidate
+      // floor is the current UTC month: an org with NO current-month usage (and no pause/limits/subscription
+      // row) isn't enumerated at all, so it isn't paused while it's idle. The moment it sends again this
+      // month it becomes a candidate and the lifetime total (150 > 100) pauses it. Bounded, self-correcting.
+      const orgId = await seedOrg("free-lifetime-lazy");
+      await seedUsageAt(orgId, "2026-06-20T00:00:00.000Z", 150); // June only → over the 100 lifetime cap
+      expect((await run({ defaultEventCap: DEFAULT_CAP })).pausedTransitions).toBe(0); // idle → not enumerated
       expect(await pausedState(orgId)).toBeNull();
+
+      await seedUsageAt(orgId, "2026-07-03T00:00:00.000Z", 1); // it sends again → now a candidate
+      expect((await run({ defaultEventCap: DEFAULT_CAP })).pausedTransitions).toBe(1);
+      expect((await pausedState(orgId))?.paused).toBe(true); // lifetime 151 > 100 → paused
     });
 
     it("a LAPSED cycle falls back to the UTC month — NOT paused over stale prior-cycle usage", async () => {
@@ -486,5 +549,42 @@ describe("makeCapTransitionEvictor (the onTransition edge-eviction fan-out)", ()
       async (h) => void evicted.push(Buffer.from(h).toString("hex")),
     )(a);
     expect(evicted).toEqual([Buffer.from(ha).toString("hex")]);
+  });
+});
+
+describe("the churn ↔ upgrade round trip (the lifetime allowance's escape hatch)", () => {
+  it("a Free org exhausted on its LIFETIME allowance RESUMES when it upgrades", async () => {
+    // The claim the lifetime basis rests on: the one-time allowance never resets, so the ONLY way out is to
+    // subscribe. Upgrading re-anchors the org to a fresh Stripe cycle whose usage is ~0, and the very next
+    // producer pass must resume it — AND fire edge eviction, or a paying customer keeps getting 429s until
+    // the ingest-token cache TTL expires.
+    const orgId = await seedOrg("lifetime-upgrade");
+    await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 150); // 150 > the 100 free cap → over, lifetime
+    expect((await run()).pausedTransitions).toBe(1);
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
+
+    // Upgrade: an ENTITLED subscription whose cycle starts AFTER the pre-upgrade usage, plus its paid cap.
+    await seedSubscription(orgId, { start: "2026-07-14T00:00:00Z", end: "2026-08-14T00:00:00Z" });
+    await admin`insert into org_limits (org_id, event_cap) values (${orgId}, ${1_000_000})`;
+
+    const evicted: Array<{ orgId: string; paused: boolean }> = [];
+    const result = await run({
+      onTransition: async (o, p) => void evicted.push({ orgId: o, paused: p }),
+    });
+    expect(result.resumedTransitions).toBe(1);
+    expect(await pausedState(orgId)).toEqual({ paused: false, reason: null });
+    expect(evicted).toContainEqual({ orgId, paused: false }); // no 429 tail for a paying customer
+  });
+
+  it("a paused Free org does NOT resume merely because a new UTC month began", async () => {
+    // The negative that makes the allowance one-time. The org is enumerated (its ingest_paused row is a
+    // candidate floor), re-evaluated on the lifetime basis, and stays paused — no calendar reset.
+    const AUG = Date.UTC(2026, 7, 15, 12, 0, 0);
+    const orgId = await seedOrg("lifetime-no-rollover");
+    await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 150);
+    expect((await run()).pausedTransitions).toBe(1);
+    const result = await run({ now: AUG }); // a whole new month, no new events
+    expect(result.resumedTransitions).toBe(0);
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
   });
 });

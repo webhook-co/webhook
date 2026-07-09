@@ -8,7 +8,44 @@ const BASE: UsageThresholdContext = {
   threshold: 80,
   pausePolicy: "pause",
   periodEndIso: "2026-08-01T00:00:00.000Z",
+  capKind: "billing_cycle",
 };
+
+/** A Free org's ONE-TIME lifetime allowance: no reset instant, so the copy must never promise one. */
+const LIFETIME: UsageThresholdContext = {
+  usage: 4_000,
+  eventCap: 5_000,
+  threshold: 80,
+  pausePolicy: "pause",
+  periodEndIso: null,
+  capKind: "lifetime",
+};
+
+describe("renderUsageThresholdEmail — the one-time LIFETIME allowance (Free)", () => {
+  it("at 80% never promises a reset — it points at upgrading", () => {
+    const email = renderUsageThresholdEmail(LIFETIME);
+    expect(email.subject).toBe("You've used 80% of your free events");
+    expect(email.html).toContain("4,000 of 5,000 events (80%)");
+    expect(email.text).toContain("one-time free allowance");
+    expect(email.text).toContain("doesn't reset");
+    expect(email.text).toContain("One-time — does not reset");
+    // The load-bearing guarantee: a lifetime allowance has NO reset date, so no date may appear.
+    expect(email.html).not.toContain("resets on");
+    expect(email.text).not.toContain("Resets:");
+    expect(email.html).not.toMatch(
+      /\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) \d{1,2}, \d{4}/,
+    );
+  });
+
+  it("at 100% + pause says capture is paused and the way out is an upgrade", () => {
+    const email = renderUsageThresholdEmail({ ...LIFETIME, usage: 5_000, threshold: 100 });
+    expect(email.subject).toBe("You've used your free events — capture is paused");
+    expect(email.text).toContain("new events are paused");
+    expect(email.text).toContain("upgrade to resume capturing");
+    expect(email.text).toContain("Upgrade in the dashboard to resume capturing.");
+    expect(email.html).not.toContain("resets on");
+  });
+});
 
 describe("renderUsageThresholdEmail", () => {
   it("renders an approaching-limit (80%) heads-up with the org's own numbers and reset date", () => {

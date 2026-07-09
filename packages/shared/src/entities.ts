@@ -308,15 +308,24 @@ export const OrgLimitsSchema = z.object({
 });
 export type OrgLimits = z.infer<typeof OrgLimitsSchema>;
 
+/** How the org's included-event allowance is scoped (ADR-0004): a one-time lifetime grant, or per-cycle.
+ *  The plain `CapKind` type lives in ./metering (zod-free); this is its wire schema. */
+export const CapKindSchema = z.enum(["lifetime", "billing_cycle"]);
+
 /**
- * The usage-surface projection (usage.get) for the caller's org + current billing period. Single
- * dimension (events); NO prices/tiers — the billable unit is disclosed, the cap + pause behavior are
- * shown, and the surface renders "X of Y events" + a percentage. `eventCap` null = uncapped display.
+ * The usage-surface projection (usage.get) for the caller's org + the period its cap is measured over.
+ * Single dimension (events); NO prices/tiers — the billable unit is disclosed, the cap + pause behavior
+ * are shown, and the surface renders "X of Y events" + a percentage. `eventCap` null = uncapped display.
  * `paused` is the org-level ingest pause (soft-cap or operator), independent of any per-endpoint pause.
+ *
+ * `capKind` distinguishes the Free tier's ONE-TIME lifetime allowance from a paid plan's per-cycle
+ * volume. For `lifetime`, `periodStart` is the org's creation instant and `periodEnd` is **null** —
+ * a one-time allowance never resets, so there is no period end to show or count down to.
  */
 export const UsageSummarySchema = z.object({
   periodStart: z.coerce.date(),
-  periodEnd: z.coerce.date(),
+  periodEnd: z.coerce.date().nullable(),
+  capKind: CapKindSchema,
   events: z.number().int().nonnegative(),
   eventCap: z.number().int().nonnegative().nullable(),
   pausePolicy: PausePolicySchema,

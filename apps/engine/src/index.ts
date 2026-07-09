@@ -167,7 +167,8 @@ export interface Env {
    */
   DASHBOARD_ORIGIN?: string;
   /**
-   * The Free-tier event cap for orgs WITHOUT an explicit org_limits row (S4.3 soft-cap). A tier figure,
+   * The Free tier's ONE-TIME LIFETIME event allowance for orgs WITHOUT an explicit org_limits row (S4.3
+   * soft-cap; ADR-0004 amended 2026-07-09 — counted over all time, never resets). A tier figure,
    * so it is INJECTED at deploy (not committed) and kept out of the repo. Unset/blank = uncapped (no
    * Free-pause enforcement) — a fail-safe default; setting it is the enable-Free-enforcement switch.
    */

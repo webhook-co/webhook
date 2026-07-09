@@ -369,3 +369,44 @@ describe("webhook_billing cross-tenant write rejection (behavioral RLS WITH CHEC
     expect(stripe_customer_id).toBe("cus_owned"); // untouched
   });
 });
+
+describe("applySubscriptionUpsert — a NON-ENTITLED status drops the paid cap mirror", () => {
+  it("keeps the paid cap while past_due (dunning is a grace window, not a downgrade)", async () => {
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { status: "active" }), 1000);
+    expect(await readCap(org)).toBe(500000);
+    await applySubscriptionUpsert(billing, sub(org, { status: "past_due" }), 2000);
+    expect(await readCap(org)).toBe(500000); // still entitled — a failed card must not pause a customer
+  });
+
+  for (const status of ["unpaid", "incomplete", "incomplete_expired", "paused"] as const) {
+    it(`removes the paid cap on '${status}' → the org falls back to the Free default`, async () => {
+      // Stripe only writes 'canceled' on subscription.deleted, so without this the org would keep a paid
+      // org_limits cap while effectiveBillingPeriod has already dropped it to the Free lifetime basis.
+      const org = await seedOrg();
+      await applySubscriptionUpsert(billing, sub(org, { status: "active" }), 1000);
+      expect(await readCap(org)).toBe(500000);
+      const r = await applySubscriptionUpsert(billing, sub(org, { status }), 2000);
+      expect(r).toBe("applied");
+      expect(await readCap(org)).toBeUndefined(); // no org_limits row → injected Free default
+      expect((await readSub(org)).status).toBe(status); // the status itself is still mirrored
+    });
+  }
+
+  it("RE-establishes the cap when the org becomes entitled again (unpaid → active)", async () => {
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { status: "active" }), 1000);
+    await applySubscriptionUpsert(billing, sub(org, { status: "unpaid" }), 2000);
+    expect(await readCap(org)).toBeUndefined();
+    await applySubscriptionUpsert(billing, sub(org, { status: "active" }), 3000);
+    expect(await readCap(org)).toBe(500000); // current === undefined → establish, no decrease-defer stall
+  });
+
+  it("does not resurrect a cap for a non-entitled status whose event is STALE", async () => {
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { status: "active" }), 3000);
+    const r = await applySubscriptionUpsert(billing, sub(org, { status: "unpaid" }), 1500);
+    expect(r).toBe("stale");
+    expect(await readCap(org)).toBe(500000); // the stale downgrade never applied
+  });
+});

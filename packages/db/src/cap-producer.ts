@@ -34,7 +34,9 @@ export interface CapProducerDeps {
   /** Injected wall clock (ms) so the period + `since` are deterministic + testable. */
   readonly now: number;
   /**
-   * Event cap for orgs with NO org_limits row — the Free-tier ceiling. Injected from non-public config
+   * Event cap for orgs with NO org_limits row — the Free tier's ONE-TIME LIFETIME allowance (ADR-0004,
+   * amended 2026-07-09): measured over every event the org has ever ingested, and it never resets.
+   * Injected from non-public config
    * (deploy env), NEVER a literal in this repo: a cap value is a tier figure. `null` = uncapped default.
    * An org WITH an org_limits row uses that row's event_cap (which may itself be null = uncapped).
    */
@@ -174,7 +176,8 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
             eventCap: eventCap as number, // crossedUsageThresholds only returns for a non-null cap
             threshold,
             pausePolicy,
-            periodEndIso: period.end,
+            periodEndIso: period.end, // null for the one-time lifetime allowance
+            capKind: period.kind,
           };
           await insertNotificationIntent(tx, {
             orgId,

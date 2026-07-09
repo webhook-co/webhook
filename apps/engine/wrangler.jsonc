@@ -7,7 +7,8 @@
   "observability": {
     "enabled": true,
   },
-  // Non-secret runtime vars. FREE_EVENT_CAP is the Free-tier event ceiling for orgs without an explicit
+  // Non-secret runtime vars. FREE_EVENT_CAP is the Free tier's ONE-TIME LIFETIME event allowance (ADR-0004,
+  // amended 2026-07-09 — counted over all time, never resets) for orgs without an explicit
   // org_limits row (S4.3 soft-cap) — a TIER FIGURE, so its VALUE is injected at deploy (the `<...>`
   // placeholder is replaced by the FREE_EVENT_CAP GH var; unset → "" → uncapped/no-Free-enforcement, the
   // fail-safe default). The literal placeholder is what `wrangler dev` sees locally (parses to uncapped).

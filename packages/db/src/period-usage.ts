@@ -9,9 +9,16 @@
 // live today-count fixes that WITHOUT depending on when the rollup last ran. The split is half-open and
 // non-overlapping — `window_start < todayStart` for the rolled half, `received_at >= todayStart` for the
 // live half — so a `usage` row that already exists for TODAY is never added on top of the live count
-// (no double-count at the boundary). `todayStart >= period.start` always (today is within the period).
+// (no double-count at the boundary). `todayStart >= period.start` always, because BOTH period starts are
+// floored to UTC midnight: a billing cycle contains today, and the lifetime window starts on the org's
+// creation DAY. A null `period.end` means OPEN-ENDED (the one-time Free allowance), so the upper bounds
+// below drop away rather than clamping.
 
-import { currentBillingPeriod, type BillingPeriod } from "@webhook-co/shared";
+import {
+  BILLING_ACTIVE_STATUSES,
+  currentBillingPeriod,
+  type EffectivePeriod,
+} from "@webhook-co/shared";
 
 import type { TenantTx } from "./client";
 
@@ -23,23 +30,39 @@ export function utcDayStartIso(nowMs: number): string {
 }
 
 /**
- * The org's EFFECTIVE billing period: a PAID org's Stripe-anchored cycle (billing_subscriptions
- * current_period_start/end) when it has a non-canceled subscription, else the UTC calendar month (the Free
- * default). This is the ONE period basis for BOTH the soft-cap enforcement and the usage surface, so a paid
- * org's usage/cap/pause is measured over its real billing cycle — not the wrong UTC month. Runs inside the
- * tenant tx (webhook_app / RLS), so the subscription read is org-scoped. A canceled subscription falls back
- * to the UTC month (its org_limits paid cap was removed → Free), keeping the period + cap consistent.
+ * The org's EFFECTIVE billing period — the ONE period basis for BOTH the soft-cap enforcement and the usage
+ * surface, so what an org is shown can never drift from what it is enforced at. Runs inside the tenant tx
+ * (webhook_app / RLS), so both reads are org-scoped. Three cases (ADR-0004, amended 2026-07-09):
+ *
+ *   1. An ENTITLED subscription (`isBillingActive` — active/trialing/past_due) AND `now` inside its cycle →
+ *      the **Stripe cycle** (`billing_cycle`).
+ *   2. An ENTITLED subscription whose cycle has LAPSED (a late/missing renewal webhook) → the **UTC
+ *      month** (`billing_cycle`). Deliberately NOT lifetime: a paying customer's lifetime usage would
+ *      instantly exceed any cap and strand them paused mid-subscription.
+ *   3. No subscription, or a NON-ENTITLED one (canceled/unpaid/incomplete/paused) → the Free tier's
+ *      **one-time lifetime allowance**: an open-ended `[org creation day, ∞)` window (`lifetime`,
+ *      `end === null`). It never resets, so a churned paid org falls back here with its allowance long
+ *      spent and stays paused until it resubscribes (upgrading re-anchors it to a fresh Stripe cycle →
+ *      usage ≈ 0 → auto-resume).
+ *
+ * Case 3 tests ENTITLEMENT, not `status <> 'canceled'`: Stripe only writes `canceled` on an explicit
+ * `subscription.deleted`, so a denylist would leave an `unpaid` (dunning exhausted) or `incomplete_expired`
+ * (never paid) org on the monthly-resetting paid basis forever — a free paid plan.
  */
-export async function effectiveBillingPeriod(tx: TenantTx, nowMs: number): Promise<BillingPeriod> {
+export async function effectiveBillingPeriod(
+  tx: TenantTx,
+  nowMs: number,
+): Promise<EffectivePeriod> {
+  // The allowlist crosses as ONE text param split server-side (no status contains a comma) — the tenant-tx
+  // wrapper doesn't reach postgres.js's array serializer, and a literal `in (…)` list would inline the values.
   const [sub] = await tx<{ start: Date; end: Date }[]>`
     select current_period_start as start, current_period_end as end
-    from billing_subscriptions where status <> 'canceled'`;
+    from billing_subscriptions
+    where status = any(string_to_array(${BILLING_ACTIVE_STATUSES.join(",")}, ','))`;
   if (sub) {
     const startMs = sub.start.getTime();
     const endMs = sub.end.getTime();
-    // Only anchor to the Stripe cycle while `now` is actually WITHIN it. A lapsed cycle (now past
-    // current_period_end — a late/missing renewal webhook) falls back to the UTC month, so a paid org is
-    // never measured over a stale/ended window (which could strand it paused into a fresh cycle).
+    // Only anchor to the Stripe cycle while `now` is actually WITHIN it.
     if (nowMs >= startMs && nowMs < endMs) {
       // FLOOR the start to UTC midnight. `usage` is UTC-day-bucketed (rollup_usage date_trunc('day')), so a
       // non-midnight Stripe start would exclude the start-day bucket (window_start = midnight < start) and
@@ -47,22 +70,38 @@ export async function effectiveBillingPeriod(tx: TenantTx, nowMs: number): Promi
       // CONSERVATIVE over-count on the start day only. (The exact-instant boundary split is the outbound
       // meter-reporter's F4 job — the soft-cap accepts day granularity.) The end stays the raw instant: it
       // only bounds the LIVE half (raw events), which is instant-precise, and `now < end` here.
-      return { start: utcDayStartIso(startMs), end: sub.end.toISOString() };
+      return { start: utcDayStartIso(startMs), end: sub.end.toISOString(), kind: "billing_cycle" };
     }
+    // Lapsed cycle → UTC month (a safe, self-correcting fallback until the renewal webhook lands).
+    const month = currentBillingPeriod(nowMs);
+    return { start: month.start, end: month.end, kind: "billing_cycle" };
   }
-  return currentBillingPeriod(nowMs);
+  // Free: the ONE-TIME lifetime allowance, anchored at org creation and never closed.
+  const [org] = await tx<{ created_at: Date }[]>`select created_at from orgs`;
+  // FLOOR to UTC midnight, for the same day-bucket reason as the cycle start above: `usage.window_start` is
+  // the org's creation DAY at midnight, which sorts BEFORE a mid-day `created_at`. Anchoring at the raw
+  // instant would exclude the signup-day bucket from the rolled half forever (it's only counted live, on day
+  // 0), so every org's entire first-day volume would escape the lifetime cap — the whole allowance is
+  // trivially bypassed by bursting on signup day. Flooring costs nothing: no event can predate its org.
+  return {
+    start: utcDayStartIso((org?.created_at ?? new Date(0)).getTime()),
+    end: null,
+    kind: "lifetime",
+  };
 }
 
 /**
  * The org's event count for `period` as of `nowMs`: rolled prior-day `usage` + a live count of today's
  * `events`. Deterministic given the DB state + clock, so the surface and the cap producer can't drift.
+ * A null `period.end` is OPEN-ENDED (the one-time lifetime allowance) — no upper bound is applied.
  */
 export async function sumPeriodEventUsage(
   tx: TenantTx,
-  period: BillingPeriod,
+  period: { readonly start: string; readonly end: string | null },
   nowMs: number,
 ): Promise<number> {
   const todayStart = utcDayStartIso(nowMs);
+  const end = period.end; // null ⇒ open-ended; the `is null or` arms below drop the upper bound
   // The rolled half is upper-bounded by BOTH todayStart (today is counted live below) AND period.end — the
   // latter so a period that ended before now (a lapsed cycle a caller didn't clamp) can't accumulate usage
   // from days past its end. In the normal in-period case now < period.end, so todayStart is the tighter bound.
@@ -71,10 +110,11 @@ export async function sumPeriodEventUsage(
     from usage
     where window_start >= ${period.start}
       and window_start < ${todayStart}
-      and window_start < ${period.end}`;
+      and (${end}::timestamptz is null or window_start < ${end})`;
   const [todayRow] = await tx<{ events: string }[]>`
     select count(*)::bigint as events
     from events
-    where received_at >= ${todayStart} and received_at < ${period.end}`;
+    where received_at >= ${todayStart}
+      and (${end}::timestamptz is null or received_at < ${end})`;
   return Number(rolledRow?.events ?? 0) + Number(todayRow?.events ?? 0);
 }
