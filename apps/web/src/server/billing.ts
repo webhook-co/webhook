@@ -10,6 +10,7 @@ import {
 } from "@webhook-co/shared";
 
 import { logActionError } from "./action-log";
+import { resolveBillingPanel, type BillingPanel } from "./billing-panel";
 import { withTenantDb } from "./db";
 import { getBillingMode, getStripePlans, getStripeSecretKey } from "./env";
 
@@ -95,5 +96,24 @@ export async function openBillingPortal(orgId: string): Promise<BillingActionRes
   } catch (error) {
     logActionError("billing.portal_failed", error);
     return { status: "error" };
+  }
+}
+
+/**
+ * What the dashboard's billing panel should render for `orgId`. Never throws: a DB fault degrades to a
+ * hidden panel (the usage numbers still render) rather than a 500 on the page a user opens to check usage.
+ */
+export async function loadBillingPanel(orgId: string): Promise<BillingPanel> {
+  const mode = getBillingMode();
+  const plans = getStripePlans();
+  if (mode === "off" || !plans) return { kind: "hidden" };
+  try {
+    const customerId = await withTenantDb((app) =>
+      withTenant(app, orgId, (tx) => readBillingCustomerId(tx)),
+    );
+    return resolveBillingPanel({ mode, plans, hasCustomer: customerId !== null });
+  } catch (error) {
+    logActionError("billing.panel_failed", error);
+    return { kind: "hidden" };
   }
 }
