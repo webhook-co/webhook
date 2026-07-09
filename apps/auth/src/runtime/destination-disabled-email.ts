@@ -6,6 +6,7 @@
 
 /** The engine's context snapshot (mirror of packages/db NotificationContext — kept local so this DOM-typed
  *  app doesn't import the Node-typed db package). */
+import { escapeHtml as esc } from "./email-html";
 export interface DestinationDisabledContext {
   readonly destinationUrl: string;
   readonly failureCount: number;
@@ -24,14 +25,6 @@ const DASHBOARD_URL = "https://app.webhook.co/destinations";
 const LOGO_URL = "https://www.webhook.co/logo.png";
 
 /** Escape the five HTML-significant characters so a user-controlled URL / error string can't inject markup. */
-function esc(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /** "HTTP 502 · Bad Gateway" / "Bad Gateway" / "Connection timed out" — the human error line, or null if none. */
 function formatError(ctx: DestinationDisabledContext): string | null {

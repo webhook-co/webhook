@@ -7,6 +7,7 @@
 
 /** The producer's snapshot (mirror of packages/db UsageThresholdContext — kept local so this DOM-typed app
  *  doesn't import the Node-typed db package). `threshold` is the percent-of-cap point (80 | 100). */
+import { escapeHtml as esc } from "./email-html";
 export interface UsageThresholdContext {
   readonly usage: number;
   readonly eventCap: number;
@@ -23,15 +24,6 @@ export interface UsageThresholdEmail {
 
 const DASHBOARD_URL = "https://app.webhook.co/usage";
 const LOGO_URL = "https://www.webhook.co/logo.png";
-
-function esc(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 /** Fixed-locale thousands separator so the email is deterministic (workerd + Node identical), not host-locale. */
 function fmtCount(n: number): string {

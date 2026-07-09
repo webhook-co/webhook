@@ -9,6 +9,7 @@ import {
   createApiKey,
   listApiKeys,
   makeApiKeyColdLookup,
+  enqueueApiKeyRevokedNotification,
   revokeApiKeyByPlaintext,
   revokeApiKeyInTx,
 } from "../src/api-keys";
@@ -326,5 +327,80 @@ describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () =
     const { plaintext } = mintChecksummedCredential(API_KEY_PREFIX, hasher); // valid shape, never inserted
     const r = await revokeApiKeyByPlaintext(authn, app, plaintext, hasher, auditKey);
     expect(r).toMatchObject({ found: false, revoked: false });
+  });
+
+  it("returns the key's name + start so the owner can be told WHICH key died — never the secret", async () => {
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "ci-deploy", scopes: ["events:read"] },
+      hasher,
+    );
+    const r = await revokeApiKeyByPlaintext(authn, app, created.plaintext, hasher, auditKey);
+    expect(r).toMatchObject({ found: true, revoked: true, keyName: "ci-deploy" });
+    // `start` is the non-secret display handle already shown in the dashboard (prefix + a few chars).
+    expect(r.keyStart).toBe(created.start);
+    expect(created.plaintext.startsWith(r.keyStart!)).toBe(true);
+    expect(r.keyStart!.length).toBeLessThan(created.plaintext.length);
+    // The notification payload must never carry the plaintext or the stored hash.
+    expectNoSecretInSerialized(r, [created.plaintext, r.keyHash?.toString("hex")]);
+  });
+
+  it("carries null name/start when the key is unknown", async () => {
+    const { plaintext } = mintChecksummedCredential(API_KEY_PREFIX, hasher);
+    const r = await revokeApiKeyByPlaintext(authn, app, plaintext, hasher, auditKey);
+    expect(r).toMatchObject({ found: false, keyName: null, keyStart: null });
+  });
+});
+
+describe("enqueueApiKeyRevokedNotification (secret-scanning owner alert)", () => {
+  it("queues ONE pending, destination-less intent carrying the key's name/start", async () => {
+    const created = await createApiKey(app, { orgId: orgA, name: "leaked", scopes: [] }, hasher);
+    await enqueueApiKeyRevokedNotification(app, {
+      orgId: orgA,
+      keyName: created.name,
+      keyStart: created.start,
+      source: "github_secret_scanning",
+    });
+
+    const rows = await withTenant(
+      app,
+      orgA,
+      (tx) =>
+        tx<{ kind: string; status: string; destination_id: string | null; context: unknown }[]>`
+          select kind, status, destination_id, context from notification_intents
+          where org_id = ${orgA}`,
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "api_key_revoked",
+      status: "pending",
+      destination_id: null, // this kind has no destination (like usage_threshold)
+    });
+    expect(rows[0]!.context).toMatchObject({
+      keyName: "leaked",
+      keyStart: created.start,
+      source: "github_secret_scanning",
+    });
+    // GitHub's payload (and the key itself) must never be persisted on the intent.
+    expectNoSecretInSerialized(rows[0], [created.plaintext]);
+  });
+
+  it("writes the intent under the OWNING org (RLS), not a bystander org", async () => {
+    const created = await createApiKey(app, { orgId: orgB, name: "leaked-b", scopes: [] }, hasher);
+    await enqueueApiKeyRevokedNotification(app, {
+      orgId: orgB,
+      keyName: created.name,
+      keyStart: created.start,
+      source: "github_secret_scanning",
+    });
+    const inB = await withTenant(
+      app,
+      orgB,
+      (tx) =>
+        tx<
+          { n: string }[]
+        >`select count(*)::text as n from notification_intents where org_id = ${orgB}`,
+    );
+    expect(Number(inB[0]!.n)).toBeGreaterThanOrEqual(1);
   });
 });

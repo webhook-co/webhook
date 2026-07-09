@@ -21,6 +21,7 @@ import { randomUUID } from "node:crypto";
 
 import { appendAuthAuditEntry } from "./auth-audit";
 import { withTenant, type Sql, type TenantTx } from "./client";
+import { insertNotificationIntent } from "./delivery";
 import {
   credentialHashEquals,
   mintChecksummedCredential,
@@ -324,6 +325,10 @@ export interface RevokedByPlaintext {
   readonly keyId: string | null;
   /** The stored key_hash, so the caller can evict the credential cache. null when not found. */
   readonly keyHash: Buffer | null;
+  /** The key's name, so the owner can be told WHICH key was killed. null when not found. */
+  readonly keyName: string | null;
+  /** The non-secret `whk_…` display handle (never the full key). null when not found. */
+  readonly keyStart: string | null;
 }
 
 /**
@@ -357,14 +362,31 @@ export async function revokeApiKeyByPlaintext(
     }
   }
   if (match === null)
-    return { found: false, revoked: false, orgId: null, keyId: null, keyHash: null };
+    return {
+      found: false,
+      revoked: false,
+      orgId: null,
+      keyId: null,
+      keyHash: null,
+      keyName: null,
+      keyStart: null,
+    };
 
   const { orgId, keyHash } = match;
   // As webhook_app under the org's RLS context: resolve the key id (app has full SELECT on its org's
-  // rows, unlike authn), then revoke + audit via the shared tx-level primitive.
-  const { revoked, keyId } = await withTenant(app, orgId, async (tx) => {
-    const [row] = await tx<{ id: string }[]>`select id from api_keys where key_hash = ${keyHash}`;
-    if (!row) return { revoked: false, keyId: null as string | null };
+  // rows, unlike authn), then revoke + audit via the shared tx-level primitive. `name`/`start` come back
+  // too so the caller can tell the owner WHICH key died — both are non-secret (start is the same handle
+  // the dashboard lists).
+  const { revoked, keyId, keyName, keyStart } = await withTenant(app, orgId, async (tx) => {
+    const [row] = await tx<{ id: string; name: string; start: string }[]>`
+      select id, name, start from api_keys where key_hash = ${keyHash}`;
+    if (!row)
+      return {
+        revoked: false,
+        keyId: null as string | null,
+        keyName: null as string | null,
+        keyStart: null as string | null,
+      };
     const result = await revokeApiKeyInTx(tx, row.id);
     if (result.revoked) {
       await appendAuthAuditEntry(tx, auditKey, {
@@ -375,9 +397,48 @@ export async function revokeApiKeyByPlaintext(
         metadata: { source: "github_secret_scanning" },
       });
     }
-    return { revoked: result.revoked, keyId: row.id };
+    return { revoked: result.revoked, keyId: row.id, keyName: row.name, keyStart: row.start };
   });
-  return { found: true, revoked, orgId, keyId, keyHash };
+  return { found: true, revoked, orgId, keyId, keyHash, keyName, keyStart };
+}
+
+/** Input to {@link enqueueApiKeyRevokedNotification}. Non-secret identifiers only. */
+export interface ApiKeyRevokedNotification {
+  readonly orgId: string;
+  readonly keyName: string | null;
+  readonly keyStart: string | null;
+  readonly source: "github_secret_scanning";
+}
+
+/**
+ * Queue the "we revoked your leaked key" owner email (ADR-0074). A destination-less `api_key_revoked`
+ * intent — the same shape `usage_threshold` uses — drained hourly by the auth worker's notifier cron,
+ * which owns the identity-email read and the Resend binding. No migration: `kind` is free text and
+ * `destination_id` is nullable by design.
+ *
+ * DELIBERATELY A SEPARATE TX from the revoke, and called only AFTER it commits. The engine's
+ * auto-disable writes its intent in the same tx as the disable, because there both halves are the
+ * action. Here they are not: revoking a leaked key is the safety-critical step and a courtesy email is
+ * not. If the intent insert shared the revoke's tx, an insert failure would ROLL BACK the revoke and
+ * leave a leaked key live — trading a real compromise for a missed email. So the caller commits the
+ * revoke, then enqueues best-effort (see `revokeAndNotify` in apps/api).
+ */
+export async function enqueueApiKeyRevokedNotification(
+  app: Sql,
+  input: ApiKeyRevokedNotification,
+): Promise<string> {
+  return withTenant(app, input.orgId, (tx) =>
+    insertNotificationIntent(tx, {
+      orgId: input.orgId,
+      kind: "api_key_revoked",
+      destinationId: null,
+      context: {
+        keyName: input.keyName ?? "",
+        keyStart: input.keyStart ?? "",
+        source: input.source,
+      },
+    }),
+  );
 }
 
 /** Coerce the jsonb `scopes` column (postgres.js returns it parsed) to a string[]. */
