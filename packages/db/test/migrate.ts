@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 
 import { DB_ROLES } from "../src/constants";
-import type { EphemeralPostgres } from "./pg";
+import { MANAGED_ROLES, type EphemeralPostgres } from "./pg";
 
 const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const MIGRATIONS_DIR = join("db", "migrations");
@@ -97,27 +97,26 @@ export async function bootstrapOwner(pg: EphemeralPostgres): Promise<void> {
 }
 
 /**
- * In password mode, set the per-run login passwords on the non-owner roles the migrations
- * created (app/ingest/authn/anchor/auth/sweeper/reconciler — all created password-less so source carries no
- * credentials). Must stay in lockstep with pg.ts MANAGED_ROLES: any role the harness mints a password for
- * AND connects as in a test must also be ALTERed here, or its login fails under SCRAM (Neon nightly).
- * No-op under trust auth. Run as the provider/superuser after the migrations apply.
+ * The roles applyRolePasswords sets a password on: every role the harness mints a password for,
+ * minus the owner (bootstrapOwner sets that one before the migrations run, since dbmate logs in as
+ * it). Derived from MANAGED_ROLES rather than hand-listed — the hand-listed version drifted out of
+ * lockstep when migrations 0046/0047 added roles, and the resulting `28P01` was invisible to every
+ * trust-auth run.
+ */
+export const ROLES_NEEDING_PASSWORDS: readonly string[] = MANAGED_ROLES.filter(
+  (role) => role !== DB_ROLES.owner,
+);
+
+/**
+ * In password mode, set the per-run login passwords on the non-owner roles the migrations created
+ * (all created password-less so source carries no credentials). No-op under trust auth. Run as the
+ * provider/superuser after the migrations apply.
  */
 export async function applyRolePasswords(pg: EphemeralPostgres): Promise<void> {
   if (pg.auth !== "password") return;
   const sql = postgres(pg.ownerUrl, { max: 1, prepare: false, fetch_types: false });
   try {
-    for (const role of [
-      DB_ROLES.app,
-      DB_ROLES.ingest,
-      DB_ROLES.authn,
-      DB_ROLES.anchor,
-      DB_ROLES.auth,
-      DB_ROLES.sweeper,
-      DB_ROLES.reconciler,
-      DB_ROLES.notifier,
-      DB_ROLES.meter,
-    ]) {
+    for (const role of ROLES_NEEDING_PASSWORDS) {
       await sql.unsafe(`alter role ${quoteIdent(role)}${passwordClause(pg, role)}`);
     }
   } finally {
