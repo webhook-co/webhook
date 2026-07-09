@@ -915,6 +915,10 @@ describe("catalog-driven RLS coverage", () => {
       ["billing_subscriptions", "current_period_start"],
       ["billing_subscriptions", "current_period_end"],
       ["billing_subscriptions", "created_at"],
+      // Definition B (migration 0049): a DISPATCH is a billed event, so the rollup's org enumeration must
+      // find orgs whose only recent activity was an outbound delivery. Exactly the enumeration columns.
+      ["delivery_attempts", "org_id"],
+      ["delivery_attempts", "created_at"],
     ];
     for (const [t, c] of selects) {
       const [p] = await owner<{ ok: boolean }[]>`
@@ -934,6 +938,13 @@ describe("catalog-driven RLS coverage", () => {
       ["billing_subscriptions", "stripe_subscription_id"],
       ["billing_subscriptions", "plan"],
       ["billing_subscriptions", "event_cap"],
+      // A dispatch row carries the customer's destination URL and delivery outcome. Enumeration counts
+      // rows; it must never read WHERE an org delivers, nor whether it succeeded.
+      ["delivery_attempts", "target"],
+      ["delivery_attempts", "status"],
+      ["delivery_attempts", "attempt"],
+      ["delivery_attempts", "event_id"],
+      ["delivery_attempts", "error"],
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meter}, ${t}, ${c}, 'SELECT') as ok`;
@@ -947,6 +958,7 @@ describe("catalog-driven RLS coverage", () => {
       "org_limits",
       "ingest_paused",
       "billing_subscriptions",
+      "delivery_attempts",
     ] as const) {
       const [p] = await owner<{ any: boolean }[]>`
         select (has_table_privilege(${DB_ROLES.meter}, ${t}, 'INSERT')
@@ -960,8 +972,10 @@ describe("catalog-driven RLS coverage", () => {
       select policyname, cmd from pg_policies
       where schemaname = 'public' and policyname in
         ('events_meter_select', 'usage_meter_select', 'org_limits_meter_select',
-         'ingest_paused_meter_select', 'billing_subscriptions_meter_select')`;
+         'ingest_paused_meter_select', 'billing_subscriptions_meter_select',
+         'delivery_attempts_meter_select')`;
     expect(policies.map((p) => p.cmd).sort()).toEqual([
+      "SELECT",
       "SELECT",
       "SELECT",
       "SELECT",
@@ -995,6 +1009,11 @@ describe("catalog-driven RLS coverage", () => {
       ["usage", "window_start"],
       ["usage", "event_count"],
       ["usage", "finalized_at"],
+      // Definition B (0049): the oracle recounts BOTH legs, and must know which basis produced each row
+      // (`counts_deliveries`) so it never recounts frozen capture-only history under the new definition.
+      ["usage", "counts_deliveries"],
+      ["delivery_attempts", "org_id"],
+      ["delivery_attempts", "created_at"],
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meterAudit}, ${t}, ${c}, 'SELECT') as ok`;
@@ -1005,13 +1024,18 @@ describe("catalog-driven RLS coverage", () => {
       ["events", "payload_r2_key"],
       ["events", "headers"],
       ["events", "dedup_key"],
+      // It counts dispatches; it must never learn a destination URL or a delivery outcome.
+      ["delivery_attempts", "target"],
+      ["delivery_attempts", "status"],
+      ["delivery_attempts", "attempt"],
+      ["delivery_attempts", "error"],
     ] as Array<[string, string]>) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.meterAudit}, ${t}, ${c}, 'SELECT') as ok`;
       expect(p.ok).toBe(false);
     }
     // No write anywhere on events/usage; the role-targeted policies are FOR SELECT only.
-    for (const t of ["events", "usage"] as const) {
+    for (const t of ["events", "usage", "delivery_attempts"] as const) {
       const [p] = await owner<{ any: boolean }[]>`
         select (has_table_privilege(${DB_ROLES.meterAudit}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.meterAudit}, ${t}, 'UPDATE')
@@ -1020,8 +1044,9 @@ describe("catalog-driven RLS coverage", () => {
     }
     const auditPolicies = await owner<{ cmd: string }[]>`
       select cmd from pg_policies where schemaname = 'public'
-      and policyname in ('events_meter_audit_select', 'usage_meter_audit_select')`;
-    expect(auditPolicies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT"]);
+      and policyname in ('events_meter_audit_select', 'usage_meter_audit_select',
+                         'delivery_attempts_meter_audit_select')`;
+    expect(auditPolicies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT", "SELECT"]);
   });
 
   it("the billing writer role is non-owner/no-BYPASSRLS and holds exactly the verified-Stripe-writer grants", async () => {

@@ -354,6 +354,27 @@ describe("Definition B — a billed event is one CAPTURE or one DELIVERY DISPATC
     expect(await usageAt(orgId, dayIso(1))).toEqual({ count: 7, finalized: false });
   });
 
+  it("re-rolls an UNFINALIZED pre-cutover row: flips its basis and adds the dispatches", async () => {
+    // The cutover moment. A row written before Definition B but still OPEN must be recomputed under the
+    // new basis — count both legs AND flip counts_deliveries — because F1 only freezes FINALIZED days.
+    const { orgId, endpointId } = await seedOrg("defb-cutover");
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into usage (org_id, window_start, event_count, counts_deliveries)
+               values (${orgId}, ${dayIso(1)}, ${1}, ${false})`;
+    });
+    const eventId = await seedOneEvent(orgId, endpointId, 1, "cutover"); // 1 real capture
+    await seedDispatches(orgId, eventId, 3, 1);
+    await run();
+    expect(await usageAt(orgId, dayIso(1))).toEqual({ count: 4, finalized: false }); // 1 + 3
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ counts_deliveries: boolean }[]>`
+      select counts_deliveries from usage where org_id = ${orgId} and window_start = ${dayIso(1)}`,
+    );
+    expect(row.counts_deliveries).toBe(true);
+  });
+
   it("marks rows it writes as counts_deliveries — the basis that produced them", async () => {
     // The F6 oracle recounts each day under its own basis. A row written pre-Definition-B is
     // capture-only and immutable; a row written now includes dispatches.

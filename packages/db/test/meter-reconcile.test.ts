@@ -227,6 +227,30 @@ describe("the F6 oracle under Definition B — recount each day under the basis 
     expect(res.mismatches).toEqual([]); // recounted as 1 capture, matches
   });
 
+  it("reconciles a DISPATCH-ONLY day (zero captures in the window)", async () => {
+    // A replay of an older event produces dispatches but no capture that day. The left joins must not
+    // turn the missing captures row into a null and drop the day.
+    const org = await seedOrg();
+    const at = DAY.replace("T00:00:00.000Z", "T07:00:00.000Z");
+    const endpointId = randomUUID();
+    const eventId = randomUUID();
+    await withTenant(app, org, async (tx) => {
+      await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
+               values (${endpointId}, ${org}, ${randomBytes(32)}, ${"ep-old"})`;
+      await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+               values (${eventId}, ${org}, ${endpointId}, ${"kk"}, ${10}, ${"dd"}, ${"content_hash"})`;
+      // Captured on a DIFFERENT day than the dispatches.
+      await tx`update events set received_at = ${"2026-07-01T06:00:00.000Z"} where id = ${eventId}`;
+      for (let i = 0; i < 5; i++) {
+        await tx`insert into delivery_attempts (id, org_id, event_id, target, status, attempt, created_at)
+                 values (${randomUUID()}, ${org}, ${eventId}, ${"https://x.test/" + i}, ${"queued"}, ${1}, ${at})`;
+      }
+    });
+    await seedFrozenUsageWithBasis(org, DAY, 5, true); // 0 captures + 5 dispatches
+    const res = await run();
+    expect(res.mismatches).toEqual([]);
+  });
+
   it("a retry never creates drift (dispatch count is immune to the attempt counter)", async () => {
     const org = await seedOrg();
     const ids = await seedDispatches(org, DAY, 2); // 1 capture + 2 dispatches = 3
