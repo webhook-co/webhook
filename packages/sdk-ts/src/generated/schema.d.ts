@@ -883,13 +883,14 @@ export interface components {
             nextCursor: string | null;
         };
         UsageGetResponse: {
+            /** @enum {string} */
+            capKind: "lifetime" | "billing_cycle";
             eventCap: number | null;
             events: number;
             paused: boolean;
             /** @enum {string} */
             pausePolicy: "pause" | "allow";
-            /** Format: date-time */
-            periodEnd: string;
+            periodEnd: string | null;
             /** Format: date-time */
             periodStart: string;
         };

@@ -95,6 +95,17 @@ describe("drainNotifications", () => {
     threshold: 80,
     pausePolicy: "pause" as const,
     periodEndIso: "2026-08-01T00:00:00.000Z",
+    capKind: "billing_cycle" as const,
+  };
+
+  /** A Free org's ONE-TIME lifetime allowance, as the cap producer snapshots it into the intent. */
+  const LIFETIME_USAGE_CTX = {
+    usage: 4_000,
+    eventCap: 5_000,
+    threshold: 80,
+    pausePolicy: "pause" as const,
+    periodEndIso: null,
+    capKind: "lifetime" as const,
   };
 
   it("routes a usage_threshold intent to the usage renderer and sends it", async () => {
@@ -108,6 +119,23 @@ describe("drainNotifications", () => {
     expect(res).toMatchObject({ claimed: 1, sent: 1, skipped: 0 });
     // The usage renderer's subject (not the destination one) — proves kind-dispatch picked the right renderer.
     expect(subjects).toEqual(["You've used 80% of your included events"]);
+  });
+
+  it("renders a LIFETIME intent with the free-allowance copy (capKind survives the intent JSON)", async () => {
+    // The end-to-end seam: the producer snapshots capKind into notification_intents.context, and the drain
+    // hands that JSON straight to the renderer. If capKind were ever dropped from the stored context, this
+    // Free org would silently get billing-cycle copy promising a reset date that never comes.
+    const subjects: string[] = [];
+    const list = [
+      pending({ kind: "usage_threshold", destinationId: null, context: LIFETIME_USAGE_CTX }),
+    ];
+    const res = await drainNotifications({
+      listPending: async () => list,
+      claim: async () => true,
+      send: async (_to, email) => void subjects.push(email.subject),
+    });
+    expect(res).toMatchObject({ claimed: 1, sent: 1, skipped: 0 });
+    expect(subjects).toEqual(["You've used 80% of your free events"]);
   });
 
   it("claims but does NOT send a usage_threshold intent with no context (unrenderable)", async () => {

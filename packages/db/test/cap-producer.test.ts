@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { makeCapTransitionEvictor, runCapProducer } from "../src/cap-producer";
 import { createClient, withTenant, type Sql } from "../src/client";
+import type { UsageThresholdContext } from "../src/delivery";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -133,6 +134,17 @@ async function usageAlertIntents(
     select context from notification_intents
     where org_id = ${orgId} and kind = 'usage_threshold' order by (context->>'threshold')::int`;
   return rows.map((r) => ({ threshold: r.context.threshold, usage: r.context.usage }));
+}
+
+/** The FULL stored intent context — the exact JSON the notify-cron drain hands to the email renderer.
+ *  The renderer branches on `capKind`, so a snapshot that silently drops it would render a Free org a
+ *  billing-cycle email promising a reset date that will never come. Pin the whole shape, not just the
+ *  two fields the pause assertions read. */
+async function usageAlertContexts(orgId: string): Promise<UsageThresholdContext[]> {
+  const rows = await admin<{ context: UsageThresholdContext }[]>`
+    select context from notification_intents
+    where org_id = ${orgId} and kind = 'usage_threshold' order by (context->>'threshold')::int`;
+  return rows.map((r) => r.context);
 }
 
 afterAll(async () => {
@@ -385,6 +397,18 @@ describe("runCapProducer", () => {
       const orgId = await seedOrg("alert-lifetime");
       await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 90); // 90 of the 100 cap → crosses 80%
       expect((await run()).thresholdAlerts).toBe(1);
+      // The stored snapshot is what the notify-cron drain hands the email renderer. `capKind: "lifetime"`
+      // + a null periodEndIso are load-bearing: without them the renderer promises a reset that never comes.
+      expect(await usageAlertContexts(orgId)).toEqual([
+        {
+          threshold: 80,
+          usage: 90,
+          eventCap: 100,
+          pausePolicy: "pause",
+          capKind: "lifetime",
+          periodEndIso: null,
+        },
+      ]);
       expect((await run()).thresholdAlerts).toBe(0); // same lifetime period → deduped
       expect((await run({ now: AUG })).thresholdAlerts).toBe(0); // a new MONTH does not re-arm it
       const [{ n }] = await admin<{ n: number }[]>`
@@ -399,6 +423,18 @@ describe("runCapProducer", () => {
       await seedSubscription(orgId, { start: "2026-07-01T00:00:00Z", end: "2026-08-01T00:00:00Z" });
       await seedUsageAt(orgId, "2026-07-10T00:00:00.000Z", 90); // 80% of the 100 cap
       expect((await run()).thresholdAlerts).toBe(1); // July cycle
+      // The mirror image of the lifetime snapshot: a paid cycle carries capKind 'billing_cycle' and the
+      // subscription's real end instant, so the renderer prints an honest reset date.
+      expect(await usageAlertContexts(orgId)).toEqual([
+        {
+          threshold: 80,
+          usage: 90,
+          eventCap: 100,
+          pausePolicy: "pause",
+          capKind: "billing_cycle",
+          periodEndIso: "2026-08-01T00:00:00.000Z",
+        },
+      ]);
       expect((await run()).thresholdAlerts).toBe(0); // same cycle → deduped
 
       // Renewal: the cycle advances. July's usage falls outside it; August's 90 crosses 80% afresh.
