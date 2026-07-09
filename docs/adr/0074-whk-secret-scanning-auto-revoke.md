@@ -90,6 +90,25 @@ live before submission (it is validated during onboarding).
   granted columns — `id` is resolved later under `webhook_app`), then revokes + audits
   (`key_revoked`, `source: github_secret_scanning`) under the org's RLS context, and the handler
   evicts `KV_AUTHZ` by hash. A revoke logs `secret_scanning.key_revoked` (the out-of-band alert).
+- **The owner is told.** A revoke that actually flips `revoked_at` enqueues an `api_key_revoked`
+  notification intent, drained hourly by the auth worker's existing notifier cron (the only surface
+  with an identity-email read and a Resend binding) → one email per org owner. No migration: `kind`
+  is free text and `destination_id` is nullable. The intent's context snapshot carries **only**
+  non-secret identifiers (the key's name and its `whk_…` display `start`) — never the leaked token,
+  and never the reporter's match metadata (the repo URL), which we promise partners we do not persist.
+  Notification fires **only on a first revoke**: GitHub's payload has no nonce, so a replayed report
+  must not re-email the owner. Both the cache eviction and the notification are **best-effort and run
+  after the revoke commits** — a courtesy email must never be able to roll back, or 500, the
+  revocation of a leaked key (GitHub is not documented to retry, so a lost retry means the key stays
+  live). Deliberately unlike the engine's auto-disable, which writes its intent in the same tx as the
+  disable — there both halves *are* the action; here revocation alone is the safety-critical one.
+- **The `key_revoked` audit row stays INSIDE the revoke's transaction**, and that is deliberate — it is
+  not the same class of thing as the email. A tamper-evident audit log is a constitutional
+  non-negotiable, so an *unaudited* revoke is not an outcome we are willing to commit: if the audit
+  append fails, the revoke must roll back with it. The cost is real and accepted — an audit-append
+  failure surfaces as a `500` to GitHub, and GitHub is not documented to retry — but the alternative
+  (silently revoking a key with no auditable record) is worse. The eviction and the email are courtesy
+  side-effects and are swallowed; the audit is part of the action and is not.
 - **Registration is the remaining MANUAL step** — there is no GitHub API for the partner program;
   an org-authorized contact emails `secret-scanning@github.com` with the name/regex/endpoint/test
   token and accepts the Partner Program Agreement (the packet is prepared for the founder). The

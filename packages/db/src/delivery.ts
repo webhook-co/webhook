@@ -51,8 +51,25 @@ export interface UsageThresholdContext {
   readonly periodEndIso: string;
 }
 
+/**
+ * The snapshot on an `api_key_revoked` intent (ADR-0074): written when a leaked api key is auto-revoked
+ * after a secret-scanning partner reports it. Carries ONLY non-secret identifiers — `keyName` and the
+ * `start` display handle already shown in the dashboard — so the owner can tell WHICH key died. It
+ * deliberately does NOT carry the leaked token, nor the reporter's payload (the repo URL): we promise
+ * partners we never persist their match metadata, and the email needs neither.
+ */
+export interface ApiKeyRevokedContext {
+  /** The key's user-given name (may be empty — a key can be unnamed). */
+  readonly keyName: string;
+  /** The non-secret display handle: prefix + a few leading chars (never the full key). */
+  readonly keyStart: string;
+  /** Which scanner reported the leak, so the email can say where it was found. */
+  readonly source: "github_secret_scanning";
+}
+
 /** The jsonb `context` on an intent — a union across the notification families, discriminated by `kind`. */
-export type NotificationIntentContext = NotificationContext | UsageThresholdContext;
+export type NotificationIntentContext =
+  NotificationContext | UsageThresholdContext | ApiKeyRevokedContext;
 
 export interface NotificationIntentInput {
   readonly orgId: string;

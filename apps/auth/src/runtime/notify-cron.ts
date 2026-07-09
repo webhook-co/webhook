@@ -20,6 +20,7 @@ import {
 } from "@webhook-co/db";
 import { readSecretBinding } from "@webhook-co/shared";
 
+import { renderApiKeyRevokedEmail, type ApiKeyRevokedContext } from "./api-key-revoked-email";
 import {
   renderDestinationDisabledEmail,
   type DestinationDisabledContext,
@@ -30,8 +31,8 @@ import { renderUsageThresholdEmail, type UsageThresholdContext } from "./usage-t
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
-/** The common shape every notification renderer produces (subject + HTML + text). The two families
- *  (destination_disabled, usage_threshold) both emit this, so the sender is kind-agnostic. */
+/** The common shape every notification renderer produces (subject + HTML + text). Every family
+ *  (destination_disabled, usage_threshold, api_key_revoked) emits this, so the sender is kind-agnostic. */
 export interface RenderedEmail {
   readonly subject: string;
   readonly html: string;
@@ -40,9 +41,10 @@ export interface RenderedEmail {
 
 /**
  * Render the email for a pending intent by its `kind`, or null if it isn't sendable (an unknown kind, or a
- * usage_threshold with no context snapshot). `p.context` is the discriminated jsonb union; each case casts to
+ * context-requiring kind with no snapshot). `p.context` is the discriminated jsonb union; each case casts to
  * its family's shape (structurally identical to the db type). destination_disabled degrades gracefully on a
- * null context; usage_threshold REQUIRES its snapshot (no usable email without the numbers).
+ * null context; usage_threshold and api_key_revoked REQUIRE their snapshot (no usable email without the
+ * numbers / without knowing which key died).
  */
 function renderIntent(p: PendingNotification): RenderedEmail | null {
   if (p.kind === "destination_disabled") {
@@ -54,6 +56,11 @@ function renderIntent(p: PendingNotification): RenderedEmail | null {
   if (p.kind === "usage_threshold") {
     if (!p.context) return null;
     return renderUsageThresholdEmail(p.context as UsageThresholdContext);
+  }
+  if (p.kind === "api_key_revoked") {
+    // REQUIRES its snapshot: without the key's name/start the owner can't tell which key we killed.
+    if (!p.context) return null;
+    return renderApiKeyRevokedEmail(p.context as ApiKeyRevokedContext);
   }
   return null;
 }
@@ -95,7 +102,22 @@ export async function drainNotifications(
     // Sendable = a known-kind intent we can render (renderIntent) AND at least one recipient. Anything else
     // — an unknown kind, an unrenderable usage_threshold (no context), or an ownerless org — is claimed to
     // clear it, then skipped (never left pending to retry-loop forever).
-    const email = renderIntent(p);
+    //
+    // renderIntent is TOTAL from the drain's point of view: the intent is ALREADY claimed by now, so a render
+    // that throws (a malformed jsonb context, say) would both lose this owner's alert AND abort the loop,
+    // silently dropping every still-pending intent behind it — including outage and usage alerts for other
+    // orgs. A throw is therefore caught and treated exactly like an unrenderable intent: claimed, logged, skipped.
+    let email: RenderedEmail | null;
+    try {
+      email = renderIntent(p);
+    } catch (err) {
+      email = null;
+      deps.log?.("notify.render_failed", {
+        intentId: p.intentId,
+        kind: p.kind,
+        error: String(err),
+      });
+    }
     if (email === null || p.ownerEmails.length === 0) {
       skipped++;
       deps.log?.("notify.claimed_no_send", {

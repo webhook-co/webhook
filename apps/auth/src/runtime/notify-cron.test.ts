@@ -136,3 +136,64 @@ describe("drainNotifications", () => {
     expect(sends).toEqual(["ok@x.test", "next@x.test"]);
   });
 });
+
+describe("drainNotifications — api_key_revoked (secret-scanning owner alert)", () => {
+  const KEY_CTX = {
+    keyName: "ci-deploy",
+    keyStart: "whk_AbC1234",
+    source: "github_secret_scanning" as const,
+  };
+
+  it("routes an api_key_revoked intent to the key-revoked renderer and sends it", async () => {
+    const p = pending({ kind: "api_key_revoked", destinationId: null, context: KEY_CTX });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(sends).toEqual(["owner@example.test"]);
+  });
+
+  it("claims but does NOT send an api_key_revoked intent with no context (unrenderable)", async () => {
+    const p = pending({ kind: "api_key_revoked", destinationId: null, context: null });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 0, skipped: 1 });
+    expect(sends).toEqual([]); // cleared, never left pending to retry-loop
+  });
+
+  it("emails every owner of the org exactly once", async () => {
+    const p = pending({
+      kind: "api_key_revoked",
+      destinationId: null,
+      context: KEY_CTX,
+      ownerEmails: ["a@x.test", "b@x.test"],
+    });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 2 });
+    expect(sends).toEqual(["a@x.test", "b@x.test"]);
+  });
+});
+
+describe("drainNotifications — a render failure must not poison the batch", () => {
+  // A truthy-but-malformed usage_threshold context: renderUsageThresholdEmail reaches
+  // `ctx.usage.toLocaleString()` and throws a TypeError. This is a real throw, not a contrived one.
+  const MALFORMED = { pausePolicy: "pause" } as never;
+
+  it("contains a throwing renderer: that intent is skipped, later intents still send", async () => {
+    const bad = pending({ kind: "usage_threshold", destinationId: null, context: MALFORMED });
+    const good = pending({ ownerEmails: ["later@x.test"] });
+    const { deps: d, sends } = deps([bad, good]);
+    const r = await drainNotifications(d);
+    // The batch survives: the healthy intent queued behind the bad one still got its email.
+    expect(sends).toEqual(["later@x.test"]);
+    expect(r.claimed).toBe(2);
+    expect(r.sent).toBe(1);
+    expect(r.skipped).toBe(1);
+  });
+
+  it("never rejects even when the only intent's renderer throws", async () => {
+    const bad = pending({ kind: "usage_threshold", destinationId: null, context: MALFORMED });
+    const { deps: d } = deps([bad]);
+    await expect(drainNotifications(d)).resolves.toMatchObject({ claimed: 1, sent: 0, skipped: 1 });
+  });
+});

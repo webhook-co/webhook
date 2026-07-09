@@ -2,7 +2,7 @@ import { generateKeyPairSync, sign } from "node:crypto";
 
 import { describe, expect, it, vi } from "vitest";
 
-import { classifyAndRevoke, verifyGithubSignature } from "./secret-scanning";
+import { classifyAndRevoke, revokeAndNotify, verifyGithubSignature } from "./secret-scanning";
 
 // A throwaway P-256 keypair to stand in for GitHub's secret_scanning key. GitHub signs the RAW
 // body with ECDSA-P256-SHA256 and sends the signature as base64 ASN.1/DER — exactly what
@@ -94,5 +94,100 @@ describe("classifyAndRevoke (label semantics + revoke side-effect)", () => {
     });
     expect(out.map((o) => o.label)).toEqual(["true_positive", "false_positive"]);
     expect(out.every((o) => o.token_type === "webhook_co_api_key")).toBe(true);
+  });
+});
+
+describe("revokeAndNotify (auto-revoke → evict cache → alert the owner)", () => {
+  const revoked = {
+    found: true,
+    revoked: true,
+    orgId: "org-1",
+    keyId: "key-1",
+    keyHash: new Uint8Array([0xde, 0xad]),
+    keyName: "ci-deploy",
+    keyStart: "whk_abcdefg",
+  };
+
+  function deps(over: Partial<Parameters<typeof revokeAndNotify>[1]> = {}) {
+    return {
+      revoke: vi.fn().mockResolvedValue(revoked),
+      evict: vi.fn().mockResolvedValue(undefined),
+      notify: vi.fn().mockResolvedValue(undefined),
+      log: vi.fn(),
+      ...over,
+    };
+  }
+
+  it("evicts the cache and alerts the owner when a key is actually revoked", async () => {
+    const d = deps();
+    await revokeAndNotify("whk_leaked", d);
+    expect(d.evict).toHaveBeenCalledOnce();
+    expect(d.notify).toHaveBeenCalledOnce();
+    expect(d.notify).toHaveBeenCalledWith({
+      orgId: "org-1",
+      keyName: "ci-deploy",
+      keyStart: "whk_abcdefg",
+      source: "github_secret_scanning",
+    });
+  });
+
+  it("does NOT re-alert on a re-report of an already-revoked key (GitHub payloads replay)", async () => {
+    const d = deps({
+      revoke: vi.fn().mockResolvedValue({ ...revoked, revoked: false }),
+    });
+    await revokeAndNotify("whk_leaked", d);
+    expect(d.evict).toHaveBeenCalledOnce(); // still evict — the cache may hold a stale grant
+    expect(d.notify).not.toHaveBeenCalled(); // but never email the owner twice
+  });
+
+  it("does nothing but return for a token that isn't ours (found: false)", async () => {
+    const d = deps({
+      revoke: vi.fn().mockResolvedValue({
+        found: false,
+        revoked: false,
+        orgId: null,
+        keyId: null,
+        keyHash: null,
+        keyName: null,
+        keyStart: null,
+      }),
+    });
+    await revokeAndNotify("whk_unknown", d);
+    expect(d.evict).not.toHaveBeenCalled();
+    expect(d.notify).not.toHaveBeenCalled();
+  });
+
+  it("a notification failure NEVER fails the revoke (courtesy email must not gate remediation)", async () => {
+    const d = deps({ notify: vi.fn().mockRejectedValue(new Error("resend down")) });
+    await expect(revokeAndNotify("whk_leaked", d)).resolves.toBeUndefined();
+    expect(d.log).toHaveBeenCalledWith(
+      "secret_scanning.notify_failed",
+      expect.objectContaining({ orgId: "org-1" }),
+    );
+  });
+
+  it("an eviction failure NEVER fails the revoke either", async () => {
+    const d = deps({ evict: vi.fn().mockRejectedValue(new Error("kv down")) });
+    await expect(revokeAndNotify("whk_leaked", d)).resolves.toBeUndefined();
+    expect(d.notify).toHaveBeenCalledOnce(); // eviction trouble must not skip the owner alert
+  });
+
+  it("never logs the stored key_hash on an eviction failure (a KV error can embed it)", async () => {
+    const d = deps({
+      // A realistic workerd KV error: it names the failing key, which IS the key_hash hex.
+      evict: vi.fn().mockRejectedValue(new Error("KV DELETE failed for key dead000beef")),
+    });
+    await revokeAndNotify("whk_leaked", d);
+    const logged = JSON.stringify(d.log.mock.calls);
+    expect(logged).toContain("secret_scanning.evict_failed");
+    expect(logged).not.toContain("dead000beef"); // scrubbed: opaque ids only
+    expect(logged).not.toContain("KV DELETE failed");
+  });
+
+  it("never logs the leaked token itself", async () => {
+    const d = deps();
+    await revokeAndNotify("whk_supersecretleakedtoken", d);
+    const logged = JSON.stringify(d.log.mock.calls);
+    expect(logged).not.toContain("whk_supersecretleakedtoken");
   });
 });

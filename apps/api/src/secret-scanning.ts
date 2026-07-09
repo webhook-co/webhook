@@ -16,7 +16,9 @@ import {
   createClient,
   createCredentialHasherFromBase64,
   credentialCacheKey,
+  enqueueApiKeyRevokedNotification,
   revokeApiKeyByPlaintext,
+  type RevokedByPlaintext,
   verifyKeyChecksum,
 } from "@webhook-co/db";
 import { b64ToBytes, importAuditKey, readSecretBinding } from "@webhook-co/shared";
@@ -157,6 +159,70 @@ export async function classifyAndRevoke(
   return out;
 }
 
+export interface RevokeAndNotifyDeps {
+  /** Revoke the key by plaintext alone (idempotent; a re-report flips nothing). */
+  revoke: (token: string) => Promise<RevokedByPlaintext>;
+  /** Drop the KV credential-cache entry so the revoke bites before the TTL backstop. */
+  evict: (keyHash: Uint8Array) => Promise<void>;
+  /** Queue the "we revoked your leaked key" owner email. */
+  notify: (input: {
+    orgId: string;
+    keyName: string | null;
+    keyStart: string | null;
+    source: "github_secret_scanning";
+  }) => Promise<void>;
+  /** Structured logger — ids + counts only, NEVER the token. */
+  log?: (message: string, fields?: Record<string, unknown>) => void;
+}
+
+/**
+ * Revoke one reported token, then evict its cache entry and alert its owner (ADR-0074).
+ *
+ * Ordering and failure policy are the whole point of this function:
+ *   * The revoke is the safety-critical step. It commits first, on its own.
+ *   * Eviction and notification are BEST-EFFORT and run after. Neither may throw out of here — a KV
+ *     blip or a queue failure must never turn a committed revoke into a 500, because GitHub is not
+ *     documented to retry and a lost retry means a leaked key stays live forever. Both failures are
+ *     logged instead.
+ *   * Notification fires ONLY when THIS call actually flipped `revoked_at`. GitHub's payload carries no
+ *     nonce, so a re-report is replayable; without this guard every replay would re-email the owner.
+ *   * Eviction fires whenever we found the key, even on a re-report — the cache may still hold a grant
+ *     from before an earlier revoke's eviction failed.
+ */
+export async function revokeAndNotify(token: string, deps: RevokeAndNotifyDeps): Promise<void> {
+  const r = await deps.revoke(token);
+  if (!r.found) return;
+
+  if (r.keyHash !== null) {
+    try {
+      await deps.evict(r.keyHash);
+    } catch {
+      // SCRUBBED: opaque ids only. A KV error can embed the failing KV key, which IS the stored
+      // key_hash — the one value a database-only attacker must not be handed from our logs. Same
+      // discipline as evictBestEffort in apps/web/src/server/credential-revoke.ts.
+      deps.log?.("secret_scanning.evict_failed", { orgId: r.orgId, keyId: r.keyId });
+    }
+  }
+
+  if (!r.revoked || r.orgId === null) return;
+
+  deps.log?.("secret_scanning.key_revoked", { orgId: r.orgId, keyId: r.keyId });
+  try {
+    await deps.notify({
+      orgId: r.orgId,
+      keyName: r.keyName,
+      keyStart: r.keyStart,
+      source: "github_secret_scanning",
+    });
+  } catch (err) {
+    deps.log?.("secret_scanning.notify_failed", {
+      orgId: r.orgId,
+      keyId: r.keyId,
+      error: String(err),
+    });
+  }
+}
+
 /** Resolve GitHub's secret_scanning public key for `keyId`, KV-cached with a bounded refresh. */
 async function getGithubPublicKey(env: SecretScanningEnv, keyId: string): Promise<string | null> {
   const cachedRaw = await env.KV_AUTHZ.get(KEYS_CACHE_KEY);
@@ -265,21 +331,18 @@ export async function handleGithubSecretScanning(
   try {
     const labels = await classifyAndRevoke(tokens, {
       isWellFormed,
-      revoke: async (token) => {
-        const r = await revokeApiKeyByPlaintext(authn, tenant, token, hasher, auditKey);
-        // Evict the KV credential-cache entry so the revoke takes effect before the TTL backstop.
-        if (r.keyHash !== null) await env.KV_AUTHZ.delete(credentialCacheKey(r.keyHash));
-        if (r.revoked) {
-          // Out-of-band alert: a leaked key was auto-revoked. (A real alert channel is a follow-up.)
-          console.log(
-            JSON.stringify({
-              message: "secret_scanning.key_revoked",
-              orgId: r.orgId,
-              keyId: r.keyId,
-            }),
-          );
-        }
-      },
+      revoke: (token) =>
+        revokeAndNotify(token, {
+          revoke: (t) => revokeApiKeyByPlaintext(authn, tenant, t, hasher, auditKey),
+          evict: (keyHash) => env.KV_AUTHZ.delete(credentialCacheKey(keyHash)),
+          // Queued, not sent here: the api worker holds no Resend binding and no identity-email read.
+          // The auth worker's hourly notifier cron drains the intent and emails every org owner.
+          // The new intent id is discarded — nothing downstream needs it.
+          notify: async (input) => {
+            await enqueueApiKeyRevokedNotification(tenant, input);
+          },
+          log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+        }),
     });
     return Response.json(labels);
   } finally {
