@@ -20,7 +20,8 @@
               "quickstart",
               "authentication",
               "leaked-api-key",
-              "deduplication"
+              "deduplication",
+              "events-and-usage"
             ]
           },
           {
