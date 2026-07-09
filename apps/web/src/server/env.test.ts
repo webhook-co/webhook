@@ -11,7 +11,7 @@ import {
   getListenWsUrl,
   getProviderSecretSealer,
   getSessionSecret,
-  getStripePriceIds,
+  getStripePlans,
   getStripeSecretKey,
 } from "./env";
 
@@ -164,14 +164,25 @@ describe("billing env accessors", () => {
     expect(await getStripeSecretKey()).toBeNull();
   });
 
-  it("getStripePriceIds needs BOTH ids, else null (fail-closed half-config)", () => {
+  it("getStripePlans reads the STRIPE_PLANS binding into a plan → price-id map", () => {
     getCloudflareContext.mockReturnValue({
-      env: { STRIPE_PRICE_BASE: "price_b", STRIPE_PRICE_OVERAGE: "price_o" },
+      env: {
+        STRIPE_PLANS:
+          '{"pro":{"base":"price_pb","overage":"price_po"},"team":{"base":"price_tb","overage":"price_to"}}',
+      },
     });
-    expect(getStripePriceIds()).toEqual({ base: "price_b", overage: "price_o" });
-    getCloudflareContext.mockReturnValue({ env: { STRIPE_PRICE_BASE: "price_b" } }); // overage missing
-    vi.stubEnv("STRIPE_PRICE_OVERAGE", "");
-    expect(getStripePriceIds()).toBeNull();
+    expect(getStripePlans()).toEqual({
+      pro: { base: "price_pb", overage: "price_po" },
+      team: { base: "price_tb", overage: "price_to" },
+    });
+  });
+
+  it("getStripePlans is fail-closed on an unset or malformed map (no Checkout beats a wrong one)", () => {
+    getCloudflareContext.mockReturnValue({ env: {} });
+    vi.stubEnv("STRIPE_PLANS", "");
+    expect(getStripePlans()).toBeNull();
+    getCloudflareContext.mockReturnValue({ env: { STRIPE_PLANS: '{"pro":{"base":"price_pb"}}' } });
+    expect(getStripePlans()).toBeNull(); // half-configured plan
   });
 });
 

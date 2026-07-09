@@ -5,10 +5,12 @@ import { getCloudflareContext } from "@opennextjs/cloudflare";
 import {
   parseBillingMode,
   parseFreeEventCap,
+  parseStripePlans,
   type BillingMode,
   type DeliveryDispatcherRpc,
   type IngestUrlRevealerRpc,
   type SecretSealer,
+  type StripePlans,
 } from "@webhook-co/shared";
 
 import type { SessionExchangeBinding } from "./session-exchange";
@@ -242,21 +244,18 @@ export function getStripeSecretKey(): Promise<string | null> {
 }
 
 /**
- * The base licensed + metered-overage Stripe PRICE IDs (committed-at-deploy vars — ids, NOT amounts, so no
- * price figure enters the repo). Returns null unless BOTH are set, so a half-configured billing deploy
- * fails closed (no Checkout) rather than sending a malformed line item.
+ * The self-serve plan → Stripe PRICE ID map (the `STRIPE_PLANS` deploy var — ids, NOT amounts, so no price
+ * figure enters the repo). `parseStripePlans` is fail-closed: a malformed or half-configured map yields
+ * null and the dashboard shows no Checkout, rather than sending a wrong line item to a real customer.
  */
-export function getStripePriceIds(): { base: string; overage: string } | null {
-  const read = (name: string): string | null => {
-    const v = workerEnv()[name];
-    return (
-      (typeof v === "string" && v.length > 0 ? v : null) ??
-      (process.env[name] && process.env[name]!.length > 0 ? process.env[name]! : null)
-    );
-  };
-  const base = read("STRIPE_PRICE_BASE");
-  const overage = read("STRIPE_PRICE_OVERAGE");
-  return base && overage ? { base, overage } : null;
+export function getStripePlans(): StripePlans | null {
+  const v = workerEnv().STRIPE_PLANS;
+  const raw =
+    (typeof v === "string" && v.length > 0 ? v : null) ??
+    (process.env.STRIPE_PLANS && process.env.STRIPE_PLANS.length > 0
+      ? process.env.STRIPE_PLANS
+      : null);
+  return parseStripePlans(raw);
 }
 
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */

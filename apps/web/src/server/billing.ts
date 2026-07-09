@@ -2,11 +2,16 @@ import "server-only";
 
 import { withTenant } from "@webhook-co/db/client";
 import { readBillingCustomerId } from "@webhook-co/db/reads";
-import { billingEnabled, makeStripeClient, type StripeClient } from "@webhook-co/shared";
+import {
+  billingEnabled,
+  isSelfServePlan,
+  makeStripeClient,
+  type StripeClient,
+} from "@webhook-co/shared";
 
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
-import { getBillingMode, getStripePriceIds, getStripeSecretKey } from "./env";
+import { getBillingMode, getStripePlans, getStripeSecretKey } from "./env";
 
 // The dashboard billing actions (S4.4b) — hosted Stripe Checkout (upgrade) + Customer Portal (manage).
 // Everything is gated on BILLING_MODE: unless it is test/live AND the Stripe key + price ids are configured,
@@ -18,8 +23,10 @@ const BILLING_RETURN_URL = "https://app.webhook.co/usage";
 
 export type BillingActionResult =
   | { readonly status: "ok"; readonly url: string }
-  /** BILLING_MODE off, or the Stripe key / price ids aren't configured — no billing UI. */
+  /** BILLING_MODE off, or the Stripe key / plan price ids aren't configured — no billing UI. */
   | { readonly status: "disabled" }
+  /** The requested plan isn't one this deploy sells (unknown id, or a contact-sales plan like enterprise). */
+  | { readonly status: "unknown_plan" }
   /** Portal only: the org has never subscribed, so there's no Stripe customer to manage. */
   | { readonly status: "no_customer" }
   | { readonly status: "error" };
@@ -36,10 +43,19 @@ async function stripeClientFromEnv(): Promise<StripeClient | null> {
  * webhook records it. The org id rides client_reference_id + subscription metadata (a signed value we
  * control) so the webhook can attribute the subscription without trusting email.
  */
-export async function startCheckout(orgId: string, email?: string): Promise<BillingActionResult> {
+export async function startCheckout(
+  orgId: string,
+  planId: string,
+  email?: string,
+): Promise<BillingActionResult> {
   if (!billingEnabled(getBillingMode())) return { status: "disabled" };
-  const prices = getStripePriceIds();
-  if (!prices) return { status: "disabled" };
+  const plans = getStripePlans();
+  if (!plans) return { status: "disabled" };
+  // Gate the plan id BEFORE any Stripe call. `planId` arrives from a form post, so it is untrusted input:
+  // it must name a self-serve plan (never enterprise/free) that THIS deploy actually configured prices for.
+  if (!isSelfServePlan(planId)) return { status: "unknown_plan" };
+  const prices = plans[planId];
+  if (!prices) return { status: "unknown_plan" };
   try {
     // Resolve the secret (a Secrets Store .get() is network-backed) INSIDE the try so a transient fault
     // becomes an "error" banner, never an unhandled server-action rejection. A null key = not configured.

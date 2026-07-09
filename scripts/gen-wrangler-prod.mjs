@@ -34,6 +34,9 @@ const STORE = reqEnv("SECRETS_STORE_ID");
 const BILLING_ON = !!(process.env.BILLING_MODE && process.env.BILLING_MODE !== "off");
 const whenBilling = (names) => (BILLING_ON ? names : []);
 
+/** Escape a value for embedding INSIDE a JSON string literal (quotes, backslashes, control chars). */
+const jsonStringBody = (v) => JSON.stringify(v).slice(1, -1);
+
 // placeholder/literal token -> real value (resource ids from the env; bucket dev -> prod).
 const TOKEN = {
   "<HYPERDRIVE_TENANT_ID>": reqEnv("HYPERDRIVE_TENANT_ID"),
@@ -77,8 +80,10 @@ const TOKEN = {
   // bindings — these substitute in unconditionally. No price/tier figure lives here (ids/names only).
   "<BILLING_MODE>": process.env.BILLING_MODE ?? "",
   "<STRIPE_METER_EVENT_NAME>": process.env.STRIPE_METER_EVENT_NAME ?? "",
-  "<STRIPE_PRICE_BASE>": process.env.STRIPE_PRICE_BASE ?? "",
-  "<STRIPE_PRICE_OVERAGE>": process.env.STRIPE_PRICE_OVERAGE ?? "",
+  // STRIPE_PLANS is a JSON map (plan id → {base, overage} price ids) that lands INSIDE a JSON string value,
+  // so its quotes must be escaped or the generated wrangler.prod.jsonc is unparseable. `JSON.stringify`
+  // then strip the surrounding quotes = exactly the JSON string-body escaping wrangler needs.
+  "<STRIPE_PLANS>": jsonStringBody(process.env.STRIPE_PLANS ?? ""),
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
 };
@@ -248,8 +253,7 @@ const APPS = {
       // GH var as engine (unset → "" → uncapped). Identical across every worker rendering usage.
       "<FREE_EVENT_CAP>",
       "<BILLING_MODE>",
-      "<STRIPE_PRICE_BASE>",
-      "<STRIPE_PRICE_OVERAGE>",
+      "<STRIPE_PLANS>",
       "webhook-payloads-dev",
     ],
     // AUTH_SESSION_EXCHANGE — the web→auth service binding to auth.'s SessionExchange WorkerEntrypoint, so the
