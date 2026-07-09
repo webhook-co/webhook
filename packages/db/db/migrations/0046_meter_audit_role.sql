@@ -42,9 +42,19 @@ grant select (org_id, window_start, event_count, finalized_at) on usage to webho
 
 -- migrate:down
 
-revoke select (org_id, window_start, event_count, finalized_at) on usage from webhook_meter_audit;
-revoke select (org_id, received_at) on events from webhook_meter_audit;
-drop policy if exists usage_meter_audit_select on usage;
-drop policy if exists events_meter_audit_select on events;
--- Leave the role in place on down (other environments may share it); dropping a login role that owns nothing
--- is safe but unnecessary, and mirrors 0033's choice to keep the role.
+-- Drop the role, mirroring every other role migration (0002/0008/0010/0016/0020/0033/0034/0040): roles are
+-- CLUSTER-GLOBAL, so leaving one behind on down leaks it across every database on the server and makes the
+-- reversibility suite's "no leftover roles" assertion pass blind. Guarded on existence so a partial/repeated
+-- rollback is idempotent, and grants are revoked first (a role holding privileges cannot be dropped).
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'webhook_meter_audit') then
+    revoke select (org_id, window_start, event_count, finalized_at) on usage from webhook_meter_audit;
+    revoke select (org_id, received_at) on events from webhook_meter_audit;
+    drop policy if exists usage_meter_audit_select on usage;
+    drop policy if exists events_meter_audit_select on events;
+    revoke usage on schema public from webhook_meter_audit;
+    drop role webhook_meter_audit;
+  end if;
+end
+$$;

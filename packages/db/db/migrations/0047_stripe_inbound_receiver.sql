@@ -41,5 +41,15 @@ grant select, insert on processed_stripe_events to webhook_billing;
 
 revoke select, insert on processed_stripe_events from webhook_billing;
 drop table if exists processed_stripe_events;
--- Leave the role in place on down (mirrors 0033/0046 — dropping a login role that owns nothing is safe but
--- unnecessary, and other environments may share it).
+
+-- Drop the role, mirroring every other role migration. Roles are CLUSTER-GLOBAL: leaving one behind leaks it
+-- across every database on the server. 0048's down() already revoked the billing_customers/subscriptions/
+-- org_limits grants it layers on top, and the ledger grants go above, so nothing pins the role by here.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'webhook_billing') then
+    revoke usage on schema public from webhook_billing;
+    drop role webhook_billing;
+  end if;
+end
+$$;

@@ -29,24 +29,31 @@ async function publicTables(): Promise<string[]> {
   return rows.map((r) => r.relname);
 }
 
-// EVERY non-owner role the migrations create — app/ingest (0002), authn (0008), anchor (0010),
-// auth (0016), sweeper (0020), reconciler (0033). The list must stay complete: a down() that forgets to drop
-// one is only caught if that role is checked here (else the down-all clean-schema assertion passes blind).
-const MIGRATION_ROLES = [
-  DB_ROLES.app,
-  DB_ROLES.ingest,
-  DB_ROLES.authn,
-  DB_ROLES.anchor,
-  DB_ROLES.auth,
-  DB_ROLES.sweeper,
-  DB_ROLES.reconciler,
-  DB_ROLES.notifier,
-];
+// EVERY non-owner role the migrations create. DERIVED from DB_ROLES, not hand-listed: the hand-listed
+// version silently omitted meter (0040), meter_audit (0046) and billing (0047), so the down-all
+// "no leftover roles" assertion below was passing blind for exactly those three — and 0046/0047 did in
+// fact forget to drop their roles, which is the failure mode the old comment warned about.
+const MIGRATION_ROLES = Object.values(DB_ROLES).filter((role) => role !== DB_ROLES.owner);
 
 async function appRoles(): Promise<string[]> {
   const rows = await owner<{ rolname: string }[]>`
     select rolname from pg_roles
     where rolname in ${owner(MIGRATION_ROLES)}
+    order by rolname`;
+  return rows.map((r) => r.rolname);
+}
+
+/**
+ * Every `webhook_*` role actually present in the cluster (owner excluded — bootstrapOwner, not a
+ * migration, creates it). Unlike appRoles() this does NOT filter by a known list, so it guards the
+ * other direction: a migration that creates a role DB_ROLES has never heard of. Such a role gets no
+ * per-run SCRAM password from the harness, so every connection as it fails `28P01` — but only in
+ * password mode, which means a trust-auth run (local, PR CI) never notices.
+ */
+async function discoveredAppRoles(): Promise<string[]> {
+  const rows = await owner<{ rolname: string }[]>`
+    select rolname from pg_roles
+    where rolname like 'webhook\\_%' and rolname <> ${DB_ROLES.owner}
     order by rolname`;
   return rows.map((r) => r.rolname);
 }
@@ -75,6 +82,10 @@ describe("migration reversibility (up -> down -> up)", () => {
       expect(tables).toContain("audit_log");
       expect(tables).toContain("schema_migrations");
       expect(await appRoles()).toEqual(ALL_ROLES_SORTED);
+      // Every role the migrations created is one DB_ROLES knows about, so the harness mints and
+      // applies a password for it. A role added by a migration alone fails here, at PR time, rather
+      // than as a 28P01 on the nightly.
+      expect(await discoveredAppRoles()).toEqual(ALL_ROLES_SORTED);
     },
     REVERSIBILITY_TIMEOUT_MS,
   );
