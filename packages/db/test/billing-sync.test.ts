@@ -410,3 +410,78 @@ describe("applySubscriptionUpsert — a NON-ENTITLED status drops the paid cap m
     expect(await readCap(org)).toBe(500000); // the stale downgrade never applied
   });
 });
+
+describe("parseSubscriptionObject — the cap may live on ANY item, not items[0]", () => {
+  /** A real Checkout subscription: a licensed BASE item plus a metered OVERAGE item. `event_cap` lives on
+   *  the overage price, because that is the price the meter is attached to. Which item Stripe returns first
+   *  is not a contract we control. */
+  const twoItem = (order: "base-first" | "overage-first") => {
+    const base = {
+      price: { id: "price_base", metadata: {}, recurring: { usage_type: "licensed" } },
+    };
+    const overage = {
+      price: {
+        id: "price_over",
+        metadata: { event_cap: "500000" },
+        recurring: { usage_type: "metered" },
+      },
+    };
+    return {
+      id: "sub_1",
+      customer: "cus_1",
+      status: "active",
+      metadata: { org_id: "11111111-1111-1111-1111-111111111111" },
+      current_period_start: 1_780_000_000,
+      current_period_end: 1_782_000_000,
+      items: { data: order === "base-first" ? [base, overage] : [overage, base] },
+    };
+  };
+
+  it("finds event_cap on the OVERAGE item even when the BASE item comes first", () => {
+    // The prod bug: reading items.data[0] only. Checkout puts the licensed base first, so the cap was
+    // never seen, parseCapFromPriceMetadata returned undefined, and the fail-closed path skipped the
+    // mirror entirely — a paying customer silently kept the Free cap.
+    expect(parseSubscriptionObject(twoItem("base-first"))?.eventCap).toBe(500000);
+  });
+
+  it("finds it when the overage item comes first (order is not a contract)", () => {
+    expect(parseSubscriptionObject(twoItem("overage-first"))?.eventCap).toBe(500000);
+  });
+
+  it("still fails CLOSED when NO item carries a cap (a misconfigured price must not grant unlimited)", () => {
+    const noCap = {
+      ...twoItem("base-first"),
+      items: {
+        data: [
+          { price: { id: "a", metadata: {}, recurring: { usage_type: "licensed" } } },
+          { price: { id: "b", metadata: {}, recurring: { usage_type: "metered" } } },
+        ],
+      },
+    };
+    expect(parseSubscriptionObject(noCap)?.eventCap).toBeUndefined();
+  });
+
+  it("honours an explicit `unlimited` on any item", () => {
+    const unlimited = {
+      ...twoItem("base-first"),
+      items: {
+        data: [
+          { price: { id: "a", metadata: {}, recurring: { usage_type: "licensed" } } },
+          {
+            price: {
+              id: "b",
+              metadata: { event_cap: "unlimited" },
+              recurring: { usage_type: "metered" },
+            },
+          },
+        ],
+      },
+    };
+    expect(parseSubscriptionObject(unlimited)?.eventCap).toBeNull();
+  });
+
+  it("plan is the LICENSED base price id, not whichever item happened to be first", () => {
+    expect(parseSubscriptionObject(twoItem("overage-first"))?.plan).toBe("price_base");
+    expect(parseSubscriptionObject(twoItem("base-first"))?.plan).toBe("price_base");
+  });
+});

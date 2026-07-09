@@ -97,13 +97,53 @@ export function parseSubscriptionObject(obj: Record<string, unknown>): ParsedSub
     orgId,
     stripeSubscriptionId: id,
     customerId: customer,
-    plan: price && typeof price.id === "string" ? price.id : "",
+    plan: planPriceId(obj.items) ?? (price && typeof price.id === "string" ? price.id : ""),
     status,
-    eventCap: parseCapFromPriceMetadata(price?.metadata),
+    // The cap lives on whichever price the METER is attached to (the overage item), and Stripe does not
+    // promise an item order. Reading items[0] alone silently missed it for every real Checkout
+    // subscription — base first, overage second — so a paying customer kept the Free cap while the
+    // fail-closed path reported "unspecified". Scan every item.
+    eventCap: capFromAnyItem(obj.items),
     currentPeriodStartIso: new Date(cps * 1000).toISOString(),
     currentPeriodEndIso: new Date(cpe * 1000).toISOString(),
     cancelAtPeriodEnd: obj.cancel_at_period_end === true,
   };
+}
+
+/** Every `items.data[i].price` object on the subscription, in Stripe's order. */
+function itemPrices(items: unknown): Array<Record<string, unknown>> {
+  if (!items || typeof items !== "object") return [];
+  const data = (items as Record<string, unknown>).data;
+  if (!Array.isArray(data)) return [];
+  return data
+    .map((it) => (it && typeof it === "object" ? (it as Record<string, unknown>).price : null))
+    .filter((p): p is Record<string, unknown> => !!p && typeof p === "object");
+}
+
+/**
+ * The plan's cap, from whichever item carries it. `null` (explicit unlimited) wins over `undefined`
+ * (unspecified) so an "unlimited" marker on any item is honoured; if NO item specifies one we return
+ * undefined and the caller fail-closes (no cap mirror), rather than granting unlimited from a bad config.
+ */
+function capFromAnyItem(items: unknown): number | null | undefined {
+  let seen: number | null | undefined = undefined;
+  for (const price of itemPrices(items)) {
+    const cap = parseCapFromPriceMetadata(price.metadata);
+    if (typeof cap === "number") return cap; // a concrete cap is the most specific answer
+    if (cap === null) seen = null; // explicit unlimited; keep scanning for a concrete cap
+  }
+  return seen;
+}
+
+/** The LICENSED (flat base) price id — the thing a human calls "the plan". Falls back to the first item. */
+function planPriceId(items: unknown): string | null {
+  const prices = itemPrices(items);
+  const licensed = prices.find((p) => {
+    const r = p.recurring;
+    return !!r && typeof r === "object" && (r as Record<string, unknown>).usage_type === "licensed";
+  });
+  const chosen = licensed ?? prices[0];
+  return chosen && typeof chosen.id === "string" ? chosen.id : null;
 }
 
 function firstItemData(items: unknown): Record<string, unknown> | null {
