@@ -1,0 +1,101 @@
+---
+title: If your API key leaks
+description: "Revoke a compromised whk_ API key, rotate without downtime, and limit the blast radius."
+---
+
+Treat a key as compromised the moment it lands somewhere you didn't put it — a public repo, a build
+log, a screenshot, a pasted stack trace, a shared terminal session. Anyone holding a `whk_` key can
+act as your organization, up to whatever that key is scoped for.
+
+The fix is short: **revoke it.** Everything below is detail around that.
+
+<Warning>
+  We store only a keyed hash of your key, never the key itself. That's the point — but it means we
+  can't show it to you again, and we can't un-leak it for you. Revoking is the only remedy.
+</Warning>
+
+## Revoke a leaked key
+
+<Steps>
+  <Step title="Open the dashboard">
+    Go to [Settings → API keys & devices](https://app.webhook.co/settings/credentials).
+  </Step>
+  <Step title="Find the key">
+    Keys are listed by name and by the first few characters of the key itself — enough to tell one
+    key from another without revealing either.
+  </Step>
+  <Step title="Revoke it">
+    Hit **Revoke**, then confirm. We mark the key revoked and drop it from our auth caches at once.
+    In the rare case a cache eviction doesn't land, the key stops working within a few minutes.
+  </Step>
+</Steps>
+
+Revoking can't be undone. If the key is still serving production traffic, rotate first.
+
+## Rotate without downtime
+
+Revocation takes effect right away, so pulling a key that's still in use will break whatever is
+using it. Put the new key in place before you take the old one away:
+
+<Steps>
+  <Step title="Create the replacement">
+    On the same page, create a key with the same scopes — no more. Copy it now; it's shown once.
+  </Step>
+  <Step title="Deploy it">
+    Roll the new key out to your application, CI, or wherever the old one lived.
+  </Step>
+  <Step title="Check the new key works">
+    A `200` means the key is valid and carries the scopes you expect:
+
+    ```sh
+    curl https://api.webhook.co/v1/whoami \
+      -H "Authorization: Bearer $WEBHOOK_API_KEY"
+    ```
+
+    The SDKs expose the same call as `whoami()`, and the CLI as `wbhk whoami`. It confirms the key
+    is good — not which key your application is sending, since two keys with the same scopes get
+    identical answers. Make sure your deploy actually picked up the new value before you continue.
+
+  </Step>
+  <Step title="Revoke the old key">
+    Now revoke it. Anything still sending the old key gets a `401`.
+  </Step>
+</Steps>
+
+## Revoking a device
+
+A device — a machine you've logged into with `wbhk login` — can mint keys of its own. Revoking a
+device **cascades to every key minted under it**, so if a laptop is lost or a CI runner is
+compromised, revoke the device rather than hunting its keys one by one.
+
+## Limit the blast radius before it happens
+
+<Note>A leaked key is a bad day. A leaked key with `endpoints:write` is a worse one.</Note>
+
+- **Scope keys narrowly.** A key only ever needs the scopes for the job it does. A read-only
+  reporting job doesn't need `events:replay`.
+- **One key per consumer.** Separate keys for CI, staging, and each service mean you revoke one
+  thing, not everything.
+- **Keep keys server-side.** Never ship a `whk_` key to a browser, a mobile app, or anything else a
+  user can read. The SDKs redact keys from their own errors and debug output, but that only helps
+  once the key is already somewhere it belongs.
+- **Read them from the environment.** `WEBHOOK_API_KEY` in your secret manager, not a literal in
+  source. Most leaked keys are committed keys.
+
+## How to tell a real key from a placeholder
+
+Every `whk_` key is exactly 53 characters: the `whk_` prefix, 43 random characters, and a 6-character
+checksum over those 43. If a string doesn't have that shape, it was never a working key — so a
+`whk_YOUR_API_KEY_HERE` in a README is nothing to worry about, and a scanner that flags it is wrong.
+
+The checksum means we can reject a malformed or truncated key before it ever reaches a database
+lookup. It is error detection, not security: the secret is the 43 random characters.
+
+## Reporting a leak you didn't cause
+
+Found a `whk_` key that isn't yours — in a public repo, a package, a paste? Tell us at
+[security@webhook.co](mailto:security@webhook.co) and we'll take it from there. Please don't use the
+key to check whether it works.
+
+Security issues in webhook.co itself go through our
+[security policy](https://github.com/webhook-co/webhook/security/policy).
