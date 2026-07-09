@@ -63,6 +63,13 @@ jobs:
       HYPERDRIVE_METER_ID: ${{ vars.HYPERDRIVE_METER_ID }}
       # Free-tier event cap (S4.3 soft-cap) — optional; unset = uncapped (no Free-pause enforcement).
       FREE_EVENT_CAP: ${{ vars.FREE_EVENT_CAP }}
+      # Billing (S4.4/S4.5) — all OPTIONAL; unset → dark (the generator strips the Hyperdrive/secret bindings
+      # and empties the vars). BILLING_MODE gates the api inbound webhook + the engine meter-reporter + the
+      # engine's STRIPE_SECRET_KEY / api's STRIPE_WEBHOOK_SIGNING_SECRET secret-store bindings.
+      BILLING_MODE: ${{ vars.BILLING_MODE }}
+      STRIPE_METER_EVENT_NAME: ${{ vars.STRIPE_METER_EVENT_NAME }}
+      HYPERDRIVE_BILLING_ID: ${{ vars.HYPERDRIVE_BILLING_ID }}
+      HYPERDRIVE_METER_AUDIT_ID: ${{ vars.HYPERDRIVE_METER_AUDIT_ID }}
       HYPERDRIVE_AUTHN_ID: ${{ vars.HYPERDRIVE_AUTHN_ID }}
       HYPERDRIVE_INGEST_ID: ${{ vars.HYPERDRIVE_INGEST_ID }}
       KV_CONFIG_ID: ${{ vars.KV_CONFIG_ID }}

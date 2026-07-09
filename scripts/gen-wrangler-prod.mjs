@@ -26,6 +26,14 @@ function reqEnv(name) {
 const ACCOUNT_ID = reqEnv("CLOUDFLARE_ACCOUNT_ID");
 const STORE = reqEnv("SECRETS_STORE_ID");
 
+// Billing (S4.4/S4.5) ships DARK until provisioned. `BILLING_ON` (BILLING_MODE set + not "off") gates the
+// optional Stripe SECRET bindings — they must be injected ONLY once the secret exists in the store, or a
+// `wrangler deploy` binding a non-existent secret fails. The runbook provisions the secrets BEFORE setting
+// BILLING_MODE, so this order is safe. The optional HYPERDRIVE bindings are gated separately, on their own id
+// var (they're billing-independent for meter-audit), by applyOptionalBlock below.
+const BILLING_ON = !!(process.env.BILLING_MODE && process.env.BILLING_MODE !== "off");
+const whenBilling = (names) => (BILLING_ON ? names : []);
+
 // placeholder/literal token -> real value (resource ids from the env; bucket dev -> prod).
 const TOKEN = {
   "<HYPERDRIVE_TENANT_ID>": reqEnv("HYPERDRIVE_TENANT_ID"),
@@ -63,6 +71,13 @@ const TOKEN = {
   // unset → "" → the engine cron treats it as uncapped (fail-safe, no Free-pause enforcement). Set the
   // FREE_EVENT_CAP GH repo var + this workflow env to ENABLE Free enforcement.
   "<FREE_EVENT_CAP>": process.env.FREE_EVENT_CAP ?? "",
+  // Billing config VARS (S4.4/S4.5) — all OPTIONAL: unset → "" → the code fail-closes (BILLING_MODE ""→off,
+  // empty price/meter → disabled). An empty var is a valid wrangler var, so — unlike the optional Hyperdrive
+  // bindings — these substitute in unconditionally. No price/tier figure lives here (ids/names only).
+  "<BILLING_MODE>": process.env.BILLING_MODE ?? "",
+  "<STRIPE_METER_EVENT_NAME>": process.env.STRIPE_METER_EVENT_NAME ?? "",
+  "<STRIPE_PRICE_BASE>": process.env.STRIPE_PRICE_BASE ?? "",
+  "<STRIPE_PRICE_OVERAGE>": process.env.STRIPE_PRICE_OVERAGE ?? "",
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
 };
@@ -82,6 +97,8 @@ const APPS = {
       "AWS_ACCESS_KEY_ID",
       "AWS_SECRET_ACCESS_KEY",
       "LISTEN_TICKET_KEY",
+      // STRIPE_SECRET_KEY (S4.4c) — the outbound meter-reporter's Stripe key. Bound only when billing is on.
+      ...whenBilling(["STRIPE_SECRET_KEY"]),
     ],
     placeholders: [
       "<HYPERDRIVE_TENANT_ID>",
@@ -94,13 +111,18 @@ const APPS = {
       "<KV_CONFIG_ID>",
       "<KV_AUTHZ_ID>",
       "<FREE_EVENT_CAP>",
+      "<BILLING_MODE>",
+      "<STRIPE_METER_EVENT_NAME>",
       "webhook-payloads-dev",
       "webhook-audit-anchors-dev",
     ],
+    // HYPERDRIVE_METER_AUDIT (S4.4d) — kept only when HYPERDRIVE_METER_AUDIT_ID is provisioned, else stripped.
+    optionalHyperdrives: ["HYPERDRIVE_METER_AUDIT_ID"],
   },
   api: {
     domain: "api.webhook.co",
-    secrets: SHARED,
+    // STRIPE_WEBHOOK_SIGNING_SECRET (S4.5) — verifies the inbound webhook signature. Bound only when billing on.
+    secrets: [...SHARED, ...whenBilling(["STRIPE_WEBHOOK_SIGNING_SECRET"])],
     placeholders: [
       "<HYPERDRIVE_AUTHN_ID>",
       "<HYPERDRIVE_TENANT_ID>",
@@ -111,8 +133,11 @@ const APPS = {
       // FREE_EVENT_CAP (S4.3b) — usage.get shows a rowless org the cap it is enforced at; same optional GH
       // var as engine (unset → "" → uncapped). Kept identical across every worker that renders usage.
       "<FREE_EVENT_CAP>",
+      "<BILLING_MODE>",
       "webhook-payloads-dev",
     ],
+    // HYPERDRIVE_BILLING (S4.5) — kept only when HYPERDRIVE_BILLING_ID is provisioned, else stripped.
+    optionalHyperdrives: ["HYPERDRIVE_BILLING_ID"],
     // Service bindings to the engine's WorkerEntrypoints — deploy-injected (NOT committed), exactly like
     // mcp's AUTH_ISSUER: the engine entrypoints are already LIVE, so CF late-binds them fine; committing
     // them would block a cold deploy.
@@ -208,6 +233,8 @@ const APPS = {
       "AUDIT_CHAIN_HMAC_KEY",
       "SESSION_TOKEN_SECRET",
       "LISTEN_TICKET_KEY",
+      // STRIPE_SECRET_KEY (S4.4b) — the dashboard Checkout/Portal Stripe key. Bound only when billing is on.
+      ...whenBilling(["STRIPE_SECRET_KEY"]),
     ],
     // + KV_CONFIG (the engine's ingest-token cache, same namespace by id) so the dashboard's endpoint
     // delete/rotate actions evict the old token (ADR-0076/0077); + R2_PAYLOADS (webhook-payloads-dev →
@@ -219,6 +246,9 @@ const APPS = {
       // FREE_EVENT_CAP (S4.3b) — the usage view shows a rowless org the cap it is enforced at; same optional
       // GH var as engine (unset → "" → uncapped). Identical across every worker rendering usage.
       "<FREE_EVENT_CAP>",
+      "<BILLING_MODE>",
+      "<STRIPE_PRICE_BASE>",
+      "<STRIPE_PRICE_OVERAGE>",
       "webhook-payloads-dev",
     ],
     // AUTH_SESSION_EXCHANGE — the web→auth service binding to auth.'s SessionExchange WorkerEntrypoint, so the
@@ -297,6 +327,34 @@ const APPS = {
   },
 };
 
+// An OPTIONAL binding block in a committed wrangler.jsonc, wrapped in `// @gen-optional <ID>` … `// @gen-end
+// <ID>` sentinels (each committed array element already carries its own trailing comma, so the block is
+// self-contained). When the id env var is PROVISIONED → drop the two sentinel lines + substitute the id, so
+// the binding ships. When UNSET → strip the whole block, so the worker deploys DARK without the binding
+// (a Hyperdrive/secret binding can't be emitted with an empty id). Runs BEFORE the leftover/leak checks.
+function applyOptionalBlock(app, txt, idEnv) {
+  const startMark = `// @gen-optional ${idEnv}`;
+  const endMark = `// @gen-end ${idEnv}`;
+  const si = txt.indexOf(startMark);
+  const ei = txt.indexOf(endMark);
+  if (si === -1 || ei === -1 || ei < si)
+    throw new Error(`${app}: optional sentinels for ${idEnv} not found/ordered`);
+  const lineStart = txt.lastIndexOf("\n", si) + 1; // start of the `// @gen-optional` line
+  const endNl = txt.indexOf("\n", ei);
+  const lineEnd = endNl === -1 ? txt.length : endNl + 1; // through the end of the `// @gen-end` line
+  if (process.env[idEnv]) {
+    const inner = txt
+      .slice(lineStart, lineEnd)
+      .split("\n")
+      .filter((l) => !l.includes("@gen-optional") && !l.includes("@gen-end"))
+      .join("\n")
+      .split(`<${idEnv}>`)
+      .join(process.env[idEnv]);
+    return txt.slice(0, lineStart) + inner + txt.slice(lineEnd);
+  }
+  return txt.slice(0, lineStart) + txt.slice(lineEnd); // strip the whole block (dark)
+}
+
 for (const [app, cfg] of Object.entries(APPS)) {
   const src = join(REPO, "apps", app, "wrangler.jsonc");
   let txt = readFileSync(src, "utf8");
@@ -307,6 +365,8 @@ for (const [app, cfg] of Object.entries(APPS)) {
       throw new Error(`${app}: token ${ph} not found in committed wrangler.jsonc`);
     txt = txt.split(ph).join(TOKEN[ph]);
   }
+  // 1b) resolve optional bindings (keep-when-provisioned / strip-when-dark) before the leak checks.
+  for (const idEnv of cfg.optionalHyperdrives ?? []) txt = applyOptionalBlock(app, txt, idEnv);
   const leftover = txt.match(/<[A-Z_]+_ID>/g);
   if (leftover) throw new Error(`${app}: unreplaced placeholders ${leftover.join(", ")}`);
   // Defense-in-depth beyond the `<..._ID>` regex: no TOKEN key may survive into the prod config. The

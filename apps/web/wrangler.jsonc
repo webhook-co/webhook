@@ -28,6 +28,12 @@
     // `<FREE_EVENT_CAP>` placeholder is DEPLOY-INJECTED by the overlay (optional FREE_EVENT_CAP GH var);
     // unset → "" → uncapped (fail-safe). Must equal the engine's FREE_EVENT_CAP. `next dev` → uncapped.
     "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
+    // Billing (S4.4b) — DEPLOY-INJECTED (optional GH vars); unset/"" → dark. BILLING_MODE off → the dashboard
+    // Checkout/Portal actions no-op ("disabled"). STRIPE_PRICE_BASE/OVERAGE are the Checkout line-item price
+    // IDS (not amounts); both required or Checkout is disabled (getStripePriceIds fail-closed).
+    "BILLING_MODE": "<BILLING_MODE>",
+    "STRIPE_PRICE_BASE": "<STRIPE_PRICE_BASE>",
+    "STRIPE_PRICE_OVERAGE": "<STRIPE_PRICE_OVERAGE>",
   },
   // OpenNext emits the client/static assets under `.open-next/assets`; the worker serves them via this
   // binding (run-time-handled by the OpenNext server). No `account_id`/`routes` here — app.webhook.co is
