@@ -40,7 +40,9 @@ export function shouldPauseForCap(
 
 /**
  * Parse the INJECTED Free-tier default event cap (the `FREE_EVENT_CAP` deploy var) into the cap the
- * producer applies to orgs with no explicit `org_limits` row. This is a FAIL-SAFE gate: enforcement
+ * producer applies to orgs with no explicit `org_limits` row. Since ADR-0004's 2026-07-09 amendment this
+ * is a **ONE-TIME LIFETIME** allowance (every event the org has ever ingested), not a monthly quota — the
+ * var name is unchanged but the basis is `capKind: "lifetime"`. This is a FAIL-SAFE gate: enforcement
  * turns on ONLY for a clean, strictly-positive integer. Everything else → null (uncapped, no Free
  * enforcement):
  *  - unset / blank → uncapped (the default posture; enabling Free-pause is a deliberate act).
@@ -123,6 +125,24 @@ export function finalizeCutoff(nowMs: number, settleDays: number): string {
 export interface BillingPeriod {
   readonly start: string;
   readonly end: string;
+}
+
+/**
+ * How an org's included-event allowance is scoped (ADR-0004, amended 2026-07-09):
+ * - `lifetime` — the Free tier's ONE-TIME 5,000-event allowance. Counted over every event the org has
+ *   ever ingested (since `orgs.created_at`) and it NEVER resets. Free is a trial, not a monthly tier.
+ * - `billing_cycle` — a paid plan's per-cycle included volume, measured over the org's Stripe cycle.
+ */
+export type CapKind = "lifetime" | "billing_cycle";
+
+/**
+ * The period an org's cap is actually measured over. `end === null` means OPEN-ENDED — the one-time
+ * lifetime allowance has no end, so every usage query must treat a null end as "no upper bound".
+ */
+export interface EffectivePeriod {
+  readonly start: string;
+  readonly end: string | null;
+  readonly kind: CapKind;
 }
 
 /**

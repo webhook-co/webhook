@@ -48,7 +48,13 @@ export interface UsageThresholdContext {
   readonly eventCap: number;
   readonly threshold: number;
   readonly pausePolicy: "pause" | "allow";
-  readonly periodEndIso: string;
+  /**
+   * When the org's allowance resets — `null` for the Free tier's ONE-TIME lifetime allowance, which never
+   * resets. The email must not promise a reset date it doesn't have.
+   */
+  readonly periodEndIso: string | null;
+  /** `lifetime` = the one-time Free allowance; `billing_cycle` = a paid plan's per-cycle volume. */
+  readonly capKind: "lifetime" | "billing_cycle";
 }
 
 /**

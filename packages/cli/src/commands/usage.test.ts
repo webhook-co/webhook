@@ -29,8 +29,20 @@ const okFetch = (body: unknown): typeof fetch =>
 const CAPPED = {
   periodStart: "2026-07-01T00:00:00.000Z",
   periodEnd: "2026-08-01T00:00:00.000Z",
+  capKind: "billing_cycle",
   events: 12345,
   eventCap: 500000,
+  pausePolicy: "pause",
+  paused: false,
+};
+
+/** A Free org: the ONE-TIME lifetime allowance — no periodEnd, never resets. */
+const LIFETIME = {
+  periodStart: "2026-01-15T00:00:00.000Z",
+  periodEnd: null,
+  capKind: "lifetime",
+  events: 4200,
+  eventCap: 5000,
   pausePolicy: "pause",
   paused: false,
 };
@@ -44,6 +56,18 @@ describe("wbhk usage", () => {
     expect(out).toContain("12,345 of 500,000 events (2%)");
     expect(out).toContain("pauses at cap");
     expect(out).toContain("active");
+    expect(out).toContain("2026-07-01 — 2026-08-01"); // a billing cycle renders a start—end range
+  });
+
+  it("renders a FREE org's one-time lifetime allowance as an open-ended window (no end date)", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(LIFETIME) });
+    await run(app, ["usage"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    const out = t.stdout();
+    expect(out).toContain("4,200 of 5,000 events (84%)");
+    expect(out).toContain("since 2026-01-15");
+    expect(out).toContain("one-time allowance (does not reset)");
+    expect(out).not.toContain("—  "); // no dangling start—end range
   });
 
   it("shows an uncapped org without a percentage", async () => {

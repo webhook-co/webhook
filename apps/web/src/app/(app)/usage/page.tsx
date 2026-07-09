@@ -44,7 +44,10 @@ export default async function UsagePage() {
 }
 
 function UsageCard({ usage }: { usage: UsageSummary }) {
-  const { events, eventCap, pausePolicy, paused, periodStart, periodEnd } = usage;
+  const { events, eventCap, pausePolicy, paused, periodStart, periodEnd, capKind } = usage;
+  // The Free tier's ONE-TIME allowance: no periodEnd, never resets — so we must not offer a reset date
+  // or tell a paused org to "wait for the next period". The way out is upgrading.
+  const lifetime = capKind === "lifetime";
   // The TRUE percentage (uncapped) is shown as text so an over-cap 'allow' org reads its real overage
   // (e.g. 150%) — matching `wbhk usage`. The BAR is a fill gauge, so its width + aria clamp to 100%.
   const pct = eventCap && eventCap > 0 ? Math.round((events / eventCap) * 100) : null;
@@ -54,19 +57,29 @@ function UsageCard({ usage }: { usage: UsageSummary }) {
 
   return (
     <div className="flex flex-col gap-5">
-      {paused && (
-        <Banner tone="warn">
-          Capture is paused — you&apos;ve reached your event limit for this period. It resumes at
-          the start of the next period, or when your limit is raised.
-        </Banner>
-      )}
+      {paused &&
+        (lifetime ? (
+          <Banner tone="warn">
+            Capture is paused — you&apos;ve used your one-time free allowance. It doesn&apos;t
+            reset; upgrade to resume capturing.
+          </Banner>
+        ) : (
+          <Banner tone="warn">
+            Capture is paused — you&apos;ve reached your event limit for this period. It resumes at
+            the start of the next period, or when your limit is raised.
+          </Banner>
+        ))}
 
       <div className="flex flex-col gap-6 rounded-card border border-hairline bg-surface p-6">
         <div className="flex items-baseline justify-between">
           <div className="flex flex-col gap-0.5">
-            <span className="text-sm text-fg-secondary">This period</span>
+            <span className="text-sm text-fg-secondary">
+              {lifetime ? "One-time allowance" : "This period"}
+            </span>
             <span className="text-sm text-fg">
-              {fmtDate(periodStart)} — {fmtDate(periodEnd)}
+              {lifetime || periodEnd === null
+                ? `Since ${fmtDate(periodStart)} · does not reset`
+                : `${fmtDate(periodStart)} — ${fmtDate(periodEnd)}`}
             </span>
           </div>
           <span className={`text-sm ${paused ? "text-warn" : "text-ok"}`}>

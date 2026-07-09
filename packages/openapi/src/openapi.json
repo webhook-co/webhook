@@ -4817,8 +4817,22 @@
             "format": "date-time"
           },
           "periodEnd": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "capKind": {
             "type": "string",
-            "format": "date-time"
+            "enum": [
+              "lifetime",
+              "billing_cycle"
+            ]
           },
           "events": {
             "type": "integer",
@@ -4851,6 +4865,7 @@
         "required": [
           "periodStart",
           "periodEnd",
+          "capKind",
           "events",
           "eventCap",
           "pausePolicy",

@@ -70,12 +70,18 @@ function fmtCount(n: number): string {
 }
 
 /**
- * The `wbhk usage` view: the org's metering usage for the current billing period. Single dimension
- * (events) — the billable unit is "every captured request to an endpoint". No prices; shows usage vs
- * the included cap (+ %), the cap behavior (pause vs continue), and the org's ingest state.
+ * The `wbhk usage` view: the org's metering usage for the period its cap is measured over. Single
+ * dimension (events) — the billable unit is "every captured request to an endpoint". No prices; shows
+ * usage vs the included cap (+ %), the cap behavior (pause vs continue), and the org's ingest state.
+ *
+ * `capKind: "lifetime"` is the Free tier's ONE-TIME allowance: `periodEnd` is null (it never resets), so
+ * we render an open-ended "since <created>" window rather than a "start — end" range.
  */
 export function renderUsageSummary(u: UsageSummary, color: boolean): string {
-  const period = `${fmtDate(u.periodStart)} — ${fmtDate(u.periodEnd)}`;
+  const period =
+    u.periodEnd === null
+      ? `since ${fmtDate(u.periodStart)} · one-time allowance (does not reset)`
+      : `${fmtDate(u.periodStart)} — ${fmtDate(u.periodEnd)}`;
   // null cap = uncapped; a cap of 0 is a real cap (fully-capped org), NOT uncapped — only show the % when
   // the cap is > 0 (avoid a divide-by-zero).
   const pct =

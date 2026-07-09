@@ -13,7 +13,10 @@ export interface UsageThresholdContext {
   readonly eventCap: number;
   readonly threshold: number;
   readonly pausePolicy: "pause" | "allow";
-  readonly periodEndIso: string;
+  /** When the allowance resets — `null` for the one-time lifetime allowance, which never resets. */
+  readonly periodEndIso: string | null;
+  /** `lifetime` = the one-time Free allowance; `billing_cycle` = a paid plan's per-cycle volume. */
+  readonly capKind: "lifetime" | "billing_cycle";
 }
 
 export interface UsageThresholdEmail {
@@ -63,50 +66,85 @@ function detailRow(label: string, valueHtml: string, valueColor = "#18181b"): st
  * Render the usage-threshold warning for one owner. `threshold` selects the copy: <100 = approaching (a
  * heads-up), 100 = at the cap. `pausePolicy` decides what hitting the cap MEANS — 'pause' pauses capture
  * (nothing lost is a lie here: over-cap events are refused, so we say so honestly), 'allow' keeps capturing
- * (overage). NO price is shown; the org sees only its own usage/cap and when the cap resets.
+ * (overage). `capKind` decides whether the allowance RESETS: a paid `billing_cycle` resets on a date, the
+ * Free `lifetime` allowance is one-time and never resets — so we must never promise it a reset date, and we
+ * point at upgrading instead. NO price is shown; the org sees only its own usage/cap.
  */
 export function renderUsageThresholdEmail(ctx: UsageThresholdContext): UsageThresholdEmail {
   const atCap = ctx.threshold >= 100;
   const pauses = ctx.pausePolicy === "pause";
-  const resetStr = fmtResetDate(ctx.periodEndIso);
+  const lifetime = ctx.capKind === "lifetime";
+  // Only meaningful for a billing cycle. Defensive: a cycle with no end falls back to a generic phrase.
+  const resetStr =
+    ctx.periodEndIso === null
+      ? "the start of your next billing period"
+      : fmtResetDate(ctx.periodEndIso);
   const pct = ctx.eventCap > 0 ? Math.min(100, Math.round((ctx.usage / ctx.eventCap) * 100)) : 100;
 
-  const subject = atCap
-    ? pauses
-      ? "You've reached your event limit — capture is paused"
-      : "You've reached your included event limit"
-    : `You've used ${ctx.threshold}% of your included events`;
+  const subject = lifetime
+    ? atCap
+      ? pauses
+        ? "You've used your free events — capture is paused"
+        : "You've used your free events"
+      : `You've used ${ctx.threshold}% of your free events`
+    : atCap
+      ? pauses
+        ? "You've reached your event limit — capture is paused"
+        : "You've reached your included event limit"
+      : `You've used ${ctx.threshold}% of your included events`;
 
-  // The lead paragraph: what's happening + the consequence, honest about pause.
-  const lead = atCap
-    ? pauses
-      ? `You've used all ${fmtCount(ctx.eventCap)} events included in your current period. To avoid a surprise bill we don't charge for overage — instead, new events are paused and won't be captured until your limit resets on ${resetStr}. Raise your limit to resume capturing right away.`
-      : `You've used all ${fmtCount(ctx.eventCap)} events included in your current period. Additional events this period will keep being captured as overage. Your included allotment resets on ${resetStr}.`
-    : `You've used ${ctx.threshold}% of the ${fmtCount(ctx.eventCap)} events included in your current period. ${
-        pauses
-          ? `If you reach 100%, new events are paused until your limit resets on ${resetStr}.`
-          : `Beyond 100%, additional events are captured as overage. Your allotment resets on ${resetStr}.`
-      }`;
+  // The lead paragraph: what's happening + the consequence, honest about pause AND about whether it resets.
+  const lead = lifetime
+    ? atCap
+      ? pauses
+        ? `You've used all ${fmtCount(ctx.eventCap)} events in your one-time free allowance. To avoid a surprise bill we don't charge for overage — instead, new events are paused and won't be captured. Your free allowance doesn't reset, so upgrade to resume capturing right away.`
+        : `You've used all ${fmtCount(ctx.eventCap)} events in your one-time free allowance. Additional events will keep being captured as overage. Your free allowance doesn't reset.`
+      : `You've used ${ctx.threshold}% of the ${fmtCount(ctx.eventCap)} events in your one-time free allowance. ${
+          pauses
+            ? `If you reach 100%, new events are paused. Your free allowance doesn't reset, so upgrade to keep capturing.`
+            : `Beyond 100%, additional events are captured as overage. Your free allowance doesn't reset.`
+        }`
+    : atCap
+      ? pauses
+        ? `You've used all ${fmtCount(ctx.eventCap)} events included in your current period. To avoid a surprise bill we don't charge for overage — instead, new events are paused and won't be captured until your limit resets on ${resetStr}. Raise your limit to resume capturing right away.`
+        : `You've used all ${fmtCount(ctx.eventCap)} events included in your current period. Additional events this period will keep being captured as overage. Your included allotment resets on ${resetStr}.`
+      : `You've used ${ctx.threshold}% of the ${fmtCount(ctx.eventCap)} events included in your current period. ${
+          pauses
+            ? `If you reach 100%, new events are paused until your limit resets on ${resetStr}.`
+            : `Beyond 100%, additional events are captured as overage. Your allotment resets on ${resetStr}.`
+        }`;
 
   const usageColor = atCap ? "#b91c1c" : "#18181b";
+  const usedLabel = lifetime ? "Used" : "Used this period";
+  const resetLabel = lifetime ? "Allowance" : "Resets";
+  const resetValue = lifetime ? "One-time — does not reset" : resetStr;
   const rows = [
     detailRow(
-      "Used this period",
+      usedLabel,
       `${fmtCount(ctx.usage)} of ${fmtCount(ctx.eventCap)} events (${pct}%)`,
       usageColor,
     ),
-    detailRow("Resets", esc(resetStr)),
+    detailRow(resetLabel, esc(resetValue)),
   ].join("\n");
 
-  const preview = atCap
-    ? pauses
-      ? "You've hit your event limit — capture is paused until your limit resets."
-      : "You've used all your included events for this period."
-    : `You've used ${ctx.threshold}% of your included events this period.`;
+  const preview = lifetime
+    ? atCap
+      ? pauses
+        ? "You've used your one-time free allowance — capture is paused."
+        : "You've used all the events in your one-time free allowance."
+      : `You've used ${ctx.threshold}% of your one-time free allowance.`
+    : atCap
+      ? pauses
+        ? "You've hit your event limit — capture is paused until your limit resets."
+        : "You've used all your included events for this period."
+      : `You've used ${ctx.threshold}% of your included events this period.`;
 
-  const closing = pauses
-    ? "Manage your limit or review your usage in the dashboard."
-    : "Review your usage in the dashboard.";
+  const closing =
+    lifetime && pauses
+      ? "Upgrade in the dashboard to resume capturing."
+      : pauses
+        ? "Manage your limit or review your usage in the dashboard."
+        : "Review your usage in the dashboard.";
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -190,8 +228,8 @@ ${rows}
     "",
     lead,
     "",
-    `  Used this period:  ${fmtCount(ctx.usage)} of ${fmtCount(ctx.eventCap)} events (${pct}%)`,
-    `  Resets:            ${resetStr}`,
+    `  ${usedLabel}: ${fmtCount(ctx.usage)} of ${fmtCount(ctx.eventCap)} events (${pct}%)`,
+    `  ${resetLabel}: ${resetValue}`,
     "",
     `View your usage: ${DASHBOARD_URL}`,
     "",

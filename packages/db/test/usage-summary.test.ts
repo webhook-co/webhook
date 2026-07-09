@@ -18,10 +18,13 @@ let pg: EphemeralPostgres;
 let app: Sql;
 let admin: Sql; // seeds SELECT-only billing_subscriptions
 
-async function seedOrg(slug: string): Promise<string> {
+/** `created_at` anchors the Free tier's LIFETIME allowance window; default it well before any seeded usage
+ *  (in prod an org's events can never predate it, but these fixtures use fake dates ahead of the real clock). */
+const ORG_CREATED = "2026-01-01T00:00:00.000Z";
+async function seedOrg(slug: string, createdAt = ORG_CREATED): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${slug}, ${slug})`;
+    await tx`insert into orgs (id, slug, name, created_at) values (${orgId}, ${slug}, ${slug}, ${createdAt})`;
   });
   return orgId;
 }
@@ -63,18 +66,19 @@ afterAll(async () => {
 });
 
 describe("readUsageSummary", () => {
-  it("sums prior-day rolled windows PLUS today's live events, and returns the period bounds", async () => {
+  it("a FREE org: sums rolled + live over its ONE-TIME LIFETIME allowance (no period end)", async () => {
     const orgId = await seedOrg("usage-sum");
-    await seedUsage(orgId, "2026-07-02T00:00:00.000Z", 100); // prior day, rolled
-    await seedUsage(orgId, "2026-07-10T00:00:00.000Z", 25); // prior day, rolled
-    await seedUsage(orgId, "2026-06-30T00:00:00.000Z", 999); // prior month — excluded
+    await seedUsage(orgId, "2026-07-02T00:00:00.000Z", 100); // rolled
+    await seedUsage(orgId, "2026-07-10T00:00:00.000Z", 25); // rolled
+    await seedUsage(orgId, "2026-06-30T00:00:00.000Z", 999); // PRIOR MONTH — a lifetime allowance counts it
     await seedEventsToday(orgId, 3); // today, not yet rolled — counted live
 
     const summary = await withTenant(app, orgId, (tx) => readUsageSummary(tx, NOW));
 
-    expect(summary.events).toBe(128); // 100 + 25 + 3 live
-    expect(summary.periodStart.toISOString()).toBe("2026-07-01T00:00:00.000Z");
-    expect(summary.periodEnd.toISOString()).toBe("2026-08-01T00:00:00.000Z");
+    expect(summary.events).toBe(1127); // 999 + 100 + 25 rolled + 3 live — every event ever
+    expect(summary.capKind).toBe("lifetime");
+    expect(summary.periodStart.toISOString()).toBe(ORG_CREATED); // anchored at org creation
+    expect(summary.periodEnd).toBeNull(); // a one-time allowance never resets
   });
 
   it("measures over the SUBSCRIPTION's Stripe cycle for a paid org, not the UTC month", async () => {

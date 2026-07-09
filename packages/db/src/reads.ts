@@ -709,7 +709,9 @@ export async function readUsageSummary(
     : defaultEventCap;
   return {
     periodStart: new Date(period.start),
-    periodEnd: new Date(period.end),
+    // null for the Free tier's one-time lifetime allowance — it never resets, so there is no end.
+    periodEnd: period.end === null ? null : new Date(period.end),
+    capKind: period.kind,
     events,
     eventCap,
     pausePolicy: limits?.pause_policy ?? "pause",

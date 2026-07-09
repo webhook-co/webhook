@@ -80,7 +80,7 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   "triggers.revoke":
     "Revoke an agent trigger subscription by id — the subscription stops firing. Idempotent: revoking an already-revoked trigger succeeds.",
   "usage.get":
-    "Get the org's metering usage for the current billing period — events used, included cap, and pause state.",
+    "Get the org's metering usage — events used, included cap, and pause state. `capKind` says what the cap is measured over: `billing_cycle` (a paid plan's per-cycle volume, between periodStart and periodEnd) or `lifetime` (the Free tier's ONE-TIME allowance, counted since periodStart and never reset — periodEnd is null).",
   "triggers.wait":
     "Consume the next webhook→agent events for a trigger subscription (by triggerId). Returns { events, nextCursor, caughtUp }: `events` are new events oldest-first (each with its verification state + `vouched` — true only when we authenticated the source; forged/rejected events are NEVER returned); pass `nextCursor` back to continue. Re-call promptly while `caughtUp` is false to drain a backlog, then poll on your own cadence once caught up. At-least-once: a crash before you persist nextCursor just re-delivers (dedup on the event id). Optional `cursor` (resume) and `limit`.",
   "endpoints.addProviderSecret":

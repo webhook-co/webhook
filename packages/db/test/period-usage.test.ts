@@ -19,10 +19,15 @@ let pg: EphemeralPostgres;
 let app: Sql;
 let admin: Sql; // seeds SELECT-only billing_subscriptions
 
-async function seedOrg(): Promise<string> {
+/** Seed an org. `createdAt` anchors the Free tier's LIFETIME allowance window — default it well before any
+ *  seeded usage (in prod an org's events can never predate it; the DB default `now()` is the real clock,
+ *  which sits after these fixtures' fake dates). */
+const ORG_CREATED = "2026-01-01T00:00:00.000Z";
+async function seedOrg(createdAt = ORG_CREATED): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+    await tx`insert into orgs (id, slug, name, created_at)
+             values (${orgId}, ${orgId.slice(0, 8)}, ${"o"}, ${createdAt})`;
   });
   return orgId;
 }
@@ -79,13 +84,11 @@ afterAll(async () => {
 });
 
 describe("effectiveBillingPeriod", () => {
-  it("uses the UTC calendar month when the org has NO subscription (Free default)", async () => {
+  it("is the ONE-TIME LIFETIME allowance when the org has NO subscription (Free)", async () => {
     const org = await seedOrg();
     const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
-    expect(period).toEqual({
-      start: "2026-07-01T00:00:00.000Z",
-      end: "2026-08-01T00:00:00.000Z",
-    });
+    // Anchored at org creation, open-ended: a one-time allowance never resets.
+    expect(period).toEqual({ start: ORG_CREATED, end: null, kind: "lifetime" });
   });
 
   it("uses the SUBSCRIPTION's Stripe cycle, flooring the start to UTC midnight (day-bucket aligned)", async () => {
@@ -98,19 +101,24 @@ describe("effectiveBillingPeriod", () => {
     expect(period).toEqual({
       start: "2026-06-18T00:00:00.000Z", // floored to midnight
       end: "2026-07-18T09:00:00.000Z", // raw instant
+      kind: "billing_cycle",
     });
   });
 
-  it("falls back to the UTC month when the Stripe cycle has LAPSED (now past current_period_end)", async () => {
+  it("falls back to the UTC month when the Stripe cycle has LAPSED (never to lifetime — a payer must not be stranded)", async () => {
     const org = await seedOrg();
-    // A cycle that ended BEFORE now (a late/missing renewal webhook) must not anchor — a paid org would
-    // otherwise be measured over a stale/ended window and could stay stranded paused into the new cycle.
+    // A cycle that ended BEFORE now (a late/missing renewal webhook) must not anchor — and must NOT fall to
+    // the lifetime window either, or the payer's lifetime usage would instantly exceed any cap.
     await seedSubscription(org, { start: "2026-06-05T00:00:00Z", end: "2026-07-05T00:00:00Z" }); // end < NOW
     const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
-    expect(period.start).toBe("2026-07-01T00:00:00.000Z"); // UTC month fallback
+    expect(period).toEqual({
+      start: "2026-07-01T00:00:00.000Z", // UTC month fallback
+      end: "2026-08-01T00:00:00.000Z",
+      kind: "billing_cycle",
+    });
   });
 
-  it("falls back to the UTC month for a CANCELED subscription (→ Free)", async () => {
+  it("a CANCELED subscription falls back to the LIFETIME allowance (churn → allowance already spent)", async () => {
     const org = await seedOrg();
     await seedSubscription(org, {
       status: "canceled",
@@ -118,16 +126,44 @@ describe("effectiveBillingPeriod", () => {
       end: "2026-07-18T00:00:00Z",
     });
     const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
-    expect(period.start).toBe("2026-07-01T00:00:00.000Z"); // UTC month, not the stale sub cycle
+    expect(period).toEqual({ start: ORG_CREATED, end: null, kind: "lifetime" });
   });
 
   it("is RLS-scoped — org A's period never reflects org B's subscription", async () => {
     const a = await seedOrg();
     const b = await seedOrg();
     await seedSubscription(b, { start: "2026-06-18T00:00:00Z", end: "2026-07-18T00:00:00Z" });
-    // A has no subscription → UTC month, unaffected by B's cycle.
+    // A has no subscription → its own lifetime allowance, unaffected by B's cycle.
     const period = await withTenant(app, a, (tx) => effectiveBillingPeriod(tx, NOW));
-    expect(period.start).toBe("2026-07-01T00:00:00.000Z");
+    expect(period).toEqual({ start: ORG_CREATED, end: null, kind: "lifetime" });
+  });
+
+  it("anchors the lifetime window at THIS org's creation instant", async () => {
+    const org = await seedOrg("2026-03-07T08:15:00.000Z");
+    const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+    expect(period.start).toBe("2026-03-07T08:15:00.000Z");
+    expect(period.end).toBeNull();
+  });
+});
+
+describe("sumPeriodEventUsage — the LIFETIME (open-ended) window", () => {
+  it("counts EVERY event ever, across months, with no upper bound", async () => {
+    const org = await seedOrg(); // created 2026-01-01
+    await seedUsage(org, "2026-02-10T00:00:00.000Z", 40); // months before "this" month
+    await seedUsage(org, "2026-06-30T00:00:00.000Z", 60); // prior month
+    await seedUsage(org, "2026-07-02T00:00:00.000Z", 100); // this month, rolled
+    await seedEventAt(org, "2026-07-15T06:00:00.000Z"); // today, live
+    const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+    const total = await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW));
+    expect(total).toBe(201); // 40 + 60 + 100 rolled + 1 live — a one-time allowance spans all time
+  });
+
+  it("excludes usage that predates the org's creation anchor", async () => {
+    const org = await seedOrg("2026-06-01T00:00:00.000Z");
+    await seedUsage(org, "2026-05-20T00:00:00.000Z", 999); // before the org existed → not counted
+    await seedUsage(org, "2026-06-10T00:00:00.000Z", 7);
+    const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+    expect(await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW))).toBe(7);
   });
 });
 
