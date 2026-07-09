@@ -141,3 +141,49 @@ test("an unset STRIPE_PLANS leaves an empty var (dark: Checkout disabled, not a 
   gen();
   assert.equal(readProd("web").vars.STRIPE_PLANS, "");
 });
+
+// Every env var the generator READS must be forwarded by the workflow that RUNS it. This exists because
+// #426 renamed STRIPE_PRICE_BASE/OVERAGE -> STRIPE_PLANS in the generator and the committed wrangler, but
+// deploy-web.yml kept forwarding the dead names. The generator then saw "" and fail-closed the dashboard's
+// plan picker into `hidden` — a silent prod defect that typecheck, unit tests, and this file's other tests
+// all missed, because they set the env directly and never read the workflow.
+test("every billing env var the generator reads is forwarded by its deploy workflow", () => {
+  const gen = readFileSync(GEN, "utf8");
+  // The generator reads billing config as `process.env.NAME`.
+  const read = new Set(
+    [...gen.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)]
+      .map((m) => m[1])
+      .filter((n) =>
+        /^(BILLING_MODE|STRIPE_|FREE_EVENT_CAP|HYPERDRIVE_(BILLING|METER_AUDIT)_ID)/.test(n),
+      ),
+  );
+  assert.ok(read.size > 0, "expected the generator to read some billing env vars");
+
+  const workflows = ["deploy.yml", "deploy-web.yml", "deploy-auth.yml"].map((f) =>
+    readFileSync(join(REPO, ".github", "workflows", f), "utf8"),
+  );
+  const forwardedAnywhere = new Set(
+    workflows.flatMap((w) =>
+      [...w.matchAll(/^\s{6}([A-Z][A-Z0-9_]*):\s*\$\{\{\s*vars\./gm)].map((m) => m[1]),
+    ),
+  );
+
+  const missing = [...read].filter((n) => !forwardedAnywhere.has(n));
+  assert.deepEqual(
+    missing,
+    [],
+    `generator reads these but no deploy workflow forwards them: ${missing}`,
+  );
+
+  // And the reverse: a workflow must not forward a billing var the generator no longer reads (a dead name
+  // is how the STRIPE_PLANS regression hid — the workflow looked configured).
+  const forwardedBilling = [...forwardedAnywhere].filter((n) =>
+    /^(BILLING_MODE|STRIPE_|FREE_EVENT_CAP)/.test(n),
+  );
+  const dead = forwardedBilling.filter((n) => !read.has(n));
+  assert.deepEqual(
+    dead,
+    [],
+    `deploy workflows forward these, but the generator ignores them: ${dead}`,
+  );
+});
