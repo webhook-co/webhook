@@ -50,3 +50,61 @@ export const BILLING_ACTIVE_STATUSES = ["active", "trialing", "past_due"] as con
 export function isBillingActive(status: string): boolean {
   return (BILLING_ACTIVE_STATUSES as readonly string[]).includes(status);
 }
+
+/**
+ * The plans a user can buy from the dashboard without talking to us. Enterprise is deliberately absent —
+ * it is a contact-sales motion, never a hosted Checkout — and so is `free`, which has no price at all.
+ */
+export const SELF_SERVE_PLAN_IDS = ["pro", "team"] as const;
+export type SelfServePlanId = (typeof SELF_SERVE_PLAN_IDS)[number];
+
+/** Whether `id` names a plan that Checkout may sell. Anything else must not reach a Stripe line item. */
+export function isSelfServePlan(id: string): id is SelfServePlanId {
+  return (SELF_SERVE_PLAN_IDS as readonly string[]).includes(id);
+}
+
+/** One plan's Stripe PRICE IDS — the licensed base + the metered overage. Ids only: never an amount. */
+export interface StripePlanPrices {
+  readonly base: string;
+  readonly overage: string;
+}
+export type StripePlans = Partial<Record<SelfServePlanId, StripePlanPrices>>;
+
+/** A plan entry carries exactly these keys — anything else (notably an `amount`) is a misconfiguration. */
+const PLAN_PRICE_KEYS = ["base", "overage"] as const;
+
+/**
+ * Parse the `STRIPE_PLANS` deploy var: a JSON map of self-serve plan id → `{ base, overage }` price ids.
+ * Prices live in Stripe; only IDS cross into this repo, so no price/tier figure is ever committed.
+ *
+ * FAIL-CLOSED in every direction — a malformed, half-configured, non-self-serve, or amount-carrying config
+ * returns null and the dashboard simply shows no Checkout. A wrong Checkout charges a real customer the
+ * wrong money; no Checkout merely blocks an upgrade. One bad plan rejects the WHOLE map, because a silently
+ * dropped plan is a plan the user cannot buy while the page still claims to sell it.
+ */
+export function parseStripePlans(raw: string | undefined | null): StripePlans | null {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.length === 0) return null;
+
+  const plans: Record<string, StripePlanPrices> = {};
+  for (const [id, value] of entries) {
+    if (!isSelfServePlan(id)) return null;
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const keys = Object.keys(value as Record<string, unknown>);
+    if (keys.length !== PLAN_PRICE_KEYS.length) return null; // an extra key (e.g. `amount`) → reject
+    const { base, overage } = value as Record<string, unknown>;
+    if (typeof base !== "string" || base.length === 0) return null;
+    if (typeof overage !== "string" || overage.length === 0) return null;
+    plans[id] = { base, overage };
+  }
+  return plans as StripePlans;
+}

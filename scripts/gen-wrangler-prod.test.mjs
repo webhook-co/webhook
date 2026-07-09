@@ -39,8 +39,7 @@ const BASE = {
 const BILLING_KEYS = [
   "BILLING_MODE",
   "STRIPE_METER_EVENT_NAME",
-  "STRIPE_PRICE_BASE",
-  "STRIPE_PRICE_OVERAGE",
+  "STRIPE_PLANS",
   "HYPERDRIVE_BILLING_ID",
   "HYPERDRIVE_METER_AUDIT_ID",
   "FREE_EVENT_CAP",
@@ -77,15 +76,14 @@ test("DARK (no billing vars): optional bindings stripped, vars empty, valid JSON
   assert.equal(engine.vars.BILLING_MODE, "");
   const web = readProd("web");
   assert.equal(hasSecret(web, "STRIPE_SECRET_KEY"), false);
-  assert.equal(web.vars.STRIPE_PRICE_BASE, "");
+  assert.equal(web.vars.STRIPE_PLANS, "");
 });
 
 test("PROVISIONED (BILLING_MODE=test + ids): bindings kept with ids, secrets injected, valid JSONC", () => {
   gen({
     BILLING_MODE: "test",
     STRIPE_METER_EVENT_NAME: "webhook_events",
-    STRIPE_PRICE_BASE: "price_b",
-    STRIPE_PRICE_OVERAGE: "price_o",
+    STRIPE_PLANS: '{"pro":{"base":"price_b","overage":"price_o"}}',
     HYPERDRIVE_BILLING_ID: "hb",
     HYPERDRIVE_METER_AUDIT_ID: "hma",
   });
@@ -100,8 +98,9 @@ test("PROVISIONED (BILLING_MODE=test + ids): bindings kept with ids, secrets inj
   assert.equal(engine.vars.STRIPE_METER_EVENT_NAME, "webhook_events");
   const web = readProd("web");
   assert.equal(hasSecret(web, "STRIPE_SECRET_KEY"), true);
-  assert.equal(web.vars.STRIPE_PRICE_BASE, "price_b");
-  assert.equal(web.vars.STRIPE_PRICE_OVERAGE, "price_o");
+  assert.deepEqual(JSON.parse(web.vars.STRIPE_PLANS), {
+    pro: { base: "price_b", overage: "price_o" },
+  });
 });
 
 test("the meter-audit Hyperdrive is billing-INDEPENDENT (kept without BILLING_MODE; no Stripe secret)", () => {
@@ -121,4 +120,24 @@ test("a provisioned HYPERDRIVE_BILLING id is bound even though the secret gate i
 test.after(() => {
   // Clean up the generated (gitignored) artifacts so a local run leaves no residue.
   for (const app of APPS) rmSync(join(REPO, "apps", app, "wrangler.prod.jsonc"), { force: true });
+});
+
+test("STRIPE_PLANS is JSON-escaped into the web vars and round-trips to the same map", () => {
+  // The var's VALUE is itself JSON, embedded inside a JSON string. Without escaping, its quotes terminate
+  // the string early and the generated wrangler.prod.jsonc is unparseable — a deploy-time-only failure that
+  // no unit test of parseStripePlans could catch. `readProd` parsing at all is half the assertion.
+  const plans =
+    '{"pro":{"base":"price_pb","overage":"price_po"},"team":{"base":"price_tb","overage":"price_to"}}';
+  gen({ BILLING_MODE: "test", STRIPE_PLANS: plans });
+  const cfg = readProd("web");
+  assert.equal(cfg.vars.STRIPE_PLANS, plans);
+  assert.deepEqual(JSON.parse(cfg.vars.STRIPE_PLANS), {
+    pro: { base: "price_pb", overage: "price_po" },
+    team: { base: "price_tb", overage: "price_to" },
+  });
+});
+
+test("an unset STRIPE_PLANS leaves an empty var (dark: Checkout disabled, not a broken config)", () => {
+  gen();
+  assert.equal(readProd("web").vars.STRIPE_PLANS, "");
 });

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { billingEnabled, billingLive, parseBillingMode, isBillingActive } from "./billing";
+import {
+  billingEnabled,
+  billingLive,
+  parseBillingMode,
+  isBillingActive,
+  parseStripePlans,
+  SELF_SERVE_PLAN_IDS,
+  isSelfServePlan,
+} from "./billing";
 
 describe("parseBillingMode (fail-safe billing flag)", () => {
   it("accepts the three known modes (case-insensitive, trimmed)", () => {
@@ -61,5 +69,67 @@ describe("isBillingActive — which Stripe statuses ENTITLE an org to its paid p
     expect(isBillingActive("some_future_status")).toBe(false);
     expect(isBillingActive("")).toBe(false);
     expect(isBillingActive("ACTIVE")).toBe(false); // exact match only, no case coercion
+  });
+});
+
+describe("parseStripePlans — the self-serve plan → price-id map (fail-closed)", () => {
+  const VALID =
+    '{"pro":{"base":"price_pb","overage":"price_po"},"team":{"base":"price_tb","overage":"price_to"}}';
+
+  it("parses a well-formed map of every self-serve plan", () => {
+    expect(parseStripePlans(VALID)).toEqual({
+      pro: { base: "price_pb", overage: "price_po" },
+      team: { base: "price_tb", overage: "price_to" },
+    });
+  });
+
+  it("accepts a subset — a deploy may sell only one plan", () => {
+    expect(parseStripePlans('{"pro":{"base":"price_pb","overage":"price_po"}}')).toEqual({
+      pro: { base: "price_pb", overage: "price_po" },
+    });
+  });
+
+  it("carries price IDS ONLY — an amount/currency key is rejected, never persisted", () => {
+    // Guardrail: no price/tier figure may enter this repo or its deploy vars. A config that smuggles an
+    // amount is a misconfiguration, and we fail closed rather than let it flow into a line item.
+    expect(
+      parseStripePlans('{"pro":{"base":"price_pb","overage":"price_po","amount":2900}}'),
+    ).toBeNull();
+  });
+
+  it("is fail-CLOSED on anything malformed (no Checkout beats a wrong Checkout)", () => {
+    expect(parseStripePlans(undefined)).toBeNull();
+    expect(parseStripePlans("")).toBeNull();
+    expect(parseStripePlans("not json")).toBeNull();
+    expect(parseStripePlans("[]")).toBeNull(); // array, not an object
+    expect(parseStripePlans("{}")).toBeNull(); // no plans at all
+    expect(parseStripePlans('{"pro":{"base":"price_pb"}}')).toBeNull(); // half-configured → no line item
+    expect(parseStripePlans('{"pro":{"base":"","overage":"price_po"}}')).toBeNull(); // empty id
+    expect(parseStripePlans('{"pro":{"base":1,"overage":"price_po"}}')).toBeNull(); // non-string id
+  });
+
+  it("rejects a plan id that is not self-serve (enterprise is contact-sales, never Checkout)", () => {
+    expect(parseStripePlans('{"enterprise":{"base":"price_eb","overage":"price_eo"}}')).toBeNull();
+    expect(parseStripePlans('{"free":{"base":"price_fb","overage":"price_fo"}}')).toBeNull();
+  });
+
+  it("rejects the whole config if ANY plan is bad — a partial map would silently hide a plan", () => {
+    expect(
+      parseStripePlans('{"pro":{"base":"price_pb","overage":"price_po"},"team":{}}'),
+    ).toBeNull();
+  });
+});
+
+describe("SELF_SERVE_PLAN_IDS", () => {
+  it("is exactly the plans a user can buy without talking to us", () => {
+    expect([...SELF_SERVE_PLAN_IDS]).toEqual(["pro", "team"]);
+  });
+
+  it("isSelfServePlan gates Checkout — enterprise/free are not purchasable", () => {
+    expect(isSelfServePlan("pro")).toBe(true);
+    expect(isSelfServePlan("team")).toBe(true);
+    expect(isSelfServePlan("enterprise")).toBe(false);
+    expect(isSelfServePlan("free")).toBe(false);
+    expect(isSelfServePlan("")).toBe(false);
   });
 });
