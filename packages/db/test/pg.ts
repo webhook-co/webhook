@@ -49,21 +49,15 @@ export interface EphemeralPostgres {
 const SUPERUSER = "postgres";
 const DEFAULT_DB = "webhook_test";
 
-/** Roles the harness provisions credentials for in password mode. */
-const MANAGED_ROLES = [
-  DB_ROLES.owner,
-  DB_ROLES.app,
-  DB_ROLES.ingest,
-  DB_ROLES.authn,
-  DB_ROLES.anchor,
-  DB_ROLES.auth,
-  DB_ROLES.sweeper,
-  DB_ROLES.reconciler,
-  DB_ROLES.notifier,
-  DB_ROLES.meter,
-  DB_ROLES.meterAudit,
-  DB_ROLES.billing,
-] as const;
+/**
+ * Roles the harness provisions credentials for in password mode.
+ *
+ * DERIVED from DB_ROLES on purpose: a hand-maintained list silently omitted two roles added by
+ * later migrations, so their connection URLs carried a password the role never had and every
+ * connection failed `28P01` — but only in password mode (the Neon nightly), since trust auth
+ * ignores passwords. Deriving makes a new DB_ROLES entry impossible to forget.
+ */
+export const MANAGED_ROLES: readonly string[] = Object.values(DB_ROLES);
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
