@@ -63,6 +63,45 @@ async function seedEvents(
   });
 }
 
+/** Seed `n` outbound delivery DISPATCHES on the UTC day `daysAgo`. One `delivery_attempts` row = one
+ *  dispatch; `attempt` is the retry counter that later UPDATEs bump in place, never a new row. */
+async function seedDispatches(
+  orgId: string,
+  eventId: string,
+  n: number,
+  daysAgo: number,
+  attempt = 1,
+): Promise<string[]> {
+  const at = new Date(Date.UTC(2026, 6, 7) - daysAgo * DAY_MS + 3_600_000).toISOString();
+  const ids: string[] = [];
+  await withTenant(app, orgId, async (tx) => {
+    for (let i = 0; i < n; i++) {
+      const id = randomUUID();
+      await tx`insert into delivery_attempts (id, org_id, event_id, target, status, attempt, created_at)
+               values (${id}, ${orgId}, ${eventId}, ${"https://x.test/" + i}, ${"queued"}, ${attempt}, ${at})`;
+      ids.push(id);
+    }
+  });
+  return ids;
+}
+
+/** One event to hang deliveries off (delivery_attempts FKs (event_id, org_id)). */
+async function seedOneEvent(
+  orgId: string,
+  endpointId: string,
+  daysAgo: number,
+  key: string,
+): Promise<string> {
+  const at = new Date(Date.UTC(2026, 6, 7) - daysAgo * DAY_MS + 3_600_000).toISOString();
+  const id = randomUUID();
+  await withTenant(app, orgId, async (tx) => {
+    await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+             values (${id}, ${orgId}, ${endpointId}, ${key}, ${10}, ${key}, ${"content_hash"})`;
+    await tx`update events set received_at = ${at} where id = ${id}`;
+  });
+  return id;
+}
+
 async function usageAt(
   orgId: string,
   windowIso: string,
@@ -263,5 +302,118 @@ describe("runUsageRollup per-org isolation (unit, fakes)", () => {
     expect(result.orgsFailed).toBe(1);
     expect(result.capped).toBe(false);
     expect(failedOrgs).toEqual(["fail-1"]);
+  });
+});
+
+describe("Definition B — a billed event is one CAPTURE or one DELIVERY DISPATCH", () => {
+  it("counts captures AND dispatches into the same usage window", async () => {
+    const { orgId, endpointId } = await seedOrg("defb-both");
+    await seedEvents(orgId, endpointId, 3, 1, "c");
+    const eventId = await seedOneEvent(orgId, endpointId, 1, "anchor");
+    await seedDispatches(orgId, eventId, 4, 1);
+    await run();
+    // 3 captures + 1 anchor capture + 4 dispatches = 8 billed events.
+    expect(await usageAt(orgId, dayIso(1))).toEqual({ count: 8, finalized: false });
+  });
+
+  it("NEVER bills a retry — a retry updates its row in place, it does not insert a new one", async () => {
+    // The load-bearing guarantee. Our retry schedule is our cost; a receiver's downtime is not the
+    // customer's fault. `count(*)` over delivery_attempts must be immune to the `attempt` counter.
+    const { orgId, endpointId } = await seedOrg("defb-retry");
+    const eventId = await seedOneEvent(orgId, endpointId, 1, "retry-anchor");
+    const [dispatchId] = await seedDispatches(orgId, eventId, 1, 1);
+    await run();
+    expect(await usageAt(orgId, dayIso(1))).toEqual({ count: 2, finalized: false }); // 1 capture + 1 dispatch
+
+    // Simulate the DeliveryDO exhausting its retry schedule on that same dispatch.
+    await withTenant(app, orgId, async (tx) => {
+      for (const attempt of [2, 3, 4, 5, 6, 7, 8]) {
+        await tx`update delivery_attempts set attempt = ${attempt}, status = 'pending' where id = ${dispatchId}`;
+      }
+    });
+    await run();
+    expect(await usageAt(orgId, dayIso(1))).toEqual({ count: 2, finalized: false }); // still 2, not 9
+  });
+
+  it("bills an org that ONLY delivered (a replay of an older event) — no capture that day", async () => {
+    const { orgId, endpointId } = await seedOrg("defb-replay-only");
+    const eventId = await seedOneEvent(orgId, endpointId, 3, "old"); // captured 3 days ago
+    await seedDispatches(orgId, eventId, 5, 1); // replayed yesterday
+    await run();
+    // The union's outer group-by must still produce a row for a day with zero captures.
+    expect(await usageAt(orgId, dayIso(1))).toEqual({ count: 5, finalized: false });
+  });
+
+  it("is idempotent — re-rolling recomputes the identical count", async () => {
+    const { orgId, endpointId } = await seedOrg("defb-idem");
+    const eventId = await seedOneEvent(orgId, endpointId, 1, "idem");
+    await seedDispatches(orgId, eventId, 6, 1);
+    await run();
+    await run();
+    await run();
+    expect(await usageAt(orgId, dayIso(1))).toEqual({ count: 7, finalized: false });
+  });
+
+  it("re-rolls an UNFINALIZED pre-cutover row: flips its basis and adds the dispatches", async () => {
+    // The cutover moment. A row written before Definition B but still OPEN must be recomputed under the
+    // new basis — count both legs AND flip counts_deliveries — because F1 only freezes FINALIZED days.
+    const { orgId, endpointId } = await seedOrg("defb-cutover");
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into usage (org_id, window_start, event_count, counts_deliveries)
+               values (${orgId}, ${dayIso(1)}, ${1}, ${false})`;
+    });
+    const eventId = await seedOneEvent(orgId, endpointId, 1, "cutover"); // 1 real capture
+    await seedDispatches(orgId, eventId, 3, 1);
+    await run();
+    expect(await usageAt(orgId, dayIso(1))).toEqual({ count: 4, finalized: false }); // 1 + 3
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ counts_deliveries: boolean }[]>`
+      select counts_deliveries from usage where org_id = ${orgId} and window_start = ${dayIso(1)}`,
+    );
+    expect(row.counts_deliveries).toBe(true);
+  });
+
+  it("marks rows it writes as counts_deliveries — the basis that produced them", async () => {
+    // The F6 oracle recounts each day under its own basis. A row written pre-Definition-B is
+    // capture-only and immutable; a row written now includes dispatches.
+    const { orgId, endpointId } = await seedOrg("defb-basis");
+    await seedEvents(orgId, endpointId, 2, 1, "basis");
+    await run();
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ counts_deliveries: boolean }[]>`
+      select counts_deliveries from usage where org_id = ${orgId} and window_start = ${dayIso(1)}`,
+    );
+    expect(row.counts_deliveries).toBe(true);
+  });
+
+  it("does NOT retro-count deliveries into an already-FINALIZED day (no retro-billing)", async () => {
+    // Models a row written BEFORE Definition B: capture-only, and frozen (money-guard F1). Deliveries we
+    // previously gave away must never be back-billed onto it. The explicit insert leaves counts_deliveries
+    // at its pre-migration value (false), exactly like a real historical row.
+    const { orgId, endpointId } = await seedOrg("defb-finalized");
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into usage (org_id, window_start, event_count, counts_deliveries)
+               values (${orgId}, ${dayIso(4)}, ${2}, ${false})`;
+    });
+    await run(); // ages past the settle window -> frozen
+    expect(await usageAt(orgId, dayIso(4))).toEqual({ count: 2, finalized: true });
+
+    const eventId = await seedOneEvent(orgId, endpointId, 4, "late");
+    await seedDispatches(orgId, eventId, 9, 4); // 9 dispatches now sit inside that frozen window
+    await run();
+    // Frozen: the billed number must not move, and must not silently increase.
+    expect(await usageAt(orgId, dayIso(4))).toEqual({ count: 2, finalized: true });
+
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ counts_deliveries: boolean }[]>`
+      select counts_deliveries from usage where org_id = ${orgId} and window_start = ${dayIso(4)}`,
+    );
+    expect(row.counts_deliveries).toBe(false); // still recounted capture-only by the F6 oracle
   });
 });

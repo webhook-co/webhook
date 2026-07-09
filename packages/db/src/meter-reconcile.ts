@@ -74,22 +74,36 @@ export async function reconcileMeteringUsage(
       from usage
       where finalized_at is not null and window_start >= ${horizon}`;
 
+    // Definition B: recount BOTH legs — captures and delivery dispatches — from scratch, on this separate
+    // code path and role. Critically, each day is recounted under the basis that PRODUCED it
+    // (`usage.counts_deliveries`): rows finalized before Definition B landed were counted capture-only and
+    // are immutable (F1), so adding deliveries to their recount would report drift on every historical day
+    // and drown the real signal. One `delivery_attempts` row = one dispatch; retries update it in place.
     const rows = await tx<{ org_id: string; day: string; rollup: string; recount: string }[]>`
-      with recount as (
+      with captures as (
         select org_id, date_trunc('day', received_at) as day, count(*)::bigint as n
         from events
         where received_at >= ${horizon}
         group by org_id, date_trunc('day', received_at)
+      ),
+      dispatches as (
+        select org_id, date_trunc('day', created_at) as day, count(*)::bigint as n
+        from delivery_attempts
+        where created_at >= ${horizon}
+        group by org_id, date_trunc('day', created_at)
       )
       select u.org_id,
              to_char(u.window_start, 'YYYY-MM-DD') as day,
              u.event_count::text as rollup,
-             coalesce(r.n, 0)::text as recount
+             (coalesce(c.n, 0) + case when u.counts_deliveries then coalesce(d.n, 0) else 0 end)::text
+               as recount
       from usage u
-      left join recount r on r.org_id = u.org_id and r.day = u.window_start
+      left join captures c on c.org_id = u.org_id and c.day = u.window_start
+      left join dispatches d on d.org_id = u.org_id and d.day = u.window_start
       where u.finalized_at is not null
         and u.window_start >= ${horizon}
-        and u.event_count <> coalesce(r.n, 0)
+        and u.event_count
+            <> coalesce(c.n, 0) + case when u.counts_deliveries then coalesce(d.n, 0) else 0 end
       order by u.window_start, u.org_id
       limit ${deps.limit}`;
 
