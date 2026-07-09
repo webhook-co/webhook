@@ -33,7 +33,8 @@ client, err := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
 
 <Warning>
   Keep the key server-side. The SDKs never print it (they redact it from errors and debug output),
-  but it's still a credential — treat it like a password.
+  but it's still a credential — treat it like a password. If one leaks, [revoke it](/leaked-api-key)
+  — that's the only remedy.
 </Warning>
 
 ## Scopes

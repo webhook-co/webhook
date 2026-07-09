@@ -15,7 +15,13 @@
         "groups": [
           {
             "group": "Get started",
-            "pages": ["introduction", "quickstart", "authentication", "deduplication"]
+            "pages": [
+              "introduction",
+              "quickstart",
+              "authentication",
+              "leaked-api-key",
+              "deduplication"
+            ]
           },
           {
             "group": "SDKs",
