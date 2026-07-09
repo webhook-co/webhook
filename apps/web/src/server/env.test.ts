@@ -168,12 +168,12 @@ describe("billing env accessors", () => {
     getCloudflareContext.mockReturnValue({
       env: {
         STRIPE_PLANS:
-          '{"pro":{"base":"price_pb","overage":"price_po"},"team":{"base":"price_tb","overage":"price_to"}}',
+          '{"pro":{"base":"price_pb","overage":"price_po"},"scale":{"base":"price_tb","overage":"price_to"}}',
       },
     });
     expect(getStripePlans()).toEqual({
       pro: { base: "price_pb", overage: "price_po" },
-      team: { base: "price_tb", overage: "price_to" },
+      scale: { base: "price_tb", overage: "price_to" },
     });
   });
 

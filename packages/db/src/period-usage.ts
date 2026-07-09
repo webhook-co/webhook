@@ -4,7 +4,9 @@
 // (an org shows over-cap while still capturing, or resumes while still over). Both run inside a tenant
 // tx (withTenant / webhook_app), so RLS pins the org and this never filters by org_id itself.
 //
-// Basis = the rolled-up `usage` windows for the period's PRIOR days + a LIVE count of TODAY's `events`.
+// Basis = the rolled-up `usage` windows for the period's PRIOR days + a LIVE count of TODAY's billed events.
+// A BILLED EVENT is one inbound CAPTURE or one outbound delivery DISPATCH (Definition B, ADR-0004 amended
+// 2026-07-09); retries are never billed, because a retry updates its `delivery_attempts` row in place.
 // The hourly rollup re-rolls today, so summing `usage` alone reads today low (or 0) between ticks; the
 // live today-count fixes that WITHOUT depending on when the rollup last ran. The split is half-open and
 // non-overlapping — `window_start < todayStart` for the rolled half, `received_at >= todayStart` for the
@@ -111,10 +113,19 @@ export async function sumPeriodEventUsage(
     where window_start >= ${period.start}
       and window_start < ${todayStart}
       and (${end}::timestamptz is null or window_start < ${end})`;
+  // Definition B: a billed event is one inbound CAPTURE or one outbound delivery DISPATCH. The live half
+  // must count BOTH legs, or today's deliveries stay invisible to the cap until the rollup lands, and the
+  // usage surface would disagree with enforcement. One `delivery_attempts` row = one dispatch: the enqueue
+  // inserts it and every retry UPDATES it in place, so `count(*)` can never bill a retry.
   const [todayRow] = await tx<{ events: string }[]>`
-    select count(*)::bigint as events
-    from events
-    where received_at >= ${todayStart}
-      and (${end}::timestamptz is null or received_at < ${end})`;
+    select (
+      (select count(*) from events
+        where received_at >= ${todayStart}
+          and (${end}::timestamptz is null or received_at < ${end}))
+      +
+      (select count(*) from delivery_attempts
+        where created_at >= ${todayStart}
+          and (${end}::timestamptz is null or created_at < ${end}))
+    )::bigint as events`;
   return Number(rolledRow?.events ?? 0) + Number(todayRow?.events ?? 0);
 }

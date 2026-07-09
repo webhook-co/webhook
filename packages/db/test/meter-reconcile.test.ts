@@ -160,3 +160,83 @@ describe("reconcileMeteringUsage", () => {
     expect(res.capped).toBe(true);
   });
 });
+
+describe("the F6 oracle under Definition B — recount each day under the basis that produced it", () => {
+  /** A delivery DISPATCH row on `dayIso`. Retries update this row in place; they never insert another. */
+  async function seedDispatches(org: string, dayIso: string, n: number): Promise<string[]> {
+    const at = dayIso.replace("T00:00:00.000Z", "T07:00:00.000Z");
+    const endpointId = randomUUID();
+    const eventId = randomUUID();
+    const ids: string[] = [];
+    await withTenant(app, org, async (tx) => {
+      await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
+               values (${endpointId}, ${org}, ${randomBytes(32)}, ${"ep-d"})`;
+      await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+               values (${eventId}, ${org}, ${endpointId}, ${"ka" + eventId}, ${10}, ${"da" + eventId}, ${"content_hash"})`;
+      await tx`update events set received_at = ${at} where id = ${eventId}`;
+      for (let i = 0; i < n; i++) {
+        const id = randomUUID();
+        await tx`insert into delivery_attempts (id, org_id, event_id, target, status, attempt, created_at)
+                 values (${id}, ${org}, ${eventId}, ${"https://x.test/" + i}, ${"queued"}, ${1}, ${at})`;
+        ids.push(id);
+      }
+    });
+    return ids;
+  }
+
+  /** Freeze a day with an explicit basis marker. */
+  async function seedFrozenUsageWithBasis(
+    org: string,
+    dayIso: string,
+    frozenCount: number,
+    countsDeliveries: boolean,
+  ): Promise<void> {
+    await withTenant(app, org, async (tx) => {
+      await tx`insert into usage (org_id, window_start, event_count, finalized_at, counts_deliveries)
+               values (${org}, ${dayIso}, ${frozenCount}, ${"2026-07-15T00:00:00Z"}, ${countsDeliveries})`;
+    });
+  }
+
+  const DAY = "2026-07-10T00:00:00.000Z";
+
+  it("a Definition-B day reconciles when the rollup equals captures + dispatches", async () => {
+    const org = await seedOrg();
+    await seedDispatches(org, DAY, 3); // seeds 1 capture + 3 dispatches = 4 billed
+    await seedFrozenUsageWithBasis(org, DAY, 4, true);
+    const res = await run();
+    expect(res.mismatches).toEqual([]); // no drift: the oracle recounts BOTH legs
+  });
+
+  it("a Definition-B day DRIFTS when the rollup silently omitted the dispatches", async () => {
+    // The exact regression the oracle exists to catch: rollup counted captures only, but the row
+    // claims Definition B. 1 capture recorded, 3 dispatches ignored.
+    const org = await seedOrg();
+    await seedDispatches(org, DAY, 3);
+    await seedFrozenUsageWithBasis(org, DAY, 1, true);
+    const res = await run();
+    expect(res.mismatches).toEqual([{ orgId: org, day: "2026-07-10", rollup: 1, recount: 4 }]);
+  });
+
+  it("a PRE-Definition-B day is recounted CAPTURE-ONLY — no false drift on frozen history", async () => {
+    // The trap: these rows are immutable (F1) and were counted before deliveries were billable. Recounting
+    // them with dispatches would flag every historical day as drifting and drown the real signal.
+    const org = await seedOrg();
+    await seedDispatches(org, DAY, 3); // 1 capture + 3 dispatches exist in the window
+    await seedFrozenUsageWithBasis(org, DAY, 1, false); // but the row was capture-only: 1
+    const res = await run();
+    expect(res.mismatches).toEqual([]); // recounted as 1 capture, matches
+  });
+
+  it("a retry never creates drift (dispatch count is immune to the attempt counter)", async () => {
+    const org = await seedOrg();
+    const ids = await seedDispatches(org, DAY, 2); // 1 capture + 2 dispatches = 3
+    await seedFrozenUsageWithBasis(org, DAY, 3, true);
+    await withTenant(app, org, async (tx) => {
+      for (const id of ids) {
+        await tx`update delivery_attempts set attempt = 8, status = 'failed' where id = ${id}`;
+      }
+    });
+    const res = await run();
+    expect(res.mismatches).toEqual([]); // still 3 — retries update rows, they don't add them
+  });
+});

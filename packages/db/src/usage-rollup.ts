@@ -77,6 +77,11 @@ export async function runUsageRollup(deps: UsageRollupDeps): Promise<UsageRollup
     select org_id from (
       select distinct org_id from events where received_at >= ${oldest}
       union
+      -- Definition B: a DISPATCH is a billed event too, so an org whose only recent activity was an
+      -- outbound delivery (e.g. replaying an older event) must still be enumerated — otherwise its
+      -- window is never rolled and those billed events are silently given away.
+      select distinct org_id from delivery_attempts where created_at >= ${oldest}
+      union
       select org_id from usage where finalized_at is null and window_start < ${cutoff}
     ) t
     order by random()

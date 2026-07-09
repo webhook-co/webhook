@@ -235,3 +235,60 @@ describe("effectiveBillingPeriod — ENTITLEMENT, not just `status <> canceled`"
     expect(period.kind).toBe("lifetime");
   });
 });
+
+describe("sumPeriodEventUsage — Definition B: today's DISPATCHES are billed live", () => {
+  /** A dispatch row created at `iso`. Retries mutate this row; they never insert another. */
+  async function seedDispatchAt(orgId: string, eventId: string, iso: string): Promise<string> {
+    const id = randomUUID();
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into delivery_attempts (id, org_id, event_id, target, status, attempt, created_at)
+               values (${id}, ${orgId}, ${eventId}, ${"https://x.test"}, ${"queued"}, ${1}, ${iso})`;
+    });
+    return id;
+  }
+
+  async function seedEventReturningId(orgId: string, receivedAtIso: string): Promise<string> {
+    const endpointId = randomUUID();
+    const id = randomUUID();
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
+               values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
+      await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+               values (${id}, ${orgId}, ${endpointId}, ${"k" + id}, ${10}, ${"d" + id}, ${"content_hash"})`;
+      await tx`update events set received_at = ${receivedAtIso} where id = ${id}`;
+    });
+    return id;
+  }
+
+  it("counts today's captures AND today's dispatches (the surface can't lag the cap)", async () => {
+    const org = await seedOrg();
+    const eventId = await seedEventReturningId(org, "2026-07-15T06:00:00.000Z"); // today, 1 capture
+    await seedDispatchAt(org, eventId, "2026-07-15T07:00:00.000Z");
+    await seedDispatchAt(org, eventId, "2026-07-15T08:00:00.000Z");
+    const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+    expect(await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW))).toBe(3);
+  });
+
+  it("a RETRY of today's dispatch never adds a billed event", async () => {
+    const org = await seedOrg();
+    const eventId = await seedEventReturningId(org, "2026-07-15T06:00:00.000Z");
+    const dispatchId = await seedDispatchAt(org, eventId, "2026-07-15T07:00:00.000Z");
+    const period = await withTenant(app, org, (tx) => effectiveBillingPeriod(tx, NOW));
+    expect(await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW))).toBe(2);
+    await withTenant(app, org, async (tx) => {
+      await tx`update delivery_attempts set attempt = 8, status = 'pending' where id = ${dispatchId}`;
+    });
+    expect(await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW))).toBe(2); // still 2
+  });
+
+  it("excludes a dispatch at/after a non-midnight period.end (the final cycle day)", async () => {
+    const org = await seedOrg();
+    const NOW_LAST_DAY = Date.UTC(2026, 6, 18, 12, 0, 0);
+    const eventId = await seedEventReturningId(org, "2026-07-18T05:00:00.000Z");
+    await seedDispatchAt(org, eventId, "2026-07-18T06:00:00.000Z"); // before end -> counted
+    await seedDispatchAt(org, eventId, "2026-07-18T10:00:00.000Z"); // at/after end -> excluded
+    const period = { start: "2026-07-01T00:00:00.000Z", end: "2026-07-18T09:00:00.000Z" };
+    const total = await withTenant(app, org, (tx) => sumPeriodEventUsage(tx, period, NOW_LAST_DAY));
+    expect(total).toBe(2); // 1 capture + 1 in-window dispatch
+  });
+});

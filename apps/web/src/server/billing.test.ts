@@ -28,7 +28,7 @@ function enableBilling(customerId: string | null) {
   env.getBillingMode.mockReturnValue("test");
   env.getStripePlans.mockReturnValue({
     pro: { base: "price_base", overage: "price_overage" },
-    team: { base: "price_team_base", overage: "price_team_overage" },
+    scale: { base: "price_scale_base", overage: "price_scale_overage" },
   });
   env.getStripeSecretKey.mockResolvedValue("sk_test_x");
   db.withTenantDb.mockResolvedValue(customerId); // short-circuits withTenant(readBillingCustomerId)
@@ -115,13 +115,13 @@ describe("openBillingPortal", () => {
 describe("startCheckout — plan gating (planId is untrusted form input)", () => {
   it("sells the requested plan's OWN price pair, not a hardcoded one", async () => {
     const client = enableBilling(null);
-    expect(await startCheckout("org-9", "team", "a@b.test")).toEqual({
+    expect(await startCheckout("org-9", "scale", "a@b.test")).toEqual({
       status: "ok",
       url: "https://checkout",
     });
     expect(client.createCheckoutSession.mock.calls[0][0].lineItems).toEqual([
-      { price: "price_team_base", quantity: 1 },
-      { price: "price_team_overage" },
+      { price: "price_scale_base", quantity: 1 },
+      { price: "price_scale_overage" },
     ]);
   });
 
@@ -144,7 +144,7 @@ describe("startCheckout — plan gating (planId is untrusted form input)", () =>
   it("rejects a self-serve plan this deploy has no prices for (partial config)", async () => {
     const client = enableBilling(null);
     env.getStripePlans.mockReturnValue({ pro: { base: "price_base", overage: "price_overage" } });
-    expect(await startCheckout("org-9", "team", "a@b.test")).toEqual({ status: "unknown_plan" });
+    expect(await startCheckout("org-9", "scale", "a@b.test")).toEqual({ status: "unknown_plan" });
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });
 });

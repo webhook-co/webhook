@@ -54,8 +54,11 @@ export function isBillingActive(status: string): boolean {
 /**
  * The plans a user can buy from the dashboard without talking to us. Enterprise is deliberately absent —
  * it is a contact-sales motion, never a hosted Checkout — and so is `free`, which has no price at all.
+ *
+ * `scale`, not `team`: every tier names an INTENSITY, and we do not meter seats. A three-person startup
+ * pushing 10M events belongs on the top self-serve tier, and a tier called "Team" would argue otherwise.
  */
-export const SELF_SERVE_PLAN_IDS = ["pro", "team"] as const;
+export const SELF_SERVE_PLAN_IDS = ["pro", "scale"] as const;
 export type SelfServePlanId = (typeof SELF_SERVE_PLAN_IDS)[number];
 
 /** Whether `id` names a plan that Checkout may sell. Anything else must not reach a Stripe line item. */

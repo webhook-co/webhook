@@ -29,8 +29,9 @@ export default async function UsagePage() {
         {/* Disclosure (constitution: the billable unit is stated up front). Single-dimension, no
             per-step counters — so the number here is the whole story. */}
         <p className="leading-snug text-fg-secondary">
-          Metering is single-dimension: every captured request to an endpoint counts as one event.
-          You&apos;re billed on events — no per-step or per-feature charges.
+          Metering is single-dimension: one event is a captured request to an endpoint, <em>or</em>{" "}
+          one delivery to a destination. Retries never count. You&apos;re billed on events — no
+          per-step or per-feature charges, and every feature is on every plan.
         </p>
       </div>
 
