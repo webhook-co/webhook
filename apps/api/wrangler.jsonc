@@ -22,6 +22,9 @@
     // placeholder is DEPLOY-INJECTED by the overlay (from the optional FREE_EVENT_CAP GH var); unset → "" →
     // uncapped (fail-safe). Must equal the engine's FREE_EVENT_CAP. For `wrangler dev`, "" parses to uncapped.
     "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
+    // BILLING_MODE (S4.5) — gates the inbound Stripe webhook. DEPLOY-INJECTED (optional GH var); unset/""
+    // → off → POST /v1/stripe/webhook 503s (dark). parseBillingMode fail-safes junk to off.
+    "BILLING_MODE": "<BILLING_MODE>",
   },
   // The public REST API on api.webhook.co (bearer-token, cookieless). Consumed server-to-server
   // today (the CLI + the MCP server), so NO CORS is set. The PRD's "CORS allowlist = app only"
@@ -44,6 +47,17 @@
       "id": "<HYPERDRIVE_TENANT_ID>",
       "localConnectionString": "postgres://postgres:postgres@127.0.0.1:5432/webhook_dev",
     },
+    // @gen-optional HYPERDRIVE_BILLING_ID
+    // HYPERDRIVE_BILLING (S4.5) — the webhook_billing verified-Stripe-only writer for the inbound
+    // state-sync (processed_stripe_events + billing_customers/subscriptions + org_limits). OPTIONAL: the
+    // overlay keeps this binding only when HYPERDRIVE_BILLING_ID is set (provisioned) and strips it
+    // otherwise; absent → the inbound webhook 503s after verify (dark). Caching off.
+    {
+      "binding": "HYPERDRIVE_BILLING",
+      "id": "<HYPERDRIVE_BILLING_ID>",
+      "localConnectionString": "postgres://webhook_billing:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    // @gen-end HYPERDRIVE_BILLING_ID
   ],
   // Caches resolved principals keyed by api-key hash; invalidated on revoke (KV can be invalidated,
   // Hyperdrive's query cache can't). Miniflare provides a local KV in tests; real id set at deploy.

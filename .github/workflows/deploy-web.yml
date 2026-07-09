@@ -71,6 +71,11 @@ jobs:
       # FREE_EVENT_CAP (S4.3b) — optional Free-tier cap the usage view shows a rowless org (same GH var as
       # the engine; unset → "" → uncapped). Must equal every other worker's value.
       FREE_EVENT_CAP: ${{ vars.FREE_EVENT_CAP }}
+      # Billing (S4.4b) — OPTIONAL; unset → dark (BILLING_MODE ""→ Checkout/Portal disabled; empty prices →
+      # disabled; the generator binds STRIPE_SECRET_KEY only when BILLING_MODE is on). Price IDS, not amounts.
+      BILLING_MODE: ${{ vars.BILLING_MODE }}
+      STRIPE_PRICE_BASE: ${{ vars.STRIPE_PRICE_BASE }}
+      STRIPE_PRICE_OVERAGE: ${{ vars.STRIPE_PRICE_OVERAGE }}
       # auth.webhook.co ids — the generator emits every app each run + reqEnv()s its ids (web deploys only web).
       AUTH_OAUTH_KV_ID: ${{ vars.AUTH_OAUTH_KV_ID }}
       AUTH_DEVICE_KV_ID: ${{ vars.AUTH_DEVICE_KV_ID }}

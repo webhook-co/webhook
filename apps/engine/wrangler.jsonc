@@ -13,6 +13,11 @@
   // fail-safe default). The literal placeholder is what `wrangler dev` sees locally (parses to uncapped).
   "vars": {
     "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
+    // Billing (S4.4/S4.5) — all DEPLOY-INJECTED by the overlay from optional GH vars; unset → "" → dark.
+    // BILLING_MODE off/"" → the meter-reporter cron no-ops (parseBillingMode fail-safes to off).
+    // STRIPE_METER_EVENT_NAME → which Stripe Billing Meter the outbound usage reports count against.
+    "BILLING_MODE": "<BILLING_MODE>",
+    "STRIPE_METER_EVENT_NAME": "<STRIPE_METER_EVENT_NAME>",
   },
   // Two Hyperdrive bindings (ADR-0002 / review finding C1):
   //   HYPERDRIVE_TENANT  — query caching DISABLED. ALL tenant-scoped reads use this.
@@ -82,6 +87,17 @@
       "id": "<HYPERDRIVE_INGEST_ID>",
       "localConnectionString": "postgres://webhook_ingest:postgres@127.0.0.1:5432/webhook_dev",
     },
+    // @gen-optional HYPERDRIVE_METER_AUDIT_ID
+    // HYPERDRIVE_METER_AUDIT (S4.4d) — the F6 reconciliation oracle's webhook_meter_audit cross-org read
+    // (recount events vs frozen usage). OPTIONAL: the overlay keeps this binding only when the
+    // HYPERDRIVE_METER_AUDIT_ID GH var is set (provisioned), and strips it otherwise so the engine deploys
+    // dark; the reconcile cron then skips (independent of BILLING_MODE). Caching off, like the other crons.
+    {
+      "binding": "HYPERDRIVE_METER_AUDIT",
+      "id": "<HYPERDRIVE_METER_AUDIT_ID>",
+      "localConnectionString": "postgres://webhook_meter_audit:postgres@127.0.0.1:5432/webhook_dev",
+    },
+    // @gen-end HYPERDRIVE_METER_AUDIT_ID
   ],
   // WORM head-anchor bucket (ADR-0004). Object retention is enforced by an R2 Bucket Lock
   // (R2 has Bucket Locks, NOT S3 Object Lock) on the `audit-anchors/` prefix — write-once, no
