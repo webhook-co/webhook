@@ -12,8 +12,8 @@ export function FinalCta() {
         Point a webhook at it. Watch it land.
       </h2>
       <p className="mx-auto mb-8 max-w-[54ch] text-lg text-pretty text-fg-secondary">
-        Start on the Free tier: a permanent URL, full inspection, and one-command replay. Move up
-        when your team needs ingestion, delivery, or controls.
+        Start free: a permanent URL, full inspection, one-command replay — and outbound delivery,
+        because every feature is on every plan. Move up when you need more events.
       </p>
       <div className="flex flex-wrap justify-center gap-3">
         <Button asChild size="md">
