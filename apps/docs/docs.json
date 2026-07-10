@@ -10,8 +10,7 @@
   "favicon": "/favicon.svg",
   "logo": {
     "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg",
-    "href": "https://webhook.co"
+    "dark": "/logo/dark.svg"
   },
   "navigation": {
     "tabs": [
@@ -64,7 +63,7 @@
         "tab": "Guides",
         "groups": [
           {
-            "group": "Guides",
+            "group": "How-to guides",
             "icon": "book-open",
             "pages": [
               "guides/receive-your-first-webhook",
