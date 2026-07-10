@@ -1,0 +1,34 @@
+---
+title: "SDKs"
+sidebarTitle: "SDKs overview"
+description: "Official, typed SDKs for TypeScript, Python, and Go — generated from the OpenAPI contract, with the same hardening built in."
+icon: "code"
+---
+
+webhook.co ships official, typed SDKs in three languages. Each is generated from the same OpenAPI contract as the API and the [API reference](/api-reference/endpoints/list-endpoints), so a method never drifts from the endpoint behind it, and each carries the same hardening so you don't reimplement it three times.
+
+<CardGroup cols={3}>
+  <Card title="TypeScript" icon="js" href="/sdks/typescript">
+    `npm install @webhook-co/sdk`
+  </Card>
+
+  <Card title="Python" icon="python" href="/sdks/python">
+    `pip install webhook-co`
+  </Card>
+
+  <Card title="Go" icon="golang" href="/sdks/go">
+    `go get github.com/webhook-co/webhook-go`
+  </Card>
+</CardGroup>
+
+## What every SDK gives you
+
+- **Bearer auth**, taken once at construction and attached to every request — and redacted from errors and debug output, so a key never lands in a log.
+- **Bounded retries with jitter** on transient failures (`429`/`502`/`503`/`504` and network errors), honoring `Retry-After`, and never blind-retrying a non-idempotent write. See [rate limits](/reference/rate-limits).
+- **Cursor [pagination](/reference/pagination)** as a lazy async iterator — `for`-loop an endpoint's entire event history without touching a cursor.
+- **Idempotency** on replays: a fresh key per call, so a retried replay is safe.
+- **Typed [errors](/reference/errors)** — every failure is a `WebhookError` subclass you can narrow by type, carrying `code`, `status`, and `requestId`.
+
+## Which surface should I use?
+
+The SDKs, the [REST API](/api-reference/endpoints/list-endpoints), the [`wbhk` CLI](/cli/overview), and [MCP](/mcp/overview) all bind the same capability contract — pick by runtime, not by feature. Use an SDK inside an application, the CLI for scripts and local development, the API from anything that speaks HTTP, and MCP from an agent. A capability on one is a capability on all.

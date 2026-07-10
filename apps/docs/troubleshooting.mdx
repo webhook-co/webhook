@@ -1,0 +1,80 @@
+---
+title: "Troubleshooting & FAQ"
+sidebarTitle: "Troubleshooting"
+description: "The common webhook.co snags — signature verification, delivery failures, and the questions that come up most — with the fix for each."
+icon: "circle-question"
+---
+
+Most issues fall into a handful of buckets. Find yours below; each links to the page with the full story.
+
+## Verification
+
+<AccordionGroup>
+  <Accordion title="My events all show `unattempted`">
+    No provider secret is registered for the endpoint, so nothing is checked. Register the provider's signing secret — see [verify inbound signatures](/guides/verify-inbound-signatures) — and new events arrive with a real [verification state](/concepts/inbound-verification).
+  </Accordion>
+
+  <Accordion title="My events show `failed`">
+    A signature _was_ checked and rejected. Usual causes: the wrong secret (a test secret against live traffic, or a stale one after a rotation), or a proxy in front of your ingest that altered the body. Confirm the secret matches the one the provider signs with, and that nothing between the provider and `wbhk.my` rewrites the payload. A `failed` event is captured but never delivered or signed.
+  </Accordion>
+
+  <Accordion title="I'm verifying webhook.co's outbound signature myself and it won't match">
+    Almost always one of two things: you're verifying over a **re-serialized** body instead of the raw bytes, or you're using `==` instead of a constant-time compare. Verify over the exact bytes you received and compare with `crypto.timingSafeEqual` / `hmac.compare_digest`. The full snippet is on [sign outbound webhooks](/guides/sign-outbound-webhooks).
+  </Accordion>
+
+  <Accordion title="A provider that signs the URL (Square, Twilio, HubSpot) won't verify">
+    These sign the request URL along with the body, so the URL configured at the provider must be your ingest URL **exactly** — a trailing slash or an extra query parameter changes the signed string. Match it character-for-character.
+  </Accordion>
+</AccordionGroup>
+
+## Delivery
+
+<AccordionGroup>
+  <Accordion title="A delivery is `blocked`">
+    The destination resolved to a private or internal address and the [SSRF guard](/concepts/delivery-retry-signing) refused it. `blocked` is terminal — it's never retried. Point the destination at a publicly reachable HTTPS URL.
+  </Accordion>
+
+  <Accordion title="Deliveries are `failed` or `dead`">
+    `failed` is a retryable error (a non-2xx, a timeout); `dead` means the [retry schedule](/guides/handle-delivery-failures) exhausted all 8 attempts over ~32h. Read the error on the delivery with `wbhk deliveries get <id>`, fix the receiver, then replay the missed events.
+  </Accordion>
+
+  <Accordion title="A destination stopped receiving entirely">
+    After 20 consecutive dead deliveries a destination auto-disables and the org owner is emailed. Re-enable it with `wbhk replay-destinations enable <id>` once the receiver is fixed — owed deliveries resume on the next drain.
+  </Accordion>
+
+  <Accordion title="My agent isn't waking on new webhooks">
+    `triggers.wait` is a short-poll, not a push — it returns immediately with whatever's past your cursor. Keep calling it, threading `nextCursor`; while `caughtUp` is false, call again promptly. See [trigger semantics](/mcp/trigger-semantics).
+  </Accordion>
+</AccordionGroup>
+
+## Ingestion
+
+<AccordionGroup>
+  <Accordion title="My provider says the URL returned 429">
+    The endpoint is paused. A paused endpoint answers writes with a retryable `429` so a well-behaved sender holds the event and redelivers rather than dropping it — resume the endpoint and the redelivery lands. See [ingest URLs](/concepts/ingest-urls).
+  </Accordion>
+
+  <Accordion title="The provider's setup handshake is failing">
+    Handshakes are answered automatically, but some need a secret registered first — a Meta `verify_token`, a Braintree public key. Register the secret the [provider guide](/providers/directory) calls for, then retry the provider's verification.
+  </Accordion>
+
+  <Accordion title="`revealIngestUrl` returned null">
+    The endpoint predates sealed-token storage, or its seal degraded. [Rotate](/concepts/ingest-urls) the endpoint and the fresh URL is revealable from then on.
+  </Accordion>
+</AccordionGroup>
+
+## Auth
+
+<AccordionGroup>
+  <Accordion title="I'm getting 403 FORBIDDEN">
+    The key is valid but missing the scope the action needs. Mint a key with the right [scope](/authentication) rather than over-provisioning an existing one — `whoami` shows a key's scopes.
+  </Accordion>
+
+  <Accordion title="I'm getting 401 UNAUTHORIZED">
+    The bearer token is missing, malformed, expired, or revoked. Check the `Authorization: Bearer` header; if it leaked, [revoke and replace it](/leaked-api-key).
+  </Accordion>
+</AccordionGroup>
+
+## Still stuck?
+
+Every error response carries a `requestId` in the `x-request-id` header — include it when you reach out, and see [errors and status codes](/reference/errors) for the full taxonomy.
