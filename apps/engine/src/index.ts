@@ -1,6 +1,8 @@
 import { authorizeBearer, type BearerAuthzDeps } from "@webhook-co/contract";
 import {
+  advancePurgeJob,
   API_RESOURCE,
+  claimPurgeJobs,
   createClient,
   createCredentialHasherFromBase64,
   createIngestResolver,
@@ -67,6 +69,7 @@ import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 import { runAnchorCron } from "./anchor-cron";
+import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
 import {
   guardedDeliver,
@@ -138,6 +141,9 @@ export interface Env {
   HYPERDRIVE_ANCHOR: Hyperdrive;
   /** Hyperdrive config for the webhook_reconciler cross-org due-delivery read (query caching off). */
   HYPERDRIVE_RECONCILER: Hyperdrive;
+  /** Hyperdrive config for the webhook_purge cross-org payload-purge drain (query caching off).
+   *  Optional: absent until the purge role + Hyperdrive are provisioned, so the drain ships dark. */
+  HYPERDRIVE_PURGE?: Hyperdrive;
   /** Hyperdrive config for the webhook_meter cross-org metering-enumeration read (query caching off). */
   HYPERDRIVE_METER: Hyperdrive;
   /**
@@ -791,6 +797,14 @@ export default {
         ),
       ),
     );
+    // Durable payload-body purge: after an owner hard-deletes an org, its R2 payload bodies (outside
+    // Postgres) are cleared here in bounded batches until the org's prefix is empty. Dark until the
+    // purge role + Hyperdrive are provisioned. Independent of the others — a failure must not sink them.
+    ctx.waitUntil(
+      runPayloadPurgeDrainCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "payload purge cron failed", error: String(err) })),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -1198,6 +1212,49 @@ async function runReconcilerCron(env: Env): Promise<void> {
         );
       },
       limit: RECONCILE_LIMIT,
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+    });
+  } finally {
+    await sql.end();
+  }
+}
+
+// Payload-purge drain budget: how many deleted orgs to service and how much R2 work per tick.
+// Bounded so a large backlog never blows the Workers per-invocation subrequest/CPU ceiling — the
+// remainder resumes on the next tick. PAGE_SIZE is R2's per-call batch-delete ceiling.
+const PURGE_JOB_LIMIT = 20;
+const PURGE_BATCHES_PER_JOB = 50;
+const PURGE_PAGE_SIZE = 1000;
+
+async function runPayloadPurgeDrainCron(env: Env): Promise<void> {
+  if (!env.HYPERDRIVE_PURGE) return; // dark until the purge role + Hyperdrive are provisioned
+  // A short-lived connection as webhook_purge: its role-targeted SELECT + column-scoped UPDATE on
+  // org_deletions are the sole bound (no access to any tenant table). Caching off on this Hyperdrive.
+  const sql = createClient(env.HYPERDRIVE_PURGE.connectionString);
+  try {
+    await runPayloadPurgeCron({
+      claim: (n) => claimPurgeJobs(sql, n),
+      // The engine is the sole R2 principal (mirrors the PayloadReader RPC posture) — it deletes a
+      // deleted org's bodies directly from its own R2_PAYLOADS binding, prefix by prefix.
+      bucket: {
+        list: async (opts) => {
+          const listed = await env.R2_PAYLOADS.list({
+            prefix: opts.prefix,
+            cursor: opts.cursor,
+            limit: opts.limit,
+          });
+          return {
+            objects: listed.objects.map((o) => ({ key: o.key })),
+            truncated: listed.truncated,
+            cursor: listed.truncated ? listed.cursor : undefined,
+          };
+        },
+        delete: (keys) => env.R2_PAYLOADS.delete(keys),
+      },
+      advance: (input) => advancePurgeJob(sql, input),
+      jobLimit: PURGE_JOB_LIMIT,
+      batchesPerJob: PURGE_BATCHES_PER_JOB,
+      pageSize: PURGE_PAGE_SIZE,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
   } finally {

@@ -126,7 +126,13 @@ const APPS = {
     ],
     // HYPERDRIVE_METER_AUDIT (S4.4d) + HYPERDRIVE_METER_TRANSPORT_AUDIT (WS1) — each kept only when its
     // *_ID GH var is provisioned, else the whole @gen-optional block is stripped so the engine deploys dark.
-    optionalHyperdrives: ["HYPERDRIVE_METER_AUDIT_ID", "HYPERDRIVE_METER_TRANSPORT_AUDIT_ID"],
+    optionalHyperdrives: [
+      "HYPERDRIVE_METER_AUDIT_ID",
+      "HYPERDRIVE_METER_TRANSPORT_AUDIT_ID",
+      // data-lifecycle: the payload-purge drain's cross-org role. Unset for now, so the overlay strips
+      // the @gen-optional block and the engine deploys dark until the role + Hyperdrive are provisioned.
+      "HYPERDRIVE_PURGE_ID",
+    ],
   },
   api: {
     domain: "api.webhook.co",
