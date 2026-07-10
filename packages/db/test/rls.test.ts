@@ -1049,6 +1049,61 @@ describe("catalog-driven RLS coverage", () => {
     expect(auditPolicies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT", "SELECT"]);
   });
 
+  it("the meter-TRANSPORT role is non-owner/no-BYPASSRLS, reads the outbox + customer map only, never writes", async () => {
+    // webhook_meter_transport (WS1 / migration 0050) reconciles what we told Stripe (outbox `sent` rows)
+    // against what Stripe aggregated. It reads billing_customers.stripe_customer_id — an EXTERNAL id — so it
+    // is a distinct role from the recount oracle. Read-only, non-privileged, like every job role.
+    const [role] = await owner<{ super: boolean; bypass: boolean }[]>`
+      select rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.meterTransport}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+    const owned = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.meterTransport}`;
+    expect(owned[0]?.n).toBe(0);
+
+    // SELECT on exactly its columns: the value we POSTed + send markers, and the org→Stripe-customer map.
+    for (const [t, c] of [
+      ["stripe_meter_reports", "org_id"],
+      ["stripe_meter_reports", "day"],
+      ["stripe_meter_reports", "event_count"],
+      ["stripe_meter_reports", "status"],
+      ["stripe_meter_reports", "sent_at"],
+      ["billing_customers", "org_id"],
+      ["billing_customers", "stripe_customer_id"],
+    ] as Array<[string, string]>) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.meterTransport}, ${t}, ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    // NEVER the internal identifier / echoed stripe id, and never billing_customers.created_at.
+    for (const [t, c] of [
+      ["stripe_meter_reports", "identifier"],
+      ["stripe_meter_reports", "stripe_meter_event_id"],
+      ["stripe_meter_reports", "attempts"],
+      ["billing_customers", "created_at"],
+    ] as Array<[string, string]>) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.meterTransport}, ${t}, ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // No write anywhere; the role-targeted policies are FOR SELECT only.
+    for (const t of ["stripe_meter_reports", "billing_customers"] as const) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.meterTransport}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.meterTransport}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.meterTransport}, ${t}, 'DELETE')) as any`;
+      expect(p.any).toBe(false);
+    }
+    const transportPolicies = await owner<{ cmd: string }[]>`
+      select cmd from pg_policies where schemaname = 'public'
+      and policyname in ('stripe_meter_reports_transport_select', 'billing_customers_transport_select')`;
+    expect(transportPolicies.map((p) => p.cmd).sort()).toEqual(["SELECT", "SELECT"]);
+  });
+
   it("the billing writer role is non-owner/no-BYPASSRLS and holds exactly the verified-Stripe-writer grants", async () => {
     // webhook_billing (S4.5, migrations 0047/0048) is the verified-Stripe-only writer: insert+select on the
     // dedup ledger, and (S4.5b) the billing-state writes — insert/update on billing_customers/subscriptions,

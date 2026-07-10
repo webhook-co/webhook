@@ -144,7 +144,30 @@ export interface StripeClient {
   }): Promise<StripeHostedSession>;
   /** Report one metered-usage event to a Stripe Billing Meter (the outbox drainer's send step). */
   reportMeterEvent(args: ReportMeterEventArgs): Promise<StripeMeterEventResult>;
+  /** Low-level: GET a Stripe path with a query object (no body). Throws StripeError on a non-2xx. */
+  get<T = Record<string, unknown>>(path: string, query?: StripeParams): Promise<T>;
+  /**
+   * List a customer's meter-event summaries (what Stripe actually AGGREGATED) over a time range, day-grouped.
+   * The transport reconciler compares these to what we told Stripe (the outbox `sent` rows). Paginates fully.
+   */
+  listMeterEventSummaries(args: {
+    meterId: string;
+    customer: string;
+    startTime: number;
+    endTime: number;
+    valueGroupingWindow?: "hour" | "day";
+  }): Promise<MeterEventSummary[]>;
 }
+
+/** One Stripe meter-event summary: the value Stripe aggregated over [startTime, endTime). */
+export interface MeterEventSummary {
+  readonly startTime: number;
+  readonly endTime: number;
+  readonly aggregatedValue: number;
+}
+
+/** Guard against infinitely looping a broken `has_more` — far above any real page count. */
+const MAX_SUMMARY_PAGES = 1000;
 
 export function makeStripeClient(opts: StripeClientOptions): StripeClient {
   if (!stripeKeyMatchesMode(opts.mode, opts.secretKey)) {
@@ -153,6 +176,25 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
   }
   const base = opts.apiBase ?? DEFAULT_API_BASE;
   const doFetch = opts.fetchImpl ?? fetch;
+
+  // Shared response handling — Stripe always returns JSON; guard a non-JSON error page (e.g. a gateway 502)
+  // and turn any non-2xx into a typed StripeError. Used by both request() (POST) and get().
+  async function handleResponse<T>(res: Response): Promise<T> {
+    let body: { error?: { message?: string; type?: string; code?: string } } & Record<
+      string,
+      unknown
+    >;
+    try {
+      body = (await res.json()) as typeof body;
+    } catch {
+      throw new StripeError(res.status, `Stripe returned a non-JSON ${res.status} response`);
+    }
+    if (!res.ok) {
+      const e = body.error ?? {};
+      throw new StripeError(res.status, e.message ?? `Stripe error ${res.status}`, e.type, e.code);
+    }
+    return body as unknown as T;
+  }
 
   async function request<T>(
     path: string,
@@ -170,21 +212,20 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
       headers,
       body: stripeFormEncode(params),
     });
-    // Stripe always returns JSON; guard against a non-JSON error page (e.g. a gateway 502).
-    let body: { error?: { message?: string; type?: string; code?: string } } & Record<
-      string,
-      unknown
-    >;
-    try {
-      body = (await res.json()) as typeof body;
-    } catch {
-      throw new StripeError(res.status, `Stripe returned a non-JSON ${res.status} response`);
-    }
-    if (!res.ok) {
-      const e = body.error ?? {};
-      throw new StripeError(res.status, e.message ?? `Stripe error ${res.status}`, e.type, e.code);
-    }
-    return body as unknown as T;
+    return handleResponse<T>(res);
+  }
+
+  // A GET carries NO body and NO Content-Type; the query goes in the URL. Reuses handleResponse.
+  async function get<T>(path: string, query?: StripeParams): Promise<T> {
+    const qs = query ? stripeFormEncode(query) : "";
+    const res = await doFetch(`${base}/v1${path}${qs ? `?${qs}` : ""}`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${opts.secretKey}`,
+        "Stripe-Version": STRIPE_API_VERSION,
+      },
+    });
+    return handleResponse<T>(res);
   }
 
   return {
@@ -245,6 +286,41 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         },
         identifier,
       );
+    },
+    get,
+    async listMeterEventSummaries({ meterId, customer, startTime, endTime, valueGroupingWindow }) {
+      const out: MeterEventSummary[] = [];
+      let startingAfter: string | undefined;
+      for (let page = 0; page < MAX_SUMMARY_PAGES; page += 1) {
+        const body = await get<{
+          data?: Array<{
+            id: string;
+            start_time: number;
+            end_time: number;
+            aggregated_value: number;
+          }>;
+          has_more?: boolean;
+        }>(`/billing/meters/${meterId}/event_summaries`, {
+          customer,
+          start_time: startTime,
+          end_time: endTime,
+          value_grouping_window: valueGroupingWindow ?? "day",
+          limit: 100,
+          starting_after: startingAfter,
+        });
+        const data = body.data ?? [];
+        for (const d of data) {
+          out.push({
+            startTime: d.start_time,
+            endTime: d.end_time,
+            aggregatedValue: Number(d.aggregated_value),
+          });
+        }
+        const last = data[data.length - 1];
+        if (!body.has_more || !last) break;
+        startingAfter = last.id;
+      }
+      return out;
     },
   };
 }

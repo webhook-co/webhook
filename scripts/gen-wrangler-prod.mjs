@@ -80,6 +80,7 @@ const TOKEN = {
   // bindings — these substitute in unconditionally. No price/tier figure lives here (ids/names only).
   "<BILLING_MODE>": process.env.BILLING_MODE ?? "",
   "<STRIPE_METER_EVENT_NAME>": process.env.STRIPE_METER_EVENT_NAME ?? "",
+  "<STRIPE_METER_ID>": process.env.STRIPE_METER_ID ?? "",
   // STRIPE_PLANS is a JSON map (plan id → {base, overage} price ids) that lands INSIDE a JSON string value,
   // so its quotes must be escaped or the generated wrangler.prod.jsonc is unparseable. `JSON.stringify`
   // then strip the surrounding quotes = exactly the JSON string-body escaping wrangler needs.
@@ -119,11 +120,13 @@ const APPS = {
       "<FREE_EVENT_CAP>",
       "<BILLING_MODE>",
       "<STRIPE_METER_EVENT_NAME>",
+      "<STRIPE_METER_ID>",
       "webhook-payloads-dev",
       "webhook-audit-anchors-dev",
     ],
-    // HYPERDRIVE_METER_AUDIT (S4.4d) — kept only when HYPERDRIVE_METER_AUDIT_ID is provisioned, else stripped.
-    optionalHyperdrives: ["HYPERDRIVE_METER_AUDIT_ID"],
+    // HYPERDRIVE_METER_AUDIT (S4.4d) + HYPERDRIVE_METER_TRANSPORT_AUDIT (WS1) — each kept only when its
+    // *_ID GH var is provisioned, else the whole @gen-optional block is stripped so the engine deploys dark.
+    optionalHyperdrives: ["HYPERDRIVE_METER_AUDIT_ID", "HYPERDRIVE_METER_TRANSPORT_AUDIT_ID"],
   },
   api: {
     domain: "api.webhook.co",

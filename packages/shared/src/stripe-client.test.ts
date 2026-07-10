@@ -314,3 +314,144 @@ describe("makeStripeClient — the mode/key guard is UNSKIPPABLE (it lives in th
     expect(() => makeStripeClient({ mode: "test", secretKey: TEST })).not.toThrow();
   });
 });
+
+/** A fake fetch that returns a SEQUENCE of canned responses (for pagination), recording every call. */
+function fakeFetchSeq(responses: Array<{ status: number; body: unknown }>) {
+  const calls: Array<{ url: string; init: RequestInit }> = [];
+  let i = 0;
+  const impl = (async (url: string, init: RequestInit) => {
+    calls.push({ url, init });
+    const r = responses[Math.min(i, responses.length - 1)];
+    i += 1;
+    return {
+      ok: r.status >= 200 && r.status < 300,
+      status: r.status,
+      json: async () => r.body,
+    } as Response;
+  }) as unknown as typeof fetch;
+  return { impl, calls };
+}
+
+describe("makeStripeClient.get", () => {
+  it("GETs /v1<path>?query with Bearer + Version and NO body / NO Content-Type", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: { object: "list", data: [] } });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    await client.get("/billing/meters/mtr_1/event_summaries", { customer: "cus_1", limit: 100 });
+    const { url, init } = calls[0];
+    expect(init.method).toBe("GET");
+    expect(init.body).toBeUndefined();
+    const headers = init.headers as Record<string, string>;
+    expect(headers["Authorization"]).toBe(`Bearer ${SECRET}`);
+    expect(headers["Stripe-Version"]).toBe(STRIPE_API_VERSION);
+    expect(headers["Content-Type"]).toBeUndefined();
+    // query lands in the URL, not the body
+    const u = new URL(url);
+    expect(u.pathname).toBe("/v1/billing/meters/mtr_1/event_summaries");
+    expect(u.searchParams.get("customer")).toBe("cus_1");
+    expect(u.searchParams.get("limit")).toBe("100");
+  });
+
+  it("omits the ? entirely when there is no query", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: {} });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    await client.get("/account");
+    expect(calls[0].url).toBe("https://stripe.test/v1/account");
+  });
+
+  it("throws StripeError on a non-2xx", async () => {
+    const { impl } = fakeFetch({ status: 402, body: { error: { message: "nope", code: "x" } } });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
+    await expect(client.get("/x")).rejects.toBeInstanceOf(StripeError);
+  });
+
+  it("throws StripeError on a non-JSON gateway response", async () => {
+    // A gateway 502 whose body isn't JSON: json() rejects → handleResponse must still throw a StripeError.
+    const badImpl = (async () =>
+      ({
+        ok: false,
+        status: 502,
+        json: async () => {
+          throw new Error("not json");
+        },
+      }) as Response) as unknown as typeof fetch;
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: badImpl });
+    await expect(client.get("/x")).rejects.toBeInstanceOf(StripeError);
+  });
+});
+
+describe("makeStripeClient.listMeterEventSummaries", () => {
+  const base = {
+    mode: "test" as const,
+    secretKey: SECRET,
+    apiBase: "https://stripe.test",
+  };
+
+  it("builds the meter/customer/time/day-window/limit params and parses aggregated_value", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: {
+        object: "list",
+        has_more: false,
+        data: [
+          { id: "mes_1", start_time: 1_780_000_000, end_time: 1_780_086_400, aggregated_value: 42 },
+        ],
+      },
+    });
+    const client = makeStripeClient({ ...base, fetchImpl: impl });
+    const out = await client.listMeterEventSummaries({
+      meterId: "mtr_1",
+      customer: "cus_1",
+      startTime: 1_780_000_000,
+      endTime: 1_782_000_000,
+    });
+    expect(out).toEqual([
+      { startTime: 1_780_000_000, endTime: 1_780_086_400, aggregatedValue: 42 },
+    ]);
+    const u = new URL(calls[0].url);
+    expect(u.pathname).toBe("/v1/billing/meters/mtr_1/event_summaries");
+    expect(u.searchParams.get("customer")).toBe("cus_1");
+    expect(u.searchParams.get("start_time")).toBe("1780000000");
+    expect(u.searchParams.get("end_time")).toBe("1782000000");
+    expect(u.searchParams.get("value_grouping_window")).toBe("day");
+    expect(u.searchParams.get("limit")).toBe("100");
+  });
+
+  it("paginates via starting_after until has_more is false and concatenates", async () => {
+    const { impl, calls } = fakeFetchSeq([
+      {
+        status: 200,
+        body: {
+          has_more: true,
+          data: [{ id: "mes_1", start_time: 100, end_time: 200, aggregated_value: 1 }],
+        },
+      },
+      {
+        status: 200,
+        body: {
+          has_more: false,
+          data: [{ id: "mes_2", start_time: 200, end_time: 300, aggregated_value: 2 }],
+        },
+      },
+    ]);
+    const client = makeStripeClient({ ...base, fetchImpl: impl });
+    const out = await client.listMeterEventSummaries({
+      meterId: "mtr_1",
+      customer: "cus_1",
+      startTime: 0,
+      endTime: 1000,
+    });
+    expect(out.map((s) => s.aggregatedValue)).toEqual([1, 2]);
+    // second call carries starting_after = last id of page 1
+    expect(new URL(calls[1].url).searchParams.get("starting_after")).toBe("mes_1");
+  });
+});

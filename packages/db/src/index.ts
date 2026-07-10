@@ -49,5 +49,6 @@ export * from "./usage-rollup";
 export * from "./cap-producer";
 export * from "./meter-reporter";
 export * from "./meter-reconcile";
+export * from "./meter-transport-reconcile";
 export * from "./stripe-events";
 export * from "./billing-sync";
