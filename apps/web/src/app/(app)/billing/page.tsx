@@ -1,5 +1,5 @@
 import { Banner, Button } from "@webhook-co/ui";
-import type { BillingDisplay } from "@webhook-co/shared";
+import { planLabel, type BillingDisplay } from "@webhook-co/shared";
 import type { Metadata } from "next";
 
 import { loadBillingSummary } from "@/server/billing";
@@ -11,13 +11,14 @@ import { verifySession } from "@/server/session";
 // cancel/payment/invoices, and an upgrade/resubscribe picker when the org isn't on an entitled paid plan.
 // No price/included-volume figure lives here — Stripe's Checkout shows the amount and /usage shows the cap.
 
-const PLAN_LABEL: Record<string, string> = { pro: "Pro", scale: "Scale" };
-
 /** A human status line for the current-plan card, honest about grace + cancellation (ADR-0004 / ADR-0020). */
 function stateLabel(d: BillingDisplay, when: string): { label: string; tone: "ok" | "warn" } {
   switch (d.state) {
     case "active":
       return { label: `Renews ${when}`, tone: "ok" };
+    case "trialing":
+      // The shown date is the trial's FIRST charge, not a renewal — say so, or a trial reads as a paid plan.
+      return { label: `Trial — first charge ${when}`, tone: "ok" };
     case "canceling":
       return {
         label: `Cancels ${when} — capture pauses then, until you resubscribe`,
@@ -38,6 +39,8 @@ function stateLabel(d: BillingDisplay, when: string): { label: string; tone: "ok
 const BILLING_ERROR: Record<string, string> = {
   unknown_plan: "That plan isn't available. Pick one below, or contact us about Enterprise.",
   no_customer: "You don't have a subscription to manage yet.",
+  already_subscribed:
+    "You already have an active subscription — manage or change it below, not by starting a new one.",
   error: "We couldn't reach our payment provider. Nothing was charged — try again.",
   disabled: "Billing isn't available right now.",
 };
@@ -46,14 +49,20 @@ export const metadata: Metadata = { title: "Billing · webhook.co" };
 
 function fmtDate(iso: string): string {
   const t = Date.parse(iso);
+  // timeZone:"UTC" — current_period_end is a midnight-UTC instant; without pinning UTC it renders one day
+  // early in any behind-UTC runtime (the usage page's fmtDate pins it for the same reason).
   return Number.isNaN(t)
     ? ""
-    : new Date(t).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+    : new Date(t).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "long",
+        day: "numeric",
+        timeZone: "UTC",
+      });
 }
 
 function CurrentPlanCard({ display }: { display: BillingDisplay }) {
-  const tierLabel =
-    display.tier === "unknown" ? "Paid plan" : (PLAN_LABEL[display.tier] ?? "Paid plan");
+  const tierLabel = planLabel(display.tier);
   const status = stateLabel(display, fmtDate(display.periodEnd));
   return (
     <div className="flex flex-col gap-4 rounded-card border border-hairline bg-surface p-6">
@@ -122,7 +131,7 @@ function UpgradeCard({
           <form key={planId} action={startCheckoutAction}>
             <input type="hidden" name="planId" value={planId} />
             <Button type="submit" variant={planId === "pro" ? "primary" : "secondary"}>
-              {resubscribe ? "Resubscribe to" : "Start on"} {PLAN_LABEL[planId] ?? planId}
+              {resubscribe ? "Resubscribe to" : "Start on"} {planLabel(planId)}
             </Button>
           </form>
         ))}

@@ -52,6 +52,25 @@ export function isBillingActive(status: string): boolean {
 }
 
 /**
+ * The TERMINAL Stripe subscription statuses — the subscription object no longer exists at Stripe, so a
+ * fresh Checkout is the correct (and only) way to resubscribe and CANNOT create a duplicate. `canceled` is
+ * an explicit `subscription.deleted`; `incomplete_expired` is a first payment that never completed and was
+ * garbage-collected. Every OTHER status (active/trialing/past_due/unpaid/paused/incomplete) is a subscription
+ * that still LIVES — starting a new Checkout on the same customer would double-subscribe them.
+ */
+const TERMINAL_SUBSCRIPTION_STATUSES = ["canceled", "incomplete_expired"] as const;
+
+/**
+ * Whether a subscription with this status still exists at Stripe (so a NEW Checkout on the same customer
+ * would create a duplicate). Fail-SAFE: an unknown/blank status counts as live, so we block a possible
+ * double-subscribe rather than risk one. This is the money guard behind both the upgrade-picker gating and
+ * the `startCheckout` already-subscribed backstop.
+ */
+export function isLiveSubscriptionStatus(status: string): boolean {
+  return !(TERMINAL_SUBSCRIPTION_STATUSES as readonly string[]).includes(status);
+}
+
+/**
  * The plans a user can buy from the dashboard without talking to us. Enterprise is deliberately absent —
  * it is a contact-sales motion, never a hosted Checkout — and so is `free`, which has no price at all.
  *
@@ -60,6 +79,18 @@ export function isBillingActive(status: string): boolean {
  */
 export const SELF_SERVE_PLAN_IDS = ["pro", "scale"] as const;
 export type SelfServePlanId = (typeof SELF_SERVE_PLAN_IDS)[number];
+
+/** Display names for the self-serve tiers — co-located with the ids so adding a plan is a single edit
+ *  (a new id without a label here is a type error, not a silent raw-slug fallback in the dashboard). */
+export const SELF_SERVE_PLAN_LABELS: Record<SelfServePlanId, string> = {
+  pro: "Pro",
+  scale: "Scale",
+};
+
+/** Human label for a plan id (or an unknown/legacy tier). Falls back to a generic name, never a raw slug. */
+export function planLabel(id: string): string {
+  return isSelfServePlan(id) ? SELF_SERVE_PLAN_LABELS[id] : "Paid plan";
+}
 
 /** Whether `id` names a plan that Checkout may sell. Anything else must not reach a Stripe line item. */
 export function isSelfServePlan(id: string): id is SelfServePlanId {
@@ -123,9 +154,11 @@ export interface BillingSubscriptionSummary {
   readonly cancelAtPeriodEnd: boolean;
 }
 
-/** A dashboard-facing billing state. `canceling` = active-but-scheduled-to-cancel; `inactive` = a
- *  non-entitled status (unpaid/incomplete/paused) that has dropped to the Free allowance. */
-export type BillingState = "active" | "past_due" | "canceling" | "canceled" | "inactive";
+/** A dashboard-facing billing state. `trialing` = entitled but no charge yet (shown date is the FIRST
+ *  charge, not a renewal); `canceling` = active-but-scheduled-to-cancel; `inactive` = a non-entitled status
+ *  (unpaid/incomplete/paused) that has dropped to the Free allowance. */
+export type BillingState =
+  "active" | "trialing" | "past_due" | "canceling" | "canceled" | "inactive";
 
 export interface BillingDisplay {
   /** The self-serve tier this subscription is on, or "unknown" if the base price isn't in STRIPE_PLANS
@@ -149,9 +182,16 @@ export function planIdForBasePrice(
 
 /**
  * Derive the dashboard billing state from a synced subscription. Order matters and encodes ADR-0020's grace
- * rule: an explicit `canceled` is terminal; a non-entitled status (unpaid/incomplete/paused) reads as
- * `inactive` (back on Free); a still-entitled sub scheduled to cancel is `canceling`; `past_due` is a grace
- * window (entitled, NOT paused) shown distinctly; otherwise `active`. Pure + exhaustively unit-testable.
+ * rule. Precedence, highest first:
+ *   1. `canceled` — explicit `subscription.deleted`, terminal.
+ *   2. non-entitled (unpaid/incomplete/paused) → `inactive` (dropped back to the Free allowance).
+ *   3. `past_due` — a failing card is the actionable state and must surface even when the sub is ALSO
+ *      scheduled to cancel (so it is checked BEFORE cancelAtPeriodEnd; hiding it behind "canceling" would
+ *      bury the dunning message during the grace window).
+ *   4. `cancelAtPeriodEnd` (and not past_due) → `canceling`.
+ *   5. `trialing` → its own state (the shown date is the FIRST charge, not a renewal — "Renews" would lie).
+ *   6. otherwise `active`.
+ * Pure + exhaustively unit-testable.
  */
 export function billingDisplayFromSubscription(
   sub: BillingSubscriptionSummary,
@@ -168,11 +208,13 @@ export function billingDisplayFromSubscription(
       ? "canceled"
       : !isBillingActive(sub.status)
         ? "inactive"
-        : sub.cancelAtPeriodEnd
-          ? "canceling"
-          : sub.status === "past_due"
-            ? "past_due"
-            : "active";
+        : sub.status === "past_due"
+          ? "past_due"
+          : sub.cancelAtPeriodEnd
+            ? "canceling"
+            : sub.status === "trialing"
+              ? "trialing"
+              : "active";
   return { ...base, state };
 }
 

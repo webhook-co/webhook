@@ -5,11 +5,13 @@ import { readBillingCustomerId, readBillingSummary } from "@webhook-co/db/reads"
 import {
   billingDisplayFromSubscription,
   billingEnabled,
+  isLiveSubscriptionStatus,
   isSelfServePlan,
   makeStripeClient,
   SELF_SERVE_PLAN_IDS,
   stripeKeyMatchesMode,
   type BillingDisplay,
+  type BillingSubscriptionSummary,
   type SelfServePlanId,
   type StripeClient,
 } from "@webhook-co/shared";
@@ -34,7 +36,22 @@ export type BillingActionResult =
   | { readonly status: "unknown_plan" }
   /** Portal only: the org has never subscribed, so there's no Stripe customer to manage. */
   | { readonly status: "no_customer" }
+  /** The org already has a LIVE subscription — a new Checkout would double-subscribe it. Manage via Portal. */
+  | { readonly status: "already_subscribed" }
   | { readonly status: "error" };
+
+/** The org's Stripe customer id (if any) + its synced subscription mirror row (if any), read together
+ *  under one tenant-RLS transaction. The pair drives both the already-subscribed guard and the picker. */
+async function readOrgBilling(
+  orgId: string,
+): Promise<{ customerId: string | null; sub: BillingSubscriptionSummary | null }> {
+  return withTenantDb((app) =>
+    withTenant(app, orgId, async (tx) => ({
+      customerId: await readBillingCustomerId(tx),
+      sub: await readBillingSummary(tx),
+    })),
+  );
+}
 
 /** Build the Stripe client from env, or null when billing isn't fully configured (key missing). */
 async function stripeClientFromEnv(): Promise<StripeClient | null> {
@@ -78,12 +95,18 @@ export async function startCheckout(
     // becomes an "error" banner, never an unhandled server-action rejection. A null key = not configured.
     const client = await stripeClientFromEnv();
     if (!client) return { status: "disabled" };
-    const existingCustomer = await withTenantDb((app) =>
-      withTenant(app, orgId, (tx) => readBillingCustomerId(tx)),
-    );
+    const { customerId, sub } = await readOrgBilling(orgId);
+    // Money backstop: never open a Checkout for an org that still has a LIVE subscription (active,
+    // trialing, past_due, unpaid, paused, incomplete) — Stripe would create a SECOND concurrent
+    // subscription on the same customer and double-bill them. Changing an existing plan is WS4 / the
+    // Portal, not a fresh Checkout. A terminal sub (canceled/incomplete_expired) is a legitimate
+    // resubscribe and passes. Residual: an unmirrored live sub (customer exists, mirror empty) isn't
+    // caught here — the picker gating in loadBillingSummary declines to offer Checkout in that case, and
+    // a Stripe-side subscription read is deferred to WS4 where that seam is built.
+    if (sub && isLiveSubscriptionStatus(sub.status)) return { status: "already_subscribed" };
     const session = await client.createCheckoutSession({
-      customer: existingCustomer ?? undefined,
-      customerEmail: existingCustomer ? undefined : email,
+      customer: customerId ?? undefined,
+      customerEmail: customerId ? undefined : email,
       lineItems: [{ price: prices.base, quantity: 1 }, { price: prices.overage }],
       successUrl: `${BILLING_RETURN_URL}?checkout=success`,
       cancelUrl: `${BILLING_RETURN_URL}?checkout=cancelled`,
@@ -103,11 +126,12 @@ export async function openBillingPortal(orgId: string): Promise<BillingActionRes
     // Secret resolution is inside the try (see startCheckout) — a Secrets Store fault → "error", not a 500.
     const client = await stripeClientFromEnv();
     if (!client) return { status: "disabled" };
-    const customer = await withTenantDb((app) =>
-      withTenant(app, orgId, (tx) => readBillingCustomerId(tx)),
-    );
-    if (!customer) return { status: "no_customer" };
-    const session = await client.createPortalSession({ customer, returnUrl: BILLING_RETURN_URL });
+    const { customerId } = await readOrgBilling(orgId);
+    if (!customerId) return { status: "no_customer" };
+    const session = await client.createPortalSession({
+      customer: customerId,
+      returnUrl: BILLING_RETURN_URL,
+    });
     return { status: "ok", url: session.url };
   } catch (error) {
     logActionError("billing.portal_failed", error);
@@ -133,9 +157,22 @@ const HIDDEN_VIEW: BillingView = {
   hasCustomer: false,
 };
 
-/** Whether a display state still entitles the org to its paid plan (so we don't offer an upgrade picker). */
-function isEntitledState(state: BillingDisplay["state"] | undefined): boolean {
-  return state === "active" || state === "canceling" || state === "past_due";
+/**
+ * Whether it is safe to offer a NEW-subscription Checkout (the upgrade/resubscribe picker) — i.e. the org
+ * has NO live subscription that a fresh Checkout would duplicate. Safe cases:
+ *   - no Stripe customer at all → a genuinely new subscriber;
+ *   - a terminal sub (canceled / incomplete_expired) → a legitimate resubscribe.
+ * NOT safe (→ no picker, route to the Portal instead):
+ *   - any live sub (active/trialing/past_due/unpaid/paused/incomplete) → a new Checkout double-subscribes;
+ *   - a customer with NO mirror row → could be an unmirrored live sub, so we decline to invite Checkout.
+ * This mirrors the `startCheckout` backstop and is what closes the double-subscribe regression.
+ */
+function canStartNewCheckout(
+  customerId: string | null,
+  sub: BillingSubscriptionSummary | null,
+): boolean {
+  if (sub) return !isLiveSubscriptionStatus(sub.status);
+  return customerId === null;
 }
 
 export async function loadBillingSummary(orgId: string): Promise<BillingView> {
@@ -145,18 +182,13 @@ export async function loadBillingSummary(orgId: string): Promise<BillingView> {
   try {
     const secretKey = await getStripeSecretKey();
     if (!secretKey || !stripeKeyMatchesMode(mode, secretKey)) return HIDDEN_VIEW; // transient/dark
-    const { customerId, sub } = await withTenantDb((app) =>
-      withTenant(app, orgId, async (tx) => ({
-        customerId: await readBillingCustomerId(tx),
-        sub: await readBillingSummary(tx),
-      })),
-    );
+    const { customerId, sub } = await readOrgBilling(orgId);
     const display = sub ? billingDisplayFromSubscription(sub, plans) : null;
-    // Offer the upgrade/resubscribe picker unless the org is on an entitled paid plan (switching between
-    // paid plans is a separate action, not the picker). Ladder order (pro → scale), configured plans only.
-    const upgradePlanIds = isEntitledState(display?.state)
-      ? []
-      : SELF_SERVE_PLAN_IDS.filter((id) => plans[id]);
+    // Offer the picker ONLY when a new Checkout can't create a duplicate subscription (see
+    // canStartNewCheckout). Ladder order (pro → scale), configured plans only.
+    const upgradePlanIds = canStartNewCheckout(customerId, sub)
+      ? SELF_SERVE_PLAN_IDS.filter((id) => plans[id])
+      : [];
     return { hidden: false, display, upgradePlanIds, hasCustomer: customerId !== null };
   } catch (error) {
     logActionError("billing.summary_failed", error);
