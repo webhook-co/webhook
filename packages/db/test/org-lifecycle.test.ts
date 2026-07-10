@@ -6,7 +6,13 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { appendAuditEntry, readAuditChain } from "../src/audit-append";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { deleteOrgWithAudit, isOrgOwner, OrgNotFoundError } from "../src/org-lifecycle";
+import {
+  advancePurgeJob,
+  claimPurgeJobs,
+  deleteOrgWithAudit,
+  isOrgOwner,
+  OrgNotFoundError,
+} from "../src/org-lifecycle";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -20,6 +26,7 @@ import { setupHookTimeoutMs } from "./pg-timing";
 let pg: EphemeralPostgres;
 let app: Sql;
 let owner: Sql;
+let purge: Sql;
 let key: CryptoKey;
 
 async function seedUser(id: string): Promise<void> {
@@ -62,12 +69,14 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+  purge = createClient(pg.urlFor({ role: DB_ROLES.purge }));
   key = await importAuditKey(new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 7) % 256)));
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
   await owner?.end();
+  await purge?.end();
   await pg?.stop();
 });
 
@@ -138,5 +147,68 @@ describe("isOrgOwner", () => {
     expect(await isOrgOwner(app, ownerId, orgId)).toBe(true);
     expect(await isOrgOwner(app, memberId, orgId)).toBe(false);
     expect(await isOrgOwner(app, "u_nobody", orgId)).toBe(false);
+  });
+});
+
+describe("purge drain (webhook_purge)", () => {
+  it("claims outstanding jobs, advances the resume cursor, and completes them", async () => {
+    const u = `u_drain_${randomUUID().slice(0, 8)}`;
+    await seedUser(u);
+    const o1 = await seedOrg("drain-1", u);
+    const o2 = await seedOrg("drain-2", u);
+    await deleteOrgWithAudit(app, { orgId: o1, actor: u }, key);
+    await deleteOrgWithAudit(app, { orgId: o2, actor: u }, key);
+
+    // Both jobs are outstanding and unstarted (cursor null).
+    const claimed = await claimPurgeJobs(purge, 10);
+    const ids = claimed.map((j) => j.orgId);
+    expect(ids).toEqual(expect.arrayContaining([o1, o2]));
+    expect(claimed.every((j) => j.cursor === null)).toBe(true);
+
+    // Advance o1 mid-prefix (not done): the resume cursor persists, job still outstanding.
+    await advancePurgeJob(purge, { orgId: o1, cursor: "cur-1", deltaObjects: 500, done: false });
+    const mid = (await claimPurgeJobs(purge, 10)).find((j) => j.orgId === o1);
+    expect(mid?.cursor).toBe("cur-1");
+
+    // Finish o1: it drops out of the outstanding set and records completion + the running total.
+    await advancePurgeJob(purge, { orgId: o1, cursor: null, deltaObjects: 300, done: true });
+    const afterIds = (await claimPurgeJobs(purge, 10)).map((j) => j.orgId);
+    expect(afterIds).not.toContain(o1);
+    expect(afterIds).toContain(o2);
+
+    const [done] = await purge<
+      { status: string; objects_purged: string; done_at: string | null }[]
+    >`
+      select status, objects_purged, purge_completed_at as done_at
+      from org_deletions where org_id = ${o1}`;
+    expect(done.status).toBe("completed");
+    expect(Number(done.objects_purged)).toBe(800);
+    expect(done.done_at).not.toBeNull();
+  });
+
+  it("holds least privilege: SELECT+UPDATE org_deletions only, no tenant-table access, non-super", async () => {
+    // SELECT is table-level; UPDATE is COLUMN-level (least privilege) so has_table_privilege
+    // reports no table UPDATE — the drain columns are individually granted, org_id is NOT (a job
+    // can never be reassigned to another org). No INSERT, no DELETE.
+    const [g] = await owner<
+      { sel: boolean; ins: boolean; del: boolean; updStatus: boolean; updOrgId: boolean }[]
+    >`
+      select
+        has_table_privilege(${DB_ROLES.purge}, 'org_deletions', 'SELECT') as sel,
+        has_table_privilege(${DB_ROLES.purge}, 'org_deletions', 'INSERT') as ins,
+        has_table_privilege(${DB_ROLES.purge}, 'org_deletions', 'DELETE') as del,
+        has_column_privilege(${DB_ROLES.purge}, 'org_deletions', 'status', 'UPDATE') as "updStatus",
+        has_column_privilege(${DB_ROLES.purge}, 'org_deletions', 'org_id', 'UPDATE') as "updOrgId"`;
+    expect(g).toEqual({ sel: true, ins: false, del: false, updStatus: true, updOrgId: false });
+
+    for (const table of ["events", "orgs", "audit_log", "api_keys"]) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.purge}, ${table}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+
+    const [r] = await owner<{ super: boolean; bypass: boolean }[]>`
+      select rolsuper as super, rolbypassrls as bypass from pg_roles where rolname = ${DB_ROLES.purge}`;
+    expect(r).toEqual({ super: false, bypass: false });
   });
 });

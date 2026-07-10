@@ -73,3 +73,54 @@ export async function deleteOrgWithAudit(
     return { orgId: input.orgId, deletedAt: row.deletedAt };
   });
 }
+
+/** One outstanding R2-purge job: the deleted org and where its last purge pass left off. */
+export interface PurgeJob {
+  orgId: string;
+  /** The R2 list cursor to resume from, or null to (re)start at the beginning of the prefix. */
+  cursor: string | null;
+}
+
+/**
+ * Read outstanding R2-purge jobs (oldest first) for the engine drain. Runs as `webhook_purge` on
+ * its own connection (NOT `withTenant`) — the role-targeted `FOR SELECT TO webhook_purge` policy is
+ * the sole bound, so this is a bare cross-org read of a table the role can only see, never mutate
+ * beyond its column-scoped UPDATE. The `partial index on (requested_at) where status='purging'`
+ * keeps the scan index-driven.
+ */
+export async function claimPurgeJobs(purge: Sql, limit: number): Promise<PurgeJob[]> {
+  return purge<PurgeJob[]>`
+    select org_id as "orgId", r2_cursor as cursor
+    from org_deletions
+    where status = 'purging'
+    order by requested_at
+    limit ${limit}`;
+}
+
+/**
+ * Advance a purge job after a batch of R2 objects was deleted. When `done`, the prefix is exhausted:
+ * flip the job to `completed` and stamp `purge_completed_at` (its durable proof the payloads are
+ * gone). Otherwise persist the resume `cursor` and accumulate the count so the next drain tick (or a
+ * crash-retry) picks up exactly where this left off. Runs as `webhook_purge`; the `status='purging'`
+ * predicate + the role-targeted UPDATE policy mean a completed job is never touched again.
+ */
+export async function advancePurgeJob(
+  purge: Sql,
+  input: { orgId: string; cursor: string | null; deltaObjects: number; done: boolean },
+): Promise<void> {
+  if (input.done) {
+    await purge`
+      update org_deletions
+      set objects_purged = objects_purged + ${input.deltaObjects},
+          r2_cursor = null,
+          status = 'completed',
+          purge_completed_at = now()
+      where org_id = ${input.orgId} and status = 'purging'`;
+    return;
+  }
+  await purge`
+    update org_deletions
+    set objects_purged = objects_purged + ${input.deltaObjects},
+        r2_cursor = ${input.cursor}
+    where org_id = ${input.orgId} and status = 'purging'`;
+}
