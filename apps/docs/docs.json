@@ -22,25 +22,6 @@
             "pages": ["introduction", "quickstart", "authentication"]
           },
           {
-            "group": "Providers",
-            "icon": "plug",
-            "pages": [
-              "providers/verifying-provider-webhooks",
-              "providers/directory",
-              "providers/stripe",
-              "providers/github",
-              "providers/shopify",
-              "providers/slack",
-              "providers/braintree",
-              "providers/adyen",
-              "providers/square",
-              "providers/twilio",
-              "providers/hubspot",
-              "providers/meta",
-              "providers/custom"
-            ]
-          },
-          {
             "group": "Concepts",
             "icon": "shapes",
             "pages": [
@@ -76,6 +57,25 @@
               "guides/sign-outbound-webhooks",
               "guides/handle-delivery-failures",
               "deduplication"
+            ]
+          },
+          {
+            "group": "Providers",
+            "icon": "plug",
+            "pages": [
+              "providers/verifying-provider-webhooks",
+              "providers/directory",
+              "providers/stripe",
+              "providers/github",
+              "providers/shopify",
+              "providers/slack",
+              "providers/braintree",
+              "providers/adyen",
+              "providers/square",
+              "providers/twilio",
+              "providers/hubspot",
+              "providers/meta",
+              "providers/custom"
             ]
           },
           {
