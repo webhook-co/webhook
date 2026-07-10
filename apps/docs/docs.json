@@ -8,6 +8,11 @@
     "dark": "#0e141b"
   },
   "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
+    "href": "https://webhook.co"
+  },
   "navigation": {
     "tabs": [
       {
@@ -96,58 +101,46 @@
           {
             "group": "Resources",
             "icon": "life-ring",
-            "pages": [
-              "troubleshooting",
-              "leaked-api-key""]
+            "pages": ["troubleshooting", "leaked-api-key"]
           }
         ]
       },
       {
         "tab": "API reference",
         "openapi": "https://api.webhook.co/openapi.json"
-      }
-    ]
-  },
-  "navbar",
-  {
-    "tab": "CLI & SDKs",
-    "groups": [
+      },
       {
-        "group": "CLI",
-        "icon": "terminal",
-        "pages": [
-          "cli/overview",
-          "cli/command-reference"
+        "tab": "CLI & SDKs",
+        "groups": [
+          {
+            "group": "CLI",
+            "icon": "terminal",
+            "pages": ["cli/overview", "cli/command-reference"]
+          },
+          {
+            "group": "SDKs",
+            "icon": "code",
+            "pages": ["sdks/overview", "sdks/typescript", "sdks/python", "sdks/go"]
+          }
         ]
       },
       {
-        "group": "SDKs",
-        "icon": "code",
+        "tab": "MCP & agents",
         "pages": [
-          "sdks/overview",
-          "sdks/typescript",
-          "sdks/python",
-          "sdks/go"
+          "mcp/overview",
+          "mcp/wake-an-agent",
+          "mcp/trigger-semantics",
+          "mcp/using-from-a-client",
+          "mcp/connect-the-docs-mcp"
         ]
+      },
+      {
+        "tab": "Changelog",
+        "pages": ["changelog"]
       }
     ]
   },
-  {
-    "tab": "MCP & agents",
-    "pages": [
-      "mcp/overview",
-      "mcp/wake-an-agent",
-      "mcp/trigger-semantics",
-      "mcp/using-from-a-client",
-      "mcp/connect-the-docs-mcp"
-    ]
-  },
-  {
-    "tab": "Changelog",
-    "pages": [
-      "changelog"
-    ]
-  }: {
+  "navbar": {
     "links": [
       {
         "label": "Dashboard",
@@ -162,12 +155,6 @@
   },
   "description": "webhook.co documentation — a free, permanent, signed webhook URL with payload inspection, replay-to-localhost, inbound verification across 142 providers, outbound delivery, and an MCP webhook→agent trigger. Identical across CLI, API, dashboard, and MCP.",
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "cursor"],
-    "display": "header"
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg",
-    "href": "https://webhook.co"
+    "options": ["copy", "view", "chatgpt", "claude", "cursor"]
   }
 }
