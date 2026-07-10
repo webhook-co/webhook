@@ -57,6 +57,37 @@ describe("OpenAPI document — top-level shape", () => {
   });
 });
 
+describe("tags — sidebar section headers are consistent", () => {
+  const opTags = new Set<string>();
+  for (const item of Object.values(paths)) {
+    for (const op of Object.values(item)) {
+      for (const t of (op.tags as string[] | undefined) ?? []) opTags.add(t);
+    }
+  }
+  const declared = new Set((doc.tags as JsonObject[]).map((t) => t.name as string));
+
+  it("gives every operation tag a title-case name (no lowercase section headers)", () => {
+    for (const t of opTags) {
+      expect(t[0], `tag ${JSON.stringify(t)} must start upper-case`).toBe(t[0]!.toUpperCase());
+    }
+  });
+
+  it("declares every operation tag at the top level with a description", () => {
+    for (const t of opTags) {
+      expect(
+        declared.has(t),
+        `tag ${JSON.stringify(t)} is not declared in the top-level tags`,
+      ).toBe(true);
+    }
+    for (const t of doc.tags as JsonObject[]) {
+      expect(
+        (t.description as string | undefined)?.length,
+        `tag ${t.name} needs a description`,
+      ).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe("drift guard L2 — the paths bijection with the route manifest", () => {
   it("has exactly one operation per route (no gaps, no extras)", () => {
     const operationCount = Object.values(paths).reduce(

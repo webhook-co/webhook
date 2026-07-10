@@ -368,6 +368,8 @@ function tagOf(route: RouteDef): string {
     deliveries: "Deliveries",
     replayDestinations: "Replay Destinations",
     subscriptions: "Subscriptions",
+    triggers: "Triggers",
+    usage: "Usage",
   };
   return map[prefix] ?? prefix;
 }
@@ -456,6 +458,8 @@ const TAGS: JsonObject[] = [
     description: "Manage the allowlist of remote delivery destinations.",
   },
   { name: "Subscriptions", description: "Configure auto-delivery routing rules." },
+  { name: "Triggers", description: "Subscribe agents to endpoints and wait for matching events." },
+  { name: "Usage", description: "Read the org's metering usage for the current billing period." },
   { name: "Audit", description: "Verify the tamper-evident audit chain." },
   { name: "Identity", description: "Inspect the authenticated principal." },
 ];
