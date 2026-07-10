@@ -14,6 +14,7 @@
     "./credential-resolver": "./src/credential-resolver.ts",
     "./auth-audit": "./src/auth-audit.ts",
     "./reads": "./src/reads.ts",
+    "./overage-policy": "./src/overage-policy.ts",
     "./endpoints": "./src/endpoints.ts",
     "./ingest-token-seal": "./src/ingest-token-seal.ts",
     "./ingest-url-reveal": "./src/ingest-url-reveal.ts",

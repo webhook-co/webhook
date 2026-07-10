@@ -9,10 +9,11 @@ import {
   crossedUsageThresholds,
   currentBillingPeriod,
   shouldPauseForCap,
+  type EffectivePeriod,
   type PausePolicy,
 } from "@webhook-co/shared";
 
-import { withTenant, type Sql } from "./client";
+import { withTenant, type Sql, type TenantTx } from "./client";
 import { insertNotificationIntent, type UsageThresholdContext } from "./delivery";
 import { effectiveBillingPeriod, sumPeriodEventUsage } from "./period-usage";
 
@@ -21,6 +22,66 @@ import { effectiveBillingPeriod, sumPeriodEventUsage } from "./period-usage";
 interface OrgOutcome {
   readonly transition: boolean | null;
   readonly alerts: number;
+}
+
+/** The outcome of evaluating one org's soft cap: the pause↔resume TRANSITION (null = no change), the
+ *  resulting durable `paused` state, and the computed inputs (so the caller can drive threshold alerts
+ *  without recomputing). */
+export interface OrgCapEvaluation {
+  readonly transition: boolean | null;
+  readonly paused: boolean;
+  readonly periodUsage: number;
+  readonly eventCap: number | null;
+  readonly pausePolicy: PausePolicy;
+  readonly period: EffectivePeriod;
+}
+
+/**
+ * Evaluate a SINGLE org's soft cap and flip `ingest_paused` on a transition. The money-critical core shared
+ * by the hourly {@link runCapProducer} cron AND the on-demand overage-toggle RPC (WS3), so the toggle
+ * enforces on the EXACT same basis the cron does (no drift between an immediate flip and the next pass).
+ *
+ * MUST run inside `withTenant(app, orgId, tx)` — every read/write is org-scoped by RLS and `insert ...
+ * on conflict (org_id)` relies on the tenant GUC. Returns the computed inputs so a caller can emit
+ * usage-threshold alerts (a cron concern) without a second round of queries; the toggle path ignores them.
+ * Idempotent: when the desired pause state already matches the durable one, no write happens (transition null).
+ */
+export async function evaluateOrgCap(
+  tx: TenantTx,
+  args: { orgId: string; now: number; defaultEventCap: number | null },
+): Promise<OrgCapEvaluation> {
+  // The org's EFFECTIVE period — a paid org's Stripe-anchored cycle, else the UTC month — read per-org
+  // under RLS. The SAME basis the usage surface displays, so enforcement can't diverge from the dashboard.
+  const period = await effectiveBillingPeriod(tx, args.now);
+  // sumPeriodEventUsage: rolled prior days + live today; not tied to whether the rollup ran today, so
+  // reordering the cron can't silently undercount today.
+  const periodUsage = await sumPeriodEventUsage(tx, period, args.now);
+  const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
+    select event_cap, pause_policy from org_limits`;
+  const [pauseRow] = await tx<{ paused: boolean }[]>`select paused from ingest_paused`;
+
+  // No org_limits row → Free default (injected); a row → its own cap/policy (event_cap null = uncapped).
+  const eventCap = limits
+    ? limits.event_cap != null
+      ? Number(limits.event_cap)
+      : null
+    : args.defaultEventCap;
+  const pausePolicy: PausePolicy = limits ? limits.pause_policy : "pause";
+
+  const want = shouldPauseForCap(periodUsage, eventCap, pausePolicy);
+  const current = pauseRow?.paused ?? false;
+  if (want === current) {
+    return { transition: null, paused: current, periodUsage, eventCap, pausePolicy, period };
+  }
+
+  const since = want ? new Date(args.now).toISOString() : null;
+  const reason = want ? "cap" : null;
+  await tx`
+    insert into ingest_paused (org_id, paused, reason, since, updated_at)
+    values (${args.orgId}, ${want}, ${reason}, ${since}, now())
+    on conflict (org_id) do update
+      set paused = ${want}, reason = ${reason}, since = ${since}, updated_at = now()`;
+  return { transition: want, paused: want, periodUsage, eventCap, pausePolicy, period };
 }
 
 /** Default cap on orgs one producer pass processes (bounded + fairly ordered — mirrors the rollup). */
@@ -139,45 +200,37 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
   for (const orgId of orgIds) {
     try {
       const outcome = await withTenant(deps.app, orgId, async (tx): Promise<OrgOutcome> => {
-        // The org's EFFECTIVE period — a paid org's Stripe-anchored cycle, else the UTC month — read
-        // per-org under RLS (the outer `period` is only the cross-org enumeration candidate floor). The
-        // SAME basis the usage surface displays, so enforcement can't diverge from what the dashboard shows.
-        const period = await effectiveBillingPeriod(tx, deps.now);
-        // sumPeriodEventUsage: rolled prior days + live today; not tied to whether the rollup ran today, so
-        // reordering the cron can't silently undercount today.
-        const periodUsage = await sumPeriodEventUsage(tx, period, deps.now);
-        const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
-          select event_cap, pause_policy from org_limits`;
-        const [pauseRow] = await tx<{ paused: boolean }[]>`select paused from ingest_paused`;
+        // The shared money-critical core: compute the effective period + usage, decide pause/resume, and
+        // flip ingest_paused on a transition. (The outer `period` is only the cross-org enumeration floor.)
+        const evaluation = await evaluateOrgCap(tx, {
+          orgId,
+          now: deps.now,
+          defaultEventCap: deps.defaultEventCap,
+        });
 
-        // No org_limits row → Free default (injected); a row → its own cap/policy (event_cap null = uncapped).
-        const eventCap = limits
-          ? limits.event_cap != null
-            ? Number(limits.event_cap)
-            : null
-          : deps.defaultEventCap;
-        const pausePolicy: PausePolicy = limits ? limits.pause_policy : "pause";
-
-        // Threshold alerts (S4.3b, warn-before-pause) FIRST — before the no-transition early return below,
-        // because the 80% alert fires while the org is NOT yet paused (want === current === false). Emit at
-        // most one intent per (org, period, threshold): the usage_alerts PK + ON CONFLICT DO NOTHING makes
-        // the hourly producer idempotent (a row already there = already alerted this period → no re-email).
-        // Uncapped orgs cross nothing (no % of uncapped), so this is naturally dark until a cap exists.
+        // Threshold alerts (S4.3b, warn-before-pause) are a CRON concern — the 80% alert fires while the org
+        // is NOT yet paused, so it must run even when there's no transition. Emit at most one intent per
+        // (org, period, threshold): the usage_alerts PK + ON CONFLICT DO NOTHING makes the hourly producer
+        // idempotent. Uncapped orgs cross nothing, so this is naturally dark until a cap exists. Reuses the
+        // values evaluateOrgCap already computed (no second query round). The on-demand toggle RPC skips this.
         let alerts = 0;
-        for (const threshold of crossedUsageThresholds(periodUsage, eventCap)) {
+        for (const threshold of crossedUsageThresholds(
+          evaluation.periodUsage,
+          evaluation.eventCap,
+        )) {
           const [won] = await tx<{ org_id: string }[]>`
             insert into usage_alerts (org_id, period_start, threshold)
-            values (${orgId}, ${period.start}, ${threshold})
+            values (${orgId}, ${evaluation.period.start}, ${threshold})
             on conflict (org_id, period_start, threshold) do nothing
             returning org_id`;
           if (!won) continue; // already alerted this threshold this period
           const context: UsageThresholdContext = {
-            usage: periodUsage,
-            eventCap: eventCap as number, // crossedUsageThresholds only returns for a non-null cap
+            usage: evaluation.periodUsage,
+            eventCap: evaluation.eventCap as number, // crossedUsageThresholds only returns for a non-null cap
             threshold,
-            pausePolicy,
-            periodEndIso: period.end, // null for the one-time lifetime allowance
-            capKind: period.kind,
+            pausePolicy: evaluation.pausePolicy,
+            periodEndIso: evaluation.period.end, // null for the one-time lifetime allowance
+            capKind: evaluation.period.kind,
           };
           await insertNotificationIntent(tx, {
             orgId,
@@ -188,18 +241,7 @@ export async function runCapProducer(deps: CapProducerDeps): Promise<CapProducer
           alerts += 1;
         }
 
-        const want = shouldPauseForCap(periodUsage, eventCap, pausePolicy);
-        const current = pauseRow?.paused ?? false;
-        if (want === current) return { transition: null, alerts }; // no pause transition
-
-        const since = want ? new Date(deps.now).toISOString() : null;
-        const reason = want ? "cap" : null;
-        await tx`
-          insert into ingest_paused (org_id, paused, reason, since, updated_at)
-          values (${orgId}, ${want}, ${reason}, ${since}, now())
-          on conflict (org_id) do update
-            set paused = ${want}, reason = ${reason}, since = ${since}, updated_at = now()`;
-        return { transition: want, alerts };
+        return { transition: evaluation.transition, alerts };
       });
 
       thresholdAlerts += outcome.alerts;

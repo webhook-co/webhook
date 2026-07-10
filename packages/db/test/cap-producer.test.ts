@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { makeCapTransitionEvictor, runCapProducer } from "../src/cap-producer";
+import { evaluateOrgCap, makeCapTransitionEvictor, runCapProducer } from "../src/cap-producer";
 import { createClient, withTenant, type Sql } from "../src/client";
 import type { UsageThresholdContext } from "../src/delivery";
 import { DB_ROLES } from "../src/constants";
@@ -586,5 +586,93 @@ describe("the churn ↔ upgrade round trip (the lifetime allowance's escape hatc
     const result = await run({ now: AUG }); // a whole new month, no new events
     expect(result.resumedTransitions).toBe(0);
     expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
+  });
+});
+
+// evaluateOrgCap — the single-org core shared by the cron AND the WS3 overage-toggle RPC. It must flip
+// ingest_paused immediately when the effective pause decision changes (e.g. the user just flipped the
+// pause_policy), on the exact same basis the cron uses, so the toggle takes effect without a cron wait.
+describe("evaluateOrgCap (single-org core for the overage toggle)", () => {
+  const evalOrg = (orgId: string, defaultEventCap: number | null = DEFAULT_CAP, now = NOW) =>
+    withTenant(app, orgId, (tx) => evaluateOrgCap(tx, { orgId, now, defaultEventCap }));
+
+  it("pauses an over-cap org whose policy is 'pause' (transition true, ingest_paused set)", async () => {
+    const orgId = await seedOrg("eval-pause");
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${100}, ${"pause"})`,
+    );
+    await seedUsage(orgId, 150);
+    const r = await evalOrg(orgId);
+    expect(r).toMatchObject({
+      transition: true,
+      paused: true,
+      eventCap: 100,
+      pausePolicy: "pause",
+    });
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
+  });
+
+  it("RESUMES an over-cap PAUSED org the moment its policy flips to 'allow' (the overage-ON toggle)", async () => {
+    const orgId = await seedOrg("eval-allow-resume");
+    await seedUsage(orgId, 150);
+    // Start over-cap on 'pause' → paused.
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${100}, ${"pause"})`,
+    );
+    expect((await evalOrg(orgId)).paused).toBe(true);
+    // User enables overage → policy 'allow'. Re-evaluating must RESUME immediately (no cron wait).
+    await withTenant(app, orgId, (tx) => tx`update org_limits set pause_policy = ${"allow"}`);
+    const r = await evalOrg(orgId);
+    expect(r).toMatchObject({ transition: false, paused: false, pausePolicy: "allow" });
+    expect(await pausedState(orgId)).toEqual({ paused: false, reason: null });
+  });
+
+  it("PAUSES an over-cap unpaused org the moment its policy flips to 'pause' (the overage-OFF toggle)", async () => {
+    const orgId = await seedOrg("eval-pause-toggle");
+    await seedUsage(orgId, 150);
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${100}, ${"allow"})`,
+    );
+    expect((await evalOrg(orgId)).paused).toBe(false); // 'allow' never pauses
+    await withTenant(app, orgId, (tx) => tx`update org_limits set pause_policy = ${"pause"}`);
+    const r = await evalOrg(orgId);
+    expect(r).toMatchObject({ transition: true, paused: true });
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "cap" });
+  });
+
+  it("is idempotent — re-evaluating a settled state does NOT write a transition", async () => {
+    const orgId = await seedOrg("eval-idempotent");
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${100}, ${"pause"})`,
+    );
+    await seedUsage(orgId, 150);
+    expect((await evalOrg(orgId)).transition).toBe(true); // first flip
+    expect((await evalOrg(orgId)).transition).toBeNull(); // already paused → no-op
+  });
+
+  it("an UNDER-cap org never pauses, whatever the policy", async () => {
+    const orgId = await seedOrg("eval-under");
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${1000}, ${"pause"})`,
+    );
+    await seedUsage(orgId, 10);
+    const r = await evalOrg(orgId);
+    expect(r).toMatchObject({ transition: null, paused: false });
+    expect(await pausedState(orgId)).toBeNull();
   });
 });
