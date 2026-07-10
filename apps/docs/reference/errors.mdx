@@ -11,15 +11,15 @@ Every error response carries three things: a machine-readable `code`, the HTTP `
 
 The error taxonomy is closed: each `code` maps to exactly one HTTP status.
 
-| Status | Code | What it means | What to do |
-| --- | --- | --- | --- |
-| 400 | `VALIDATION_ERROR` | The request was structurally or semantically invalid. | Fix the request. The `message` names the offending field. |
-| 401 | `UNAUTHORIZED` | The bearer token is missing, invalid, expired, revoked, or issued for a different audience. | Check the `Authorization` header and that the key is live. See [authentication](/authentication). |
-| 403 | `FORBIDDEN` | The key is valid but lacks the scope this action requires. | Mint a key with the right scope — don't over-provision an existing one. |
-| 404 | `NOT_FOUND` | The resource doesn't exist, or isn't visible to your org. | Cross-org resources return 404, not 403 — we don't confirm existence you can't see. |
-| 409 | `ENDPOINT_PAUSED` | A conflicting state blocks the request — today, the target endpoint is paused. | Resume the endpoint, or wait, then retry. |
-| 429 | `RATE_LIMITED` | The request was throttled. | Back off and retry. See [rate limits](/reference/rate-limits). |
-| 502 | `TARGET_UNREACHABLE` | A downstream delivery target couldn't be reached. | Check the target; retry with the same idempotency key. |
+| Status | Code                 | What it means                                                                               | What to do                                                                                        |
+| ------ | -------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 400    | `VALIDATION_ERROR`   | The request was structurally or semantically invalid.                                       | Fix the request. The `message` names the offending field.                                         |
+| 401    | `UNAUTHORIZED`       | The bearer token is missing, invalid, expired, revoked, or issued for a different audience. | Check the `Authorization` header and that the key is live. See [authentication](/authentication). |
+| 403    | `FORBIDDEN`          | The key is valid but lacks the scope this action requires.                                  | Mint a key with the right scope — don't over-provision an existing one.                           |
+| 404    | `NOT_FOUND`          | The resource doesn't exist, or isn't visible to your org.                                   | Cross-org resources return 404, not 403 — we don't confirm existence you can't see.               |
+| 409    | `ENDPOINT_PAUSED`    | A conflicting state blocks the request — today, the target endpoint is paused.              | Resume the endpoint, or wait, then retry.                                                         |
+| 429    | `RATE_LIMITED`       | The request was throttled.                                                                  | Back off and retry. See [rate limits](/reference/rate-limits).                                    |
+| 502    | `TARGET_UNREACHABLE` | A downstream delivery target couldn't be reached.                                           | Check the target; retry with the same idempotency key.                                            |
 
 ## Typed errors in the SDKs
 
@@ -49,15 +49,15 @@ try {
 
 Each status maps to its own subclass of `WebhookAPIError`:
 
-| Status | Error class |
-| --- | --- |
-| 400 | `WebhookInvalidRequestError` |
-| 401 | `WebhookAuthenticationError` |
-| 403 | `WebhookPermissionError` |
-| 404 | `WebhookNotFoundError` |
-| 409 | `WebhookConflictError` |
-| 429 | `WebhookRateLimitError` (inspect `retryAfterMs`) |
-| 502 | `WebhookTargetUnreachableError` |
+| Status | Error class                                      |
+| ------ | ------------------------------------------------ |
+| 400    | `WebhookInvalidRequestError`                     |
+| 401    | `WebhookAuthenticationError`                     |
+| 403    | `WebhookPermissionError`                         |
+| 404    | `WebhookNotFoundError`                           |
+| 409    | `WebhookConflictError`                           |
+| 429    | `WebhookRateLimitError` (inspect `retryAfterMs`) |
+| 502    | `WebhookTargetUnreachableError`                  |
 
 Three more errors never come from a server status, so catch them separately:
 

@@ -17,7 +17,8 @@ So a webhook captured and forwarded to one destination is **two** events; forwar
 ## What is never counted
 
 <Note>
-  The most common surprises in usage-based products come from the things you _didn't_ think you were paying for. webhook.co counts none of them.
+  The most common surprises in usage-based products come from the things you _didn't_ think you were
+  paying for. webhook.co counts none of them.
 </Note>
 
 - **Retries.** A delivery counts once, when it's first dispatched — however many attempts [the fixed exponential schedule](/concepts/delivery-retry-signing) takes to land it. A receiver's downtime is never your cost.
@@ -26,7 +27,9 @@ So a webhook captured and forwarded to one destination is **two** events; forwar
 - **Reading your own data.** Listing events, inspecting payloads, tailing, and replaying cost nothing on any surface. (A replay that _forwards to a destination_ is a delivery, and that delivery counts.)
 
 <Warning>
-  Turning [deduplication](/deduplication) **off** means every retry a sender sends is a distinct captured request, and each one counts. That's the trade you're making when you disable it — the default is off precisely so you see every request while you're getting set up.
+  Turning [deduplication](/deduplication) **off** means every retry a sender sends is a distinct
+  captured request, and each one counts. That's the trade you're making when you disable it — the
+  default is off precisely so you see every request while you're getting set up.
 </Warning>
 
 ## How usage relates to pricing

@@ -37,7 +37,7 @@ await webhook.providerSecrets.add({
 
 </CodeGroup>
 
-## The url\_verification handshake
+## The url_verification handshake
 
 When you save an ingest URL in Slack's **Event Subscriptions**, Slack POSTs a `url_verification` challenge. webhook.co detects it and echoes the `challenge` value automatically — no configuration, and the challenge is never captured as an event. Slack signs the timestamp, so webhook.co enforces a 5-minute replay window on real events.
 

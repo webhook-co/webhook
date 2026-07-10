@@ -101,7 +101,10 @@ def verify(secret: str, headers: dict[str, str], raw_body: bytes) -> bool:
 </CodeGroup>
 
 <Warning>
-  Verify over the **raw request body, byte for byte** — the exact bytes you received, never a re-serialized or reparsed copy. A single whitespace or key-order difference breaks the HMAC. And compare signatures with a **constant-time** function (`crypto.timingSafeEqual` / `hmac.compare_digest`) — never `==`, which leaks the answer through timing.
+  Verify over the **raw request body, byte for byte** — the exact bytes you received, never a
+  re-serialized or reparsed copy. A single whitespace or key-order difference breaks the HMAC. And
+  compare signatures with a **constant-time** function (`crypto.timingSafeEqual` /
+  `hmac.compare_digest`) — never `==`, which leaks the answer through timing.
 </Warning>
 
 ## Related

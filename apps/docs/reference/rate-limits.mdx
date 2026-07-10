@@ -23,11 +23,13 @@ For a retryable request the SDK honors `Retry-After` when the server sends a del
 
 The client defaults are tunable at construction:
 
-| Option | Default | Notes |
-| --- | --- | --- |
-| `maxRetries` | `2` | Retries _after_ the first attempt (3 total). |
-| `timeoutMs` | `30000` | Per-request wall-clock budget; a timeout retries an idempotent request. |
+| Option       | Default | Notes                                                                   |
+| ------------ | ------- | ----------------------------------------------------------------------- |
+| `maxRetries` | `2`     | Retries _after_ the first attempt (3 total).                            |
+| `timeoutMs`  | `30000` | Per-request wall-clock budget; a timeout retries an idempotent request. |
 
 <Note>
-  On a `429`, prefer the error's `retryAfterMs` over rolling your own delay — it reflects what the server asked for. The SDKs already do this for retryable requests; reach for it manually only when handling a non-idempotent write.
+  On a `429`, prefer the error's `retryAfterMs` over rolling your own delay — it reflects what the
+  server asked for. The SDKs already do this for retryable requests; reach for it manually only when
+  handling a non-idempotent write.
 </Note>

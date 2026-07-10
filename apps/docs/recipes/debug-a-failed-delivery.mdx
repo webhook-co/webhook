@@ -14,6 +14,7 @@ Something downstream broke and deliveries are piling up as `dead`. Find them, re
     ```sh
     wbhk deliveries list --status failed,dead
     ```
+
   </Step>
   <Step title="Read the actual error">
     `get` shows the status code and error string from the last attempt — a 500, a TLS failure, a timeout.
@@ -21,6 +22,7 @@ Something downstream broke and deliveries are piling up as `dead`. Find them, re
     ```sh
     wbhk deliveries get <delivery-id>
     ```
+
   </Step>
   <Step title="Fix, then re-enable the destination">
     After 20 dead deliveries a destination auto-disables. Clearing it resumes owed deliveries on the next wake — so re-enable only once the receiver is actually fixed.
@@ -28,6 +30,7 @@ Something downstream broke and deliveries are piling up as `dead`. Find them, re
     ```sh
     wbhk replay-destinations enable <destination-id>
     ```
+
   </Step>
   <Step title="Replay the events it missed">
     Replay each captured event to the destination. The server delivers the stored bytes with a fresh idempotency key per call, so a retried replay is safe.
@@ -35,9 +38,11 @@ Something downstream broke and deliveries are piling up as `dead`. Find them, re
     ```sh
     wbhk replay <event-id> --destination <destination-id>
     ```
+
   </Step>
 </Steps>
 
 <Note>
-  Replaying to a destination re-delivers the exact signed bytes — no `--edit`, unlike a `--forward` replay to localhost. That's what keeps the signature valid for your receiver.
+  Replaying to a destination re-delivers the exact signed bytes — no `--edit`, unlike a `--forward`
+  replay to localhost. That's what keeps the signature valid for your receiver.
 </Note>

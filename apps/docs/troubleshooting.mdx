@@ -14,13 +14,20 @@ Most issues fall into a handful of buckets. Find yours below; each links to the 
     No provider secret is registered for the endpoint, so nothing is checked. Register the provider's signing secret — see [verify inbound signatures](/guides/verify-inbound-signatures) — and new events arrive with a real [verification state](/concepts/inbound-verification).
   </Accordion>
 
-  <Accordion title="My events show `failed`">
-    A signature _was_ checked and rejected. Usual causes: the wrong secret (a test secret against live traffic, or a stale one after a rotation), or a proxy in front of your ingest that altered the body. Confirm the secret matches the one the provider signs with, and that nothing between the provider and `wbhk.my` rewrites the payload. A `failed` event is captured but never delivered or signed.
-  </Accordion>
+<Accordion title="My events show `failed`">
+  A signature _was_ checked and rejected. Usual causes: the wrong secret (a test secret against live
+  traffic, or a stale one after a rotation), or a proxy in front of your ingest that altered the
+  body. Confirm the secret matches the one the provider signs with, and that nothing between the
+  provider and `wbhk.my` rewrites the payload. A `failed` event is captured but never delivered or
+  signed.
+</Accordion>
 
-  <Accordion title="I'm verifying webhook.co's outbound signature myself and it won't match">
-    Almost always one of two things: you're verifying over a **re-serialized** body instead of the raw bytes, or you're using `==` instead of a constant-time compare. Verify over the exact bytes you received and compare with `crypto.timingSafeEqual` / `hmac.compare_digest`. The full snippet is on [sign outbound webhooks](/guides/sign-outbound-webhooks).
-  </Accordion>
+<Accordion title="I'm verifying webhook.co's outbound signature myself and it won't match">
+  Almost always one of two things: you're verifying over a **re-serialized** body instead of the raw
+  bytes, or you're using `==` instead of a constant-time compare. Verify over the exact bytes you
+  received and compare with `crypto.timingSafeEqual` / `hmac.compare_digest`. The full snippet is on
+  [sign outbound webhooks](/guides/sign-outbound-webhooks).
+</Accordion>
 
   <Accordion title="A provider that signs the URL (Square, Twilio, HubSpot) won't verify">
     These sign the request URL along with the body, so the URL configured at the provider must be your ingest URL **exactly** — a trailing slash or an extra query parameter changes the signed string. Match it character-for-character.
@@ -54,9 +61,11 @@ Most issues fall into a handful of buckets. Find yours below; each links to the 
     The endpoint is paused. A paused endpoint answers writes with a retryable `429` so a well-behaved sender holds the event and redelivers rather than dropping it — resume the endpoint and the redelivery lands. See [ingest URLs](/concepts/ingest-urls).
   </Accordion>
 
-  <Accordion title="The provider's setup handshake is failing">
-    Handshakes are answered automatically, but some need a secret registered first — a Meta `verify_token`, a Braintree public key. Register the secret the [provider guide](/providers/directory) calls for, then retry the provider's verification.
-  </Accordion>
+<Accordion title="The provider's setup handshake is failing">
+  Handshakes are answered automatically, but some need a secret registered first — a Meta
+  `verify_token`, a Braintree public key. Register the secret the [provider
+  guide](/providers/directory) calls for, then retry the provider's verification.
+</Accordion>
 
   <Accordion title="`revealIngestUrl` returned null">
     The endpoint predates sealed-token storage, or its seal degraded. [Rotate](/concepts/ingest-urls) the endpoint and the fresh URL is revealable from then on.

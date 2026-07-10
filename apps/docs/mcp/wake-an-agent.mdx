@@ -55,8 +55,8 @@ while (true) {
     await handle(event); // dedup on event.id — delivery is at-least-once
   }
 
-  cursor = nextCursor;              // ack only after the work above succeeded
-  if (caughtUp) await sleep(1000);  // drained; idle until the next event
+  cursor = nextCursor; // ack only after the work above succeeded
+  if (caughtUp) await sleep(1000); // drained; idle until the next event
 }
 ```
 

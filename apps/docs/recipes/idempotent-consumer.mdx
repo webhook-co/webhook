@@ -14,6 +14,7 @@ Delivery is at least once by design, so exactly-once lives in your consumer. Sta
     ```sh
     wbhk endpoints update <endpoint-id> --dedup-mode identifier --dedup-window 600
     ```
+
   </Step>
   <Step title="Deliver only what you verified">
     `--require-verified` forwards signature-checked events only; an `unattempted` event is never signed, and a `failed` one is blocked. Your receiver can trust that a signed delivery is genuine.
@@ -21,6 +22,7 @@ Delivery is at least once by design, so exactly-once lives in your consumer. Sta
     ```sh
     wbhk subscriptions add <endpoint-id> <destination-id> --require-verified
     ```
+
   </Step>
   <Step title="Dedup on webhook-id at the receiver">
     The forwarded event carries a stable `webhook-id`. Record processed ids and short-circuit repeats — this is the layer that actually makes the consumer idempotent.
@@ -31,6 +33,7 @@ Delivery is at least once by design, so exactly-once lives in your consumer. Sta
     await process(req.body);
     await markSeen(req.headers["webhook-id"]);
     ```
+
   </Step>
 </Steps>
 

@@ -38,7 +38,8 @@ await webhook.providerSecrets.add({
 </CodeGroup>
 
 <Note>
-  Register the HMAC key exactly as the Customer Area shows it (the hex string). webhook.co hex-decodes it to the key bytes, matching Adyen's own SDKs — don't decode or reformat it first.
+  Register the HMAC key exactly as the Customer Area shows it (the hex string). webhook.co
+  hex-decodes it to the key bytes, matching Adyen's own SDKs — don't decode or reformat it first.
 </Note>
 
 webhook.co verifies one notification item per request. There's no signed timestamp, so no replay window applies.

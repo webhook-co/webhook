@@ -14,6 +14,7 @@ Capture one real webhook, then iterate against it forever — forward the live s
     ```sh
     wbhk events list <endpoint-id> --all
     ```
+
   </Step>
   <Step title="Forward the stream while you work">
     `--since from-last-ack` with `--resume` picks up where you left off across restarts, so a rebuild doesn't replay the whole backlog.
@@ -21,6 +22,7 @@ Capture one real webhook, then iterate against it forever — forward the live s
     ```sh
     wbhk listen <endpoint-id> --forward http://localhost:3000/webhooks --resume
     ```
+
   </Step>
   <Step title="Replay one event, editing the payload">
     `--edit` opens the body in `$EDITOR` before forwarding — flip a field, add a line item, null something out, and fire it at your handler.
@@ -28,11 +30,13 @@ Capture one real webhook, then iterate against it forever — forward the live s
     ```sh
     wbhk replay <event-id> --forward http://localhost:3000/webhooks --edit
     ```
+
   </Step>
 </Steps>
 
 <Note>
-  An edited replay won't re-verify against the provider's original signature — you're exercising handler logic, not verification. Replay without `--edit` to send the exact captured bytes.
+  An edited replay won't re-verify against the provider's original signature — you're exercising
+  handler logic, not verification. Replay without `--edit` to send the exact captured bytes.
 </Note>
 
 Reading, listing, and replaying to localhost cost nothing — only a replay that _forwards to a destination_ is a metered delivery. See [what counts as an event](/events-and-usage).

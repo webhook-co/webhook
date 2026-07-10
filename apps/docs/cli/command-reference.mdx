@@ -9,65 +9,65 @@ Every `wbhk` command accepts the [global flags](/cli/overview#global-flags): `--
 
 ## Auth and session
 
-| Command | Key flags | Description |
-| --- | --- | --- |
-| `wbhk login` | `--device`, `--api-key`, `--stdin`, `--insecure-storage` | Authenticate and store a credential. Browser OAuth by default; `--device` for headless, `--api-key`/`--stdin` for an existing key. |
-| `wbhk logout` |  | Clear the stored credential; revoke the OAuth token server-side if there is one. |
-| `wbhk whoami` |  | Show the authenticated org, scopes, and redacted key handle. |
-| `wbhk profile use <name>` |  | Switch the active profile. |
-| `wbhk profile current` |  | Show the active profile and where it's set. |
-| `wbhk profile list` |  | List configured profiles; the active one is marked. |
-| `wbhk profile remove <name>` |  | Delete a profile and its stored credential. |
-| `wbhk doctor` |  | Local diagnostics: auth, config, connectivity, clock. |
+| Command                      | Key flags                                                | Description                                                                                                                        |
+| ---------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `wbhk login`                 | `--device`, `--api-key`, `--stdin`, `--insecure-storage` | Authenticate and store a credential. Browser OAuth by default; `--device` for headless, `--api-key`/`--stdin` for an existing key. |
+| `wbhk logout`                |                                                          | Clear the stored credential; revoke the OAuth token server-side if there is one.                                                   |
+| `wbhk whoami`                |                                                          | Show the authenticated org, scopes, and redacted key handle.                                                                       |
+| `wbhk profile use <name>`    |                                                          | Switch the active profile.                                                                                                         |
+| `wbhk profile current`       |                                                          | Show the active profile and where it's set.                                                                                        |
+| `wbhk profile list`          |                                                          | List configured profiles; the active one is marked.                                                                                |
+| `wbhk profile remove <name>` |                                                          | Delete a profile and its stored credential.                                                                                        |
+| `wbhk doctor`                |                                                          | Local diagnostics: auth, config, connectivity, clock.                                                                              |
 
 ## Endpoints
 
 An endpoint is a webhook.co URL that captures inbound requests. `create` and `rotate` reveal the ingest URL; it's shown then and stays viewable in your dashboard and via `endpoints reveal`.
 
-| Command | Key flags | Description |
-| --- | --- | --- |
-| `wbhk endpoints list` | `--name`, `--limit`, `--cursor`, `--all` | List your endpoints. `--name` filters by case-insensitive substring. |
-| `wbhk endpoints get <endpointId>` |  | Show a single endpoint. |
-| `wbhk endpoints create <name>` | `--dedup-mode`, `--dedup-window`, `--dedup-field`, `--dedup-exclude` | Create an endpoint and reveal its ingest URL. |
-| `wbhk endpoints update <endpointId>` | dedup flags, `--dedup-reset` | Update an endpoint's deduplication config; `--dedup-reset` clears it. |
-| `wbhk endpoints delete <endpointId>` | `--yes` | Delete an endpoint. Its ingest URL stops accepting events; captured events are kept. |
-| `wbhk endpoints rotate <endpointId>` | `--yes` | Revoke the current ingest URL and reveal a new one. |
-| `wbhk endpoints reveal <endpointId>` |  | Re-display the current ingest URL. Doesn't rotate; audited server-side. |
-| `wbhk endpoints add-provider-secret <endpointId>` | `--provider` (required), `--label`, `--kind` | Register a provider secret for inbound verification. Read via prompt or stdin — never an argument. |
-| `wbhk endpoints list-provider-secrets <endpointId>` |  | List an endpoint's provider secrets (metadata only). |
-| `wbhk endpoints revoke-provider-secret <endpointId> <secretId>` | `--yes` | Revoke a provider secret; verification stops honoring it immediately. |
+| Command                                                         | Key flags                                                            | Description                                                                                        |
+| --------------------------------------------------------------- | -------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `wbhk endpoints list`                                           | `--name`, `--limit`, `--cursor`, `--all`                             | List your endpoints. `--name` filters by case-insensitive substring.                               |
+| `wbhk endpoints get <endpointId>`                               |                                                                      | Show a single endpoint.                                                                            |
+| `wbhk endpoints create <name>`                                  | `--dedup-mode`, `--dedup-window`, `--dedup-field`, `--dedup-exclude` | Create an endpoint and reveal its ingest URL.                                                      |
+| `wbhk endpoints update <endpointId>`                            | dedup flags, `--dedup-reset`                                         | Update an endpoint's deduplication config; `--dedup-reset` clears it.                              |
+| `wbhk endpoints delete <endpointId>`                            | `--yes`                                                              | Delete an endpoint. Its ingest URL stops accepting events; captured events are kept.               |
+| `wbhk endpoints rotate <endpointId>`                            | `--yes`                                                              | Revoke the current ingest URL and reveal a new one.                                                |
+| `wbhk endpoints reveal <endpointId>`                            |                                                                      | Re-display the current ingest URL. Doesn't rotate; audited server-side.                            |
+| `wbhk endpoints add-provider-secret <endpointId>`               | `--provider` (required), `--label`, `--kind`                         | Register a provider secret for inbound verification. Read via prompt or stdin — never an argument. |
+| `wbhk endpoints list-provider-secrets <endpointId>`             |                                                                      | List an endpoint's provider secrets (metadata only).                                               |
+| `wbhk endpoints revoke-provider-secret <endpointId> <secretId>` | `--yes`                                                              | Revoke a provider secret; verification stops honoring it immediately.                              |
 
 `delete`, `rotate`, and `revoke-provider-secret` prompt for confirmation in an interactive terminal, or take `--yes`; non-interactively without `--yes` they refuse. `--kind` is `signing_secret` (default) or `verify_token` (a Meta `hub.verify_token` handshake token). Dedup modes are validated at the CLI before the request.
 
 ## Events
 
-| Command | Key flags | Description |
-| --- | --- | --- |
-| `wbhk events list <endpointId>` | `--provider`, `--status`, `--after`, `--before`, `--search`, `--limit`, `--cursor`, `--all` | List captured events for an endpoint. |
-| `wbhk events get <eventId>` |  | Show a single event in full. |
-| `wbhk events payload <eventId>` |  | Print the event's raw body. `--output json` emits a lossless base64 envelope (the safe view for binary). |
+| Command                         | Key flags                                                                                   | Description                                                                                              |
+| ------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `wbhk events list <endpointId>` | `--provider`, `--status`, `--after`, `--before`, `--search`, `--limit`, `--cursor`, `--all` | List captured events for an endpoint.                                                                    |
+| `wbhk events get <eventId>`     |                                                                                             | Show a single event in full.                                                                             |
+| `wbhk events payload <eventId>` |                                                                                             | Print the event's raw body. `--output json` emits a lossless base64 envelope (the safe view for binary). |
 
 List filters:
 
-| Flag | Description |
-| --- | --- |
-| `--provider <p>` | Filter by provider. Repeatable or comma-separated for multi-select. |
+| Flag               | Description                                                                                                          |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `--provider <p>`   | Filter by provider. Repeatable or comma-separated for multi-select.                                                  |
 | `--status <state>` | Filter by verification state: `verified`, `authenticated`, `failed`, or `unattempted`. Repeatable / comma-separated. |
-| `--after <ts>` | Events received at or after this time (ISO-8601 / RFC3339). |
-| `--before <ts>` | Events received strictly before this time. |
-| `--search <term>` | Substring search over event/provider/external ids and request header names/values. |
-| `--limit <n>` | Max results per page (1–200). |
-| `--cursor <token>` | Resume from a `nextCursor` (advanced). |
-| `--all` | Follow the cursor to the end and return every page. |
+| `--after <ts>`     | Events received at or after this time (ISO-8601 / RFC3339).                                                          |
+| `--before <ts>`    | Events received strictly before this time.                                                                           |
+| `--search <term>`  | Substring search over event/provider/external ids and request header names/values.                                   |
+| `--limit <n>`      | Max results per page (1–200).                                                                                        |
+| `--cursor <token>` | Resume from a `nextCursor` (advanced).                                                                               |
+| `--all`            | Follow the cursor to the end and return every page.                                                                  |
 
 ## Deliveries
 
 Outbound deliveries — auto-deliveries to subscribed destinations, plus manual replay attempts.
 
-| Command | Key flags | Description |
-| --- | --- | --- |
-| `wbhk deliveries list` | `--status`, `--destination`, `--subscription`, `--limit`, `--cursor`, `--all` | List outbound deliveries. |
-| `wbhk deliveries get <deliveryId>` |  | Show a single delivery in full. |
+| Command                            | Key flags                                                                     | Description                     |
+| ---------------------------------- | ----------------------------------------------------------------------------- | ------------------------------- |
+| `wbhk deliveries list`             | `--status`, `--destination`, `--subscription`, `--limit`, `--cursor`, `--all` | List outbound deliveries.       |
+| `wbhk deliveries get <deliveryId>` |                                                                               | Show a single delivery in full. |
 
 `--status` filters by `queued`, `pending`, `delivered`, `failed`, `dead`, `blocked`, or `forwarded` (repeatable / comma-separated). `--destination` and `--subscription` filter to one id.
 
@@ -75,48 +75,48 @@ Outbound deliveries — auto-deliveries to subscribed destinations, plus manual 
 
 Stream an endpoint's events live over a signed tunnel, or forward each one to localhost. In an interactive terminal this opens a browsable replay TUI; piped, it's a plain line tail (`--output json` gives NDJSON). See [replay to localhost](/guides/replay-to-localhost).
 
-| Flag | Description |
-| --- | --- |
-| `--forward <url>` | Re-deliver each event to a loopback URL (signature-preserving), cursor-gated so each event is recorded only after a local 2xx. |
-| `--since <where>` | Where to start on the first connect: `now` (default), `beginning`, `from-last-ack`, or an explicit `<cursor>`. |
-| `--resume` | Resume from the last cursor this (profile, endpoint) acked, and keep saving it. |
-| `--reset` | Forget the saved resume cursor before starting. |
-| `--max-backlog <n>` | Refuse to replay if more than N events are behind — avoids firing a large backlog at `--forward`. |
-| `--tunnel-url <wss>` | Override the tunnel URL. |
+| Flag                 | Description                                                                                                                    |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `--forward <url>`    | Re-deliver each event to a loopback URL (signature-preserving), cursor-gated so each event is recorded only after a local 2xx. |
+| `--since <where>`    | Where to start on the first connect: `now` (default), `beginning`, `from-last-ack`, or an explicit `<cursor>`.                 |
+| `--resume`           | Resume from the last cursor this (profile, endpoint) acked, and keep saving it.                                                |
+| `--reset`            | Forget the saved resume cursor before starting.                                                                                |
+| `--max-backlog <n>`  | Refuse to replay if more than N events are behind — avoids firing a large backlog at `--forward`.                              |
+| `--tunnel-url <wss>` | Override the tunnel URL.                                                                                                       |
 
 ## Replay
 
 Re-deliver a captured event, either to your machine or to a registered destination.
 
-| Flag | Description |
-| --- | --- |
-| `--forward <url>` | The CLI delivers the event (exact bytes \+ original headers) to your loopback URL, then records the attempt on a local 2xx. |
-| `--destination <id>` | The server delivers the stored bytes to a registered destination and records the real outcome. Mutually exclusive with `--forward`. |
-| `--edit` | Open the payload in `$EDITOR` before forwarding (`--forward` only). The original signature won't re-verify the edited body — you'll be warned. |
+| Flag                 | Description                                                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--forward <url>`    | The CLI delivers the event (exact bytes \+ original headers) to your loopback URL, then records the attempt on a local 2xx.                    |
+| `--destination <id>` | The server delivers the stored bytes to a registered destination and records the real outcome. Mutually exclusive with `--forward`.            |
+| `--edit`             | Open the payload in `$EDITOR` before forwarding (`--forward` only). The original signature won't re-verify the edited body — you'll be warned. |
 
 ## Replay destinations
 
 The org's allowlist of remote HTTPS URLs a server-side replay may deliver to. Referencing a destination by id — never a free-form URL — is a deliberate safety control. See [send to a destination](/guides/send-to-a-destination).
 
-| Command | Key flags | Description |
-| --- | --- | --- |
-| `wbhk replay-destinations add <url>` | `--label` | Allow an HTTPS URL as a replay destination. Reveals a signing secret once. |
-| `wbhk replay-destinations list` |  | List the org's allowed destinations. |
-| `wbhk replay-destinations remove <destinationId>` |  | Remove a destination from the allowlist. |
-| `wbhk replay-destinations enable <destinationId>` |  | Re-enable a destination that auto-disabled on persistent failure. |
-| `wbhk replay-destinations set-ordered <destinationId> <mode>` |  | Set strict-FIFO (`on`) vs best-effort (`off`) delivery. |
-| `wbhk replay-destinations rotate-secret <destinationId>` |  | Mint a fresh signing secret (shown once); the prior key overlaps briefly. |
-| `wbhk replay-destinations list-secrets <destinationId>` |  | List a destination's signing-secret metadata (never the value). |
+| Command                                                       | Key flags | Description                                                                |
+| ------------------------------------------------------------- | --------- | -------------------------------------------------------------------------- |
+| `wbhk replay-destinations add <url>`                          | `--label` | Allow an HTTPS URL as a replay destination. Reveals a signing secret once. |
+| `wbhk replay-destinations list`                               |           | List the org's allowed destinations.                                       |
+| `wbhk replay-destinations remove <destinationId>`             |           | Remove a destination from the allowlist.                                   |
+| `wbhk replay-destinations enable <destinationId>`             |           | Re-enable a destination that auto-disabled on persistent failure.          |
+| `wbhk replay-destinations set-ordered <destinationId> <mode>` |           | Set strict-FIFO (`on`) vs best-effort (`off`) delivery.                    |
+| `wbhk replay-destinations rotate-secret <destinationId>`      |           | Mint a fresh signing secret (shown once); the prior key overlaps briefly.  |
+| `wbhk replay-destinations list-secrets <destinationId>`       |           | List a destination's signing-secret metadata (never the value).            |
 
 ## Subscriptions
 
 Routing rules that auto-deliver a source endpoint's captured events to a destination.
 
-| Command | Key flags | Description |
-| --- | --- | --- |
-| `wbhk subscriptions add <sourceEndpointId> <destinationId>` | `--provider`, `--event-type`, `--require-verified` | Auto-deliver the endpoint's events to the destination. |
-| `wbhk subscriptions list` | `--endpoint` | List the org's subscriptions; `--endpoint` filters to one source. |
-| `wbhk subscriptions remove <subscriptionId>` |  | Remove a subscription. |
+| Command                                                     | Key flags                                          | Description                                                       |
+| ----------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------------------- |
+| `wbhk subscriptions add <sourceEndpointId> <destinationId>` | `--provider`, `--event-type`, `--require-verified` | Auto-deliver the endpoint's events to the destination.            |
+| `wbhk subscriptions list`                                   | `--endpoint`                                       | List the org's subscriptions; `--endpoint` filters to one source. |
+| `wbhk subscriptions remove <subscriptionId>`                |                                                    | Remove a subscription.                                            |
 
 `--provider` limits routing to one provider (default: any). `--event-type` selects event-type patterns — exact, `charge.*`, or `*` — repeatable or comma-separated (default `*`). `--require-verified` routes only signature-checked events.
 
@@ -124,21 +124,21 @@ Routing rules that auto-deliver a source endpoint's captured events to a destina
 
 Webhook-to-agent trigger subscriptions: register to be woken when an endpoint captures an event, then consume those events. A trigger creates no outbound delivery — it only lets you consume events you can already read.
 
-| Command | Key flags | Description |
-| --- | --- | --- |
-| `wbhk triggers add <endpointId>` | `--name` | Subscribe to an endpoint to receive triggers. |
-| `wbhk triggers list` | `--endpoint` | List the org's active triggers. |
-| `wbhk triggers wait <triggerId>` | `--cursor`, `--limit`, `--no-body`, `--max-body-bytes` | Consume the next events for a trigger (short-poll — returns what's past the cursor; call again to continue). |
-| `wbhk triggers revoke <triggerId>` |  | Revoke a trigger. |
+| Command                            | Key flags                                              | Description                                                                                                  |
+| ---------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `wbhk triggers add <endpointId>`   | `--name`                                               | Subscribe to an endpoint to receive triggers.                                                                |
+| `wbhk triggers list`               | `--endpoint`                                           | List the org's active triggers.                                                                              |
+| `wbhk triggers wait <triggerId>`   | `--cursor`, `--limit`, `--no-body`, `--max-body-bytes` | Consume the next events for a trigger (short-poll — returns what's past the cursor; call again to continue). |
+| `wbhk triggers revoke <triggerId>` |                                                        | Revoke a trigger.                                                                                            |
 
 For `wait`: `--cursor` resumes from a prior call's `nextCursor`; `--limit` caps events (1–200); `--no-body` skips the inline body for a cheaper poll; `--max-body-bytes` caps each inline body (1–65536).
 
 ## Usage, audit, maintenance
 
-| Command | Key flags | Description |
-| --- | --- | --- |
-| `wbhk usage` |  | Show the org's metering usage for the current period. |
-| `wbhk audit verify` |  | Walk the org's tamper-evident audit chain and report the first break. A detected break exits non-zero, so a cron/CI run alerts. |
-| `wbhk upgrade` | `--check` | Update `wbhk` to the latest release (checksum \+ provenance verified); package installs defer to their own updater. |
-| `wbhk telemetry on/off/status` |  | Manage anonymous, opt-out usage telemetry. |
-| `wbhk completion bash/zsh/fish` |  | Print a sourceable shell tab-completion script. |
+| Command                         | Key flags | Description                                                                                                                     |
+| ------------------------------- | --------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `wbhk usage`                    |           | Show the org's metering usage for the current period.                                                                           |
+| `wbhk audit verify`             |           | Walk the org's tamper-evident audit chain and report the first break. A detected break exits non-zero, so a cron/CI run alerts. |
+| `wbhk upgrade`                  | `--check` | Update `wbhk` to the latest release (checksum \+ provenance verified); package installs defer to their own updater.             |
+| `wbhk telemetry on/off/status`  |           | Manage anonymous, opt-out usage telemetry.                                                                                      |
+| `wbhk completion bash/zsh/fish` |           | Print a sourceable shell tab-completion script.                                                                                 |

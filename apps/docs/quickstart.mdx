@@ -12,6 +12,7 @@ Create an endpoint, send it a request, and see the captured event — in a few m
     ```sh
     export WEBHOOK_API_KEY=whk_your_key_here
     ```
+
   </Step>
   <Step title="Install an SDK">
     <CodeGroup>
@@ -31,6 +32,7 @@ Create an endpoint, send it a request, and see the captured event — in a few m
     </CodeGroup>
 
     Prefer the command line? `wbhk login` signs you in without an API key — see the [CLI](/authentication#signing-in-from-the-cli).
+
   </Step>
   <Step title="Create an endpoint">
     Each endpoint has a permanent, signed **ingest URL**. It's shown here and always available in your dashboard.
@@ -39,7 +41,7 @@ Create an endpoint, send it a request, and see the captured event — in a few m
 
     ```ts TypeScript
     import { WebhookClient } from "@webhook-co/sdk";
-    
+
     const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
     const endpoint = await webhook.endpoints.create({ name: "orders-prod" });
     console.log(endpoint.ingestUrl); // https://wbhk.my/whep_...
@@ -48,7 +50,7 @@ Create an endpoint, send it a request, and see the captured event — in a few m
     ```python Python
     import os
     from webhook_co import WebhookClient
-    
+
     client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
     endpoint = client.endpoints.create(name="orders-prod")
     print(endpoint.ingest_url)  # https://wbhk.my/whep_...
@@ -61,6 +63,7 @@ Create an endpoint, send it a request, and see the captured event — in a few m
     ```
 
     </CodeGroup>
+
   </Step>
   <Step title="Send it a test event">
     Point a provider at the ingest URL, or just POST to it yourself — no key required to _send_:
@@ -70,6 +73,7 @@ Create an endpoint, send it a request, and see the captured event — in a few m
       -H "Content-Type: application/json" \
       -d '{"hello":"webhook.co"}'
     ```
+
   </Step>
   <Step title="Watch it arrive">
     The request is now a captured event. List the endpoint's events — the list auto-paginates:
@@ -94,6 +98,7 @@ Create an endpoint, send it a request, and see the captured event — in a few m
     </CodeGroup>
 
     You'll see your `{"hello":"webhook.co"}` event, marked `unattempted` — captured, but unsigned until you [register a provider secret](/guides/verify-inbound-signatures).
+
   </Step>
 </Steps>
 

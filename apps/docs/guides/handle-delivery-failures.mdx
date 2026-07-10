@@ -45,16 +45,16 @@ const one = await webhook.deliveries.get("<delivery-id>");
 
 ## Delivery statuses
 
-| Status | Meaning |
-| --- | --- |
-| `queued` | Durably accepted, not yet attempted. |
-| `pending` | Claimed and in flight. |
-| `forwarded` | Handed to a localhost tunnel (CLI forward). |
-| `delivered` | Your endpoint returned a `2xx`. |
-| `failed` | Non-`2xx`, connection, or transient error — **retryable**. |
-| `blocked` | Resolved to a private/internal address; the SSRF guard refused it. **Terminal — never retried.** |
-| `dead` | Retries exhausted (dead-lettered). Retained for history and manual replay. |
-| `cancelled` | The destination was deleted while the delivery was still open. |
+| Status      | Meaning                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------ |
+| `queued`    | Durably accepted, not yet attempted.                                                             |
+| `pending`   | Claimed and in flight.                                                                           |
+| `forwarded` | Handed to a localhost tunnel (CLI forward).                                                      |
+| `delivered` | Your endpoint returned a `2xx`.                                                                  |
+| `failed`    | Non-`2xx`, connection, or transient error — **retryable**.                                       |
+| `blocked`   | Resolved to a private/internal address; the SSRF guard refused it. **Terminal — never retried.** |
+| `dead`      | Retries exhausted (dead-lettered). Retained for history and manual replay.                       |
+| `cancelled` | The destination was deleted while the delivery was still open.                                   |
 
 ## The retry schedule
 

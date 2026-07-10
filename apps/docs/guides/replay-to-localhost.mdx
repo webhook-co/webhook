@@ -25,12 +25,12 @@ The target must be a loopback address (`localhost` / `127.0.0.1`). A non-loopbac
 
 By default `listen` starts from **now** — only events captured after you connect. Point it elsewhere with `--since`:
 
-| `--since` | Starts from |
-| --- | --- |
-| `now` (default) | Only new events from this moment on. |
-| `beginning` | The full retained backlog, then tails. |
+| `--since`       | Starts from                                |
+| --------------- | ------------------------------------------ |
+| `now` (default) | Only new events from this moment on.       |
+| `beginning`     | The full retained backlog, then tails.     |
 | `from-last-ack` | Where this profile \+ endpoint last acked. |
-| `<cursor>` | An exact opaque cursor. |
+| `<cursor>`      | An exact opaque cursor.                    |
 
 Related flags:
 
@@ -47,7 +47,9 @@ wbhk listen <endpoint-id> \
 ```
 
 <Warning>
-  Forwarding re-delivers **real events to real code** — every 2xx your handler returns is a side effect that actually ran. Reach for `--max-backlog` before a `--since beginning` run so a large backlog doesn't fire all at once.
+  Forwarding re-delivers **real events to real code** — every 2xx your handler returns is a side
+  effect that actually ran. Reach for `--max-backlog` before a `--since beginning` run so a large
+  backlog doesn't fire all at once.
 </Warning>
 
 ## Drive it interactively

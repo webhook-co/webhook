@@ -28,21 +28,21 @@ The catalog is _derived_ from the same capability contract the API, CLI, and das
     `endpoints.list` · `endpoints.get` · `endpoints.create` · `endpoints.update` · `endpoints.delete` · `endpoints.rotate` · `endpoints.revealIngestUrl` · `endpoints.addProviderSecret` · `endpoints.listProviderSecrets` · `endpoints.revokeProviderSecret`
   </Card>
 
-  <Card title="Events (3)" icon="inbox">
-    `events.list` · `events.get` · `events.tail`
-  </Card>
+<Card title="Events (3)" icon="inbox">
+  `events.list` · `events.get` · `events.tail`
+</Card>
 
-  <Card title="Triggers (4)" icon="bell">
-    `triggers.create` · `triggers.list` · `triggers.revoke` · `triggers.wait`
-  </Card>
+<Card title="Triggers (4)" icon="bell">
+  `triggers.create` · `triggers.list` · `triggers.revoke` · `triggers.wait`
+</Card>
 
-  <Card title="Deliveries (2)" icon="paper-plane">
-    `deliveries.list` · `deliveries.get`
-  </Card>
+<Card title="Deliveries (2)" icon="paper-plane">
+  `deliveries.list` · `deliveries.get`
+</Card>
 
-  <Card title="Audit (1)" icon="shield-check">
-    `audit.verify`
-  </Card>
+<Card title="Audit (1)" icon="shield-check">
+  `audit.verify`
+</Card>
 
   <Card title="Usage (1)" icon="gauge">
     `usage.get`
@@ -62,7 +62,8 @@ Twelve capabilities that exist on other surfaces are held back from MCP on purpo
 That last line is the whole safety story of the next page. Reading events an agent already has access to steers nothing; redirecting egress does.
 
 <Note>
-  Delivery _reads_ — `deliveries.list` and `deliveries.get` — are exposed. Watching where events went is safe; deciding where they go is not.
+  Delivery _reads_ — `deliveries.list` and `deliveries.get` — are exposed. Watching where events
+  went is safe; deciding where they go is not.
 </Note>
 
 ## Next

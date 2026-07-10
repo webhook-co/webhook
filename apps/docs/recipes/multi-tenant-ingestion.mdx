@@ -15,6 +15,7 @@ Hand each customer a dedicated ingest URL instead of one shared endpoint you dem
     wbhk endpoints create tenant-acme
     wbhk endpoints create tenant-globex
     ```
+
   </Step>
   <Step title="Per-tenant secret and dedup">
     Each tenant's secret verifies only their traffic; each endpoint's dedup policy is independent, so a noisy tenant's window doesn't affect a quiet one.
@@ -23,6 +24,7 @@ Hand each customer a dedicated ingest URL instead of one shared endpoint you dem
     wbhk endpoints add-provider-secret <acme-endpoint>  --provider stripe
     wbhk endpoints update <acme-endpoint> --dedup-mode identifier --dedup-window 300
     ```
+
   </Step>
   <Step title="Route each tenant to the right destination">
     Subscribe each endpoint to the destination that serves that tenant — a shared receiver that reads the endpoint id, or a per-tenant URL.
@@ -31,6 +33,7 @@ Hand each customer a dedicated ingest URL instead of one shared endpoint you dem
     wbhk subscriptions add <acme-endpoint>   <acme-destination>   --require-verified
     wbhk subscriptions add <globex-endpoint> <globex-destination> --require-verified
     ```
+
   </Step>
 </Steps>
 

@@ -31,22 +31,24 @@ client, err := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
 </CodeGroup>
 
 <Warning>
-  Keep the key server-side. The SDKs never print it — they redact it from errors and debug output — but it's still a credential. If one leaks, [revoke it](/leaked-api-key); revocation is the only remedy.
+  Keep the key server-side. The SDKs never print it — they redact it from errors and debug output —
+  but it's still a credential. If one leaks, [revoke it](/leaked-api-key); revocation is the only
+  remedy.
 </Warning>
 
 ## Scopes
 
 Keys are scoped, and a key is granted only the scopes it needs. A request missing a required scope gets `403 FORBIDDEN` — mint a key with the right scopes rather than over-provisioning one.
 
-| Scope | Grants |
-| --- | --- |
-| `endpoints:read` | Read endpoints, provider secrets, destinations, and subscriptions. |
+| Scope             | Grants                                                                            |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `endpoints:read`  | Read endpoints, provider secrets, destinations, and subscriptions.                |
 | `endpoints:write` | Create and manage endpoints, provider secrets, destinations, and signing secrets. |
-| `events:read` | List and read captured events, payloads, and deliveries. |
-| `events:replay` | Replay events to localhost or a destination. |
-| `triggers:write` | Create and revoke [agent triggers](/mcp/wake-an-agent). |
-| `audit:read` | Read and verify the tamper-evident audit log. |
-| `billing:read` | Read usage and metering. |
+| `events:read`     | List and read captured events, payloads, and deliveries.                          |
+| `events:replay`   | Replay events to localhost or a destination.                                      |
+| `triggers:write`  | Create and revoke [agent triggers](/mcp/wake-an-agent).                           |
+| `audit:read`      | Read and verify the tamper-evident audit log.                                     |
+| `billing:read`    | Read usage and metering.                                                          |
 
 Resolve a key's identity and scopes at any time with `whoami`:
 

@@ -38,7 +38,9 @@ await webhook.providerSecrets.add({
 </CodeGroup>
 
 <Warning>
-  Twilio signs the request URL. The webhook URL configured in Twilio must be your endpoint's ingest URL exactly — a mismatched host, path, or query changes the signed string. webhook.co tries the default-port variants the way Twilio's SDKs do.
+  Twilio signs the request URL. The webhook URL configured in Twilio must be your endpoint's ingest
+  URL exactly — a mismatched host, path, or query changes the signed string. webhook.co tries the
+  default-port variants the way Twilio's SDKs do.
 </Warning>
 
 ## Confirm

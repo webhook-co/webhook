@@ -15,6 +15,7 @@ Get capture, inspection, replay, and a retry schedule in front of a receiver you
     wbhk endpoints create prod-migration
     wbhk replay-destinations add https://api.example.com/webhooks --label legacy
     ```
+
   </Step>
   <Step title="Subscribe the endpoint to it">
     Every captured event now auto-delivers to your existing receiver, with the fixed exponential retry schedule (8 attempts over ~32h) it never had before.
@@ -22,6 +23,7 @@ Get capture, inspection, replay, and a retry schedule in front of a receiver you
     ```sh
     wbhk subscriptions add <endpoint-id> <destination-id>
     ```
+
   </Step>
   <Step title="Run in parallel, then cut over">
     Point the provider at the ingest URL **alongside** its current target and confirm your receiver sees identical traffic through webhook.co. When it matches, remove the provider's old direct target. Your receiver's code never changed; it just gained an inspection log and a replay button.
@@ -30,6 +32,7 @@ Get capture, inspection, replay, and a retry schedule in front of a receiver you
     wbhk events list <endpoint-id> --all
     wbhk deliveries list --status delivered,failed,dead
     ```
+
   </Step>
 </Steps>
 

@@ -59,7 +59,11 @@ console.log(attempt.status, attempt.statusCode);
 The API scope is `events:replay`. `idempotencyKey` is **required** — mint a fresh one per call. Replay is at-least-once, so a re-sent delivery can reach your receiver twice; receivers dedup on the stable `webhook-id` header. Reusing a key for a _different_ replay is rejected rather than silently skipped; a matching re-claim returns the existing attempt.
 
 <Warning>
-  An event whose signature was checked and **rejected** (verification state `failed`) is never replayed or delivered — the API returns `403`. That request was forged or tampered, and re-delivering it would let webhook.co vouch for content it never authenticated. An `unattempted` event (no signature was checked) does replay, but is delivered unsigned. See [delivery, retry & signing](/concepts/delivery-retry-signing).
+  An event whose signature was checked and **rejected** (verification state `failed`) is never
+  replayed or delivered — the API returns `403`. That request was forged or tampered, and
+  re-delivering it would let webhook.co vouch for content it never authenticated. An `unattempted`
+  event (no signature was checked) does replay, but is delivered unsigned. See [delivery, retry &
+  signing](/concepts/delivery-retry-signing).
 </Warning>
 
 ## Related

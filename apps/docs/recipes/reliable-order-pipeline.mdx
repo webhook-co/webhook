@@ -20,6 +20,7 @@ Shopify retries aggressively, and a double-fulfilled order is a real refund. Ver
     ```sh
     wbhk endpoints update <endpoint-id> --dedup-mode identifier --dedup-window 300
     ```
+
   </Step>
   <Step title="Deliver to fulfillment, signed and verified-only">
     Register fulfillment as a destination, then subscribe `--require-verified`. Each delivery is signed with the destination secret and retried on the fixed schedule (5s → 5m → 30m → 2h → 5h → 10h → 10h); after 20 dead deliveries the destination auto-disables so a hard outage stops hammering it.
@@ -28,9 +29,11 @@ Shopify retries aggressively, and a double-fulfilled order is a real refund. Ver
     wbhk replay-destinations add https://fulfillment.example.com/orders --label fulfillment
     wbhk subscriptions add <endpoint-id> <destination-id> --provider shopify --require-verified
     ```
+
   </Step>
 </Steps>
 
 <Warning>
-  Dedup is best-effort load reduction, not exactly-once. Keep fulfillment idempotent on the order id — see [build an idempotent consumer](/recipes/idempotent-consumer).
+  Dedup is best-effort load reduction, not exactly-once. Keep fulfillment idempotent on the order id
+  — see [build an idempotent consumer](/recipes/idempotent-consumer).
 </Warning>

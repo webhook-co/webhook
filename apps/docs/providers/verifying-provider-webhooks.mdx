@@ -32,19 +32,22 @@ A new provider is usually one config row, which is why the list grows quickly. S
 Some providers won't start delivering until your ingest URL answers a one-time verification challenge — a GET or POST carrying a nonce, a subscription token, or a signed ping. webhook.co answers these for you: Slack, Meta, Dropbox, X, eBay, Braintree, Okta, Microsoft Graph, Twitch, monday.com, Asana, Zoom, and Discord all complete setup against a wbhk.my URL with no action on your part.
 
 <Note>
-  Handshakes are control messages, not events. They're dispatched before capture and **capture and meter nothing** — a challenge never shows up in your event stream or counts toward usage. Where a handshake computes a response under your secret, it's fenced so it can't be coaxed into signing an attacker-chosen payload.
+  Handshakes are control messages, not events. They're dispatched before capture and **capture and
+  meter nothing** — a challenge never shows up in your event stream or counts toward usage. Where a
+  handshake computes a response under your secret, it's fenced so it can't be coaxed into signing an
+  attacker-chosen payload.
 </Note>
 
 ## The four verification states
 
 Every stored event carries exactly one state, derived from what the server actually observed — never from a client-supplied claim:
 
-| State | Meaning |
-| --- | --- |
-| `verified` | An adapter reproduced the cryptographic signature over the captured bytes. |
+| State           | Meaning                                                                                                                                                                              |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `verified`      | An adapter reproduced the cryptographic signature over the captured bytes.                                                                                                           |
 | `authenticated` | The source proved itself with a shared static token or HTTP Basic credential — real, but weaker than a payload signature, so it's a distinct state (never dressed up as `verified`). |
-| `failed` | An adapter ran and rejected — a signature was present and did not match. Worth investigating. |
-| `unattempted` | No signature was checked: no secret registered, the expected header was absent, or a rare internal error. Not a failure — just unverified. |
+| `failed`        | An adapter ran and rejected — a signature was present and did not match. Worth investigating.                                                                                        |
+| `unattempted`   | No signature was checked: no secret registered, the expected header was absent, or a rare internal error. Not a failure — just unverified.                                           |
 
 `unattempted` and `failed` are deliberately different. An event with no registered secret is `unattempted`, not `failed` — absence of a check is not evidence of forgery.
 
@@ -57,13 +60,13 @@ The [provider directory](/providers/directory) is generated from the same regist
     The step-by-step guide to turning on verification for an endpoint.
   </Card>
 
-  <Card title="Provider directory" icon="table-list" href="/providers/directory">
-    All 142 providers, their slugs, schemes, and headers.
-  </Card>
+<Card title="Provider directory" icon="table-list" href="/providers/directory">
+  All 142 providers, their slugs, schemes, and headers.
+</Card>
 
-  <Card title="Custom or unlisted provider" icon="puzzle-piece" href="/providers/custom">
-    What to do when your sender isn't individually listed.
-  </Card>
+<Card title="Custom or unlisted provider" icon="puzzle-piece" href="/providers/custom">
+  What to do when your sender isn't individually listed.
+</Card>
 
   <Card title="Inbound verification concepts" icon="lock" href="/concepts/inbound-verification">
     Where verification sits in the receive pipeline.

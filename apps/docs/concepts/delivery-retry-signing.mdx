@@ -21,14 +21,14 @@ Each destination has its own FIFO partition, so deliveries to one target stay or
 If a destination doesn't return `2xx`, the delivery is retried on a fixed schedule — up to **8 attempts**, with jittered waits between them:
 
 | After attempt | Wait before next |
-| --- | --- |
-| 1 | 5 seconds |
-| 2 | 5 minutes |
-| 3 | 30 minutes |
-| 4 | 2 hours |
-| 5 | 5 hours |
-| 6 | 10 hours |
-| 7 | 10 hours |
+| ------------- | ---------------- |
+| 1             | 5 seconds        |
+| 2             | 5 minutes        |
+| 3             | 30 minutes       |
+| 4             | 2 hours          |
+| 5             | 5 hours          |
+| 6             | 10 hours         |
+| 7             | 10 hours         |
 
 Each wait carries ±10% jitter so a fleet of deliveries to a recovering host don't all re-fire in lockstep. That's roughly 32 hours of trying before attempt 8 exhausts and the delivery is dead-lettered — retained, so you can inspect and manually replay it. If a destination racks up **20 consecutive dead deliveries**, it's auto-disabled (recorded in your audit log, and the org owner is emailed); re-enable it to resume. A background reconciler re-wakes any delivery that got stranded mid-flight.
 

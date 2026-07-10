@@ -15,6 +15,7 @@ Point Stripe at a permanent, signed ingest URL, verify every event's signature, 
     wbhk endpoints create stripe-dev
     # → ingest URL: https://wbhk.my/whep_...
     ```
+
   </Step>
   <Step title="Register your Stripe signing secret">
     Now events arrive with a `verificationState` of `verified` instead of `unattempted`. The secret is read from stdin, never a shell argument.
@@ -25,6 +26,7 @@ Point Stripe at a permanent, signed ingest URL, verify every event's signature, 
     ```
 
     Point a Stripe webhook endpoint at `https://wbhk.my/<token>` and send a test event. See [verify inbound signatures](/guides/verify-inbound-signatures) for the details.
+
   </Step>
   <Step title="Forward the live stream to your dev server">
     `listen --forward` re-delivers each captured event to your local URL, cursor-gated at least once. Reconnects resume from the durable cursor, so a dropped wifi connection doesn't lose events.
@@ -32,6 +34,7 @@ Point Stripe at a permanent, signed ingest URL, verify every event's signature, 
     ```sh
     wbhk listen <endpoint-id> --forward http://localhost:3000/webhooks --since now
     ```
+
   </Step>
   <Step title="Replay while you iterate">
     Broke your handler on `invoice.paid`? Don't fish in the Stripe dashboard — replay the one you already captured, editing the body first to exercise an edge case.
@@ -39,9 +42,12 @@ Point Stripe at a permanent, signed ingest URL, verify every event's signature, 
     ```sh
     wbhk replay <event-id> --forward http://localhost:3000/webhooks --edit
     ```
+
   </Step>
 </Steps>
 
 <Note>
-  `--edit` re-delivers modified bytes, so Stripe's original signature won't re-verify against them — expected when you're testing your handler's logic rather than its verification. Forward without `--edit` to replay the exact signed bytes.
+  `--edit` re-delivers modified bytes, so Stripe's original signature won't re-verify against them —
+  expected when you're testing your handler's logic rather than its verification. Forward without
+  `--edit` to replay the exact signed bytes.
 </Note>

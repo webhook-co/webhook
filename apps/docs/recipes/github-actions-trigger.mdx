@@ -17,6 +17,7 @@ Kick off a build, deploy, or any job when GitHub fires — without exposing your
     ```
 
     Point a GitHub webhook (e.g. on `push`) at the ingest URL.
+
   </Step>
   <Step title="Register your job-runner as a destination">
     The destination is any https URL you control that starts the job — a serverless function, a small relay, an internal service. The allowlist blocks private-range targets at delivery time, so this must be publicly reachable.
@@ -27,6 +28,7 @@ Kick off a build, deploy, or any job when GitHub fires — without exposing your
     ```
 
     Verify that secret in the runner so only webhook.co can start a job.
+
   </Step>
   <Step title="Subscribe, verified-only">
     `--require-verified` means a forged push — anyone who learns the ingest URL can POST one — never reaches your pipeline.
@@ -34,9 +36,11 @@ Kick off a build, deploy, or any job when GitHub fires — without exposing your
     ```sh
     wbhk subscriptions add <endpoint-id> <destination-id> --provider github --require-verified
     ```
+
   </Step>
 </Steps>
 
 <Note>
-  A rejected signature (`failed`) is blocked outright — no subscription setting forwards it. Only `verified` / `authenticated` events are delivered and signed.
+  A rejected signature (`failed`) is blocked outright — no subscription setting forwards it. Only
+  `verified` / `authenticated` events are delivered and signed.
 </Note>

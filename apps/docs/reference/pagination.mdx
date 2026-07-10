@@ -9,7 +9,7 @@ List endpoints return a page of items and an opaque `nextCursor`. Pass the curso
 
 ```json
 {
-  "items": [ /* up to `limit` items */ ],
+  "items": [/* up to `limit` items */],
   "nextCursor": "opaque-keyset-token"
 }
 ```
@@ -47,11 +47,11 @@ The iterator guards against a server that hands back a non-advancing cursor — 
 
 List commands print the first page and, if there's more, hint how to continue.
 
-| Flag | Effect |
-| --- | --- |
-| `--all` | Follow the cursor and print every page. |
-| `--cursor <token>` | Resume from a specific `nextCursor`. |
-| `--limit <n>` | Items per page, `1`–`200`. |
+| Flag               | Effect                                  |
+| ------------------ | --------------------------------------- |
+| `--all`            | Follow the cursor and print every page. |
+| `--cursor <token>` | Resume from a specific `nextCursor`.    |
+| `--limit <n>`      | Items per page, `1`–`200`.              |
 
 ## Not everything paginates
 

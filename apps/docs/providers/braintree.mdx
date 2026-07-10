@@ -37,7 +37,7 @@ await webhook.providerSecrets.add({
 
 </CodeGroup>
 
-## The bt\_challenge handshake
+## The bt_challenge handshake
 
 Braintree verifies a new webhook with a `bt_challenge` GET. Answering it needs your public key too, registered as a second secret with `kind: braintree_public_key` — available over the API or SDK:
 
@@ -51,7 +51,9 @@ curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
 With both registered, webhook.co computes the challenge response Braintree expects.
 
 <Note>
-  The `braintree_public_key` kind is registered via the API or SDK. The private key (your signing secret) registers on any surface, including the CLI, and is all you need to verify incoming events.
+  The `braintree_public_key` kind is registered via the API or SDK. The private key (your signing
+  secret) registers on any surface, including the CLI, and is all you need to verify incoming
+  events.
 </Note>
 
 ## Confirm

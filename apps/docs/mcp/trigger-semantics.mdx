@@ -9,19 +9,19 @@ icon: "book"
 
 ## Input
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `triggerId` | uuid | The trigger to consume from. |
-| `cursor` | string \| null | Opaque resume position. Omit or pass `null` to start from the oldest retained event. |
-| `limit` | int ≤ 200 | Max events this page. |
-| `includeBody` | bool, default `true` | Inline the bounded payload body on each event. |
-| `maxBodyBytes` | int ≤ 64 KiB | Clamp for the inlined body. |
+| Field          | Type                 | Notes                                                                                |
+| -------------- | -------------------- | ------------------------------------------------------------------------------------ |
+| `triggerId`    | uuid                 | The trigger to consume from.                                                         |
+| `cursor`       | string \| null       | Opaque resume position. Omit or pass `null` to start from the oldest retained event. |
+| `limit`        | int ≤ 200            | Max events this page.                                                                |
+| `includeBody`  | bool, default `true` | Inline the bounded payload body on each event.                                       |
+| `maxBodyBytes` | int ≤ 64 KiB         | Clamp for the inlined body.                                                          |
 
 ## Output
 
 ```json
 {
-  "events": [ /* AgentTriggerEvent[], each with its verification state + vouched flag */ ],
+  "events": [/* AgentTriggerEvent[], each with its verification state + vouched flag */],
   "nextCursor": "…",
   "caughtUp": true
 }
@@ -38,7 +38,8 @@ icon: "book"
 The event log is the queue and the cursor is the acknowledgement. Persist `nextCursor` only after the work for a page succeeds. Crash before persisting it and the next call re-reads those events — never loses them. That makes delivery **at-least-once**, so **dedup on the event id**: an event may arrive twice, never zero times.
 
 <Warning>
-  Advance your stored cursor only after the side effects for a page are durable. Persisting `nextCursor` before the work turns a crash into silent event loss.
+  Advance your stored cursor only after the side effects for a page are durable. Persisting
+  `nextCursor` before the work turns a crash into silent event loss.
 </Warning>
 
 ## Filtered, but never re-scanned
@@ -55,12 +56,12 @@ Per endpoint, by capture-completion time (`received_at`) — the order events we
 
 ## Errors
 
-| Code | Meaning |
-| --- | --- |
-| `NOT_FOUND` | Unknown, revoked, or cross-org trigger. |
+| Code               | Meaning                                                                                                    |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `NOT_FOUND`        | Unknown, revoked, or cross-org trigger.                                                                    |
 | `VALIDATION_ERROR` | Malformed cursor, or a cursor below the retained window — restart from the beginning by omitting `cursor`. |
-| `UNAUTHORIZED` | Missing or invalid bearer. |
-| `RATE_LIMITED` | Back off and retry. |
+| `UNAUTHORIZED`     | Missing or invalid bearer.                                                                                 |
+| `RATE_LIMITED`     | Back off and retry.                                                                                        |
 
 ## The API mirror
 
