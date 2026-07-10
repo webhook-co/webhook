@@ -8,6 +8,11 @@
     "dark": "#0e141b"
   },
   "favicon": "/favicon.svg",
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
+    "href": "https://webhook.co"
+  },
   "navigation": {
     "tabs": [
       {
@@ -65,17 +70,6 @@
             ]
           },
           {
-            "group": "MCP & agents",
-            "icon": "robot",
-            "pages": [
-              "mcp/overview",
-              "mcp/wake-an-agent",
-              "mcp/trigger-semantics",
-              "mcp/using-from-a-client",
-              "mcp/connect-the-docs-mcp"
-            ]
-          },
-          {
             "group": "Recipes",
             "icon": "book-sparkles",
             "pages": [
@@ -94,21 +88,19 @@
             ]
           },
           {
-            "group": "CLI & SDKs",
-            "icon": "terminal",
-            "pages": [
-              "cli/overview",
-              "cli/command-reference",
-              "sdks/overview",
-              "sdks/typescript",
-              "sdks/python",
-              "sdks/go"
-            ]
-          },
+            "group": "Resources",
+            "icon": "life-ring",
+            "pages": ["troubleshooting", "leaked-api-key"]
+          }
+        ]
+      },
+      {
+        "tab": "API reference",
+        "groups": [
           {
-            "group": "Reference",
-            "icon": "book-bookmark",
+            "group": "Overview",
             "pages": [
+              "api-reference/introduction",
               "reference/the-event-object",
               "reference/errors",
               "reference/rate-limits",
@@ -117,15 +109,39 @@
             ]
           },
           {
-            "group": "Resources",
-            "icon": "life-ring",
-            "pages": ["troubleshooting", "leaked-api-key", "changelog"]
+            "group": "Endpoints",
+            "openapi": "https://api.webhook.co/openapi.json"
           }
         ]
       },
       {
-        "tab": "API reference",
-        "openapi": "https://api.webhook.co/openapi.json"
+        "tab": "CLI & SDKs",
+        "groups": [
+          {
+            "group": "CLI",
+            "icon": "terminal",
+            "pages": ["cli/overview", "cli/command-reference"]
+          },
+          {
+            "group": "SDKs",
+            "icon": "code",
+            "pages": ["sdks/overview", "sdks/typescript", "sdks/python", "sdks/go"]
+          }
+        ]
+      },
+      {
+        "tab": "MCP & agents",
+        "pages": [
+          "mcp/overview",
+          "mcp/wake-an-agent",
+          "mcp/trigger-semantics",
+          "mcp/using-from-a-client",
+          "mcp/connect-the-docs-mcp"
+        ]
+      },
+      {
+        "tab": "Changelog",
+        "pages": ["changelog"]
       }
     ]
   },
@@ -144,7 +160,14 @@
   },
   "description": "webhook.co documentation — a free, permanent, signed webhook URL with payload inspection, replay-to-localhost, inbound verification across 142 providers, outbound delivery, and an MCP webhook→agent trigger. Identical across CLI, API, dashboard, and MCP.",
   "contextual": {
-    "options": ["copy", "view", "chatgpt", "claude", "cursor"],
-    "display": "header"
+    "options": ["copy", "view", "chatgpt", "claude", "cursor"]
+  },
+  "api": {
+    "playground": {
+      "display": "simple"
+    },
+    "examples": {
+      "languages": ["curl", "typescript", "python", "go"]
+    }
   }
 }

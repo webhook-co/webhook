@@ -1,15 +1,17 @@
 ---
-title: "Introduction"
-description: "A free, permanent, signed webhook URL — inspect every request, replay it to localhost, and deliver it onward. The same from the CLI, API, dashboard, and MCP."
+title: "webhook.co"
+sidebarTitle: "Introduction"
+description: "A free, permanent, signed ingest URL — inspect every request, replay it to localhost, and deliver it onward. Identical across CLI, API, dashboard, and MCP."
+icon: "book-open"
 ---
 
-webhook.co gives you a **free, permanent, signed webhook URL** with payload inspection and one-command replay-to-localhost — then grows with you into inbound ingestion (verify → [dedup](/deduplication) → retry → replay) and outbound delivery. Every capability is reachable identically across the **CLI, API, dashboard, and MCP**, and nothing is public unless you make it so.
+webhook.co gives you a **free, permanent, signed ingest URL**: point any provider at it and every request is captured — raw bytes first, then verified and deduplicated — where you can inspect it, replay it to localhost with one command, and deliver it onward. It grows with you from a debugging mailbox into a full inbound pipeline (verify → [dedup](/deduplication) → retry → replay) and outbound delivery, and every capability is reachable identically from the **CLI, API, dashboard, and MCP**. Nothing is public unless you make it so.
 
-Signing and verification follow the [Standard Webhooks](https://www.standardwebhooks.com/) spec, for both send and receive.
+Signing and verification follow the [Standard Webhooks](https://www.standardwebhooks.com/) spec, on both the receive and send sides.
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Create a signed URL, send a test event, and watch it arrive — in a few minutes.
+    Create an ingest URL, send a test event, and watch it arrive — in a few minutes.
   </Card>
 
   <Card title="How it works" icon="diagram-project" href="/concepts/how-webhook-co-works">
@@ -19,13 +21,15 @@ Signing and verification follow the [Standard Webhooks](https://www.standardwebh
 
 ## Explore
 
+Four capabilities, each usable on its own. Start wherever your problem is.
+
 <CardGroup cols={2}>
   <Card title="Ingest" icon="inbox-in" href="/concepts/ingest-urls">
-    A permanent, signed URL on a dedicated apex that accepts every request and never expires.
+    A permanent, signed URL on a dedicated cookieless apex that accepts every verb and never expires.
   </Card>
 
 <Card title="Verify" icon="shield-check" href="/guides/verify-inbound-signatures">
-  Register a provider secret and webhook.co verifies every inbound request — 142 providers built in.
+  Register a provider secret and every inbound request is checked — 142 providers built in.
 </Card>
 
 <Card title="Deliver" icon="paper-plane" href="/concepts/delivery-retry-signing">
@@ -46,22 +50,22 @@ The REST API lives at `https://api.webhook.co`. It's a small, predictable surfac
 curl https://api.webhook.co/openapi.json
 ```
 
-That same document generates the SDKs and this site's API reference, so they never drift from the real API.
+That same document generates the SDKs and this site's reference, so they never drift from the running API. Authentication is a `whk_` bearer key — see [authentication](/authentication).
 
 ## SDKs
 
-Official, typed SDKs in three languages — each with the same hardening built in (bearer auth, bounded retries with jitter, cursor pagination, idempotency, and secret redaction):
+Official, typed SDKs in three languages — each with the same hardening built in: bearer auth, bounded retries with jitter, cursor pagination, idempotency, and secret redaction.
 
 <CardGroup cols={3}>
-  <Card title="TypeScript" href="/sdks/typescript">
+  <Card title="TypeScript" icon="js" href="/sdks/typescript">
     `npm install @webhook-co/sdk`
   </Card>
 
-<Card title="Python" href="/sdks/python">
+<Card title="Python" icon="python" href="/sdks/python">
   `pip install webhook-co`
 </Card>
 
-  <Card title="Go" href="/sdks/go">
+  <Card title="Go" icon="golang" href="/sdks/go">
     `go get github.com/webhook-co/webhook-go`
   </Card>
 </CardGroup>
