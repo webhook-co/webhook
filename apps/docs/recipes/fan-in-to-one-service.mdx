@@ -16,7 +16,6 @@ Your receiver shouldn't carry a verifier for every provider you integrate. Verif
     wbhk endpoints add-provider-secret <shopify-endpoint> --provider shopify
     wbhk endpoints add-provider-secret <github-endpoint>  --provider github
     ```
-
   </Step>
   <Step title="Register one destination — your receiver">
     `add` returns a signing secret, shown once. Configure it in your receiver's Standard Webhooks verifier.
@@ -25,22 +24,18 @@ Your receiver shouldn't carry a verifier for every provider you integrate. Verif
     wbhk replay-destinations add https://api.example.com/ingest --label unified
     # → signing secret (shown once): whsec...
     ```
-
   </Step>
   <Step title="Subscribe every endpoint to that one destination">
-    `--require-verified` routes only signature-checked events. webhook.co re-signs each with the destination's secret — the un-forgeable verification state gates whether we vouch for it, so a forged event never carries your signature.
+    `--require-verified` routes only events whose source was authenticated (the `verified` and `authenticated` states), dropping `unattempted` and `failed`. webhook.co re-signs each with the destination's secret — the un-forgeable verification state gates whether we vouch for it, so a forged event never carries your signature.
 
     ```sh
     wbhk subscriptions add <stripe-endpoint>  <destination-id> --require-verified
     wbhk subscriptions add <shopify-endpoint> <destination-id> --require-verified
     wbhk subscriptions add <github-endpoint>  <destination-id> --require-verified
     ```
-
   </Step>
 </Steps>
 
 <Note>
-  Every subscription to the same destination delivers under the **same** signing secret, so your
-  receiver runs one verifier. Rotate it in one place — see [rotate a signing
-  secret](/recipes/rotate-signing-secret).
+  Every subscription to the same destination delivers under the **same** signing secret, so your receiver runs one verifier. Rotate it in one place — see [rotate a signing secret](/recipes/rotate-signing-secret).
 </Note>

@@ -35,10 +35,9 @@ To forward captured events to one of your services automatically, do two things:
     </CodeGroup>
 
     In the dashboard, add a destination under **Settings → Destinations**.
-
   </Step>
   <Step title="Subscribe a source endpoint to it">
-    A subscription is the routing rule: captured events from the source endpoint auto-deliver to the destination. The zero-config default routes everything; narrow it with `--provider`, `--event-type` patterns (exact, `charge.*`, or `*`), and `--require-verified` to route only signature-verified events.
+    A subscription is the routing rule: captured events from the source endpoint auto-deliver to the destination. The zero-config default routes everything; narrow it with `--provider`, `--event-type` patterns (exact, `charge.*`, or `*`), and `--require-verified` to route only events whose source was authenticated (the `verified` and `authenticated` states — excluding `unattempted` and `failed`).
 
     <CodeGroup>
 
@@ -71,9 +70,12 @@ To forward captured events to one of your services automatically, do two things:
     ```
 
     </CodeGroup>
-
   </Step>
 </Steps>
+
+<Warning>
+  For production egress, add `--require-verified` (or filter by `--provider`) unless you deliberately want everything. A subscription with no filters forwards **every** captured request — including `unattempted` traffic from anything that reaches the ingest URL.
+</Warning>
 
 ## Ordering, enabling, disabling
 
@@ -86,10 +88,7 @@ wbhk replay-destinations set-ordered <destination-id> on
 Remove a destination from the allowlist with `wbhk replay-destinations remove <id>` — it can no longer be a delivery target, and is easily re-added. If a destination auto-disabled after repeated failures, re-enable it — see [handle delivery failures](/guides/handle-delivery-failures).
 
 <Note>
-  Destinations and subscriptions are deliberately **not** exposed over MCP — only over the CLI, API,
-  and dashboard. This is a security property, not a gap: an AI agent must never be able to
-  reconfigure where an org's event stream is sent, or it could steer your data to a destination of
-  its choosing. Egress routing is a human-only control.
+  Destinations and subscriptions are deliberately **not** exposed over MCP — only over the CLI, API, and dashboard. This is a security property, not a gap: an AI agent must never be able to reconfigure where an org's event stream is sent, or it could steer your data to a destination of its choosing. Egress routing is a human-only control.
 </Note>
 
 ## Related

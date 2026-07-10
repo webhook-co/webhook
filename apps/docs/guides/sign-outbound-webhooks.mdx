@@ -35,7 +35,9 @@ console.log(rotated.signingSecret); // shown once — persist it now
 
 ## What gets signed, and what doesn't
 
-Only **verified** events are signed. An `unattempted` event — one where no inbound signature was checked — is delivered **unsigned**, even to a destination with signing enabled. We never vouch for content we didn't authenticate. A `failed` event isn't delivered at all. See [delivery, retry & signing](/concepts/delivery-retry-signing).
+webhook.co signs the events whose source it **authenticated** — both `verified` (a cryptographic payload signature) and `authenticated` (a shared token or HTTP Basic, a weaker inbound proof). An `unattempted` event — one where no inbound signature was checked — is delivered **unsigned**, even to a destination with signing enabled: we never put our signature on content we didn't authenticate. A `failed` event isn't delivered at all. See [delivery, retry & signing](/concepts/delivery-retry-signing).
+
+Because `authenticated` deliveries **are** signed, verify webhook.co's signature on every delivery your receiver accepts — don't assume an unsigned request just because the original source used token auth rather than a payload signature.
 
 Before re-signing, inbound provider signature headers are stripped, so your receiver only ever sees webhook.co's signature — not a stale one it can't verify. The `webhook-id` is **stable across retries**, so a re-sent delivery carries the same id and your receiver can dedup it.
 
@@ -101,10 +103,7 @@ def verify(secret: str, headers: dict[str, str], raw_body: bytes) -> bool:
 </CodeGroup>
 
 <Warning>
-  Verify over the **raw request body, byte for byte** — the exact bytes you received, never a
-  re-serialized or reparsed copy. A single whitespace or key-order difference breaks the HMAC. And
-  compare signatures with a **constant-time** function (`crypto.timingSafeEqual` /
-  `hmac.compare_digest`) — never `==`, which leaks the answer through timing.
+  Verify over the **raw request body, byte for byte** — the exact bytes you received, never a re-serialized or reparsed copy. A single whitespace or key-order difference breaks the HMAC. And compare signatures with a **constant-time** function (`crypto.timingSafeEqual` / `hmac.compare_digest`) — never `==`, which leaks the answer through timing.
 </Warning>
 
 ## Related
