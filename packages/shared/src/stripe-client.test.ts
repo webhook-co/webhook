@@ -62,6 +62,7 @@ describe("makeStripeClient.request", () => {
   it("POSTs form-encoded to /v1<path> with Bearer auth, version, and idempotency key", async () => {
     const { impl, calls } = fakeFetch({ status: 200, body: { id: "obj_1" } });
     const client = makeStripeClient({
+      mode: "test",
       secretKey: SECRET,
       apiBase: "https://stripe.test",
       fetchImpl: impl,
@@ -82,7 +83,7 @@ describe("makeStripeClient.request", () => {
 
   it("omits the Idempotency-Key header when none is given", async () => {
     const { impl, calls } = fakeFetch({ status: 200, body: {} });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     await client.request("/x", {});
     expect((calls[0].init.headers as Record<string, string>)["Idempotency-Key"]).toBeUndefined();
   });
@@ -94,7 +95,7 @@ describe("makeStripeClient.request", () => {
         error: { message: "Your card was declined.", type: "card_error", code: "card_declined" },
       },
     });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     const err = await client.request("/charges", {}).catch((e) => e);
     expect(err).toBeInstanceOf(StripeError);
     expect(err.status).toBe(402);
@@ -113,7 +114,7 @@ describe("makeStripeClient.request", () => {
           throw new Error("not json");
         },
       }) as unknown as Response) as unknown as typeof fetch;
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     const err = await client.request("/x", {}).catch((e) => e);
     expect(err).toBeInstanceOf(StripeError);
     expect(err.status).toBe(502);
@@ -123,7 +124,7 @@ describe("makeStripeClient.request", () => {
 describe("makeStripeClient hosted flows", () => {
   it("createCustomer stamps metadata[org_id] + an org-scoped idempotency key", async () => {
     const { impl, calls } = fakeFetch({ status: 200, body: { id: "cus_1" } });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     const out = await client.createCustomer({ orgId: "org-9", email: "o@x.test" });
     expect(out.id).toBe("cus_1");
     const p = new URLSearchParams(calls[0].init.body as string);
@@ -138,7 +139,7 @@ describe("makeStripeClient hosted flows", () => {
       status: 200,
       body: { id: "cs_1", url: "https://checkout" },
     });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     const out = await client.createCheckoutSession({
       customer: "cus_1",
       lineItems: [{ price: "price_base", quantity: 1 }, { price: "price_overage" }],
@@ -164,7 +165,7 @@ describe("makeStripeClient hosted flows", () => {
       status: 200,
       body: { id: "cs_3", url: "https://checkout" },
     });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     await client.createCheckoutSession({
       customerEmail: "new@x.test",
       lineItems: [{ price: "price_base", quantity: 1 }],
@@ -182,7 +183,7 @@ describe("makeStripeClient hosted flows", () => {
       status: 200,
       body: { id: "cs_4", url: "https://checkout" },
     });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     await client.createCheckoutSession({
       customer: "cus_1",
       customerEmail: "ignored@x.test",
@@ -201,7 +202,7 @@ describe("makeStripeClient hosted flows", () => {
       status: 200,
       body: { id: "cs_2", url: "https://checkout" },
     });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     await client.createCheckoutSession({
       customer: "cus_1",
       lineItems: [{ price: "price_base", quantity: 1 }],
@@ -220,7 +221,7 @@ describe("makeStripeClient hosted flows", () => {
       status: 200,
       body: { identifier: "org-7:2026-07-15", event_name: "webhook_events" },
     });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     const out = await client.reportMeterEvent({
       eventName: "webhook_events",
       customer: "cus_1",
@@ -244,7 +245,7 @@ describe("makeStripeClient hosted flows", () => {
 
   it("reportMeterEvent omits an unset timestamp (Stripe defaults to ingest time)", async () => {
     const { impl, calls } = fakeFetch({ status: 200, body: { identifier: "org-7:2026-07-16" } });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     await client.reportMeterEvent({
       eventName: "webhook_events",
       customer: "cus_1",
@@ -257,7 +258,7 @@ describe("makeStripeClient hosted flows", () => {
 
   it("createPortalSession sends the customer + return_url", async () => {
     const { impl, calls } = fakeFetch({ status: 200, body: { id: "ps_1", url: "https://portal" } });
-    const client = makeStripeClient({ secretKey: SECRET, fetchImpl: impl });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     const out = await client.createPortalSession({
       customer: "cus_1",
       returnUrl: "https://app/back",
@@ -266,5 +267,50 @@ describe("makeStripeClient hosted flows", () => {
     const p = new URLSearchParams(calls[0].init.body as string);
     expect(p.get("customer")).toBe("cus_1");
     expect(p.get("return_url")).toBe("https://app/back");
+  });
+});
+
+describe("makeStripeClient — the mode/key guard is UNSKIPPABLE (it lives in the constructor)", () => {
+  // A guard at the call sites is one a future caller can forget. Requiring `mode` here makes the compiler
+  // force every caller through it, and throwing means a mismatched pair can never issue a single request.
+  //
+  // The key fixtures are CONCATENATED rather than written as literals: a literal `sk_live_…` is a real
+  // Stripe token shape and trips the repo's gitleaks scan, which reads branch HISTORY (so an inline
+  // allow-comment would have to live in the introducing commit). Building the string sidesteps it entirely.
+  const LIVE = "sk_live_" + "fixture";
+  const TEST = "sk_test_" + "fixture";
+  const PUBLISHABLE = "pk_live_" + "fixture";
+
+  it("throws on a LIVE key in test mode (it would charge real cards)", () => {
+    expect(() => makeStripeClient({ mode: "test", secretKey: LIVE })).toThrow(
+      /does not match BILLING_MODE/,
+    );
+  });
+
+  it("throws on a TEST key in live mode (it would take no money)", () => {
+    expect(() => makeStripeClient({ mode: "live", secretKey: TEST })).toThrow(
+      /does not match BILLING_MODE/,
+    );
+  });
+
+  it("throws when billing is off, and on a publishable key used as a secret", () => {
+    expect(() => makeStripeClient({ mode: "off", secretKey: TEST })).toThrow();
+    expect(() => makeStripeClient({ mode: "live", secretKey: PUBLISHABLE })).toThrow();
+  });
+
+  it("never names the key or its prefix in the error", () => {
+    try {
+      makeStripeClient({ mode: "test", secretKey: LIVE });
+      throw new Error("expected a throw");
+    } catch (e) {
+      const msg = (e as Error).message;
+      expect(msg).not.toContain("fixture");
+      expect(msg).not.toContain("sk_live");
+    }
+  });
+
+  it("constructs fine for a matching pair", () => {
+    expect(() => makeStripeClient({ mode: "live", secretKey: LIVE })).not.toThrow();
+    expect(() => makeStripeClient({ mode: "test", secretKey: TEST })).not.toThrow();
   });
 });

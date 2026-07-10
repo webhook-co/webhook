@@ -1045,7 +1045,7 @@ async function runMeterReporterCron(env: Env): Promise<void> {
     return;
   }
 
-  const stripe = makeStripeClient({ secretKey });
+  const stripe = makeStripeClient({ mode, secretKey });
   const meter = createClient(env.HYPERDRIVE_METER.connectionString);
   const app = createClient(env.HYPERDRIVE_TENANT.connectionString);
   try {
