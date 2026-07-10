@@ -120,4 +120,14 @@ export const DB_ROLES = {
    * webhook_app, so this role is the sole writer. NON-OWNER, NOSUPERUSER, NOBYPASSRLS. Password out of band.
    */
   billing: "webhook_billing",
+  /**
+   * Cross-org R2 PAYLOAD-PURGE drain role (data-lifecycle / migration 0051). After an owner
+   * hard-deletes an org, its captured payload bodies still live in R2 (outside Postgres). This
+   * role drives the engine cron that drains that purge: SELECT the outstanding `org_deletions`
+   * jobs and column-scoped UPDATE their cursor/counters/completion — nothing else. No INSERT, no
+   * DELETE, no access to any tenant table (the org's rows are already gone). Role-targeted
+   * `FOR SELECT/UPDATE TO webhook_purge` policies on org_deletions are the sole bound. NON-OWNER,
+   * NOSUPERUSER, NOBYPASSRLS. Password injected out of band.
+   */
+  purge: "webhook_purge",
 } as const;
