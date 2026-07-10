@@ -53,4 +53,5 @@ export * from "./reveal-rpc";
 export * from "./payload-reader-rpc";
 export * from "./delivery-retry";
 export * from "./billing";
+export * from "./retention";
 export * from "./stripe-client";

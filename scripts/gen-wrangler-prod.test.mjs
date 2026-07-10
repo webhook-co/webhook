@@ -45,6 +45,10 @@ const BILLING_KEYS = [
   "HYPERDRIVE_BILLING_ID",
   "HYPERDRIVE_METER_AUDIT_ID",
   "FREE_EVENT_CAP",
+  // data-lifecycle optional cross-org Hyperdrives — cleared so an ambient shell var can't make the DARK
+  // assertions flap.
+  "HYPERDRIVE_PURGE_ID",
+  "HYPERDRIVE_RETENTION_ID",
 ];
 
 /** Run the generator with BASE + `extra`. Inherits the ambient env (PATH etc.) but CLEARS any billing vars
@@ -215,5 +219,25 @@ test("STRIPE_METER_ID + the transport Hyperdrive: bound when provisioned, stripp
   assert.ok(
     !(dark.hyperdrive ?? []).some((h) => h.binding === "HYPERDRIVE_METER_TRANSPORT_AUDIT"),
     "transport Hyperdrive should be stripped when its id is unset",
+  );
+});
+
+test("HYPERDRIVE_RETENTION (slice 2.3): bound when provisioned, stripped when dark (billing-independent)", () => {
+  // Provisioned: the retention prune's cross-org Hyperdrive binding is present. It is NOT gated on billing —
+  // the prune runs (Free window) as soon as the role + Hyperdrive exist.
+  gen({ HYPERDRIVE_RETENTION_ID: "hd_retention_x" });
+  const eng = readProd("engine");
+  assert.equal(
+    (eng.hyperdrive ?? []).find((h) => h.binding === "HYPERDRIVE_RETENTION")?.id,
+    "hd_retention_x",
+    "retention Hyperdrive should be bound when its id is set",
+  );
+
+  // Dark: unset id → the whole @gen-optional block is stripped and the prune cron skips.
+  gen();
+  const dark = readProd("engine");
+  assert.ok(
+    !(dark.hyperdrive ?? []).some((h) => h.binding === "HYPERDRIVE_RETENTION"),
+    "retention Hyperdrive should be stripped when its id is unset",
   );
 });
