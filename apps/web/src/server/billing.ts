@@ -121,10 +121,13 @@ export async function loadBillingPanel(orgId: string): Promise<BillingPanel> {
   const plans = getStripePlans();
   if (mode === "off" || !plans) return { kind: "hidden" };
   try {
+    // Resolve the key inside the try — a Secrets Store .get() is network-backed.
+    const secretKey = await getStripeSecretKey();
+    const keyMatchesMode = !!secretKey && stripeKeyMatchesMode(mode, secretKey);
     const customerId = await withTenantDb((app) =>
       withTenant(app, orgId, (tx) => readBillingCustomerId(tx)),
     );
-    return resolveBillingPanel({ mode, plans, hasCustomer: customerId !== null });
+    return resolveBillingPanel({ mode, plans, hasCustomer: customerId !== null, keyMatchesMode });
   } catch (error) {
     logActionError("billing.panel_failed", error);
     return { kind: "hidden" };
