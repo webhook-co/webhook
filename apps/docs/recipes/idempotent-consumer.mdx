@@ -17,7 +17,7 @@ Delivery is at least once by design, so exactly-once lives in your consumer. Sta
 
   </Step>
   <Step title="Deliver only what you verified">
-    `--require-verified` forwards signature-checked events only; an `unattempted` event is never signed, and a `failed` one is blocked. Your receiver can trust that a signed delivery is genuine.
+    `--require-verified` forwards only events whose source was authenticated (the `verified` and `authenticated` states); an `unattempted` event is dropped by the filter, and a `failed` one is blocked outright. Your receiver can trust that a signed delivery is genuine.
 
     ```sh
     wbhk subscriptions add <endpoint-id> <destination-id> --require-verified

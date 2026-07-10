@@ -118,7 +118,7 @@ Routing rules that auto-deliver a source endpoint's captured events to a destina
 | `wbhk subscriptions list`                                   | `--endpoint`                                       | List the org's subscriptions; `--endpoint` filters to one source. |
 | `wbhk subscriptions remove <subscriptionId>`                |                                                    | Remove a subscription.                                            |
 
-`--provider` limits routing to one provider (default: any). `--event-type` selects event-type patterns — exact, `charge.*`, or `*` — repeatable or comma-separated (default `*`). `--require-verified` routes only signature-checked events.
+`--provider` limits routing to one provider (default: any). `--event-type` selects event-type patterns — exact, `charge.*`, or `*` — repeatable or comma-separated (default `*`). `--require-verified` routes only events whose source was authenticated — the `verified` and `authenticated` states — excluding `unattempted` and `failed`.
 
 ## Triggers
 

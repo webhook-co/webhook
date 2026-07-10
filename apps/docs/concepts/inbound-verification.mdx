@@ -15,12 +15,12 @@ A signature header alone doesn't tell us who sent something — plenty of provid
 
 Every event carries exactly one of these:
 
-- **`verified`** — a cryptographic signature over the payload checked out. This is the strong state, and the only one webhook.co will [re-sign](/concepts/delivery-retry-signing) on the way out.
+- **`verified`** — a cryptographic signature over the payload checked out. The strong state.
 - **`authenticated`** — the source proved itself with something weaker than a payload signature: a shared static token or HTTP Basic. It's genuinely authenticated, but it isn't a signature over _this_ payload, so it's a distinct, lesser state.
 - **`failed`** — a signature _was_ checked and _rejected_. The event is still captured so you can see it, but it's never delivered to a destination and never re-signed. A `failed` event is a red flag, not a dropped one.
 - **`unattempted`** — no signature was checked, because you haven't registered a secret for a provider that matches. The event is still captured and still deliverable, but webhook.co won't put its own signature on something it never authenticated.
 
-That last distinction matters downstream: an `unattempted` event is delivered **unsigned** even to a destination configured for signing. webhook.co signs what it verified, and nothing else.
+That last distinction matters downstream: an `unattempted` event is delivered **unsigned** even to a destination configured for signing. webhook.co signs the events whose source it authenticated — `verified` and `authenticated` — and nothing weaker.
 
 ## 142 providers from one registry
 

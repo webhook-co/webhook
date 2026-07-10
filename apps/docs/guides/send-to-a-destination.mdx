@@ -38,7 +38,7 @@ To forward captured events to one of your services automatically, do two things:
 
   </Step>
   <Step title="Subscribe a source endpoint to it">
-    A subscription is the routing rule: captured events from the source endpoint auto-deliver to the destination. The zero-config default routes everything; narrow it with `--provider`, `--event-type` patterns (exact, `charge.*`, or `*`), and `--require-verified` to route only signature-verified events.
+    A subscription is the routing rule: captured events from the source endpoint auto-deliver to the destination. The zero-config default routes everything; narrow it with `--provider`, `--event-type` patterns (exact, `charge.*`, or `*`), and `--require-verified` to route only events whose source was authenticated (the `verified` and `authenticated` states — excluding `unattempted` and `failed`).
 
     <CodeGroup>
 
@@ -74,6 +74,12 @@ To forward captured events to one of your services automatically, do two things:
 
   </Step>
 </Steps>
+
+<Warning>
+  For production egress, add `--require-verified` (or filter by `--provider`) unless you
+  deliberately want everything. A subscription with no filters forwards **every** captured request —
+  including `unattempted` traffic from anything that reaches the ingest URL.
+</Warning>
 
 ## Ordering, enabling, disabling
 
