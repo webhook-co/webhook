@@ -16,7 +16,8 @@ You can now turn an incoming webhook into an agent trigger, and you have new con
 - **Webhook→agent triggers (MCP).** Subscribe a coding agent to one of your endpoints over MCP, then have it wait for the next matching event and receive the payload inline. Delivery is at-least-once, tracked by cursor so an agent can resume exactly where it left off. Triggers are managed from the API, CLI, MCP, and a dedicated dashboard view (create, list, revoke).
 - **Delete organization.** An owner-gated danger-zone action permanently deletes an organization and durably purges its stored payloads.
 - **Leaked API key guidance.** If one of your `whk_` API keys ever ends up in public source, a new remediation guide at docs.webhook.co/leaked-api-key walks through rotating it and re-securing your account.
-  </Update>
+
+</Update>
 
 <Update label="July 7, 2026" description="Deduplication & dashboard" tags={["Dashboard", "API", "CLI"]}>
 ## per-endpoint deduplication and a fuller dashboard
@@ -39,7 +40,8 @@ Configurable deduplication landed, and the dashboard grew to cover the whole inb
 **Changed**
 
 - Auto-delivery and replay only ever forward events whose signature was verified — an unverified event is never re-signed on the way out. Deliveries now show a clear signed/unsigned indicator for the source event.
-  </Update>
+
+</Update>
 
 <Update label="July 4, 2026" description="Docs, OpenAPI & SDKs" tags={["Docs", "SDK", "API"]}>
 ## documentation, an OpenAPI spec, and official SDKs
@@ -49,7 +51,8 @@ Everything you need to build against webhook.co programmatically.
 - **docs.webhook.co** is live — full product documentation, quickstarts, and reference.
 - **OpenAPI 3.1 spec** generated directly from the API contract and published at `/openapi.json`, so it never drifts from the live API.
 - **Official SDKs** for **TypeScript**, **Python**, and **Go**, generated from that spec and published to npm, PyPI, and the Go module proxy.
-  </Update>
+
+</Update>
 
 <Update label="July 1, 2026" description="Outbound delivery" tags={["API", "CLI", "MCP"]}>
 ## outbound delivery
@@ -62,7 +65,8 @@ Beyond capturing and replaying, webhook.co can now deliver verified events onwar
 - **Subscriptions & event types.** Per-provider event-type derivation lets you subscribe a destination to just the event types you care about.
 - **Deliveries API.** Read delivery history and status across the API, CLI, and MCP.
 - **Faster pagination.** Event and delivery lists use keyset pagination with an opaque, microsecond-exact cursor for stable, fast paging through large histories.
-  </Update>
+
+</Update>
 
 <Update label="June 30, 2026" description="Signature verification" tags={["Providers", "Security", "API"]}>
 ## inbound signature verification, from a handful to 142 providers
@@ -73,7 +77,8 @@ webhook.co verifies the signature on every incoming webhook so you know an event
 - **Provider-secret management.** Store a provider's signing secret (encrypted at rest) per endpoint from the dashboard, API, CLI, or MCP, so inbound events are verified automatically.
 - **Verification handshakes.** Endpoints answer the one-time verification challenges that providers send on setup (for example CRC echo, `hub.challenge`, and provider-specific activation handshakes), so registering your ingest URL with a provider just works.
 - **A public providers wall** lists every supported provider with its logo.
-  </Update>
+
+</Update>
 
 <Update label="June 29, 2026" description="Accounts & dashboard" tags={["Dashboard", "API", "Security"]}>
 ## sign-in and the dashboard
@@ -84,7 +89,8 @@ Accounts at auth.webhook.co and a web dashboard at app.webhook.co.
 - **Endpoint management.** Create, rename, rotate, and delete endpoints from the dashboard, API, CLI, and MCP.
 - **Events.** Browse events with a list and detail view, search and filter by provider, date, endpoint, and verification status, and open a payload viewer with raw-body download.
 - **API keys.** Mint and revoke API keys with a one-time secret reveal; keys are self-describing and checksummed (`whk_…`) so a malformed key is rejected at the edge.
-  </Update>
+
+</Update>
 
 <Update label="June 24, 2026" description="CLI & distribution" tags={["CLI"]}>
 ## the wbhk CLI
@@ -96,7 +102,8 @@ A full command-line client for working with your webhooks from the terminal, plu
 - **Replay to localhost.** `wbhk replay --forward` replays a captured event to your local server, and `replay --edit` lets you tweak the payload first.
 - **Quality of life.** Named profiles, `wbhk doctor` diagnostics, an interactive replay-browser TUI, OS-keychain credential storage, and bash/zsh/fish completions.
 - **Distribution.** Install via `curl | sh`, npm (`@webhook-co/cli`), or a Homebrew tap; cross-compiled signed binaries for every platform with build provenance; `wbhk upgrade` self-update; and anonymous, opt-out usage telemetry.
-  </Update>
+
+</Update>
 
 <Update label="June 14, 2026" description="Launch" tags={["API"]}>
 ## the free, permanent signed ingest URL
@@ -107,4 +114,5 @@ webhook.co launched with the core idea: a free, permanent ingest URL you can poi
 - **Inspect every request** — headers, body, and metadata — for each event.
 - **One-command replay to localhost**, so you can develop against real captured payloads without redeploying.
 - **www.webhook.co** — the marketing site and homepage, with a live inspector demo.
-  </Update>
+
+</Update>
