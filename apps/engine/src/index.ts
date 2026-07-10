@@ -46,6 +46,7 @@ import {
   billingEnabled,
   makeStripeClient,
   parseBillingMode,
+  stripeKeyMatchesMode,
   parseFreeEventCap,
   parseSince,
   readSecretBinding,
@@ -1035,6 +1036,12 @@ async function runMeterReporterCron(env: Env): Promise<void> {
   if (!eventName || !secretKey) {
     // Billing is switched on but not fully provisioned — don't error the cron, just skip (fail-safe).
     log("metering.report.not_configured", { hasMeter: !!eventName, hasKey: !!secretKey });
+    return;
+  }
+  // The key must belong to the mode. Reporting TEST usage to a LIVE meter (or the reverse) silently corrupts
+  // what a customer is invoiced for, and the meter events are not retractable. Skip rather than report wrong.
+  if (!stripeKeyMatchesMode(mode, secretKey)) {
+    log("metering.report.key_mode_mismatch"); // never log the key or its prefix
     return;
   }
 
