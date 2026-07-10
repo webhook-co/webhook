@@ -1,0 +1,40 @@
+---
+title: "Inbound verification"
+sidebarTitle: "Inbound verification"
+description: "Register a provider secret and webhook.co verifies each incoming signature over the exact captured bytes, recording a four-value verification state."
+icon: "badge-check"
+---
+
+webhook.co checks incoming webhook signatures for you. Register a provider secret for an endpoint, and every captured event runs through that provider's verification adapter over the exact bytes we received — the result is recorded as the event's **verification state**. Verification is best-effort and runs _after_ capture, so a bad signature never costs you the event; it just labels it.
+
+## Selection is driven by what you registered, not by headers
+
+A signature header alone doesn't tell us who sent something — plenty of providers reuse the same header name, and headers are trivially spoofable. So selection is registration-driven: for each provider you've registered a secret for on an endpoint, we run that provider's adapter against the captured bytes. The first adapter to verify wins, and that's what names the event's provider. If two providers you registered happen to share a header shape, each gets a real cryptographic shot at the payload and the one whose secret actually validates is the one that sticks.
+
+## The four-value verification state
+
+Every event carries exactly one of these:
+
+- **`verified`** — a cryptographic signature over the payload checked out. This is the strong state, and the only one webhook.co will [re-sign](/concepts/delivery-retry-signing) on the way out.
+- **`authenticated`** — the source proved itself with something weaker than a payload signature: a shared static token or HTTP Basic. It's genuinely authenticated, but it isn't a signature over _this_ payload, so it's a distinct, lesser state.
+- **`failed`** — a signature _was_ checked and _rejected_. The event is still captured so you can see it, but it's never delivered to a destination and never re-signed. A `failed` event is a red flag, not a dropped one.
+- **`unattempted`** — no signature was checked, because you haven't registered a secret for a provider that matches. The event is still captured and still deliverable, but webhook.co won't put its own signature on something it never authenticated.
+
+That last distinction matters downstream: an `unattempted` event is delivered **unsigned** even to a destination configured for signing. webhook.co signs what it verified, and nothing else.
+
+## 142 providers from one registry
+
+Verification adapters come from a single registry covering 142 providers. Most — around 109 — are config-driven HMAC variants that differ only in header names, encodings, and what exactly goes into the signed string. The remaining 33 are bespoke: JWT-based schemes, asymmetric signatures (Ed25519, ECDSA, RSA), providers that require fetching a rotating public key, request-context signing, and the non-cryptographic token/Basic schemes that land in the `authenticated` state.
+
+Browse the full list in the [provider directory](/providers/directory). If a provider isn't there, its events simply stay `unattempted` — captured and usable, just unsigned by us.
+
+## How provider secrets are handled
+
+When you register a provider secret it's sealed with KMS on arrival and bound, via additional authenticated data, to the specific org, endpoint, and secret it belongs to. That binding means a sealed secret can't be lifted and replayed against a different endpoint — it only unseals in the context it was created for. The API and MCP surfaces relay ciphertext; only the delivery engine ever unseals it to run a verification.
+
+The contract for both inbound verification and outbound re-signing is [Standard Webhooks](https://www.standardwebhooks.com), so what you verify coming in and what you can re-sign going out speak the same language.
+
+## Related
+
+- [Verify inbound signatures](/guides/verify-inbound-signatures) — register a secret and read the state end to end.
+- [Provider directory](/providers/directory) — every supported provider and its scheme.

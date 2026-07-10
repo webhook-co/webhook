@@ -1,0 +1,89 @@
+---
+title: "Handle delivery failures"
+sidebarTitle: "Handle failures"
+description: "Inspect why an outbound delivery failed, read its retry clock and status, and re-enable a destination that auto-disabled after repeated failures."
+icon: "heart-pulse"
+---
+
+When a destination stops accepting deliveries, start with `wbhk deliveries list` to find the failing rows, then `deliveries get <id>` for the status, attempt count, next retry time, and the error. Both cover auto-deliveries to subscribed destinations and manual replay attempts.
+
+## Inspect deliveries
+
+Filter the list by status, destination, or subscription; `--status` is multi-select (repeatable or comma-separated).
+
+<CodeGroup>
+
+```sh CLI
+# every failing or dead-lettered delivery for one destination
+wbhk deliveries list --status failed,dead \
+  --destination <destination-id>
+
+# one delivery in full: status, attempt, nextRetryAt, error
+wbhk deliveries get <delivery-id>
+```
+
+```sh API
+curl "https://api.webhook.co/v1/deliveries?status=failed&status=dead&destinationId=<destination-id>" \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+
+curl "https://api.webhook.co/v1/deliveries/<delivery-id>" \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+```
+
+```ts TypeScript
+for await (const d of webhook.deliveries.list({
+  status: ["failed", "dead"],
+  destinationId: "<destination-id>",
+})) {
+  console.log(d.status, d.attempt, d.nextRetryAt, d.error);
+}
+
+const one = await webhook.deliveries.get("<delivery-id>");
+```
+
+</CodeGroup>
+
+## Delivery statuses
+
+| Status      | Meaning                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------ |
+| `queued`    | Durably accepted, not yet attempted.                                                             |
+| `pending`   | Claimed and in flight.                                                                           |
+| `forwarded` | Handed to a localhost tunnel (CLI forward).                                                      |
+| `delivered` | Your endpoint returned a `2xx`.                                                                  |
+| `failed`    | Non-`2xx`, connection, or transient error — **retryable**.                                       |
+| `blocked`   | Resolved to a private/internal address; the SSRF guard refused it. **Terminal — never retried.** |
+| `dead`      | Retries exhausted (dead-lettered). Retained for history and manual replay.                       |
+| `cancelled` | The destination was deleted while the delivery was still open.                                   |
+
+## The retry schedule
+
+A `failed` delivery retries on a fixed exponential schedule — up to 8 attempts, with ±10% jitter so a fleet of deliveries to a recovering host don't re-fire in lockstep:
+
+```text
+attempt 1 fails → wait 5s
+attempt 2 fails → wait 5m
+attempt 3 fails → wait 30m
+attempt 4 fails → wait 2h
+attempt 5 fails → wait 5h
+attempt 6 fails → wait 10h
+attempt 7 fails → wait 10h
+attempt 8 fails → dead-lettered
+```
+
+That's roughly 32 hours of retries before a delivery goes `dead`. A `blocked` delivery is terminal immediately — it never enters this schedule.
+
+## Re-enable an auto-disabled destination
+
+After **20 consecutive dead deliveries**, a destination auto-disables and the org owner is emailed — a backstop against hammering a permanently broken endpoint. Fix the receiver, then re-enable it; deliveries owed to it resume on the next drain.
+
+```sh
+wbhk replay-destinations enable <destination-id>
+```
+
+The API is `POST /v1/replay-destinations/{id}/enable`, scope `endpoints:write`.
+
+## Related
+
+- [How retries and signing work](/concepts/delivery-retry-signing)
+- [Send events to a destination](/guides/send-to-a-destination)

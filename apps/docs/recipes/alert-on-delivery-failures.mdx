@@ -1,0 +1,37 @@
+---
+title: "Get alerted when deliveries start failing"
+sidebarTitle: "Alert on failures"
+description: "Combine built-in auto-disable and owner email with a poll over dead deliveries and usage to build the alert your on-call needs."
+icon: "bell"
+---
+
+Know before your customers do when a receiver goes dark. Two defenses fire automatically; a short poll turns them into the alert your on-call actually pages on.
+
+## What fires on its own
+
+- **Auto-disable.** After 20 dead deliveries a destination is disabled, so a hard outage stops burning the retry schedule against a dead receiver.
+- **Owner email.** The org owner is emailed when a destination auto-disables — a floor, not a paging strategy.
+
+## Build the alert you page on
+
+Poll for `dead` deliveries on a schedule and raise your own alert — a Slack message, a PagerDuty event, whatever your on-call watches.
+
+```sh
+# in a cron / scheduled job
+dead=$(wbhk deliveries list --status dead --all --output json | jq 'length')
+if [ "$dead" -gt 0 ]; then
+  notify-oncall "webhook.co: $dead dead deliveries"
+fi
+```
+
+Watch usage in the same job so a runaway sender that's about to pause ingestion pages you before capture stops.
+
+```sh
+wbhk usage
+```
+
+<Note>
+  After you fix the receiver, clear the auto-disable and replay the missed events — see [diagnose a
+  failing delivery](/recipes/debug-a-failed-delivery). Re-enabling resumes owed deliveries on the
+  next wake.
+</Note>

@@ -1,0 +1,63 @@
+---
+title: "Verify Braintree webhooks"
+sidebarTitle: "Braintree"
+description: "Register your Braintree private key and webhook.co verifies bt_signature and answers the bt_challenge handshake."
+icon: "shield-halved"
+---
+
+Braintree signs webhooks with an HMAC-SHA1 keyed by `SHA1(private_key)`. The signature rides the `bt_signature` form field as `publicKey|signature` pairs, over the `bt_payload` field. Register your private key and webhook.co reproduces the exact scheme.
+
+## Get the keys
+
+In the Braintree Control Panel, open **Settings → API Keys**. You'll register the **Private Key** as the signing secret. For the subscription handshake you'll also need the matching **Public Key**.
+
+## Register the private key
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$BRAINTREE_PRIVATE_KEY" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider braintree
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"braintree","secret":"your_private_key"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "braintree",
+  secret: process.env.BRAINTREE_PRIVATE_KEY!,
+});
+```
+
+</CodeGroup>
+
+## The bt_challenge handshake
+
+Braintree verifies a new webhook with a `bt_challenge` GET. Answering it needs your public key too, registered as a second secret with `kind: braintree_public_key` — available over the API or SDK:
+
+```sh
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"braintree","secret":"your_public_key","kind":"braintree_public_key"}'
+```
+
+With both registered, webhook.co computes the challenge response Braintree expects.
+
+<Note>
+  The `braintree_public_key` kind is registered via the API or SDK. The private key (your signing
+  secret) registers on any surface, including the CLI, and is all you need to verify incoming
+  events.
+</Note>
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

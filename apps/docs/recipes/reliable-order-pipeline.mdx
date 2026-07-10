@@ -1,0 +1,39 @@
+---
+title: "A reliable e-commerce order pipeline"
+sidebarTitle: "Order pipeline"
+description: "Verify Shopify orders, collapse the noisy retries, and deliver each order once to fulfillment with signing and automatic retries."
+icon: "bag-shopping"
+---
+
+Shopify retries aggressively, and a double-fulfilled order is a real refund. Verify the source, collapse the retries into one event, and deliver each order to fulfillment — signed, with a retry schedule that survives a downstream blip.
+
+<Steps>
+  <Step title="Verify Shopify">
+    ```sh
+    wbhk endpoints create orders-prod
+    wbhk endpoints add-provider-secret <endpoint-id> --provider shopify
+    ```
+  </Step>
+  <Step title="Collapse retries with deduplication">
+    `identifier` mode keys on the Standard Webhooks `webhook-id` (or a recognized provider event id), so a provider retry within the window collapses into the event you already have. See [deduplication](/deduplication).
+
+    ```sh
+    wbhk endpoints update <endpoint-id> --dedup-mode identifier --dedup-window 300
+    ```
+
+  </Step>
+  <Step title="Deliver to fulfillment, signed and verified-only">
+    Register fulfillment as a destination, then subscribe `--require-verified`. Each delivery is signed with the destination secret and retried on the fixed schedule (5s → 5m → 30m → 2h → 5h → 10h → 10h); after 20 dead deliveries the destination auto-disables so a hard outage stops hammering it.
+
+    ```sh
+    wbhk replay-destinations add https://fulfillment.example.com/orders --label fulfillment
+    wbhk subscriptions add <endpoint-id> <destination-id> --provider shopify --require-verified
+    ```
+
+  </Step>
+</Steps>
+
+<Warning>
+  Dedup is best-effort load reduction, not exactly-once. Keep fulfillment idempotent on the order id
+  — see [build an idempotent consumer](/recipes/idempotent-consumer).
+</Warning>

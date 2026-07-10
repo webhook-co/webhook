@@ -71,7 +71,9 @@ test("DARK (no billing vars): optional bindings stripped, vars empty, valid JSON
   const api = readProd("api");
   assert.equal(hasHyperdrive(api, "HYPERDRIVE_BILLING"), false);
   assert.equal(hasSecret(api, "STRIPE_WEBHOOK_SIGNING_SECRET"), false);
+  assert.equal(hasSecret(api, "STRIPE_SECRET_KEY"), false); // WS3: tail-flush key dark when billing off
   assert.equal(api.vars.BILLING_MODE, "");
+  assert.equal(api.vars.STRIPE_METER_EVENT_NAME, ""); // WS3: flush meter name empty → dark
   const engine = readProd("engine");
   assert.equal(hasHyperdrive(engine, "HYPERDRIVE_METER_AUDIT"), false);
   assert.equal(hasSecret(engine, "STRIPE_SECRET_KEY"), false);
@@ -93,7 +95,9 @@ test("PROVISIONED (BILLING_MODE=test + ids): bindings kept with ids, secrets inj
   const api = readProd("api");
   assert.equal(api.hyperdrive.find((h) => h.binding === "HYPERDRIVE_BILLING")?.id, "hb");
   assert.equal(hasSecret(api, "STRIPE_WEBHOOK_SIGNING_SECRET"), true);
+  assert.equal(hasSecret(api, "STRIPE_SECRET_KEY"), true); // WS3: tail-flush key bound when billing on
   assert.equal(api.vars.BILLING_MODE, "test");
+  assert.equal(api.vars.STRIPE_METER_EVENT_NAME, "webhook_events"); // WS3: flush meter name injected
   const engine = readProd("engine");
   assert.equal(engine.hyperdrive.find((h) => h.binding === "HYPERDRIVE_METER_AUDIT")?.id, "hma");
   assert.equal(hasSecret(engine, "STRIPE_SECRET_KEY"), true);

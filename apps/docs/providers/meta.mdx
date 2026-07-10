@@ -1,0 +1,58 @@
+---
+title: "Verify Meta webhooks (WhatsApp, Messenger)"
+sidebarTitle: "Meta"
+description: "Register your Meta app secret and verify token, and webhook.co verifies x-hub-signature-256 and answers the subscription handshake."
+icon: "meta"
+---
+
+Meta's platforms (WhatsApp, Messenger, Instagram, and other Graph webhooks) sign each POST with an HMAC-SHA256 over the raw body, sent as `X-Hub-Signature-256: sha256=<hex>`. Setup uses a separate GET handshake. Register two secrets and webhook.co covers both.
+
+## Get the two values
+
+- **App secret** — your app's secret from **App Dashboard → App settings → Basic**. Signs the payloads.
+- **Verify token** — the arbitrary string you type into **Webhooks → Configure** in the App Dashboard. Meta echoes it back during the subscription handshake.
+
+## Register both on your endpoint
+
+Register the app secret as the signing secret:
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$META_APP_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider meta
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"meta","secret":"your_app_secret"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "meta",
+  secret: process.env.META_APP_SECRET!,
+});
+```
+
+</CodeGroup>
+
+Then register the verify token as a second secret with `kind: verify_token`:
+
+```sh
+printf %s "$META_VERIFY_TOKEN" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider meta --kind verify_token
+```
+
+## The subscription handshake
+
+When you save the callback URL in the App Dashboard, Meta sends a `hub.mode=subscribe` GET carrying `hub.challenge` and `hub.verify_token`. webhook.co echoes the challenge only if the presented verify token matches the one you registered (constant-time compared), and returns 403 otherwise — so a wrong token fails setup instead of leaking the challenge.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

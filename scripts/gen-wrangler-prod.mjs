@@ -136,8 +136,9 @@ const APPS = {
   },
   api: {
     domain: "api.webhook.co",
-    // STRIPE_WEBHOOK_SIGNING_SECRET (S4.5) — verifies the inbound webhook signature. Bound only when billing on.
-    secrets: [...SHARED, ...whenBilling(["STRIPE_WEBHOOK_SIGNING_SECRET"])],
+    // STRIPE_WEBHOOK_SIGNING_SECRET (S4.5) verifies the inbound webhook signature; STRIPE_SECRET_KEY (WS3)
+    // lets the invoice.created TAIL-FLUSH REPORT meter usage outbound. Both bound only when billing is on.
+    secrets: [...SHARED, ...whenBilling(["STRIPE_WEBHOOK_SIGNING_SECRET", "STRIPE_SECRET_KEY"])],
     placeholders: [
       "<HYPERDRIVE_AUTHN_ID>",
       "<HYPERDRIVE_TENANT_ID>",
@@ -149,6 +150,9 @@ const APPS = {
       // var as engine (unset → "" → uncapped). Kept identical across every worker that renders usage.
       "<FREE_EVENT_CAP>",
       "<BILLING_MODE>",
+      // STRIPE_METER_EVENT_NAME (WS3) — the meter the tail-flush reports against; same optional GH var as
+      // engine (unset → "" → the flush is dark). ids/names only, no price figure.
+      "<STRIPE_METER_EVENT_NAME>",
       "webhook-payloads-dev",
     ],
     // HYPERDRIVE_BILLING (S4.5) — kept only when HYPERDRIVE_BILLING_ID is provisioned, else stripped.

@@ -1,0 +1,34 @@
+---
+title: "Delivery and consumption guarantees"
+sidebarTitle: "Delivery guarantees"
+description: "What webhook.co promises about capturing, delivering, and consuming events — durability, at-least-once delivery, ordering, and verified-gated signing."
+icon: "shield-check"
+---
+
+The short version: webhook.co stores a request before it does anything else with it, delivers and re-delivers **at least once**, and only ever signs what it actually authenticated. The details below are the promises you can design against.
+
+## Capture is durable before we ACK
+
+A request to an [ingest URL](/concepts/ingest-urls) is stored **before** it's verified. Verification is something we do to an event we already hold, not a gate it has to pass to be saved. So a bad signature never loses the event — it's captured, marked `failed`, and available for inspection. The one thing that stops capture is a paused or soft-capped endpoint, which returns a retryable `429` and stores nothing.
+
+## Outbound delivery is at-least-once
+
+When webhook.co forwards a captured event to a destination, delivery is **at-least-once**. A delivery can be re-sent — after a retry, or a manual replay — so **design your receivers to be idempotent.** You get the tool to do it for free: a re-sent delivery keeps a **stable `webhook-id`** across attempts, so your receiver can dedup on it. The same guarantee holds for `triggers.wait`, the agent consumption path (see [MCP trigger semantics](/mcp/trigger-semantics)).
+
+## Ordering is per-endpoint, per-destination
+
+Events are ordered within an endpoint by capture-completion time, and deliveries are ordered per destination. The default is best-effort ordered dispatch with independent retries — a stuck delivery doesn't hold up the ones behind it. A destination can opt into **strict FIFO**, which delivers in order with head-of-line blocking (and the throughput cost that implies). Choose per destination based on whether in-order delivery or throughput matters more.
+
+## Inbound dedup collapses a sender's retries
+
+Providers retry too. webhook.co [deduplication](/deduplication) collapses a sender's redeliveries of the same logical event into one — configured per endpoint, and recorded on each event as the `dedupStrategy` that produced its key, so you can always explain why two requests did or didn't merge.
+
+## Signing is verified-gated
+
+webhook.co never vouches for content it didn't authenticate. When it re-signs an outbound delivery with the destination's [Standard Webhooks](https://www.standardwebhooks.com/) secret, it does so based on the source event's server-derived verification state — never the attacker-controllable `provider` field:
+
+- **`verified` or `authenticated`** → delivered **and signed**. We authenticated the source.
+- **`unattempted`** → delivered **unsigned**. No signature was checked, so we forward the event but strip our signature — a forged request can never carry it onward.
+- **`failed`** → **blocked**. A rejected signature is forged or tampered; no configuration overrides this.
+
+That's why a receiver can trust a webhook.co signature as fully as it trusts the original provider's — the signature is present only when the chain of custody was proven. See [delivery, retry, and signing](/concepts/delivery-retry-signing).

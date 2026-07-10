@@ -38,6 +38,17 @@ Set a per-endpoint `dedupConfig` to turn on deduplication and choose how the key
 Every mode **except `off`** takes a `windowSeconds` (60–604800), the window within which repeats collapse.
 `off` takes no window — it never collapses.
 
+<Note>
+  Collapsing is scoped to the window on purpose: a repeat that arrives in a **later** window is
+  treated as a new event, so a legitimately-repeated payload days later is still captured rather
+  than silently dropped. One consequence: a retry that lands right around a window boundary can be
+  captured as **two** events instead of one, because the two copies fall in different windows. If
+  your sender supplies a stable id, prefer **`identifier`** mode — its key is that id, which carries
+  no window, so a retry collapses no matter when it arrives. `content` and `fields` keys include the
+  window, so those are the modes where a boundary-straddling retry can double up. Widening
+  `windowSeconds` also makes a boundary straddle rarer.
+</Note>
+
 ## Field paths
 
 `fields` mode keys on values you select with field paths. A path starts with a root — `headers`, `body`,

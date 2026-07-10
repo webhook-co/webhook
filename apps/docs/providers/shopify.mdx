@@ -1,0 +1,49 @@
+---
+title: "Verify Shopify webhooks"
+sidebarTitle: "Shopify"
+description: "Register your Shopify webhook secret and webhook.co verifies every X-Shopify-Hmac-Sha256 against the raw payload."
+icon: "shopify"
+---
+
+Shopify signs each webhook with an HMAC-SHA256 over the raw body, base64-encoded in the `X-Shopify-Hmac-Sha256` header. Register the secret on your endpoint and webhook.co verifies every delivery byte-for-byte.
+
+## Get the signing secret
+
+For app webhooks, the secret is your app's **API secret key** (Partner Dashboard → your app → **API credentials**). For webhooks created in the Shopify admin under **Settings → Notifications**, use the signing secret shown there. Shopify identifies the store in `X-Shopify-Shop-Domain`, but the signature is what proves authenticity.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$SHOPIFY_API_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider shopify
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"shopify","secret":"your_api_secret_key"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "shopify",
+  secret: process.env.SHOPIFY_API_SECRET!,
+});
+```
+
+</CodeGroup>
+
+<Note>
+  The signature is base64, not hex. Register the raw secret exactly as Shopify shows it — webhook.co
+  handles the encoding.
+</Note>
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

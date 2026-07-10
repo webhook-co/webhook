@@ -571,6 +571,11 @@ export async function handleIngest(request: Request, deps: IngestDeps): Promise<
     endpointId: endpoint.endpointId,
     inserted,
     dedupStrategy: derived.dedupStrategy,
+    // The epoch window bucket (null for id-based / off keys). Emitting it here is free (already derived, no
+    // extra lookup) and lets an OFF-path analysis flag endpoints whose content/fields retries straddle a
+    // window boundary — captured as two billable events in ADJACENT buckets (F3). Never probe the prior
+    // bucket on this unauthenticated hot path; the signal is derived from these logs / the dedup_bucket column.
+    dedupBucket: derived.dedupBucket,
     provider: derived.provider,
     verified: outcome.verified,
     method: request.method,

@@ -1,0 +1,35 @@
+---
+title: "Rate limits"
+sidebarTitle: "Rate limits"
+description: "How webhook.co signals throttling — a 429 with Retry-After — and how the SDKs back off and retry automatically."
+icon: "gauge-high"
+---
+
+A throttled request returns HTTP `429` with the `RATE_LIMITED` code and a `Retry-After` header telling you how long to wait. The SDKs honor it automatically. That's the whole contract you need to code against.
+
+## The posture
+
+There's no fixed, published per-request API number to quote — and inventing one would be worse than useless. What's guaranteed is the _behavior_: limits may apply to protect the service and keep it fair, and when one does, you get a `429` with a `Retry-After` you can act on rather than a silent drop.
+
+Some operations carry deliberate abuse backstops that surface as `429` — for example, minting endpoints or revealing an ingest URL. Treat any `429` the same way regardless of source: read `Retry-After`, wait, and retry an idempotent request.
+
+Separately, an ingest URL that belongs to a paused or soft-capped endpoint answers writes with a `429` and a `Retry-After`, so a well-behaved provider holds the event and redelivers rather than dropping it. That's a capture-side signal, not an API throttle — but it reads the same on the wire.
+
+## How the SDKs handle it
+
+The SDKs treat `429`, `502`, `503`, and `504` as transient and retry them, but **only for idempotent requests** — a read, or a write whose repeat can't cause a duplicate side effect. A non-idempotent write (creating an endpoint, rotating a token, adding a secret) is never blind-retried; on a `429` there, catch `WebhookRateLimitError`, wait `retryAfterMs`, and retry yourself.
+
+For a retryable request the SDK honors `Retry-After` when the server sends a delta-seconds value (clamped so a hostile or oversized value can't hang the client), and otherwise falls back to **capped exponential backoff with jitter** — half the delay fixed, half random — so concurrent clients don't resynchronize into a thundering herd.
+
+The client defaults are tunable at construction:
+
+| Option       | Default | Notes                                                                   |
+| ------------ | ------- | ----------------------------------------------------------------------- |
+| `maxRetries` | `2`     | Retries _after_ the first attempt (3 total).                            |
+| `timeoutMs`  | `30000` | Per-request wall-clock budget; a timeout retries an idempotent request. |
+
+<Note>
+  On a `429`, prefer the error's `retryAfterMs` over rolling your own delay — it reflects what the
+  server asked for. The SDKs already do this for retryable requests; reach for it manually only when
+  handling a non-idempotent write.
+</Note>
