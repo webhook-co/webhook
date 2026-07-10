@@ -1,13 +1,93 @@
 ---
 title: "webhook.co"
 sidebarTitle: "Introduction"
-description: "A free, permanent, signed ingest URL — inspect every request, replay it to localhost, and deliver it onward. Identical across CLI, API, dashboard, and MCP."
+description: "A free, permanent, signed ingest URL — inspect every request, verify it, replay it to localhost, and deliver it onward. Identical across CLI, API, dashboard, and MCP."
 icon: "book-open"
 ---
 
-webhook.co gives you a **free, permanent, signed ingest URL**: point any provider at it and every request is captured — raw bytes first, then verified and deduplicated — where you can inspect it, replay it to localhost with one command, and deliver it onward. It grows with you from a debugging mailbox into a full inbound pipeline (verify → [dedup](/deduplication) → retry → replay) and outbound delivery, and every capability is reachable identically from the **CLI, API, dashboard, and MCP**. Nothing is public unless you make it so.
+webhook.co gives you a **free, permanent, signed ingest URL**: point any provider at `https://wbhk.my/<token>` and every request is captured — raw bytes first, then verified and deduplicated — where you can inspect it, replay it to localhost with one command, and deliver it onward. It starts as a debugging mailbox and grows, without a rewrite, into a full inbound pipeline (verify → [dedup](/deduplication) → retry → replay) plus outbound delivery. Every capability is reachable identically from the **CLI, API, dashboard, and MCP**, and nothing is public unless you make it so.
 
-Signing and verification follow the [Standard Webhooks](https://www.standardwebhooks.com/) spec, on both the receive and send sides.
+## The problem it removes
+
+Receiving a webhook is deceptively involved. To do it properly you need, at minimum:
+
+- **A public URL** the provider can reach — which your laptop doesn't have, so local development means tunnels, redeploys, or a staging box.
+- **Signature verification** done right: over the raw bytes, constant-time, per provider — the single most common thing people get subtly wrong.
+- **Retries with backoff** on the way out, plus dead-lettering, so a receiver blip doesn't drop events on the floor.
+- **A way to replay** a payload you've already seen — to fix a handler, or recover from an outage — instead of asking the provider to re-send.
+
+webhook.co is the piece that owns all four. You get the URL for free, verification is a registered secret rather than code you write, retries and dead-lettering are built into delivery, and every captured request is replayable forever.
+
+## The mental model
+
+Every request follows one path: **ingest → verify → dedup → store → deliver → replay**. Capture is the floor — the raw bytes are written down the instant a request arrives, and everything after runs against that durable copy. A bad signature, an unknown provider, or a downstream outage can never cost you the event; it only changes what happens next. See [how webhook.co works](/concepts/how-webhook-co-works) for the diagram and a step-by-step walk.
+
+## What you can do
+
+Four capabilities, each useful on its own. Start wherever your problem is.
+
+<CardGroup cols={2}>
+  <Card title="Ingest" icon="inbox-in" href="/concepts/ingest-urls">
+    A permanent, signed URL on a dedicated, cookieless apex. It accepts every HTTP verb, answers
+    provider verification handshakes automatically, and captures raw bytes durably before it verifies
+    or dedupes — so a request is never lost at the door.
+  </Card>
+
+<Card title="Verify" icon="shield-check" href="/guides/verify-inbound-signatures">
+  Register a provider's signing secret and every inbound request is checked against the exact bytes
+  captured — no verification code on your side. Each event carries a `verificationState` (verified /
+  authenticated / failed / unattempted), with **142 providers** built in from a single registry.
+</Card>
+
+<Card title="Deliver" icon="paper-plane" href="/concepts/delivery-retry-signing">
+  Forward events to an SSRF-safe destination allowlist with at-least-once delivery, a fixed
+  exponential retry schedule, and dead-lettering. Outbound signing follows Standard Webhooks and is
+  verified-gated — webhook.co only re-signs what it authenticated.
+</Card>
+
+  <Card title="Trigger an agent" icon="robot" href="/mcp/wake-an-agent">
+    Over MCP, an agent can call `triggers.wait` and block until a matching webhook lands, then act on
+    the payload. It's an inbound trigger for the agent era — a webhook that wakes a program up rather
+    than one you poll for.
+  </Card>
+</CardGroup>
+
+## One product, four surfaces
+
+The CLI, API, dashboard, and MCP aren't four products that happen to overlap — they're four bindings over one capability contract, with one shared handler per capability. A capability that exists on one exists on all, with the same request shapes and the same results. Script it in CI, click it in the dashboard, or hand it to an agent without learning four different tools — and nothing drifts, because there's a single definition behind each.
+
+Listing your endpoints is the same operation everywhere:
+
+<CodeGroup>
+
+```sh CLI
+wbhk endpoints list
+```
+
+```sh curl
+curl https://api.webhook.co/v1/endpoints \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+```
+
+```ts TypeScript
+const endpoints = await webhook.endpoints.list();
+```
+
+```python Python
+endpoints = client.endpoints.list()
+```
+
+```go Go
+endpoints, _ := client.Endpoints.List(ctx)
+```
+
+</CodeGroup>
+
+## Standard Webhooks, private by default
+
+Signing and verification follow the [Standard Webhooks](https://www.standardwebhooks.com/) spec on both the receive and send sides, so the signatures you check and the ones webhook.co emits are the same well-specified format — not a bespoke scheme. And ingestion lives on its own cookieless apex that carries no session and answers no CORS: an ingest URL is a mailbox, not an app, and an unknown token gets a flat `404` that reveals nothing. Nothing you capture is visible to anyone but your org.
+
+## Get started
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
@@ -21,30 +101,31 @@ Signing and verification follow the [Standard Webhooks](https://www.standardwebh
 
 ## Explore
 
-Four capabilities, each usable on its own. Start wherever your problem is.
-
 <CardGroup cols={2}>
-  <Card title="Ingest" icon="inbox-in" href="/concepts/ingest-urls">
-    A permanent, signed URL on a dedicated cookieless apex that accepts every verb and never expires.
+  <Card title="Ingest URLs" icon="link" href="/concepts/ingest-urls">
+    What the `wbhk.my` apex does, why every verb is accepted, and how reveal and rotation work.
   </Card>
 
-<Card title="Verify" icon="shield-check" href="/guides/verify-inbound-signatures">
-  Register a provider secret and every inbound request is checked — 142 providers built in.
+<Card
+  title="Verify inbound signatures"
+  icon="shield-check"
+  href="/guides/verify-inbound-signatures"
+>
+  Register a provider secret and read the four verification states off your events.
 </Card>
 
-<Card title="Deliver" icon="paper-plane" href="/concepts/delivery-retry-signing">
-  Forward events to a destination with at-least-once delivery, bounded retries, and outbound
-  signing.
+<Card title="Deliver and retry" icon="paper-plane" href="/concepts/delivery-retry-signing">
+  Destinations, the retry schedule, the SSRF guard, and verified-gated send-side signing.
 </Card>
 
-  <Card title="Trigger an agent" icon="robot" href="/mcp/wake-an-agent">
-    Wake an MCP agent the moment a webhook lands — an inbound trigger for the agent era.
+  <Card title="webhook.co over MCP" icon="plug" href="/mcp/overview">
+    21 scope-gated tools over streamable-HTTP, including the webhook → agent trigger.
   </Card>
 </CardGroup>
 
 ## The API
 
-The REST API lives at `https://api.webhook.co`. It's a small, predictable surface — every endpoint is described by a machine-readable OpenAPI 3.1 document you can browse in the [**API reference**](/api-reference/endpoints/list-endpoints) or fetch yourself:
+The REST API lives at `https://api.webhook.co`. It's a small, predictable surface — every endpoint is described by a machine-readable OpenAPI 3.1 document you can browse in the [**API reference**](/api-reference/introduction) or fetch yourself:
 
 ```sh
 curl https://api.webhook.co/openapi.json
