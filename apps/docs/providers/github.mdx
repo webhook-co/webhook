@@ -1,0 +1,48 @@
+---
+title: "Verify GitHub webhooks"
+sidebarTitle: "GitHub"
+description: "Register your GitHub webhook secret and webhook.co verifies every X-Hub-Signature-256 against the raw payload bytes."
+icon: "github"
+---
+
+GitHub signs each webhook with an HMAC-SHA256 over the raw request body, sent as `X-Hub-Signature-256: sha256=<hex>`. Register the secret on your endpoint and webhook.co verifies every delivery against the exact bytes it captured.
+
+## Get the signing secret
+
+The secret is whatever you typed into **Secret** when you created the webhook — on a repository or org under **Settings → Webhooks**, or via the API. GitHub doesn't show it again after creation, so register the same value you set there.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$GITHUB_WEBHOOK_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider github
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"github","secret":"your_webhook_secret"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "github",
+  secret: process.env.GITHUB_WEBHOOK_SECRET!,
+});
+```
+
+</CodeGroup>
+
+## The ping event
+
+GitHub's first delivery is a `ping` (see the `X-GitHub-Event` header). It's signed exactly like every other event, so once the secret is registered the ping verifies too — a quick way to confirm the secret is right. GitHub signs the body verbatim, so there's no timestamp and no replay window here.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

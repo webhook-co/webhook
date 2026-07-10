@@ -1,0 +1,119 @@
+---
+title: "Receive your first webhook"
+sidebarTitle: "Receive a webhook"
+description: "Create an endpoint, get its permanent signed ingest URL, point a provider or curl at it, and confirm the captured event."
+icon: "inbox"
+---
+
+Point any webhook source at a permanent, signed URL and see the payload land. You create an **endpoint**, it hands you an **ingest URL** of the form `https://wbhk.my/<token>`, and every request that URL receives is **captured** as an **event** you can inspect, verify, and replay. The URL never expires and never changes — set it once in your provider's dashboard and forget it.
+
+You'll need an API key (`whk_`-prefixed) exported as `WEBHOOK_API_KEY`, or a logged-in `wbhk` CLI (`wbhk login`).
+
+## 1. Create an endpoint
+
+An endpoint is the thing that owns an ingest URL and collects its events. Creating one returns its ingest URL — and it stays available afterward: the dashboard always shows it on the endpoint's detail page, and you can re-reveal it over the API.
+
+<CodeGroup>
+
+```sh CLI
+wbhk endpoints create "orders-prod"
+# prints the endpoint record, including its ingest url, to stdout
+```
+
+```sh API
+curl -X POST https://api.webhook.co/v1/endpoints \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "orders-prod"}'
+```
+
+```ts TypeScript
+import { WebhookClient } from "@webhook-co/sdk";
+
+const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
+
+const endpoint = await webhook.endpoints.create({ name: "orders-prod" });
+console.log(endpoint.ingestUrl); // https://wbhk.my/…
+```
+
+```python Python
+import os
+from webhook_co import WebhookClient
+
+client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
+
+endpoint = client.endpoints.create(name="orders-prod")
+print(endpoint.ingest_url)  # https://wbhk.my/…
+```
+
+```go Go
+client, _ := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
+
+ep, err := client.Endpoints.Create(context.Background(),
+    webhook.EndpointsCreateParams{Name: "orders-prod"})
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(ep.IngestUrl) // https://wbhk.my/…
+```
+
+</CodeGroup>
+
+The response includes `id` (the endpoint id you'll use everywhere else) and `ingestUrl`. The ingest token embeds a credential — keep it out of client-side code — and if one ever leaks, `wbhk endpoints rotate <endpoint-id>` mints a fresh URL and invalidates the old one immediately.
+
+## 2. Point something at the URL
+
+Set the ingest URL as the webhook destination in your provider's dashboard — the [142 supported providers](/providers/directory) and anything else. The URL accepts every HTTP verb and answers provider verification handshakes automatically, so most providers validate it on the spot.
+
+No provider handy? Any HTTP client works. The ingest URL doesn't care what sends to it:
+
+```sh
+curl -X POST https://wbhk.my/whep_your_token \
+  -H "Content-Type: application/json" \
+  -d '{"hello": "world"}'
+```
+
+Every request becomes a captured event, with its body preserved byte-for-byte.
+
+## 3. Confirm the captured event
+
+List the endpoint's events and you'll see the one you just sent, newest first.
+
+<CodeGroup>
+
+```sh CLI
+wbhk events list <endpoint-id>
+```
+
+```sh API
+curl "https://api.webhook.co/v1/endpoints/<endpoint-id>/events" \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+```
+
+```ts TypeScript
+for await (const event of webhook.events.list(endpointId)) {
+  console.log(event.id, event.verificationState, event.receivedAt);
+}
+```
+
+```python Python
+for event in client.events.list(endpoint_id):
+    print(event.id, event.verification_state, event.received_at)
+```
+
+```go Go
+it := client.Events.List(endpointID, &webhook.EventsListParams{})
+for it.Next(ctx) {
+    e := it.Value()
+    fmt.Println(e.ID, e.VerificationState, e.ReceivedAt)
+}
+if err := it.Err(); err != nil {
+    log.Fatal(err)
+}
+```
+
+</CodeGroup>
+
+Grab an event's `id` and read it in full — headers, verification state, and a pointer to the raw body — with `wbhk events get <event-id>`.
+
+Your event's `verificationState` is `unattempted` until you register the provider's signing secret. That's the next step: [verify inbound signatures](/guides/verify-inbound-signatures) so webhook.co proves each event actually came from your provider. For the guided tour of every surface, see the [quickstart](/quickstart).

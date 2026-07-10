@@ -1,10 +1,9 @@
 ---
-title: Python SDK
+title: "Python SDK"
 description: "webhook-co — the official Python SDK."
 ---
 
-The Python SDK returns validated pydantic v2 models with typed, snake_cased attributes. Python 3.10+, built
-on `httpx`.
+The Python SDK returns validated pydantic v2 models with typed, snake_cased attributes. Python 3.10\+, built on `httpx`.
 
 ```sh
 pip install webhook-co
@@ -19,7 +18,7 @@ from webhook_co import WebhookClient
 client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
 
 endpoint = client.endpoints.create(name="orders-prod")
-print(endpoint.ingest_url)  # returned once — capture it now
+print(endpoint.ingest_url)  # the endpoint's signed ingest URL
 ```
 
 ## Pagination
@@ -57,9 +56,7 @@ Each error carries `code`, `status`, and `request_id` when present.
 
 ## Retries & idempotency
 
-The client retries idempotent requests on transient failures with capped exponential backoff and jitter,
-honouring `Retry-After`, and never blind-retries a non-idempotent write. Replays carry an idempotency key
-(auto-generated if you don't pass one):
+The client retries idempotent requests on transient failures with capped exponential backoff and jitter, honouring `Retry-After`, and never blind-retries a non-idempotent write. Replays carry an idempotency key (auto-generated if you don't pass one):
 
 ```python
 import uuid

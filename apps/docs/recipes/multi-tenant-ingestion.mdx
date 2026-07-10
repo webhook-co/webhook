@@ -1,0 +1,42 @@
+---
+title: "Give every tenant their own webhook URL"
+sidebarTitle: "Multi-tenant ingestion"
+description: "One endpoint per tenant, each with its own secret, dedup policy, and destination — so tenant traffic never crosses wires."
+icon: "users"
+---
+
+Hand each customer a dedicated ingest URL instead of one shared endpoint you demultiplex by hand. Each tenant gets its own endpoint — its own signing secret, its own dedup policy, and its own destination — so verification and routing never cross tenants.
+
+<Steps>
+  <Step title="One endpoint per tenant">
+    Create an endpoint as you onboard each tenant and hand them its ingest URL. The URL is permanent, so it's safe to store against the tenant record.
+
+    ```sh
+    wbhk endpoints create tenant-acme
+    wbhk endpoints create tenant-globex
+    ```
+
+  </Step>
+  <Step title="Per-tenant secret and dedup">
+    Each tenant's secret verifies only their traffic; each endpoint's dedup policy is independent, so a noisy tenant's window doesn't affect a quiet one.
+
+    ```sh
+    wbhk endpoints add-provider-secret <acme-endpoint>  --provider stripe
+    wbhk endpoints update <acme-endpoint> --dedup-mode identifier --dedup-window 300
+    ```
+
+  </Step>
+  <Step title="Route each tenant to the right destination">
+    Subscribe each endpoint to the destination that serves that tenant — a shared receiver that reads the endpoint id, or a per-tenant URL.
+
+    ```sh
+    wbhk subscriptions add <acme-endpoint>   <acme-destination>   --require-verified
+    wbhk subscriptions add <globex-endpoint> <globex-destination> --require-verified
+    ```
+
+  </Step>
+</Steps>
+
+<Note>
+  Filter and audit per tenant with the endpoint id — `wbhk events list <endpoint-id>` and `wbhk deliveries list --subscription <id>` never bleed one tenant's traffic into another's view.
+</Note>

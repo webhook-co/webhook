@@ -1,0 +1,46 @@
+---
+title: "Trigger a job on a GitHub webhook"
+sidebarTitle: "Trigger a job"
+description: "Verify GitHub events and auto-deliver only the genuine ones to a destination that kicks off your pipeline."
+icon: "play"
+---
+
+Kick off a build, deploy, or any job when GitHub fires — without exposing your job-runner to the open internet. Verify the GitHub signature at ingestion, then auto-deliver only `verified` events to the small https endpoint that starts your job.
+
+<Steps>
+  <Step title="Verify GitHub on an endpoint">
+    GitHub signs with a secret you set on the webhook; register the same secret here so events land as `verified`.
+
+    ```sh
+    wbhk endpoints create ci-triggers
+    wbhk endpoints add-provider-secret <endpoint-id> --provider github
+    ```
+
+    Point a GitHub webhook (e.g. on `push`) at the ingest URL.
+
+  </Step>
+  <Step title="Register your job-runner as a destination">
+    The destination is any https URL you control that starts the job — a serverless function, a small relay, an internal service. The allowlist blocks private-range targets at delivery time, so this must be publicly reachable.
+
+    ```sh
+    wbhk replay-destinations add https://ci.example.com/dispatch --label ci
+    # → signing secret (shown once): whsec...
+    ```
+
+    Verify that secret in the runner so only webhook.co can start a job.
+
+  </Step>
+  <Step title="Subscribe, verified-only">
+    `--require-verified` means a forged push — anyone who learns the ingest URL can POST one — never reaches your pipeline.
+
+    ```sh
+    wbhk subscriptions add <endpoint-id> <destination-id> --provider github --require-verified
+    ```
+
+  </Step>
+</Steps>
+
+<Note>
+  A rejected signature (`failed`) is blocked outright — no subscription setting forwards it. Only
+  `verified` / `authenticated` events are delivered and signed.
+</Note>

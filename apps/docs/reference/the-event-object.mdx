@@ -1,0 +1,115 @@
+---
+title: "The event object"
+sidebarTitle: "The event object"
+description: "The shape of a captured event as the API and SDKs return it, plus the Standard Webhooks headers webhook.co adds when it delivers one onward."
+icon: "cube"
+---
+
+An event is a single captured request to an [ingest URL](/concepts/ingest-urls) — the verb, headers, body, and the verification webhook.co performed on it. Read one in full with `events.get` (`GET /v1/events/{id}`); browse an endpoint's events with `events.list`, which returns a lighter summary.
+
+## The full event
+
+`events.get` returns every field below. It's the detail view: ordered, unscrubbed request headers and the structured verification diagnostic, but not the raw body — that's fetched separately (see [the raw body](#the-raw-body)).
+
+<ResponseField name="id" type="string">
+  The event's UUID.
+</ResponseField>
+
+<ResponseField name="endpointId" type="string">
+  The endpoint that captured it.
+</ResponseField>
+
+<ResponseField name="provider" type="string | null">
+  The identified provider slug (e.g. `stripe`, `github`), or `null` when the request couldn't be
+  attributed to a known provider.
+</ResponseField>
+
+<ResponseField name="receivedAt" type="string">
+  When capture completed, as an RFC 3339 timestamp. This is the ordering key for an endpoint's
+  events.
+</ResponseField>
+
+<ResponseField name="method" type="string | null">
+  The captured request's HTTP method. `null` on older rows recorded before the method was stored —
+  treat `null` as "unrecorded", not as an inferred `POST`.
+</ResponseField>
+
+<ResponseField name="contentType" type="string | null">
+  The request's declared `Content-Type`, or `null` if it sent none.
+</ResponseField>
+
+<ResponseField name="payloadBytes" type="integer">
+  The exact size of the raw body in bytes.
+</ResponseField>
+
+<ResponseField name="headers" type="array">
+  The request headers as ordered `[name, value]` string pairs — unscrubbed and preserving order and
+  duplicates, so you see exactly what arrived. The list summary omits this.
+</ResponseField>
+
+<ResponseField name="verified" type="boolean">
+  Whether an adapter matched a signature. `verificationState` is the field to read for the full
+  picture — `verified` alone can't distinguish "no signature was checked" from "a signature was
+  checked and rejected".
+</ResponseField>
+
+<ResponseField name="verificationState" type="string">
+  The truthful outcome of verification, one of `verified` (a payload signature checked out),
+  `authenticated` (a shared token or HTTP Basic — weaker, reported distinctly), `failed` (a
+  signature was checked and **rejected**), or `unattempted` (no signature was checked). See [inbound
+  verification](/concepts/inbound-verification).
+</ResponseField>
+
+<ResponseField name="verification" type="object | null">
+  The structured verification diagnostic (which adapter ran, why it matched or didn't), or `null`
+  when nothing was attempted.
+</ResponseField>
+
+<ResponseField name="providerEventId" type="string | null">
+  The provider's own event identifier, when one was present in the request. `null` otherwise.
+</ResponseField>
+
+<ResponseField name="dedupKey" type="string">
+  The key webhook.co derived for [deduplication](/deduplication).
+</ResponseField>
+
+<ResponseField name="dedupStrategy" type="string">
+  How `dedupKey` was derived, recorded so inspection can explain why two events did or didn't
+  collapse. First match wins, in order: `sw_webhook_id`, `provider_event_id`, `content_hash`,
+  `fields`, or `unique`.
+</ResponseField>
+
+## The list summary
+
+`events.list` returns a summary per event — enough to browse and filter without the cost of headers and the verification diagnostic. It carries `id`, `endpointId`, `receivedAt`, `provider`, `dedupKey`, `dedupStrategy`, `verified`, and `verificationState`. Fetch the full event with `events.get` when you need the rest. See [inspect and search events](/guides/inspect-search-events).
+
+## The raw body
+
+The body is never inlined into the event JSON. Fetch it with `events.getPayload` (`GET /v1/events/{id}/payload`), which returns the exact captured bytes in a base64 envelope:
+
+```json
+{
+  "contentType": "application/json",
+  "bytes": 1024,
+  "bodyBase64": "eyJoZWxsbyI6I...=="
+}
+```
+
+The SDKs decode this for you and verify the decoded length against `bytes`, returning the raw bytes plus `contentType`. Keeping the body out-of-band means an event listing stays cheap and binary payloads survive byte-for-byte — which matters for signature fidelity.
+
+## Headers webhook.co adds on delivery
+
+When webhook.co forwards a captured event to a destination, it signs the outbound request per the [Standard Webhooks](https://www.standardwebhooks.com/) spec and adds three headers your receiver verifies:
+
+| Header              | What it carries                                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `webhook-id`        | A unique message id, **stable across retries** of the same delivery — your receiver's idempotency key.                       |
+| `webhook-timestamp` | Unix seconds; verify it falls within your accepted replay window.                                                            |
+| `webhook-signature` | One or more `v1,<sig>` signatures, space-delimited so a rotating secret's old and new keys both validate during the overlap. |
+
+<Note>
+  webhook.co only re-signs events it authenticated (`verified` or `authenticated`). An `unattempted`
+  event is still forwarded but **without** a signature, so a forged request can never carry
+  webhook.co's signature onward. A `failed` event is never forwarded at all. See [delivery, retry,
+  and signing](/concepts/delivery-retry-signing).
+</Note>

@@ -1,0 +1,113 @@
+---
+title: "Sign outbound webhooks"
+sidebarTitle: "Sign outbound webhooks"
+description: "Enable per-destination Standard Webhooks signing so your receiver can verify a delivery genuinely came from webhook.co, with zero-downtime secret rotation."
+icon: "signature"
+---
+
+Sign the webhooks webhook.co sends to your destination so your receiver can prove they came from us and weren't tampered with in transit. Signing follows the [Standard Webhooks](https://www.standardwebhooks.com/) spec and is enabled **per destination** by minting a `whsec_` signing secret.
+
+## Enable signing
+
+Creating a destination mints a signing secret, shown once. To enable signing on an existing destination — or to rotate — mint a fresh one. The secret is revealed **exactly once**; store it immediately in your receiver's config.
+
+<CodeGroup>
+
+```sh CLI
+wbhk replay-destinations rotate-secret <destination-id>
+# new signing secret (shown once):
+#   whsec_your_new_signing_secret
+```
+
+```sh API
+curl -X POST https://api.webhook.co/v1/replay-destinations/<destination-id>/rotate-secret \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+```
+
+```ts TypeScript
+const rotated = await webhook.replayDestinations.rotateSigningSecret("<destination-id>");
+console.log(rotated.signingSecret); // shown once — persist it now
+```
+
+</CodeGroup>
+
+`wbhk replay-destinations list-secrets <id>` returns metadata only — id, status, created-at — never the secret value. If you lose a secret, rotate to mint a new one.
+
+## What gets signed, and what doesn't
+
+Only **verified** events are signed. An `unattempted` event — one where no inbound signature was checked — is delivered **unsigned**, even to a destination with signing enabled. We never vouch for content we didn't authenticate. A `failed` event isn't delivered at all. See [delivery, retry & signing](/concepts/delivery-retry-signing).
+
+Before re-signing, inbound provider signature headers are stripped, so your receiver only ever sees webhook.co's signature — not a stale one it can't verify. The `webhook-id` is **stable across retries**, so a re-sent delivery carries the same id and your receiver can dedup it.
+
+## Rotate without downtime
+
+During rotation, the old and new signatures are sent **together** in the `webhook-signature` header, space-delimited. Your receiver verifies successfully against either one, so you can roll the secret in your config on your own schedule — no coordinated cutover, no dropped deliveries. Once you've switched over, the old secret ages out.
+
+## Verify a delivery
+
+Compute the HMAC over `webhook-id.webhook-timestamp.body` with your `whsec_` secret (base64-decoded after the tag), then compare against each signature in the header.
+
+<CodeGroup>
+
+```ts TypeScript
+import { createHmac, timingSafeEqual } from "node:crypto";
+
+// rawBody MUST be the exact bytes received — a Buffer, never a re-serialized object.
+export function verify(secret: string, headers: Record<string, string>, rawBody: Buffer): boolean {
+  const id = headers["webhook-id"];
+  const timestamp = headers["webhook-timestamp"];
+  const received = headers["webhook-signature"]; // "v1,aBc… v1,dEf…"
+
+  // Reject stale deliveries: timestamp is Unix seconds; allow a few minutes of skew.
+  const age = Math.abs(Date.now() / 1000 - Number(timestamp));
+  if (!Number.isFinite(age) || age > 300) return false;
+
+  const key = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
+  const signed = Buffer.concat([Buffer.from(`${id}.${timestamp}.`), rawBody]);
+  const expected = Buffer.from(createHmac("sha256", key).update(signed).digest("base64"));
+
+  // Any one signature matching is a pass — this is what makes rotation overlap work.
+  return received.split(" ").some((part) => {
+    const sig = Buffer.from(part.split(",")[1] ?? "");
+    return sig.length === expected.length && timingSafeEqual(sig, expected);
+  });
+}
+```
+
+```python Python
+import base64, hashlib, hmac, time
+
+def verify(secret: str, headers: dict[str, str], raw_body: bytes) -> bool:
+    msg_id = headers["webhook-id"]
+    timestamp = headers["webhook-timestamp"]
+    received = headers["webhook-signature"]  # "v1,aBc… v1,dEf…"
+
+    # Reject stale deliveries: allow a few minutes of clock skew.
+    if abs(time.time() - int(timestamp)) > 300:
+        return False
+
+    key = base64.b64decode(secret.removeprefix("whsec_"))
+    signed = f"{msg_id}.{timestamp}.".encode() + raw_body
+    expected = base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+
+    # Any one signature matching is a pass — covers rotation overlap.
+    for part in received.split(" "):
+        _, _, sig = part.partition(",")
+        if hmac.compare_digest(sig, expected):
+            return True
+    return False
+```
+
+</CodeGroup>
+
+<Warning>
+  Verify over the **raw request body, byte for byte** — the exact bytes you received, never a
+  re-serialized or reparsed copy. A single whitespace or key-order difference breaks the HMAC. And
+  compare signatures with a **constant-time** function (`crypto.timingSafeEqual` /
+  `hmac.compare_digest`) — never `==`, which leaks the answer through timing.
+</Warning>
+
+## Related
+
+- [How retries and signing work](/concepts/delivery-retry-signing)
+- [Verify inbound signatures](/guides/verify-inbound-signatures)
