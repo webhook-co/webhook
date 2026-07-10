@@ -1,15 +1,79 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  billingDisplayFromSubscription,
   billingEnabled,
   billingLive,
   parseBillingMode,
   isBillingActive,
   parseStripePlans,
+  planIdForBasePrice,
   SELF_SERVE_PLAN_IDS,
   isSelfServePlan,
   stripeKeyMatchesMode,
+  type BillingSubscriptionSummary,
 } from "./billing";
+
+describe("planIdForBasePrice + billingDisplayFromSubscription (current-plan card core)", () => {
+  const PLANS = {
+    pro: { base: "price_pro_base", overage: "price_pro_over" },
+    scale: { base: "price_scale_base", overage: "price_scale_over" },
+  };
+  const sub = (over: Partial<BillingSubscriptionSummary> = {}): BillingSubscriptionSummary => ({
+    plan: "price_pro_base",
+    status: "active",
+    currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+    cancelAtPeriodEnd: false,
+    ...over,
+  });
+
+  it("reverse-looks-up the tier from the base price id", () => {
+    expect(planIdForBasePrice(PLANS, "price_pro_base")).toBe("pro");
+    expect(planIdForBasePrice(PLANS, "price_scale_base")).toBe("scale");
+    expect(planIdForBasePrice(PLANS, "price_scale_over")).toBeNull(); // overage id is not a base
+    expect(planIdForBasePrice(PLANS, "price_unknown")).toBeNull();
+  });
+
+  it("active subscription → active on its tier", () => {
+    expect(billingDisplayFromSubscription(sub(), PLANS)).toEqual({
+      tier: "pro",
+      state: "active",
+      periodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    });
+  });
+
+  it("cancel_at_period_end while still active → canceling (not yet canceled)", () => {
+    expect(billingDisplayFromSubscription(sub({ cancelAtPeriodEnd: true }), PLANS).state).toBe(
+      "canceling",
+    );
+  });
+
+  it("status 'canceled' is terminal (overrides cancelAtPeriodEnd)", () => {
+    expect(
+      billingDisplayFromSubscription(sub({ status: "canceled", cancelAtPeriodEnd: true }), PLANS)
+        .state,
+    ).toBe("canceled");
+  });
+
+  it("past_due is a distinct grace state (entitled, NOT inactive) — ADR-0020", () => {
+    expect(billingDisplayFromSubscription(sub({ status: "past_due" }), PLANS).state).toBe(
+      "past_due",
+    );
+  });
+
+  it("non-entitled statuses (unpaid/incomplete/paused) → inactive (back on Free)", () => {
+    for (const status of ["unpaid", "incomplete", "incomplete_expired", "paused"]) {
+      expect(billingDisplayFromSubscription(sub({ status }), PLANS).state).toBe("inactive");
+    }
+  });
+
+  it("an unknown base price (legacy/archived) still renders a state, tier 'unknown'", () => {
+    const d = billingDisplayFromSubscription(sub({ plan: "price_legacy" }), PLANS);
+    expect(d.tier).toBe("unknown");
+    expect(d.state).toBe("active");
+  });
+});
 
 describe("parseBillingMode (fail-safe billing flag)", () => {
   it("accepts the three known modes (case-insensitive, trimmed)", () => {

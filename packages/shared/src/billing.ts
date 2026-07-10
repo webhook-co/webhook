@@ -112,6 +112,70 @@ export function parseStripePlans(raw: string | undefined | null): StripePlans | 
   return plans as StripePlans;
 }
 
+/** The org's current-plan display shape (derived, dashboard-facing). Pure so the Billing card is testable. */
+export interface BillingSubscriptionSummary {
+  /** The subscription's base (licensed) price id — the tier discriminator. */
+  readonly plan: string;
+  /** Raw Stripe status (verbatim). */
+  readonly status: string;
+  /** current_period_end as an ISO string — renewal date, or cancel date when canceling. */
+  readonly currentPeriodEnd: string;
+  readonly cancelAtPeriodEnd: boolean;
+}
+
+/** A dashboard-facing billing state. `canceling` = active-but-scheduled-to-cancel; `inactive` = a
+ *  non-entitled status (unpaid/incomplete/paused) that has dropped to the Free allowance. */
+export type BillingState = "active" | "past_due" | "canceling" | "canceled" | "inactive";
+
+export interface BillingDisplay {
+  /** The self-serve tier this subscription is on, or "unknown" if the base price isn't in STRIPE_PLANS
+   *  (e.g. a legacy/archived price) — the card falls back to a generic "paid plan" label. */
+  readonly tier: SelfServePlanId | "unknown";
+  readonly state: BillingState;
+  readonly periodEnd: string;
+  readonly cancelAtPeriodEnd: boolean;
+}
+
+/** Reverse-lookup the self-serve tier whose BASE price equals `basePriceId`. Ids only, no Stripe call. */
+export function planIdForBasePrice(
+  plans: StripePlans,
+  basePriceId: string,
+): SelfServePlanId | null {
+  for (const id of SELF_SERVE_PLAN_IDS) {
+    if (plans[id]?.base === basePriceId) return id;
+  }
+  return null;
+}
+
+/**
+ * Derive the dashboard billing state from a synced subscription. Order matters and encodes ADR-0020's grace
+ * rule: an explicit `canceled` is terminal; a non-entitled status (unpaid/incomplete/paused) reads as
+ * `inactive` (back on Free); a still-entitled sub scheduled to cancel is `canceling`; `past_due` is a grace
+ * window (entitled, NOT paused) shown distinctly; otherwise `active`. Pure + exhaustively unit-testable.
+ */
+export function billingDisplayFromSubscription(
+  sub: BillingSubscriptionSummary,
+  plans: StripePlans,
+): BillingDisplay {
+  const tier: SelfServePlanId | "unknown" = planIdForBasePrice(plans, sub.plan) ?? "unknown";
+  const base = {
+    tier,
+    periodEnd: sub.currentPeriodEnd,
+    cancelAtPeriodEnd: sub.cancelAtPeriodEnd,
+  };
+  const state: BillingState =
+    sub.status === "canceled"
+      ? "canceled"
+      : !isBillingActive(sub.status)
+        ? "inactive"
+        : sub.cancelAtPeriodEnd
+          ? "canceling"
+          : sub.status === "past_due"
+            ? "past_due"
+            : "active";
+  return { ...base, state };
+}
+
 /**
  * Does this Stripe secret key belong to this billing mode? Founder rule (2026-07-09): **localhost and any
  * test-mode deploy use the SANDBOX account; only a `BILLING_MODE=live` prod deploy uses the LIVE account.**
