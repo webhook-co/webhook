@@ -122,6 +122,30 @@ describe("insertIngestEvent (webhook_ingest, full capture row)", () => {
     expect(rows.length).toBe(1);
   });
 
+  it("F3 characterization: a boundary-crossing retry (same content, ADJACENT buckets) inserts TWO rows", async () => {
+    // In content/fields modes the dedup_key embeds the window bucket (`…:${bucket}`), so a retry that
+    // straddles a window boundary produces two DIFFERENT keys → the ON CONFLICT gate does not collapse them
+    // → two billable rows. This documents the known F3 over-count at the persistence layer (steered to
+    // `identifier` mode in the docs, whose key carries no bucket). It is NOT a bug to fix here.
+    const base = `content_hash:sameKeyDifferentBucket:${randomUUID()}`;
+    const r1 = row({
+      dedupStrategy: "content_hash",
+      dedupKey: `${base}:20265`,
+      dedupBucket: 20_265,
+    });
+    const r2 = row({
+      dedupStrategy: "content_hash",
+      dedupKey: `${base}:20266`,
+      dedupBucket: 20_266,
+    });
+    expect((await insertIngestEvent(ingest, r1)).inserted).toBe(true);
+    expect((await insertIngestEvent(ingest, r2)).inserted).toBe(true); // adjacent bucket → NOT collapsed
+    const rows = await withTenant(app, orgId, async (tx) => {
+      return tx`select id from events where endpoint_id = ${endpointId} and dedup_key like ${base + ":%"}`;
+    });
+    expect(rows.length).toBe(2);
+  });
+
   it("persists a content_hash-strategy row with a null provider and a dedup_bucket", async () => {
     const r = row({
       dedupStrategy: "content_hash",
