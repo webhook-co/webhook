@@ -172,14 +172,12 @@ export default function PrivacyPage() {
 
           <h2>5. Who we share it with (sub-processors)</h2>
           <p>
-            We don't sell your data or share it for advertising. We use a small set of trusted
-            infrastructure providers to run the Service, listed on our Sub-processors page with each
-            one's purpose and location. In summary they include: <strong>Cloudflare</strong>{" "}
-            (compute, storage, and network for the platform), <strong>Neon</strong> (our Postgres
-            database), <strong>Amazon Web Services</strong> (AWS KMS, which safeguards encryption
-            keys), <strong>Stripe</strong> (billing), and <strong>Resend</strong> (transactional
-            email such as magic-links and notifications). Cloudflare <strong>Turnstile</strong>{" "}
-            provides bot protection on our login page.
+            We don't sell your data or share it for advertising. To run the Service we rely on a
+            small set of trusted infrastructure providers (sub-processors) — including{" "}
+            <strong>Cloudflare</strong>, <strong>Neon</strong>, <strong>Amazon Web Services</strong>
+            , <strong>Stripe</strong>, and <strong>Resend</strong>. Our{" "}
+            <a href="/sub-processors">Sub-processors page</a> lists each one, what it does, the data
+            it may process, and where it's located, and we update it whenever the list changes.
           </p>
           <p>
             We may also disclose data if required by law, to protect our rights or users' safety, or

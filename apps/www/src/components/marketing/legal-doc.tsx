@@ -37,6 +37,9 @@ export function LegalDoc({
             "[&_strong]:font-semibold [&_strong]:text-fg",
             "[&_a]:font-medium [&_a]:text-fg [&_a]:underline [&_a]:underline-offset-2 hover:[&_a]:text-fg-secondary",
             "[&_blockquote]:mt-8 [&_blockquote]:rounded-control [&_blockquote]:border [&_blockquote]:border-hairline [&_blockquote]:bg-surface-sunken [&_blockquote]:p-5 [&_blockquote]:text-sm [&_blockquote]:leading-relaxed",
+            "[&_table]:mt-6 [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm",
+            "[&_th]:border-b [&_th]:border-hairline [&_th]:py-3 [&_th]:pr-4 [&_th]:text-left [&_th]:align-top [&_th]:font-semibold [&_th]:text-fg",
+            "[&_td]:border-b [&_td]:border-hairline [&_td]:py-3 [&_td]:pr-4 [&_td]:align-top [&_td]:leading-relaxed",
           )}
         >
           {children}
