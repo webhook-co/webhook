@@ -1,11 +1,11 @@
 ---
 title: "Quickstart"
 sidebarTitle: "Quickstart"
-description: "Create a signed ingest URL, send it a test event, and watch it arrive as a captured event — in a few minutes."
+description: "Create a signed ingest URL, send it a test event, and watch it arrive — then verify it, replay it to localhost, and deliver it onward."
 icon: "rocket"
 ---
 
-Create an endpoint, send its ingest URL a request, and see the captured event — in a few minutes. No provider setup, no receiver to stand up.
+Create an endpoint, send its ingest URL a request, and see the captured event — in a few minutes. No provider setup, no receiver to stand up. Once the loop works, the sections below turn the toy into something real.
 
 <Steps>
   <Step title="Get an API key">
@@ -15,11 +15,13 @@ Create an endpoint, send its ingest URL a request, and see the captured event �
     export WEBHOOK_API_KEY=whk_your_key_here
     ```
 
-    Prefer not to manage a key? `wbhk login` signs the CLI in over OAuth — see [authentication](/authentication#signing-in-from-the-cli).
+    Prefer not to manage a key? `wbhk login` signs the CLI in over browser OAuth — see [authentication](/authentication#signing-in-from-the-cli).
 
   </Step>
 
   <Step title="Install an SDK">
+    Skip this step if you're using the CLI or curl.
+
     <CodeGroup>
 
     ```sh npm
@@ -39,9 +41,22 @@ Create an endpoint, send its ingest URL a request, and see the captured event �
   </Step>
 
   <Step title="Create an endpoint">
-    Each endpoint has a permanent, signed **ingest URL** on `wbhk.my`. It's returned here and always visible (and re-revealable) in your dashboard — it never expires, and changes only if you rotate it.
+    Each endpoint has a permanent, signed **ingest URL** on `wbhk.my`. It's returned here and stays visible (and re-revealable) in your dashboard — it never expires, and changes only if you rotate it.
 
     <CodeGroup>
+
+    ```sh CLI
+    wbhk endpoints create orders-prod
+    # prints the ingest URL: https://wbhk.my/whep_...
+    ```
+
+    ```sh curl
+    curl -X POST https://api.webhook.co/v1/endpoints \
+      -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+      -H "content-type: application/json" \
+      -d '{"name":"orders-prod"}'
+    # → { "id": "...", "ingestUrl": "https://wbhk.my/whep_...", ... }
+    ```
 
     ```ts TypeScript
     import { WebhookClient } from "@webhook-co/sdk";
@@ -66,11 +81,6 @@ Create an endpoint, send its ingest URL a request, and see the captured event �
     fmt.Println(ep.IngestUrl) // https://wbhk.my/whep_...
     ```
 
-    ```sh CLI
-    wbhk endpoints create orders-prod
-    # prints the ingest URL: https://wbhk.my/whep_...
-    ```
-
     </CodeGroup>
 
   </Step>
@@ -88,9 +98,18 @@ Create an endpoint, send its ingest URL a request, and see the captured event �
   </Step>
 
   <Step title="Watch it arrive">
-    The request is now a captured **event**. List the endpoint's events — the list auto-paginates over the cursor:
+    The request is now a captured **event**. List the endpoint's events — the SDK iterators auto-paginate over the cursor:
 
     <CodeGroup>
+
+    ```sh CLI
+    wbhk events list <endpoint-id>
+    ```
+
+    ```sh curl
+    curl "https://api.webhook.co/v1/endpoints/<endpoint-id>/events" \
+      -H "Authorization: Bearer $WEBHOOK_API_KEY"
+    ```
 
     ```ts TypeScript
     for await (const event of webhook.events.list(endpoint.id)) {
@@ -103,25 +122,81 @@ Create an endpoint, send its ingest URL a request, and see the captured event �
         print(event.id, event.provider, event.verification_state)
     ```
 
-    ```sh CLI
-    wbhk events list <endpoint-id>
+    ```go Go
+    page, _ := client.Events.List(ctx, ep.Id)
+    for _, e := range page.Data {
+        fmt.Println(e.Id, e.Provider, e.VerificationState)
+    }
     ```
 
     </CodeGroup>
 
-    You'll see your `{"hello":"webhook.co"}` event with `verificationState: unattempted` — captured, but unsigned until you [register a provider secret](/guides/verify-inbound-signatures). That's the whole loop: land, capture, inspect.
+    You'll see your `{"hello":"webhook.co"}` event with `verificationState: unattempted` — captured, but unsigned until you register a provider secret. That's the whole loop: land, capture, inspect.
 
   </Step>
 </Steps>
 
-## Next
+## Verify it's really from your provider
+
+`unattempted` means nobody checked the signature yet. Register the signing secret your provider issued and, from the next request on, webhook.co verifies **every** inbound request against the exact bytes it captured — no verification code on your side — and stamps each event `verified`, `authenticated`, or `failed`.
+
+<CodeGroup>
+
+```sh CLI
+wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider stripe --label "prod signing secret"
+# paste the secret when prompted
+```
+
+```ts TypeScript
+await webhook.endpoints.addProviderSecret({
+  endpointId,
+  provider: "stripe",
+  secret: process.env.STRIPE_SIGNING_SECRET!,
+  label: "prod signing secret",
+});
+```
+
+</CodeGroup>
+
+Filter by state to confirm setup — an all-`unattempted` stream means the secret isn't registered yet. Full walkthrough: [verify inbound signatures](/guides/verify-inbound-signatures).
+
+## Replay it to your machine
+
+The events are already captured, so you don't need a tunnel or a public URL to develop against them. Point `wbhk listen` at a loopback target and each event is re-delivered to your handler:
+
+```sh
+wbhk listen <endpoint-id> --forward http://localhost:3000/webhooks
+```
+
+The cursor advances only after your local handler returns `2xx`, so a crash or a sleeping laptop re-reads the un-acked events on the next run instead of dropping them. Capture a real payload once, then replay it as many times as you like while you iterate. More: [replay to localhost](/guides/replay-to-localhost).
+
+## Troubleshooting
+
+- **Event not showing up?** Check you `POST`ed to the exact ingest URL (token and all) and used a write verb — a `GET` is treated as a liveness probe and isn't captured. Confirm the request came back `200`.
+- **`verificationState: unattempted` is expected** until you register a provider secret. It's not an error; it just means no signature was checked.
+- **`401` on the API but the ingest works?** Sending to `wbhk.my` needs no key; the API at `api.webhook.co` needs your `whk_` bearer. See [authentication](/authentication).
+
+## What next
 
 <CardGroup cols={2}>
-  <Card title="Verify inbound signatures" icon="shield-check" href="/guides/verify-inbound-signatures">
-    Register a provider secret so events arrive `verified`.
+  <Card title="Deliver to a destination" icon="paper-plane" href="/guides/send-to-a-destination">
+    Forward events to an allowlisted target with retries and optional signing.
   </Card>
 
-  <Card title="Replay to localhost" icon="laptop-code" href="/guides/replay-to-localhost">
-    Forward captured events to your machine with one command.
+<Card title="Wake an agent" icon="robot" href="/mcp/wake-an-agent">
+  Have an MCP agent block on `triggers.wait` until a matching webhook lands.
+</Card>
+
+<Card
+  title="Verify inbound signatures"
+  icon="shield-check"
+  href="/guides/verify-inbound-signatures"
+>
+  Register a provider secret so events arrive `verified`.
+</Card>
+
+  <Card title="Browse providers" icon="list" href="/providers/directory">
+    142 providers with their exact scheme, header, and handshake behaviour.
   </Card>
 </CardGroup>

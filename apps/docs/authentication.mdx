@@ -1,18 +1,27 @@
 ---
 title: "Authentication"
 sidebarTitle: "Authentication"
-description: "The whk_ API key: bearer auth, scopes, dashboard-managed keys, https-only base URL, and how the CLI signs in over OAuth."
+description: "The whk_ API key: bearer auth, scopes and least privilege, dashboard-managed keys, CLI OAuth sign-in, MCP auth, and an https-only base URL."
 icon: "id-badge"
 ---
 
-The API authenticates with a bearer token — a `whk_`-prefixed API key you create in your [dashboard](https://app.webhook.co). Send it in the `Authorization` header on every request; there is no other auth scheme.
+The API authenticates with a bearer token — a `whk_`-prefixed API key you create in your [dashboard](https://app.webhook.co). Send it in the `Authorization` header on every request; there is no other auth scheme, no cookies, and no session.
 
 ```sh
 curl https://api.webhook.co/v1/whoami \
   -H "Authorization: Bearer $WEBHOOK_API_KEY"
+# → { "orgId": "...", "scopes": ["endpoints:read", "events:read"] }
 ```
 
-The SDKs take the key at construction and attach it for you:
+`whoami` is the fastest way to confirm a deployed key is the one you think it is — it echoes the key's org and scopes without touching any resource.
+
+## Key format
+
+A key is `whk_` followed by 43 random characters and a 6-character checksum — 53 characters in total. The checksum is a CRC32 over the random part: it's **error detection, not security**, so a key mistyped or truncated in transit fails fast with a `401` instead of being probed against your data. The secret's strength is the 43 random characters; treat the whole string as sensitive and never log it. At rest, keys are stored as a peppered HMAC, never in the clear — which is also why a lost key can't be recovered, only rotated.
+
+## Construct an SDK client
+
+The SDKs take the key at construction and attach the `Authorization` header for you. They redact it from errors, debug output, and any logging, so a stack trace can't leak your credential.
 
 <CodeGroup>
 
@@ -22,6 +31,7 @@ const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
 ```
 
 ```python Python
+import os
 from webhook_co import WebhookClient
 client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
 ```
@@ -33,14 +43,15 @@ client, err := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
 </CodeGroup>
 
 <Warning>
-  Keep the key server-side. The SDKs redact it from errors and debug output, but it's still a
-  credential — never ship it to a browser or mobile app. If one leaks, [revoke it](/leaked-api-key);
-  revocation is the only remedy.
+  Keep the key server-side. The SDKs redact it, but it's still a credential — never ship it to a
+  browser or mobile app, and read it from an environment variable or secret manager rather than
+  hard-coding it. If one leaks, [revoke it](/leaked-api-key); revocation is immediate and the only
+  remedy.
 </Warning>
 
 ## Scopes
 
-Every key carries an explicit set of scopes, and a key is granted only the scopes its job needs. A request missing a required scope gets `403 FORBIDDEN` — mint a narrowly-scoped key rather than over-provisioning one and handing every consumer the keys to the kingdom.
+Every key carries an explicit set of scopes, and a key should be granted only the scopes its job needs. Choosing scopes is choosing blast radius: a key scoped `events:read` that leaks can read events and nothing else — it can't create an endpoint, register a secret, or replay to a destination.
 
 | Scope             | Grants                                                                            |
 | ----------------- | --------------------------------------------------------------------------------- |
@@ -52,7 +63,17 @@ Every key carries an explicit set of scopes, and a key is granted only the scope
 | `audit:read`      | Read and verify the tamper-evident audit log.                                     |
 | `billing:read`    | Read [usage and metering](/events-and-usage).                                     |
 
-Resolve a key's org and scopes at any time with `whoami` — the fastest way to confirm a deployed key is the one you think it is:
+**Least privilege in practice:** mint one key per consumer, scoped to what that consumer does. A CI job that only lists events gets `events:read`; a provisioning script that creates endpoints gets `endpoints:write`; a metering dashboard gets `billing:read`. Don't over-provision one key and hand every service the keys to the kingdom — the point of narrow scopes is that a leak from one consumer doesn't compromise the others.
+
+### When a scope is missing
+
+A request whose key lacks the required scope gets `403 FORBIDDEN` — the key is valid, but not allowed to do this. The fix is to **mint a new key with the right scope**, not to widen an existing one:
+
+```json
+{ "code": "FORBIDDEN", "status": 403, "requestId": "req_..." }
+```
+
+A `403` is the API telling you the auth worked and the authorization didn't. Contrast it with a `401` (below), which means the bearer itself is missing, invalid, or for the wrong audience. Check a key's actual scopes any time with `whoami`:
 
 ```ts
 const me = await webhook.whoami();
@@ -63,20 +84,61 @@ The CLI exposes the same call as `wbhk whoami`.
 
 ## Managing keys
 
-Create, rotate, and revoke API keys from **Settings → Credentials** in the [dashboard](https://app.webhook.co). Keys are managed from the authenticated dashboard rather than minted over the API, precisely because they're credentials — the API surface never hands out a key that could act as your org. A key's secret is shown once at creation; store it in your secret manager, not in source.
+Create, rotate, and revoke API keys from **Settings → Credentials** in the [dashboard](https://app.webhook.co). Keys are managed from the authenticated dashboard rather than minted over the API, precisely because they're credentials — the API surface never hands out a key that could act as your org.
+
+- **Shown once.** A key's secret is displayed a single time, at creation. Copy it into your secret manager then; there's no way to reveal it again — if you lose it, rotate.
+- **Rotate without downtime.** Create the replacement first, roll it out to your consumers, and revoke the old key once traffic has moved. Both keys are live during the overlap, so nothing drops. The full playbook, including how to shrink the blast radius before a leak, is in [recovering a leaked key](/leaked-api-key#rotate-without-downtime).
+- **Revocation is immediate.** A revoked key stops working on the very next request — it's the only remedy for a leak, and it takes effect at once.
 
 ## Signing in from the CLI
 
-You don't have to paste a key into the CLI. `wbhk login` runs a browser-based OAuth flow (PKCE) and stores a short-lived, scoped key in your OS keychain; it refreshes silently, and `wbhk logout` revokes it server-side.
+You don't have to paste a key into the CLI. `wbhk login` runs a browser-based OAuth flow (PKCE) and stores a short-lived, scoped key in your OS keychain; it refreshes silently in the background, and `wbhk logout` revokes it server-side.
 
 ```sh
 wbhk login              # browser OAuth (PKCE)
 wbhk login --device     # device flow, for headless machines
 wbhk login --api-key    # or paste a whk_ key directly
+wbhk logout             # revoke the stored key server-side
 ```
 
-A device you've logged in from can mint keys of its own — if a laptop is lost or a CI runner is compromised, revoke the _device_ and every key minted under it goes with it. See [recovering a leaked key](/leaked-api-key#revoking-a-device).
+A device you've logged in from can mint keys of its own — if a laptop is lost or a CI runner is compromised, revoke the _device_ and every key minted under it goes with it. See [revoking a device](/leaked-api-key#revoking-a-device).
 
-## Base URL
+## Auth across surfaces
 
-The default is `https://api.webhook.co`. Point the SDKs at a self-host or dev origin with the base-URL option — it must be `https` (loopback `http` is allowed for local dev only), so a misconfiguration can't downgrade your bearer key onto a plaintext connection where a proxy could read it.
+The same `whk_` bearer authenticates every surface — it's one credential model, not four:
+
+- **API** — the `Authorization: Bearer` header on every request to `api.webhook.co`.
+- **CLI** — `wbhk login` mints and stores a short-lived scoped key for you; or set `WEBHOOK_API_KEY` for a key you manage yourself.
+- **SDKs** — pass the key at construction; the client attaches it and redacts it.
+- **MCP** — `mcp.webhook.co/mcp` is a pure OAuth resource server: **bearer only**, either a `whk_` key or an OAuth access token in the `Authorization` header, no cookies or login form. Scopes are enforced by the same shared handler as the API. See [connect from a client](/mcp/using-from-a-client).
+
+## Environments and base URL
+
+The default base URL is `https://api.webhook.co`. Point the SDKs at a self-host or development origin with the base-URL option — but it must be `https`. The one exception is a loopback address (`localhost` / `127.0.0.1`) over `http`, allowed for local development only. This is a deliberate guard: a plaintext base URL would put your bearer key on the wire where a proxy could read it, so the client refuses to construct against one — you'll get a `WebhookConfigError` before any request leaves the process.
+
+```ts
+// Dev against a local server — loopback http is the one allowed exception.
+const webhook = new WebhookClient({
+  apiKey: process.env.WEBHOOK_API_KEY!,
+  baseUrl: "http://localhost:8787",
+});
+```
+
+## Errors
+
+Two auth failures, and they mean different things:
+
+| Status | Code           | Cause                                                                          |
+| ------ | -------------- | ------------------------------------------------------------------------------ |
+| 401    | `UNAUTHORIZED` | The bearer is missing, malformed, expired, revoked, or for the wrong audience. |
+| 403    | `FORBIDDEN`    | The bearer is valid, but the key lacks the scope this action requires.         |
+
+A `401` means fix the credential; a `403` means fix the scope. Every error also carries a `requestId` (also returned as the `x-request-id` response header) — include it in any support report. See [errors and status codes](/reference/errors) for the full taxonomy and the SDKs' typed errors.
+
+## Security best practices
+
+- **Server-side only.** Never expose a `whk_` key to a browser, mobile app, or anything a user can read.
+- **One key per consumer.** Separate keys per service or environment so you can revoke one without disrupting the rest.
+- **Narrow scopes.** Grant only what the consumer needs; a `read` job never needs a `write` key.
+- **Out of source.** Load keys from environment variables or a secret manager — never commit them.
+- **Rotate on a schedule, revoke on a leak.** Rotation is zero-downtime; revocation is immediate. When in doubt, revoke — see [recovering a leaked key](/leaked-api-key).
