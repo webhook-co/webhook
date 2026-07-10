@@ -1,0 +1,9 @@
+webhook.co
+Copyright 2026 Sourabh Choraria
+
+This product includes software developed as part of the webhook.co project
+(https://github.com/webhook-co/webhook), licensed under the Apache License,
+Version 2.0. See the LICENSE file for the full license text.
+
+Portions of this repository under the ee/ directory are proprietary and are
+NOT licensed under the Apache License, Version 2.0. See ee/LICENSE.
