@@ -15,18 +15,111 @@
         "groups": [
           {
             "group": "Get started",
+            "pages": ["introduction", "quickstart", "authentication"]
+          },
+          {
+            "group": "Guides",
+            "icon": "book-open",
             "pages": [
-              "introduction",
-              "quickstart",
-              "authentication",
-              "leaked-api-key",
-              "deduplication",
+              "guides/receive-your-first-webhook",
+              "guides/verify-inbound-signatures",
+              "guides/manage-provider-secrets",
+              "guides/inspect-search-events",
+              "guides/replay-to-localhost",
+              "guides/replay-past-or-failed-event",
+              "guides/send-to-a-destination",
+              "guides/sign-outbound-webhooks",
+              "guides/handle-delivery-failures",
+              "deduplication"
+            ]
+          },
+          {
+            "group": "Providers",
+            "icon": "plug",
+            "pages": [
+              "providers/verifying-provider-webhooks",
+              "providers/directory",
+              "providers/stripe",
+              "providers/github",
+              "providers/shopify",
+              "providers/slack",
+              "providers/braintree",
+              "providers/adyen",
+              "providers/square",
+              "providers/twilio",
+              "providers/hubspot",
+              "providers/meta",
+              "providers/custom"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "icon": "shapes",
+            "pages": [
+              "concepts/how-webhook-co-works",
+              "concepts/ingest-urls",
+              "concepts/inbound-verification",
+              "concepts/delivery-retry-signing",
+              "concepts/security",
               "events-and-usage"
             ]
           },
           {
-            "group": "SDKs",
-            "pages": ["sdks/typescript", "sdks/python", "sdks/go"]
+            "group": "MCP & agents",
+            "icon": "robot",
+            "pages": [
+              "mcp/overview",
+              "mcp/wake-an-agent",
+              "mcp/trigger-semantics",
+              "mcp/using-from-a-client",
+              "mcp/connect-the-docs-mcp"
+            ]
+          },
+          {
+            "group": "Recipes",
+            "icon": "book-sparkles",
+            "pages": [
+              "recipes/stripe-to-localhost",
+              "recipes/wake-an-agent",
+              "recipes/fan-in-to-one-service",
+              "recipes/github-actions-trigger",
+              "recipes/migrate-existing-receiver",
+              "recipes/reliable-order-pipeline",
+              "recipes/rotate-signing-secret",
+              "recipes/idempotent-consumer",
+              "recipes/debug-a-failed-delivery",
+              "recipes/local-dev-loop",
+              "recipes/multi-tenant-ingestion",
+              "recipes/alert-on-delivery-failures"
+            ]
+          },
+          {
+            "group": "CLI & SDKs",
+            "icon": "terminal",
+            "pages": [
+              "cli/overview",
+              "cli/command-reference",
+              "sdks/overview",
+              "sdks/typescript",
+              "sdks/python",
+              "sdks/go"
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "book-bookmark",
+            "pages": [
+              "reference/the-event-object",
+              "reference/errors",
+              "reference/rate-limits",
+              "reference/pagination",
+              "reference/delivery-guarantees"
+            ]
+          },
+          {
+            "group": "Resources",
+            "icon": "life-ring",
+            "pages": ["troubleshooting", "leaked-api-key", "changelog"]
           }
         ]
       },
@@ -48,5 +141,10 @@
     "socials": {
       "github": "https://github.com/webhook-co"
     }
+  },
+  "description": "webhook.co documentation — a free, permanent, signed webhook URL with payload inspection, replay-to-localhost, inbound verification across 142 providers, outbound delivery, and an MCP webhook→agent trigger. Identical across CLI, API, dashboard, and MCP.",
+  "contextual": {
+    "options": ["copy", "view", "chatgpt", "claude", "cursor"],
+    "display": "header"
   }
 }

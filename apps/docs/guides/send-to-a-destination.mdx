@@ -1,0 +1,99 @@
+---
+title: "Send events to a destination"
+sidebarTitle: "Send to a destination"
+description: "Register an HTTPS destination and subscribe a source endpoint to it so captured events forward automatically, with retries and optional FIFO ordering."
+icon: "paper-plane"
+---
+
+To forward captured events to one of your services automatically, do two things: register the service as a **destination** (an allowlisted HTTPS URL the server may deliver to), then bind a source **endpoint** to it with a **subscription**. From then on, matching events flow to your destination on their own, with [retries](/guides/handle-delivery-failures) and optional [signing](/guides/sign-outbound-webhooks).
+
+<Steps>
+  <Step title="Register the destination">
+    A destination is an HTTPS-only allowlist entry. `add` validates the URL structurally — HTTPS, a public hostname, no IP-literal host, an allowed port — and the authoritative private-range/SSRF guard runs again at delivery time.
+
+    <CodeGroup>
+
+    ```sh CLI
+    wbhk replay-destinations add https://api.example.com/hooks --label "prod ingest"
+    ```
+
+    ```sh API
+    curl -X POST https://api.webhook.co/v1/replay-destinations \
+      -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{ "url": "https://api.example.com/hooks", "label": "prod ingest" }'
+    ```
+
+    ```ts TypeScript
+    const dest = await webhook.replayDestinations.create({
+      url: "https://api.example.com/hooks",
+      label: "prod ingest",
+    });
+    console.log(dest.id);
+    ```
+
+    </CodeGroup>
+
+    In the dashboard, add a destination under **Settings → Destinations**.
+
+  </Step>
+  <Step title="Subscribe a source endpoint to it">
+    A subscription is the routing rule: captured events from the source endpoint auto-deliver to the destination. The zero-config default routes everything; narrow it with `--provider`, `--event-type` patterns (exact, `charge.*`, or `*`), and `--require-verified` to route only signature-verified events.
+
+    <CodeGroup>
+
+    ```sh CLI
+    wbhk subscriptions add <source-endpoint-id> <destination-id> \
+      --provider stripe --event-type "charge.*" --require-verified
+    ```
+
+    ```sh API
+    curl -X POST https://api.webhook.co/v1/subscriptions \
+      -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "sourceEndpointId": "<source-endpoint-id>",
+        "destinationId": "<destination-id>",
+        "provider": "stripe",
+        "eventTypes": ["charge.*"],
+        "requireVerified": true
+      }'
+    ```
+
+    ```ts TypeScript
+    await webhook.subscriptions.create({
+      sourceEndpointId: "<source-endpoint-id>",
+      destinationId: "<destination-id>",
+      provider: "stripe",
+      eventTypes: ["charge.*"],
+      requireVerified: true,
+    });
+    ```
+
+    </CodeGroup>
+
+  </Step>
+</Steps>
+
+## Ordering, enabling, disabling
+
+By default each delivery retries independently (best-effort). Turn on strict FIFO — deliver in order, where a stuck delivery head-of-line-blocks newer ones until it succeeds or dead-letters — with the required `on`/`off` mode:
+
+```sh
+wbhk replay-destinations set-ordered <destination-id> on
+```
+
+Remove a destination from the allowlist with `wbhk replay-destinations remove <id>` — it can no longer be a delivery target, and is easily re-added. If a destination auto-disabled after repeated failures, re-enable it — see [handle delivery failures](/guides/handle-delivery-failures).
+
+<Note>
+  Destinations and subscriptions are deliberately **not** exposed over MCP — only over the CLI, API,
+  and dashboard. This is a security property, not a gap: an AI agent must never be able to
+  reconfigure where an org's event stream is sent, or it could steer your data to a destination of
+  its choosing. Egress routing is a human-only control.
+</Note>
+
+## Related
+
+- [Sign outbound webhooks](/guides/sign-outbound-webhooks)
+- [Handle delivery failures](/guides/handle-delivery-failures)
+- [How retries and signing work](/concepts/delivery-retry-signing)

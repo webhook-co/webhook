@@ -25,6 +25,9 @@
     // BILLING_MODE (S4.5) — gates the inbound Stripe webhook. DEPLOY-INJECTED (optional GH var); unset/""
     // → off → POST /v1/stripe/webhook 503s (dark). parseBillingMode fail-safes junk to off.
     "BILLING_MODE": "<BILLING_MODE>",
+    // STRIPE_METER_EVENT_NAME (WS3) — the Billing Meter the invoice.created TAIL-FLUSH reports usage against.
+    // DEPLOY-INJECTED (optional GH var, same value as engine); unset/"" → the flush is dark (a no-op).
+    "STRIPE_METER_EVENT_NAME": "<STRIPE_METER_EVENT_NAME>",
   },
   // The public REST API on api.webhook.co (bearer-token, cookieless). Consumed server-to-server
   // today (the CLI + the MCP server), so NO CORS is set. The PRD's "CORS allowlist = app only"

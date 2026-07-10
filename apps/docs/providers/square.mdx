@@ -1,0 +1,50 @@
+---
+title: "Verify Square webhooks"
+sidebarTitle: "Square"
+description: "Register your Square signature key and webhook.co verifies the HMAC over the notification URL plus the raw body."
+icon: "square"
+---
+
+Square signs each webhook with an HMAC-SHA256 over `{notificationURL}{body}` — the request URL first, then the raw payload — base64-encoded in `X-Square-HmacSha256-Signature`. Register the signature key and webhook.co reproduces it against the exact URL and bytes it captured.
+
+## Get the signature key
+
+In the Square Developer Dashboard, open your application's **Webhooks → Subscriptions**, select the subscription pointing at your ingest URL, and copy its **Signature Key**.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$SQUARE_SIGNATURE_KEY" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider square
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"square","secret":"your_signature_key"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "square",
+  secret: process.env.SQUARE_SIGNATURE_KEY!,
+});
+```
+
+</CodeGroup>
+
+<Warning>
+  Square signs the notification URL. The subscription URL in Square must be your endpoint's ingest
+  URL exactly — a trailing slash or an added query string changes the signed string and fails
+  verification.
+</Warning>
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

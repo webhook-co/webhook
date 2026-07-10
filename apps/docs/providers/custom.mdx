@@ -1,0 +1,59 @@
+---
+title: "Custom or unlisted provider"
+sidebarTitle: "Custom or unlisted"
+description: "Capture works for any sender. Here's how verification maps to the 142 listed providers and what to do when yours isn't one of them."
+icon: "puzzle-piece"
+---
+
+Your sender doesn't have to be in the [directory](/providers/directory) for webhook.co to be useful. **Capture works for any sender, no configuration required** — every request to your **ingest URL** is stored, inspectable, and replayable. What the directory governs is _verification_: cryptographic checking is available for the 142 listed providers. This page is the honest map of what that means and what to do at the edges.
+
+## Nothing is ever lost
+
+An unrecognized or unlisted sender is captured exactly like a recognized one — same bytes, same storage, same replay. It simply lands in the `unattempted` **verification state**: captured but not signature-checked, because webhook.co had no adapter registered for it. `unattempted` is not a failure and never blocks anything downstream. You can inspect the payload and headers, replay it to localhost, and forward it — all without verification.
+
+So the question is never "will my webhook be received?" It's "can webhook.co _prove_ it's genuine?" That's what the rest of this page is about.
+
+## There is no free-form HMAC configurator — and here's why that's fine
+
+webhook.co does **not** offer a generic "define your own signature recipe" box where you pick a header, digest, and encoding. Verification runs the audited adapters for the 142 registered providers, full stop. That's a deliberate trust boundary: a hand-typed crypto recipe is exactly the kind of thing that silently verifies nothing (or the wrong thing) and hands you a false green check. We'd rather add a real, tested adapter than let you assemble an untested one.
+
+In practice, most unlisted senders still have a path to `verified`. Work down this list.
+
+### 1. If your sender implements Standard Webhooks, use the generic slug
+
+The [Standard Webhooks](https://www.standardwebhooks.com/) spec is an open, widely adopted construction (HMAC-SHA256 over `{id}.{ts}.{body}`, a `whsec_`-style key). If your provider says it signs with Standard Webhooks — many do, often without being individually named — register your secret under the `standard_webhooks` slug and you're verifying. This is the one genuinely generic adapter, and it covers a surprising number of "unlisted" senders.
+
+### 2. If your sender's scheme is byte-identical to a listed one, register under that slug
+
+Verification is driven by the secret you register, matched over the exact captured bytes. If your unlisted sender happens to use precisely the same scheme as a listed provider — same header, same digest, same signed message — registering that provider's secret will verify its events, because the cryptography is identical. For example, a sender that emits a `sha256=`-prefixed HMAC-SHA256 of the raw body under `x-hub-signature-256` is, cryptographically, a GitHub-shaped webhook.
+
+This is opportunistic, not a promise: it only works when the scheme matches down to the bytes. Confirm against the [directory](/providers/directory) row — the signature header, digest, and what's actually signed all have to line up. When in doubt, capture a real event first and compare.
+
+### 3. If your sender authenticates with a token in a header, use a configured-header slug
+
+Some providers don't sign at all — they send a shared secret in a header of your choosing. For those, the `okta`, `bigcommerce`, `datadog`, `brevo`, `new_relic`, `fillout`, and `zapier` slugs let you register both the **header name** and the token, and a match surfaces as `authenticated`. If your unlisted sender works this way, one of these operator-configured slugs may fit as-is. (This is token equality, not a signature — treat `authenticated` as the weaker guarantee it is.)
+
+## What to do for a genuinely unlisted sender
+
+If none of the above fits:
+
+1. **Keep capturing.** You already have full receive, inspect, and replay — turn nothing off waiting on verification.
+2. **Grab a real payload.** Use the captured request's headers and body to identify the signature header, digest, and signed message. That's exactly what an adapter needs.
+3. **Request the provider.** New providers are usually a single config row, so the list moves fast. Send the provider name and a sample signed request (redact the secret) and it can often be added quickly.
+
+<Note>
+  Never paste a real signing secret into a sample. The signature header and an example body are
+  enough to build an adapter; the secret stays yours.
+</Note>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Provider directory" icon="table-list" href="/providers/directory">
+    Check whether your sender — or one with an identical scheme — is already listed.
+  </Card>
+
+  <Card title="Verify inbound signatures" icon="signature" href="/guides/verify-inbound-signatures">
+    Register a provider secret and turn on verification.
+  </Card>
+</CardGroup>

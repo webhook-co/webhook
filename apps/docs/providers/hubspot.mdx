@@ -1,0 +1,48 @@
+---
+title: "Verify HubSpot webhooks"
+sidebarTitle: "HubSpot"
+description: "Register your HubSpot app client secret and webhook.co verifies the v3 request signature over method, URI, body, and timestamp."
+icon: "hubspot"
+---
+
+HubSpot's v3 signature is an HMAC-SHA256 over `{method}{requestURI}{body}{timestamp}`, base64-encoded in `X-HubSpot-Signature-v3`, with the timestamp in `X-HubSpot-Request-Timestamp`. Register your app's client secret and webhook.co reproduces the signature against the exact request it captured.
+
+## Get the client secret
+
+In the HubSpot developer account, open your app's **Auth** settings and copy the **Client secret**. This same secret signs the app's webhooks.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$HUBSPOT_CLIENT_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider hubspot
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"hubspot","secret":"your_client_secret"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "hubspot",
+  secret: process.env.HUBSPOT_CLIENT_SECRET!,
+});
+```
+
+</CodeGroup>
+
+## Replay window
+
+The signed timestamp (milliseconds) is part of the signature and drives a 5-minute window — webhook.co rejects a v3 request older than that. Because the URI is signed, your app's configured target must be the endpoint's ingest URL exactly.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

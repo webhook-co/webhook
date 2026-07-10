@@ -1,0 +1,46 @@
+---
+title: "Consolidate webhooks from many providers into one signed stream"
+sidebarTitle: "Fan-in to one service"
+description: "Verify webhooks from several providers, then fan them into a single destination your receiver verifies with one signing secret."
+icon: "object-group"
+---
+
+Your receiver shouldn't carry a verifier for every provider you integrate. Verify each provider at ingestion, subscribe them all to one destination, and webhook.co re-signs the fan-in stream with a single Standard Webhooks secret — so your service verifies exactly one signature, not a dozen.
+
+<Steps>
+  <Step title="Verify each provider on its own endpoint">
+    One endpoint per source, each with its provider secret registered.
+
+    ```sh
+    wbhk endpoints add-provider-secret <stripe-endpoint>  --provider stripe
+    wbhk endpoints add-provider-secret <shopify-endpoint> --provider shopify
+    wbhk endpoints add-provider-secret <github-endpoint>  --provider github
+    ```
+
+  </Step>
+  <Step title="Register one destination — your receiver">
+    `add` returns a signing secret, shown once. Configure it in your receiver's Standard Webhooks verifier.
+
+    ```sh
+    wbhk replay-destinations add https://api.example.com/ingest --label unified
+    # → signing secret (shown once): whsec...
+    ```
+
+  </Step>
+  <Step title="Subscribe every endpoint to that one destination">
+    `--require-verified` routes only signature-checked events. webhook.co re-signs each with the destination's secret — the un-forgeable verification state gates whether we vouch for it, so a forged event never carries your signature.
+
+    ```sh
+    wbhk subscriptions add <stripe-endpoint>  <destination-id> --require-verified
+    wbhk subscriptions add <shopify-endpoint> <destination-id> --require-verified
+    wbhk subscriptions add <github-endpoint>  <destination-id> --require-verified
+    ```
+
+  </Step>
+</Steps>
+
+<Note>
+  Every subscription to the same destination delivers under the **same** signing secret, so your
+  receiver runs one verifier. Rotate it in one place — see [rotate a signing
+  secret](/recipes/rotate-signing-secret).
+</Note>
