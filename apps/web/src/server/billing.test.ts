@@ -19,7 +19,7 @@ vi.mock("@webhook-co/shared", async (orig) => ({
   makeStripeClient: stripe.makeStripeClient,
 }));
 
-import { openBillingPortal, startCheckout } from "./billing";
+import { loadBillingSummary, openBillingPortal, startCheckout } from "./billing";
 
 afterEach(() => vi.clearAllMocks());
 
@@ -181,5 +181,69 @@ describe("startCheckout — the Stripe key must belong to BILLING_MODE", () => {
       url: "https://checkout",
     });
     expect(client.createCheckoutSession).toHaveBeenCalled();
+  });
+});
+
+describe("loadBillingSummary (dedicated Billing section)", () => {
+  function enable(sub: unknown, customerId: string | null) {
+    env.getBillingMode.mockReturnValue("test");
+    env.getStripePlans.mockReturnValue({
+      pro: { base: "price_base", overage: "price_overage" },
+      scale: { base: "price_scale_base", overage: "price_scale_overage" },
+    });
+    env.getStripeSecretKey.mockResolvedValue("sk_test_x");
+    db.withTenantDb.mockResolvedValue({ customerId, sub });
+  }
+
+  it("hides when billing is off / plans unset / key mismatches mode", async () => {
+    env.getBillingMode.mockReturnValue("off");
+    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+    env.getBillingMode.mockReturnValue("test");
+    env.getStripePlans.mockReturnValue(null);
+    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+    env.getStripePlans.mockReturnValue({ pro: { base: "b", overage: "o" } });
+    env.getStripeSecretKey.mockResolvedValue("sk_live_x"); // live key under test mode → mismatch
+    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+  });
+
+  it("an ACTIVE subscription → current-plan display, NO upgrade picker, has customer", async () => {
+    enable(
+      {
+        plan: "price_base",
+        status: "active",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+      },
+      "cus_1",
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.hidden).toBe(false);
+    expect(v.display).toMatchObject({ tier: "pro", state: "active" });
+    expect(v.upgradePlanIds).toEqual([]); // entitled → no picker
+    expect(v.hasCustomer).toBe(true);
+  });
+
+  it("NO subscription → no display, upgrade picker (ladder order), no customer", async () => {
+    enable(null, null);
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toBeNull();
+    expect(v.upgradePlanIds).toEqual(["pro", "scale"]);
+    expect(v.hasCustomer).toBe(false);
+  });
+
+  it("a CANCELED subscription → canceled display AND a resubscribe picker (has customer for the Portal)", async () => {
+    enable(
+      {
+        plan: "price_base",
+        status: "canceled",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      "cus_1",
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toMatchObject({ state: "canceled" });
+    expect(v.upgradePlanIds).toEqual(["pro", "scale"]); // not entitled → offer resubscribe
+    expect(v.hasCustomer).toBe(true);
   });
 });

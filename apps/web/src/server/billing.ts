@@ -1,17 +1,20 @@
 import "server-only";
 
 import { withTenant } from "@webhook-co/db/client";
-import { readBillingCustomerId } from "@webhook-co/db/reads";
+import { readBillingCustomerId, readBillingSummary } from "@webhook-co/db/reads";
 import {
+  billingDisplayFromSubscription,
   billingEnabled,
   isSelfServePlan,
   makeStripeClient,
+  SELF_SERVE_PLAN_IDS,
   stripeKeyMatchesMode,
+  type BillingDisplay,
+  type SelfServePlanId,
   type StripeClient,
 } from "@webhook-co/shared";
 
 import { logActionError } from "./action-log";
-import { resolveBillingPanel, type BillingPanel } from "./billing-panel";
 import { withTenantDb } from "./db";
 import { getBillingMode, getStripePlans, getStripeSecretKey } from "./env";
 
@@ -20,8 +23,8 @@ import { getBillingMode, getStripePlans, getStripeSecretKey } from "./env";
 // these no-op ("disabled") so the dashboard shows no billing UI and no Stripe call is ever made. Never
 // throws — a Stripe/db fault becomes an "error" state the page renders as a banner, not a 500.
 
-/** Where Checkout success/cancel + the Portal return land (the dashboard usage view). */
-const BILLING_RETURN_URL = "https://app.webhook.co/usage";
+/** Where Checkout success/cancel + the Portal return land (the dedicated Billing section). */
+const BILLING_RETURN_URL = "https://app.webhook.co/billing";
 
 export type BillingActionResult =
   | { readonly status: "ok"; readonly url: string }
@@ -112,24 +115,51 @@ export async function openBillingPortal(orgId: string): Promise<BillingActionRes
   }
 }
 
-/**
- * What the dashboard's billing panel should render for `orgId`. Never throws: a DB fault degrades to a
- * hidden panel (the usage numbers still render) rather than a 500 on the page a user opens to check usage.
- */
-export async function loadBillingPanel(orgId: string): Promise<BillingPanel> {
+/** Everything the dedicated Billing section renders for `orgId`. `display` is the current subscription's
+ *  derived state (or null if never subscribed); `upgradePlanIds` is the self-serve ladder to offer when the
+ *  org is NOT on an entitled paid plan (unsubscribed, canceled, or lapsed); `hasCustomer` gates the hosted
+ *  Portal (cancel / payment method / invoices). Never throws — a fault hides the section, page still renders. */
+export interface BillingView {
+  readonly hidden: boolean;
+  readonly display: BillingDisplay | null;
+  readonly upgradePlanIds: readonly SelfServePlanId[];
+  readonly hasCustomer: boolean;
+}
+
+const HIDDEN_VIEW: BillingView = {
+  hidden: true,
+  display: null,
+  upgradePlanIds: [],
+  hasCustomer: false,
+};
+
+/** Whether a display state still entitles the org to its paid plan (so we don't offer an upgrade picker). */
+function isEntitledState(state: BillingDisplay["state"] | undefined): boolean {
+  return state === "active" || state === "canceling" || state === "past_due";
+}
+
+export async function loadBillingSummary(orgId: string): Promise<BillingView> {
   const mode = getBillingMode();
   const plans = getStripePlans();
-  if (mode === "off" || !plans) return { kind: "hidden" };
+  if (mode === "off" || !plans) return HIDDEN_VIEW;
   try {
-    // Resolve the key inside the try — a Secrets Store .get() is network-backed.
     const secretKey = await getStripeSecretKey();
-    const keyMatchesMode = !!secretKey && stripeKeyMatchesMode(mode, secretKey);
-    const customerId = await withTenantDb((app) =>
-      withTenant(app, orgId, (tx) => readBillingCustomerId(tx)),
+    if (!secretKey || !stripeKeyMatchesMode(mode, secretKey)) return HIDDEN_VIEW; // transient/dark
+    const { customerId, sub } = await withTenantDb((app) =>
+      withTenant(app, orgId, async (tx) => ({
+        customerId: await readBillingCustomerId(tx),
+        sub: await readBillingSummary(tx),
+      })),
     );
-    return resolveBillingPanel({ mode, plans, hasCustomer: customerId !== null, keyMatchesMode });
+    const display = sub ? billingDisplayFromSubscription(sub, plans) : null;
+    // Offer the upgrade/resubscribe picker unless the org is on an entitled paid plan (switching between
+    // paid plans is a separate action, not the picker). Ladder order (pro → scale), configured plans only.
+    const upgradePlanIds = isEntitledState(display?.state)
+      ? []
+      : SELF_SERVE_PLAN_IDS.filter((id) => plans[id]);
+    return { hidden: false, display, upgradePlanIds, hasCustomer: customerId !== null };
   } catch (error) {
-    logActionError("billing.panel_failed", error);
-    return { kind: "hidden" };
+    logActionError("billing.summary_failed", error);
+    return HIDDEN_VIEW;
   }
 }
