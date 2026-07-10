@@ -2,10 +2,13 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import postgres from "postgres";
+
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import {
   meterEventTimestampSeconds,
+  reportOrgMeter,
   runMeterReporter,
   type MeterReportSink,
 } from "../src/meter-reporter";
@@ -307,5 +310,36 @@ describe("runMeterReporter — enumeration bounds + cross-org isolation", () => 
     // And each org's outbox holds only its own row (RLS-scoped read).
     expect((await outboxRows(a)).map((r) => r.event_count)).toEqual([111]);
     expect((await outboxRows(b)).map((r) => r.event_count)).toEqual([222]);
+  });
+
+  it("reportOrgMeter pins UTC — a non-UTC connection still stamps the meter day at UTC (regression)", async () => {
+    // window_start::date is session-TimeZone-dependent. On a connection whose DEFAULT TimeZone is west of
+    // UTC, a UTC-midnight window renders as the PREVIOUS calendar day → the {org}:{day} identifier + meter
+    // timestamp would be a day early (into an already-finalized Stripe period → dropped). The `set local time
+    // zone 'UTC'` in reportOrgMeter must override that default. This test fails if the pin is removed.
+    const orgId = await seedPayingOrg({ customer: "cus_TZ" });
+    await seedUsage(orgId, "2026-07-05T00:00:00Z", 42, true); // finalized, UTC-midnight
+    // A client whose startup TimeZone is America/New_York (UTC-4/5) — the untrusted non-UTC default.
+    const ny = postgres(pg.urlFor({ role: DB_ROLES.app }), {
+      prepare: true,
+      fetch_types: false,
+      max: 1,
+      connection: { TimeZone: "America/New_York" },
+    });
+    try {
+      const { sink, calls } = fakeSink();
+      await reportOrgMeter({ app: ny, stripe: sink, eventName: EVENT_NAME }, orgId, "2026-07-01");
+      // Without the pin this would be `${orgId}:2026-07-04` at meterEventTimestampSeconds("2026-07-04").
+      expect(calls).toEqual([
+        {
+          customer: "cus_TZ",
+          value: 42,
+          identifier: `${orgId}:2026-07-05`,
+          timestamp: meterEventTimestampSeconds("2026-07-05"),
+        },
+      ]);
+    } finally {
+      await ny.end();
+    }
   });
 });

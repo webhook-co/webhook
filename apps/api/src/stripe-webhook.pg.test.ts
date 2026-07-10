@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
-import { processStripeEvent, type StripeEvent } from "./stripe-webhook.js";
+import { processStripeEvent, type StripeEvent, type TailFlushRunner } from "./stripe-webhook.js";
 
 // The processStripeEvent orchestration (seen-check → APPLY → record-dedup) against a REAL Postgres with the
 // real appliers under RLS as webhook_billing. Proves the correctness-critical contract: a fresh event
@@ -150,5 +150,65 @@ describe("processStripeEvent (integration)", () => {
     const [sub] = await admin<{ status: string }[]>`
       select status from billing_subscriptions where org_id = ${org}`;
     expect(sub.status).toBe("active");
+  });
+});
+
+// The WS3 tail-flush dedup handshake, against a REAL ledger. The money-safety contract: invoice.created is
+// recorded (deduped) ONLY when the flush is fully handled; a DARK (unprovisioned) or RESIDUAL (send-failed)
+// flush returns "rejected" — ACK 200 but NO ledger row — so a later manual Stripe replay reprocesses and
+// lands the tail instead of losing it forever (Stripe never redelivers a 200'd event).
+describe("MONEY-SAFETY: invoice.created tail-flush dedup ledger (WS3)", () => {
+  function invObject(orgId: string): Record<string, unknown> {
+    return {
+      id: "in_" + orgId.slice(0, 6),
+      subscription: "sub_" + orgId.slice(0, 6),
+      billing_reason: "subscription_cycle",
+      period_start: Math.floor(Date.UTC(2026, 6, 1) / 1000),
+      period_end: Math.floor(Date.UTC(2026, 7, 1) / 1000),
+      subscription_details: { metadata: { org_id: orgId } },
+    };
+  }
+  function mkRunner(handled: boolean): { runner: TailFlushRunner; calls: () => number } {
+    let calls = 0;
+    return {
+      runner: {
+        async onInvoiceCreated() {
+          calls += 1;
+          return handled;
+        },
+      },
+      calls: () => calls,
+    };
+  }
+
+  it("a fully-handled flush → 'applied' + one ledger row; a replay does NOT re-run the flush", async () => {
+    const org = await seedOrg();
+    const ok = mkRunner(true);
+    const e = ev("invoice.created", invObject(org));
+    expect(await processStripeEvent(billing, e, ok.runner)).toBe("applied");
+    expect(await ledgerCount(e.id)).toBe(1);
+    expect(ok.calls()).toBe(1);
+    // Redelivery of the same event id short-circuits BEFORE the flush (dedup) — the tail isn't billed twice.
+    expect(await processStripeEvent(billing, e, ok.runner)).toBe("replay");
+    expect(await ledgerCount(e.id)).toBe(1);
+    expect(ok.calls()).toBe(1);
+  });
+
+  it("a RESIDUAL flush (returns false) → 'rejected', NOT deduped, reprocessable once it clears", async () => {
+    const org = await seedOrg();
+    const e = ev("invoice.created", invObject(org));
+    expect(await processStripeEvent(billing, e, mkRunner(false).runner)).toBe("rejected");
+    expect(await ledgerCount(e.id)).toBe(0); // replayable — a transient send failure never loses the tail
+    // Once the condition clears, a replay of the SAME event applies + records exactly once.
+    const ok = mkRunner(true);
+    expect(await processStripeEvent(billing, e, ok.runner)).toBe("applied");
+    expect(await ledgerCount(e.id)).toBe(1);
+    expect(ok.calls()).toBe(1);
+  });
+
+  it("a DARK flush (unprovisioned) → 'rejected', NOT deduped — replayable once provisioned", async () => {
+    const e = ev("invoice.created", invObject(await seedOrg()));
+    expect(await processStripeEvent(billing, e)).toBe("rejected"); // no runner wired
+    expect(await ledgerCount(e.id)).toBe(0);
   });
 });
