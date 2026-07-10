@@ -136,7 +136,7 @@ describe("listExpiringEvents", () => {
 });
 
 describe("deleteExpiredEvents", () => {
-  it("deletes the aged events by id, cascades their delivery_attempts, and returns the count", async () => {
+  it("deletes the aged events by id, cascades their delivery_attempts, and returns the deleted ids", async () => {
     const o = await seedOrg("del");
     const oldId = await seedEvent(o.orgId, o.endpointId, { ageDays: 10 });
     // A delivery attempt on the aged event — must cascade away with it (FK ON DELETE CASCADE).
@@ -148,7 +148,7 @@ describe("deleteExpiredEvents", () => {
     );
 
     const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [oldId]);
-    expect(deleted).toBe(1);
+    expect(deleted).toEqual([oldId]);
 
     const [{ n: events }] = await admin<
       { n: number }[]
@@ -162,7 +162,7 @@ describe("deleteExpiredEvents", () => {
 
   it("is a no-op for an empty id list", async () => {
     const o = await seedOrg("empty");
-    expect(await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [])).toBe(0);
+    expect(await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [])).toEqual([]);
   });
 
   it("the age-FLOOR DELETE policy REFUSES to remove an in-retention event even if its id is passed", async () => {
@@ -171,7 +171,7 @@ describe("deleteExpiredEvents", () => {
     const o = await seedOrg("floor");
     const freshId = await seedEvent(o.orgId, o.endpointId, { ageDays: 1 });
     const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [freshId]);
-    expect(deleted).toBe(0);
+    expect(deleted).toEqual([]);
     const [{ n }] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${freshId}`;
@@ -185,7 +185,7 @@ describe("deleteExpiredEvents", () => {
     const oldId = await seedEvent(o.orgId, o.endpointId, { ageDays: 30 });
     await seedSubscription(o.orgId, "active");
     const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [oldId]);
-    expect(deleted).toBe(0);
+    expect(deleted).toEqual([]);
     const [{ n }] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${oldId}`;

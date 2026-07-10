@@ -80,18 +80,20 @@ export async function listExpiringEvents(
 
 /**
  * Delete a batch of an org's expired events by id (cascades their delivery_attempts via the ON DELETE
- * CASCADE FK). The DELETE itself re-asserts every safety predicate so it is atomically correct regardless of
- * what changed since the id list was read: scoped to `orgId`, `received_at` past the window, and the
- * entitled-org anti-join (a paid org's data is never pruned even if the subscription appeared mid-tick). The
- * role-targeted DELETE policy's `received_at < now() - 7d` floor is a further backstop. Returns the row count.
+ * CASCADE FK) and return the ids ACTUALLY deleted. The DELETE re-asserts every safety predicate so it is
+ * atomically correct regardless of what changed since the id list was read: scoped to `orgId`, `received_at`
+ * past the window, and the entitled-org anti-join (a paid org's data is never pruned even if the subscription
+ * appeared mid-tick). The role-targeted DELETE policy's `received_at < now() - 7d` floor is a further
+ * backstop. The caller purges R2 only for the RETURNED ids — so a mid-tick entitlement flip (which makes the
+ * anti-join return fewer/zero ids) can never orphan a still-paying org's payload bodies.
  */
 export async function deleteExpiredEvents(
   retention: Sql,
   orgId: string,
   retentionDays: number,
   ids: readonly string[],
-): Promise<number> {
-  if (ids.length === 0) return 0;
+): Promise<string[]> {
+  if (ids.length === 0) return [];
   const rows = await retention<{ id: string }[]>`
     delete from events e
     where e.org_id = ${orgId}
@@ -102,5 +104,5 @@ export async function deleteExpiredEvents(
         where b.org_id = e.org_id and b.status in ${retention(ENTITLED_STATUSES)}
       )
     returning e.id`;
-  return rows.length;
+  return rows.map((r) => r.id);
 }

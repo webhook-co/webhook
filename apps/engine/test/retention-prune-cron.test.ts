@@ -29,9 +29,9 @@ function makeStore(seed: Record<string, ExpiringEvent[]>) {
     },
     deleteEvents: async (orgId, ids) => {
       order.push(`rows:${ids.join(",")}`);
-      const before = store[orgId].length;
+      const present = store[orgId].filter((e) => ids.includes(e.id)).map((e) => e.id);
       store[orgId] = store[orgId].filter((e) => !ids.includes(e.id));
-      return before - store[orgId].length;
+      return present; // the ids actually removed (all present ones, in this fake)
     },
     retentionDays: 7,
     orgLimit: 100,
@@ -55,11 +55,25 @@ describe("runRetentionPruneCron", () => {
     expect(store["org-b"]).toHaveLength(0);
   });
 
-  it("deletes the R2 objects BEFORE the event rows (crash-orphan safety)", async () => {
+  it("deletes the rows BEFORE R2, and only purges R2 for ids the DELETE actually removed", async () => {
     const { order, deps } = makeStore({ "org-a": [ev("a1"), ev("a2")] });
     await runRetentionPruneCron(deps);
-    // One full page of 2: R2 delete must precede the row delete.
-    expect(order).toEqual(["r2:key-a1,key-a2", "rows:a1,a2"]);
+    // Rows first (atomic age+entitlement re-check), then R2 for exactly the deleted ids.
+    expect(order).toEqual(["rows:a1,a2", "r2:key-a1,key-a2"]);
+  });
+
+  it("PURGES R2 only for the ids the DELETE returned — an entitlement flip mid-tick spares that org's bodies", async () => {
+    // deleteEvents returns FEWER ids than asked (the DB anti-join spared a2 because the org became entitled
+    // between listing and deleting). a2's R2 body must NOT be deleted.
+    const { order, deps } = makeStore({ "org-a": [ev("a1"), ev("a2")] });
+    const result = await runRetentionPruneCron({
+      ...deps,
+      batchesPerOrg: 1, // one pass — the fake DELETE doesn't mutate the store
+      deleteEvents: async (_org, _ids) => ["a1"], // only a1 was actually deleted
+    });
+    expect(result.deleted).toBe(1);
+    // Only a1's body was purged from R2; a2 (spared by the DELETE) is untouched.
+    expect(order.filter((o) => o.startsWith("r2:"))).toEqual(["r2:key-a1"]);
   });
 
   it("respects the per-org batch budget, leaving the rest for the next tick", async () => {
@@ -100,8 +114,8 @@ describe("runRetentionPruneCron", () => {
       validateKey: (_org, _ep, key) => key !== "key-a2",
     });
     expect(result).toEqual({ orgs: 1, deleted: 1, fenced: 1 });
-    // Only a1's key reached R2, and only a1's row was deleted; a2 survives.
-    expect(order).toEqual(["r2:key-a1", "rows:a1"]);
+    // Only a1's row was deleted (a2 never entered the delete), then only a1's key reached R2; a2 survives.
+    expect(order).toEqual(["rows:a1", "r2:key-a1"]);
     expect(store["org-a"].map((e) => e.id)).toEqual(["a2"]);
   });
 

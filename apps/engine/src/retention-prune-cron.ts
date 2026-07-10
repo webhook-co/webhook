@@ -4,12 +4,16 @@
 //
 // Each org's captured events are deleted once they age past that org's retention window (Free = 7 days;
 // paid orgs are EXCLUDED at the claim step until per-plan windows are wired at billing activation). For
-// every expiring event the payload BODY in R2 must go too — and the R2 key is content-addressed (it folds
-// in the body hash), so it can only be read from the stored row. Ordering is therefore load-bearing:
-// delete the R2 object BEFORE the row. If we deleted the row first and then crashed, the key would be gone
-// and the R2 object orphaned forever; deleting R2-then-row means a crash simply re-lists the same rows next
-// tick and retries (R2 delete of an already-gone key is a no-op). Bounded per tick so a large backlog never
-// blows the Workers subrequest/CPU ceiling — the remainder resumes next tick.
+// every expiring event the payload BODY in R2 must go too — the R2 key is content-addressed (it folds in the
+// body hash), so it is read from the stored row.
+//
+// Ordering is load-bearing: delete the ROWS first (an atomic DELETE that re-checks age + the entitled-org
+// anti-join), then delete R2 for ONLY the ids the DELETE actually removed. This closes the entitlement
+// TOCTOU — if an org gains a paid subscription between listing and deleting, the anti-join returns fewer/zero
+// ids and its payload bodies are never touched. The cost is a benign, sweepable R2 orphan if we crash
+// between the row delete and the R2 delete — strictly preferable to irreversibly destroying a still-paying
+// customer's payloads (deleting R2 first would do exactly that on an entitlement flip). Bounded per tick so
+// a large backlog never blows the Workers subrequest/CPU ceiling — the remainder resumes next tick.
 
 /** One event whose payload body must be purged from R2, then whose row is deleted. */
 export interface ExpiringEvent {
@@ -36,8 +40,12 @@ export interface RetentionPruneCronDeps {
   validateKey: (orgId: string, endpointId: string, r2Key: string) => boolean;
   /** Delete the given R2 payload objects (idempotent — an absent key is a no-op). */
   deleteR2: (keys: string[]) => Promise<void>;
-  /** Delete the given event rows for an org (cascades delivery_attempts); returns the row count. */
-  deleteEvents: (orgId: string, ids: string[]) => Promise<number>;
+  /**
+   * Delete the given event rows for an org (cascades delivery_attempts) and return the ids ACTUALLY deleted.
+   * The DELETE re-asserts age + the entitled-org anti-join, so a paid org that became entitled mid-tick has
+   * FEWER (or zero) ids returned — the caller then purges R2 only for those, never a still-paying org's body.
+   */
+  deleteEvents: (orgId: string, ids: string[]) => Promise<readonly string[]>;
   /** The retention window in days (Free = 7 while billing is dark). */
   retentionDays: number;
   /** Max orgs to service per tick. */
@@ -84,12 +92,20 @@ export async function runRetentionPruneCron(
       }
 
       if (valid.length > 0) {
-        // R2 objects FIRST — the content-addressed key lives only on the row we are about to delete.
-        await deps.deleteR2(valid.map((e) => e.r2Key));
-        deleted += await deps.deleteEvents(
-          orgId,
-          valid.map((e) => e.id),
+        // ROWS first, then R2 for ONLY the ids the DELETE actually removed. The DELETE re-checks age + the
+        // entitled-org anti-join, so if an org became entitled between listing and now, it returns fewer (or
+        // zero) ids and that org's payload bodies are never touched. The tradeoff vs deleting R2 first is a
+        // benign, sweepable R2 ORPHAN if we crash between the row delete and the R2 delete — strictly
+        // preferable to irreversibly destroying a still-paying customer's payloads.
+        const deletedIds = new Set(
+          await deps.deleteEvents(
+            orgId,
+            valid.map((e) => e.id),
+          ),
         );
+        const keys = valid.filter((e) => deletedIds.has(e.id)).map((e) => e.r2Key);
+        if (keys.length > 0) await deps.deleteR2(keys);
+        deleted += deletedIds.size;
       }
 
       // A fenced row stays in the table and would re-list forever, so once a page hits the fence we prune its
