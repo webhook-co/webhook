@@ -1,0 +1,71 @@
+---
+title: "Trigger semantics"
+sidebarTitle: "Trigger semantics"
+description: "The exact triggers.wait contract — short-poll cursor pull, at-least-once via ack-by-cursor, per-endpoint ordering, bounded body inlining, and the API mirror."
+icon: "book"
+---
+
+`triggers.wait` is the consumption half of a webhook-to-agent trigger. This is its precise contract — read it once and the agent loop on [wake an agent](/mcp/wake-an-agent) stops being magic.
+
+## Input
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `triggerId` | uuid | The trigger to consume from. |
+| `cursor` | string \| null | Opaque resume position. Omit or pass `null` to start from the oldest retained event. |
+| `limit` | int ≤ 200 | Max events this page. |
+| `includeBody` | bool, default `true` | Inline the bounded payload body on each event. |
+| `maxBodyBytes` | int ≤ 64 KiB | Clamp for the inlined body. |
+
+## Output
+
+```json
+{
+  "events": [ /* AgentTriggerEvent[], each with its verification state + vouched flag */ ],
+  "nextCursor": "…",
+  "caughtUp": true
+}
+```
+
+`nextCursor` is the position past every event scanned this call — pass it back on the next call. `caughtUp` is true once the page reaches the watermark head (nothing more, right now).
+
+## Short-poll pull, not push
+
+`triggers.wait` returns immediately with whatever sits past `cursor`, up to the gapless watermark. It does not block waiting for the next event. The caller re-invokes with `nextCursor` — promptly while `caughtUp` is false to drain a backlog, then on its own cadence once caught up. The durable event log is the queue; you set the pace.
+
+## At-least-once, ack-by-cursor
+
+The event log is the queue and the cursor is the acknowledgement. Persist `nextCursor` only after the work for a page succeeds. Crash before persisting it and the next call re-reads those events — never loses them. That makes delivery **at-least-once**, so **dedup on the event id**: an event may arrive twice, never zero times.
+
+<Warning>
+  Advance your stored cursor only after the side effects for a page are durable. Persisting `nextCursor` before the work turns a crash into silent event loss.
+</Warning>
+
+## Filtered, but never re-scanned
+
+Events whose verification state is `failed` are never surfaced — but the cursor still advances past them. They're read exactly once and never re-scanned, so a stream of failed-verification noise can't wedge your consumer. Every surfaced event carries its verification state and a `vouched` flag, so the agent can decide how much to trust each one.
+
+## Ordering
+
+Per endpoint, by capture-completion time (`received_at`) — the order events were captured, not any send order. A trigger is scoped to one endpoint, so within a trigger the order is stable.
+
+## Body inlining
+
+`includeBody` defaults to `true`: each event carries its payload inlined, read via the engine's org-scoped payload reader and clamped to `maxBodyBytes` (≤ 64 KiB). Set `includeBody: false` when you only need to be _woken_ and will fetch the content elsewhere — it skips the payload fetch entirely.
+
+## Errors
+
+| Code | Meaning |
+| --- | --- |
+| `NOT_FOUND` | Unknown, revoked, or cross-org trigger. |
+| `VALIDATION_ERROR` | Malformed cursor, or a cursor below the retained window — restart from the beginning by omitting `cursor`. |
+| `UNAUTHORIZED` | Missing or invalid bearer. |
+| `RATE_LIMITED` | Back off and retry. |
+
+## The API mirror
+
+Everything here is reachable over HTTP too. `triggers.wait` mirrors to `GET /v1/triggers/{triggerId}/wait`, and full CRUD lives at `/v1/triggers`. Same contract, same cursors — pick the surface that fits your runtime.
+
+<Card title="Back to waking an agent" icon="bolt" href="/mcp/wake-an-agent">
+  The end-to-end flow and a working agent loop.
+</Card>

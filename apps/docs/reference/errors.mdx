@@ -1,0 +1,68 @@
+---
+title: "Errors and status codes"
+sidebarTitle: "Errors"
+description: "Every webhook.co error carries a code, an HTTP status, and a request id. How to read them, and how the SDKs surface them as typed errors."
+icon: "triangle-exclamation"
+---
+
+Every error response carries three things: a machine-readable `code`, the HTTP `status`, and a `requestId`. The `requestId` comes back in the `x-request-id` response header — **include it in any support report**, it's how we find your exact request in the logs.
+
+## Status codes
+
+The error taxonomy is closed: each `code` maps to exactly one HTTP status.
+
+| Status | Code | What it means | What to do |
+| --- | --- | --- | --- |
+| 400 | `VALIDATION_ERROR` | The request was structurally or semantically invalid. | Fix the request. The `message` names the offending field. |
+| 401 | `UNAUTHORIZED` | The bearer token is missing, invalid, expired, revoked, or issued for a different audience. | Check the `Authorization` header and that the key is live. See [authentication](/authentication). |
+| 403 | `FORBIDDEN` | The key is valid but lacks the scope this action requires. | Mint a key with the right scope — don't over-provision an existing one. |
+| 404 | `NOT_FOUND` | The resource doesn't exist, or isn't visible to your org. | Cross-org resources return 404, not 403 — we don't confirm existence you can't see. |
+| 409 | `ENDPOINT_PAUSED` | A conflicting state blocks the request — today, the target endpoint is paused. | Resume the endpoint, or wait, then retry. |
+| 429 | `RATE_LIMITED` | The request was throttled. | Back off and retry. See [rate limits](/reference/rate-limits). |
+| 502 | `TARGET_UNREACHABLE` | A downstream delivery target couldn't be reached. | Check the target; retry with the same idempotency key. |
+
+## Typed errors in the SDKs
+
+The SDKs resolve every failure into a typed error so you can branch on `instanceof` instead of string-matching a code. All of them extend `WebhookError`, which carries `code`, `status`, `requestId`, and — for a throttle — `retryAfterMs`.
+
+```ts
+import {
+  WebhookNotFoundError,
+  WebhookRateLimitError,
+  WebhookPermissionError,
+} from "@webhook-co/sdk";
+
+try {
+  const event = await client.events.get(eventId);
+} catch (err) {
+  if (err instanceof WebhookNotFoundError) {
+    // 404 — unknown event, or not visible to this org
+  } else if (err instanceof WebhookPermissionError) {
+    // 403 — mint a key with events:read
+  } else if (err instanceof WebhookRateLimitError) {
+    await sleep(err.retryAfterMs ?? 1000); // then retry
+  } else {
+    throw err;
+  }
+}
+```
+
+Each status maps to its own subclass of `WebhookAPIError`:
+
+| Status | Error class |
+| --- | --- |
+| 400 | `WebhookInvalidRequestError` |
+| 401 | `WebhookAuthenticationError` |
+| 403 | `WebhookPermissionError` |
+| 404 | `WebhookNotFoundError` |
+| 409 | `WebhookConflictError` |
+| 429 | `WebhookRateLimitError` (inspect `retryAfterMs`) |
+| 502 | `WebhookTargetUnreachableError` |
+
+Three more errors never come from a server status, so catch them separately:
+
+- `WebhookConfigError` — the client was constructed with bad options (e.g. a plaintext base URL). Thrown eagerly, before any request.
+- `WebhookConnectionError` — the request never reached the server (DNS, TLS, connection, or a client-side timeout).
+- `WebhookUnexpectedResponseError` — a response the SDK can't interpret (an unmodelled status, or a body that failed validation).
+
+Catch the base `WebhookError` to handle any SDK failure uniformly; catch a subclass to handle one precisely.

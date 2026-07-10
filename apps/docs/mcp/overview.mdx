@@ -1,0 +1,78 @@
+---
+title: "webhook.co over MCP"
+sidebarTitle: "Overview"
+description: "A pure OAuth resource server exposing 21 scope-gated tools over streamable-HTTP, derived from the same capability contract as the API, CLI, and dashboard."
+icon: "plug"
+---
+
+webhook.co speaks the Model Context Protocol. Point an MCP-capable agent at `mcp.webhook.co`, authenticate with a bearer token, and it can manage endpoints, read events, inspect deliveries, verify your audit chain — and, uniquely, be _woken_ by an inbound webhook.
+
+## Connect
+
+The server is a streamable-HTTP endpoint:
+
+```text
+https://mcp.webhook.co/mcp
+```
+
+It's a pure OAuth resource server: **bearer auth only** — a `whk_` API key or an OAuth access token in the `Authorization` header. No cookies, no CORS, no login form. See [connect from a client](/mcp/using-from-a-client) for a ready-to-paste config, and [authentication](/authentication) for how to mint a key.
+
+Every session id is HMAC-bound to the principal that initialized it. Replaying a captured session id under a different principal is rejected before any tool runs — a stolen session is not a usable session.
+
+## The 21 tools
+
+The catalog is _derived_ from the same capability contract the API, CLI, and dashboard bind — surfaces can't drift, because there's one definition per capability and one shared handler. Each tool is scope-gated by that handler (an MCP bearer has no edge to lean on, so the handler's scope check is the sole gate). Tools never throw: a fault becomes a clean, closed-taxonomy error result, and internals go to logs — never to the caller.
+
+<CardGroup cols={2}>
+  <Card title="Endpoints (10)" icon="link">
+    `endpoints.list` · `endpoints.get` · `endpoints.create` · `endpoints.update` · `endpoints.delete` · `endpoints.rotate` · `endpoints.revealIngestUrl` · `endpoints.addProviderSecret` · `endpoints.listProviderSecrets` · `endpoints.revokeProviderSecret`
+  </Card>
+
+  <Card title="Events (3)" icon="inbox">
+    `events.list` · `events.get` · `events.tail`
+  </Card>
+
+  <Card title="Triggers (4)" icon="bell">
+    `triggers.create` · `triggers.list` · `triggers.revoke` · `triggers.wait`
+  </Card>
+
+  <Card title="Deliveries (2)" icon="paper-plane">
+    `deliveries.list` · `deliveries.get`
+  </Card>
+
+  <Card title="Audit (1)" icon="shield-check">
+    `audit.verify`
+  </Card>
+
+  <Card title="Usage (1)" icon="gauge">
+    `usage.get`
+  </Card>
+</CardGroup>
+
+The write tools (`endpoints.create/update/delete/rotate`, the reveal and provider-secret tools, `triggers.create/revoke`) require a write scope; the rest need only the matching read scope. A read-only key can browse and wait, but can't mutate anything.
+
+## What's deliberately _not_ here
+
+Twelve capabilities that exist on other surfaces are held back from MCP on purpose — the parity contract records the reason for each:
+
+- **`events.getPayload`** — no raw-payload retrieval over MCP. An agent reads event metadata via `events.get`; the payload bytes stay off this surface. (`triggers.wait` can inline a _bounded_ body when an agent needs the content to act — see [trigger semantics](/mcp/trigger-semantics).)
+- **`events.replay`** — replay-to-localhost is intrinsic to the CLI; an agent has no localhost session to forward to.
+- **all `replayDestinations.*` and `subscriptions.*`** — these register and mutate where an org's events get delivered. An agent must never be able to steer an org's event stream to a destination of its choosing. Withholding them is the egress / confused-deputy guard: the outbound allowlist is not agent-writable.
+
+That last line is the whole safety story of the next page. Reading events an agent already has access to steers nothing; redirecting egress does.
+
+<Note>
+  Delivery _reads_ — `deliveries.list` and `deliveries.get` — are exposed. Watching where events went is safe; deciding where they go is not.
+</Note>
+
+## Next
+
+<CardGroup cols={2}>
+  <Card title="Wake an agent on a webhook" icon="bolt" href="/mcp/wake-an-agent">
+    The flagship: an inbound webhook wakes a waiting agent.
+  </Card>
+
+  <Card title="Connect from a client" icon="terminal" href="/mcp/using-from-a-client">
+    Add `mcp.webhook.co` to Claude, Cursor, VS Code, and friends.
+  </Card>
+</CardGroup>

@@ -1,0 +1,60 @@
+---
+title: "Connect from an MCP client"
+sidebarTitle: "Connect a client"
+description: "Add mcp.webhook.co as an MCP server in any MCP-capable client — the streamable-HTTP endpoint plus a whk_ key or OAuth bearer."
+icon: "terminal"
+---
+
+Add webhook.co to any MCP-capable client — Claude, Cursor, VS Code, and the rest — and its agent gets the [21 tools](/mcp/overview) directly.
+
+You need two things: the endpoint and a bearer token.
+
+```text
+endpoint   https://mcp.webhook.co/mcp   (streamable-HTTP)
+auth       Authorization: Bearer <token>
+```
+
+The token is either a `whk_` API key or an OAuth access token — see [authentication](/authentication) to mint one. The server is cookieless and bearer-only; there's nothing else to configure.
+
+## Config
+
+Most clients take a remote MCP server as a URL plus headers. The shape:
+
+<CodeGroup>
+
+```json API key
+{
+  "mcpServers": {
+    "webhook": {
+      "url": "https://mcp.webhook.co/mcp",
+      "headers": {
+        "Authorization": "Bearer whk_your_key_here"
+      }
+    }
+  }
+}
+```
+
+```json OAuth
+{
+  "mcpServers": {
+    "webhook": {
+      "url": "https://mcp.webhook.co/mcp"
+    }
+  }
+}
+```
+
+</CodeGroup>
+
+With a `whk_` key, put it in the `Authorization` header as above. With OAuth, point the client at the URL and let it run the authorization flow — webhook.co is a standard OAuth resource server, so a client that speaks MCP OAuth will discover and complete it on its own.
+
+Keys are secrets. Load them from your environment or your client's secret store rather than committing a config with the value inline.
+
+## Verify
+
+Once connected, the client lists the tool catalog — the 21 tools from the [overview](/mcp/overview), grouped across endpoints, events, triggers, deliveries, audit, and usage. If the list is empty, the bearer is missing or wrong; the server rejects an unauthenticated session before any tool is offered.
+
+<Card title="What each tool does" icon="plug" href="/mcp/overview">
+  The full catalog, scopes, and the capabilities held back from MCP.
+</Card>

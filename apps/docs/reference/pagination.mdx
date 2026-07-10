@@ -1,0 +1,60 @@
+---
+title: "Pagination"
+sidebarTitle: "Pagination"
+description: "List endpoints page with opaque keyset cursors — stable under inserts. How to page with the SDKs and the CLI."
+icon: "layer-group"
+---
+
+List endpoints return a page of items and an opaque `nextCursor`. Pass the cursor back to get the next page; when it comes back `null`, you've reached the end.
+
+```json
+{
+  "items": [ /* up to `limit` items */ ],
+  "nextCursor": "opaque-keyset-token"
+}
+```
+
+The cursor is a **keyset** cursor, not an offset. Paging stays stable while new events arrive underneath you — you never skip or double-read a row because something was inserted mid-scan. A page holds up to `limit` items (**max 200**, the default is smaller); a `null` or absent `nextCursor` means there's nothing after this page.
+
+## With the SDKs
+
+A paginated method returns an iterator. In the common case, just `for await` over it — it follows the cursor for you, one page at a time, lazily:
+
+```ts
+for await (const event of client.events.list(endpointId, { limit: 100 })) {
+  console.log(event.id, event.verificationState);
+}
+```
+
+When you need more control:
+
+```ts
+// Page at a time.
+for await (const page of client.events.list(endpointId).pages()) {
+  console.log(page.items.length, page.nextCursor);
+}
+
+// Manual cursor control — one page per call.
+const page = await client.events.listPage(endpointId, { cursor, limit: 50 });
+
+// Materialize everything (mind unbounded result sets).
+const all = await client.events.list(endpointId).collect();
+```
+
+The iterator guards against a server that hands back a non-advancing cursor — following one would loop forever, so the SDK surfaces it as an error instead.
+
+## With the CLI
+
+List commands print the first page and, if there's more, hint how to continue.
+
+| Flag | Effect |
+| --- | --- |
+| `--all` | Follow the cursor and print every page. |
+| `--cursor <token>` | Resume from a specific `nextCursor`. |
+| `--limit <n>` | Items per page, `1`–`200`. |
+
+## Not everything paginates
+
+Small, human-managed sets — an endpoint's provider secrets, an org's replay destinations, delivery subscriptions, and agent triggers — return the whole collection at once, with no cursor and no `limit`. We don't advertise pagination a surface doesn't implement. If a list carries a `nextCursor`, it pages; if it doesn't, it's complete.
+
+For working through an endpoint's history, see [inspect and search events](/guides/inspect-search-events).

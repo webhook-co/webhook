@@ -59,8 +59,15 @@
             ]
           },
           {
-            "group": "SDKs",
-            "pages": ["sdks/typescript", "sdks/python", "sdks/go"]
+            "group": "CLI & SDKs",
+            "icon": "terminal",
+            "pages": [
+              "cli/overview",
+              "cli/command-reference",
+              "sdks/typescript",
+              "sdks/python",
+              "sdks/go"
+            ]
           },
           {
             "group": "Concepts",
@@ -71,6 +78,28 @@
               "concepts/inbound-verification",
               "concepts/delivery-retry-signing",
               "concepts/security"
+            ]
+          },
+          {
+            "group": "MCP & agents",
+            "icon": "robot",
+            "pages": [
+              "mcp/overview",
+              "mcp/wake-an-agent",
+              "mcp/trigger-semantics",
+              "mcp/using-from-a-client",
+              "mcp/connect-the-docs-mcp"
+            ]
+          },
+          {
+            "group": "Reference",
+            "icon": "book-bookmark",
+            "pages": [
+              "reference/the-event-object",
+              "reference/errors",
+              "reference/rate-limits",
+              "reference/pagination",
+              "reference/delivery-guarantees"
             ]
           }
         ]

@@ -1,0 +1,106 @@
+---
+title: "The wbhk CLI"
+sidebarTitle: "CLI overview"
+description: "Install wbhk, sign in, and capture, inspect, and replay webhooks from your terminal — every capability the dashboard has, scriptable."
+icon: "terminal"
+---
+
+`wbhk` is the webhook.co command-line client. It does everything the dashboard does — create endpoints, inspect events, stream deliveries to your machine, replay them to localhost, manage destinations and agent triggers — and it does it in a form you can pipe into `jq` and drop into a script.
+
+## Install and sign in
+
+<CodeGroup>
+
+```sh Homebrew
+brew install webhook-co/tap/wbhk
+```
+
+```sh npm
+# needs Node >= 22; installs the `wbhk` command
+npm install -g @webhook-co/cli
+```
+
+```sh Install script
+# standalone binary, no Node required (macOS / Linux)
+curl -fsSL https://get.webhook.co -o install-wbhk.sh
+sh install-wbhk.sh
+```
+
+</CodeGroup>
+
+Then authenticate:
+
+```sh
+wbhk login          # opens your browser
+wbhk whoami         # confirm the org, scopes, and key handle
+```
+
+`login` runs a browser OAuth flow by default, validates the minted credential, and stores a short-lived, scoped key in your OS keychain. From there the CLI refreshes the access token silently — you stay logged in without a long-lived secret sitting on disk.
+
+## Installation channels
+
+Every channel lands the same `wbhk` binary or package.
+
+| Channel | How | Notes |
+| --- | --- | --- |
+| Homebrew | `brew install webhook-co/tap/wbhk` | macOS and Linux. Upgrade with `brew upgrade wbhk`. |
+| npm | `npm install -g @webhook-co/cli` | Needs Node \>= 22. Or run ad-hoc with `npx @webhook-co/cli --help`. |
+| Install script | Download `get.webhook.co` and run it | Detects your OS/arch, downloads the matching binary, verifies its SHA-256, and installs it. Set `WBHK_INSTALL_DIR` to change the target, `WBHK_VERSION` to pin a release. |
+| Standalone binary | Download from [GitHub releases](https://github.com/webhook-co/webhook/releases) | Signed binaries for macOS, Linux, and Windows. No runtime required. |
+| Windows | The `wbhk-windows-x64.exe` from releases, or Scoop | Upgrade a Scoop install with `scoop update wbhk`. |
+
+Every release is built in CI with sigstore-signed build provenance, so a downloaded binary is independently verifiable — the provenance proves it was built from this repository's GitHub Actions, not hand-uploaded. Verify a binary with `gh attestation verify`, or check an npm install with `npm audit signatures`.
+
+## Signing in
+
+`wbhk login` supports three credential flows. All of them validate the credential before anything is written, so a bad key stores nothing.
+
+| Flow | Command | When to use |
+| --- | --- | --- |
+| Browser (default) | `wbhk login` | Interactive. Opens a browser, captures the code on a localhost redirect. |
+| Device | `wbhk login --device` | Headless or remote boxes — prints a code and a URL to approve elsewhere. |
+| API key | `wbhk login --api-key` | Authenticate with an existing key via a hidden prompt. Pipe one in with `wbhk login --stdin`, or set `WBHK_API_KEY` for a never-persisted headless run. |
+
+The key is never taken as a command-line argument — that would leak it into your shell history and the process list. It comes from a hidden prompt or stdin.
+
+`wbhk logout` clears the stored credential. For an OAuth credential it also revokes the token server-side, so a logged-out session stops working everywhere — not just on this machine.
+
+<Note>
+  Credentials go into your OS keychain when one is available. On a box without a keychain helper, `wbhk login --insecure-storage` falls back to a `0600` config file. `wbhk doctor` tells you which backend is in use.
+</Note>
+
+## Global flags
+
+Every command accepts the same four global flags.
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--output text` or `json` | `text` | `json` is the machine-readable view — the format to pipe into `jq`. |
+| `--api-url <url>` | hosted API | Point the CLI at a different API base URL. |
+| `--color` / `--no-color` | auto | Force color on or off; unset auto-detects from your terminal. |
+| `--profile <name>` | active | Run against a named profile without switching the active one. |
+
+## Profiles for multiple accounts
+
+A profile is a named credential plus its base URL — keep a work org and a personal org side by side.
+
+```sh
+wbhk --profile work login     # create the profile by logging into it
+wbhk profile use work         # make it the active profile
+wbhk profile current          # show the active profile and where it's set
+wbhk profile list             # list all profiles (the active one is marked)
+```
+
+Profile selection resolves in order: `--profile` beats the `WBHK_PROFILE` env var, which beats the persisted active profile, which falls back to `default`. When a command runs against a non-default profile, `wbhk` prints a one-line stderr banner so a run against staging or prod never surprises you.
+
+## Diagnostics, updates, telemetry
+
+- **`wbhk doctor`** runs local, silent checks and reports the CLI version, active credential and its source, config-file health, API reachability, and clock skew. It exits non-zero only for a must-fix local misconfiguration (a corrupt or world-readable config); transient things stay warnings.
+- **`wbhk upgrade`** updates a standalone binary in place after verifying the download's checksum and build provenance; `--check` just reports whether an update is available. A package-managed install is detected and pointed at its own updater.
+- **`wbhk telemetry status` / `off`** manages anonymous, opt-out usage telemetry — which commands ran, the CLI version, and OS/arch, never your data or credentials. Off automatically in CI, or set `WBHK_TELEMETRY=0`.
+- **`wbhk completion bash|zsh|fish`** prints a shell tab-completion script to standard output; save it and source it from your shell config. Completions defer to `wbhk` itself, so they always reflect the live command set.
+
+## Next
+
+- [Command reference](/cli/command-reference) — every command group, subcommand, and flag.
+- [Authentication](/authentication) — keys, scopes, and how sign-in works under the hood.
