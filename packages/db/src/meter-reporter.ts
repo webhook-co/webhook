@@ -23,7 +23,7 @@ import { readBillingCustomerId } from "./reads";
  * a category + Stripe's structured (non-PII) status/type/code only. orgId (an opaque internal UUID) stays,
  * matching the existing metering-cron logging; it is not PII and is needed to trace which org failed.
  */
-function safeErr(err: unknown): Record<string, unknown> {
+export function safeErr(err: unknown): Record<string, unknown> {
   if (err instanceof StripeError) {
     return {
       errorKind: "stripe",

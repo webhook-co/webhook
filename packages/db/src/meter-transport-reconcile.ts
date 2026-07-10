@@ -15,6 +15,7 @@
 // partial drop). And `stripe_meter_reports.day` is a `date`, so day comparison needs no TZ pinning.
 
 import type { Sql } from "./client";
+import { safeErr } from "./meter-reporter";
 
 /**
  * Reads a customer's Stripe meter-event summaries over a range, day-grouped. Injected so the DB comparison
@@ -153,11 +154,10 @@ export async function reconcileStripeTransport(
       // One org's Stripe failure must not sink the pass — but it must NOT masquerade as a clean reconcile
       // either. Count it as ERRORED (surfaced in the summary as an alarm), never as checked; a persistent
       // 400/500 would otherwise report "done, 0 drift" forever while reconciling nothing.
+      // safeErr (shared with the reporter): NEVER the raw message — a Stripe error's text can carry
+      // external billing ids (cus_…/sub_…). Log a category + Stripe's structured status/type/code only.
       erroredOrgs += 1;
-      deps.log?.("metering.stripe_reconcile.reader_error", {
-        orgId,
-        error: err instanceof Error ? err.message : "unknown",
-      });
+      deps.log?.("metering.stripe_reconcile.reader_error", { orgId, ...safeErr(err) });
       continue;
     }
 

@@ -40,6 +40,8 @@ const BILLING_KEYS = [
   "BILLING_MODE",
   "STRIPE_METER_EVENT_NAME",
   "STRIPE_PLANS",
+  "STRIPE_METER_ID",
+  "HYPERDRIVE_METER_TRANSPORT_AUDIT_ID",
   "HYPERDRIVE_BILLING_ID",
   "HYPERDRIVE_METER_AUDIT_ID",
   "FREE_EVENT_CAP",
@@ -185,5 +187,29 @@ test("every billing env var the generator reads is forwarded by its deploy workf
     dead,
     [],
     `deploy workflows forward these, but the generator ignores them: ${dead}`,
+  );
+});
+
+test("STRIPE_METER_ID + the transport Hyperdrive: bound when provisioned, stripped when dark", () => {
+  // Provisioned: the meter id lands as an engine var and the transport Hyperdrive binding is present.
+  gen({
+    BILLING_MODE: "live",
+    STRIPE_METER_ID: "mtr_live_x",
+    HYPERDRIVE_METER_TRANSPORT_AUDIT_ID: "hd_transport_x",
+  });
+  const eng = readProd("engine");
+  assert.equal(eng.vars.STRIPE_METER_ID, "mtr_live_x");
+  assert.ok(
+    (eng.hyperdrive ?? []).some((h) => h.binding === "HYPERDRIVE_METER_TRANSPORT_AUDIT"),
+    "transport Hyperdrive should be bound when its id is set",
+  );
+
+  // Dark: unset id → the whole @gen-optional block is stripped, and the var is empty.
+  gen();
+  const dark = readProd("engine");
+  assert.equal(dark.vars.STRIPE_METER_ID, "");
+  assert.ok(
+    !(dark.hyperdrive ?? []).some((h) => h.binding === "HYPERDRIVE_METER_TRANSPORT_AUDIT"),
+    "transport Hyperdrive should be stripped when its id is unset",
   );
 });
