@@ -300,6 +300,33 @@ describe("deriveDedup — content mode", () => {
   });
 });
 
+describe("deriveDedup — window-boundary characterization (F3: documents the edge, does not fix it)", () => {
+  // Two instants in ADJACENT epoch windows (the bucket is window-width-aligned). At the 24h default a
+  // straddle needs a retry near UTC midnight — rare; at short windows it's more reachable.
+  const beforeEdge = new Date("2026-06-14T23:59:59Z");
+  const afterEdge = new Date("2026-06-15T00:00:01Z");
+
+  it("content mode: a retry straddling a window boundary gets DISTINCT keys — two billable events", async () => {
+    const body = enc("an identical, retried payload");
+    const a = await deriveDedup(body, [], "POST", U(), EVENT_ID, beforeEdge, CONTENT);
+    const b = await deriveDedup(body, [], "POST", U(), EVENT_ID, afterEdge, CONTENT);
+    // Same content, adjacent buckets → different keys → NOT collapsed. This is the known F3 over-count:
+    // content + fields keys carry the window, so a boundary-straddling retry bills twice. Documented in the
+    // dedup docs, steered to `identifier` mode. `fields` mode behaves the same (its key also carries the bucket).
+    expect(b.dedupBucket).toBe((a.dedupBucket as number) + 1);
+    expect(a.dedupKey).not.toBe(b.dedupKey);
+  });
+
+  it("identifier mode: the SAME retry collapses across the boundary — the id key carries no window", async () => {
+    const body = enc('{"id":"evt_boundary"}');
+    const hdr: Array<[string, string]> = [["webhook-id", "msg_stable"]];
+    const a = await deriveDedup(body, hdr, "POST", U(), EVENT_ID, beforeEdge, IDENT);
+    const b = await deriveDedup(body, hdr, "POST", U(), EVENT_ID, afterEdge, IDENT);
+    expect(a.dedupBucket).toBeNull(); // id-based key → window-independent → immune to the straddle
+    expect(a.dedupKey).toBe(b.dedupKey);
+  });
+});
+
 describe("deriveDedup — off mode", () => {
   it("produces a per-request unique key (every request is a distinct event)", async () => {
     const body = enc(`{"id":"evt_x"}`);
