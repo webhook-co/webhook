@@ -112,6 +112,21 @@ export function getSessionExchangeBinding(): SessionExchangeBinding | undefined 
   return undefined;
 }
 
+/** auth.'s AccountDeleter WorkerEntrypoint (slice 2.2), reachable over a Cloudflare service binding.
+ *  Only auth. (webhook_auth) may touch the identity realm, so account erasure RPCs it. */
+export interface AccountDeleterBinding {
+  deleteAccount(userId: string): Promise<{ deleted: boolean }>;
+}
+
+/** The bound AUTH_ACCOUNT_DELETER entrypoint, or undefined when unbound (dev / pre-provision). */
+export function getAccountDeleterBinding(): AccountDeleterBinding | undefined {
+  const binding = workerEnv().AUTH_ACCOUNT_DELETER;
+  if (binding && typeof (binding as { deleteAccount?: unknown }).deleteAccount === "function") {
+    return binding as AccountDeleterBinding;
+  }
+  return undefined;
+}
+
 /**
  * The `PROVIDER_SECRET_SEALER` Cloudflare service binding — the engine's seal-only `ProviderSecretSealer`
  * WorkerEntrypoint, reachable as a direct RPC (no public HTTP hop). It is **write-only**: it wraps a

@@ -1,6 +1,7 @@
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
+import { DeleteAccountCard } from "@/components/delete-account-card";
 import { DeleteOrgCard } from "@/components/delete-org-card";
 import { logout } from "@/server/auth-actions";
 import { verifySession } from "@/server/session";
@@ -50,6 +51,7 @@ export default async function SettingsPage() {
       </form>
 
       <DeleteOrgCard />
+      <DeleteAccountCard />
     </div>
   );
 }
