@@ -120,9 +120,18 @@ describe("listExpiringEvents", () => {
     const page = await listExpiringEvents(retention, o.orgId, RETENTION_DAYS, 100);
     expect(page.map((e) => e.id).sort()).toEqual([oldA, oldB].sort());
     expect(page.map((e) => e.r2Key).sort()).toEqual(["key-A", "key-B"]);
+    // endpoint_id rides along so the cron can fence the key to org/{org}/ep/{endpoint}/ before deleting.
+    expect(page.every((e) => e.endpointId === o.endpointId)).toBe(true);
 
     const limited = await listExpiringEvents(retention, o.orgId, RETENTION_DAYS, 1);
     expect(limited).toHaveLength(1);
+  });
+
+  it("EXCLUDES an org that became entitled after the claim (defence at list time, not just claim)", async () => {
+    const o = await seedOrg("list-entitled");
+    await seedEvent(o.orgId, o.endpointId, { ageDays: 30 });
+    await seedSubscription(o.orgId, "active"); // subscription appears mid-tick
+    expect(await listExpiringEvents(retention, o.orgId, RETENTION_DAYS, 100)).toEqual([]);
   });
 });
 
@@ -138,7 +147,7 @@ describe("deleteExpiredEvents", () => {
                  values (${randomUUID()}, ${o.orgId}, ${oldId}, ${"https://x.test"}, ${"pending"})`,
     );
 
-    const deleted = await deleteExpiredEvents(retention, o.orgId, [oldId]);
+    const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [oldId]);
     expect(deleted).toBe(1);
 
     const [{ n: events }] = await admin<
@@ -153,7 +162,7 @@ describe("deleteExpiredEvents", () => {
 
   it("is a no-op for an empty id list", async () => {
     const o = await seedOrg("empty");
-    expect(await deleteExpiredEvents(retention, o.orgId, [])).toBe(0);
+    expect(await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [])).toBe(0);
   });
 
   it("the age-FLOOR DELETE policy REFUSES to remove an in-retention event even if its id is passed", async () => {
@@ -161,18 +170,44 @@ describe("deleteExpiredEvents", () => {
     // hands a fresh event's id to the delete removes NOTHING — RLS filters it out (0 rows), never an error.
     const o = await seedOrg("floor");
     const freshId = await seedEvent(o.orgId, o.endpointId, { ageDays: 1 });
-    const deleted = await deleteExpiredEvents(retention, o.orgId, [freshId]);
+    const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [freshId]);
     expect(deleted).toBe(0);
     const [{ n }] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${freshId}`;
     expect(n).toBe(1); // still there
   });
+
+  it("REFUSES to delete a now-entitled org's events even if their ids are passed (atomic anti-join)", async () => {
+    // The catastrophic miss the design guards against: pruning a paid org's data. If a subscription appears
+    // between the id list and the delete, the DELETE's own NOT EXISTS must still spare it — 0 rows removed.
+    const o = await seedOrg("del-entitled");
+    const oldId = await seedEvent(o.orgId, o.endpointId, { ageDays: 30 });
+    await seedSubscription(o.orgId, "active");
+    const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [oldId]);
+    expect(deleted).toBe(0);
+    const [{ n }] = await admin<
+      { n: number }[]
+    >`select count(*)::int as n from events where id = ${oldId}`;
+    expect(n).toBe(1); // the paid org's event survives
+  });
+});
+
+describe("claimRetentionOrgs fairness", () => {
+  it("returns oldest-data orgs first, so a backlog larger than the limit can't starve an org", async () => {
+    const older = await seedOrg("older");
+    await seedEvent(older.orgId, older.endpointId, { ageDays: 40 });
+    const newer = await seedOrg("newer");
+    await seedEvent(newer.orgId, newer.endpointId, { ageDays: 10 });
+
+    // limit 1 must pick the org whose oldest event is furthest past the window.
+    expect(await claimRetentionOrgs(retention, RETENTION_DAYS, 1)).toEqual([older.orgId]);
+  });
 });
 
 describe("webhook_retention least privilege", () => {
   it("holds SELECT on only the enumeration/purge columns of events + DELETE, no other write", async () => {
-    const granted = ["id", "org_id", "received_at", "payload_r2_key"] as const;
+    const granted = ["id", "org_id", "endpoint_id", "received_at", "payload_r2_key"] as const;
     for (const c of granted) {
       const [p] = await admin<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.retention}, 'events', ${c}, 'SELECT') as ok`;

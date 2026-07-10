@@ -14,18 +14,26 @@
 /** One event whose payload body must be purged from R2, then whose row is deleted. */
 export interface ExpiringEvent {
   readonly id: string;
+  /** The owning endpoint — fences the stored R2 key to `org/{orgId}/ep/{endpointId}/` before we delete it. */
+  readonly endpointId: string;
   readonly r2Key: string;
 }
 
 export interface RetentionPruneCronDeps {
   /** The orgs with events older than `retentionDays` that are eligible to prune (paid orgs excluded). */
   claimOrgs: (retentionDays: number, limit: number) => Promise<readonly string[]>;
-  /** A page of an org's expiring events (id + the R2 key to purge), oldest-window-first, up to `limit`. */
+  /** A page of an org's expiring events (id + endpoint + the R2 key to purge), oldest-first, up to `limit`. */
   listExpiring: (
     orgId: string,
     retentionDays: number,
     limit: number,
   ) => Promise<readonly ExpiringEvent[]>;
+  /**
+   * Validate that a stored R2 key belongs to (orgId, endpointId) — the readPayloadKey principal fence (H1).
+   * A destructive path must NOT delete an object whose key doesn't match its own prefix (a corrupted or
+   * cross-tenant key could otherwise destroy a victim's payload). Returns false to skip + alarm.
+   */
+  validateKey: (orgId: string, endpointId: string, r2Key: string) => boolean;
   /** Delete the given R2 payload objects (idempotent — an absent key is a no-op). */
   deleteR2: (keys: string[]) => Promise<void>;
   /** Delete the given event rows for an org (cascades delivery_attempts); returns the row count. */
@@ -47,6 +55,8 @@ export interface RetentionPruneCronResult {
   readonly orgs: number;
   /** Total events (and their R2 bodies) pruned this tick. */
   readonly deleted: number;
+  /** Events skipped this tick because their stored R2 key failed the principal fence (alarm signal). */
+  readonly fenced: number;
 }
 
 /** Drain expired events + their R2 payload bodies, one bounded slice at a time. */
@@ -55,21 +65,41 @@ export async function runRetentionPruneCron(
 ): Promise<RetentionPruneCronResult> {
   const orgs = await deps.claimOrgs(deps.retentionDays, deps.orgLimit);
   let deleted = 0;
+  let fenced = 0; // events skipped because their stored R2 key failed the principal fence
 
   for (const orgId of orgs) {
     for (let batch = 0; batch < deps.batchesPerOrg; batch++) {
       const page = await deps.listExpiring(orgId, deps.retentionDays, deps.pageSize);
       if (page.length === 0) break; // org drained
-      // R2 objects FIRST — the content-addressed key lives only on the row we are about to delete.
-      await deps.deleteR2(page.map((e) => e.r2Key));
-      deleted += await deps.deleteEvents(
-        orgId,
-        page.map((e) => e.id),
-      );
+
+      // Fence every stored key to this org+endpoint before touching R2. A key that doesn't match its own
+      // prefix is corrupt or cross-tenant — we must NOT delete that object (it could be a victim's) and we
+      // LEAVE the row too, so the incident survives for investigation and re-alarms until a human resolves
+      // it. Log counts + the (own) org id only — never the raw key, whose prefix could name another tenant.
+      const valid = page.filter((e) => deps.validateKey(orgId, e.endpointId, e.r2Key));
+      const skipped = page.length - valid.length;
+      if (skipped > 0) {
+        fenced += skipped;
+        deps.log?.("retention_prune.key_fence_skip", { orgId, count: skipped });
+      }
+
+      if (valid.length > 0) {
+        // R2 objects FIRST — the content-addressed key lives only on the row we are about to delete.
+        await deps.deleteR2(valid.map((e) => e.r2Key));
+        deleted += await deps.deleteEvents(
+          orgId,
+          valid.map((e) => e.id),
+        );
+      }
+
+      // A fenced row stays in the table and would re-list forever, so once a page hits the fence we prune its
+      // clean rows and PAUSE this org for the tick — it resumes next tick (and the incident re-alarms) rather
+      // than re-scanning the same poison every batch.
+      if (skipped > 0) break;
       if (page.length < deps.pageSize) break; // last (short) page — org drained
     }
   }
 
-  deps.log?.("retention_prune.done", { orgs: orgs.length, deleted });
-  return { orgs: orgs.length, deleted };
+  deps.log?.("retention_prune.done", { orgs: orgs.length, deleted, fenced });
+  return { orgs: orgs.length, deleted, fenced };
 }

@@ -135,10 +135,11 @@ export const DB_ROLES = {
    * events (and cascades their delivery_attempts) once they age past that org's retention window, so the R2
    * payload bodies can be purged. Free = 7 days (packages/shared/src/retention.ts); paid orgs are EXCLUDED
    * (the cron skips any org with an entitled subscription) until per-plan windows are wired at billing
-   * activation — over-retention is the safe miss. Holds column-scoped SELECT (id, org_id, received_at,
-   * payload_r2_key) + DELETE on events, plus SELECT (org_id, status) on billing_subscriptions to skip
-   * entitled orgs — nothing else. It needs SELECT (unlike the DELETE-only sweeper) because the R2 key is
-   * content-addressed and must be read from the row to purge the object. A role-targeted DELETE policy floors
+   * activation — over-retention is the safe miss. Holds column-scoped SELECT (id, org_id, endpoint_id,
+   * received_at, payload_r2_key) + DELETE on events, plus SELECT (org_id, status) on billing_subscriptions to
+   * skip entitled orgs — nothing else. It needs SELECT (unlike the DELETE-only sweeper) because the R2 key is
+   * content-addressed and must be read from the row to purge the object (endpoint_id fences that key to the
+   * principal's prefix before delete). A role-targeted DELETE policy floors
    * deletion at the 7-day window (defense in depth). NON-OWNER, NOSUPERUSER, NOBYPASSRLS. Password out of band.
    */
   retention: "webhook_retention",

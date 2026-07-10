@@ -57,6 +57,7 @@ import {
   stripeKeyMatchesMode,
   parseFreeEventCap,
   parseSince,
+  readPayloadKey,
   readSecretBinding,
   USAGE_SETTLE_DAYS,
   type BoundedPayloadBody,
@@ -1288,10 +1289,14 @@ async function runPayloadPurgeDrainCron(env: Env): Promise<void> {
 }
 
 // Retention-prune drain budget: how many orgs to service and how much work per org per tick. Bounded so a
-// large backlog never blows the Workers per-invocation subrequest/CPU ceiling — the rest resumes next tick.
-// PAGE_SIZE is also the R2 batch-delete size (<= 1000, R2's per-call ceiling).
+// large backlog never blows the Workers per-invocation subrequest ceiling — the rest resumes next tick, and
+// the scheduled() budget is SHARED with the other crons. Worst case per tick ≈ orgLimit × batchesPerOrg ×
+// (1 list + 1 R2 delete + 1 events delete) = 50 × 4 × 3 = 600 binding ops, under the 1000 ceiling with
+// margin. On first activation (retention was infinite, so every Free org has a large backlog) the drain
+// spans many hourly ticks by design rather than maxing out a single one. PAGE_SIZE is also the R2
+// batch-delete size (<= 1000, R2's per-call ceiling).
 const RETENTION_ORG_LIMIT = 50;
-const RETENTION_BATCHES_PER_ORG = 20;
+const RETENTION_BATCHES_PER_ORG = 4;
 const RETENTION_PAGE_SIZE = 1000;
 
 /**
@@ -1311,10 +1316,14 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
       claimOrgs: (retentionDays, limit) => claimRetentionOrgs(sql, retentionDays, limit),
       listExpiring: (orgId, retentionDays, limit) =>
         listExpiringEvents(sql, orgId, retentionDays, limit),
+      // Principal fence (H1): only act on a stored key that matches its own org/endpoint prefix. Same
+      // check every delivery/replay/read path applies — never delete an object whose key is corrupt or
+      // points at another tenant.
+      validateKey: (orgId, endpointId, r2Key) => readPayloadKey(orgId, endpointId, r2Key) !== null,
       // The engine is the sole R2 principal — it deletes each expiring event's body from its own
       // R2_PAYLOADS binding (idempotent: an already-gone key is a no-op).
       deleteR2: (keys) => env.R2_PAYLOADS.delete(keys),
-      deleteEvents: (orgId, ids) => deleteExpiredEvents(sql, orgId, ids),
+      deleteEvents: (orgId, ids) => deleteExpiredEvents(sql, orgId, FREE_RETENTION_DAYS, ids),
       retentionDays: FREE_RETENTION_DAYS,
       orgLimit: RETENTION_ORG_LIMIT,
       batchesPerOrg: RETENTION_BATCHES_PER_ORG,

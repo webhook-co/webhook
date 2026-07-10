@@ -43,8 +43,10 @@ $$;
 grant usage on schema public to webhook_retention;
 
 -- Column-scoped SELECT on events: enumerate expiring rows (id + received_at) + read the content-addressed
--- R2 key to purge. `id` also qualifies the DELETE's `where id in …` and its `returning id`.
-grant select (id, org_id, received_at, payload_r2_key) on events to webhook_retention;
+-- R2 key to purge + endpoint_id to FENCE that key to `org/{org}/ep/{endpoint}/` before deleting the object
+-- (readPayloadKey, matching every other engine path that acts on a stored key — H1). `id` also qualifies the
+-- DELETE's `where id in …` and its `returning id`.
+grant select (id, org_id, endpoint_id, received_at, payload_r2_key) on events to webhook_retention;
 -- DELETE on events (cascades delivery_attempts). The row-count is the prune's only write.
 grant delete on events to webhook_retention;
 -- Column-scoped SELECT on billing_subscriptions: read only (org_id, status) to skip entitled/paid orgs.
@@ -75,7 +77,7 @@ drop policy if exists events_retention_delete on events;
 drop policy if exists events_retention_select on events;
 revoke select (org_id, status) on billing_subscriptions from webhook_retention;
 revoke delete on events from webhook_retention;
-revoke select (id, org_id, received_at, payload_r2_key) on events from webhook_retention;
+revoke select (id, org_id, endpoint_id, received_at, payload_r2_key) on events from webhook_retention;
 revoke usage on schema public from webhook_retention;
 do $$
 begin

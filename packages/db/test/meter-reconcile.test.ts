@@ -2,6 +2,8 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
+import { reconcileLookbackDays } from "@webhook-co/shared";
+
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { reconcileMeteringUsage } from "../src/meter-reconcile";
@@ -158,6 +160,29 @@ describe("reconcileMeteringUsage", () => {
     const res = await run(1); // only surface one mismatch this pass
     expect(res.mismatches.length).toBe(1);
     expect(res.capped).toBe(true);
+  });
+});
+
+describe("retention-prune coupling (slice 2.3) — a pruned day must not false-alarm", () => {
+  it("the active clamp (6d) skips a pruned finalized day that the wide (35d) lookback WOULD flag", async () => {
+    // The load-bearing money-guard invariant. Free retention prunes events older than 7 days; the day
+    // 2026-07-08 (events at T06:00, > 7d before NOW=07-15T12:00) is pruned, but its frozen usage stays.
+    const org = await seedOrg();
+    const prunedDay = "2026-07-08T00:00:00.000Z";
+    await seedEvents(org, prunedDay, 5);
+    await seedFrozenUsage(org, prunedDay, 5);
+    await admin`delete from events`; // simulate the retention prune removing that day's events
+
+    // Prune ACTIVE → lookback clamps to 6d. Horizon = midnight(07-15) − 6d = 07-09, so the pruned 07-08 day
+    // sits strictly outside the window: it is never recounted, so no false drift.
+    const clamped = await run(1000, reconcileLookbackDays(true));
+    expect(clamped.daysChecked).toBe(0);
+    expect(clamped.mismatches).toEqual([]);
+
+    // The wide 35d lookback (what runs while the prune is dark) WOULD recount the pruned day as 0 vs frozen
+    // 5 — exactly the false alarm the clamp exists to prevent.
+    const wide = await run(1000, reconcileLookbackDays(false));
+    expect(wide.mismatches).toEqual([{ orgId: org, day: "2026-07-08", rollup: 5, recount: 0 }]);
   });
 });
 

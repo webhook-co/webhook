@@ -22,6 +22,8 @@ function makeStore(seed: Record<string, ExpiringEvent[]>) {
         .filter((o) => store[o].length > 0)
         .slice(0, limit),
     listExpiring: async (orgId, _days, limit) => store[orgId].slice(0, limit),
+    // Default fence: every key is valid. Individual tests override to simulate a poison key.
+    validateKey: () => true,
     deleteR2: async (keys) => {
       order.push(`r2:${keys.join(",")}`);
     },
@@ -39,7 +41,7 @@ function makeStore(seed: Record<string, ExpiringEvent[]>) {
   return { store, order, deps };
 }
 
-const ev = (id: string): ExpiringEvent => ({ id, r2Key: `key-${id}` });
+const ev = (id: string): ExpiringEvent => ({ id, endpointId: `ep-${id}`, r2Key: `key-${id}` });
 
 describe("runRetentionPruneCron", () => {
   it("prunes every expiring event across orgs, paging each to exhaustion", async () => {
@@ -48,7 +50,7 @@ describe("runRetentionPruneCron", () => {
       "org-b": [ev("b1")],
     });
     const result = await runRetentionPruneCron(deps);
-    expect(result).toEqual({ orgs: 2, deleted: 4 });
+    expect(result).toEqual({ orgs: 2, deleted: 4, fenced: 0 });
     expect(store["org-a"]).toHaveLength(0);
     expect(store["org-b"]).toHaveLength(0);
   });
@@ -85,8 +87,29 @@ describe("runRetentionPruneCron", () => {
   it("does nothing (no R2 or row deletes) when no org has expiring events", async () => {
     const { order, deps } = makeStore({});
     const result = await runRetentionPruneCron(deps);
-    expect(result).toEqual({ orgs: 0, deleted: 0 });
+    expect(result).toEqual({ orgs: 0, deleted: 0, fenced: 0 });
     expect(order).toEqual([]);
+  });
+
+  it("FENCES a key that fails the principal check: never deletes its R2 object OR row, and alarms", async () => {
+    // "a2" carries a poison (cross-tenant/corrupt) key. It must be skipped entirely — no R2 delete, and its
+    // row is LEFT for investigation — while its well-formed sibling "a1" prunes normally.
+    const { store, order, deps } = makeStore({ "org-a": [ev("a1"), ev("a2")] });
+    const result = await runRetentionPruneCron({
+      ...deps,
+      validateKey: (_org, _ep, key) => key !== "key-a2",
+    });
+    expect(result).toEqual({ orgs: 1, deleted: 1, fenced: 1 });
+    // Only a1's key reached R2, and only a1's row was deleted; a2 survives.
+    expect(order).toEqual(["r2:key-a1", "rows:a1"]);
+    expect(store["org-a"].map((e) => e.id)).toEqual(["a2"]);
+  });
+
+  it("skips R2 entirely when a whole page is fenced out (no empty delete, no spin)", async () => {
+    const { order, deps } = makeStore({ "org-a": [ev("a1"), ev("a2")] });
+    const result = await runRetentionPruneCron({ ...deps, validateKey: () => false });
+    expect(result).toEqual({ orgs: 1, deleted: 0, fenced: 2 });
+    expect(order).toEqual([]); // never called deleteR2 or deleteEvents
   });
 
   it("never issues an empty R2 delete for a drained org", async () => {
