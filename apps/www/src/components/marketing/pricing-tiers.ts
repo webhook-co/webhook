@@ -5,7 +5,7 @@
 // the page lies. `apps/web` deliberately holds NO figures: the dashboard reads the org's cap from the DB and
 // Stripe's hosted Checkout shows the price. This file is the one public place a number lives.
 //
-// Price per event FALLS as you climb (26k → 30k → 40k events per dollar). That is the whole shape of the
+// Price per event FALLS as you climb (26k → 30k → 40k events per euro). That is the whole shape of the
 // ladder: upgrading must buy cheaper events, never dearer ones.
 
 export interface Tier {
@@ -26,7 +26,7 @@ export interface Tier {
   readonly featured?: boolean;
 }
 
-export const OVERAGE_PER_MILLION = "$25";
+export const OVERAGE_PER_MILLION = "€25";
 
 export const TIERS: readonly Tier[] = [
   {
@@ -43,7 +43,7 @@ export const TIERS: readonly Tier[] = [
   {
     id: "pro",
     name: "Pro",
-    price: "$19",
+    price: "€19",
     cadence: "/month",
     includedEvents: "500,000 events / month",
     summary: "For a service in production with real traffic.",
@@ -55,7 +55,7 @@ export const TIERS: readonly Tier[] = [
   {
     id: "scale",
     name: "Scale",
-    price: "$99",
+    price: "€99",
     cadence: "/month",
     includedEvents: "3,000,000 events / month",
     summary: "For high-volume ingestion and fan-out to many destinations.",
@@ -67,7 +67,7 @@ export const TIERS: readonly Tier[] = [
     id: "enterprise",
     name: "Enterprise",
     pricePrefix: "From",
-    price: "$499",
+    price: "€499",
     cadence: "/month",
     includedEvents: "20,000,000+ events / month",
     summary: "Committed volume, SAML SSO, audit export, and a BAA.",

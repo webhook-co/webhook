@@ -20,18 +20,18 @@ describe("pricing ladder (the sanctioned figures)", () => {
     const byId = Object.fromEntries(TIERS.map((t) => [t.id, t]));
     expect(byId.free.price).toBeNull();
     expect(byId.free.includedEvents).toContain("5,000");
-    expect(byId.pro.price).toBe("$19");
+    expect(byId.pro.price).toBe("€19");
     expect(byId.pro.includedEvents).toContain("500,000");
-    expect(byId.scale.price).toBe("$99");
+    expect(byId.scale.price).toBe("€99");
     expect(byId.scale.includedEvents).toContain("3,000,000");
     expect(byId.enterprise.pricePrefix).toBe("From");
-    expect(byId.enterprise.price).toBe("$499");
+    expect(byId.enterprise.price).toBe("€499");
     expect(byId.enterprise.includedEvents).toContain("20,000,000");
-    expect(OVERAGE_PER_MILLION).toBe("$25");
+    expect(OVERAGE_PER_MILLION).toBe("€25");
   });
 
   it("a long price qualifier is a separate field, so it can't wrap away from the amount", () => {
-    // "From $499" as one string wrapped as "From … /month" with "$499" orphaned on the next line.
+    // "From €499" as one string wrapped as "From … /month" with "€499" orphaned on the next line.
     expect(TIERS.find((t) => t.id === "enterprise")?.pricePrefix).toBe("From");
     expect(TIERS.filter((t) => t.pricePrefix).map((t) => t.id)).toEqual(["enterprise"]);
   });
@@ -60,8 +60,8 @@ describe("PricingTable", () => {
     for (const tier of TIERS) {
       expect(screen.getByRole("heading", { name: tier.name })).toBeInTheDocument();
     }
-    expect(screen.getByText("$19")).toBeInTheDocument();
-    expect(screen.getByText("$99")).toBeInTheDocument();
+    expect(screen.getByText("€19")).toBeInTheDocument();
+    expect(screen.getByText("€99")).toBeInTheDocument();
   });
 
   it("states that features are not gated by plan", () => {
