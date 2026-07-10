@@ -14,6 +14,7 @@ import {
 } from "../src/billing-sync";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
+import { readBillingSummary } from "../src/reads";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -483,5 +484,29 @@ describe("parseSubscriptionObject — the cap may live on ANY item, not items[0]
   it("plan is the LICENSED base price id, not whichever item happened to be first", () => {
     expect(parseSubscriptionObject(twoItem("overage-first"))?.plan).toBe("price_base");
     expect(parseSubscriptionObject(twoItem("base-first"))?.plan).toBe("price_base");
+  });
+});
+
+describe("readBillingSummary (dashboard current-plan read)", () => {
+  it("returns the org's own subscription mirror under tenant RLS, null when none", async () => {
+    const org = await seedOrg();
+    expect(await withTenant(app, org, (tx) => readBillingSummary(tx))).toBeNull();
+    await admin`insert into billing_subscriptions
+      (org_id, stripe_subscription_id, plan, status, current_period_start, current_period_end, cancel_at_period_end)
+      values (${org}, ${"sub_x"}, ${"price_pro_base"}, ${"active"},
+              ${"2026-07-01T00:00:00Z"}, ${"2026-08-01T00:00:00Z"}, ${true})`;
+    const s = await withTenant(app, org, (tx) => readBillingSummary(tx));
+    expect(s).toMatchObject({ plan: "price_pro_base", status: "active", cancelAtPeriodEnd: true });
+    expect(s?.currentPeriodEnd).toContain("2026-08-01");
+  });
+
+  it("is tenant-isolated — org A cannot read org B's subscription (RLS)", async () => {
+    const a = await seedOrg();
+    const b = await seedOrg();
+    await admin`insert into billing_subscriptions
+      (org_id, stripe_subscription_id, plan, status, current_period_start, current_period_end)
+      values (${b}, ${"sub_b"}, ${"price_scale_base"}, ${"active"},
+              ${"2026-07-01T00:00:00Z"}, ${"2026-08-01T00:00:00Z"})`;
+    expect(await withTenant(app, a, (tx) => readBillingSummary(tx))).toBeNull();
   });
 });
