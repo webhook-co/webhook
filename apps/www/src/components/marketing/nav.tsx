@@ -5,7 +5,7 @@ import { container, focusRing } from "@/lib/styles";
 
 // Plain top-level links; the Product / Developers dropdowns are the <NavMenus/> client island.
 const navLinks = [
-  { label: "Pricing", href: "#" },
+  { label: "Pricing", href: "/pricing" },
   { label: "Changelog", href: "#" },
 ];
 
