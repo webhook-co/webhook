@@ -49,11 +49,11 @@ export default function LoginPage() {
       footer={
         <p className="text-center text-sm leading-snug text-fg-faint">
           By continuing you agree to webhook.co&apos;s{" "}
-          <a href="/terms" className="text-fg-secondary underline">
+          <a href="https://www.webhook.co/terms" className="text-fg-secondary underline">
             Terms of Service
           </a>{" "}
           and{" "}
-          <a href="/privacy" className="text-fg-secondary underline">
+          <a href="https://www.webhook.co/privacy" className="text-fg-secondary underline">
             Privacy Policy
           </a>
           .

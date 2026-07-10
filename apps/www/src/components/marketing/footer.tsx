@@ -3,7 +3,12 @@ import { cn, Wordmark } from "@webhook-co/ui";
 import { GithubIcon, LinkedinIcon, XIcon } from "@/components/ui/brand-icons";
 import { container, focusRing } from "@/lib/styles";
 
-const columns = [
+// A footer link is either a bare label (placeholder → "#", owned by the L3 wiring lane) or a
+// {label, href} pair. The Legal column (L2) points at the real legal routes; the other three
+// columns stay placeholders until L3 wires them.
+type FooterLink = string | { label: string; href: string };
+
+const columns: { title: string; links: FooterLink[] }[] = [
   {
     title: "Product",
     links: ["Overview", "Capture & replay", "Ingestion", "Delivery", "MCP server", "Pricing"],
@@ -21,7 +26,15 @@ const columns = [
     ],
   },
   { title: "Company", links: ["About", "Blog", "Changelog", "Security", "Contact"] },
-  { title: "Legal", links: ["Terms", "Privacy", "DPA"] },
+  {
+    title: "Legal",
+    links: [
+      { label: "Terms", href: "/terms" },
+      { label: "Privacy", href: "/privacy" },
+      { label: "Sub-processors", href: "/sub-processors" },
+      { label: "DPA", href: "#" },
+    ],
+  },
 ];
 
 const socials = [
@@ -62,19 +75,23 @@ export function Footer() {
             <nav key={column.title} aria-label={column.title}>
               <p className="text-sm font-semibold tracking-tight text-fg">{column.title}</p>
               <ul className="mt-4 flex flex-col gap-3">
-                {column.links.map((link) => (
-                  <li key={link}>
-                    <a
-                      href="#"
-                      className={cn(
-                        focusRing,
-                        "rounded-control text-sm text-fg-muted transition-colors hover:text-fg",
-                      )}
-                    >
-                      {link}
-                    </a>
-                  </li>
-                ))}
+                {column.links.map((link) => {
+                  const label = typeof link === "string" ? link : link.label;
+                  const href = typeof link === "string" ? "#" : link.href;
+                  return (
+                    <li key={label}>
+                      <a
+                        href={href}
+                        className={cn(
+                          focusRing,
+                          "rounded-control text-sm text-fg-muted transition-colors hover:text-fg",
+                        )}
+                      >
+                        {label}
+                      </a>
+                    </li>
+                  );
+                })}
               </ul>
             </nav>
           ))}
