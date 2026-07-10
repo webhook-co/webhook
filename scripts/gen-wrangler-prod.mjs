@@ -288,6 +288,11 @@ const APPS = {
     // DeliveryDispatcher entrypoint first (it is — used by api). apps/web fails closed when it's unbound.
     services: [
       { binding: "AUTH_SESSION_EXCHANGE", service: "webhook-auth", entrypoint: "SessionExchange" },
+      // AUTH_ACCOUNT_DELETER (slice 2.2) — the web→auth binding to auth.'s AccountDeleter entrypoint,
+      // so account erasure deletes the identity as webhook_auth. auth. must be LIVE with the
+      // AccountDeleter entrypoint first (same deploy-ordering note as SessionExchange); apps/web fails
+      // closed (the action throws "temporarily unavailable") when it's unbound (dev / pre-provision).
+      { binding: "AUTH_ACCOUNT_DELETER", service: "webhook-auth", entrypoint: "AccountDeleter" },
       {
         binding: "PROVIDER_SECRET_SEALER",
         service: "webhook-engine",

@@ -1,6 +1,11 @@
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 
+// Re-exported through this leaf so the web dashboard (which imports leaf subpaths, not the barrel —
+// Turbopack) can resolve the deterministic personal-org id for account erasure alongside
+// deleteOrgWithAudit / isOrgOwner.
+export { personalOrgId } from "./orgs";
+
 /**
  * Thrown when an org delete targets a row that doesn't exist in the caller's RLS context — i.e.
  * the org is already gone. Callers translate this to a 404; the transaction has rolled back, so

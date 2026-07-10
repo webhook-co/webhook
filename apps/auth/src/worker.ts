@@ -24,6 +24,7 @@ import openNextHandler from "../.open-next/worker.js";
 import { introspect } from "./issuer/introspect-handler";
 import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
 import { oauthIssuerConfig } from "./issuer/oauth-config";
+import { deleteAccountRpc } from "./issuer/account-delete-deps";
 import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
 import { runNotificationDrain } from "./runtime/notify-cron";
@@ -79,5 +80,15 @@ export class IssuerIntrospect extends WorkerEntrypoint {
 export class SessionExchange extends WorkerEntrypoint {
   async exchange(ticket) {
     return redeemSessionExchangeRpc(this.env, ticket);
+  }
+}
+
+// AccountDeleter (slice 2.2): the web→auth account-erasure RPC. apps/web verifies the session and
+// passes its OWN authenticated userId over this worker-to-worker binding (never public), so a user
+// can only erase themselves. Only this Worker (webhook_auth via HYPERDRIVE_AUTH) may delete from the
+// global identity realm; the web caller has already deleted any org the user solely owns first.
+export class AccountDeleter extends WorkerEntrypoint {
+  async deleteAccount(userId) {
+    return deleteAccountRpc(this.env, userId);
   }
 }
