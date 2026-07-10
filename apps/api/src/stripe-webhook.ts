@@ -1,8 +1,9 @@
 // Stripe INBOUND webhook receiver. Mirrors the GitHub secret-scanning pre-router branch: raw body BEFORE any
 // parse, a size cap, signature verification via the AUDITED Stripe adapter (getAdapterForScheme("stripe") —
-// never a hand-rolled HMAC), fail-closed, NO DB touch before the signature verifies. After a verified+deduped
-// event, it ACKs 200 immediately and dispatches the state-sync (S4.5b) in ctx.waitUntil, so a slow apply can
-// never trip Stripe's own delivery-retry.
+// never a hand-rolled HMAC), fail-closed, NO DB touch before the signature verifies. A verified event is
+// processed SYNCHRONOUSLY (the appliers + the S4.5 tail-flush are fast, well inside Stripe's timeout) then
+// ACKed: 200 on success/replay, 500 on a transient fault so Stripe redelivers (apply-before-record keeps it
+// idempotent). The invoice.created tail-flush is best-effort — it never throws, so it can't turn into a 500.
 
 import {
   applyCustomerLink,
@@ -181,21 +182,40 @@ export interface InvoiceFlushTarget {
 }
 
 export function parseInvoiceForFlush(invoice: Record<string, unknown>): InvoiceFlushTarget | null {
-  const subMeta = (
+  // Stripe 'Basil' (API 2025-03-31+) RELOCATED `subscription` + its `subscription_details` (incl. the
+  // metadata WE set) from the invoice top level to `invoice.parent.subscription_details`. We pin 2024-06-20
+  // (top-level), but read BOTH shapes so a future version bump — or an endpoint on a newer version — can't
+  // silently null every flush (mirrors billing-sync.ts's dual-shape handling for subscriptions).
+  const parentSub = (
+    invoice.parent as
+      | { subscription_details?: { subscription?: unknown; metadata?: Record<string, unknown> } }
+      | undefined
+  )?.subscription_details;
+  const topSubMeta = (
     invoice.subscription_details as { metadata?: Record<string, unknown> } | undefined
   )?.metadata;
+  const subMeta = topSubMeta ?? parentSub?.metadata;
   const lineMeta = (
     invoice.lines as { data?: Array<{ metadata?: Record<string, unknown> }> } | undefined
   )?.data?.[0]?.metadata;
   const fromSub = typeof subMeta?.org_id === "string" ? subMeta.org_id : "";
   const fromLine = typeof lineMeta?.org_id === "string" ? lineMeta.org_id : "";
   const orgId = fromSub || fromLine;
-  const { subscription, period_start: periodStart, period_end: periodEnd } = invoice;
-  // Require a real subscription cycle with a positive span. The 0-length first invoice
-  // (subscription_create) and any non-subscription invoice → null (nothing to flush; a harmless no-op).
+  const hasSubscription =
+    typeof invoice.subscription === "string" || typeof parentSub?.subscription === "string";
+  const {
+    billing_reason: billingReason,
+    period_start: periodStart,
+    period_end: periodEnd,
+  } = invoice;
+  // Flush ONLY on a clean period-close RENEWAL (`subscription_cycle`), where the invoice-level period IS the
+  // metered cycle. The 0-length first invoice (`subscription_create`) and proration/update invoices
+  // (`subscription_update` — invoice period ≠ the metered cycle) are skipped; their usage is captured by the
+  // next `subscription_cycle` invoice. period_start/period_end stay top-level in every API version.
   if (
     !orgId ||
-    typeof subscription !== "string" ||
+    !hasSubscription ||
+    billingReason !== "subscription_cycle" ||
     typeof periodStart !== "number" ||
     typeof periodEnd !== "number" ||
     periodEnd <= periodStart
@@ -212,9 +232,11 @@ export function parseInvoiceForFlush(invoice: Record<string, unknown>): InvoiceF
 /** Runs the tail-flush for a verified `invoice.created`. BEST-EFFORT: opens a per-event webhook_app
  *  connection, flushes, and NEVER throws to the caller — a flush fault must not 500 the webhook (Stripe's
  *  redelivery can land past the short draft grace, and the WS1 transport reconciler already alarms on any
- *  residual). Built only when the flush is fully configured + mode-matched; otherwise the branch is dark. */
+ *  residual). Built only when the flush is fully configured + mode-matched; otherwise the branch is dark.
+ *  Returns `true` when the event is safe to DEDUP (nothing to flush, or the whole tail landed), `false` when
+ *  it should stay REPLAYABLE (the flush threw or a send failed) so a later manual Stripe replay can retry. */
 export interface TailFlushRunner {
-  onInvoiceCreated(invoice: Record<string, unknown>): Promise<void>;
+  onInvoiceCreated(invoice: Record<string, unknown>): Promise<boolean>;
 }
 
 export function makeTailFlushRunner(cfg: {
@@ -226,10 +248,10 @@ export function makeTailFlushRunner(cfg: {
   return {
     async onInvoiceCreated(invoice) {
       const target = parseInvoiceForFlush(invoice);
-      if (!target) return;
+      if (!target) return true; // genuinely not a flushable cycle → dedup is safe
       const app = createClient(cfg.tenantConnectionString, { max: 1 });
       try {
-        await flushOrgTail(
+        const res = await flushOrgTail(
           { app, stripe: cfg.stripe, eventName: cfg.eventName, log: cfg.log },
           {
             orgId: target.orgId,
@@ -238,8 +260,12 @@ export function makeTailFlushRunner(cfg: {
             settleDays: USAGE_SETTLE_DAYS,
           },
         );
+        // A residual send failure (or a skipped drain awaiting the customer link) must NOT be deduped as
+        // done — leave the event replayable so a retry after the WS1 reconciler alarms can land the tail.
+        return res.failed === 0 && res.skippedNoCustomer === 0;
       } catch (err) {
         cfg.log?.("metering.tail_flush.error", { orgId: target.orgId, ...safeErr(err) });
+        return false; // threw → replayable
       } finally {
         await app.end();
       }
@@ -321,7 +347,10 @@ export async function handleStripeWebhook(
   }
   if (!env.HYPERDRIVE_BILLING) return text(503, "not configured"); // can't process → fail closed
   const billing = createClient(env.HYPERDRIVE_BILLING.connectionString, { max: 1 });
-  const flush = await buildTailFlushRunner(env, mode);
+  // Build the flush runner ONLY for the one event that consumes it — this reads a Secrets Store binding, so
+  // gating on the type keeps every other webhook (and every replay) off that round-trip.
+  const flush =
+    event.type === "invoice.created" ? await buildTailFlushRunner(env, mode) : undefined;
   try {
     await processStripeEvent(billing, event, flush);
     return text(200, "ok");
@@ -409,10 +438,14 @@ export async function applyStripeEvent(
     case "invoice.created": {
       // A period is closing: FLUSH the org's complete tail days to Stripe while THIS invoice is still a
       // draft (WS2 proved usage reported before finalization lands on the invoice, and usage reported after
-      // is dropped). Best-effort + idempotent — `flush` is undefined when the flush isn't provisioned (dark),
-      // and the runner never throws, so it never blocks the ACK. The dedup ledger records this event once.
-      if (flush) await flush.onInvoiceCreated(obj);
-      return "applied";
+      // is dropped). Best-effort + idempotent — the runner never throws, so it never blocks the ACK.
+      //
+      // Dedup only when the flush is genuinely DONE. When it is DARK (unprovisioned) or a send failed, return
+      // "rejected": still ACK 200 (no Stripe retry storm), but DON'T write the dedup marker, so a later manual
+      // replay — once provisioned, or after the WS1 reconciler alarms — reprocesses and lands the tail. If we
+      // recorded these as "applied", the tail would be permanently lost (Stripe never redelivers a 200'd event).
+      if (!flush) return "rejected";
+      return (await flush.onInvoiceCreated(obj)) ? "applied" : "rejected";
     }
     default:
       return "applied"; // unhandled type — recorded + ACKed, no state change

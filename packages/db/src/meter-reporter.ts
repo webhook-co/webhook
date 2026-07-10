@@ -124,6 +124,11 @@ export async function reportOrgMeter(
   // Phase 1 (one tenant tx, NO network): produce pending rows from finalized usage, read the customer, and
   // collect the unsent days to drain.
   const phase1 = await withTenant(deps.app, orgId, async (tx) => {
+    // Pin UTC: `window_start::date` is session-TimeZone-dependent, so a non-UTC connection would render a
+    // UTC-midnight window as the PREVIOUS day — mis-stamping the identifier + meter timestamp a day early
+    // (into an already-finalized Stripe period → dropped). Every sibling path (rollup/reconcile/flush
+    // finalize) pins UTC; the drain must too, or a flush's finalize (UTC) and produce (unpinned) disagree.
+    await tx`set local time zone 'UTC'`;
     const producedRows = await tx<{ day: string }[]>`
       insert into stripe_meter_reports (org_id, day, event_count, identifier)
       select u.org_id, u.window_start::date, u.event_count,

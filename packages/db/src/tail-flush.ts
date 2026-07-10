@@ -15,7 +15,7 @@
 import { tailFlushCutoff } from "@webhook-co/shared";
 
 import { withTenant, type Sql } from "./client";
-import { type OrgMeterDeps, reportOrgMeter, safeErr } from "./meter-reporter";
+import { type OrgMeterDeps, reportOrgMeter } from "./meter-reporter";
 
 /** How many extra days behind the tail to RE-ROLL before finalizing, on top of settleDays. The hourly
  *  rollup keeps recent days rolled; a small margin covers a just-missed event or a skipped cron tick. The
@@ -114,6 +114,3 @@ export async function flushOrgTail(
   });
   return { finalized, ...outcome };
 }
-
-/** Re-exported for the caller's error logging on the flush path (scrubs external Stripe ids). */
-export { safeErr };

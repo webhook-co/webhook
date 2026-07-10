@@ -163,6 +163,7 @@ describe("parseInvoiceForFlush", () => {
   const base = {
     id: "in_1",
     subscription: "sub_1",
+    billing_reason: "subscription_cycle",
     period_start: Date.UTC(2026, 6, 1) / 1000, // 2026-07-01
     period_end: Date.UTC(2026, 6, 31, 8, 0, 0) / 1000, // 2026-07-31T08:00Z (mid-day boundary)
     subscription_details: { metadata: { org_id: "org-a" } },
@@ -174,6 +175,19 @@ describe("parseInvoiceForFlush", () => {
       floorDay: "2026-07-01",
       periodEndMs: Date.UTC(2026, 6, 31, 8, 0, 0),
     });
+  });
+
+  it("reads the Basil (2025-03-31+) shape: org + subscription under invoice.parent.subscription_details", () => {
+    const basil = {
+      id: "in_1",
+      billing_reason: "subscription_cycle",
+      period_start: base.period_start,
+      period_end: base.period_end,
+      parent: {
+        subscription_details: { subscription: "sub_1", metadata: { org_id: "org-basil" } },
+      },
+    };
+    expect(parseInvoiceForFlush(basil)?.orgId).toBe("org-basil");
   });
 
   it("falls back to lines[0].metadata.org_id when subscription_details has none", () => {
@@ -189,8 +203,13 @@ describe("parseInvoiceForFlush", () => {
     expect(parseInvoiceForFlush({ ...base, subscription_details: { metadata: {} } })).toBeNull();
   });
 
-  it("is null for a non-subscription invoice (no subscription id)", () => {
+  it("is null for a non-subscription invoice (no subscription id in either shape)", () => {
     expect(parseInvoiceForFlush({ ...base, subscription: null })).toBeNull();
+  });
+
+  it("is null for a proration/update invoice — only subscription_cycle renewals flush", () => {
+    expect(parseInvoiceForFlush({ ...base, billing_reason: "subscription_update" })).toBeNull();
+    expect(parseInvoiceForFlush({ ...base, billing_reason: "subscription_create" })).toBeNull();
   });
 
   it("is null for the 0-length first invoice (period_end <= period_start)", () => {
@@ -338,17 +357,24 @@ describe("applyStripeEvent — routes each event type to its applier", () => {
     expect(sync.applySubscriptionDeleted).not.toHaveBeenCalled();
   });
 
-  it("invoice.created → runs the tail-flush with the invoice object (when a runner is wired)", async () => {
-    const onInvoiceCreated = vi.fn().mockResolvedValue(undefined);
+  it("invoice.created → runs the flush; 'applied' (dedup) only when it reports fully handled", async () => {
+    const onInvoiceCreated = vi.fn().mockResolvedValue(true);
     const flush: TailFlushRunner = { onInvoiceCreated };
     const invoice = { id: "in_1", subscription: "sub_1", period_start: 100, period_end: 200 };
     expect(await applyStripeEvent(billing, ev("invoice.created", invoice), flush)).toBe("applied");
     expect(onInvoiceCreated).toHaveBeenCalledWith(invoice);
   });
 
-  it("invoice.created is a dark no-op when no flush runner is wired (flush unprovisioned)", async () => {
-    // No throw, still 'applied' + dedup-recorded — the flush is simply skipped until it's provisioned.
-    expect(await applyStripeEvent(billing, ev("invoice.created", { id: "in_1" }))).toBe("applied");
+  it("invoice.created is 'rejected' (NOT deduped) when the flush reports a residual — stays replayable", async () => {
+    const flush: TailFlushRunner = { onInvoiceCreated: vi.fn().mockResolvedValue(false) };
+    expect(await applyStripeEvent(billing, ev("invoice.created", { id: "in_1" }), flush)).toBe(
+      "rejected",
+    );
+  });
+
+  it("invoice.created is 'rejected' (NOT deduped) when the flush is dark — replayable once provisioned", async () => {
+    // ACK 200 but never write the dedup marker, so a later replay reprocesses instead of silently dropping.
+    expect(await applyStripeEvent(billing, ev("invoice.created", { id: "in_1" }))).toBe("rejected");
   });
 
   it("does NOT run the flush for a non-created invoice event (only invoice.created)", async () => {
