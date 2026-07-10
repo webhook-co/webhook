@@ -1,104 +1,103 @@
 ---
-title: Deduplication
-description: "Configure how webhook.co collapses duplicate inbound requests into a single event."
+title: "Deduplication"
+sidebarTitle: "Deduplication"
+description: "Collapse a sender's at-least-once retries into a single captured event — per endpoint, by identifier, content, or fields, within a window you choose."
+icon: "clone"
 ---
 
-Webhook senders are **at-least-once**: on a network blip or a non-2xx response they retry, so the same
-event can arrive more than once. webhook.co deduplicates inbound requests per endpoint so a retry collapses
-into the event you already captured, instead of showing up (and metering) twice.
+Webhook senders are **at-least-once**: on a network blip or a non-2xx response they retry, so the same event can arrive more than once. Deduplication collapses those repeats into the one event you already captured — per endpoint, keyed however you choose — so a retry doesn't show up (and count) twice. It's **off by default**; turn on a mode when a sender's retries get noisy.
 
 <Note>
   Deduplication is best-effort **load reduction**, not an exactly-once guarantee. Keep your own
-  handler idempotent — dedup reduces duplicates, it doesn't promise their absence.
+  handler idempotent — dedup reduces duplicates, it doesn't promise their absence. Which mode keyed
+  an event is recorded on [the event object](/reference/the-event-object) as `dedupStrategy`,
+  alongside the derived `dedupKey`.
 </Note>
 
 ## The default
 
-Every endpoint starts with deduplication **off** — we log **every** request as a distinct event, and
-nothing is collapsed. That's the safe default for an inspection tool: you see exactly what a sender sends,
-retries and all. Deduplication is **opt-in** — turn on a mode per endpoint when a sender's retries get noisy.
+Every endpoint starts with deduplication **off** — we capture **every** request as a distinct event, and nothing is collapsed. That's the safe default for an inspection tool: you see exactly what a sender sends, retries and all. Deduplication is **opt-in**; turn on a mode per endpoint once you trust a sender's shape and want its retries folded away. For where dedup sits in the pipeline, see [how webhook.co works](/concepts/how-webhook-co-works).
 
 <Warning>
-  With dedup off, **every** request is a distinct, billable event — including retries and any
-  non-webhook traffic (uptime checks, link previews) that reaches the URL. Enable a dedup mode to
-  collapse retries; your soft cap pauses ingestion before a runaway bill.
+  With dedup off, **every** request is a distinct, counted event — including retries and any
+  non-webhook traffic (uptime checks, link previews) that reaches the URL. Enable a mode to collapse
+  retries; the soft cap pauses ingestion before a runaway sender runs away with your usage.
 </Warning>
 
 ## Modes
 
-Set a per-endpoint `dedupConfig` to turn on deduplication and choose how the key is derived:
+Set a per-endpoint `dedupConfig` to turn deduplication on and choose how the key is derived:
 
 | Mode            | Keys on                                                                                                         | Use it when                                                          |
 | --------------- | --------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `off` (default) | nothing — every request is its own event                                                                        | you want to capture every request (the default; testing, debugging)  |
+| `off` (default) | nothing — every request is its own event                                                                        | you want to capture every request (testing, debugging)               |
 | `identifier`    | id ladder (a Standard Webhooks `webhook-id` header, then a recognized provider's event id), then a content hash | the sender supplies a stable id                                      |
 | `content`       | the canonical request content (method + path + query + body)                                                    | the sender's ids are unreliable or reused across distinct events     |
 | `fields`        | operator-selected field paths                                                                                   | the sender has no stable id but a stable field (e.g. `body.data.id`) |
 
-Every mode **except `off`** takes a `windowSeconds` (60–604800), the window within which repeats collapse.
-`off` takes no window — it never collapses.
+Every mode **except `off`** takes a `windowSeconds` (60–604800, i.e. 60s–7d), the window within which repeats collapse. `off` takes no window — it never collapses.
 
 <Note>
   Collapsing is scoped to the window on purpose: a repeat that arrives in a **later** window is
   treated as a new event, so a legitimately-repeated payload days later is still captured rather
-  than silently dropped. One consequence: a retry that lands right around a window boundary can be
-  captured as **two** events instead of one, because the two copies fall in different windows. If
-  your sender supplies a stable id, prefer **`identifier`** mode — its key is that id, which carries
-  no window, so a retry collapses no matter when it arrives. `content` and `fields` keys include the
-  window, so those are the modes where a boundary-straddling retry can double up. Widening
-  `windowSeconds` also makes a boundary straddle rarer.
+  than silently dropped. One consequence — a retry that lands right around a window boundary can be
+  captured as **two** events, because the copies fall in different windows. If your sender supplies
+  a stable id, prefer **`identifier`**: its key is that id and carries no window, so a retry
+  collapses no matter when it arrives. `content` and `fields` keys include the window, so those are
+  the modes where a boundary-straddling retry can double up. Widening `windowSeconds` makes a
+  straddle rarer.
 </Note>
 
 ## Field paths
 
-`fields` mode keys on values you select with field paths. A path starts with a root — `headers`, `body`,
-`query`, or `path` — and addresses into it with dot notation and array accessors:
+`fields` mode keys on values you select with field paths. A path starts with a root — `headers`, `body`, `query`, or `path` — and addresses into it with dot notation and array accessors:
 
 - `body.data.id` — a nested body value
 - `headers.x-event-id` — a header value
 - `query.id` — a query parameter
 - `body.items[*].sku` — every element of an array (`[*]` wildcard, or `[0]` for one index)
 
-Provide `include` paths (the values that make up the key) and optionally `exclude` paths (volatile fields
-to drop, like a per-delivery timestamp). If a configured field is missing from a request, that request is
-treated as distinct rather than collapsed — webhook.co never silently drops an event it can't key.
+Provide `include` paths (the values that make up the key) and, optionally, `exclude` paths (volatile fields to drop, like a per-delivery timestamp). If a configured field is missing from a request, that request is treated as distinct rather than collapsed — webhook.co never silently drops an event it can't key.
 
 ## Configure it
 
-Deduplication is configured identically across every surface — set it when you create an endpoint, or
-update it any time. `--dedup-reset` (CLI) or a `null` `dedupConfig` (API) returns an endpoint to the
-default.
+Deduplication is configured identically across every surface — set it on create, or update it any time. `--dedup-reset` (CLI) or a `null` `dedupConfig` (API) returns an endpoint to the default.
 
-From the CLI:
+<CodeGroup>
 
-```sh
+```sh CLI
 wbhk endpoints create orders-prod --dedup-mode content --dedup-window 300
 wbhk endpoints update <endpoint-id> --dedup-mode fields --dedup-field body.data.id
 wbhk endpoints update <endpoint-id> --dedup-mode off
 wbhk endpoints update <endpoint-id> --dedup-reset
 ```
 
-From the API — set the config on create, or `PATCH` it later:
-
-```sh
+```sh curl
+# Set on create…
 curl -X POST https://api.webhook.co/v1/endpoints \
-  -H "authorization: Bearer $WBHK_API_KEY" -H "content-type: application/json" \
+  -H "authorization: Bearer $WEBHOOK_API_KEY" -H "content-type: application/json" \
   -d '{"name":"orders-prod","dedupConfig":{"mode":"content","windowSeconds":300}}'
 
+# …or PATCH it later.
 curl -X PATCH https://api.webhook.co/v1/endpoints/<endpoint-id> \
-  -H "authorization: Bearer $WBHK_API_KEY" -H "content-type: application/json" \
+  -H "authorization: Bearer $WEBHOOK_API_KEY" -H "content-type: application/json" \
   -d '{"dedupConfig":{"mode":"fields","windowSeconds":300,"fields":{"include":["body.data.id"]}}}'
 ```
 
-From a typed SDK:
-
-```ts
+```ts TypeScript
 await webhook.endpoints.update({
   endpointId,
   dedupConfig: { mode: "content", windowSeconds: 300 },
 });
 ```
 
-Config changes take effect within the cache-propagation window (about five minutes), not instantly — and
-a change never claims exactly-once across the transition. Every change is recorded in your endpoint's
-tamper-evident audit trail.
+```python Python
+client.endpoints.update(
+    endpoint_id,
+    dedup_config={"mode": "content", "window_seconds": 300},
+)
+```
+
+</CodeGroup>
+
+Config changes take effect within the cache-propagation window (about five minutes), not instantly — and a change never claims exactly-once across the transition. Every change is recorded in your endpoint's tamper-evident audit trail.

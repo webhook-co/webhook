@@ -1,19 +1,24 @@
 ---
 title: "Quickstart"
-description: "Create a signed webhook URL, send it a test event, and watch it arrive."
+sidebarTitle: "Quickstart"
+description: "Create a signed ingest URL, send it a test event, and watch it arrive as a captured event — in a few minutes."
+icon: "rocket"
 ---
 
-Create an endpoint, send it a request, and see the captured event — in a few minutes.
+Create an endpoint, send its ingest URL a request, and see the captured event — in a few minutes. No provider setup, no receiver to stand up.
 
 <Steps>
   <Step title="Get an API key">
-    Create a `whk_` API key in your [dashboard](https://app.webhook.co) and export it:
+    Create a `whk_` API key in your [dashboard](https://app.webhook.co) under **Settings → Credentials**, then export it:
 
     ```sh
     export WEBHOOK_API_KEY=whk_your_key_here
     ```
 
+    Prefer not to manage a key? `wbhk login` signs the CLI in over OAuth — see [authentication](/authentication#signing-in-from-the-cli).
+
   </Step>
+
   <Step title="Install an SDK">
     <CodeGroup>
 
@@ -31,11 +36,10 @@ Create an endpoint, send it a request, and see the captured event — in a few m
 
     </CodeGroup>
 
-    Prefer the command line? `wbhk login` signs you in without an API key — see the [CLI](/authentication#signing-in-from-the-cli).
-
   </Step>
+
   <Step title="Create an endpoint">
-    Each endpoint has a permanent, signed **ingest URL**. It's shown here and always available in your dashboard.
+    Each endpoint has a permanent, signed **ingest URL** on `wbhk.my`. It's returned here and always visible (and re-revealable) in your dashboard — it never expires, and changes only if you rotate it.
 
     <CodeGroup>
 
@@ -62,21 +66,29 @@ Create an endpoint, send it a request, and see the captured event — in a few m
     fmt.Println(ep.IngestUrl) // https://wbhk.my/whep_...
     ```
 
+    ```sh CLI
+    wbhk endpoints create orders-prod
+    # prints the ingest URL: https://wbhk.my/whep_...
+    ```
+
     </CodeGroup>
 
   </Step>
+
   <Step title="Send it a test event">
-    Point a provider at the ingest URL, or just POST to it yourself — no key required to _send_:
+    Point a provider at the ingest URL, or just `POST` to it yourself — no key required to _send_. The ingest URL accepts every verb; a write is captured and acknowledged with `200`.
 
     ```sh
     curl -X POST https://wbhk.my/whep_your_token \
-      -H "Content-Type: application/json" \
+      -H "content-type: application/json" \
       -d '{"hello":"webhook.co"}'
+    # → 200
     ```
 
   </Step>
+
   <Step title="Watch it arrive">
-    The request is now a captured event. List the endpoint's events — the list auto-paginates:
+    The request is now a captured **event**. List the endpoint's events — the list auto-paginates over the cursor:
 
     <CodeGroup>
 
@@ -97,7 +109,7 @@ Create an endpoint, send it a request, and see the captured event — in a few m
 
     </CodeGroup>
 
-    You'll see your `{"hello":"webhook.co"}` event, marked `unattempted` — captured, but unsigned until you [register a provider secret](/guides/verify-inbound-signatures).
+    You'll see your `{"hello":"webhook.co"}` event with `verificationState: unattempted` — captured, but unsigned until you [register a provider secret](/guides/verify-inbound-signatures). That's the whole loop: land, capture, inspect.
 
   </Step>
 </Steps>

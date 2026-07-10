@@ -1,47 +1,45 @@
 ---
-title: "What counts as an event"
-description: "How usage is measured — the single unit we count, and everything we never count."
+title: "Events and usage"
+sidebarTitle: "Events & usage"
+description: "Usage is measured in one unit — the event. What a capture and a delivery cost, everything that never counts, and how to check your usage."
+icon: "gauge"
 ---
 
-Usage is measured in one unit: the **event**. There is no per-step, per-feature, or per-seat metering, and no capability is locked behind a tier — the same features are available whether you pay or not. This page is the whole model of what counts.
+Usage is measured in one unit: the **event**. There's no per-step, per-feature, or per-seat metering — one dimension, counted the same way everywhere. This page is the whole model of what counts and, just as important, what never does.
 
 ## An event is one capture, or one delivery
 
 Exactly two things count as an event:
 
 - **A capture** — a request reaches one of your endpoints and is stored.
-- **A delivery** — an event is forwarded to one destination. Each destination is its own event.
+- **A delivery** — a stored event is forwarded to one destination. Each destination is its own event.
 
-So a webhook captured and forwarded to one destination is **two** events; forwarded to three destinations, **four** (one capture, three deliveries). Deliveries count because delivering does real work on your behalf — not to push you toward a tier, since every feature is available on every plan.
+So a webhook captured and forwarded to a single destination is **two** events; forwarded to three destinations, **four** (one capture, three deliveries). Deliveries count because delivering does real work on your behalf — reaching out, retrying, signing.
 
 ## What is never counted
 
 <Note>
-  The most common surprises in usage-based products come from the things you _didn't_ think you were
-  paying for. webhook.co counts none of them.
+  The nastiest surprises in usage-based products come from the things you didn't think you were
+  paying for. webhook.co counts none of the following.
 </Note>
 
 - **Retries.** A delivery counts once, when it's first dispatched — however many attempts [the fixed exponential schedule](/concepts/delivery-retry-signing) takes to land it. A receiver's downtime is never your cost.
-- **Duplicates that dedup collapses.** When [deduplication](/deduplication) recognises a retry as the same event, it never becomes a second captured event.
-- **Verification handshakes.** A provider's `GET` or echo challenge is a control message — it is never stored and never counts.
-- **Reading your own data.** Listing events, inspecting payloads, tailing, and replaying cost nothing on any surface. (A replay that _forwards to a destination_ is a delivery, and that delivery counts.)
+- **Duplicates that dedup collapses.** When [deduplication](/deduplication) folds a retry into the event you already have, it never becomes a second capture.
+- **Verification handshakes.** A provider's `GET` or echo challenge is a control message — never stored, never counted.
+- **Reading your own data.** Listing events, inspecting payloads, tailing, and replaying to localhost cost nothing on any surface. (A replay that _forwards to a destination_ is a delivery, and that delivery counts.)
 
-<Warning>
-  Turning [deduplication](/deduplication) **off** means every retry a sender sends is a distinct
-  captured request, and each one counts. That's the trade you're making when you disable it — the
-  default is off precisely so you see every request while you're getting set up.
-</Warning>
+The single lever that most changes your event count is deduplication. With it **off**, every retry a sender sends is a distinct capture and each one counts — that's the trade for seeing every raw request. Turn on a [dedup mode](/deduplication) once a sender's retries stop being interesting.
 
-## How usage relates to pricing
+## The metering model
 
-The pricing model follows from the unit above, and from two principles:
+Two principles fall out of the single unit above:
 
-- **Single-dimension and disclosed up front.** You are metered on events and nothing else. The unit is stated where you create an endpoint, so there's never a hidden counter.
-- **A soft cap that pauses, not a surprise bill.** The design is to alert you as you approach a limit and then **pause capture** rather than run up an overage — your captured data stays exactly where it is, and you resume by raising the limit.
+- **One dimension, disclosed up front.** You're metered on events and nothing else, and the unit is stated where you create an endpoint — there's never a hidden counter running behind a feature you didn't know you'd triggered.
+- **A soft cap that pauses, not a surprise bill.** The design is to alert you as you approach a limit and then **pause capture** rather than run up an overage. Your captured data stays exactly where it is; you resume by raising the limit.
 
 ## Check your usage
 
-Your current usage is available on every surface:
+Your current usage is available on every surface (the `whk_` key needs `billing:read`):
 
 <CodeGroup>
 
@@ -49,7 +47,7 @@ Your current usage is available on every surface:
 wbhk usage
 ```
 
-```sh API
+```sh curl
 curl https://api.webhook.co/v1/usage \
   -H "Authorization: Bearer $WEBHOOK_API_KEY"
 ```
