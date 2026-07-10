@@ -101,6 +101,24 @@
               "reference/pagination",
               "reference/delivery-guarantees"
             ]
+          },
+          {
+            "group": "Recipes",
+            "icon": "book-sparkles",
+            "pages": [
+              "recipes/stripe-to-localhost",
+              "recipes/wake-an-agent",
+              "recipes/fan-in-to-one-service",
+              "recipes/github-actions-trigger",
+              "recipes/migrate-existing-receiver",
+              "recipes/reliable-order-pipeline",
+              "recipes/rotate-signing-secret",
+              "recipes/idempotent-consumer",
+              "recipes/debug-a-failed-delivery",
+              "recipes/local-dev-loop",
+              "recipes/multi-tenant-ingestion",
+              "recipes/alert-on-delivery-failures"
+            ]
           }
         ]
       },

@@ -1,0 +1,37 @@
+---
+title: "Build an idempotent at-least-once consumer"
+sidebarTitle: "Idempotent consumer"
+description: "Layer inbound dedup, verified-gated delivery, and receiver-side idempotency so a duplicate delivery is a no-op, not a double-charge."
+icon: "fingerprint"
+---
+
+Delivery is at least once by design, so exactly-once lives in your consumer. Stack three defenses: collapse provider retries at ingestion, let only verified events through, and make your receiver idempotent on a stable id — so a duplicate delivery is a harmless no-op.
+
+<Steps>
+  <Step title="Collapse retries at ingestion">
+    `identifier` dedup keys on the `webhook-id` header (then a provider event id), so most provider retries never become a second event. It's load reduction, not a guarantee — the next two layers cover the rest.
+
+    ```sh
+    wbhk endpoints update <endpoint-id> --dedup-mode identifier --dedup-window 600
+    ```
+  </Step>
+  <Step title="Deliver only what you verified">
+    `--require-verified` forwards signature-checked events only; an `unattempted` event is never signed, and a `failed` one is blocked. Your receiver can trust that a signed delivery is genuine.
+
+    ```sh
+    wbhk subscriptions add <endpoint-id> <destination-id> --require-verified
+    ```
+  </Step>
+  <Step title="Dedup on webhook-id at the receiver">
+    The forwarded event carries a stable `webhook-id`. Record processed ids and short-circuit repeats — this is the layer that actually makes the consumer idempotent.
+
+    ```js
+    // pseudocode
+    if (await seen(req.headers["webhook-id"])) return res.status(200).end();
+    await process(req.body);
+    await markSeen(req.headers["webhook-id"]);
+    ```
+  </Step>
+</Steps>
+
+Duplicate deliveries and provider retries are never metered — only the first dispatch counts. See [what counts as an event](/events-and-usage).

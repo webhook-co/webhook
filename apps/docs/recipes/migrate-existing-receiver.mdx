@@ -1,0 +1,36 @@
+---
+title: "Move an existing receiver behind webhook.co with zero downtime"
+sidebarTitle: "Migrate a receiver"
+description: "Put inspection, replay, and retries in front of a webhook receiver you already run — without changing a line of its code."
+icon: "right-left"
+---
+
+Get capture, inspection, replay, and a retry schedule in front of a receiver you already run — without touching its code. Register it as a destination, subscribe your endpoint to it, then cut the provider over once you've confirmed parity.
+
+<Steps>
+  <Step title="Register your current receiver as a destination">
+    Its URL is unchanged. `add` returns a signing secret; configure it in the receiver so it can verify the forwarded stream (optional, but you now get a signature you didn't have before).
+
+    ```sh
+    wbhk endpoints create prod-migration
+    wbhk replay-destinations add https://api.example.com/webhooks --label legacy
+    ```
+  </Step>
+  <Step title="Subscribe the endpoint to it">
+    Every captured event now auto-delivers to your existing receiver, with the fixed exponential retry schedule (8 attempts over ~32h) it never had before.
+
+    ```sh
+    wbhk subscriptions add <endpoint-id> <destination-id>
+    ```
+  </Step>
+  <Step title="Run in parallel, then cut over">
+    Point the provider at the ingest URL **alongside** its current target and confirm your receiver sees identical traffic through webhook.co. When it matches, remove the provider's old direct target. Your receiver's code never changed; it just gained an inspection log and a replay button.
+
+    ```sh
+    wbhk events list <endpoint-id> --all
+    wbhk deliveries list --status delivered,failed,dead
+    ```
+  </Step>
+</Steps>
+
+Anything that failed while you were validating is replayable — see [diagnose a failing delivery](/recipes/debug-a-failed-delivery).

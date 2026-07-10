@@ -1,0 +1,39 @@
+---
+title: "Wake an AI agent when a webhook arrives"
+sidebarTitle: "Wake an agent"
+description: "Register an endpoint as an MCP trigger and run an agent loop that acts on verified events the moment they land."
+icon: "robot"
+---
+
+Turn an inbound webhook into an agent action. The agent subscribes to an endpoint over MCP, polls `triggers.wait`, and wakes with the event body the instant one is captured — acting only on events whose signature you verified.
+
+<Steps>
+  <Step title="Create an endpoint and verify its source">
+    Register the provider secret so the agent can trust what it acts on. An event that fails verification should never drive a tool call.
+
+    ```sh
+    wbhk endpoints create github-agent
+    wbhk endpoints add-provider-secret <endpoint-id> --provider github
+    ```
+  </Step>
+  <Step title="Create a trigger over MCP">
+    From your agent's MCP client, call `triggers.create` with the endpoint id. It returns a `triggerId` and creates no outbound egress — it only consumes events you can already read.
+
+    ```json
+    // tool: triggers.create
+    { "endpointId": "<endpoint-id>", "name": "issue-triage" }
+    ```
+  </Step>
+  <Step title="Loop on triggers.wait">
+    `triggers.wait` is a short-poll: it returns events past your cursor (with an inline body), then you pass the returned `nextCursor` back to continue. Delivery is at least once, acked by cursor — so make the agent's action idempotent.
+
+    ```json
+    // tool: triggers.wait  (repeat, threading nextCursor)
+    { "triggerId": "<trigger-id>", "cursor": "<nextCursor>" }
+    ```
+
+    Gate the action on `verificationState`: act on `verified` / `authenticated`, skip `unattempted`, never on `failed`.
+  </Step>
+</Steps>
+
+For the full agent loop, ack semantics, and inline-body caps, see [wake an agent](/mcp/wake-an-agent).
