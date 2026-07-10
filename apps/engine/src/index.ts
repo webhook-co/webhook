@@ -55,6 +55,7 @@ import {
   parseFreeEventCap,
   parseSince,
   readSecretBinding,
+  USAGE_SETTLE_DAYS,
   type BoundedPayloadBody,
   type ReadBoundedBodiesArgs,
   type RevealedIngestToken,
@@ -977,10 +978,6 @@ async function runAuditAnchorCron(env: Env): Promise<void> {
 /** Max destinations one reconciler pass re-wakes (the db default — well under the Workers subrequest cap). A
  *  capped pass is logged; the next hourly pass continues, with fair random ordering so none is starved. */
 const RECONCILE_LIMIT = DEFAULT_RECONCILE_LIMIT;
-
-/** Days of lookback each metering pass re-rolls before a day is frozen (F2: the just-closed day must be
- *  re-counted so the pre-midnight tail isn't lost). 2 gives margin for late-committed events / a skipped run. */
-const USAGE_SETTLE_DAYS = 2;
 
 /**
  * Wire the real deps and run one metering-rollup pass. Two short-lived connections: webhook_meter

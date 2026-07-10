@@ -8,7 +8,9 @@ import {
   parseFreeEventCap,
   rollupWindows,
   shouldPauseForCap,
+  tailFlushCutoff,
   USAGE_ALERT_THRESHOLDS,
+  USAGE_SETTLE_DAYS,
   type IngestGuardSignal,
 } from "./metering";
 
@@ -166,6 +168,36 @@ describe("currentBillingPeriod", () => {
       start: "2026-12-01T00:00:00.000Z",
       end: "2027-01-01T00:00:00.000Z",
     });
+  });
+});
+
+describe("tailFlushCutoff (the boundary a closing period's tail is finalized before)", () => {
+  it("returns UTC midnight of the day CONTAINING a mid-day period end", () => {
+    // Period ends 2026-07-09T07:33:00Z → boundary day is 07-09; every usage day strictly before
+    // 07-09T00:00Z is complete-within-the-period and must be flushed. The boundary day (07-09,
+    // which straddles the period end) is the excluded bounded residual.
+    expect(tailFlushCutoff(Date.UTC(2026, 6, 9, 7, 33, 0))).toBe("2026-07-09T00:00:00.000Z");
+  });
+
+  it("a period end at EXACTLY UTC midnight makes that day the cutoff (it carries no pre-end usage)", () => {
+    // Period ends 2026-07-09T00:00:00Z → cutoff 07-09T00:00Z, so 07-08 and earlier flush and 07-09
+    // (which has zero usage inside this period) is excluded — no spurious partial-day residual.
+    expect(tailFlushCutoff(Date.UTC(2026, 6, 9, 0, 0, 0))).toBe("2026-07-09T00:00:00.000Z");
+  });
+
+  it("floors to the start of the day for the last instant before midnight", () => {
+    expect(tailFlushCutoff(Date.UTC(2026, 6, 9, 23, 59, 59, 999))).toBe("2026-07-09T00:00:00.000Z");
+  });
+
+  it("crosses a month boundary correctly", () => {
+    expect(tailFlushCutoff(Date.UTC(2026, 7, 1, 4, 0, 0))).toBe("2026-08-01T00:00:00.000Z");
+  });
+});
+
+describe("USAGE_SETTLE_DAYS", () => {
+  it("is the single source of truth for the money-safe settle window (>= 1, the F2 minimum)", () => {
+    expect(USAGE_SETTLE_DAYS).toBeGreaterThanOrEqual(1);
+    expect(Number.isInteger(USAGE_SETTLE_DAYS)).toBe(true);
   });
 });
 

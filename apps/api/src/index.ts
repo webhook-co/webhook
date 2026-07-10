@@ -139,6 +139,14 @@ export interface Env {
    * webhook's dedup ledger (S4.5a) + billing state (S4.5b). Present only once provisioned; absent → 503.
    */
   HYPERDRIVE_BILLING?: Hyperdrive;
+  /**
+   * The Stripe SECRET key (sk_…) — a Secrets Store binding used ONLY by the S4.5 invoice.created TAIL-FLUSH
+   * to REPORT meter usage outbound (distinct from the signing secret, which only verifies inbound). Absent →
+   * the flush is dark (a no-op); inbound verification + subscription sync are unaffected.
+   */
+  STRIPE_SECRET_KEY?: SecretsStoreSecret;
+  /** The Stripe Billing Meter event_name the tail-flush reports against (config var; matches the engine's). */
+  STRIPE_METER_EVENT_NAME?: string;
 }
 
 // Built once at module load (pure); served on the public PRM route with no tenant deps.

@@ -121,6 +121,28 @@ export function finalizeCutoff(nowMs: number, settleDays: number): string {
   return new Date(startOfUtcDayMs(nowMs) - settleDays * DAY_MS).toISOString();
 }
 
+/**
+ * The single source of truth for the money-safe metering SETTLE window: a usage day is re-rolled for this
+ * many days after it closes and only then frozen (F1/F2). Both the engine rollup cron and the api tail-flush
+ * import this so the two paths can never drift on how long "still open" lasts. >= 1 (the F2 minimum).
+ */
+export const USAGE_SETTLE_DAYS = 2;
+
+/**
+ * The tail-flush cutoff for a billing period that is closing at `periodEndMs`: UTC midnight at the START of
+ * the day CONTAINING the period end. Every usage day strictly before this is COMPLETE within the closing
+ * period — its whole 24h ended at or before the period end — so a meter event stamped at that day's 00:00
+ * UTC lands inside the period (00:00 <= period end) and must be finalized + reported BEFORE Stripe finalizes
+ * the invoice (empirically: usage reported after finalization is silently dropped). The boundary day itself
+ * is intentionally EXCLUDED and left for the next period: it straddles the period end (billing its whole
+ * count into this period would over-bill the post-end slice), or — when the period ends exactly on UTC
+ * midnight — it carries no usage inside this period at all. That excluded day is the bounded residual the
+ * transport reconciler alarms on. Pure + deterministic (UTC has no DST), so it is exhaustively unit-testable.
+ */
+export function tailFlushCutoff(periodEndMs: number): string {
+  return new Date(startOfUtcDayMs(periodEndMs)).toISOString();
+}
+
 /** A billing period as half-open [start, end) UTC instants. */
 export interface BillingPeriod {
   readonly start: string;
