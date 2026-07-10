@@ -50,5 +50,6 @@ export * from "./cap-producer";
 export * from "./meter-reporter";
 export * from "./meter-reconcile";
 export * from "./meter-transport-reconcile";
+export * from "./tail-flush";
 export * from "./stripe-events";
 export * from "./billing-sync";
