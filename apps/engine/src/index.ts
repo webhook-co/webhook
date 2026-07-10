@@ -8,12 +8,17 @@ import {
   DEFAULT_CAP_PRODUCER_LIMIT,
   DEFAULT_METER_RECONCILE_LIMIT,
   DEFAULT_METER_RECONCILE_LOOKBACK_DAYS,
+  DEFAULT_TRANSPORT_LIMIT,
+  DEFAULT_TRANSPORT_LOOKBACK_DAYS,
+  DEFAULT_TRANSPORT_SETTLE_LAG_MS,
   DEFAULT_METER_REPORTER_LIMIT,
   DEFAULT_METERING_ROLLUP_LIMIT,
   DEFAULT_RECONCILE_LIMIT,
   makeCapTransitionEvictor,
   makeIngestHashEvictor,
   reconcileMeteringUsage,
+  reconcileStripeTransport,
+  type MeterSummaryReader,
   runCapProducer,
   runMeterReporter,
   enqueueAutoDeliveries,
@@ -140,6 +145,11 @@ export interface Env {
    * reconciliation cron skips (dark), so this ships without blocking the deploy.
    */
   HYPERDRIVE_METER_AUDIT?: Hyperdrive;
+  /**
+   * The webhook_meter_transport Hyperdrive (WS1) — a read-only cross-org connection for the Stripe
+   * transport reconciler (outbox `sent` rows + org→customer map). Optional; unset → that cron is dark.
+   */
+  HYPERDRIVE_METER_TRANSPORT_AUDIT?: Hyperdrive;
   /** R2 bucket holding the WORM head anchors (retention-locked; this writer has no delete rights). */
   R2_AUDIT_ANCHOR: R2Bucket;
   /** Base64 audit-chain HMAC key — the same key the chain rows are signed with (shared across surfaces). */
@@ -190,6 +200,12 @@ export interface Env {
    * committed VAR (a config id, not a secret, not a price). Unset → the reporter has no meter to report to.
    */
   STRIPE_METER_EVENT_NAME?: string;
+  /**
+   * The Stripe Billing METER id (`mtr_…`) — required by the transport reconciler's event-summaries GET
+   * (summaries are addressed by meter id, not event_name). A committed VAR (a config id, not a secret).
+   * Unset → the transport reconcile cron is dark.
+   */
+  STRIPE_METER_ID?: string;
 }
 
 // Isolate-scoped DEK handle cache (ADR-0007): unwrapped, non-extractable CryptoKey handles, bounded
@@ -764,6 +780,16 @@ export default {
         console.log(JSON.stringify({ message: "meter reconcile cron failed", error: String(err) })),
       ),
     );
+    // Stripe TRANSPORT reconciliation (WS1): compare what we told Stripe (outbox `sent` rows) to what Stripe
+    // aggregated (event summaries) and alarm on any drop. Calls Stripe, so it carries the reporter's full
+    // gate stack PLUS the transport Hyperdrive. Independent of the others.
+    ctx.waitUntil(
+      runMeterTransportReconcileCron(env).catch((err: unknown) =>
+        console.log(
+          JSON.stringify({ message: "meter transport reconcile cron failed", error: String(err) }),
+        ),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -1089,6 +1115,68 @@ async function runMeteringReconcileCron(env: Env): Promise<void> {
     log("metering.reconcile.done", {
       daysChecked: result.daysChecked,
       driftCount: result.mismatches.length,
+      capped: result.capped,
+    });
+  } finally {
+    await audit.end();
+  }
+}
+
+/**
+ * Stripe TRANSPORT reconciliation (WS1). Reconcile what we TOLD Stripe (the outbox `sent` rows, per UTC day)
+ * against what Stripe SAYS it aggregated (meter event summaries). A drift = a meter event Stripe silently
+ * dropped (or a stale value) — pure under-/over-billing that nothing else catches. Read-only both sides;
+ * alarms only, never auto-adjusts. Dark unless billing is on AND the meter id + key + transport Hyperdrive
+ * are all provisioned. Mode-checked so we never compare against the wrong Stripe environment.
+ */
+async function runMeterTransportReconcileCron(env: Env): Promise<void> {
+  const mode = parseBillingMode(env.BILLING_MODE ?? null);
+  if (!billingEnabled(mode)) return; // dark: BILLING_MODE off/unset
+  if (!env.HYPERDRIVE_METER_TRANSPORT_AUDIT) return; // dark until the transport role + Hyperdrive exist
+
+  const log = (message: string, fields?: Record<string, unknown>) =>
+    console.log(JSON.stringify({ message, ...fields }));
+  const meterId = env.STRIPE_METER_ID?.trim();
+  const secretKey = env.STRIPE_SECRET_KEY ? await readSecretBinding(env.STRIPE_SECRET_KEY) : "";
+  if (!meterId || !secretKey) {
+    log("metering.stripe_reconcile.not_configured", { hasMeter: !!meterId, hasKey: !!secretKey });
+    return;
+  }
+  if (!stripeKeyMatchesMode(mode, secretKey)) {
+    log("metering.stripe_reconcile.key_mode_mismatch"); // never log the key or its prefix
+    return;
+  }
+
+  const stripe = makeStripeClient({ mode, secretKey });
+  // Adapt the Stripe client's summaries lister into the pure comparator's reader seam.
+  const reader: MeterSummaryReader = {
+    listDaySummaries: async (customer, startSec, endSec) => {
+      const summaries = await stripe.listMeterEventSummaries({
+        meterId,
+        customer,
+        startTime: startSec,
+        endTime: endSec,
+      });
+      return summaries.map((sm) => ({ startSec: sm.startTime, aggregated: sm.aggregatedValue }));
+    },
+  };
+  const audit = createClient(env.HYPERDRIVE_METER_TRANSPORT_AUDIT.connectionString);
+  try {
+    const result = await reconcileStripeTransport({
+      audit,
+      reader,
+      now: Date.now(),
+      settleLagMs: DEFAULT_TRANSPORT_SETTLE_LAG_MS,
+      lookbackDays: DEFAULT_TRANSPORT_LOOKBACK_DAYS,
+      limit: DEFAULT_TRANSPORT_LIMIT,
+      log,
+    });
+    log("metering.stripe_reconcile.done", {
+      daysChecked: result.daysChecked,
+      orgsChecked: result.orgsChecked,
+      driftCount: result.mismatches.length,
+      skippedNoCustomer: result.skippedNoCustomer,
+      erroredOrgs: result.erroredOrgs, // > 0 is an alarm: an org's transport check did not run
       capped: result.capped,
     });
   } finally {

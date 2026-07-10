@@ -102,6 +102,17 @@ export const DB_ROLES = {
    */
   meterAudit: "webhook_meter_audit",
   /**
+   * Cross-org Stripe TRANSPORT-reconciliation role (WS1 / migration 0050). Read-only, DISTINCT from
+   * webhook_meter_audit: it reconciles what we TOLD Stripe (the outbox `sent` rows) against what Stripe
+   * actually aggregated (event summaries), so it must read `billing_customers.stripe_customer_id` — an
+   * EXTERNAL billing identifier sent off-box — a different data class than the recount role's "counts rows,
+   * never identifiers" contract. Holds SELECT-only via role-targeted `FOR SELECT TO webhook_meter_transport
+   * USING(true)` policies on stripe_meter_reports + billing_customers, column-scoped to
+   * (org_id, day, event_count, status, sent_at) + (org_id, stripe_customer_id) — never the internal
+   * identifier/stripe_meter_event_id, never any write. Password injected out of band.
+   */
+  meterTransport: "webhook_meter_transport",
+  /**
    * The VERIFIED-STRIPE-ONLY billing writer role (S4.5 / migration 0047). The Stripe inbound webhook runs
    * as this role AFTER it verifies the Stripe signature and resolves org from signed metadata, to write
    * state the tenant must never forge: the processed_stripe_events dedup ledger (S4.5a), and (S4.5b) the
