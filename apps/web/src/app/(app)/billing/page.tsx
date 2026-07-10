@@ -180,6 +180,17 @@ export default async function BillingPage({
             <UpgradeCard planIds={view.upgradePlanIds} resubscribe={view.display !== null} />
           )}
           {view.hasCustomer && <ManageBillingCard />}
+          {/* A live subscription whose Stripe customer hasn't mirrored yet (the two setup webhooks can
+              land out of order): no picker (it would double-subscribe) and no Portal (we have no customer
+              id to open one) — so give the user context instead of an actionless card. Transient. */}
+          {view.display && !view.hasCustomer && view.upgradePlanIds.length === 0 && (
+            <div className="rounded-card border border-hairline bg-surface p-6">
+              <p className="text-sm text-fg-secondary">
+                We&apos;re finishing setting up your billing details. Refresh in a moment to manage
+                your payment method and invoices.
+              </p>
+            </div>
+          )}
         </>
       )}
     </div>

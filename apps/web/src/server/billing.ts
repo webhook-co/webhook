@@ -96,14 +96,14 @@ export async function startCheckout(
     const client = await stripeClientFromEnv();
     if (!client) return { status: "disabled" };
     const { customerId, sub } = await readOrgBilling(orgId);
-    // Money backstop: never open a Checkout for an org that still has a LIVE subscription (active,
-    // trialing, past_due, unpaid, paused, incomplete) — Stripe would create a SECOND concurrent
-    // subscription on the same customer and double-bill them. Changing an existing plan is WS4 / the
-    // Portal, not a fresh Checkout. A terminal sub (canceled/incomplete_expired) is a legitimate
-    // resubscribe and passes. Residual: an unmirrored live sub (customer exists, mirror empty) isn't
-    // caught here — the picker gating in loadBillingSummary declines to offer Checkout in that case, and
-    // a Stripe-side subscription read is deferred to WS4 where that seam is built.
-    if (sub && isLiveSubscriptionStatus(sub.status)) return { status: "already_subscribed" };
+    // Money backstop — the SAME rule the UI picker gates on (canStartNewCheckout), enforced server-side so
+    // a forged/stale server-action POST can't bypass it. Refuse a fresh Checkout unless it provably can't
+    // create a duplicate: a LIVE mirrored sub (active/trialing/past_due/unpaid/paused/incomplete) or a
+    // customer that exists with NO mirror row (possibly an unmirrored live sub) both refuse; only a truly
+    // new org (no customer) or a TERMINAL sub (canceled/incomplete_expired — subscription.deleted keeps the
+    // row as `canceled`, so a resubscribe still passes) proceeds. Residual: a live Stripe sub we have NEVER
+    // mirrored is invisible here — a Stripe-side subscription read is deferred to WS4 where that seam exists.
+    if (!canStartNewCheckout(customerId, sub)) return { status: "already_subscribed" };
     const session = await client.createCheckoutSession({
       customer: customerId ?? undefined,
       customerEmail: customerId ? undefined : email,

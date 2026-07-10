@@ -79,12 +79,15 @@ describe("startCheckout", () => {
     ]);
   });
 
-  it("for a returning org (prior sub gone) reuses the existing Stripe customer", async () => {
-    const client = enableBilling("cus_existing"); // sub=null → no live sub → resubscribe reuses customer
-    await startCheckout("org-7", "pro", "ignored@x.test");
-    const args = client.createCheckoutSession.mock.calls[0][0];
-    expect(args.customer).toBe("cus_existing");
-    expect(args.customerEmail).toBeUndefined();
+  it("REFUSES a Checkout for a customer with NO mirror sub row (matches the hidden picker)", async () => {
+    // A customer exists but no subscription is mirrored — possibly an unmirrored live sub (the two setup
+    // webhooks can land out of order). The server refuses exactly as the UI hides the picker, so a forged
+    // POST can't slip through. (A genuine resubscribe has a `canceled` mirror row — see the next test.)
+    const client = enableBilling("cus_existing"); // sub=null
+    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+      status: "already_subscribed",
+    });
+    expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });
 
   it("REFUSES a new Checkout when a LIVE subscription exists — never double-subscribes", async () => {
@@ -116,6 +119,20 @@ describe("startCheckout", () => {
       url: "https://checkout",
     });
     expect(client.createCheckoutSession.mock.calls[0][0].customer).toBe("cus_1");
+  });
+
+  it("ALLOWS a Checkout when the existing sub is terminal (incomplete_expired) — a real resubscribe", async () => {
+    const client = enableBilling("cus_2", {
+      plan: "price_base",
+      status: "incomplete_expired",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    });
+    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+      status: "ok",
+      url: "https://checkout",
+    });
+    expect(client.createCheckoutSession.mock.calls[0][0].customer).toBe("cus_2");
   });
 
   it("maps a Stripe failure to 'error' (never throws)", async () => {
@@ -279,6 +296,22 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
     expect(v.hasCustomer).toBe(true);
   });
 
+  it("a CANCELING sub (active + cancel_at_period_end) is still entitled → NO picker, has customer", async () => {
+    enable(
+      {
+        plan: "price_base",
+        status: "active",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      "cus_1",
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toMatchObject({ state: "canceling" });
+    expect(v.upgradePlanIds).toEqual([]); // still a live sub → no duplicate; cancel/manage via Portal
+    expect(v.hasCustomer).toBe(true);
+  });
+
   it("an INACTIVE (unpaid) sub still LIVES → NO picker (a Checkout would double-subscribe; use Portal)", async () => {
     enable(
       {
@@ -301,5 +334,24 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
     expect(v.display).toBeNull();
     expect(v.upgradePlanIds).toEqual([]); // conservative: don't invite a Checkout we can't prove is safe
     expect(v.hasCustomer).toBe(true);
+  });
+
+  it("a LIVE sub whose customer hasn't mirrored yet → display, NO picker, NO customer (sync-race)", async () => {
+    // Reverse-ordered setup webhooks: the subscription mirrored before its billing_customers row. The page
+    // shows the plan but neither a picker (would double-subscribe) nor the Portal (no customer id) — it
+    // renders a transient "finishing setup" note off exactly this shape.
+    enable(
+      {
+        plan: "price_base",
+        status: "active",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+      },
+      null,
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toMatchObject({ tier: "pro", state: "active" });
+    expect(v.upgradePlanIds).toEqual([]);
+    expect(v.hasCustomer).toBe(false);
   });
 });
