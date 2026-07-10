@@ -35,19 +35,20 @@ export type BillingActionResult =
 
 /** Build the Stripe client from env, or null when billing isn't fully configured (key missing). */
 async function stripeClientFromEnv(): Promise<StripeClient | null> {
+  const mode = getBillingMode();
   const secretKey = await getStripeSecretKey();
   if (!secretKey) return null;
   // The key must belong to the mode. A live key under BILLING_MODE=test would charge REAL CARDS from a
   // deploy nobody thinks is live; a test key under live would sell plans and take no money. Both are silent,
   // so refuse to build a client at all — Checkout renders as "disabled" rather than doing the wrong thing.
-  if (!stripeKeyMatchesMode(getBillingMode(), secretKey)) {
+  if (!stripeKeyMatchesMode(mode, secretKey)) {
     logActionError(
       "billing.key_mode_mismatch",
       new Error("Stripe key does not match BILLING_MODE"),
     );
     return null;
   }
-  return makeStripeClient({ secretKey });
+  return makeStripeClient({ mode, secretKey });
 }
 
 /**

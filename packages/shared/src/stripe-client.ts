@@ -3,8 +3,11 @@
 // form-urlencoded bodies (Stripe's bracket notation for nested params), Bearer sk_ auth, an optional
 // Idempotency-Key, and a pinned Stripe-Version. NO Stripe SDK (Workers-friendly, auditable, no supply
 // chain). The secret key is passed in (read from a Secrets Store binding by the caller) and NEVER logged.
-// The client is MODE-AGNOSTIC — whether Stripe is called at all is the caller's BILLING_MODE gate; a `test`
-// key hits Stripe's sandbox, a `live` key real money, with identical code.
+// The client is MODE-BOUND: `mode` is required and asserted against the key's prefix at construction, so a
+// live key can never be used by a test-mode deploy (real charges) and a test key can never be used by a live
+// one (no money taken). See stripeKeyMatchesMode.
+
+import { stripeKeyMatchesMode, type BillingMode } from "./billing";
 
 /** Pinned Stripe API version — supports Billing Meters (the metered-overage model). Bump deliberately. */
 export const STRIPE_API_VERSION = "2024-06-20";
@@ -54,6 +57,12 @@ export function stripeFormEncode(params: StripeParams): string {
 export interface StripeClientOptions {
   /** The Stripe secret key (sk_test_… or sk_live_…). Read from a Secrets Store binding; NEVER logged. */
   readonly secretKey: string;
+  /**
+   * The billing mode this key must belong to. REQUIRED, and asserted below — a guard that lives only at the
+   * call sites is one a future caller can skip. A live key in test mode charges real cards; a test key in
+   * live mode takes no money. Both are silent, so we refuse to construct the client at all.
+   */
+  readonly mode: BillingMode;
   /** Override the API base (for a mock server in tests). Defaults to https://api.stripe.com. */
   readonly apiBase?: string;
   /** Injected fetch (Workers global by default) so tests can supply a fake without network. */
@@ -138,6 +147,10 @@ export interface StripeClient {
 }
 
 export function makeStripeClient(opts: StripeClientOptions): StripeClient {
+  if (!stripeKeyMatchesMode(opts.mode, opts.secretKey)) {
+    // The message names neither the key nor its prefix.
+    throw new Error("stripe: secret key does not match BILLING_MODE");
+  }
   const base = opts.apiBase ?? DEFAULT_API_BASE;
   const doFetch = opts.fetchImpl ?? fetch;
 
