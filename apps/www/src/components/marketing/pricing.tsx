@@ -47,7 +47,7 @@ function TierCard({ tier }: { tier: Tier }) {
         <p className="text-sm leading-snug text-fg-secondary">{tier.summary}</p>
       </div>
 
-      {/* Baseline-aligned and nowrap: "From $499 /month" must never break across lines, and a long
+      {/* Baseline-aligned and nowrap: "From €499 /month" must never break across lines, and a long
           qualifier must not push the cadence onto its own row. */}
       <div className="flex flex-wrap items-baseline gap-x-1.5">
         {tier.pricePrefix && <span className="text-sm text-fg-secondary">{tier.pricePrefix}</span>}
