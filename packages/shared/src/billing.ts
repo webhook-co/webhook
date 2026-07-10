@@ -111,3 +111,21 @@ export function parseStripePlans(raw: string | undefined | null): StripePlans | 
   }
   return plans as StripePlans;
 }
+
+/**
+ * Does this Stripe secret key belong to this billing mode? Founder rule (2026-07-09): **localhost and any
+ * test-mode deploy use the SANDBOX account; only a `BILLING_MODE=live` prod deploy uses the LIVE account.**
+ *
+ * Enforced rather than trusted, because both mismatches are silent and expensive:
+ *   - a live key under `BILLING_MODE=test` would charge REAL CARDS from a deploy nobody thinks is live;
+ *   - a test key under `BILLING_MODE=live` would take NO money while the dashboard cheerfully sells plans.
+ *
+ * Fails CLOSED on anything unrecognised — a publishable key (`pk_`), a restricted key (`rk_`, whose scopes we
+ * don't control), a signing secret, or an empty binding all return false and the caller declines to build a
+ * client. Prefix match is exact and case-sensitive: Stripe's key prefixes are lowercase.
+ */
+export function stripeKeyMatchesMode(mode: BillingMode, secretKey: string): boolean {
+  if (mode === "live") return secretKey.startsWith("sk_live_");
+  if (mode === "test") return secretKey.startsWith("sk_test_");
+  return false; // billing off: no key is legitimate
+}

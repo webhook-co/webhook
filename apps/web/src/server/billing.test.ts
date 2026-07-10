@@ -148,3 +148,38 @@ describe("startCheckout — plan gating (planId is untrusted form input)", () =>
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });
 });
+
+describe("startCheckout — the Stripe key must belong to BILLING_MODE", () => {
+  it("refuses a LIVE key under BILLING_MODE=test (it would charge real cards)", async () => {
+    const client = enableBilling(null);
+    env.getStripeSecretKey.mockResolvedValue("sk_live_realmoney");
+    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
+    expect(client.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("refuses a TEST key under BILLING_MODE=live (it would take no money)", async () => {
+    const client = enableBilling(null);
+    env.getBillingMode.mockReturnValue("live");
+    env.getStripeSecretKey.mockResolvedValue("sk_test_sandbox");
+    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
+    expect(client.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("refuses a PUBLISHABLE key used as a secret", async () => {
+    const client = enableBilling(null);
+    env.getStripeSecretKey.mockResolvedValue("pk_test_publishable");
+    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
+    expect(client.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("allows the matching pair (live key + live mode)", async () => {
+    const client = enableBilling(null);
+    env.getBillingMode.mockReturnValue("live");
+    env.getStripeSecretKey.mockResolvedValue("sk_live_realmoney");
+    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({
+      status: "ok",
+      url: "https://checkout",
+    });
+    expect(client.createCheckoutSession).toHaveBeenCalled();
+  });
+});

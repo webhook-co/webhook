@@ -8,6 +8,7 @@ import {
   parseStripePlans,
   SELF_SERVE_PLAN_IDS,
   isSelfServePlan,
+  stripeKeyMatchesMode,
 } from "./billing";
 
 describe("parseBillingMode (fail-safe billing flag)", () => {
@@ -132,5 +133,37 @@ describe("SELF_SERVE_PLAN_IDS", () => {
     expect(isSelfServePlan("enterprise")).toBe(false);
     expect(isSelfServePlan("free")).toBe(false);
     expect(isSelfServePlan("")).toBe(false);
+  });
+});
+
+describe("stripeKeyMatchesMode — a live key must never run in test mode, and vice versa", () => {
+  const LIVE = "sk_live_abc123";
+  const TEST = "sk_test_abc123";
+
+  it("accepts the key that belongs to the mode", () => {
+    expect(stripeKeyMatchesMode("live", LIVE)).toBe(true);
+    expect(stripeKeyMatchesMode("test", TEST)).toBe(true);
+  });
+
+  it("REJECTS a live key under BILLING_MODE=test — it would charge real cards from a test deploy", () => {
+    expect(stripeKeyMatchesMode("test", LIVE)).toBe(false);
+  });
+
+  it("REJECTS a test key under BILLING_MODE=live — it would silently take no money", () => {
+    expect(stripeKeyMatchesMode("live", TEST)).toBe(false);
+  });
+
+  it("rejects everything when billing is off (there is no legitimate key to use)", () => {
+    expect(stripeKeyMatchesMode("off", LIVE)).toBe(false);
+    expect(stripeKeyMatchesMode("off", TEST)).toBe(false);
+  });
+
+  it("rejects a key with neither prefix — restricted keys, publishable keys, garbage, empty", () => {
+    // `pk_live_` is a PUBLISHABLE key: it must never be used as a secret. `rk_` is a restricted key,
+    // whose scopes we don't control. Anything unrecognised fails closed.
+    for (const bad of ["pk_live_x", "pk_test_x", "rk_live_x", "whsec_x", "sk_", "", "SK_LIVE_X"]) {
+      expect(stripeKeyMatchesMode("live", bad)).toBe(false);
+      expect(stripeKeyMatchesMode("test", bad)).toBe(false);
+    }
   });
 });
