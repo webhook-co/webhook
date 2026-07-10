@@ -1,60 +1,380 @@
 ---
-title: "Connect from an MCP client"
+title: "Connect your MCP client"
 sidebarTitle: "Connect a client"
-description: "Add mcp.webhook.co as an MCP server in any MCP-capable client — the streamable-HTTP endpoint plus a whk_ key or OAuth bearer."
-icon: "terminal"
+description: "Connect any MCP client to webhook.co's remote server at https://mcp.webhook.co/mcp — OAuth or a whk_ bearer token. Per-client configs for coding agents."
+icon: "plug"
 ---
 
-Add webhook.co to any MCP-capable client — Claude, Cursor, VS Code, and the rest — and its agent gets the [21 tools](/mcp/overview) directly.
+Point your MCP client at webhook.co's remote server and it gains 21 tools — inspect endpoints, replay events, and drive the `triggers.*` webhook-to-agent flow — without leaving your editor or chat.
 
-You need two things: the endpoint and a bearer token.
+<Card title="Server URL" icon="server">
+  **`https://mcp.webhook.co/mcp`** — a remote, **streamable-HTTP** MCP server. Not stdio.
+</Card>
 
-```text
-endpoint   https://mcp.webhook.co/mcp   (streamable-HTTP)
-auth       Authorization: Bearer <token>
-```
+Two ways to authenticate:
 
-The token is either a `whk_` API key or an OAuth access token — see [authentication](/authentication) to mint one. The server is cookieless and bearer-only; there's nothing else to configure.
+- **OAuth (interactive).** webhook.co is a standard OAuth resource server. For most clients, adding the server URL triggers a browser sign-in on first connect — no key to paste. This is the recommended path for GUI clients (Claude Desktop, ChatGPT, Cursor one-click).
+- **`whk_` bearer token.** Send `Authorization: Bearer whk_your_key_here`. Best for header-based and headless clients (Claude Code, Codex, CI). [Mint a key](/authentication), store it in an environment variable, and never hardcode it.
 
-## Config
+<Info>
+  New here? [Mint an API key](/authentication) and browse the full [tool catalog](/mcp/overview) —
+  including `triggers.wait`, the webhook-to-agent trigger.
+</Info>
 
-Most clients take a remote MCP server as a URL plus headers. The shape:
+## Supported clients
 
-<CodeGroup>
+Jump to your client:
 
-```json API key
+- [Claude Code](#claude-code)
+- [Claude Desktop](#claude-desktop)
+- [ChatGPT](#chatgpt)
+- [Codex CLI](#codex-cli)
+- [Cursor](#cursor)
+- [VS Code (Copilot)](#vs-code-copilot)
+- [Windsurf](#windsurf)
+- [Other clients](#other-clients) (Cline, Goose, Zed, JetBrains, Warp, Continue) and the [`mcp-remote` bridge](#the-mcp-remote-bridge)
+
+Throughout, replace `whk_your_key_here` with your own key, and prefer the environment-variable form (`WEBHOOK_API_KEY`) over a literal.
+
+## Claude Code
+
+Claude Code speaks streamable HTTP natively — no bridge needed.
+
+<Steps>
+  <Step title="Add the server">
+    With a bearer token:
+
+    ```bash
+    claude mcp add --transport http webhook https://mcp.webhook.co/mcp \
+      --header "Authorization: Bearer whk_your_key_here"
+    ```
+
+    Or omit `--header` to use OAuth — you'll authenticate on first use:
+
+    ```bash
+    claude mcp add --transport http webhook https://mcp.webhook.co/mcp
+    ```
+
+  </Step>
+  <Step title="Choose a scope (optional)">
+    Add `-s local` (default, this machine only), `-s project` (shared via a checked-in `.mcp.json`), or `-s user` (all your projects):
+
+    ```bash
+    claude mcp add --transport http webhook https://mcp.webhook.co/mcp -s user \
+      --header "Authorization: Bearer whk_your_key_here"
+    ```
+
+  </Step>
+  <Step title="Sign in (OAuth only)">
+    If you added the server without a header, authenticate:
+
+    ```bash
+    claude mcp login webhook
+    ```
+
+    You can also run `/mcp` inside Claude Code and follow the auth prompt.
+
+  </Step>
+  <Step title="Verify">
+    ```bash
+    claude mcp list
+    ```
+
+    Or run `/mcp` in a session — `webhook` should report **connected**.
+
+  </Step>
+</Steps>
+
+For a project-shared config, commit a `.mcp.json` that reads the key from the environment:
+
+```json .mcp.json
 {
   "mcpServers": {
     "webhook": {
+      "type": "http",
       "url": "https://mcp.webhook.co/mcp",
       "headers": {
-        "Authorization": "Bearer whk_your_key_here"
+        "Authorization": "Bearer ${WEBHOOK_API_KEY}"
       }
     }
   }
 }
 ```
 
-```json OAuth
-{
-  "mcpServers": {
-    "webhook": {
-      "url": "https://mcp.webhook.co/mcp"
+Set `WEBHOOK_API_KEY` in your shell so the literal key never lands in the repo.
+
+## Claude Desktop
+
+Claude Desktop connects from Anthropic's cloud, so the server must be publicly reachable — `https://mcp.webhook.co/mcp` is. The Connectors UI uses OAuth; for a header-based token you edit the config file and use the [`mcp-remote` bridge](#the-mcp-remote-bridge).
+
+<Steps>
+  <Step title="Open Connectors">**Settings → Connectors → Add custom connector.**</Step>
+  <Step title="Paste the server URL">Enter `https://mcp.webhook.co/mcp` and click **Add**.</Step>
+  <Step title="Authenticate">
+    Complete the OAuth sign-in when prompted. The Free plan allows one custom connector; Pro, Max,
+    Team, and Enterprise allow more.
+  </Step>
+</Steps>
+
+<Tabs>
+  <Tab title="OAuth (recommended)">
+    Use the Connectors flow above. No key to manage — Claude Desktop stores and refreshes the OAuth token for you.
+  </Tab>
+  <Tab title="whk_ token (config file)">
+    Add the server to `claude_desktop_config.json` via the `mcp-remote` bridge, then restart Claude Desktop.
+
+    - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+    - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+    ```json claude_desktop_config.json
+    {
+      "mcpServers": {
+        "webhook": {
+          "command": "npx",
+          "args": [
+            "-y",
+            "mcp-remote",
+            "https://mcp.webhook.co/mcp",
+            "--header",
+            "Authorization:${AUTH_HEADER}"
+          ],
+          "env": {
+            "AUTH_HEADER": "Bearer whk_your_key_here"
+          }
+        }
+      }
     }
+    ```
+
+    The header value is passed through `env` to sidestep the space-in-argument gotcha (see [the bridge notes](#the-mcp-remote-bridge)). Restart Claude Desktop after saving.
+
+  </Tab>
+</Tabs>
+
+## ChatGPT
+
+ChatGPT connects from OpenAI's cloud (Developer mode / custom connectors, on paid plans), so the endpoint must be public — `https://mcp.webhook.co/mcp` is. A raw bearer header isn't a first-class field here, so OAuth is the path.
+
+<Steps>
+  <Step title="Enable Developer mode">**Settings → Apps → Advanced → enable Developer mode.**</Step>
+  <Step title="Create the connector">
+    **Create custom connector**, then set the URL to `https://mcp.webhook.co/mcp`.
+  </Step>
+  <Step title="Authenticate">
+    Complete the OAuth sign-in. The connector's tools become available in Developer mode chats.
+  </Step>
+</Steps>
+
+## Codex CLI
+
+Codex CLI supports remote streamable-HTTP MCP servers via `~/.codex/config.toml`. Remote-HTTP support is recent and version-sensitive — update Codex if the `url` key isn't recognized.
+
+<Steps>
+  <Step title="Edit ~/.codex/config.toml">
+    ```toml ~/.codex/config.toml
+    [mcp_servers.webhook]
+    url = "https://mcp.webhook.co/mcp"
+    bearer_token_env_var = "WEBHOOK_API_KEY"
+    ```
+
+    Codex reads the token from the named environment variable — export `WEBHOOK_API_KEY=whk_your_key_here` in your shell.
+
+  </Step>
+  <Step title="Verify">
+    ```bash
+    codex mcp list
+    ```
+
+    `webhook` should appear with its tools.
+
+  </Step>
+</Steps>
+
+## Cursor
+
+Cursor speaks streamable HTTP natively. Use `~/.cursor/mcp.json` for all projects, or a project-scoped `.cursor/mcp.json`.
+
+<Steps>
+  <Step title="Add the server">
+    ```json ~/.cursor/mcp.json
+    {
+      "mcpServers": {
+        "webhook": {
+          "url": "https://mcp.webhook.co/mcp",
+          "headers": {
+            "Authorization": "Bearer ${env:WEBHOOK_API_KEY}"
+          }
+        }
+      }
+    }
+    ```
+
+    Set `WEBHOOK_API_KEY` in your environment. For OAuth instead, omit `headers` and complete the one-click sign-in Cursor offers on connect.
+
+  </Step>
+  <Step title="Or use the deeplink">
+    An "Add to Cursor" link has the form:
+
+    ```
+    cursor://anysphere.cursor-deeplink/mcp/install?name=webhook&config=<base64-json>
+    ```
+
+    where `<base64-json>` is the base64 encoding of `{"url":"https://mcp.webhook.co/mcp"}`.
+
+  </Step>
+  <Step title="Verify">
+    Open **Settings → MCP**. `webhook` should show a green dot and list its tools.
+  </Step>
+</Steps>
+
+## VS Code (Copilot)
+
+VS Code's Copilot agent mode speaks streamable HTTP. The workspace config lives in `.vscode/mcp.json`, where the top-level key is `servers` (note: not `mcpServers`).
+
+<Steps>
+  <Step title="Add .vscode/mcp.json">
+    This prompts for the key on first use and stores it securely, so nothing secret is written to the file:
+
+    ```json .vscode/mcp.json
+    {
+      "servers": {
+        "webhook": {
+          "type": "http",
+          "url": "https://mcp.webhook.co/mcp",
+          "headers": {
+            "Authorization": "Bearer ${input:webhook-key}"
+          }
+        }
+      },
+      "inputs": [
+        {
+          "id": "webhook-key",
+          "type": "promptString",
+          "description": "webhook.co API key",
+          "password": true
+        }
+      ]
+    }
+    ```
+
+  </Step>
+  <Step title="Or add from the CLI">
+    ```bash
+    code --add-mcp "{\"name\":\"webhook\",\"type\":\"http\",\"url\":\"https://mcp.webhook.co/mcp\"}"
+    ```
+  </Step>
+  <Step title="Verify">
+    Run **MCP: List Servers** from the Command Palette and start `webhook`. An install badge/deeplink uses the form `https://vscode.dev/redirect/mcp/install?{url-encoded-json}`.
+  </Step>
+</Steps>
+
+## Windsurf
+
+Windsurf's Cascade speaks streamable HTTP. Its config uses the `serverUrl` key (not `url`).
+
+<Steps>
+  <Step title="Edit the config">
+    ```json ~/.codeium/windsurf/mcp_config.json
+    {
+      "mcpServers": {
+        "webhook": {
+          "serverUrl": "https://mcp.webhook.co/mcp",
+          "headers": {
+            "Authorization": "Bearer ${env:WEBHOOK_API_KEY}"
+          }
+        }
+      }
+    }
+    ```
+
+    Set `WEBHOOK_API_KEY` in your environment.
+
+  </Step>
+  <Step title="Verify">
+    In Cascade, open the **MCP** panel and click **Refresh**. `webhook` and its tools should appear.
+  </Step>
+</Steps>
+
+## Other clients
+
+Any client that supports remote streamable HTTP can connect to `https://mcp.webhook.co/mcp` with an `Authorization: Bearer whk_your_key_here` header. Key names differ:
+
+- **Cline** — add a server with transport `streamableHttp` and the URL plus an `Authorization` header.
+- **Goose** — type `streamable_http` in `~/.config/goose/config.yaml`, URL `https://mcp.webhook.co/mcp`, with the bearer header under the server's headers.
+- **Zed** — add under `context_servers` in settings with the HTTP URL and header.
+- **JetBrains AI Assistant** — **Settings → Tools → MCP**, add an HTTP server pointing at the URL with the `Authorization` header.
+- **Warp** — **Settings → Agents → MCP**, add the URL with the bearer header.
+- **Continue** — transport `streamable-http`, URL `https://mcp.webhook.co/mcp`, key under `requestOptions.headers`.
+
+### The mcp-remote bridge
+
+For any client that only speaks stdio, bridge to the remote server with `mcp-remote`:
+
+```bash
+npx -y mcp-remote https://mcp.webhook.co/mcp \
+  --header "Authorization: Bearer whk_your_key_here"
+```
+
+<Warning>
+  **Space-in-argument gotcha.** Many stdio clients split each `args` entry on spaces, which mangles `Authorization: Bearer …`. Put the value in `env` and reference it with no space in the arg:
+
+```json
+{
+  "command": "npx",
+  "args": [
+    "-y",
+    "mcp-remote",
+    "https://mcp.webhook.co/mcp",
+    "--header",
+    "Authorization:${AUTH_HEADER}"
+  ],
+  "env": {
+    "AUTH_HEADER": "Bearer whk_your_key_here"
   }
 }
 ```
 
-</CodeGroup>
+Omit `--header` entirely to have `mcp-remote` run the OAuth flow instead.
 
-With a `whk_` key, put it in the `Authorization` header as above. With OAuth, point the client at the URL and let it run the authorization flow — webhook.co is a standard OAuth resource server, so a client that speaks MCP OAuth will discover and complete it on its own.
+</Warning>
 
-Keys are secrets. Load them from your environment or your client's secret store rather than committing a config with the value inline.
+## Verify the connection
 
-## Verify
+Once connected, confirm the tools loaded — you should see the `triggers.*` and `endpoints.*` tools appear:
 
-Once connected, the client lists the tool catalog — the 21 tools from the [overview](/mcp/overview), grouped across endpoints, events, triggers, deliveries, audit, and usage. If the list is empty, the bearer is missing or wrong; the server rejects an unauthenticated session before any tool is offered.
+- **Claude Code / Codex** — run `/mcp` (or `claude mcp list` / `codex mcp list`); `webhook` reports connected.
+- **Cursor / Windsurf** — open the MCP panel; look for a green dot and the tool list.
+- **VS Code** — **MCP: List Servers → Start**, then check the tools.
+- **Claude Desktop / ChatGPT** — the connector shows as active; the tools are offered in a new chat.
 
-<Card title="What each tool does" icon="plug" href="/mcp/overview">
-  The full catalog, scopes, and the capabilities held back from MCP.
-</Card>
+A quick smoke test from any client: ask it to list your endpoints. If the `endpoints.*` tools resolve, auth and transport are both working.
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Tools don't show up after adding the server">
+    Confirm the transport is **http** (streamable HTTP), not stdio, and that the URL is exactly `https://mcp.webhook.co/mcp`. Restart the client (Claude Desktop and some editors only load MCP servers at startup). Then re-run the verify step for your client — `/mcp`, **List Servers**, or the MCP panel — and check for an error next to `webhook`.
+  </Accordion>
+  <Accordion title='The client says "needs login" or auth failed'>
+    Your OAuth session or token expired, or the header is wrong. For OAuth clients, trigger a fresh sign-in (`claude mcp login webhook`, `/mcp`, or the client's reconnect button). For token clients, verify the header is `Authorization: Bearer whk_your_key_here` and that `WEBHOOK_API_KEY` is actually exported in the environment the client sees. [Mint a new key](/authentication) if in doubt.
+  </Accordion>
+  <Accordion title="Reset the OAuth cache (mcp-remote)">
+    `mcp-remote` caches tokens under `~/.mcp-auth`. If auth is stuck in a bad state, clear it and reconnect:
+
+    ```bash
+    rm -rf ~/.mcp-auth
+    ```
+
+    The next connection re-runs the OAuth flow.
+
+  </Accordion>
+  <Accordion title="Streamable HTTP vs SSE">
+    webhook.co serves **streamable HTTP** at `https://mcp.webhook.co/mcp`. If your client asks you to pick a remote transport, choose streamable HTTP (sometimes labeled "HTTP"), not the older SSE transport. Point it at the same `/mcp` URL.
+  </Accordion>
+  <Accordion title="My client only speaks stdio">
+    Use the [`mcp-remote` bridge](#the-mcp-remote-bridge) — it presents the remote server to the client as a local stdio server. Remember the space-in-argument gotcha: pass the header value via `env`.
+  </Accordion>
+  <Accordion title="Claude Desktop or ChatGPT can't reach my endpoint">
+    Both connect from the vendor's cloud, so they can only reach a **publicly reachable** server. `https://mcp.webhook.co/mcp` is public, so it works — but a `localhost` or private-network MCP server will not connect from these clients. Local-only setups need a local client (Claude Code, Cursor, VS Code) or a public tunnel.
+  </Accordion>
+</AccordionGroup>
