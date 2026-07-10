@@ -5,7 +5,12 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
-import { processStripeEvent, type StripeEvent } from "./stripe-webhook.js";
+import {
+  makeTailFlushRunner,
+  processStripeEvent,
+  type StripeEvent,
+  type TailFlushRunner,
+} from "./stripe-webhook.js";
 
 // The processStripeEvent orchestration (seen-check → APPLY → record-dedup) against a REAL Postgres with the
 // real appliers under RLS as webhook_billing. Proves the correctness-critical contract: a fresh event
@@ -65,6 +70,8 @@ beforeAll(async () => {
 
 afterEach(async () => {
   await admin`delete from processed_stripe_events`;
+  await admin`delete from stripe_meter_reports`;
+  await admin`delete from usage`;
   await admin`delete from org_limits`;
   await admin`delete from billing_subscriptions`;
   await admin`delete from billing_customers`;
@@ -150,5 +157,120 @@ describe("processStripeEvent (integration)", () => {
     const [sub] = await admin<{ status: string }[]>`
       select status from billing_subscriptions where org_id = ${org}`;
     expect(sub.status).toBe("active");
+  });
+});
+
+// The WS3 tail-flush dedup handshake, against a REAL ledger. The money-safety contract: invoice.created is
+// recorded (deduped) ONLY when the flush is fully handled; a DARK (unprovisioned) or RESIDUAL (send-failed)
+// flush returns "rejected" — ACK 200 but NO ledger row — so a later manual Stripe replay reprocesses and
+// lands the tail instead of losing it forever (Stripe never redelivers a 200'd event).
+describe("MONEY-SAFETY: invoice.created tail-flush dedup ledger (WS3)", () => {
+  function invObject(orgId: string): Record<string, unknown> {
+    return {
+      id: "in_" + orgId.slice(0, 6),
+      subscription: "sub_" + orgId.slice(0, 6),
+      billing_reason: "subscription_cycle",
+      period_start: Math.floor(Date.UTC(2026, 6, 1) / 1000),
+      period_end: Math.floor(Date.UTC(2026, 7, 1) / 1000),
+      subscription_details: { metadata: { org_id: orgId } },
+    };
+  }
+  function mkRunner(handled: boolean): { runner: TailFlushRunner; calls: () => number } {
+    let calls = 0;
+    return {
+      runner: {
+        async onInvoiceCreated() {
+          calls += 1;
+          return handled;
+        },
+      },
+      calls: () => calls,
+    };
+  }
+
+  it("a fully-handled flush → 'applied' + one ledger row; a replay does NOT re-run the flush", async () => {
+    const org = await seedOrg();
+    const ok = mkRunner(true);
+    const e = ev("invoice.created", invObject(org));
+    expect(await processStripeEvent(billing, e, ok.runner)).toBe("applied");
+    expect(await ledgerCount(e.id)).toBe(1);
+    expect(ok.calls()).toBe(1);
+    // Redelivery of the same event id short-circuits BEFORE the flush (dedup) — the tail isn't billed twice.
+    expect(await processStripeEvent(billing, e, ok.runner)).toBe("replay");
+    expect(await ledgerCount(e.id)).toBe(1);
+    expect(ok.calls()).toBe(1);
+  });
+
+  it("a RESIDUAL flush (returns false) → 'rejected', NOT deduped, reprocessable once it clears", async () => {
+    const org = await seedOrg();
+    const e = ev("invoice.created", invObject(org));
+    expect(await processStripeEvent(billing, e, mkRunner(false).runner)).toBe("rejected");
+    expect(await ledgerCount(e.id)).toBe(0); // replayable — a transient send failure never loses the tail
+    // Once the condition clears, a replay of the SAME event applies + records exactly once.
+    const ok = mkRunner(true);
+    expect(await processStripeEvent(billing, e, ok.runner)).toBe("applied");
+    expect(await ledgerCount(e.id)).toBe(1);
+    expect(ok.calls()).toBe(1);
+  });
+
+  it("a DARK flush (unprovisioned) → 'rejected', NOT deduped — replayable once provisioned", async () => {
+    const e = ev("invoice.created", invObject(await seedOrg()));
+    expect(await processStripeEvent(billing, e)).toBe("rejected"); // no runner wired
+    expect(await ledgerCount(e.id)).toBe(0);
+  });
+
+  // Exercise the REAL makeTailFlushRunner → flushOrgTail bridge end-to-end (not a mock runner): it opens its
+  // own webhook_app connection, finalizes + drains, and maps the result to the dedup boolean.
+  async function seedFinalizedTailDay(orgId: string): Promise<void> {
+    // billing_subscriptions is webhook_billing's table (webhook_app has no INSERT) → seed as superuser.
+    await admin`insert into billing_subscriptions
+      (org_id, stripe_subscription_id, plan, status, current_period_start, current_period_end, created_at)
+      values (${orgId}, ${"sub_" + orgId.slice(0, 6)}, 'pro', 'active',
+              ${"2026-07-01T00:00:00Z"}, ${"2026-08-01T00:00:00Z"}, ${"2026-07-01T00:00:00Z"})`;
+    // usage is webhook_app's — seed under RLS as the tenant.
+    await withTenant(
+      app,
+      orgId,
+      (tx) => tx`insert into usage (org_id, window_start, event_count, finalized_at)
+             values (${orgId}, ${"2026-07-05T00:00:00Z"}, 12, now())`,
+    );
+  }
+  const invoice = (orgId: string): Record<string, unknown> => ({
+    subscription: "sub_" + orgId.slice(0, 6),
+    billing_reason: "subscription_cycle",
+    period_start: Math.floor(Date.UTC(2026, 6, 1) / 1000),
+    period_end: Math.floor(Date.UTC(2026, 6, 10) / 1000), // boundary 07-10 → 07-05 is a complete tail day
+    subscription_details: { metadata: { org_id: orgId } },
+  });
+  function realRunner(calls: unknown[]): TailFlushRunner {
+    return makeTailFlushRunner({
+      tenantConnectionString: pg.urlFor({ role: DB_ROLES.app }),
+      stripe: {
+        async reportMeterEvent(a) {
+          calls.push(a);
+          return { identifier: a.identifier };
+        },
+      },
+      eventName: "webhook_events",
+    });
+  }
+
+  it("bridge: returns TRUE + drains the tail once the org has a Stripe customer (happy path)", async () => {
+    const org = await seedOrg();
+    await admin`insert into billing_customers (org_id, stripe_customer_id) values (${org}, ${"cus_ok"})`;
+    await seedFinalizedTailDay(org);
+    const calls: unknown[] = [];
+    expect(await realRunner(calls).onInvoiceCreated(invoice(org))).toBe(true);
+    expect(calls).toEqual([
+      expect.objectContaining({ customer: "cus_ok", value: 12, identifier: `${org}:2026-07-05` }),
+    ]);
+  });
+
+  it("bridge: returns FALSE (replayable) when the org has no Stripe customer yet — never drains", async () => {
+    const org = await seedOrg(); // subscription + finalized usage, but NO billing_customers row
+    await seedFinalizedTailDay(org);
+    const calls: unknown[] = [];
+    expect(await realRunner(calls).onInvoiceCreated(invoice(org))).toBe(false);
+    expect(calls).toEqual([]); // skippedNoCustomer → nothing sent, and the event stays replayable
   });
 });

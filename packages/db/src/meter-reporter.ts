@@ -87,6 +87,120 @@ export function meterEventTimestampSeconds(dayIso: string): number {
   return Math.floor(Date.parse(`${dayIso}T00:00:00Z`) / 1000);
 }
 
+/** The per-org slice of {@link MeterReporterDeps} — everything the produce+drain needs WITHOUT the cross-org
+ *  `meter` enumeration. The reporter cron builds this from its own deps; the S4.5 tail-flush reuses it so the
+ *  two paths talk to Stripe through the byte-identical claim → report → finalize state machine. */
+export interface OrgMeterDeps {
+  /** webhook_app connection — per-org read (usage/customer) + outbox write, under RLS. */
+  readonly app: Sql;
+  /** The Stripe meter send seam (BILLING_MODE gating is the caller's — this client is mode-agnostic). */
+  readonly stripe: MeterReportSink;
+  /** The Stripe Billing Meter's event_name (config). */
+  readonly eventName: string;
+  /** Optional structured logger; only non-PII fields (org id, day, counts) are passed. */
+  readonly log?: (message: string, fields?: Record<string, unknown>) => void;
+}
+
+/** The produce+drain outcome for ONE org (the per-org contribution to a {@link MeterReporterResult}). */
+export interface OrgMeterOutcome {
+  readonly produced: number;
+  readonly sent: number;
+  readonly failed: number;
+  /** 1 if the org had unsent rows but no Stripe customer link yet (drain skipped), else 0. */
+  readonly skippedNoCustomer: number;
+}
+
+/**
+ * Produce outbox rows from ONE org's FINALIZED usage (never a day before `floorDay` = the subscription day)
+ * and drain them to Stripe. Extracted from {@link runMeterReporter} so the tail-flush can reuse the EXACT
+ * idempotent state machine (identifier `{org}:{day}` = Stripe dedup key + HTTP Idempotency-Key). May throw on
+ * a Phase-1 DB fault; the caller decides whether that's fatal (the cron logs+continues, the flush best-efforts).
+ */
+export async function reportOrgMeter(
+  deps: OrgMeterDeps,
+  orgId: string,
+  floorDay: string,
+): Promise<OrgMeterOutcome> {
+  // Phase 1 (one tenant tx, NO network): produce pending rows from finalized usage, read the customer, and
+  // collect the unsent days to drain.
+  const phase1 = await withTenant(deps.app, orgId, async (tx) => {
+    // Pin UTC: `window_start::date` is session-TimeZone-dependent, so a non-UTC connection would render a
+    // UTC-midnight window as the PREVIOUS day — mis-stamping the identifier + meter timestamp a day early
+    // (into an already-finalized Stripe period → dropped). Every sibling path (rollup/reconcile/flush
+    // finalize) pins UTC; the drain must too, or a flush's finalize (UTC) and produce (unpinned) disagree.
+    await tx`set local time zone 'UTC'`;
+    const producedRows = await tx<{ day: string }[]>`
+      insert into stripe_meter_reports (org_id, day, event_count, identifier)
+      select u.org_id, u.window_start::date, u.event_count,
+             u.org_id::text || ':' || (u.window_start::date)::text
+      from usage u
+      where u.finalized_at is not null
+        and u.event_count > 0
+        and u.window_start::date >= ${floorDay}::date
+        and not exists (
+          select 1 from stripe_meter_reports r
+          where r.org_id = u.org_id and r.day = u.window_start::date)
+      on conflict (org_id, day) do nothing
+      returning day::text as day`;
+    const customer = await readBillingCustomerId(tx);
+    const unsent = await tx<{ day: string; event_count: string; identifier: string }[]>`
+      select day::text as day, event_count::text as event_count, identifier
+      from stripe_meter_reports where status <> 'sent' order by day`;
+    return { customer, unsent, newlyProduced: producedRows.length };
+  });
+
+  if (phase1.unsent.length === 0) {
+    return { produced: phase1.newlyProduced, sent: 0, failed: 0, skippedNoCustomer: 0 };
+  }
+  if (!phase1.customer) {
+    // A subscription exists but the customer link hasn't been recorded yet (the inbound webhook is
+    // eventually consistent). Leave the rows pending; a later pass drains them once the link lands.
+    deps.log?.("metering.report.no_customer", { orgId });
+    return { produced: phase1.newlyProduced, sent: 0, failed: 0, skippedNoCustomer: 1 };
+  }
+  const customer = phase1.customer;
+
+  // Phase 2 (per day, OUTSIDE the tenant tx): claim → report to Stripe → finalize.
+  let sent = 0;
+  let failed = 0;
+  for (const row of phase1.unsent) {
+    const claimed = await withTenant(
+      deps.app,
+      orgId,
+      (tx) => tx<{ day: string }[]>`
+        update stripe_meter_reports set status = 'sending', attempts = attempts + 1, updated_at = now()
+        where org_id = ${orgId} and day = ${row.day} and status <> 'sent'
+        returning day`,
+    );
+    if (claimed.length === 0) continue; // a concurrent pass already sent it
+    try {
+      const ack = await deps.stripe.reportMeterEvent({
+        eventName: deps.eventName,
+        customer,
+        value: Number(row.event_count),
+        identifier: row.identifier,
+        timestamp: meterEventTimestampSeconds(row.day),
+      });
+      await withTenant(
+        deps.app,
+        orgId,
+        (tx) => tx`
+          update stripe_meter_reports
+          set status = 'sent', stripe_meter_event_id = ${ack.identifier ?? row.identifier},
+              sent_at = now(), updated_at = now()
+          where org_id = ${orgId} and day = ${row.day}`,
+      );
+      sent += 1;
+    } catch (err) {
+      // Retryable: the row stays 'sending' (attempt counted). Next pass resends the SAME identifier;
+      // Stripe dedups within its window, so a partially-landed report is never double-billed (F5).
+      failed += 1;
+      deps.log?.("metering.report.send_failed", { orgId, day: row.day, ...safeErr(err) });
+    }
+  }
+  return { produced: phase1.newlyProduced, sent, failed, skippedNoCustomer: 0 };
+}
+
 export async function runMeterReporter(deps: MeterReporterDeps): Promise<MeterReporterResult> {
   // Enumerate PAYING orgs (a non-canceled subscription). random() ordering gives every candidate an equal
   // per-pass chance (no fixed-order tail starvation); at current scale the set is far below `limit`.
@@ -106,6 +220,13 @@ export async function runMeterReporter(deps: MeterReporterDeps): Promise<MeterRe
     limit ${deps.limit}`;
   const capped = rows.length >= deps.limit;
 
+  const orgDeps: OrgMeterDeps = {
+    app: deps.app,
+    stripe: deps.stripe,
+    eventName: deps.eventName,
+    log: deps.log,
+  };
+
   let produced = 0;
   let sent = 0;
   let failed = 0;
@@ -115,77 +236,13 @@ export async function runMeterReporter(deps: MeterReporterDeps): Promise<MeterRe
     // The meter FLOOR: never bill a day before the org subscribed (pre-subscription Free usage).
     const floorDay = created_at.slice(0, 10);
     try {
-      // Phase 1 (one tenant tx, NO network): produce pending rows from finalized usage, read the customer,
-      // and collect the unsent days to drain.
-      const phase1 = await withTenant(deps.app, orgId, async (tx) => {
-        const producedRows = await tx<{ day: string }[]>`
-          insert into stripe_meter_reports (org_id, day, event_count, identifier)
-          select u.org_id, u.window_start::date, u.event_count,
-                 u.org_id::text || ':' || (u.window_start::date)::text
-          from usage u
-          where u.finalized_at is not null
-            and u.event_count > 0
-            and u.window_start::date >= ${floorDay}::date
-            and not exists (
-              select 1 from stripe_meter_reports r
-              where r.org_id = u.org_id and r.day = u.window_start::date)
-          on conflict (org_id, day) do nothing
-          returning day::text as day`;
-        const customer = await readBillingCustomerId(tx);
-        const unsent = await tx<{ day: string; event_count: string; identifier: string }[]>`
-          select day::text as day, event_count::text as event_count, identifier
-          from stripe_meter_reports where status <> 'sent' order by day`;
-        return { customer, unsent, newlyProduced: producedRows.length };
-      });
-      produced += phase1.newlyProduced;
-
-      if (phase1.unsent.length === 0) continue;
-      if (!phase1.customer) {
-        // A subscription exists but the customer link hasn't been recorded yet (the inbound webhook is
-        // eventually consistent). Leave the rows pending; a later pass drains them once the link lands.
-        skippedNoCustomer += 1;
-        deps.log?.("metering.report.no_customer", { orgId });
-        continue;
-      }
-      const customer = phase1.customer;
-
-      // Phase 2 (per day, OUTSIDE the tenant tx): claim → report to Stripe → finalize.
-      for (const row of phase1.unsent) {
-        const claimed = await withTenant(
-          deps.app,
-          orgId,
-          (tx) => tx<{ day: string }[]>`
-            update stripe_meter_reports set status = 'sending', attempts = attempts + 1, updated_at = now()
-            where org_id = ${orgId} and day = ${row.day} and status <> 'sent'
-            returning day`,
-        );
-        if (claimed.length === 0) continue; // a concurrent pass already sent it
-        try {
-          const ack = await deps.stripe.reportMeterEvent({
-            eventName: deps.eventName,
-            customer,
-            value: Number(row.event_count),
-            identifier: row.identifier,
-            timestamp: meterEventTimestampSeconds(row.day),
-          });
-          await withTenant(
-            deps.app,
-            orgId,
-            (tx) => tx`
-              update stripe_meter_reports
-              set status = 'sent', stripe_meter_event_id = ${ack.identifier ?? row.identifier},
-                  sent_at = now(), updated_at = now()
-              where org_id = ${orgId} and day = ${row.day}`,
-          );
-          sent += 1;
-        } catch (err) {
-          // Retryable: the row stays 'sending' (attempt counted). Next pass resends the SAME identifier;
-          // Stripe dedups within its window, so a partially-landed report is never double-billed (F5).
-          failed += 1;
-          deps.log?.("metering.report.send_failed", { orgId, day: row.day, ...safeErr(err) });
-        }
-      }
+      const r = await reportOrgMeter(orgDeps, orgId, floorDay);
+      produced += r.produced;
+      sent += r.sent;
+      failed += r.failed;
+      skippedNoCustomer += r.skippedNoCustomer;
     } catch (err) {
+      // One org's Phase-1 fault must not skip every org after it in the pass; surface + continue.
       deps.log?.("metering.report.org_failed", { orgId, ...safeErr(err) });
     }
   }
