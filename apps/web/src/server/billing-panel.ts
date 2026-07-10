@@ -16,8 +16,15 @@ export function resolveBillingPanel(input: {
   readonly mode: BillingMode;
   readonly plans: StripePlans | null;
   readonly hasCustomer: boolean;
+  /** Whether the configured Stripe secret key belongs to `mode` (see `stripeKeyMatchesMode`). */
+  readonly keyMatchesMode: boolean;
 }): BillingPanel {
   if (input.mode === "off" || !input.plans) return { kind: "hidden" };
+  // A key that belongs to the OTHER mode means every Stripe call will be refused by makeStripeClient. Render
+  // nothing rather than an "Upgrade" button that bounces the user back with an error. This is the transient
+  // state while live secrets are swapped in before BILLING_MODE flips — offering a button that cannot work is
+  // worse than offering none.
+  if (!input.keyMatchesMode) return { kind: "hidden" };
   if (input.hasCustomer) return { kind: "portal" };
   // Ladder order (pro → scale), never the config object's key order: a JSON var is unordered, and the
   // picker must always read as a ladder of increasing volume.
