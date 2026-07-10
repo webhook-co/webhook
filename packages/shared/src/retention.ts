@@ -17,7 +17,9 @@ export const FREE_RETENTION_DAYS = 7;
 /**
  * Retention window per plan tier, in days. `null` = unlimited (never pruned). The keys are tier NAMES
  * (`free`/`pro`/`scale`/`enterprise`), the same intensity vocabulary as {@link SELF_SERVE_PLAN_IDS};
- * `free` is the implicit no-subscription tier.
+ * `free` is the implicit no-subscription tier. These MUST match the public pricing ladder's retention
+ * strings — apps/www/src/components/marketing/pricing-tiers.ts. Enterprise is `null` (never auto-pruned)
+ * because its window is contractual/negotiated; the pricing page states it publicly as "up to 1 year".
  */
 export const PLAN_RETENTION_DAYS: Readonly<Record<string, number | null>> = {
   free: FREE_RETENTION_DAYS,
