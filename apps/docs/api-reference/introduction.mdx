@@ -1,0 +1,67 @@
+---
+title: "API reference"
+sidebarTitle: "Overview"
+description: "The webhook.co REST API — base URL, bearer auth, the response and error envelope, pagination, and where every endpoint connects to the concepts."
+icon: "code"
+---
+
+The webhook.co REST API is a small, predictable surface. Every endpoint on the pages that follow is generated from the same OpenAPI 3.1 document that generates the [SDKs](/sdks/overview) — so the reference, the SDKs, and the running API never drift. Everything you can do in the [dashboard](https://app.webhook.co), the CLI, or over MCP, you can do here.
+
+## Base URL
+
+```
+https://api.webhook.co
+```
+
+All endpoints live under `/v1` and are HTTPS-only. Fetch the spec yourself at [`https://api.webhook.co/openapi.json`](https://api.webhook.co/openapi.json).
+
+## Authentication
+
+Every request carries a `whk_` bearer token in the `Authorization` header:
+
+```sh
+curl https://api.webhook.co/v1/whoami \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+```
+
+Keys are scoped — a request missing a required scope gets `403 FORBIDDEN`. See [authentication](/authentication) for the scope table, `whoami`, and how the CLI signs in over OAuth.
+
+## Responses and errors
+
+A successful call returns `200` with a JSON body. A failure carries a machine-readable `code`, the HTTP `status`, and a `requestId` (echoed in the `x-request-id` header — include it in support reports):
+
+```json
+{ "error": "FORBIDDEN", "message": "the API key is missing a required scope for this action" }
+```
+
+The taxonomy is closed — one `code` per status. See [errors and status codes](/reference/errors) for the full table and the typed error classes the SDKs raise.
+
+## Pagination
+
+List endpoints use opaque **keyset cursors**, not offsets, so paging is stable while new events arrive underneath you. A page carries up to `limit` items (max 200) and a `nextCursor`; a null cursor means the end. See [pagination](/reference/pagination).
+
+## Rate limits
+
+A throttled request returns `429` with a `Retry-After` header, which the SDKs honor automatically with capped exponential backoff. See [rate limits](/reference/rate-limits).
+
+## What you'll work with
+
+<CardGroup cols={2}>
+  <Card title="The event object" icon="cube" href="/reference/the-event-object">
+    The shape of a captured event, and the Standard Webhooks headers webhook.co adds on delivery.
+  </Card>
+
+<Card title="Delivery guarantees" icon="shield-check" href="/reference/delivery-guarantees">
+  Durable-before-ACK capture, at-least-once delivery, ordering, and verified-gated signing.
+</Card>
+
+<Card title="SDKs" icon="code" href="/sdks/overview">
+  Typed clients for TypeScript, Python, and Go — with retries, pagination, and idempotency built in.
+</Card>
+
+  <Card title="Authentication" icon="id-badge" href="/authentication">
+    The `whk_` bearer key, scopes, and signing in from the CLI.
+  </Card>
+</CardGroup>
+
+Usage is metered in a single dimension — events — with no per-call charge for reads. See [events and usage](/events-and-usage).

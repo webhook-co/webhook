@@ -88,17 +88,6 @@
             ]
           },
           {
-            "group": "Reference",
-            "icon": "book-bookmark",
-            "pages": [
-              "reference/the-event-object",
-              "reference/errors",
-              "reference/rate-limits",
-              "reference/pagination",
-              "reference/delivery-guarantees"
-            ]
-          },
-          {
             "group": "Resources",
             "icon": "life-ring",
             "pages": ["troubleshooting", "leaked-api-key"]
@@ -107,7 +96,23 @@
       },
       {
         "tab": "API reference",
-        "openapi": "https://api.webhook.co/openapi.json"
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "api-reference/introduction",
+              "reference/the-event-object",
+              "reference/errors",
+              "reference/rate-limits",
+              "reference/pagination",
+              "reference/delivery-guarantees"
+            ]
+          },
+          {
+            "group": "Endpoints",
+            "openapi": "https://api.webhook.co/openapi.json"
+          }
+        ]
       },
       {
         "tab": "CLI & SDKs",
@@ -156,5 +161,13 @@
   "description": "webhook.co documentation — a free, permanent, signed webhook URL with payload inspection, replay-to-localhost, inbound verification across 142 providers, outbound delivery, and an MCP webhook→agent trigger. Identical across CLI, API, dashboard, and MCP.",
   "contextual": {
     "options": ["copy", "view", "chatgpt", "claude", "cursor"]
+  },
+  "api": {
+    "playground": {
+      "display": "simple"
+    },
+    "examples": {
+      "languages": ["curl", "typescript", "python", "go"]
+    }
   }
 }
