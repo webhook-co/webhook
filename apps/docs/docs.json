@@ -10,8 +10,7 @@
   "favicon": "/favicon.svg",
   "logo": {
     "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg",
-    "href": "https://webhook.co"
+    "dark": "/logo/dark.svg"
   },
   "navigation": {
     "tabs": [
@@ -21,22 +20,6 @@
           {
             "group": "Get started",
             "pages": ["introduction", "quickstart", "authentication"]
-          },
-          {
-            "group": "Guides",
-            "icon": "book-open",
-            "pages": [
-              "guides/receive-your-first-webhook",
-              "guides/verify-inbound-signatures",
-              "guides/manage-provider-secrets",
-              "guides/inspect-search-events",
-              "guides/replay-to-localhost",
-              "guides/replay-past-or-failed-event",
-              "guides/send-to-a-destination",
-              "guides/sign-outbound-webhooks",
-              "guides/handle-delivery-failures",
-              "deduplication"
-            ]
           },
           {
             "group": "Providers",
@@ -70,6 +53,32 @@
             ]
           },
           {
+            "group": "Resources",
+            "icon": "life-ring",
+            "pages": ["troubleshooting", "leaked-api-key"]
+          }
+        ]
+      },
+      {
+        "tab": "Guides",
+        "groups": [
+          {
+            "group": "How-to guides",
+            "icon": "book-open",
+            "pages": [
+              "guides/receive-your-first-webhook",
+              "guides/verify-inbound-signatures",
+              "guides/manage-provider-secrets",
+              "guides/inspect-search-events",
+              "guides/replay-to-localhost",
+              "guides/replay-past-or-failed-event",
+              "guides/send-to-a-destination",
+              "guides/sign-outbound-webhooks",
+              "guides/handle-delivery-failures",
+              "deduplication"
+            ]
+          },
+          {
             "group": "Recipes",
             "icon": "book-sparkles",
             "pages": [
@@ -86,11 +95,6 @@
               "recipes/multi-tenant-ingestion",
               "recipes/alert-on-delivery-failures"
             ]
-          },
-          {
-            "group": "Resources",
-            "icon": "life-ring",
-            "pages": ["troubleshooting", "leaked-api-key"]
           }
         ]
       },
