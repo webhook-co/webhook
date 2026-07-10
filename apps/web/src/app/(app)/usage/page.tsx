@@ -1,24 +1,12 @@
-import { Banner, Button } from "@webhook-co/ui";
+import { Banner } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
-import { loadBillingPanel } from "@/server/billing";
-import type { BillingPanel } from "@/server/billing-panel";
-import { openBillingPortalAction, startCheckoutAction } from "@/server/plan-actions";
 import { loadUsage } from "@/server/usage";
 import { verifySession } from "@/server/session";
 import type { UsageSummary } from "@webhook-co/shared";
 
-/** Plan display names. NO price or included-volume figure lives in this repo — Stripe's hosted Checkout is
- *  the only surface that shows an amount, and the usage card shows the org's own cap from the DB. */
-const PLAN_LABEL: Record<string, string> = { pro: "Pro", scale: "Scale" };
-
-/** What went wrong coming back from a billing action, in the user's words. */
-const BILLING_ERROR: Record<string, string> = {
-  unknown_plan: "That plan isn't available. Pick one below, or contact us about Enterprise.",
-  no_customer: "You don't have a subscription to manage yet.",
-  error: "We couldn't reach our payment provider. Nothing was charged — try again.",
-  disabled: "Billing isn't available right now.",
-};
+// Billing (current plan, upgrade, portal) lives in its own dedicated /billing section now — this page is
+// the usage meter only.
 
 export const metadata: Metadata = {
   title: "Usage · webhook.co",
@@ -33,19 +21,9 @@ const fmtDate = (d: Date): string =>
     timeZone: "UTC",
   });
 
-export default async function UsagePage({
-  searchParams,
-}: {
-  searchParams: Promise<{ billing?: string | string[] }>;
-}) {
+export default async function UsagePage() {
   const session = await verifySession();
-  const [result, panel, sp] = await Promise.all([
-    loadUsage(session.orgId),
-    loadBillingPanel(session.orgId),
-    searchParams,
-  ]);
-  const flag = Array.isArray(sp.billing) ? sp.billing[0] : sp.billing;
-  const billingError = flag && flag !== "ok" ? (BILLING_ERROR[flag] ?? BILLING_ERROR.error) : null;
+  const result = await loadUsage(session.orgId);
 
   return (
     <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
@@ -60,72 +38,16 @@ export default async function UsagePage({
         </p>
       </div>
 
-      {billingError && <Banner tone="danger">{billingError}</Banner>}
-
       {result.status === "error" ? (
         <Banner tone="danger">We couldn&apos;t load your usage. Refresh to try again.</Banner>
       ) : (
         <UsageCard usage={result.usage} />
       )}
-
-      <BillingPanelSection panel={panel} />
     </div>
   );
 }
 
-/** Checkout / Portal entry points. Renders nothing at all when billing is off or unconfigured. */
-function BillingPanelSection({ panel }: { panel: BillingPanel }) {
-  if (panel.kind === "hidden") return null;
-
-  if (panel.kind === "portal") {
-    return (
-      <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
-        <h2 className="text-lg font-semibold tracking-heading text-fg">Billing</h2>
-        <p className="text-sm text-fg-secondary">
-          Update your payment method, see invoices, or cancel. Cancelling returns you to the free
-          tier — and because the free allowance is one-time, capture pauses until you resubscribe.
-        </p>
-        <form action={openBillingPortalAction}>
-          <Button type="submit" variant="secondary">
-            Manage billing
-          </Button>
-        </form>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-4 rounded-card border border-hairline bg-surface p-6">
-      <div className="flex flex-col gap-1">
-        <h2 className="text-lg font-semibold tracking-heading text-fg">Upgrade</h2>
-        <p className="text-sm text-fg-secondary">
-          Every feature is on every plan — including outbound delivery. Plans differ only by
-          included events. You&apos;ll see the price before you pay.
-        </p>
-      </div>
-
-      <div className="flex flex-wrap gap-3">
-        {panel.planIds.map((planId) => (
-          <form key={planId} action={startCheckoutAction}>
-            <input type="hidden" name="planId" value={planId} />
-            <Button type="submit" variant={planId === "pro" ? "primary" : "secondary"}>
-              Upgrade to {PLAN_LABEL[planId] ?? planId}
-            </Button>
-          </form>
-        ))}
-      </div>
-
-      <p className="text-sm text-fg-secondary">
-        Need more than Scale, SSO, or a BAA?{" "}
-        <a className="text-fg underline underline-offset-2" href="mailto:sales@webhook.co">
-          Talk to us about Enterprise
-        </a>
-        .
-      </p>
-    </div>
-  );
-}
-
+/** The usage meter: events used vs the org's cap, the pause state, and the billable-unit disclosure. */
 function UsageCard({ usage }: { usage: UsageSummary }) {
   const { events, eventCap, pausePolicy, paused, periodStart, periodEnd, capKind } = usage;
   // The Free tier's ONE-TIME allowance: no periodEnd, never resets — so we must not offer a reset date

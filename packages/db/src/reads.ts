@@ -729,3 +729,33 @@ export async function readBillingCustomerId(tx: TenantTx): Promise<string | null
     select stripe_customer_id from billing_customers limit 1`;
   return row?.stripe_customer_id ?? null;
 }
+
+/** The org's synced subscription mirror (plan base-price id, raw Stripe status, period end, cancel intent),
+ *  or null if the org has no subscription. Runs under tenant RLS (webhook_app has SELECT on
+ *  billing_subscriptions scoped to the org). Read-only; the dashboard maps this to a display state via the
+ *  shared `billingDisplayFromSubscription`. `current_period_end` is rendered `::text` for a stable ISO. */
+export async function readBillingSummary(tx: TenantTx): Promise<{
+  plan: string;
+  status: string;
+  currentPeriodEnd: string;
+  cancelAtPeriodEnd: boolean;
+} | null> {
+  const [row] = await tx<
+    {
+      plan: string;
+      status: string;
+      current_period_end: string;
+      cancel_at_period_end: boolean;
+    }[]
+  >`
+    select plan, status, current_period_end::text as current_period_end, cancel_at_period_end
+    from billing_subscriptions limit 1`;
+  return row
+    ? {
+        plan: row.plan,
+        status: row.status,
+        currentPeriodEnd: row.current_period_end,
+        cancelAtPeriodEnd: row.cancel_at_period_end,
+      }
+    : null;
+}
