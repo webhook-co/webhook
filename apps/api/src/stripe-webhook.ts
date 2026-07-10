@@ -9,13 +9,23 @@ import {
   applySubscriptionDeleted,
   applySubscriptionUpsert,
   createClient,
+  flushOrgTail,
+  type MeterReportSink,
   parseCheckoutSession,
   parseSubscriptionObject,
   recordStripeEventOnce,
   resolveOrgId,
+  safeErr,
   type Sql,
 } from "@webhook-co/db";
-import { billingEnabled, parseBillingMode, readSecretBinding } from "@webhook-co/shared";
+import {
+  billingEnabled,
+  makeStripeClient,
+  parseBillingMode,
+  readSecretBinding,
+  stripeKeyMatchesMode,
+  USAGE_SETTLE_DAYS,
+} from "@webhook-co/shared";
 import { getAdapterForScheme } from "@webhook-co/webhooks-spec";
 
 /** Generous cap on a Stripe event body — they are small; anything larger is rejected before parse. */
@@ -33,6 +43,13 @@ export interface StripeWebhookEnv {
   readonly STRIPE_WEBHOOK_SIGNING_SECRET?: SecretsStoreSecret;
   /** webhook_billing Hyperdrive (caching off) for the dedup ledger write. Present only once provisioned. */
   readonly HYPERDRIVE_BILLING?: Hyperdrive;
+  /** The Stripe SECRET key (sk_…) — needed by the tail-flush to REPORT meter usage outbound (not just verify
+   *  inbound). A Secrets Store binding; present only once the flush is provisioned. Dark without it. */
+  readonly STRIPE_SECRET_KEY?: SecretsStoreSecret;
+  /** The Stripe Billing Meter event_name (config) the tail-flush reports against. */
+  readonly STRIPE_METER_EVENT_NAME?: string;
+  /** webhook_app Hyperdrive — the tail-flush finalizes usage + drains the outbox per-org under RLS here. */
+  readonly HYPERDRIVE_TENANT?: Hyperdrive;
 }
 
 /** A minimally-validated Stripe event envelope (only the fields the receiver + handlers rely on). */
@@ -152,6 +169,113 @@ function outcomeToErrorResponse(outcome: Exclude<StripeReceiveOutcome, { kind: "
  * idempotent + watermark-guarded, so a re-apply is safe and no event is ever silently lost. `inject` is a
  * test seam; in prod the work runs on the webhook_billing Hyperdrive (503 if that isn't provisioned yet).
  */
+/** What the tail-flush needs from a signature-verified `invoice.created`, or null if this invoice isn't a
+ *  subscription cycle we flush. org_id rides `subscription_details.metadata` (the signed value we set on the
+ *  subscription at Checkout; `lines[0].metadata` is the fallback) — the event is already verified, so it is
+ *  trusted, exactly like the subscription appliers. The floor is utcDay(period_start), scoping the produce to
+ *  THIS period's tail (never re-touching a prior period, and no DB read for the subscription's created_at). */
+export interface InvoiceFlushTarget {
+  readonly orgId: string;
+  readonly floorDay: string;
+  readonly periodEndMs: number;
+}
+
+export function parseInvoiceForFlush(invoice: Record<string, unknown>): InvoiceFlushTarget | null {
+  const subMeta = (
+    invoice.subscription_details as { metadata?: Record<string, unknown> } | undefined
+  )?.metadata;
+  const lineMeta = (
+    invoice.lines as { data?: Array<{ metadata?: Record<string, unknown> }> } | undefined
+  )?.data?.[0]?.metadata;
+  const fromSub = typeof subMeta?.org_id === "string" ? subMeta.org_id : "";
+  const fromLine = typeof lineMeta?.org_id === "string" ? lineMeta.org_id : "";
+  const orgId = fromSub || fromLine;
+  const { subscription, period_start: periodStart, period_end: periodEnd } = invoice;
+  // Require a real subscription cycle with a positive span. The 0-length first invoice
+  // (subscription_create) and any non-subscription invoice → null (nothing to flush; a harmless no-op).
+  if (
+    !orgId ||
+    typeof subscription !== "string" ||
+    typeof periodStart !== "number" ||
+    typeof periodEnd !== "number" ||
+    periodEnd <= periodStart
+  ) {
+    return null;
+  }
+  return {
+    orgId,
+    floorDay: new Date(periodStart * 1000).toISOString().slice(0, 10),
+    periodEndMs: periodEnd * 1000,
+  };
+}
+
+/** Runs the tail-flush for a verified `invoice.created`. BEST-EFFORT: opens a per-event webhook_app
+ *  connection, flushes, and NEVER throws to the caller — a flush fault must not 500 the webhook (Stripe's
+ *  redelivery can land past the short draft grace, and the WS1 transport reconciler already alarms on any
+ *  residual). Built only when the flush is fully configured + mode-matched; otherwise the branch is dark. */
+export interface TailFlushRunner {
+  onInvoiceCreated(invoice: Record<string, unknown>): Promise<void>;
+}
+
+export function makeTailFlushRunner(cfg: {
+  readonly tenantConnectionString: string;
+  readonly stripe: MeterReportSink;
+  readonly eventName: string;
+  readonly log?: (message: string, fields?: Record<string, unknown>) => void;
+}): TailFlushRunner {
+  return {
+    async onInvoiceCreated(invoice) {
+      const target = parseInvoiceForFlush(invoice);
+      if (!target) return;
+      const app = createClient(cfg.tenantConnectionString, { max: 1 });
+      try {
+        await flushOrgTail(
+          { app, stripe: cfg.stripe, eventName: cfg.eventName, log: cfg.log },
+          {
+            orgId: target.orgId,
+            floorDay: target.floorDay,
+            periodEndMs: target.periodEndMs,
+            settleDays: USAGE_SETTLE_DAYS,
+          },
+        );
+      } catch (err) {
+        cfg.log?.("metering.tail_flush.error", { orgId: target.orgId, ...safeErr(err) });
+      } finally {
+        await app.end();
+      }
+    },
+  };
+}
+
+/**
+ * Build the tail-flush runner from the Worker env, or `undefined` (dark) if it isn't fully configured. The
+ * flush is a DISTINCT capability from inbound verification: it REPORTS meter usage outbound, so it needs the
+ * Stripe SECRET key + the meter event_name + a webhook_app (HYPERDRIVE_TENANT) connection — none required to
+ * merely verify + sync subscriptions. Fail-closed + mode-bound: a key/mode mismatch (a live key under
+ * BILLING_MODE=test, or vice-versa) returns `undefined` rather than building a client that could report to
+ * the wrong account, mirroring makeStripeClient's own guard without throwing inside the webhook.
+ */
+async function buildTailFlushRunner(
+  env: StripeWebhookEnv,
+  mode: ReturnType<typeof parseBillingMode>,
+): Promise<TailFlushRunner | undefined> {
+  const eventName = env.STRIPE_METER_EVENT_NAME?.trim();
+  const secretKey = env.STRIPE_SECRET_KEY ? await readSecretBinding(env.STRIPE_SECRET_KEY) : null;
+  if (!eventName || !secretKey || secretKey.length === 0 || !env.HYPERDRIVE_TENANT)
+    return undefined;
+  if (!stripeKeyMatchesMode(mode, secretKey)) {
+    console.log(JSON.stringify({ message: "metering.tail_flush.key_mode_mismatch", mode }));
+    return undefined;
+  }
+  const stripe = makeStripeClient({ mode, secretKey });
+  return makeTailFlushRunner({
+    tenantConnectionString: env.HYPERDRIVE_TENANT.connectionString,
+    stripe,
+    eventName,
+    log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+  });
+}
+
 /** Test seam: a fake processor so the handler's gating + status mapping is unit-testable without a DB. */
 export interface StripeWebhookTestDeps {
   readonly process: (event: StripeEvent) => Promise<"applied" | "replay">;
@@ -197,8 +321,9 @@ export async function handleStripeWebhook(
   }
   if (!env.HYPERDRIVE_BILLING) return text(503, "not configured"); // can't process → fail closed
   const billing = createClient(env.HYPERDRIVE_BILLING.connectionString, { max: 1 });
+  const flush = await buildTailFlushRunner(env, mode);
   try {
-    await processStripeEvent(billing, event);
+    await processStripeEvent(billing, event, flush);
     return text(200, "ok");
   } catch (err) {
     // Nothing was durably marked processed (dedup is recorded only AFTER a successful apply), so a 500 lets
@@ -225,11 +350,12 @@ export async function handleStripeWebhook(
 export async function processStripeEvent(
   billing: Sql,
   event: StripeEvent,
+  flush?: TailFlushRunner,
 ): Promise<"applied" | "replay" | "rejected"> {
   const [seen] = await billing<{ x: number }[]>`
     select 1 as x from processed_stripe_events where event_id = ${event.id}`;
   if (seen) return "replay"; // already fully processed
-  const outcome = await applyStripeEvent(billing, event);
+  const outcome = await applyStripeEvent(billing, event, flush);
   // Record the dedup marker ONLY for an applied event. A "rejected" event (a customer/org identity mismatch)
   // is deliberately NOT recorded: it is ACKed 200 (no Stripe retry-storm for a condition retries can't fix)
   // but left out of the ledger so that, if the reject was a data anomaly we later correct, a manual Stripe
@@ -251,6 +377,7 @@ export async function processStripeEvent(
 export async function applyStripeEvent(
   billing: Sql,
   event: StripeEvent,
+  flush?: TailFlushRunner,
 ): Promise<"applied" | "rejected"> {
   const obj = event.data.object;
   switch (event.type) {
@@ -277,6 +404,14 @@ export async function applyStripeEvent(
     case "customer.subscription.deleted": {
       const orgId = resolveOrgId(obj);
       if (orgId) await applySubscriptionDeleted(billing, { orgId, eventCreated: event.created });
+      return "applied";
+    }
+    case "invoice.created": {
+      // A period is closing: FLUSH the org's complete tail days to Stripe while THIS invoice is still a
+      // draft (WS2 proved usage reported before finalization lands on the invoice, and usage reported after
+      // is dropped). Best-effort + idempotent — `flush` is undefined when the flush isn't provisioned (dark),
+      // and the runner never throws, so it never blocks the ACK. The dedup ledger records this event once.
+      if (flush) await flush.onInvoiceCreated(obj);
       return "applied";
     }
     default:
