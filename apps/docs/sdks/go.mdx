@@ -1,5 +1,5 @@
 ---
-title: Go SDK
+title: "Go SDK"
 description: "github.com/webhook-co/webhook-go — the official Go SDK."
 ---
 
@@ -34,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(ep.IngestUrl) // returned once — capture it now
+	fmt.Println(ep.IngestUrl) // the endpoint's signed ingest URL
 }
 ```
 
@@ -72,14 +72,11 @@ case err != nil:
 }
 ```
 
-`*Error` carries `Code`, `Status`, `RequestID`, and `RetryAfter`. A transport failure is a
-`*webhook.ConnectionError`.
+`*Error` carries `Code`, `Status`, `RequestID`, and `RetryAfter`. A transport failure is a `*webhook.ConnectionError`.
 
 ## Retries & idempotency
 
-The client retries idempotent requests on transient failures with capped exponential backoff and jitter,
-honouring `Retry-After`, and never blind-retries a non-idempotent write. Replays carry an idempotency key
-(auto-generated if you pass `""`):
+The client retries idempotent requests on transient failures with capped exponential backoff and jitter, honouring `Retry-After`, and never blind-retries a non-idempotent write. Replays carry an idempotency key (auto-generated if you pass `""`):
 
 ```go
 _, err := client.Events.Replay(ctx, eventID,

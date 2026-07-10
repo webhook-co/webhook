@@ -1,101 +1,110 @@
 ---
-title: Quickstart
-description: "Create an endpoint and list its events in a few lines."
+title: "Quickstart"
+description: "Create a signed webhook URL, send it a test event, and watch it arrive."
 ---
 
+Create an endpoint, send it a request, and see the captured event — in a few minutes.
+
 <Steps>
+  <Step title="Get an API key">
+    Create a `whk_` API key in your [dashboard](https://app.webhook.co) and export it:
 
-<Step title="Get an API key">
-  Create a `whk_` API key in your [dashboard](https://app.webhook.co) and export it:
+    ```sh
+    export WEBHOOK_API_KEY=whk_your_key_here
+    ```
+  </Step>
+  <Step title="Install an SDK">
+    <CodeGroup>
 
-```sh
-export WEBHOOK_API_KEY=whk_your_key_here
-```
+    ```sh npm
+    npm install @webhook-co/sdk
+    ```
 
-</Step>
+    ```sh pip
+    pip install webhook-co
+    ```
 
-<Step title="Install an SDK">
-  <CodeGroup>
+    ```sh go
+    go get github.com/webhook-co/webhook-go
+    ```
 
-```sh npm
-npm install @webhook-co/sdk
-```
+    </CodeGroup>
 
-```sh pip
-pip install webhook-co
-```
+    Prefer the command line? `wbhk login` signs you in without an API key — see the [CLI](/authentication#signing-in-from-the-cli).
+  </Step>
+  <Step title="Create an endpoint">
+    Each endpoint has a permanent, signed **ingest URL**. It's shown here and always available in your dashboard.
 
-```sh go
-go get github.com/webhook-co/webhook-go
-```
+    <CodeGroup>
 
-  </CodeGroup>
-</Step>
+    ```ts TypeScript
+    import { WebhookClient } from "@webhook-co/sdk";
+    
+    const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
+    const endpoint = await webhook.endpoints.create({ name: "orders-prod" });
+    console.log(endpoint.ingestUrl); // https://wbhk.my/whep_...
+    ```
 
-<Step title="Create an endpoint">
-  Each endpoint has a signed ingest URL that's returned **once** at creation — capture it now.
+    ```python Python
+    import os
+    from webhook_co import WebhookClient
+    
+    client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
+    endpoint = client.endpoints.create(name="orders-prod")
+    print(endpoint.ingest_url)  # https://wbhk.my/whep_...
+    ```
 
-  <CodeGroup>
+    ```go Go
+    client, _ := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
+    ep, _ := client.Endpoints.Create(ctx, webhook.EndpointsCreateParams{Name: "orders-prod"})
+    fmt.Println(ep.IngestUrl) // https://wbhk.my/whep_...
+    ```
 
-```ts TypeScript
-import { WebhookClient } from "@webhook-co/sdk";
+    </CodeGroup>
+  </Step>
+  <Step title="Send it a test event">
+    Point a provider at the ingest URL, or just POST to it yourself — no key required to _send_:
 
-const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
-const endpoint = await webhook.endpoints.create({ name: "orders-prod" });
-console.log(endpoint.ingestUrl);
-```
+    ```sh
+    curl -X POST https://wbhk.my/whep_your_token \
+      -H "Content-Type: application/json" \
+      -d '{"hello":"webhook.co"}'
+    ```
+  </Step>
+  <Step title="Watch it arrive">
+    The request is now a captured event. List the endpoint's events — the list auto-paginates:
 
-```python Python
-import os
-from webhook_co import WebhookClient
+    <CodeGroup>
 
-client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
-endpoint = client.endpoints.create(name="orders-prod")
-print(endpoint.ingest_url)
-```
+    ```ts TypeScript
+    for await (const event of webhook.events.list(endpoint.id)) {
+      console.log(event.id, event.provider, event.verificationState);
+    }
+    ```
 
-```go Go
-client, _ := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
-ep, _ := client.Endpoints.Create(ctx, webhook.EndpointsCreateParams{Name: "orders-prod"})
-fmt.Println(ep.IngestUrl)
-```
+    ```python Python
+    for event in client.events.list(endpoint.id):
+        print(event.id, event.provider, event.verification_state)
+    ```
 
-  </CodeGroup>
-</Step>
+    ```sh CLI
+    wbhk events list <endpoint-id>
+    ```
 
-<Step title="List the events it captures">
-  Point a provider at the ingest URL, then iterate the captured events. List methods auto-paginate.
+    </CodeGroup>
 
-  <CodeGroup>
-
-```ts TypeScript
-for await (const event of webhook.events.list(endpoint.id)) {
-  console.log(event.id, event.provider, event.verificationState);
-}
-```
-
-```python Python
-for event in client.events.list(endpoint.id):
-    print(event.id, event.provider, event.verification_state)
-```
-
-```go Go
-it := client.Events.List(ep.Id, nil)
-for it.Next(ctx) {
-    e := it.Value()
-    fmt.Println(e.Id, e.Verified)
-}
-if err := it.Err(); err != nil {
-    log.Fatal(err)
-}
-```
-
-  </CodeGroup>
-</Step>
-
+    You'll see your `{"hello":"webhook.co"}` event, marked `unattempted` — captured, but unsigned until you [register a provider secret](/guides/verify-inbound-signatures).
+  </Step>
 </Steps>
 
 ## Next
 
-Browse the full **[API reference](/api-reference/endpoints/list-endpoints)** (generated from the live OpenAPI spec, with an
-interactive playground), or dive into your language's SDK guide for retries, errors, replay, and more.
+<CardGroup cols={2}>
+  <Card title="Verify inbound signatures" icon="shield-check" href="/guides/verify-inbound-signatures">
+    Register a provider secret so events arrive `verified`.
+  </Card>
+
+  <Card title="Replay to localhost" icon="laptop-code" href="/guides/replay-to-localhost">
+    Forward captured events to your machine with one command.
+  </Card>
+</CardGroup>

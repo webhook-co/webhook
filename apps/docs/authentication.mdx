@@ -1,10 +1,9 @@
 ---
-title: Authentication
-description: "How the whk_ API key works."
+title: "Authentication"
+description: "How the whk_ API key works — bearer auth, scopes, and how the CLI signs you in."
 ---
 
-The API authenticates with a bearer token — a `whk_`-prefixed API key you create in your
-[dashboard](https://app.webhook.co). Send it in the `Authorization` header:
+The API authenticates with a bearer token: a `whk_`-prefixed API key you create in your [dashboard](https://app.webhook.co). Send it in the `Authorization` header on every request.
 
 ```sh
 curl https://api.webhook.co/v1/whoami \
@@ -32,24 +31,44 @@ client, err := webhook.NewClient(os.Getenv("WEBHOOK_API_KEY"))
 </CodeGroup>
 
 <Warning>
-  Keep the key server-side. The SDKs never print it (they redact it from errors and debug output),
-  but it's still a credential — treat it like a password. If one leaks, [revoke it](/leaked-api-key)
-  — that's the only remedy.
+  Keep the key server-side. The SDKs never print it — they redact it from errors and debug output — but it's still a credential. If one leaks, [revoke it](/leaked-api-key); revocation is the only remedy.
 </Warning>
 
 ## Scopes
 
-Keys are scoped. A key missing a required scope for an action gets a `403 FORBIDDEN` — mint a key with the
-right scopes from the dashboard rather than over-provisioning. Resolve a key's identity and scopes with
-`whoami`:
+Keys are scoped, and a key is granted only the scopes it needs. A request missing a required scope gets `403 FORBIDDEN` — mint a key with the right scopes rather than over-provisioning one.
+
+| Scope | Grants |
+| --- | --- |
+| `endpoints:read` | Read endpoints, provider secrets, destinations, and subscriptions. |
+| `endpoints:write` | Create and manage endpoints, provider secrets, destinations, and signing secrets. |
+| `events:read` | List and read captured events, payloads, and deliveries. |
+| `events:replay` | Replay events to localhost or a destination. |
+| `triggers:write` | Create and revoke [agent triggers](/mcp/wake-an-agent). |
+| `audit:read` | Read and verify the tamper-evident audit log. |
+| `billing:read` | Read usage and metering. |
+
+Resolve a key's identity and scopes at any time with `whoami`:
 
 ```ts
 const me = await webhook.whoami();
 console.log(me.orgId, me.scopes);
 ```
 
+## Managing keys
+
+Create, rotate, and revoke API keys from **Settings → Credentials** in the [dashboard](https://app.webhook.co). Because keys are credentials, they're managed from the authenticated dashboard rather than issued over the API.
+
+## Signing in from the CLI
+
+You don't have to paste a key into the CLI. `wbhk login` runs a browser-based OAuth flow and stores a short-lived, scoped key in your OS keychain; it refreshes silently and `wbhk logout` revokes it server-side.
+
+```sh
+wbhk login              # browser OAuth (PKCE)
+wbhk login --device     # for headless machines
+wbhk login --api-key    # or paste a whk_ key directly
+```
+
 ## Base URL
 
-The default is `https://api.webhook.co`. Point the SDKs at a self-host or dev origin with the base-URL
-option — it must be `https` (loopback `http` is allowed for local dev), so a misconfiguration can't
-downgrade your key onto a plaintext connection.
+The default is `https://api.webhook.co`. Point the SDKs at a self-host or dev origin with the base-URL option — it must be `https` (loopback `http` is allowed for local dev), so a misconfiguration can't downgrade your key onto a plaintext connection.

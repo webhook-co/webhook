@@ -25,8 +25,22 @@
             ]
           },
           {
+            "group": "Guides",
+            "icon": "book-open",
+            "pages": [
+              "guides/verify-inbound-signatures"
+            ]
+          },
+          {
             "group": "SDKs",
             "pages": ["sdks/typescript", "sdks/python", "sdks/go"]
+          },
+          {
+            "group": "Concepts",
+            "icon": "shapes",
+            "pages": [
+              "concepts/how-webhook-co-works"
+            ]
           }
         ]
       },
@@ -48,5 +62,16 @@
     "socials": {
       "github": "https://github.com/webhook-co"
     }
+  },
+  "description": "webhook.co documentation — a free, permanent, signed webhook URL with payload inspection, replay-to-localhost, inbound verification across 142 providers, outbound delivery, and an MCP webhook→agent trigger. Identical across CLI, API, dashboard, and MCP.",
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude",
+      "cursor"
+    ],
+    "display": "header"
   }
 }

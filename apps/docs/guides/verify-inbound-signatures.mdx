@@ -1,0 +1,73 @@
+---
+title: "Verify inbound signatures"
+sidebarTitle: "Verify inbound signatures"
+description: "Register a provider's signing secret and let webhook.co verify every inbound request against the exact bytes it received."
+icon: "shield-check"
+---
+
+A webhook is just an HTTP POST from someone claiming to be your provider. Verifying its signature is what turns that claim into trust. Register a provider's signing secret on an endpoint and webhook.co verifies **every** inbound request for you — against the exact bytes it captured — and records the result on the event. You don't write any signature code.
+
+## Register a signing secret
+
+Add the secret your provider issued to the endpoint that receives its webhooks. It's sealed in a KMS the moment it arrives and never stored in the clear.
+
+<CodeGroup>
+
+```sh CLI
+wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider stripe --label "prod signing secret"
+# paste the secret when prompted (or pipe it on stdin)
+```
+
+```sh API
+curl -X POST https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"stripe","secret":"whsec_...","label":"prod signing secret"}'
+```
+
+```ts SDK
+await webhook.endpoints.addProviderSecret({
+  endpointId,
+  provider: "stripe",
+  secret: process.env.STRIPE_SIGNING_SECRET!,
+  label: "prod signing secret",
+});
+```
+
+</CodeGroup>
+
+That's it. From the next request on, webhook.co checks the signature and stamps each event with a verification state. Registering a secret requires the `endpoints:write` scope; adding, listing, and revoking secrets is available on the CLI, API, dashboard, and MCP alike.
+
+<Note>
+  webhook.co picks the right scheme by **which secrets you've registered**, not by trusting a header the sender set — so providers that share a signature header each verify correctly. It checks the registered providers against the captured bytes and the first that verifies names the event's provider.
+</Note>
+
+## The four verification states
+
+Every event carries a `verificationState`. It's the difference between “this is really from Stripe” and “someone POSTed to your URL.”
+
+| State | Meaning |
+| --- | --- |
+| `verified` | A cryptographic signature over the payload was checked and passed. |
+| `authenticated` | The source proved itself with a shared static token or HTTP Basic — weaker than a payload signature, but not anonymous. |
+| `failed` | A signature **was** checked and **rejected** — forged or tampered. These are never delivered onward or signed with your secret. |
+| `unattempted` | No signature was checked (no secret registered, or the header was absent). The event is still captured, but never re-signed as if it were vouched-for. |
+
+Filter your events by state to confirm a provider is set up correctly — a stream that's all `unattempted` means the secret isn't registered yet; a `failed` means the signature didn't match.
+
+```sh
+wbhk events list <endpoint-id> --verification-state verified --verification-state failed
+```
+
+## If you verify a signature yourself
+
+webhook.co verifies inbound signatures for you, but the same rule governs any signature you check in your own code — including [the signature webhook.co adds](/concepts/delivery-retry-signing) when it delivers to your service:
+
+<Warning>
+  Always verify over the **raw request body**, byte-for-byte, before any JSON parsing or re-serialization — re-encoding changes the bytes and breaks the signature. And compare digests with a **constant-time** function (`crypto.timingSafeEqual`, `hmac.compare_digest`), never `==`. This is the single most common mistake in webhook verification.
+</Warning>
+
+## Providers
+
+webhook.co verifies **142 providers** out of the box, from a single registry. See the [provider directory](/providers/directory) for the exact scheme, header, and handshake behaviour of each, the [deep-dive guides](/providers/stripe) for the trickier ones, or [bring your own](/providers/custom) if a provider signs with a standard HMAC we don't list by name.

@@ -1,87 +1,56 @@
 ---
 title: "What counts as an event"
-description: "Exactly what we meter, what we never meter, and what happens when you reach your limit."
+description: "How usage is measured — the single unit we count, and everything we never count."
 ---
 
-Usage is measured in **events**, and only in events. There is no per-step, per-feature, or per-seat
-charge, and no feature is locked behind a plan.
+Usage is measured in one unit: the **event**. There is no per-step, per-feature, or per-seat metering, and no capability is locked behind a tier — the same features are available whether you pay or not. This page is the whole model of what counts.
 
 ## An event is one capture, or one delivery
 
-You are billed **one event** when either of these happens:
+Exactly two things count as an event:
 
-- **We capture a request.** Any request that reaches one of your endpoints and is stored.
-- **We deliver an event to a destination.** Each destination you forward to is one event.
+- **A capture** — a request reaches one of your endpoints and is stored.
+- **A delivery** — an event is forwarded to one destination. Each destination is its own event.
 
-That's the whole rule. If you capture a webhook and forward it to one destination, that's **two
-events**. Forward the same webhook to three destinations and it's **four** — one capture, three
-deliveries.
+So a webhook captured and forwarded to one destination is **two** events; forwarded to three destinations, **four** (one capture, three deliveries). Deliveries count because delivering does real work on your behalf — not to push you toward a tier, since every feature is available on every plan.
 
-We meter deliveries because delivering costs us real money, and we would rather charge for it
-honestly than lock outbound delivery behind a paid tier. Every feature is available on every plan,
-including the free one.
-
-## Retries are never billed
-
-If a destination is down and we retry, **you are not charged for the retries**. A delivery is billed
-once, when we first dispatch it — however many attempts it takes.
+## What is never counted
 
 <Note>
-  Our retry schedule is our cost. A receiver's downtime is not your fault, and charging you eight
-  times for one failed delivery is exactly the surprise this product exists to avoid.
+  The most common surprises in usage-based products come from the things you _didn't_ think you were paying for. webhook.co counts none of them.
 </Note>
 
-## What is never metered
-
-- **Retries** of a delivery you were already billed for.
-- **Duplicate requests** that deduplication collapses. A retry from a provider that we recognise as
-  the same event never becomes a second billable event. See [Deduplication](/deduplication).
-- **Verification handshakes.** A provider's `GET` challenge is a control message, not an event — it
-  is never stored and never billed.
-- **Reading your own data.** Listing events, inspecting payloads, and replaying from the dashboard,
-  API, CLI, or MCP cost nothing. (A replay that _forwards_ to a destination is a delivery, and that
-  delivery is billed.)
+- **Retries.** A delivery counts once, when it's first dispatched — however many attempts [the fixed exponential schedule](/concepts/delivery-retry-signing) takes to land it. A receiver's downtime is never your cost.
+- **Duplicates that dedup collapses.** When [deduplication](/deduplication) recognises a retry as the same event, it never becomes a second captured event.
+- **Verification handshakes.** A provider's `GET` or echo challenge is a control message — it is never stored and never counts.
+- **Reading your own data.** Listing events, inspecting payloads, tailing, and replaying cost nothing on any surface. (A replay that _forwards to a destination_ is a delivery, and that delivery counts.)
 
 <Warning>
-  If you turn deduplication **off** for an endpoint, every retry a provider sends is a distinct
-  captured request, and each one counts. That is the trade you are making when you disable it.
+  Turning [deduplication](/deduplication) **off** means every retry a sender sends is a distinct captured request, and each one counts. That's the trade you're making when you disable it — the default is off precisely so you see every request while you're getting set up.
 </Warning>
 
-## Reaching your limit
+## How usage relates to pricing
 
-Every plan includes a number of events. When you reach it, the default is to **pause, not bill**:
+The pricing model follows from the unit above, and from two principles:
 
-- We email you **before** you get there, not after.
-- At the limit, capture **pauses**. You are never billed past your included volume by surprise.
-- Nothing you already captured is lost. Resume by upgrading, or by raising your limit.
+- **Single-dimension and disclosed up front.** You are metered on events and nothing else. The unit is stated where you create an endpoint, so there's never a hidden counter.
+- **A soft cap that pauses, not a surprise bill.** The design is to alert you as you approach a limit and then **pause capture** rather than run up an overage — your captured data stays exactly where it is, and you resume by raising the limit.
 
-You can check where you stand at any time:
+## Check your usage
+
+Your current usage is available on every surface:
 
 <CodeGroup>
 
-```bash CLI
+```sh CLI
 wbhk usage
 ```
 
-```bash API
+```sh API
 curl https://api.webhook.co/v1/usage \
   -H "Authorization: Bearer $WEBHOOK_API_KEY"
 ```
 
 </CodeGroup>
 
-The dashboard shows the same number at [app.webhook.co/usage](https://app.webhook.co/usage).
-
-## The free allowance is one-time
-
-The free tier's included events are a **one-time allowance**, counted across the whole life of your
-organisation. It does **not** reset each month.
-
-<Warning>
-  If you cancel a paid plan, you return to the free tier — and because the free allowance is
-  one-time, it has already been spent. **Capture pauses until you resubscribe.** Your data stays
-  where it is, and resubscribing resumes capture immediately.
-</Warning>
-
-That is deliberate: it makes the free tier a genuine trial rather than a perpetual free plan, and it
-means we never quietly run up a bill you didn't agree to.
+The dashboard shows the same figure at [app.webhook.co/usage](https://app.webhook.co/usage).
