@@ -28,8 +28,21 @@
             "group": "Guides",
             "icon": "book-open",
             "pages": [
-              "guides/verify-inbound-signatures"
+              "guides/receive-your-first-webhook",
+              "guides/verify-inbound-signatures",
+              "guides/manage-provider-secrets",
+              "guides/inspect-search-events",
+              "guides/replay-to-localhost",
+              "guides/replay-past-or-failed-event",
+              "guides/send-to-a-destination",
+              "guides/sign-outbound-webhooks",
+              "guides/handle-delivery-failures"
             ]
+          },
+          {
+            "group": "Providers",
+            "icon": "plug",
+            "pages": []
           },
           {
             "group": "SDKs",
@@ -39,7 +52,11 @@
             "group": "Concepts",
             "icon": "shapes",
             "pages": [
-              "concepts/how-webhook-co-works"
+              "concepts/how-webhook-co-works",
+              "concepts/ingest-urls",
+              "concepts/inbound-verification",
+              "concepts/delivery-retry-signing",
+              "concepts/security"
             ]
           }
         ]

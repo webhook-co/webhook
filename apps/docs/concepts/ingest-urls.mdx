@@ -1,0 +1,67 @@
+---
+title: "Ingest URLs"
+sidebarTitle: "Ingest URLs"
+description: "A permanent, signed webhook URL on a dedicated cookieless apex that captures raw bytes durably before it verifies or dedupes."
+icon: "link"
+---
+
+An ingest URL is where your webhooks land: `https://wbhk.my/<token>`. Point any provider at it and every request is captured — raw bytes first, then verified and deduplicated. The URL is permanent (it never expires and changes only when you explicitly rotate it), and it lives on a dedicated, cookieless apex so a browser or a stray script can't leak anything about it.
+
+## Why a separate apex
+
+`wbhk.my` does one job: accept inbound requests. It carries no cookies, answers no CORS preflight, and routes purely on the path token. A request to a token that doesn't exist gets a flat `404` — no hint about whether some other token is valid. Keeping ingestion off your dashboard and API origins means there's no ambient session or cross-origin surface to abuse. It's a mailbox, not an app.
+
+"Signed" here means webhook.co can re-sign what it forwards using the [Standard Webhooks](https://www.standardwebhooks.com) contract — see [inbound verification](/concepts/inbound-verification) for how an event earns a signature.
+
+## Every verb is accepted
+
+Providers don't agree on how to send a webhook, so the ingest URL doesn't insist. `POST`, `PUT`, `PATCH`, and `DELETE` are treated as writes: the request is captured and acknowledged with `200`. `GET`, `HEAD`, and `OPTIONS` are liveness checks and return a constant response that reflects nothing about the endpoint — a browser `GET` can't tell an active endpoint from a paused one, or even prove the token maps to anything. Genuinely odd verbs like `TRACE` get a `405`.
+
+```sh
+# A write — captured, acknowledged.
+curl -X POST https://wbhk.my/whep_your_token \
+  -H "content-type: application/json" \
+  -d '{"hello":"world"}'
+# → 200
+
+# A liveness probe — a constant answer that reveals nothing.
+curl -I https://wbhk.my/whep_your_token
+# → 200, always the same
+```
+
+Some providers open with a verification handshake (a `GET` challenge or a signed `POST` echo). Those are answered automatically, before capture. A handshake isn't your data — it's a control message — so it's never stored and never metered.
+
+## Durable before ACK
+
+The order of operations is the whole point: the raw request bytes are written down **first**, and only then does verification and [deduplication](/deduplication) run. Capture never blocks on a bad signature. If a provider sends a payload that fails to verify, you still have the event — you can inspect it, and decide what to do — rather than losing it to a `401` at the door. The signature result is recorded alongside the event as its verification state; it doesn't gate whether the event exists.
+
+Only the raw **body** bytes are preserved byte-for-byte. The edge normalizes header order and casing in transit, so treat captured headers as informational — which is fine, because HMAC verification signs the body, and that's exactly what stays intact.
+
+## When things don't fit
+
+- **Oversized body** → `413`. There's a ceiling on a single request; a provider that blows past it gets a clear rejection rather than a silent truncation.
+- **Paused endpoint** → write verbs get `429` with a `retry-after` header. That's deliberately _retryable_: a well-behaved sender backs off and tries again instead of treating the pause as a hard failure and auto-disabling your webhook. Liveness verbs still answer normally, so health checks keep passing while you're paused.
+
+## Reveal posture
+
+The ingest URL is shown when you create or rotate an endpoint, and it stays visible in your dashboard — there's no "you'll only see this once" gotcha. At rest the token is sealed with KMS, so re-revealing it goes through a gated, audited, rate-limited path that requires the `endpoints:write` scope:
+
+<CodeGroup>
+
+```sh CLI
+wbhk endpoints reveal <endpoint-id>
+```
+
+```sh API
+curl -X POST https://api.webhook.co/v1/endpoints/<endpoint-id>/reveal-ingest-url \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+```
+
+</CodeGroup>
+
+A reveal can come back empty for older or degraded endpoints that predate the sealed copy. That's expected — rotate the endpoint and the fresh URL is revealable from then on. Rotation is also your kill switch: a leaked token stops working the instant you rotate, and the old URL `404`s like any other unknown token.
+
+## Related
+
+- [Inbound verification](/concepts/inbound-verification) — how a captured event gets a verification state.
+- [Verify inbound signatures](/guides/verify-inbound-signatures) — register a provider secret and read the result.

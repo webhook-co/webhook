@@ -57,7 +57,7 @@ Every event carries a `verificationState`. It's the difference between “this i
 Filter your events by state to confirm a provider is set up correctly — a stream that's all `unattempted` means the secret isn't registered yet; a `failed` means the signature didn't match.
 
 ```sh
-wbhk events list <endpoint-id> --verification-state verified --verification-state failed
+wbhk events list <endpoint-id> --status verified,failed
 ```
 
 ## If you verify a signature yourself

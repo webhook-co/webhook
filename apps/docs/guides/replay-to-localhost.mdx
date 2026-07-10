@@ -1,0 +1,63 @@
+---
+title: "Replay webhooks to localhost"
+sidebarTitle: "Replay to localhost"
+description: "Forward captured webhook events to your machine with one command — wbhk listen --forward — and iterate on your handler against real payloads."
+icon: "laptop-code"
+---
+
+Forward captured events straight to your dev server with one command:
+
+```sh
+wbhk listen <endpoint-id> --forward http://localhost:3000/webhooks
+```
+
+`wbhk listen` tails the endpoint and re-delivers each event to your loopback target, preserving the original body and headers. No tunnel to configure, no public URL to expose — the events were already captured, so this just replays them to your machine. Capture a real webhook once, then replay it as many times as you like while you iterate on the handler.
+
+This is a CLI capability: forwarding to `localhost` only makes sense from the machine running your server, so it lives where localhost lives.
+
+## At-least-once, cursor-gated
+
+`listen --forward` advances its cursor **only after your local handler returns a 2xx**. Records and acks happen post-success, so if your server is down, throws, or your laptop sleeps mid-batch, the un-acked events are re-read on the next run rather than lost. You get at-least-once delivery to localhost — design your handler to be idempotent.
+
+The target must be a loopback address (`localhost` / `127.0.0.1`). A non-loopback URL is rejected: a captured payload and its signature must never be replayed out to some arbitrary host from your terminal.
+
+## Choose where to start
+
+By default `listen` starts from **now** — only events captured after you connect. Point it elsewhere with `--since`:
+
+| `--since` | Starts from |
+| --- | --- |
+| `now` (default) | Only new events from this moment on. |
+| `beginning` | The full retained backlog, then tails. |
+| `from-last-ack` | Where this profile \+ endpoint last acked. |
+| `<cursor>` | An exact opaque cursor. |
+
+Related flags:
+
+- `--resume` — start from the last acked cursor for this profile and endpoint, and keep saving it as you go.
+- `--reset` — forget that saved cursor before starting.
+- `--max-backlog <n>` — refuse to start if more than `n` events are waiting, so you don't fire a large backlog at your dev server by surprise.
+
+```sh
+# replay everything retained, but bail if there's a big backlog waiting
+wbhk listen <endpoint-id> \
+  --forward http://localhost:3000/webhooks \
+  --since beginning \
+  --max-backlog 100
+```
+
+<Warning>
+  Forwarding re-delivers **real events to real code** — every 2xx your handler returns is a side effect that actually ran. Reach for `--max-backlog` before a `--since beginning` run so a large backlog doesn't fire all at once.
+</Warning>
+
+## Drive it interactively
+
+Run `wbhk listen` in a terminal (a TTY) and it shows a live table of events as they arrive. Move with the arrow keys and press **`r`** to replay the selected event to your `--forward` target on demand — the tight loop for debugging one specific payload against a handler you're editing.
+
+## The local-dev loop
+
+1. Trigger the webhook in your provider once (or `curl` your ingest URL). It's captured.
+2. `wbhk listen <endpoint-id> --forward http://localhost:3000/webhooks --since beginning`.
+3. Edit your handler. Press `r` to replay the same event, or re-run with `--reset --since beginning` to replay the batch. Repeat until it's right.
+
+To hunt down a specific past or failed event before replaying it, see [replay a past or failed event](/guides/replay-past-or-failed-event). To find events by provider, verification state, or free-text first, see [inspect and search events](/guides/inspect-search-events).

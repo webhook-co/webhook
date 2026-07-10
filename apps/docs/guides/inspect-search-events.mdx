@@ -1,0 +1,117 @@
+---
+title: "Inspect and search events"
+sidebarTitle: "Inspect events"
+description: "List, filter, search, read, and tail captured webhook events — by provider, verification state, time range, or free-text — across CLI, API, and SDKs."
+icon: "magnifying-glass"
+---
+
+Every request your ingest URL receives is a captured **event** you can browse, filter, read in full, and tail live. This guide covers finding events and reading their contents; to forward them to your machine, see [replay to localhost](/guides/replay-to-localhost).
+
+Reading events needs an API key with `events:read`.
+
+## List and filter
+
+`events.list` returns an endpoint's events newest-first, through an opaque keyset cursor. All filters are optional and combine with AND:
+
+- **provider** — repeatable; matches any of the given providers.
+- **verification state** — `verified`, `authenticated`, `failed`, or `unattempted`; repeatable.
+- **after / before** — an RFC 3339 received-at range (after is inclusive, before is exclusive).
+- **search** — a case-insensitive substring across the event's id fields (provider event id, external id, dedup key) and its request header names and values; an exact match when the term is an event id.
+
+`limit` caps a page at 200. On the CLI, `--all` follows the cursor to the end for you.
+
+<CodeGroup>
+
+```sh CLI
+# failed Stripe events from a start time, following every page
+wbhk events list <endpoint-id> \
+  --provider stripe \
+  --status failed \
+  --after 2026-07-09T00:00:00Z \
+  --all
+
+# free-text search across ids + headers
+wbhk events list <endpoint-id> --search "evt_1P9x"
+```
+
+```sh API
+curl -G "https://api.webhook.co/v1/endpoints/<endpoint-id>/events" \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  --data-urlencode "provider=stripe" \
+  --data-urlencode "verificationState=failed" \
+  --data-urlencode "receivedAfter=2026-07-09T00:00:00Z" \
+  --data-urlencode "limit=200"
+```
+
+```ts TypeScript
+for await (const event of webhook.events.list(endpointId, {
+  provider: ["stripe"],
+  verificationState: ["failed"],
+  receivedAfter: "2026-07-09T00:00:00Z",
+})) {
+  console.log(event.id, event.verificationState);
+}
+```
+
+```python Python
+for event in client.events.list(
+    endpoint_id,
+    provider=["stripe"],
+    verification_state=["failed"],
+    received_after="2026-07-09T00:00:00Z",
+):
+    print(event.id, event.verification_state)
+```
+
+</CodeGroup>
+
+On the CLI, `--provider` and `--status` are repeatable (or comma-separated) for multi-select, and `--before` bounds the top of the range. Add `--output json` for a machine-readable stream.
+
+## Read one event
+
+`events.get` returns a single event in full — request headers, its verification result, timing, and a pointer to the raw body.
+
+<CodeGroup>
+
+```sh CLI
+wbhk events get <event-id>
+```
+
+```sh API
+curl "https://api.webhook.co/v1/events/<event-id>" \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY"
+```
+
+```ts TypeScript
+const event = await webhook.events.get(eventId);
+console.log(event.headers, event.verification);
+```
+
+</CodeGroup>
+
+## Get the raw body
+
+`events.getPayload` returns the exact captured bytes. On the wire the body rides a JSON envelope — `contentType`, `bytes` (the decoded length), and the base64-wrapped body — so binary payloads and exact-byte signature fidelity survive intact.
+
+The CLI writes the raw bytes verbatim, so redirecting to a file is byte-exact:
+
+```sh
+wbhk events payload <event-id> > event.json
+# lossless envelope (the safe view for a binary body):
+wbhk events payload <event-id> --output json
+```
+
+```ts TypeScript
+const { contentType, bytes, body } = await webhook.events.getPayload(eventId);
+console.log(contentType, bytes, body.byteLength);
+```
+
+<Note>
+  Payload retrieval is available on the CLI, API, and SDKs. It isn't exposed over MCP — an agent reads event metadata with `events.get` instead.
+</Note>
+
+## Tail live
+
+`events.tail` is a forward, cursor-based tail with a `since` grammar (`now`, `beginning`, a duration, or an RFC 3339 instant) and cursor bookkeeping — `headCursor` for the current head, `caughtUp` once a page reaches it, and `lag` for how far behind you are. It's the pull form the API and SDKs expose.
+
+For a live stream in your terminal, the CLI wraps it as `wbhk listen <endpoint-id>`, which prints each event as it arrives. Add `--forward` to re-deliver them to your local server instead — see [replay to localhost](/guides/replay-to-localhost).

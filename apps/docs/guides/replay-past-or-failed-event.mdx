@@ -1,0 +1,68 @@
+---
+title: "Replay a past or failed event"
+sidebarTitle: "Replay an event"
+description: "Re-deliver any stored event to your machine or to a registered destination, with a fresh idempotency key and the original bytes intact."
+icon: "arrow-rotate-left"
+---
+
+Every request captured at your ingest URL is stored, so you can re-deliver any one of them on demand — to a dev server on your machine, or to a destination the server delivers to. Replay uses the event's exact captured bytes and headers; nothing is re-serialized.
+
+Grab the event id from `wbhk events list` (or the dashboard), then pick a target.
+
+## Replay to your machine
+
+`wbhk replay <event-id> --forward <localhost-url>` re-delivers to a local URL. The CLI does the delivery here — the API can't reach your machine — so it fetches the captured headers and body, POSTs them to localhost, and on a local `2xx` records the attempt server-side.
+
+```sh
+wbhk replay <event-id> --forward http://localhost:3000/webhooks
+```
+
+Want to poke at the payload first? `--edit` opens the body in `$EDITOR` before forwarding. It's forward-only, and editing changes the bytes — so the original provider signature no longer matches, and a local handler that verifies signatures will reject it. The CLI warns you rather than shipping something it knows won't verify.
+
+```sh
+wbhk replay <event-id> --forward http://localhost:3000/webhooks --edit
+```
+
+## Replay to a destination
+
+Point at a [registered destination](/guides/send-to-a-destination) by id and the server delivers the stored bytes verbatim, runs the connect-time SSRF guard, and records the real HTTP outcome. `--destination` and `--forward` are mutually exclusive — they pick different delivery targets.
+
+<CodeGroup>
+
+```sh CLI
+wbhk replay <event-id> --destination <destination-id>
+```
+
+```sh API
+curl -X POST https://api.webhook.co/v1/events/<event-id>/replay \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "target": { "kind": "destination", "destinationId": "<destination-id>" },
+    "idempotencyKey": "'"$(uuidgen)"'"
+  }'
+```
+
+```ts TypeScript
+import { randomUUID } from "node:crypto";
+
+const attempt = await webhook.events.replay({
+  eventId: "<event-id>",
+  target: { kind: "destination", destinationId: "<destination-id>" },
+  idempotencyKey: randomUUID(),
+});
+console.log(attempt.status, attempt.statusCode);
+```
+
+</CodeGroup>
+
+The API scope is `events:replay`. `idempotencyKey` is **required** — mint a fresh one per call. Replay is at-least-once, so a re-sent delivery can reach your receiver twice; receivers dedup on the stable `webhook-id` header. Reusing a key for a _different_ replay is rejected rather than silently skipped; a matching re-claim returns the existing attempt.
+
+<Warning>
+  An event whose signature was checked and **rejected** (verification state `failed`) is never replayed or delivered — the API returns `403`. That request was forged or tampered, and re-delivering it would let webhook.co vouch for content it never authenticated. An `unattempted` event (no signature was checked) does replay, but is delivered unsigned. See [delivery, retry & signing](/concepts/delivery-retry-signing).
+</Warning>
+
+## Related
+
+- [Send events to a destination automatically](/guides/send-to-a-destination)
+- [How retries and signing work](/concepts/delivery-retry-signing)

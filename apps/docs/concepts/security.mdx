@@ -1,0 +1,50 @@
+---
+title: "Security & architecture"
+sidebarTitle: "Security & architecture"
+description: "How webhook.co is built — KMS-sealed secrets, a verifiable audit log, row-level tenant isolation, SSRF-safe egress, and cookieless ingestion."
+icon: "shield-halved"
+---
+
+This page is for the person evaluating whether to route production webhooks through webhook.co. It describes how the system is built — the defenses, not a compliance checklist. If a claim isn't here, don't assume it; ask.
+
+## Encryption everywhere it matters
+
+Everything moves over TLS. The API and every SDK are HTTPS-only — the base-URL option rejects a plaintext origin, so a misconfiguration can't silently downgrade your API key onto an unencrypted connection. The single exception is loopback `http` for local development, which never leaves your machine. Data is encrypted at rest.
+
+## Secrets are sealed, and only the engine unseals them
+
+Provider secrets, outbound signing secrets, and the ingest token itself are sealed with KMS. Each is bound, via additional authenticated data, to the org and endpoint it belongs to — so a sealed blob can't be lifted and replayed in a different context; it only unseals where it was created. The API and MCP surfaces relay ciphertext and never see plaintext; only the delivery engine unseals a secret, and only at the moment it needs it to verify an inbound signature or sign an outbound one.
+
+That's also why outbound signing is [verified-gated](/concepts/delivery-retry-signing): webhook.co only ever signs what it actually authenticated.
+
+## A tamper-evident audit log you can verify yourself
+
+Security-relevant actions are written to an append-only audit log that's hash-chained: each entry commits to the one before it, so removing or altering an entry breaks the chain. You don't have to take our word for the log's integrity — you can walk the chain and verify it independently:
+
+```sh
+wbhk audit verify
+```
+
+It reports whether the chain is intact and, on a break, points at the first entry that doesn't line up. An append-only chain you can check yourself is a stronger promise than an audit log you're merely told is trustworthy.
+
+## Tenant isolation and data placement
+
+Tenant isolation is enforced at the database with Postgres row-level security, so a query is constrained to its org by the database itself rather than by application code remembering to filter. Data is region-pinned. And everything is private by default: nothing you create is public, listed, or shared with anyone until you deliberately make it so. There's no accidental "public gallery" of your endpoints or events.
+
+## Ingestion is deliberately isolated
+
+Inbound webhooks land on a separate apex, [`wbhk.my`](/concepts/ingest-urls), that does nothing but accept requests. It's cookieless, answers no CORS preflight, and routes purely on the path token — an unknown token gets a flat `404` that reveals nothing. Keeping ingestion off your dashboard and API origins means there's no ambient session or cross-origin surface attached to the front door. And capture is durable-before-ACK: the raw bytes are recorded before verification runs, so a bad signature labels an event rather than dropping it.
+
+## Egress can't be turned against your network
+
+Outbound delivery only targets [destinations](/concepts/delivery-retry-signing) you've allowlisted, referenced by id rather than a free-form URL. Before every attempt the engine re-validates the URL, resolves it over DNS-over-HTTPS, and checks _every_ resolved address against private and internal ranges, refusing any that match. It never follows redirects and runs under a strict timeout. A delivery that resolves to something internal is `blocked`, terminally — the SSRF guard is on the send path, not an afterthought.
+
+## What this page does not claim
+
+To keep this honest: nothing here is a certification. This is a description of engineering, not an attestation. Where your evaluation needs a specific compliance statement, contact us directly rather than inferring one from the defenses above.
+
+## Related
+
+- [Ingest URLs](/concepts/ingest-urls) — the cookieless front door in detail.
+- [Delivery, retry & signing](/concepts/delivery-retry-signing) — the SSRF guard and verified-gated signing.
+- [Authentication](/authentication) — API keys and scopes.
