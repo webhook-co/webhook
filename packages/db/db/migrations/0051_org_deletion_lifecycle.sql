@@ -49,7 +49,12 @@ begin
 end
 $$;
 grant usage on schema public to webhook_purge;
-grant select on org_deletions to webhook_purge;
+-- Column-scoped SELECT: the drain reads only the columns it needs — org_id/status/r2_cursor to
+-- enumerate + resume, requested_at to order, and objects_purged because the running-total UPDATE
+-- (`objects_purged = objects_purged + n`) reads it. It deliberately CANNOT read requested_by (a
+-- cross-tenant pseudonymous actor) or purge_completed_at — least privilege, mirroring the
+-- anchor/meter roles' column-scoped cross-org reads.
+grant select (org_id, status, r2_cursor, requested_at, objects_purged) on org_deletions to webhook_purge;
 grant update (status, r2_cursor, objects_purged, purge_completed_at) on org_deletions to webhook_purge;
 create policy org_deletions_purge_select on org_deletions
   for select to webhook_purge using (true);

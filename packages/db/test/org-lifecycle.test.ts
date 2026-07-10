@@ -176,30 +176,49 @@ describe("purge drain (webhook_purge)", () => {
     expect(afterIds).not.toContain(o1);
     expect(afterIds).toContain(o2);
 
-    const [done] = await purge<
-      { status: string; objects_purged: string; done_at: string | null }[]
-    >`
-      select status, objects_purged, purge_completed_at as done_at
-      from org_deletions where org_id = ${o1}`;
+    // Read the full row via the app (which can see all columns of its own org's job) — the drain
+    // role deliberately can't SELECT purge_completed_at.
+    const [done] = await withTenant(
+      app,
+      o1,
+      (tx) => tx<{ status: string; objects_purged: string; done_at: string | null }[]>`
+        select status, objects_purged, purge_completed_at as done_at
+        from org_deletions where org_id = ${o1}`,
+    );
     expect(done.status).toBe("completed");
     expect(Number(done.objects_purged)).toBe(800);
     expect(done.done_at).not.toBeNull();
   });
 
   it("holds least privilege: SELECT+UPDATE org_deletions only, no tenant-table access, non-super", async () => {
-    // SELECT is table-level; UPDATE is COLUMN-level (least privilege) so has_table_privilege
-    // reports no table UPDATE — the drain columns are individually granted, org_id is NOT (a job
-    // can never be reassigned to another org). No INSERT, no DELETE.
+    // Both SELECT and UPDATE are COLUMN-level (least privilege): the drain reads org_id but NOT the
+    // cross-tenant requested_by actor, and updates the drain columns but NOT org_id (a job can never
+    // be reassigned to another org). No INSERT, no DELETE.
     const [g] = await owner<
-      { sel: boolean; ins: boolean; del: boolean; updStatus: boolean; updOrgId: boolean }[]
+      {
+        selOrgId: boolean;
+        selReqBy: boolean;
+        ins: boolean;
+        del: boolean;
+        updStatus: boolean;
+        updOrgId: boolean;
+      }[]
     >`
       select
-        has_table_privilege(${DB_ROLES.purge}, 'org_deletions', 'SELECT') as sel,
+        has_column_privilege(${DB_ROLES.purge}, 'org_deletions', 'org_id', 'SELECT') as "selOrgId",
+        has_column_privilege(${DB_ROLES.purge}, 'org_deletions', 'requested_by', 'SELECT') as "selReqBy",
         has_table_privilege(${DB_ROLES.purge}, 'org_deletions', 'INSERT') as ins,
         has_table_privilege(${DB_ROLES.purge}, 'org_deletions', 'DELETE') as del,
         has_column_privilege(${DB_ROLES.purge}, 'org_deletions', 'status', 'UPDATE') as "updStatus",
         has_column_privilege(${DB_ROLES.purge}, 'org_deletions', 'org_id', 'UPDATE') as "updOrgId"`;
-    expect(g).toEqual({ sel: true, ins: false, del: false, updStatus: true, updOrgId: false });
+    expect(g).toEqual({
+      selOrgId: true,
+      selReqBy: false,
+      ins: false,
+      del: false,
+      updStatus: true,
+      updOrgId: false,
+    });
 
     for (const table of ["events", "orgs", "audit_log", "api_keys"]) {
       const [p] = await owner<{ ok: boolean }[]>`
@@ -210,5 +229,53 @@ describe("purge drain (webhook_purge)", () => {
     const [r] = await owner<{ super: boolean; bypass: boolean }[]>`
       select rolsuper as super, rolbypassrls as bypass from pg_roles where rolname = ${DB_ROLES.purge}`;
     expect(r).toEqual({ super: false, bypass: false });
+  });
+});
+
+describe("org_deletions RLS boundary (the anti-forgery gate)", () => {
+  it("blocks a tenant from enqueuing a purge job for a DIFFERENT org", async () => {
+    // This is the load-bearing security property: forging orgB's job would let the drain destroy
+    // orgB's R2 payloads. The insert `with check (org_id = current_org_id())` must reject it.
+    const u = `u_forge_${randomUUID().slice(0, 8)}`;
+    await seedUser(u);
+    const orgA = await seedOrg("forge-a", u);
+    const orgB = await seedOrg("forge-b", u);
+    await expect(
+      withTenant(
+        app,
+        orgA,
+        (tx) => tx`insert into org_deletions (org_id, requested_by) values (${orgB}, ${"evil"})`,
+      ),
+    ).rejects.toThrow();
+    expect(await countIn(orgB, "org_deletions")).toBe(0);
+  });
+
+  it("a tenant cannot read another org's purge job", async () => {
+    const u = `u_read_${randomUUID().slice(0, 8)}`;
+    await seedUser(u);
+    const orgA = await seedOrg("read-a", u);
+    const orgB = await seedOrg("read-b", u);
+    await deleteOrgWithAudit(app, { orgId: orgB, actor: u }, key); // orgB now has a purge job
+    const visibleFromA = await withTenant(
+      app,
+      orgA,
+      async (tx) =>
+        (
+          await tx<
+            { n: number }[]
+          >`select count(*)::int as n from org_deletions where org_id = ${orgB}`
+        )[0].n,
+    );
+    expect(visibleFromA).toBe(0);
+  });
+
+  it("webhook_app can INSERT+SELECT the job but never UPDATE or DELETE it (drain-only)", async () => {
+    const [g] = await owner<{ ins: boolean; sel: boolean; upd: boolean; del: boolean }[]>`
+      select
+        has_table_privilege(${DB_ROLES.app}, 'org_deletions', 'INSERT') as ins,
+        has_table_privilege(${DB_ROLES.app}, 'org_deletions', 'SELECT') as sel,
+        has_table_privilege(${DB_ROLES.app}, 'org_deletions', 'UPDATE') as upd,
+        has_table_privilege(${DB_ROLES.app}, 'org_deletions', 'DELETE') as del`;
+    expect(g).toEqual({ ins: true, sel: true, upd: false, del: false });
   });
 });
