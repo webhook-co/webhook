@@ -1,0 +1,51 @@
+---
+title: "Verify Stripe webhooks"
+sidebarTitle: "Stripe"
+description: "Register your Stripe signing secret on an endpoint and webhook.co verifies every inbound event's Stripe-Signature for you."
+icon: "stripe"
+---
+
+Stripe signs each webhook with an HMAC-SHA256 over `{timestamp}.{body}`, carried in the `Stripe-Signature` header as `t=<unix>,v1=<hex>`. Register your endpoint's signing secret on webhook.co and every inbound request is verified against the exact captured bytes, then stamped with a verification state.
+
+## Get the signing secret
+
+In the Stripe Dashboard, open **Developers → Webhooks**, select (or add) the endpoint pointing at your webhook.co ingest URL, and reveal its **Signing secret**. It starts with `whsec_`.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+# the secret is read from a no-echo prompt (or piped stdin) — never an argv flag
+printf %s "$STRIPE_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider stripe
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"stripe","secret":"whsec_your_signing_secret"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "stripe",
+  secret: process.env.STRIPE_SIGNING_SECRET!, // whsec_...
+});
+```
+
+</CodeGroup>
+
+## Replay window
+
+Because Stripe signs the timestamp, webhook.co enforces a 5-minute tolerance — a request whose `t` is older than that fails verification rather than being accepted as a possible replay. One signing secret per endpoint is enough; a `Stripe-Signature` may carry several `v1=` values during a secret roll, and any match verifies.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```
+
+Verified Stripe events show `verified`; a bad signature or an expired timestamp shows `failed`.

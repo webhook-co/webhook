@@ -1,0 +1,48 @@
+---
+title: "Verify Slack webhooks"
+sidebarTitle: "Slack"
+description: "Register your Slack signing secret and webhook.co verifies the v0 request signature and answers the url_verification handshake."
+icon: "slack"
+---
+
+Slack signs each request with an HMAC-SHA256 over the basestring `v0:{timestamp}:{body}`, sent as `X-Slack-Signature: v0=<hex>` alongside `X-Slack-Request-Timestamp`. Register the signing secret and webhook.co verifies every request — and answers Slack's setup handshake for you.
+
+## Get the signing secret
+
+In your Slack app config at api.slack.com/apps, open **Basic Information → App Credentials** and copy the **Signing Secret**.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$SLACK_SIGNING_SECRET" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider slack
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"slack","secret":"your_signing_secret"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "slack",
+  secret: process.env.SLACK_SIGNING_SECRET!,
+});
+```
+
+</CodeGroup>
+
+## The url\_verification handshake
+
+When you save an ingest URL in Slack's **Event Subscriptions**, Slack POSTs a `url_verification` challenge. webhook.co detects it and echoes the `challenge` value automatically — no configuration, and the challenge is never captured as an event. Slack signs the timestamp, so webhook.co enforces a 5-minute replay window on real events.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

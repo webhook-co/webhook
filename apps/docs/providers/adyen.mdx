@@ -1,0 +1,50 @@
+---
+title: "Verify Adyen webhooks"
+sidebarTitle: "Adyen"
+description: "Register your Adyen HMAC key and webhook.co verifies each notification's signature over its signed field set."
+icon: "shield-halved"
+---
+
+Adyen signs each notification with an HMAC-SHA256 over a fixed, colon-joined set of fields — `pspReference`, `originalReference`, `merchantAccountCode`, `merchantReference`, `amount.value`, `amount.currency`, `eventCode`, `success` — not the raw body. The signature lives inside the payload at `NotificationRequestItem.additionalData.hmacSignature`. Register your HMAC key and webhook.co reproduces the exact field construction.
+
+## Get the HMAC key
+
+In the Adyen Customer Area, open **Developers → Webhooks**, select your webhook (Standard notification), and under **Security** generate or reveal the **HMAC Key**. It's a hex string.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$ADYEN_HMAC_KEY" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider adyen
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"adyen","secret":"your_hmac_key"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "adyen",
+  secret: process.env.ADYEN_HMAC_KEY!,
+});
+```
+
+</CodeGroup>
+
+<Note>
+  Register the HMAC key exactly as the Customer Area shows it (the hex string). webhook.co hex-decodes it to the key bytes, matching Adyen's own SDKs — don't decode or reformat it first.
+</Note>
+
+webhook.co verifies one notification item per request. There's no signed timestamp, so no replay window applies.
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

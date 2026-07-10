@@ -1,0 +1,48 @@
+---
+title: "Verify Twilio webhooks"
+sidebarTitle: "Twilio"
+description: "Register your Twilio auth token and webhook.co verifies X-Twilio-Signature over the request URL and parameters."
+icon: "shield-halved"
+---
+
+Twilio signs each request with an HMAC-SHA1 keyed by your **Auth Token**, base64-encoded in `X-Twilio-Signature`. For form-encoded webhooks it signs the request URL followed by the sorted form fields; for JSON bodies it signs the URL (carrying a `bodySHA256`) and the body hash. Register the auth token and webhook.co handles both modes.
+
+## Get the auth token
+
+In the Twilio Console home, copy your account's **Auth Token** (under Account Info). If you use a subaccount, use that subaccount's token.
+
+## Register it on your endpoint
+
+<CodeGroup>
+
+```sh CLI
+printf %s "$TWILIO_AUTH_TOKEN" | wbhk endpoints add-provider-secret <endpoint-id> \
+  --provider twilio
+```
+
+```sh API
+curl https://api.webhook.co/v1/endpoints/<endpoint-id>/provider-secrets \
+  -H "Authorization: Bearer $WEBHOOK_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"provider":"twilio","secret":"your_auth_token"}'
+```
+
+```ts TypeScript
+await webhook.providerSecrets.add({
+  endpointId,
+  provider: "twilio",
+  secret: process.env.TWILIO_AUTH_TOKEN!,
+});
+```
+
+</CodeGroup>
+
+<Warning>
+  Twilio signs the request URL. The webhook URL configured in Twilio must be your endpoint's ingest URL exactly — a mismatched host, path, or query changes the signed string. webhook.co tries the default-port variants the way Twilio's SDKs do.
+</Warning>
+
+## Confirm
+
+```sh
+wbhk events list <endpoint-id> --status verified
+```

@@ -42,7 +42,21 @@
           {
             "group": "Providers",
             "icon": "plug",
-            "pages": []
+            "pages": [
+              "providers/verifying-provider-webhooks",
+              "providers/directory",
+              "providers/stripe",
+              "providers/github",
+              "providers/shopify",
+              "providers/slack",
+              "providers/braintree",
+              "providers/adyen",
+              "providers/square",
+              "providers/twilio",
+              "providers/hubspot",
+              "providers/meta",
+              "providers/custom"
+            ]
           },
           {
             "group": "SDKs",
