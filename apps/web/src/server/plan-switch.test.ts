@@ -433,3 +433,43 @@ describe("cancelPendingDowngrade", () => {
     expect(await cancelPendingDowngrade("org-1", "user-1")).toEqual({ status: "error" });
   });
 });
+
+describe("switchPlan — upgrade/release partial failures", () => {
+  async function auditActions() {
+    const { appendAuditEntry } = await import("@webhook-co/db/audit-append");
+    return vi.mocked(appendAuditEntry).mock.calls.map((c) => (c[2] as { action: string }).action);
+  }
+
+  it("a failed RELEASE must not go on to charge them — the upgrade is never attempted", async () => {
+    // If we charged after failing to release, the customer would pay the upgrade AND still be demoted at
+    // renewal by the schedule we couldn't clear. Worst of both worlds.
+    const client = enable({ scheduleId: "sub_sched_1" }); // on Pro, downgrade booked
+    client.releaseSubscriptionSchedule.mockRejectedValue(new Error("stripe down"));
+
+    expect(await switchPlan("org-1", "user-1", "scale")).toEqual({ status: "error" });
+    expect(client.updateSubscription).not.toHaveBeenCalled();
+    expect(await auditActions()).toEqual([]);
+  });
+
+  it("release succeeds but the upgrade fails → error, no success audit (they stay put, nothing booked)", async () => {
+    const client = enable({ scheduleId: "sub_sched_1" });
+    client.updateSubscription.mockRejectedValue(new Error("stripe down"));
+
+    expect(await switchPlan("org-1", "user-1", "scale")).toEqual({ status: "error" });
+    expect(client.releaseSubscriptionSchedule).toHaveBeenCalledOnce();
+    expect(client.updateSubscription).toHaveBeenCalledOnce();
+    expect(await auditActions()).toEqual([]);
+    // The residual state is SAFE: the booked downgrade is gone and the plan is unchanged, so they simply
+    // stay on what they have. Nothing was charged and nothing fires at renewal.
+  });
+
+  it("a failed schedule READ on a repeat downgrade maps to error, and never touches the live sub", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS, scheduleId: "sub_sched_1" });
+    client.retrieveSubscriptionSchedule.mockRejectedValue(new Error("stripe down"));
+
+    expect(await switchPlan("org-1", "user-1", "pro")).toEqual({ status: "error" });
+    expect(client.updateSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(client.updateSubscription).not.toHaveBeenCalled();
+    expect(await auditActions()).toEqual([]);
+  });
+});

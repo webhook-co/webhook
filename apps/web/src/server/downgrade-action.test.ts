@@ -16,7 +16,7 @@ vi.mock("./plan-switch", () => planSwitch);
 vi.mock("./billing", () => ({ openBillingPortal: vi.fn(), startCheckout: vi.fn() }));
 vi.mock("./overage", () => ({ applyOverageToggle: vi.fn() }));
 
-import { cancelDowngradeAction } from "./plan-actions";
+import { cancelDowngradeAction, switchPlanAction } from "./plan-actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -41,5 +41,29 @@ describe("cancelDowngradeAction", () => {
     planSwitch.cancelPendingDowngrade.mockResolvedValue({ status: "ok" });
     await cancelDowngradeAction();
     expect(planSwitch.cancelPendingDowngrade).toHaveBeenCalledWith("org-1", "user-1");
+  });
+});
+
+describe("switchPlanAction", () => {
+  it.each([
+    ["ok", "/billing?switch=ok"],
+    ["scheduled", "/billing?switch=scheduled"], // a downgrade booked for period end — NOT applied now
+    ["same_plan", "/billing?switch=same_plan"],
+    ["forbidden", "/billing?switch=forbidden"],
+    ["error", "/billing?switch=error"],
+  ])("maps %s → %s", async (status, expected) => {
+    planSwitch.switchPlan.mockResolvedValue({ status, plan: "pro" });
+    const form = new FormData();
+    form.set("planId", "pro");
+    await switchPlanAction(form);
+    expect(nav.redirect).toHaveBeenCalledWith(expected);
+  });
+
+  it("NEVER reports a scheduled downgrade as an applied switch (they'd think they lost volume today)", async () => {
+    planSwitch.switchPlan.mockResolvedValue({ status: "scheduled", plan: "pro" });
+    const form = new FormData();
+    form.set("planId", "pro");
+    await switchPlanAction(form);
+    expect(nav.redirect).not.toHaveBeenCalledWith("/billing?switch=ok");
   });
 });
