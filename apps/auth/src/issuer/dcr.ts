@@ -23,6 +23,9 @@
  * The known MCP-vendor https callback hosts allowed to self-register a remote redirect. Matched on the
  * exact parsed hostname (lowercased, trailing dot stripped). Keep in sync with the docs; adding a host
  * here is the reviewed way to onboard a new web MCP client until CIMD lands.
+ *
+ * NOTE: this set is also inherited by `VERIFIED_CLIENT_DOMAINS` (client-display.ts) — a host added here is
+ * ALSO shown as a "verified" client on the consent screen. Only add hosts you've actually vetted.
  */
 export const ALLOWED_HTTPS_REDIRECT_HOSTS: ReadonlySet<string> = new Set([
   "claude.ai", // Claude Desktop / claude.ai / mobile custom connectors

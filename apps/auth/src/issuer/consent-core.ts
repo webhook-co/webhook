@@ -21,7 +21,12 @@
 //     the cross-slice G1 invariant token-core depends on (a mismatch would orphan the vestigial grant);
 //   - PII (device name) lives only in the encrypted `props`, never in the provider's unencrypted metadata.
 
-import { sanitizeClientName } from "./client-display";
+import {
+  clientIdentityDomain,
+  isVerifiedClient,
+  redirectHostLabel,
+  sanitizeClientName,
+} from "./client-display";
 import { isRedirectAllowedForClient } from "./dcr";
 import { withIssParam } from "./iss-param";
 import type { ConsentAuthRequest, ConsentTicketPayload } from "./consent-ticket";
@@ -162,6 +167,11 @@ export async function buildConsent(
   const clientName = sanitizeClientName(
     (await deps.lookupClientName(request.clientId)) ?? request.clientId,
   );
+  // Un-spoofable provenance the screen renders instead of trusting the name: the proven identity domain, the
+  // redirect host (MCP spec MUST show it) + loopback flag, and whether the client is on the vetted list.
+  const redirect = redirectHostLabel(request.redirectUri);
+  const clientIdentity = clientIdentityDomain(request.clientId);
+  const clientVerified = isVerifiedClient(request.clientId, redirect.host);
   const now = deps.nowSeconds();
 
   const ticket = await deps.signTicket({
@@ -174,6 +184,10 @@ export async function buildConsent(
     audience: resource,
     clientId: request.clientId,
     clientName,
+    clientIdentityDomain: clientIdentity,
+    clientVerified,
+    redirectHost: redirect.host,
+    redirectIsLoopback: redirect.isLoopback,
     origin,
     grantExpiresAt: new Date((now + deps.grantTtlSeconds) * 1000).toISOString(),
     keyTtlSeconds: deps.keyTtlSeconds,
@@ -257,6 +271,9 @@ export async function buildDeviceConsent(
   const clientName = sanitizeClientName(
     (await deps.lookupClientName(record.clientId)) ?? record.clientId,
   );
+  // The device-code flow has no redirect_uri (the code is polled, not redirected), so there is no redirect
+  // host to show. Provenance is the client's identity domain + vetted status only.
+  const clientIdentity = clientIdentityDomain(record.clientId);
   const now = deps.nowSeconds();
 
   const ticket = await deps.signTicket({
@@ -269,6 +286,10 @@ export async function buildDeviceConsent(
     audience: record.audience,
     clientId: record.clientId,
     clientName,
+    clientIdentityDomain: clientIdentity,
+    clientVerified: isVerifiedClient(record.clientId, null),
+    redirectHost: null,
+    redirectIsLoopback: false,
     origin,
     grantExpiresAt: new Date((now + deps.grantTtlSeconds) * 1000).toISOString(),
     keyTtlSeconds: deps.keyTtlSeconds,

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { clientIdentityDomain, redirectHostLabel, sanitizeClientName } from "./client-display";
+import {
+  clientIdentityDomain,
+  isVerifiedClient,
+  redirectHostLabel,
+  sanitizeClientName,
+} from "./client-display";
 
 // The consent screen renders a client's self-asserted name as the headline. For a DCR or CIMD client that
 // name is ENTIRELY attacker-controlled (validateClientRegistration checks only redirect_uris; a CIMD doc is
@@ -78,6 +83,26 @@ describe("clientIdentityDomain", () => {
     expect(clientIdentityDomain("cli_wbhk")).toBeNull();
     expect(clientIdentityDomain("not a url")).toBeNull();
     expect(clientIdentityDomain("http://example.com/x")).toBeNull(); // not https → not a CIMD identity
+  });
+});
+
+describe("isVerifiedClient", () => {
+  it("is verified when the CIMD identity domain is on the curated list", () => {
+    expect(
+      isVerifiedClient("https://claude.ai/oauth/claude-code-client-metadata", "127.0.0.1"),
+    ).toBe(true);
+    expect(isVerifiedClient("https://zed.dev/oauth/client-metadata.json", "127.0.0.1")).toBe(true);
+  });
+
+  it("is verified when a DCR client's redirect host is a vetted vendor host", () => {
+    expect(isVerifiedClient("dcr_opaque_id", "claude.ai")).toBe(true); // Claude Desktop
+    expect(isVerifiedClient("dcr_opaque_id", "cursor.com")).toBe(true); // Cursor web
+  });
+
+  it("is NOT verified for an arbitrary CIMD host or a loopback-only opaque client", () => {
+    expect(isVerifiedClient("https://acme.dev/c.json", "acme.dev")).toBe(false);
+    expect(isVerifiedClient("cli_wbhk", "127.0.0.1")).toBe(false); // our own CLI: unverified-but-loopback
+    expect(isVerifiedClient("cli_wbhk", null)).toBe(false);
   });
 });
 
