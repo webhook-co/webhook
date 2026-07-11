@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sessionCookieOptions } from "@/server/session-cookie";
 
 import { getSessionSecret } from "@/server/env";
 import { SESSION_COOKIE, SESSION_TTL_SECONDS, type Session } from "@/server/session";
@@ -28,12 +29,10 @@ export async function GET(request: Request): Promise<Response> {
     SESSION_TTL_SECONDS,
   );
   const res = NextResponse.redirect(new URL("/", request.url));
+  // The same attributes every other set/delete uses. Dev-only route (it 404s in prod above), so this
+  // resolves to `secure: false` — the cookie is only ever set over http://localhost.
   res.cookies.set(SESSION_COOKIE, token, {
-    path: "/",
-    httpOnly: true,
-    sameSite: "lax",
-    // Dev-only route (404s in prod above), so the cookie is only ever set over http://localhost.
-    secure: false,
+    ...sessionCookieOptions(),
     maxAge: SESSION_TTL_SECONDS,
   });
   return res;
