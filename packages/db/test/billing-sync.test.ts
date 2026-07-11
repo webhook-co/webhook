@@ -378,6 +378,19 @@ describe("webhook_billing cross-tenant write rejection (behavioral RLS WITH CHEC
         (tx) => tx`insert into org_limits (org_id, event_cap) values (${b}, ${100})`,
       ),
     ).rejects.toThrow(/row-level security|policy|violates/i);
+
+    // orgs.retention_days (0054) — a NEW write surface, and the most dangerous one to get wrong: shrinking
+    // ANOTHER tenant's retention window would cause THEIR data to be deleted. RLS confines the update to the
+    // caller's own org, so this silently matches zero rows rather than touching org B.
+    const hijack = await withTenant(
+      billing,
+      a,
+      (tx) => tx`update orgs set retention_days = ${1} where id = ${b} returning id`,
+    );
+    expect(hijack).toHaveLength(0);
+    const [victim] = await admin<{ retention_days: number | null }[]>`
+      select retention_days from orgs where id = ${b}`;
+    expect(victim.retention_days).toBe(7); // org B's window is untouched
     // And an UPDATE of org B's existing row from org A's context is a silent no-op (RLS hides the row), not a
     // cross-tenant mutation: seed B's customer as root, then try to overwrite it as billing under A.
     await admin`insert into billing_customers (org_id, stripe_customer_id) values (${b}, ${"cus_owned"})`;
@@ -600,5 +613,35 @@ describe("retention window mirror (integration)", () => {
       2000,
     );
     expect(await windowOf(org)).toBe(30);
+  });
+});
+
+describe("retention vs the cap's fail-closed early return", () => {
+  it("lengthens retention even when an UNSPECIFIED cap makes the cap mirror bail out", async () => {
+    // The two mirrors fail in opposite directions, and they must not be coupled. A price with garbage/absent
+    // `event_cap` fail-closes the CAP (leave it alone — never grant unlimited usage from a bad config). But
+    // the RETENTION write must still land: if it didn't, a paying Pro customer would keep having their data
+    // deleted at the Free 7-day window because of an unrelated typo in their cap metadata. That is exactly
+    // the unrecoverable outcome the whole design exists to prevent — so retention is written BEFORE the cap's
+    // early return, and this pins that ordering.
+    const org = await seedOrg();
+    const [before] = await admin<{ retention_days: number | null }[]>`
+      select retention_days from orgs where id = ${org}`;
+    expect(before.retention_days).toBe(7); // starts on Free
+
+    await applySubscriptionUpsert(
+      billing,
+      sub(org, { eventCap: undefined, retentionDays: 30 }), // cap unspecified, retention specified
+      1000,
+    );
+
+    // Cap: fail-closed — no paid org_limits row was created from a bad config.
+    const limits = await admin`select 1 from org_limits where org_id = ${org}`;
+    expect(limits).toHaveLength(0);
+
+    // Retention: landed anyway. Their data is now kept for 30 days, not 7.
+    const [after] = await admin<{ retention_days: number | null }[]>`
+      select retention_days from orgs where id = ${org}`;
+    expect(after.retention_days).toBe(30);
   });
 });
