@@ -80,9 +80,12 @@ export default function PrivacyPage() {
               users or third parties. For that data, <strong>you</strong> are the controller and{" "}
               <strong>we</strong> process it only to run the Service for you, on your instructions.
               Business customers can put this on a formal footing with our{" "}
-              <strong>Data Processing Agreement</strong>. This policy's controller-focused sections
-              (legal bases, your individual rights) are about <em>account</em> data; for the data
-              you capture, your own privacy notice and our DPA govern.
+              <a href="/dpa">
+                <strong>Data Processing Agreement</strong>
+              </a>
+              . This policy's controller-focused sections (legal bases, your individual rights) are
+              about <em>account</em> data; for the data you capture, your own privacy notice and our
+              DPA govern.
             </li>
           </ul>
 
