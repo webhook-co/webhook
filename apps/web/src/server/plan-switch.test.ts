@@ -294,7 +294,9 @@ describe("switchPlan — downgrade failure paths", () => {
     client.updateSubscriptionSchedule.mockRejectedValue(new Error("stripe down"));
 
     expect(await switchPlan("org-1", "user-1", "pro")).toEqual({ status: "error" });
-    expect(await auditActions()).not.toContain("plan_downgrade_scheduled");
+    // ZERO audit entries, not merely "no plan_downgrade_scheduled": a regression that wrote some OTHER
+    // action (say `plan_switched`) on a failed downgrade would slip past a not.toContain assertion.
+    expect(await auditActions()).toEqual([]);
     expect(client.updateSubscription).not.toHaveBeenCalled();
   });
 
