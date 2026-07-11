@@ -47,13 +47,15 @@ describe("legal pages only publish email addresses that actually route", () => {
  * otherwise it proves only that the address exists somewhere on the page, which is not the guarantee we want.
  */
 function promiseRoutesTo(src: string, promise: string, address: string): boolean {
-  // Split on JSX paragraph boundaries; the promise and its mailto: must live in the SAME <p>.
-  const paragraphs = src.split(/<p>/).map((b) => b.split("</p>")[0]);
-  const p = paragraphs.find((b) =>
+  // Split on JSX block-level boundaries; the promise and its mailto: must live in the SAME block. Both <p>
+  // AND <blockquote> count — the Privacy summary makes a real "questions or requests" promise inside a
+  // <blockquote>, and binding only <p> would leave that channel unguarded (a retarget there would slip by).
+  const blocks = src.split(/<p>|<blockquote>/).map((b) => b.split(/<\/p>|<\/blockquote>/)[0]);
+  const block = blocks.find((b) =>
     b.replace(/\s+/g, " ").toLowerCase().includes(promise.toLowerCase()),
   );
-  if (!p) return false; // the promise itself vanished — also a failure
-  return p.includes(`mailto:${address}`);
+  if (!block) return false; // the promise itself vanished — also a failure
+  return block.includes(`mailto:${address}`);
 }
 
 describe("each channel the legal docs promise actually exists", () => {
@@ -73,6 +75,12 @@ describe("each channel the legal docs promise actually exists", () => {
     expect(promiseRoutesTo(read("privacy"), "to exercise any of these", "privacy@webhook.co")).toBe(
       true,
     );
+  });
+
+  it("the Privacy summary's 'questions or requests' promise also routes to privacy@", () => {
+    // This one lives in a <blockquote>, not a <p> — the first channel most people read. Binding it proves
+    // the helper now covers block-quotes, so a retarget of the summary address can't slip past the tests.
+    expect(promiseRoutesTo(read("privacy"), "Questions or", "privacy@webhook.co")).toBe(true);
   });
 
   it("the DPA binds each legal@ promise to the PARAGRAPH that makes it, not merely the page", () => {
