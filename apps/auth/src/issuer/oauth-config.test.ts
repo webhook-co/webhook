@@ -71,4 +71,31 @@ describe("oauthIssuerConfig", () => {
       }),
     ).toBeUndefined();
   });
+
+  // ── Discovery contract (ADR-0110) ────────────────────────────────────────────────────────────────
+  // We serve RFC 8414 and deliberately DO NOT serve /.well-known/openid-configuration. The MCP spec
+  // requires an AS to provide *at least one* of RFC 8414 or OIDC Discovery, and requires CLIENTS to try
+  // both — our issuer has no path component, so every conformant client builds exactly two candidate URLs,
+  // hits /.well-known/oauth-authorization-server FIRST, gets a 200, and never requests the OIDC one.
+  //
+  // Serving an OIDC alias is not a harmless nicety: the official TS SDK picks its parser from WHICH url
+  // answered, and its OIDC schema hard-requires jwks_uri / subject_types_supported /
+  // id_token_signing_alg_values_supported. We are an opaque-token AS with no JWKS, so an honest alias would
+  // make that parse THROW — and the throw is not caught by the 404-fallback path, so it aborts the whole
+  // auth flow. A benign 404 would become a hard failure. Do not "fix" the 404.
+  it("advertises S256 PKCE — an MCP client MUST refuse to proceed without code_challenge_methods_supported", () => {
+    // The provider derives code_challenge_methods_supported from these two flags; if plain PKCE were ever
+    // enabled or the field dropped, every spec-compliant client would (correctly) refuse to authorize.
+    expect(oauthIssuerConfig.allowPlainPKCE).toBe(false);
+    expect(oauthIssuerConfig.allowImplicitFlow).toBe(false);
+  });
+
+  it("stays a pure OAuth 2.1 AS — no OIDC surface is configured (see ADR-0110)", () => {
+    // There is no OIDC concept in the provider at all (no jwks_uri, no id_token, no userinfo). Locking this
+    // keeps someone from bolting on an `openid` scope or an OIDC discovery alias without reading the ADR:
+    // it would advertise an identity layer we do not implement.
+    expect(oauthIssuerConfig.scopesSupported).not.toContain("openid");
+    expect(oauthIssuerConfig).not.toHaveProperty("jwksUri");
+    expect(oauthIssuerConfig.resourceMetadata.scopes_supported).not.toContain("openid");
+  });
 });

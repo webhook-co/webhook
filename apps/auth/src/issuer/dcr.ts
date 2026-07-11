@@ -90,6 +90,78 @@ export function isHttpLoopbackRedirect(uri: string): boolean {
   return classifyRedirectUri(uri) === "loopback";
 }
 
+// ── CIMD (Client ID Metadata Documents) ──────────────────────────────────────────────────────────────
+// A CIMD client_id is an https URL to a JSON metadata doc the client hosts (the provider fetches it and
+// takes redirect_uris straight from the document). The provider's clientRegistrationCallback — where
+// validateClientRegistration below runs — NEVER fires on the CIMD path, so this is our ONLY gate on a CIMD
+// client's redirect_uri. See the lane design doc + ADR-0111.
+
+/**
+ * Is this client_id a CIMD identifier? Mirrors the provider's `isClientMetadataUrl` exactly: https scheme
+ * with a non-root path. (A bare opaque DCR client id, an http url, or a root-path https url is not CIMD.)
+ */
+export function isCimdClientId(clientId: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(clientId);
+  } catch {
+    return false;
+  }
+  return url.protocol === "https:" && url.pathname !== "/";
+}
+
+/** The exact origin (scheme://host:port) of a URL, lowercased with a trailing dot stripped, or null. */
+function originOf(uri: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(uri);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.replace(/\.$/, "").toLowerCase();
+  return `${url.protocol}//${host}:${url.port}`;
+}
+
+/**
+ * May a CIMD client (client_id is an https metadata URL) use this requested redirect_uri? Allowed iff it is
+ * an http loopback (any port) OR https SAME-ORIGIN with the client_id URL. Own origins are always rejected.
+ *
+ * This forces the authorization code to land on the same origin the consent screen displays (or the user's
+ * own loopback) — it can't be redirected to a third origin. It does NOT by itself stop consent-phishing (an
+ * attacker who owns both the doc and the redirect on one origin passes) — that is the origin-honest consent
+ * screen's job. The library follows redirects on the CIMD fetch (a documented, accepted residual), so the
+ * `client_id` origin used here can in principle be borrowed via an open redirect on a trusted domain.
+ */
+export function isCimdRedirectAllowed(clientId: string, redirectUri: string): boolean {
+  if (!isCimdClientId(clientId)) return false; // defense in depth: only reached for a real CIMD client
+  let redirect: URL;
+  try {
+    redirect = new URL(redirectUri);
+  } catch {
+    return false;
+  }
+  const redirectHost = redirect.hostname.replace(/\.$/, "").toLowerCase();
+  if (isOwnOrigin(redirectHost)) return false;
+  if (redirect.protocol === "http:" && isLoopbackHost(redirectHost)) return true;
+  if (redirect.protocol === "https:") {
+    const clientOrigin = originOf(clientId);
+    return clientOrigin !== null && clientOrigin === originOf(redirectUri);
+  }
+  return false;
+}
+
+/**
+ * May THIS client use THIS redirect_uri? Dispatches on the client kind: a CIMD client (https URL client_id)
+ * is held to the same-origin-or-loopback fence; any other (DCR / first-party) client is held to the DCR
+ * policy (http loopback or an allowlisted-vendor https host). This is the single redirect gate the consent
+ * core calls — the provider's clientRegistrationCallback does not run on the CIMD path.
+ */
+export function isRedirectAllowedForClient(clientId: string, redirectUri: string): boolean {
+  return isCimdClientId(clientId)
+    ? isCimdRedirectAllowed(clientId, redirectUri)
+    : isRegisterableRedirectUri(redirectUri);
+}
+
 /** An OAuth registration-error result; returning it from the callback REJECTS the registration. */
 export interface RegistrationRejection {
   code: string;

@@ -21,7 +21,9 @@
 //     the cross-slice G1 invariant token-core depends on (a mismatch would orphan the vestigial grant);
 //   - PII (device name) lives only in the encrypted `props`, never in the provider's unencrypted metadata.
 
-import { isRegisterableRedirectUri } from "./dcr";
+import { sanitizeClientName } from "./client-display";
+import { isRedirectAllowedForClient } from "./dcr";
+import { withIssParam } from "./iss-param";
 import type { ConsentAuthRequest, ConsentTicketPayload } from "./consent-ticket";
 // The grant-props contract is owned by token-core (the reader). consent-core is the WRITER — it imports the
 // SAME type so the two halves of the G1 invariant can't drift (a divergence here would silently break the
@@ -45,6 +47,8 @@ export interface AuthorizeOrigin {
 
 /** Injected seams for building the consent screen state from an authorization request. */
 export interface BuildConsentDeps {
+  /** Our issuer identifier, stamped onto every authorization response as RFC 9207 `iss`. */
+  issuer: string;
   allowedAudiences: readonly string[];
   /** The capability scope set; requested scopes are intersected against this. */
   allowedScopes: readonly string[];
@@ -77,12 +81,16 @@ export type BuildConsentResult =
   /** The request itself is untrustworthy (redirect_uri not loopback) — cannot redirect; render a 400. */
   | { kind: "bad_request"; error: string; description: string };
 
-/** Build a redirect back to the client's redirect_uri carrying an OAuth error (+ the echoed state). */
-function errorRedirect(redirectUri: string, error: string, state: string): string {
+/**
+ * Build a redirect back to the client's redirect_uri carrying an OAuth error (+ the echoed state), stamped
+ * with the RFC 9207 `iss`. The spec requires `iss` on ERROR responses too: without it a client cannot
+ * attribute an error to the AS it redirected to, and is required to refuse to act on it.
+ */
+function errorRedirect(redirectUri: string, error: string, state: string, issuer: string): string {
   const url = new URL(redirectUri);
   url.searchParams.set("error", error);
   if (state) url.searchParams.set("state", state);
-  return url.toString();
+  return withIssParam(url.toString(), issuer);
 }
 
 /** Normalize the RFC 8707 resource param to exactly one value, or null if absent / more than one. */
@@ -108,10 +116,12 @@ export async function buildConsent(
   userId: string,
   origin: AuthorizeOrigin,
 ): Promise<BuildConsentResult> {
-  // The redirect_uri gates whether we can safely bounce errors back. Re-validate it against the DCR policy
-  // (http loopback, or an allowlisted-vendor https callback) — if it isn't registerable, we must NOT
-  // redirect to it; render a 400 instead.
-  if (!isRegisterableRedirectUri(request.redirectUri)) {
+  // The redirect_uri gates whether we can safely bounce errors back. Re-validate it against the policy for
+  // THIS client kind — the DCR policy (http loopback / allowlisted-vendor https) for a DCR or first-party
+  // client, or the same-origin-or-loopback fence for a CIMD client (whose redirect the provider took from a
+  // self-hosted doc our registration callback never saw). If it isn't allowed, we must NOT redirect to it;
+  // render a 400 instead.
+  if (!isRedirectAllowedForClient(request.clientId, request.redirectUri)) {
     return {
       kind: "bad_request",
       error: "invalid_request",
@@ -124,7 +134,7 @@ export async function buildConsent(
   if (resource === null || !deps.allowedAudiences.includes(resource)) {
     return {
       kind: "redirect",
-      location: errorRedirect(request.redirectUri, "invalid_target", request.state),
+      location: errorRedirect(request.redirectUri, "invalid_target", request.state, deps.issuer),
     };
   }
 
@@ -133,7 +143,7 @@ export async function buildConsent(
   if (scopes.length === 0) {
     return {
       kind: "redirect",
-      location: errorRedirect(request.redirectUri, "invalid_scope", request.state),
+      location: errorRedirect(request.redirectUri, "invalid_scope", request.state, deps.issuer),
     };
   }
 
@@ -142,11 +152,16 @@ export async function buildConsent(
     deps.log?.("consent.no_org", { userId });
     return {
       kind: "redirect",
-      location: errorRedirect(request.redirectUri, "server_error", request.state),
+      location: errorRedirect(request.redirectUri, "server_error", request.state, deps.issuer),
     };
   }
 
-  const clientName = (await deps.lookupClientName(request.clientId)) ?? request.clientId;
+  // The client name is attacker-controlled (DCR validates only redirect_uris; a CIMD doc is self-hosted).
+  // Sanitize it (strip bidi/control chars, clamp length) before it's sealed into the ticket and rendered as
+  // the consent headline. The un-spoofable identity — the client's origin — is derived on the screen.
+  const clientName = sanitizeClientName(
+    (await deps.lookupClientName(request.clientId)) ?? request.clientId,
+  );
   const now = deps.nowSeconds();
 
   const ticket = await deps.signTicket({
@@ -239,7 +254,9 @@ export async function buildDeviceConsent(
     return { kind: "error", status: 500, error: "server_error", description: "no consent org" };
   }
 
-  const clientName = (await deps.lookupClientName(record.clientId)) ?? record.clientId;
+  const clientName = sanitizeClientName(
+    (await deps.lookupClientName(record.clientId)) ?? record.clientId,
+  );
   const now = deps.nowSeconds();
 
   const ticket = await deps.signTicket({
@@ -266,6 +283,8 @@ export async function buildDeviceConsent(
 
 /** Injected seams for the consent decision. */
 export interface DecideConsentDeps {
+  /** Our issuer identifier, stamped onto every authorization response as RFC 9207 `iss`. */
+  issuer: string;
   /** Verify + open the round-tripped ticket (null = invalid/expired/forged). */
   verifyTicket: (ticket: string) => Promise<ConsentTicketPayload | null>;
   /** PKCE flow: complete the authorization on the provider → the loopback redirect carrying the code. */
@@ -394,10 +413,11 @@ export async function decideConsent(
   }
 
   // Interactive PKCE flow. Defence in depth: the redirect_uri was policy-validated in buildConsent and the
-  // ticket is HMAC-sealed, so this re-check should never fire — but re-asserting it means we never hand the
-  // provider a non-registerable uri even if a future ticket path skipped the check, and it fails closed if
-  // the sealed payload is malformed (a non-string redirectUri makes isRegisterableRedirectUri false).
-  if (!isRegisterableRedirectUri(payload.request.redirectUri)) {
+  // ticket is HMAC-sealed, so this re-check should never fire — but re-asserting it (against the same
+  // client-kind-aware policy) means we never hand the provider a disallowed uri even if a future ticket path
+  // skipped the check, and it fails closed if the sealed payload is malformed (a non-string redirectUri
+  // makes the predicate false).
+  if (!isRedirectAllowedForClient(payload.request.clientId, payload.request.redirectUri)) {
     deps.log?.("consent.bad_redirect_uri", {});
     return {
       kind: "error",
@@ -414,6 +434,7 @@ export async function decideConsent(
         payload.request.redirectUri,
         "access_denied",
         payload.request.state,
+        deps.issuer,
       ),
     };
   }
@@ -431,5 +452,7 @@ export async function decideConsent(
     orgId: payload.orgId,
     scopeCount: payload.scopes.length,
   });
-  return { kind: "ok", redirectTo };
+  // RFC 9207: stamp the issuer onto the success response so the client can detect a mix-up attack (the
+  // provider builds redirectTo with only code + state).
+  return { kind: "ok", redirectTo: withIssParam(redirectTo, deps.issuer) };
 }

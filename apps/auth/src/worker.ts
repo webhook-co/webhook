@@ -25,6 +25,7 @@ import { introspect } from "./issuer/introspect-handler";
 import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
 import { nowSeconds } from "./issuer/issuer-constants";
 import { oauthIssuerConfig } from "./issuer/oauth-config";
+import { augmentAsMetadataResponse } from "./issuer/as-metadata";
 import { guardRegister } from "./issuer/register-guard";
 import type { RateLimitKv } from "./issuer/rate-limit";
 import { deleteAccountRpc } from "./issuer/account-delete-deps";
@@ -52,7 +53,11 @@ export default {
       request,
     );
     if (limited) return limited;
-    return provider.fetch(request, env, ctx);
+    const response = await provider.fetch(request, env, ctx);
+    // RFC 9207: we stamp `iss` onto every authorization response (consent-core), and an AS that does so MUST
+    // advertise it. The provider generates the AS-metadata document itself and offers no hook to extend it,
+    // so we merge the advertisement into its response here. Every other path passes through untouched.
+    return augmentAsMetadataResponse(request, response);
   },
 
   // Hourly cron (crons: "0 * * * *"). Two independent, non-throwing jobs (each logs + swallows its own

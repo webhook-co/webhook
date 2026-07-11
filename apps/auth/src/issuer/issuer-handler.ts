@@ -137,7 +137,11 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
 
       // POST /device/verify — the device browser approval entry (A4c-3): rate-limited + session-gated, it
       // resolves the user-code → builds the consent ticket → redirects to the shared /consent screen.
+      // The edge gate runs BEFORE the pool open: device-verify's own throttle is a per-user-code GUESS
+      // limiter behind the pool, so without this an unmetered flood still opens a Postgres pool per request.
       if (request.method === "POST" && url.pathname === "/device/verify") {
+        const limited = await edgeRateLimit(rl, "device_verify", request, EDGE_RULES.device_verify);
+        if (limited) return limited;
         const { deps, close } = await makeDeviceVerifyDeps(readDeviceVerifyEnv(rawEnv), ctx);
         try {
           return await handleDeviceVerify(deps, request);
