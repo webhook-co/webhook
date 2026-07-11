@@ -104,6 +104,43 @@ export interface StripePlanPrices {
 }
 export type StripePlans = Partial<Record<SelfServePlanId, StripePlanPrices>>;
 
+/** One item of a Stripe subscription — the subscription-item id (`si_…`) + the price id it currently holds. */
+export interface SubscriptionItemRef {
+  readonly id: string;
+  readonly price: string;
+}
+
+/**
+ * Compute the subscription-item updates to switch a live subscription from `current` plan prices to `target`
+ * (WS4 plan switch). A self-serve subscription has EXACTLY TWO items — the licensed base + the metered
+ * overage — so we remap each by matching its present price to `current.base`/`current.overage`. Returns null
+ * (caller aborts) unless the sub is cleanly + fully on `current`: it must have exactly two items, one holding
+ * `current.base` and a DISTINCT one holding `current.overage`. This refuses (a) a legacy/hand-edited sub not
+ * on `current`, (b) a sub carrying an EXTRA item Stripe would leave in place → dual billing, and (c) a
+ * misconfig where base === overage would collapse both items onto one → dropped meter. Pure: ids only.
+ */
+export function planSwitchItems(
+  items: readonly SubscriptionItemRef[],
+  current: StripePlanPrices,
+  target: StripePlanPrices,
+): SubscriptionItemRef[] | null {
+  if (items.length !== 2) return null; // an extra item would survive the switch (Stripe keeps unreferenced)
+  const baseItem = items.find((it) => it.price === current.base);
+  const overageItem = items.find((it) => it.price === current.overage);
+  if (!baseItem || !overageItem) return null; // not cleanly on `current` → refuse to guess
+  if (baseItem.id === overageItem.id) return null; // base === overage collapsed onto one item → refuse
+  return [
+    { id: baseItem.id, price: target.base },
+    { id: overageItem.id, price: target.overage },
+  ];
+}
+
+/** Roles allowed to change an org's billing (owner/admin) — the ONE source of truth for the billing-manager
+ *  gate used by the overage toggle, the plan switch, and the dashboard's canManageBilling (SEC-RLS-08). */
+export function isBillingManagerRole(role: string | null | undefined): boolean {
+  return role === "owner" || role === "admin";
+}
+
 /** A plan entry carries exactly these keys — anything else (notably an `amount`) is a misconfiguration. */
 const PLAN_PRICE_KEYS = ["base", "overage"] as const;
 
@@ -138,6 +175,7 @@ export function parseStripePlans(raw: string | undefined | null): StripePlans | 
     const { base, overage } = value as Record<string, unknown>;
     if (typeof base !== "string" || base.length === 0) return null;
     if (typeof overage !== "string" || overage.length === 0) return null;
+    if (base === overage) return null; // base === overage would collapse a plan's two items → dropped meter
     plans[id] = { base, overage };
   }
   return plans as StripePlans;

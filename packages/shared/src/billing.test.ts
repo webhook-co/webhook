@@ -6,9 +6,11 @@ import {
   billingLive,
   parseBillingMode,
   isBillingActive,
+  isBillingManagerRole,
   isLiveSubscriptionStatus,
   parseStripePlans,
   planIdForBasePrice,
+  planSwitchItems,
   planLabel,
   SELF_SERVE_PLAN_IDS,
   SELF_SERVE_PLAN_LABELS,
@@ -197,6 +199,8 @@ describe("parseStripePlans — the self-serve plan → price-id map (fail-closed
     expect(parseStripePlans('{"pro":{"base":"price_pb"}}')).toBeNull(); // half-configured → no line item
     expect(parseStripePlans('{"pro":{"base":"","overage":"price_po"}}')).toBeNull(); // empty id
     expect(parseStripePlans('{"pro":{"base":1,"overage":"price_po"}}')).toBeNull(); // non-string id
+    // base === overage would collapse a plan's two subscription items onto one → dropped meter.
+    expect(parseStripePlans('{"pro":{"base":"price_x","overage":"price_x"}}')).toBeNull();
   });
 
   it("rejects a plan id that is not self-serve (enterprise is contact-sales, never Checkout)", () => {
@@ -208,6 +212,88 @@ describe("parseStripePlans — the self-serve plan → price-id map (fail-closed
     expect(
       parseStripePlans('{"pro":{"base":"price_pb","overage":"price_po"},"scale":{}}'),
     ).toBeNull();
+  });
+});
+
+describe("planSwitchItems (WS4 plan switch — remap a live sub's items to the target plan)", () => {
+  const PRO = { base: "price_pro_base", overage: "price_pro_over" };
+  const SCALE = { base: "price_scale_base", overage: "price_scale_over" };
+
+  it("remaps BOTH items (base + overage) to the target plan, preserving the item ids", () => {
+    const items = [
+      { id: "si_base", price: "price_pro_base" },
+      { id: "si_over", price: "price_pro_over" },
+    ];
+    expect(planSwitchItems(items, PRO, SCALE)).toEqual([
+      { id: "si_base", price: "price_scale_base" },
+      { id: "si_over", price: "price_scale_over" },
+    ]);
+  });
+
+  it("is order-independent — matches by price, not position (overage listed first)", () => {
+    const items = [
+      { id: "si_over", price: "price_pro_over" },
+      { id: "si_base", price: "price_pro_base" },
+    ];
+    expect(planSwitchItems(items, PRO, SCALE)).toEqual([
+      { id: "si_base", price: "price_scale_base" },
+      { id: "si_over", price: "price_scale_over" },
+    ]);
+  });
+
+  it("REFUSES (null) when the sub isn't cleanly on `current` — a legacy/hand-edited sub", () => {
+    // Missing the overage price → we can't know which item is the meter → refuse rather than mis-bill.
+    expect(planSwitchItems([{ id: "si_base", price: "price_pro_base" }], PRO, SCALE)).toBeNull();
+    // A base price from neither plan → not on `current` at all.
+    expect(
+      planSwitchItems(
+        [
+          { id: "si_x", price: "price_legacy_base" },
+          { id: "si_y", price: "price_legacy_over" },
+        ],
+        PRO,
+        SCALE,
+      ),
+    ).toBeNull();
+  });
+
+  it("REFUSES an EXTRA item — a stray/legacy item Stripe would leave in place → dual billing", () => {
+    expect(
+      planSwitchItems(
+        [
+          { id: "si_base", price: "price_pro_base" },
+          { id: "si_over", price: "price_pro_over" },
+          { id: "si_stray", price: "price_legacy_extra" },
+        ],
+        PRO,
+        SCALE,
+      ),
+    ).toBeNull();
+  });
+
+  it("REFUSES a base===overage collision — both items would collapse onto one, dropping the meter", () => {
+    const COLLIDED = { base: "price_same", overage: "price_same" };
+    expect(
+      planSwitchItems(
+        [
+          { id: "si_base", price: "price_same" },
+          { id: "si_over", price: "price_same" },
+        ],
+        COLLIDED,
+        SCALE,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("isBillingManagerRole (the ONE billing-manager gate — SEC-RLS-08)", () => {
+  it("is true for owner/admin, false for member and non-members", () => {
+    expect(isBillingManagerRole("owner")).toBe(true);
+    expect(isBillingManagerRole("admin")).toBe(true);
+    expect(isBillingManagerRole("member")).toBe(false);
+    expect(isBillingManagerRole(null)).toBe(false);
+    expect(isBillingManagerRole(undefined)).toBe(false);
+    expect(isBillingManagerRole("viewer")).toBe(false);
   });
 });
 

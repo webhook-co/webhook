@@ -8,7 +8,7 @@
 // backstopped); it is never load-bearing for correctness, so a missing/failing RPC can't leave the org
 // ingesting past its cap. The KV cache lives in the engine, which is why eviction stays out of this tx.
 
-import type { PausePolicy } from "@webhook-co/shared";
+import { isBillingManagerRole, type PausePolicy } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
@@ -29,11 +29,6 @@ export type SetOverageResult =
   | { readonly status: "forbidden" }
   /** No org_limits row: a Free org has no paid plan to bill overage against, so it can't opt in. */
   | { readonly status: "no_subscription" };
-
-/** Roles allowed to change org billing policy. Plain members cannot (SEC-RLS-08). */
-function canChangePolicy(role: MembershipRole): boolean {
-  return role === "owner" || role === "admin";
-}
 
 /**
  * Flip `org_limits.pause_policy` for `orgId` to reflect `enabled` (true = overage on = 'allow'), then
@@ -59,7 +54,7 @@ export async function setOverageEnabled(
   return withTenant(app, args.orgId, async (tx): Promise<SetOverageResult> => {
     const [member] = await tx<{ role: MembershipRole }[]>`
       select role from memberships where org_id = ${args.orgId} and user_id = ${args.userId} limit 1`;
-    if (!member || !canChangePolicy(member.role)) return { status: "forbidden" };
+    if (!member || !isBillingManagerRole(member.role)) return { status: "forbidden" };
 
     const [before] = await tx<{ pause_policy: PausePolicy }[]>`
       select pause_policy from org_limits`;

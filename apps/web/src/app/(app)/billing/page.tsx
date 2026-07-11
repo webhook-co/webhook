@@ -7,6 +7,7 @@ import {
   openBillingPortalAction,
   setOverageAction,
   startCheckoutAction,
+  switchPlanAction,
 } from "@/server/plan-actions";
 import { verifySession } from "@/server/session";
 
@@ -62,6 +63,28 @@ const OVERAGE_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "d
     tone: "warn",
   },
   error: { message: "We couldn't update that setting. Please try again.", tone: "danger" },
+};
+
+/** The `?switch=<status>` result banner (switchPlanAction redirects here). Covers EVERY SwitchPlanResult
+ *  status so no outcome is a silent no-op. */
+const SWITCH_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "danger" }> = {
+  ok: {
+    message:
+      "Plan changed. The prorated difference for the rest of this period appears on your next invoice.",
+    tone: "ok",
+  },
+  forbidden: { message: "Only an owner or admin can change the plan.", tone: "warn" },
+  no_subscription: {
+    message: "You need an active subscription to switch plans. Start one below.",
+    tone: "warn",
+  },
+  same_plan: { message: "You're already on that plan.", tone: "warn" },
+  unknown_plan: { message: "That plan isn't available.", tone: "warn" },
+  disabled: { message: "Billing isn't available right now.", tone: "warn" },
+  error: {
+    message: "We couldn't change your plan. Nothing was charged — try again.",
+    tone: "danger",
+  },
 };
 
 export const metadata: Metadata = { title: "Billing · webhook.co" };
@@ -158,6 +181,31 @@ function OverageCard({ enabled, canManage }: { enabled: boolean; canManage: bool
   );
 }
 
+function ChangePlanCard({ targets }: { targets: readonly string[] }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
+      <h2 className="text-lg font-semibold tracking-heading text-fg">Change plan</h2>
+      <p className="text-sm text-fg-secondary">
+        Switching takes effect immediately. The prorated difference for the rest of this billing
+        period — a charge on an upgrade, a credit on a downgrade — appears on your next invoice.
+      </p>
+      <div className="flex flex-wrap gap-3">
+        {targets.map((planId) => (
+          <form key={planId} action={switchPlanAction}>
+            <input type="hidden" name="planId" value={planId} />
+            {/* Per-render nonce → the Stripe Idempotency-Key: a double-click of THIS button collapses to
+                one charge, while a fresh render (a later, deliberate switch) gets a new nonce. */}
+            <input type="hidden" name="nonce" value={crypto.randomUUID()} />
+            <Button type="submit" variant="secondary">
+              Switch to {planLabel(planId)}
+            </Button>
+          </form>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function UpgradeCard({
   planIds,
   resubscribe,
@@ -214,6 +262,9 @@ export default async function BillingPage({
     overageKey && Object.hasOwn(OVERAGE_STATUS, overageKey)
       ? OVERAGE_STATUS[overageKey]
       : undefined;
+  const switchKey = typeof params.switch === "string" ? params.switch : undefined;
+  const switchStatus =
+    switchKey && Object.hasOwn(SWITCH_STATUS, switchKey) ? SWITCH_STATUS[switchKey] : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -224,6 +275,7 @@ export default async function BillingPage({
 
       {errorMsg && <Banner tone="danger">{errorMsg}</Banner>}
       {overageStatus && <Banner tone={overageStatus.tone}>{overageStatus.message}</Banner>}
+      {switchStatus && <Banner tone={switchStatus.tone}>{switchStatus.message}</Banner>}
 
       {view.hidden ? (
         <div className="rounded-card border border-hairline bg-surface p-6">
@@ -232,6 +284,10 @@ export default async function BillingPage({
       ) : (
         <>
           {view.display && <CurrentPlanCard display={view.display} />}
+          {/* Owner/admin only — plan switching is a billing change (SEC-RLS-08); the server re-checks. */}
+          {view.canManageBilling && view.switchTargets.length > 0 && (
+            <ChangePlanCard targets={view.switchTargets} />
+          )}
           {view.overageEnabled !== null && (
             <OverageCard enabled={view.overageEnabled} canManage={view.canManageBilling} />
           )}
