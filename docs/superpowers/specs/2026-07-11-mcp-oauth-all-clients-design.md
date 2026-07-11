@@ -60,7 +60,9 @@ Open DCR that accepts **arbitrary** `https` rests every org's write-scoped token
 consent screen (confused-deputy / consent-phishing — DA "R1"). We neutralize it structurally:
 
 - **Loopback redirects carry no phishing surface** — the code can only reach the user's own machine
-  and is PKCE-bound. Ship openly.
+  and is PKCE-bound. Ship openly. Accepting `localhost` (required by Claude Code / VS Code / Continue)
+  reverses the old IP-literal-only rule; the reasoning (browsers hard-map `localhost` to loopback per
+  RFC 6761, PKCE binds the code, industry-standard) is recorded in **ADR-0109**.
 - **Remote `https` is restricted to an allowlist of the known MCP-vendor callback hosts**
   (`claude.ai`, `claude.com`, `cursor.com`, `www.cursor.com`, `vscode.dev`, `insiders.vscode.dev`).
   An attacker therefore cannot register `https://evil.com` → R1's DCR path is eliminated, and this
@@ -99,6 +101,9 @@ target a loopback literal.
 - **Consent screen** redirect-host + "unverified app" display (required only if we later open to
   arbitrary https; a human-UI hard stop).
 - **Dashboard active-grants + one-click revoke** and shorter refresh TTL for DCR clients (DA "R5").
+- **Apply IPv6 `/64` bucketing to the shared `edgeRateLimit`** (token/authorize/device) and dedup the
+  throttle helper — the `/64` fix currently lives only in `register-guard` (code-review [5]/[6]/[7]);
+  a pre-existing gap, not introduced here, so tracked as a follow-up rather than widening this PR.
 
 ## Testing
 

@@ -13,9 +13,10 @@ function fakeKv(): RateLimitKv & { store: Map<string, string> } {
   };
 }
 
-function registerRequest(ip: string | null): Request {
+function registerRequest(ip: string | null, origin?: string): Request {
   const headers = new Headers({ "content-type": "application/json" });
   if (ip) headers.set("cf-connecting-ip", ip);
+  if (origin) headers.set("origin", origin);
   return new Request("https://auth.webhook.co/register", { method: "POST", headers });
 }
 
@@ -31,6 +32,13 @@ describe("ipRateBucket", () => {
   it("expands a compressed IPv6 address before taking the /64", () => {
     expect(ipRateBucket("2001:db8::1")).toBe("2001:db8:0:0");
     expect(ipRateBucket("::1")).toBe("0:0:0:0");
+  });
+
+  it("buckets an IPv4-mapped IPv6 address by its embedded IPv4 (not the collapsed all-zero /64)", () => {
+    // ::ffff:a.b.c.d is a distinct IPv4 client; the naive /64 slice would collapse every mapped address
+    // to 0:0:0:0 and share one bucket across unrelated clients.
+    expect(ipRateBucket("::ffff:203.0.113.7")).toBe("203.0.113.7");
+    expect(ipRateBucket("::ffff:198.51.100.9")).toBe("198.51.100.9");
   });
 });
 
@@ -70,6 +78,29 @@ describe("guardRegister", () => {
     expect(blocked?.status).toBe(429);
     expect(blocked?.headers.get("retry-after")).toBeTruthy();
     expect(blocked?.headers.get("cache-control")).toContain("no-store");
+  });
+
+  it("echoes the request Origin on the 429 so a browser DCR client can read the rate-limit response", async () => {
+    // The provider attaches CORS (echoed Origin) to every /register response; our short-circuit 429 must
+    // too, or a cross-origin web MCP client (claude.ai / cursor.com) sees an opaque CORS error, not the 429.
+    const kv = fakeKv();
+    const origin = "https://claude.ai";
+    for (let i = 0; i < REGISTER_RATE_RULE.limit; i++) {
+      await guardRegister(deps(kv), registerRequest("203.0.113.7", origin));
+    }
+    const blocked = await guardRegister(deps(kv), registerRequest("203.0.113.7", origin));
+    expect(blocked?.status).toBe(429);
+    expect(blocked?.headers.get("access-control-allow-origin")).toBe(origin);
+  });
+
+  it("omits CORS headers on the 429 when there is no Origin (non-browser client)", async () => {
+    const kv = fakeKv();
+    for (let i = 0; i < REGISTER_RATE_RULE.limit; i++) {
+      await guardRegister(deps(kv), registerRequest("203.0.113.7"));
+    }
+    const blocked = await guardRegister(deps(kv), registerRequest("203.0.113.7"));
+    expect(blocked?.status).toBe(429);
+    expect(blocked?.headers.get("access-control-allow-origin")).toBeNull();
   });
 
   it("buckets two addresses in the same IPv6 /64 together (can't evade by rotating low bits)", async () => {

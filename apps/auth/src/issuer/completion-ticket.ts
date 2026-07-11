@@ -18,6 +18,8 @@ import {
   utf8Encoder,
 } from "@webhook-co/shared";
 
+import { isHttpLoopbackRedirect } from "./dcr";
+
 const HMAC_BYTES = 16; // 128-bit truncated HMAC-SHA256 tag — matches the consent-ticket/cursor codec.
 const TICKET_TYPE = "loopback_complete";
 
@@ -83,4 +85,36 @@ export async function verifyLoopbackTicket(
   if (typeof payload.redirectTo !== "string" || !payload.redirectTo) return null;
   if (typeof payload.exp !== "number" || nowSeconds > payload.exp) return null;
   return payload.redirectTo;
+}
+
+/** The seal/open closures for the `/consent/complete` bounce (`sealLoopbackRedirect`/`openLoopbackRedirect`). */
+export interface CompletionBounce {
+  /** Seal a server-computed http-loopback redirect into a same-origin `/consent/complete?c=…` bounce path. */
+  seal(redirectTo: string): Promise<string>;
+  /** Open a bounce ticket → its http-loopback URL, or null if invalid/expired/forged OR NOT an http loopback. */
+  open(ticket: string): Promise<string | null>;
+}
+
+/**
+ * Build the completion-bounce closures for the consent flow, keyed on the ticket HMAC key + clock. `open`
+ * re-asserts `isHttpLoopbackRedirect` after the MAC/expiry checks, so GET /consent/complete can only ever
+ * server-302 to an http loopback literal — never to a remote/https host (the own-origin open-redirector
+ * guard). This is the sole place the narrow loopback predicate gates the server 302; it is unit-tested here
+ * (a widening to isRegisterableRedirectUri would let an allowlisted-https ticket through and fail the test).
+ */
+export function makeCompletionBounce(
+  key: CryptoKey,
+  nowSeconds: () => number,
+  ttlSeconds: number,
+): CompletionBounce {
+  return {
+    seal: async (redirectTo) => {
+      const ticket = await signLoopbackTicket(redirectTo, key, nowSeconds() + ttlSeconds);
+      return `/consent/complete?c=${encodeURIComponent(ticket)}`;
+    },
+    open: async (ticket) => {
+      const url = await verifyLoopbackTicket(ticket, key, nowSeconds());
+      return url && isHttpLoopbackRedirect(url) ? url : null;
+    },
+  };
 }

@@ -33,12 +33,27 @@ export const ALLOWED_HTTPS_REDIRECT_HOSTS: ReadonlySet<string> = new Set([
   "insiders.vscode.dev",
 ]);
 
-/** True for a loopback host per RFC 8252 (127.0.0.0/8, ::1, localhost) — mirrors the provider. */
-function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.replace(/\.$/, "").toLowerCase();
+/**
+ * True for a loopback host per RFC 8252 (127.0.0.0/8, ::1, localhost). Takes an already-normalized host.
+ * The 127.0.0.0/8 regex intentionally mirrors the provider's `isLoopbackUri` (oauth-provider.js) byte-for-
+ * byte — it accepts out-of-[0,255] octets, but so does the provider, and matching it keeps our registration
+ * decision and the provider's `/authorize` matching from ever disagreeing (a mismatch is the only way this
+ * could matter; a 127.x address is non-routable regardless).
+ */
+function isLoopbackHost(host: string): boolean {
   if (host === "localhost") return true;
   if (host === "::1" || host === "[::1]") return true;
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
+}
+
+/** Our own registrable apexes — never a legitimate third-party client redirect. */
+function isOwnOrigin(host: string): boolean {
+  return (
+    host === "webhook.co" ||
+    host.endsWith(".webhook.co") ||
+    host === "wbhk.my" ||
+    host.endsWith(".wbhk.my")
+  );
 }
 
 /** Classify a redirect_uri: an http loopback, an allowlisted-vendor https callback, or neither. */
@@ -49,8 +64,11 @@ function classifyRedirectUri(uri: string): "loopback" | "https" | null {
   } catch {
     return null;
   }
-  if (url.protocol === "http:" && isLoopbackHost(url.hostname)) return "loopback";
   const host = url.hostname.replace(/\.$/, "").toLowerCase();
+  // Explicitly reject our own origins first (defense in depth: an own origin must never be a registerable
+  // redirect even if one were mistakenly added to ALLOWED_HTTPS_REDIRECT_HOSTS — no open-redirect-to-self).
+  if (isOwnOrigin(host)) return null;
+  if (url.protocol === "http:" && isLoopbackHost(host)) return "loopback";
   if (url.protocol === "https:" && ALLOWED_HTTPS_REDIRECT_HOSTS.has(host)) return "https";
   return null;
 }

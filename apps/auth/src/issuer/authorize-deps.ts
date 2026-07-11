@@ -10,10 +10,9 @@ import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
 import { API_RESOURCE, MCP_RESOURCE, createClient, getConsentOrg } from "@webhook-co/db";
 import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
 
-import { signLoopbackTicket, verifyLoopbackTicket } from "./completion-ticket";
+import { makeCompletionBounce } from "./completion-ticket";
 import { buildConsent, decideConsent } from "./consent-core";
 import { importConsentTicketKey, signConsentTicket, verifyConsentTicket } from "./consent-ticket";
-import { isHttpLoopbackRedirect } from "./dcr";
 import { makeDeviceStoreDeps } from "./device-deps";
 import { setDeviceDecision } from "./device-store";
 import {
@@ -68,6 +67,8 @@ export async function makeAuthorizeDeps(
   const log = (event: string, fields?: Record<string, unknown>) =>
     console.log(JSON.stringify({ message: event, ...fields }));
 
+  const bounce = makeCompletionBounce(ticketKey, nowSeconds, COMPLETION_TICKET_TTL_SECONDS);
+
   const deps: AuthorizeRouteDeps = {
     parseAuthRequest: (request) => helpers.parseAuthRequest(request),
     getSessionUserId: async (request) =>
@@ -110,24 +111,12 @@ export async function makeAuthorizeDeps(
         input,
       ),
 
-    // The loopback bounce: sign the server-computed loopback redirect into a same-origin /consent/complete
-    // ticket; on the way back, verify it and re-assert it's a loopback literal (defense in depth — we only
-    // ever sign such URLs) before GET /consent/complete 302s to it.
-    sealLoopbackRedirect: async (redirectTo) => {
-      const ticket = await signLoopbackTicket(
-        redirectTo,
-        ticketKey,
-        nowSeconds() + COMPLETION_TICKET_TTL_SECONDS,
-      );
-      return `/consent/complete?c=${encodeURIComponent(ticket)}`;
-    },
-    openLoopbackRedirect: async (ticket) => {
-      const url = await verifyLoopbackTicket(ticket, ticketKey, nowSeconds());
-      // Re-assert an http LOOPBACK literal (never https/remote): GET /consent/complete issues a server 302
-      // to whatever this returns, so this narrow gate is the only thing keeping the bounce from becoming an
-      // own-origin open redirect. Remote-https redirects never take the bounce (they navigate client-side).
-      return url && isHttpLoopbackRedirect(url) ? url : null;
-    },
+    // The loopback bounce (seal → same-origin /consent/complete ticket; open → re-assert an http loopback
+    // literal before GET /consent/complete server-302s to it). `open` gates on isHttpLoopbackRedirect, so
+    // the 302 can never target a remote/https host — the own-origin open-redirector guard, unit-tested in
+    // completion-ticket.test.ts. Remote-https redirects never take the bounce (they navigate client-side).
+    sealLoopbackRedirect: bounce.seal,
+    openLoopbackRedirect: bounce.open,
   };
 
   return {

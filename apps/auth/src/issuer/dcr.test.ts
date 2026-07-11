@@ -49,6 +49,7 @@ describe("isRegisterableRedirectUri — allowlisted vendor https", () => {
     expect(isRegisterableRedirectUri("https://www.cursor.com/agents/mcp/oauth/callback")).toBe(
       true,
     );
+    expect(isRegisterableRedirectUri("https://cursor.com/agents/mcp/oauth/callback")).toBe(true);
     expect(isRegisterableRedirectUri("https://vscode.dev/redirect")).toBe(true);
     expect(isRegisterableRedirectUri("https://insiders.vscode.dev/redirect")).toBe(true);
   });

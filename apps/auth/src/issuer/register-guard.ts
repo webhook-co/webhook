@@ -12,15 +12,23 @@
 
 import { consumeRateLimit, type RateLimitKv, type RateLimitRule } from "./rate-limit";
 
-/** Generous for a human adding an MCP server (Claude Code re-registers per login), tight against a flood. */
-export const REGISTER_RATE_RULE: RateLimitRule = { limit: 30, windowSeconds: 60 };
+// Generous, because registration is rare per user and web MCP clients (claude.ai / cursor.com) may DCR
+// from a small pool of SHARED vendor egress IPs — a tight limit would false-429 legitimate concurrent
+// onboarding from one /64. Storage is bounded by clientRegistrationTTL and a client is inert without
+// consent, so this just blunts a naive flood; it doesn't need to be tight.
+export const REGISTER_RATE_RULE: RateLimitRule = { limit: 60, windowSeconds: 60 };
 
 /**
- * The rate-limit bucket for a client IP. IPv4 is used whole; IPv6 is truncated to its /64 prefix (the
- * first four hextets), expanding a `::`-compressed address first so equivalent forms collapse to one key.
+ * The rate-limit bucket for a client IP. IPv4 (incl. an IPv4-mapped `::ffff:a.b.c.d`) is used whole; a real
+ * IPv6 address is truncated to its /64 prefix (the first four hextets), expanding a `::`-compressed address
+ * first so equivalent forms collapse to one key.
  */
 export function ipRateBucket(ip: string): string {
   if (!ip.includes(":")) return ip; // IPv4
+  // An IPv4-mapped IPv6 address is really an IPv4 client — bucket by the embedded IPv4, else the naive /64
+  // slice would collapse EVERY mapped address to the single all-zero prefix and share one bucket.
+  const mappedIpv4 = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i.exec(ip)?.[1];
+  if (mappedIpv4) return mappedIpv4;
   const [head, tail = ""] = ip.split("::");
   const headGroups = head ? head.split(":") : [];
   const tailGroups = tail ? tail.split(":") : [];
@@ -38,17 +46,24 @@ export interface RegisterGuardDeps {
   nowSeconds: () => number;
 }
 
-function tooManyRequests(retryAfterSeconds: number): Response {
+function tooManyRequests(retryAfterSeconds: number, request: Request): Response {
+  const headers = new Headers({
+    "content-type": "application/json;charset=UTF-8",
+    "retry-after": String(retryAfterSeconds),
+    "cache-control": "no-store",
+  });
+  // The provider attaches CORS (echoed Origin) to every /register response; mirror it on this short-circuit
+  // 429 so a cross-origin browser DCR client (claude.ai / cursor.com) can READ the response instead of
+  // getting an opaque CORS error and a silent failure. CORS is only added when an Origin is present.
+  const origin = request.headers.get("origin");
+  if (origin) {
+    headers.set("access-control-allow-origin", origin);
+    headers.set("access-control-allow-methods", "*");
+    headers.set("access-control-allow-headers", "Authorization, *");
+  }
   return new Response(
     JSON.stringify({ error: "rate_limited", error_description: "too many registration requests" }),
-    {
-      status: 429,
-      headers: {
-        "content-type": "application/json;charset=UTF-8",
-        "retry-after": String(retryAfterSeconds),
-        "cache-control": "no-store",
-      },
-    },
+    { status: 429, headers },
   );
 }
 
@@ -80,7 +95,7 @@ export async function guardRegister(
       `register:ip:${ipRateBucket(ip)}`,
       REGISTER_RATE_RULE,
     );
-    return result.allowed ? null : tooManyRequests(result.retryAfterSeconds);
+    return result.allowed ? null : tooManyRequests(result.retryAfterSeconds, request);
   } catch (error) {
     console.log(JSON.stringify({ message: "register_rate_limit.fault", error: String(error) }));
     return null;
