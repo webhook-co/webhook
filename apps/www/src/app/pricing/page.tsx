@@ -1,6 +1,6 @@
 import { cn } from "@webhook-co/ui";
-import type { Metadata } from "next";
 
+import { pageMetadata } from "../metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Faq } from "@/components/marketing/faq";
 import { FinalCta } from "@/components/marketing/final-cta";
@@ -10,12 +10,14 @@ import { PricingHero, PricingTable } from "@/components/marketing/pricing";
 import { Reveal } from "@/components/marketing/reveal";
 import { focusRing } from "@/lib/styles";
 
-export const metadata: Metadata = {
-  // The root layout's title template already appends " — webhook.co"; don't say it twice.
+// pageMetadata sets this page's own canonical + og:url (the root's canonical:"/" is otherwise
+// inherited, canonicalising /pricing to the homepage). Title template appends " — webhook.co".
+export const metadata = pageMetadata({
+  path: "/pricing",
   title: "Pricing",
   description:
     "One number to watch: events. Every feature is on every plan. At your limit we pause, we don't bill.",
-};
+});
 
 export default function PricingPage() {
   return (

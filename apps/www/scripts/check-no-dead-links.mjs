@@ -18,6 +18,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isMainModule } from "./check-seo-html.mjs";
+
 /**
  * An `<a>` whose href is a bare `#` — a link whose destination is the top of the current page.
  *
@@ -47,8 +49,9 @@ export function countDeadLinks(html) {
 
 // Only sweep the filesystem when RUN as a script, so the pure helpers above stay importable from a
 // test. Without this, importing the module would walk out/, print, and call process.exit() — killing
-// the test worker.
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+// the test worker. isMainModule (shared) is symlink-safe: a naive `file://` + argv[1] compare
+// silently no-ops under a symlinked checkout, which for a required gate means passing unchecked.
+if (isMainModule(import.meta.url, process.argv[1])) {
   const OUT = fileURLToPath(new URL("../out/", import.meta.url));
 
   if (!existsSync(OUT)) {

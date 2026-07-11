@@ -1,6 +1,6 @@
 import { cn } from "@webhook-co/ui";
-import type { Metadata } from "next";
 
+import { pageMetadata } from "@/app/metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
 import { AnchoredHeading } from "@/components/marketing/anchored-heading";
@@ -9,11 +9,12 @@ import { Nav } from "@/components/marketing/nav";
 import { TERMS_ANCHORS } from "@/app/legal-anchors";
 import { focusRing } from "@/lib/styles";
 
-export const metadata: Metadata = {
-  // The root layout's title template already appends " — webhook.co".
+// pageMetadata sets this page's own canonical + og:url (root inherits canonical:"/" otherwise).
+export const metadata = pageMetadata({
+  path: "/terms",
   title: "Terms of Service",
   description: "The terms that govern your use of the hosted webhook.co service.",
-};
+});
 
 export default function TermsPage() {
   return (

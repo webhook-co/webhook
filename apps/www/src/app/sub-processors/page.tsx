@@ -1,6 +1,6 @@
 import { cn } from "@webhook-co/ui";
-import type { Metadata } from "next";
 
+import { pageMetadata } from "@/app/metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
 import { AnchoredHeading } from "@/components/marketing/anchored-heading";
@@ -9,12 +9,13 @@ import { Nav } from "@/components/marketing/nav";
 import { SUB_PROCESSORS_ANCHORS } from "@/app/legal-anchors";
 import { focusRing } from "@/lib/styles";
 
-export const metadata: Metadata = {
-  // The root layout's title template already appends " — webhook.co".
+// pageMetadata sets this page's own canonical + og:url (root inherits canonical:"/" otherwise).
+export const metadata = pageMetadata({
+  path: "/sub-processors",
   title: "Sub-processors",
   description:
     "The third-party infrastructure providers webhook.co uses to run the hosted service, what each handles, and where it's located.",
-};
+});
 
 export default function SubProcessorsPage() {
   return (
