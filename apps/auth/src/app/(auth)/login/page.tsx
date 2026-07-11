@@ -8,6 +8,19 @@ export const metadata: Metadata = {
   description: "Sign in to webhook.co.",
 };
 
+/**
+ * The sign-in page's brand panel.
+ *
+ * It used to carry three figures — "99.99% delivery SLA", "38ms median latency", "3.4M events / day".
+ * All three were invented. We measure none of them, and the SLA one directly contradicted the Terms
+ * of Service linked at the bottom of this very page, which say the Service is provided "on a
+ * best-effort basis with **no guaranteed uptime or service-level commitment**". A number nobody
+ * measured is worse than no number: it's the one thing on the page a reader has no way to check, and
+ * the first thing that makes them doubt everything else.
+ *
+ * What's left says what the product DOES, which is true and provable. If we ever want figures here,
+ * they have to come from real telemetry — `page.test.tsx` fails if any metric reappears.
+ */
 function BrandVisual() {
   return (
     <div className="flex flex-col gap-4">
@@ -19,23 +32,9 @@ function BrandVisual() {
         Ship webhooks you can <span className="text-fg-on-inverse/45">actually trust.</span>
       </p>
       <p className="max-w-[38ch] leading-snug text-fg-on-inverse/65">
-        Durable delivery, automatic retries, and end-to-end observability — so every event lands,
-        and you can prove it.
+        Durable delivery, automatic retries, and end-to-end observability — capture every event,
+        replay any of them, and see exactly what happened.
       </p>
-      <div className="mt-4 flex flex-wrap gap-8">
-        <Stat n="99.99%" k="delivery SLA" />
-        <Stat n="38ms" k="median latency" />
-        <Stat n="3.4M" k="events / day" />
-      </div>
-    </div>
-  );
-}
-
-function Stat({ n, k }: { n: string; k: string }) {
-  return (
-    <div className="flex flex-col">
-      <span className="font-mono text-2xl">{n}</span>
-      <span className="text-sm text-fg-on-inverse/60">{k}</span>
     </div>
   );
 }

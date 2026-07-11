@@ -61,12 +61,17 @@ export function Inspector() {
                 isPlaying ? "inspector-live-dot bg-ok" : "bg-fg-faint",
               )}
             />
-            {isPlaying ? "live" : "paused"}
+            {/* "demo", not "live". A pulsing green dot, the word "live", and a counter ticking upward
+                is the exact visual grammar of real telemetry — and this feed is invented. The only
+                disclosure used to be a screen-reader-only line and a source comment, neither of which
+                a sighted visitor ever sees. We don't publish numbers we don't measure; that has to
+                include the ones that merely LOOK measured. */}
+            {isPlaying ? "demo" : "paused"}
           </span>
           <span aria-hidden="true" className="text-fg-faint">
             ·
           </span>
-          <span className="tabular-nums">{state.counter.toLocaleString()} events</span>
+          <span className="tabular-nums">{state.counter.toLocaleString()} sample events</span>
         </div>
         <button
           type="button"

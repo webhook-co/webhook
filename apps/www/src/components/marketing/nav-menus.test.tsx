@@ -39,14 +39,17 @@ describe("NavMenus", () => {
     expect(within(panel).getByRole("link", { name: "Delivery" })).toBeInTheDocument();
   });
 
-  it("uses the real Standard Webhooks URL under Developers", async () => {
+  // The Developers menu is for OUR surfaces — docs, quickstart, API, CLI, MCP. "Standard Webhooks"
+  // pointed at a third party's site and "Open source" at the repo, so two of the seven doors in the
+  // menu led off the product. Both removed; the repo still has its home in the footer socials.
+  it("keeps the Developers menu on our own surfaces", async () => {
     render(<NavMenus />);
     await userEvent.click(trigger(/^developers$/i));
     const panel = document.getElementById("navmenu-developers") as HTMLElement;
-    expect(within(panel).getByRole("link", { name: "Standard Webhooks" })).toHaveAttribute(
-      "href",
-      "https://www.standardwebhooks.com/",
-    );
+    const labels = within(panel)
+      .getAllByRole("link")
+      .map((a) => a.textContent);
+    expect(labels).toEqual(["Docs", "Quickstart", "API reference", "CLI", "MCP"]);
   });
 
   it("keeps only one menu open at a time", async () => {

@@ -72,12 +72,15 @@ describe("HomePage", () => {
     );
   });
 
-  it("marks the not-yet-GA delivery showcase as 'soon'", () => {
+  // Delivery SHIPPED — the engine, retries, signing and the DLQ are all live. The "soon" badge was
+  // left over from before it did, and a stale "soon" on a feature that already works is worse than no
+  // badge: it tells a visitor to come back later for something they could use right now.
+  it("no longer marks delivery as 'soon' — it shipped", () => {
     render(<HomePage />);
     const delivery = screen.getByRole("region", {
       name: /received once, in order, never silently dropped/i,
     });
-    expect(within(delivery).getByText("soon")).toBeInTheDocument();
+    expect(within(delivery).queryByText(/^soon$/i)).toBeNull();
   });
 
   it("renders the real Standard Webhooks link in the verification showcase", () => {

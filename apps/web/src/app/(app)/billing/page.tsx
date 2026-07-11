@@ -320,7 +320,7 @@ function UpgradeCard({
         <p className="text-fg-secondary">Only an owner or admin can start or change a plan.</p>
       )}
       <p className="text-fg-secondary">
-        Need more than Scale, SSO, or a BAA?{" "}
+        Need more than Scale?{" "}
         <a className="text-fg underline underline-offset-2" href="mailto:sales@webhook.co">
           Talk to us about Enterprise
         </a>

@@ -38,20 +38,14 @@ export function Nav() {
           ))}
         </nav>
 
-        <div className="flex items-center gap-1.5">
-          <a
-            href={LINKS.signIn}
-            className={cn(
-              focusRing,
-              "inline-flex h-[2.125rem] items-center rounded-control px-3 text-sm text-fg-secondary transition-colors hover:text-fg",
-            )}
-          >
-            Sign in
-          </a>
-          <Button asChild size="md">
-            <a href={LINKS.startFree}>Start free</a>
-          </Button>
-        </div>
+        {/* One CTA, not two. "Sign in" and "Start free" landed the same visitor in the same place —
+            app.webhook.co bounces a signed-out user to the login screen, which itself says "No account
+            yet? Signing in creates one." Two labels for one door is just a choice the reader has to
+            make for no reason. "Get started" also does the right thing for someone already signed in:
+            straight to the dashboard, which "Sign in" would not. */}
+        <Button asChild size="md">
+          <a href={LINKS.startFree}>Get started</a>
+        </Button>
       </div>
     </div>
   );
