@@ -5,6 +5,8 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
+import { FREE_RETENTION_DAYS } from "@webhook-co/shared";
+
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { mintCredential, type CredentialHasher } from "./credential";
 import { INGEST_TOKEN_PREFIX } from "./endpoints";
@@ -34,9 +36,11 @@ export async function createOrg(app: Sql, input: CreateOrgInput): Promise<Create
   const id = randomUUID();
   const region = input.region ?? "us";
   await withTenant(app, id, async (tx) => {
+    // Explicit Free window — the column default is NULL = unlimited (0056, the fail-safe against pruning an
+    // unmirrored paid org), so a new free org must set its 7-day window here rather than inherit unlimited.
     await tx`
-      insert into orgs (id, slug, name, region)
-      values (${id}, ${input.slug}, ${input.name}, ${region})`;
+      insert into orgs (id, slug, name, region, retention_days)
+      values (${id}, ${input.slug}, ${input.name}, ${region}, ${FREE_RETENTION_DAYS})`;
   });
   return { id, slug: input.slug, name: input.name, region };
 }
@@ -208,9 +212,13 @@ export async function bootstrapPersonalOrg(
     // Serialize concurrent bootstraps for this user (the xact lock auto-releases on commit).
     await tx`select pg_advisory_xact_lock(hashtextextended(${input.userId}, ${BOOTSTRAP_LOCK_NAMESPACE}))`;
 
+    // retention_days is set EXPLICITLY to the Free window, not left to the column default. The default is
+    // now NULL = unlimited (0056, the fail-safe backstop against pruning an unmirrored paid org), so a free
+    // org that relied on the default would silently retain forever. This is the one real free-org creation
+    // path, so it owns the Free window.
     const orgRows = await tx<{ id: string }[]>`
-      insert into orgs (id, slug, name, region)
-      values (${orgId}, ${input.slug}, ${input.name}, ${region})
+      insert into orgs (id, slug, name, region, retention_days)
+      values (${orgId}, ${input.slug}, ${input.name}, ${region}, ${FREE_RETENTION_DAYS})
       on conflict (id) do nothing
       returning id`;
     const created = orgRows.length > 0;

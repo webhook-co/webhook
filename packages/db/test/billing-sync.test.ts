@@ -157,10 +157,14 @@ let app: Sql;
 let billing: Sql;
 let admin: Sql;
 
+// A FREE org: retention_days = 7 set explicitly, exactly as bootstrapPersonalOrg now does. The column
+// default is NULL = unlimited (0056, the fail-safe against pruning an unmirrored paid org), so a free org's
+// window is written at creation, not inherited from the default.
 async function seedOrg(): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+    await tx`insert into orgs (id, slug, name, retention_days)
+             values (${orgId}, ${orgId.slice(0, 8)}, ${"o"}, ${7})`;
   });
   return orgId;
 }
@@ -556,7 +560,9 @@ describe("retention window mirror (integration)", () => {
     return row?.retention_days ?? null;
   }
 
-  it("a new org starts on the FREE window with no application involvement", async () => {
+  it("a free org carries the Free 7-day window it was created with", async () => {
+    // The Free window is now written at org creation (bootstrapPersonalOrg), not inherited from the column
+    // default — which is NULL = unlimited, the fail-safe backstop against pruning an unmirrored paid org.
     expect(await windowOf(await seedOrg())).toBe(7);
   });
 

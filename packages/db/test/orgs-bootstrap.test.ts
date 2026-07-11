@@ -47,6 +47,44 @@ afterAll(async () => {
   await pg?.stop();
 });
 
+describe("orgs.retention_days default (S2a — fail SAFE, toward over-retention)", () => {
+  it("defaults an org inserted WITHOUT a window to NULL (unlimited), never to the 7-day prune", async () => {
+    // The column DEFAULT is the last-resort backstop for any insert path that forgets retention_days. The
+    // dangerous mistake is deleting a paying customer's data too soon, so a missing window must resolve to
+    // UNLIMITED (never pruned), not to the Free 7-day window. bootstrapPersonalOrg sets 7 explicitly for the
+    // real free-org path (below); this proves the fail-safe direction for everything else.
+    const orgId = randomUUID();
+    const [row] = await withTenant(app, orgId, async (tx) => {
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+      return tx<{ retention_days: number | null }[]>`
+        select retention_days from orgs where id = ${orgId}`;
+    });
+    expect(row!.retention_days).toBeNull();
+  });
+});
+
+describe("bootstrapPersonalOrg", () => {
+  it("sets the Free 7-day retention window explicitly (not relying on the column default)", async () => {
+    // A free org MUST be pruned at 7 days — the pricing promise. Since the column default is now NULL
+    // (unlimited, the safe backstop), bootstrap has to write the Free window itself, or free orgs would
+    // silently retain forever.
+    const userId = `user_${randomUUID()}`;
+    await seedUser(userId);
+    const res = await bootstrapPersonalOrg(
+      app,
+      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Personal" },
+      hasher,
+    );
+    const [org] = await withTenant(
+      app,
+      res.orgId,
+      (tx) => tx<{ retention_days: number | null }[]>`
+        select retention_days from orgs where id = ${res.orgId}`,
+    );
+    expect(org!.retention_days).toBe(7);
+  });
+});
+
 describe("bootstrapPersonalOrg", () => {
   it("atomically creates the org + owner membership + default endpoint, returning the ingest token once", async () => {
     const userId = `user_${randomUUID()}`;
