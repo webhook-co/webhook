@@ -24,8 +24,9 @@ export const CAPABILITY_SCOPES = [
 // Every scope the issuer will ADVERTISE, CONSENT to, and MINT — the capability scopes plus `profile` (the
 // identity scope, single-sourced from @webhook-co/contract). This is
 // the single source the advertise / consent-intersect / mint-intersect points all use, so `profile` can't
-// drift (advertised but not mintable, or consented but dropped at mint). MUST stay in sync across those 7
-// auth-side references + the mcp PRM.
+// drift (advertised but not mintable, or consented but dropped at mint). MUST stay in sync across those 8
+// auth-side references (advertise ×2, authorize-consent, device-authorize, device-verify-consent, mint ×3)
+// + the mcp PRM.
 export const GRANTABLE_SCOPES = [...CAPABILITY_SCOPES, PROFILE_SCOPE].sort();
 
 export const oauthIssuerConfig = {

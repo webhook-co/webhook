@@ -178,9 +178,16 @@ export class WebhookMcp extends McpAgent<McpEnv> {
             isError: true,
           };
         }
-        const result = await buildWhoami(ctx, (userId) =>
-          this.env.AUTH_ISSUER.resolveProfile(userId),
-        );
+        const result = await buildWhoami(ctx, async (userId) => {
+          try {
+            return await this.env.AUTH_ISSUER.resolveProfile(userId);
+          } catch (err) {
+            // Degrade to base identity (buildWhoami reads null as "not found"), but leave a non-PII
+            // breadcrumb — a persistent auth-RPC outage silently dropping name/email must be diagnosable.
+            this.log("mcp.profile_resolve_failed", { error: String(err) });
+            return null;
+          }
+        });
         return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       },
     );
