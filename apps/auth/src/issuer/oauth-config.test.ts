@@ -36,6 +36,7 @@ describe("oauthIssuerConfig", () => {
       "billing:read",
       "endpoints:read",
       "endpoints:write",
+      "events:delete",
       "events:read",
       "events:replay",
       "profile",

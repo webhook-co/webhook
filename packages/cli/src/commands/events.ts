@@ -6,6 +6,7 @@ import { NotLoggedInError } from "../errors.js";
 import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
 import { renderEvent, renderEventsTable } from "../output/render.js";
+import { confirmDestructive, yesFlag, type DestructiveFlags } from "./endpoints.js";
 import { authedClient, collectPages, emitList, parseIsoDate, parseLimit } from "./shared.js";
 
 // `wbhk events list <endpointId>` / `wbhk events get <id>` — read views over captured events. List
@@ -131,6 +132,41 @@ export const eventsGetCommand = buildCommand<GetFlags, [string], AppContext>({
     flags: { ...globalFlags },
   },
   docs: { brief: "show a single event by id" },
+});
+
+// `wbhk events delete <id>` — the destructive event tombstone (S3). Same confirmation gate as endpoints
+// delete/rotate: `--yes` skips; an interactive TTY prompts for `yes`; a non-TTY without `--yes` refuses
+// (so a script can't wipe an event by accident). Prints the {id, deletedAt} record.
+export const eventsDeleteCommand = buildCommand<DestructiveFlags, [string], AppContext>({
+  async func(this: AppContext, flags, eventId) {
+    const client = await authedClient(this, flags);
+    if (client instanceof NotLoggedInError) return client;
+    const { format } = resolveGlobals(this, flags);
+    const blocked = await confirmDestructive(
+      this,
+      flags.yes,
+      `permanently delete event ${eventId}? its content is redacted and its payload body is purged; it can no longer be read or replayed (this does NOT reduce your metered usage).`,
+    );
+    if (blocked) return blocked;
+    const deleted = await client.eventsDelete(eventId);
+    if (format === "json") {
+      this.process.stdout.write(`${renderJson(deleted)}\n`);
+      return;
+    }
+    this.process.stdout.write(
+      `deleted event ${deleted.id} (at ${deleted.deletedAt.toISOString()})\n`,
+    );
+  },
+  parameters: {
+    positional: {
+      kind: "tuple",
+      parameters: [
+        { parse: (value: string) => value, brief: "the event id", placeholder: "eventId" },
+      ],
+    },
+    flags: { ...globalFlags, ...yesFlag },
+  },
+  docs: { brief: "delete a captured event (redacts + purges its body; irreversible)" },
 });
 
 // `wbhk events payload <eventId>` — print the captured event's raw body (what `events get` omits).

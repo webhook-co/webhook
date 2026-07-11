@@ -205,7 +205,8 @@ export interface paths {
         get: operations["eventsGet"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete a captured event (tombstone: redacts + purges its body; idempotent) */
+        delete: operations["eventsDelete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -680,6 +681,12 @@ export interface components {
             verification: components["schemas"]["VerificationResult"] | null;
             verificationState?: components["schemas"]["VerificationState"];
             verified: boolean;
+        };
+        EventsDeleteResponse: {
+            /** Format: date-time */
+            deletedAt: string;
+            /** Format: uuid */
+            id: string;
         };
         EventsGetPayloadResponse: {
             bodyBase64: string;
@@ -1521,6 +1528,34 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Event"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalError"];
+        };
+    };
+    eventsDelete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eventId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Success. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventsDeleteResponse"];
                 };
             };
             400: components["responses"]["BadRequest"];

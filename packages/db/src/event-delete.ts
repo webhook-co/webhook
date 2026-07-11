@@ -5,10 +5,47 @@
 // and the dedup slot stay intact) but marks it deleted, redacts the PII-bearing captured content in the same
 // transaction, and enqueues the R2 body for async purge. Mirrors deleteEndpointWithAudit (ADR-0076).
 
-import { CapabilityFault } from "@webhook-co/contract";
+// Leaf import (not the @webhook-co/contract barrel): apps/web pulls this module DB-direct under Turbopack,
+// where a named binding from a transpiled-package `export *` barrel resolves to `undefined` at runtime — so
+// `new CapabilityFault` would throw "not a constructor" on the RATE_LIMITED / NOT_FOUND path (see
+// [[turbopack-contract-barrel]]).
+import { CapabilityFault } from "@webhook-co/contract/capability";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
+
+/** The audit action a tombstone writes — a destructive act on captured data must be attributable + detectable,
+ *  and it doubles as the counter for the per-org delete rate limit below. */
+export const EVENT_DELETE_AUDIT_ACTION = "event.deleted";
+
+/** Delete cap: at most this many event deletes per ORG per window. A destructive-op backstop — it bounds a
+ *  runaway agent (an MCP tool acting on attacker-controlled payloads) or a compromised events:delete bearer
+ *  hammering deletes, without impeding a legitimate interactive cleanup (5/sec is far above human use). Not a
+ *  security boundary (the scope gate + audit trail are); a tiny check-then-append race may allow cap+N. */
+export const EVENT_DELETE_MAX_PER_WINDOW = 300;
+export const EVENT_DELETE_WINDOW_SECONDS = 60;
+
+/**
+ * Enforce the per-org delete rate limit BEFORE the tombstone. Counts recent `event.deleted` audit rows under
+ * the org's RLS (webhook_app); over the cap → CapabilityFault RATE_LIMITED. Audit-derived (no new table) —
+ * the rows the delete already writes are the counter, exactly like the ingest-URL-reveal limiter.
+ */
+export async function enforceEventDeleteRateLimit(app: Sql, orgId: string): Promise<void> {
+  const rows = await withTenant(
+    app,
+    orgId,
+    (tx) =>
+      tx<{ count: number }[]>`
+      select count(*)::int as count
+      from audit_log
+      where action = ${EVENT_DELETE_AUDIT_ACTION}
+        and created_at > now() - make_interval(secs => ${EVENT_DELETE_WINDOW_SECONDS})`,
+  );
+  const count = rows[0]?.count ?? 0;
+  if (count >= EVENT_DELETE_MAX_PER_WINDOW) {
+    throw new CapabilityFault("RATE_LIMITED", "too many event deletes; please retry in a moment");
+  }
+}
 
 export interface DeleteEventInput {
   readonly orgId: string;
@@ -79,7 +116,7 @@ export async function deleteEventWithAudit(
       await appendAuditEntry(tx, auditKey, {
         orgId: input.orgId,
         actor: input.actor,
-        action: "event.deleted",
+        action: EVENT_DELETE_AUDIT_ACTION,
         target: input.eventId,
       });
     }

@@ -223,8 +223,12 @@ export default function PrivacyPage() {
               plan&apos;s retention window — on the free plan, <strong>7 days</strong>. The window
               for each paid plan is listed at <a href="/pricing">webhook.co/pricing</a>. Expiry runs
               on a schedule; deletion happens shortly after an event passes the window rather than
-              at the exact second it does. You can also delete data yourself at any time, which
-              takes effect immediately.
+              at the exact second it does. You can also delete an individual event yourself at any
+              time: its content becomes <strong>immediately inaccessible</strong> (headers and
+              identifiers are redacted the moment you delete it) and its stored payload body is{" "}
+              <strong>purged shortly after</strong>. We keep a minimal record that the event was
+              received — with no personal data — so your usage count can&apos;t be rewritten by
+              deleting events (deleting does not reduce what you were billed).
             </li>
             <li>
               <strong>If your window gets shorter:</strong> if you move to a plan with a shorter
@@ -235,10 +239,12 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>Deletion &amp; erasure:</strong> you can delete endpoints, events, and your
-              whole organisation from your account — this removes the stored records and the payload
-              bodies, not just a listing. You can also ask us to erase your personal data (see §8);
-              we complete verified erasure requests <strong>within 30 days</strong>. Residual copies
-              in encrypted backups are removed on our normal backup-rotation cycle.
+              whole organisation from your account — this redacts the personal data and purges the
+              stored payload bodies, not just a listing (for a deleted event we keep only a
+              personal-data-free record that it was received, so your billed usage stays honest).
+              You can also ask us to erase your personal data (see §8); we complete verified erasure
+              requests <strong>within 30 days</strong>. Residual copies in encrypted backups are
+              removed on our normal backup-rotation cycle.
             </li>
           </ul>
 

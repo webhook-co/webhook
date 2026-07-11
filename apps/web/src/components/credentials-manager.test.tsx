@@ -57,13 +57,14 @@ describe("CredentialsManager", () => {
     const checkboxes = within(dialog).getAllByRole("checkbox");
     // endpoints:write (ADR-0075) is now a grantable scope, so the create-key form renders it too. A key
     // carrying it can create endpoints via api/cli/mcp; the dashboard endpoint-create UI is still S1.
-    // triggers:write (S5) + billing:read (S4.2) are the newest grantable scopes.
-    expect(checkboxes).toHaveLength(7);
+    // triggers:write (S5) + billing:read (S4.2), then events:delete (S3 tombstone) are the newest.
+    expect(checkboxes).toHaveLength(8);
     for (const scope of [
       "endpoints:read",
       "endpoints:write",
       "events:read",
       "events:replay",
+      "events:delete",
       "audit:read",
       "triggers:write",
       "billing:read",

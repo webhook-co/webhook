@@ -13,6 +13,7 @@ import {
   endpointsRevealIngestUrl as endpointsRevealIngestUrlCap,
   endpointsRotate as endpointsRotateCap,
   endpointsUpdate as endpointsUpdateCap,
+  eventsDelete as eventsDeleteCap,
   eventsGet as eventsGetCap,
   eventsGetPayload as eventsGetPayloadCap,
   eventsList as eventsListCap,
@@ -38,6 +39,7 @@ import {
   type CreatedEndpoint,
   type CreatedReplayDestination,
   type DeletedEndpoint,
+  type DeletedEvent,
   type ProviderSecretSummary,
   type ReplayDestinationDeleted,
   type RevealedIngestUrl,
@@ -251,6 +253,7 @@ export interface ApiClient {
   eventsList(endpointId: string, params?: EventsListParams): Promise<Page<EventSummary>>;
   /** A single event in full fidelity by id (`GET /v1/events/:id`). */
   eventsGet(eventId: string): Promise<Event>;
+  eventsDelete(eventId: string): Promise<DeletedEvent>;
   /** The captured event's raw body bytes (`GET /v1/events/:id/payload` → base64 envelope, decoded). */
   eventsGetPayload(eventId: string): Promise<{ contentType: string | null; body: Uint8Array }>;
   /** A page of the org's outbound deliveries (`GET /v1/deliveries`), filterable by destination/subscription/status. */
@@ -549,6 +552,10 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
     async eventsGet(eventId): Promise<Event> {
       const path = `/v1/events/${encodeURIComponent(eventId)}`;
       return parseOrThrow(eventsGetCap.output, await getJson(path), "event");
+    },
+    async eventsDelete(eventId): Promise<DeletedEvent> {
+      const path = `/v1/events/${encodeURIComponent(eventId)}`;
+      return parseOrThrow(eventsDeleteCap.output, await deleteJson(path), "deleted event");
     },
     async deliveriesList(params = {}): Promise<Page<Delivery>> {
       const path = withQuery("/v1/deliveries", {
