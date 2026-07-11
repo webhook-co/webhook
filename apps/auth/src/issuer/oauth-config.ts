@@ -55,8 +55,9 @@ export const oauthIssuerConfig = {
   clientRegistrationTTL: 90 * 24 * 60 * 60,
   // CIMD (Client ID Metadata Documents): accept an https-URL client_id resolved to a self-hosted metadata
   // doc — the MCP spec's forward path (DCR is deprecated). This lets a client present a DOMAIN-PROVEN
-  // identity (Claude Code → claude.ai, VS Code → vscode.dev, Zed → zed.dev), which the consent screen shows
-  // as "verified". Open to any https client_id (founder decision 2026-07-11); the phishing surface an open
+  // identity (VS Code → vscode.dev, Zed → zed.dev), which the consent screen shows as "verified". A loopback
+  // client that self-registers with no provable domain (e.g. Claude Code on localhost) stays "unverified" —
+  // expected, not an error. Open to any https client_id (founder decision 2026-07-11); the phishing surface an open
   // registration would otherwise create is neutralized by (a) the origin-honest consent screen — the
   // un-spoofable identity domain + redirect host + an "unverified app" warning + Deny-dominant for a remote
   // unverified client, (b) the same-origin-or-loopback redirect fence (isCimdRedirectAllowed — the provider's
