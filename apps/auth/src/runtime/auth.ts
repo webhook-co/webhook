@@ -171,6 +171,13 @@ export interface RuntimeAuth {
    * consent to the signed-in user; the userId comes from the cookie here, never from the request body.
    */
   getSession: (request: Request) => Promise<{ userId: string } | null>;
+  /**
+   * End the session at the IdP. DELETES the session row (cookieCache is off, so sessions are DB-validated on
+   * every read) and returns Better Auth's clearing `Set-Cookie` — so a copied cookie is dead immediately,
+   * rather than relying on the browser to forget it. Used by GET /logout; without it, app. could only clear
+   * its own cookie and the auth. session would silently re-mint a new one via /session/handoff.
+   */
+  signOut: (request: Request) => Promise<Response>;
   /** End the per-request pg pool (call via ctx.waitUntil) — never leak a pooled connection. */
   close: () => Promise<void>;
 }
@@ -215,6 +222,10 @@ export async function makeAuth(env: AuthEnv, ctx?: AuthExecutionContext): Promis
       const result = await auth.api.getSession({ headers: request.headers });
       return result?.user?.id ? { userId: result.user.id } : null;
     },
+    // asResponse so we get Better Auth's clearing Set-Cookie verbatim and can forward it onto our redirect.
+    // Called through auth.api (not the router) because this is a first-party, same-origin server call — the
+    // route's own Sec-Fetch-Site check is the CSRF gate.
+    signOut: (request) => auth.api.signOut({ headers: request.headers, asResponse: true }),
     close: () => pool.end(),
   };
 }

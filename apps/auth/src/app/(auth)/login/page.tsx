@@ -1,7 +1,35 @@
 import { AuthShell, ThemeToggle } from "@webhook-co/ui";
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 
 import { LoginActions } from "./login-actions";
+import { resolvePostLoginTarget } from "./post-login-target";
+import { isSignedIn } from "./resolve-signed-in";
+
+// Reads the session cookie, so it can never be prerendered or cached.
+export const dynamic = "force-dynamic";
+
+/**
+ * The query param the app.→auth. handoff sets when it could NOT establish a session (an expired, replayed or
+ * otherwise unredeemable ticket). It is the LOOP BREAKER for the signed-in bounce below.
+ *
+ * Without it: the callback fails → redirects to /login → /login sees a live IdP session → bounces to
+ * /session/handoff → mints another ticket → the callback fails again → … an infinite redirect loop that would
+ * lock the user out of the product entirely. With it, a failed handoff always lands on a real sign-in form.
+ */
+const HANDOFF_FAILED_PARAM = "error";
+
+type SearchParams = Record<string, string | string[] | undefined>;
+
+/** Re-serialize the resolved searchParams so the PURE, already-tested target resolver can be reused as-is. */
+function toSearchString(params: SearchParams): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (typeof value === "string") search.set(key, value);
+    else if (Array.isArray(value) && value[0] !== undefined) search.set(key, value[0]);
+  }
+  return search.toString();
+}
 
 export const metadata: Metadata = {
   title: "Sign in · webhook.co",
@@ -39,7 +67,24 @@ function BrandVisual() {
   );
 }
 
-export default function LoginPage() {
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams?: Promise<SearchParams>;
+}) {
+  const params = (await searchParams) ?? {};
+
+  // Already signed in? Then don't ask again — resume. The IdP session outlives app.'s cookie, so landing here
+  // with a live session (a Back navigation, an expired app. cookie, a fresh tab) used to mean re-authenticating
+  // for no reason. `resolvePostLoginTarget` carries the same open-redirect guard the client login flow uses
+  // (single-leading-slash relative paths only, and never /login itself), and defaults to /session/handoff.
+  //
+  // Guarded by the loop breaker: if the handoff has just FAILED, show the form instead of bouncing back into
+  // the handoff that failed.
+  if (params[HANDOFF_FAILED_PARAM] === undefined && (await isSignedIn())) {
+    redirect(resolvePostLoginTarget(toSearchString(params)));
+  }
+
   return (
     <AuthShell
       homeHref="/"

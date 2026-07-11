@@ -15,7 +15,7 @@ vi.mock("./env", () => ({
 
 import { logout } from "./auth-actions";
 import { sessionCookieOptions } from "./session-cookie";
-import { SESSION_COOKIE, LOGIN_URL } from "./session";
+import { SESSION_COOKIE, LOGOUT_URL } from "./session";
 
 // There was NO test on logout at all — the layout test mocked the whole action away — which is how the
 // clearing header shipped without `Secure` and silently failed to revoke anything in production.
@@ -57,8 +57,12 @@ describe("logout", () => {
     }
   });
 
-  it("sends the user to the sign-in surface", async () => {
-    await expect(logout()).rejects.toThrow(`NEXT_REDIRECT:${LOGIN_URL}`);
+  // It must go to auth.'s /logout, NOT /login. /login now RESUMES a live IdP session (that is single sign-on
+  // working), so redirecting a logout there would sign the user straight back into the dashboard they just
+  // left. Clearing app.'s cookie alone was never a logout: the IdP session could re-mint a new one.
+  it("sends the user to auth.'s LOGOUT — not the login page, which would sign them back in", async () => {
+    await expect(logout()).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
+    expect(LOGOUT_URL).toMatch(/\/logout$/);
   });
 
   // Order matters: the cookie must be cleared on the very response that redirects. `redirect()` throws, so
