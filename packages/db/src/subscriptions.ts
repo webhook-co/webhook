@@ -10,7 +10,12 @@ import {
   subscriptionsDelete,
   subscriptionsList,
 } from "@webhook-co/contract";
-import { deliveryVerificationDecision, newId } from "@webhook-co/shared";
+import {
+  deliveryVerificationDecision,
+  newId,
+  type AuditActorInput,
+  requireAuditActor,
+} from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
@@ -127,7 +132,7 @@ function toRecord(r: SubscriptionRow): SubscriptionRecord {
 /** Optional tamper-evident audit context for a subscription mutation. */
 export interface SubscriptionAudit {
   readonly auditKey: CryptoKey;
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 export interface CreateSubscriptionInput {
@@ -387,7 +392,7 @@ export function createSubscriptionHandlers(deps: SubscriptionHandlerDeps): Capab
           eventTypes: parsed.data.eventTypes,
           requireVerified: parsed.data.requireVerified,
         },
-        { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+        { auditKey: deps.auditKey, actor: requireAuditActor(ctx) },
       );
     } catch (err) {
       // A dead/cross-org source endpoint or destination → NOT_FOUND (not a 500); don't leak existence.
@@ -412,7 +417,7 @@ export function createSubscriptionHandlers(deps: SubscriptionHandlerDeps): Capab
     if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
     const removed = await deleteSubscription(deps.tenant, ctx.orgId, parsed.data.subscriptionId, {
       auditKey: deps.auditKey,
-      actor: ctx.userId ?? null,
+      actor: requireAuditActor(ctx),
     });
     if (removed === null) throw new CapabilityFault("NOT_FOUND", "subscription not found");
     return removed;

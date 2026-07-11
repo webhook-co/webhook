@@ -15,15 +15,33 @@
 // xact-scoped, and the RLS GUC must already be set so the head read and insert see
 // exactly this org's chain.
 
-import { computeAuditRowHash, type AuditEntry, type StoredAuditRow } from "@webhook-co/shared";
+import {
+  computeAuditRowHash,
+  formatAuditActor,
+  type AuditActor,
+  type AuditEntry,
+  type StoredAuditRow,
+} from "@webhook-co/shared";
 
 import type { Sql, TenantTx } from "./client";
 
 /** The caller-supplied fields for a new audit row (seq is assigned by the service). */
 export interface AuditAppendInput {
   readonly orgId: string;
-  /** Pseudonymous actor (Better Auth user_id), or null for system actions. */
-  readonly actor: string | null;
+  /**
+   * WHO acted — a typed actor, not a bare id.
+   *
+   * This is deliberately NOT `string | null`. It used to be, and the result was that every write handler on
+   * api/mcp/cli passed `ctx.userId ?? null` — which is always null for a standalone api key — so every
+   * mutation over those surfaces was recorded as NULL, indistinguishable from the delivery DO's genuine
+   * system actions. Taking the typed union makes that class of mistake UNREPRESENTABLE: a caller cannot pass
+   * a raw id, and cannot omit the choice between a user, a key, and the system. The compiler enumerates
+   * every mint site, so a NEW audited path cannot be added without declaring whose action it records.
+   *
+   * `unattributed` is not accepted: it exists only to READ rows written before this vocabulary. A new row
+   * must always name its actor.
+   */
+  readonly actor: Exclude<AuditActor, { kind: "unattributed" }>;
   readonly action: string;
   readonly target: string | null;
 }
@@ -62,10 +80,13 @@ export async function appendAuditEntry(
   const prevHash = head ? toBytes(head.row_hash) : null;
   const seq = head ? Number(head.seq) + 1 : 1;
 
+  // The stored (and therefore HASHED) form. A prefixed string is still a string, so the frozen `wha1` canon
+  // and every previously-written row verify unchanged — attribution gets stronger with no chain break.
+  const actor = formatAuditActor(input.actor);
   const entry: AuditEntry = {
     orgId: input.orgId,
     seq,
-    actor: input.actor,
+    actor,
     action: input.action,
     target: input.target,
   };
@@ -74,7 +95,7 @@ export async function appendAuditEntry(
   // postgres.js sends a Uint8Array as bytea. prev_hash is null for the genesis row.
   await tx`
     insert into audit_log (org_id, seq, actor, action, target, prev_hash, row_hash)
-    values (${input.orgId}, ${seq}, ${input.actor}, ${input.action}, ${input.target},
+    values (${input.orgId}, ${seq}, ${actor}, ${input.action}, ${input.target},
             ${prevHash}, ${rowHash})`;
 
   return { ...entry, prevHash, rowHash };

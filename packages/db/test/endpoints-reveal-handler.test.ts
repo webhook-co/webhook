@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { type AuthContext } from "@webhook-co/contract";
-import { importAuditKey } from "@webhook-co/shared";
+import { importAuditKey, userActor } from "@webhook-co/shared";
 import type { IngestUrlRevealerRpc, RevealedIngestToken } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -47,7 +47,11 @@ const handlers = () =>
     revealIngestUrl: reveal,
   });
 
-const writeCtx = (): AuthContext => ({ orgId: orgA, scopes: ["endpoints:write"] });
+const writeCtx = (): AuthContext => ({
+  orgId: orgA,
+  scopes: ["endpoints:write"],
+  keyId: "key_test",
+});
 
 async function revealCountAudit(): Promise<number> {
   const rows = await withTenant(app, orgA, (tx) => readAuditChain(tx, orgA));
@@ -63,7 +67,7 @@ beforeAll(async () => {
   endpointId = (
     await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "reveal-ep", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "reveal-ep", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
     )
@@ -119,14 +123,14 @@ describe("endpoints.revealIngestUrl handler", () => {
     const ep = (
       await createEndpointWithAudit(
         app,
-        { orgId: capOrg, name: "cap-ep", actor: null, maxEndpoints: 100 },
+        { orgId: capOrg, name: "cap-ep", actor: userActor("user_alice"), maxEndpoints: 100 },
         hasher,
         auditKey,
       )
     ).id;
     revealImpl = async () => ({ found: true, token: "whep_x" });
     const h = handlers().get("endpoints.revealIngestUrl")!;
-    const ctx: AuthContext = { orgId: capOrg, scopes: ["endpoints:write"] };
+    const ctx: AuthContext = { orgId: capOrg, scopes: ["endpoints:write"], keyId: "key_test" };
     // Seed the window to the cap by appending the disclosure audit rows the limiter counts
     // (action = endpoint.ingest_url_revealed) DIRECTLY, in a SINGLE transaction — instead of
     // driving the cap via that many full handler reveals. The handler path (rate-limit query +
@@ -138,7 +142,7 @@ describe("endpoints.revealIngestUrl handler", () => {
       for (let i = 0; i < INGEST_URL_REVEAL_MAX_PER_WINDOW; i++) {
         await appendAuditEntry(tx, auditKey, {
           orgId: capOrg,
-          actor: null,
+          actor: userActor("user_alice"),
           action: INGEST_URL_REVEAL_AUDIT_ACTION,
           target: ep,
         });

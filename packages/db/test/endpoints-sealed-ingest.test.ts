@@ -6,6 +6,7 @@ import {
   SecretStore,
   type SealedRecord,
   type SecretSealer,
+  userActor,
 } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -108,7 +109,7 @@ describe("createEndpointWithAudit — seal on create", () => {
   it("seals a recoverable copy of the minted token that unseals back to the SAME plaintext", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "sealed-create", actor: "user_alice", maxEndpoints: 100 },
+      { orgId: orgA, name: "sealed-create", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       store,
@@ -124,7 +125,7 @@ describe("createEndpointWithAudit — seal on create", () => {
   it("degrades to NULL sealed columns when NO sealer is wired (legacy behavior, still creates)", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "no-sealer", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "no-sealer", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       // no sealer
@@ -141,7 +142,7 @@ describe("createEndpointWithAudit — seal on create", () => {
     };
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "seal-fails", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "seal-fails", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       failing,
@@ -156,7 +157,7 @@ describe("rotateEndpointWithAudit — reseal on rotate", () => {
   it("reseals the NEW token in lockstep and NEVER leaves a stale seal behind the rotated hash", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "rotate-reseal", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "rotate-reseal", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       store,
@@ -166,7 +167,7 @@ describe("rotateEndpointWithAudit — reseal on rotate", () => {
 
     const rotated = await rotateEndpointWithAudit(
       app,
-      { orgId: orgA, endpointId: created.id, actor: null },
+      { orgId: orgA, endpointId: created.id, actor: userActor("user_alice") },
       hasher,
       auditKey,
       store,
@@ -182,7 +183,7 @@ describe("rotateEndpointWithAudit — reseal on rotate", () => {
   it("rotate with a FAILING sealer NULLs the sealed columns (never leaves the prior seal)", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "rotate-seal-fail", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "rotate-seal-fail", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       store,
@@ -193,7 +194,7 @@ describe("rotateEndpointWithAudit — reseal on rotate", () => {
     };
     await rotateEndpointWithAudit(
       app,
-      { orgId: orgA, endpointId: created.id, actor: null },
+      { orgId: orgA, endpointId: created.id, actor: userActor("user_alice") },
       hasher,
       auditKey,
       failing,
@@ -208,7 +209,7 @@ describe("grant hygiene", () => {
   it("webhook_authn (the ingest resolver role) is DENIED select on the sealed ingest columns", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "grant-fence", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "grant-fence", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       store,
@@ -242,7 +243,7 @@ describe("readSealedIngestToken + revealIngestTokenCore — the reveal round-tri
   it("reveals the SAME token that was sealed on create (engine-only unseal round-trip)", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "reveal-roundtrip", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "reveal-roundtrip", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       store,
@@ -255,7 +256,7 @@ describe("readSealedIngestToken + revealIngestTokenCore — the reveal round-tri
   it("returns found:true, token:null for a legacy endpoint with no recoverable copy (rotate to reveal)", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "reveal-legacy", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "reveal-legacy", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       // no sealer -> NULL sealed columns (legacy shape)
@@ -272,7 +273,7 @@ describe("readSealedIngestToken + revealIngestTokenCore — the reveal round-tri
       .id;
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "reveal-crossorg", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "reveal-crossorg", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       store,
@@ -289,7 +290,7 @@ describe("readSealedIngestToken + revealIngestTokenCore — the reveal round-tri
   it("does NOT reveal a soft-deleted endpoint (deleted_at filter → NOT_FOUND)", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "reveal-deleted", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "reveal-deleted", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
       store,

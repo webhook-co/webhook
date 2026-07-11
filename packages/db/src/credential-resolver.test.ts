@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "./credential";
+import {
+  credentialCacheKey,
+  createCredentialHasher,
+  CREDENTIAL_PEPPER_MIN_BYTES,
+} from "./credential";
 import { InMemoryCredentialCache, type ResolvedPrincipal } from "./credential-cache";
 import { createCredentialResolver, type ColdLookup } from "./credential-resolver";
 
@@ -36,7 +40,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     });
     await resolver.resolve("whk_secret");
     const [key, value] = putSpy.mock.calls[0];
-    expect(key).toBe(hasher.hash("whk_secret").toString("hex"));
+    expect(key).toBe(credentialCacheKey(hasher.hash("whk_secret")));
     expect(value).not.toContain("whk_secret");
   });
 
@@ -72,7 +76,7 @@ describe("createCredentialResolver — hot/cold path", () => {
 
   it("treats a malformed cache entry as a miss (fails closed to the cold path)", async () => {
     const cache = new InMemoryCredentialCache();
-    await cache.put(hasher.hash("whk_secret").toString("hex"), '{"not":"a principal"}');
+    await cache.put(credentialCacheKey(hasher.hash("whk_secret")), '{"not":"a principal"}');
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
 
@@ -87,7 +91,7 @@ describe("createCredentialResolver — hot/cold path", () => {
       endpointId: "22222222-2222-7222-8222-222222222222",
       dedupConfig: { mode: "identifier", windowSeconds: 86_400 },
     });
-    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(p));
+    await cache.put(credentialCacheKey(hasher.hash("tok")), JSON.stringify(p));
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
     const result = await resolver.resolve("tok");
@@ -103,7 +107,7 @@ describe("createCredentialResolver — hot/cold path", () => {
       endpointId: "22222222-2222-7222-8222-222222222222",
       dedupConfig: { mode: "off" },
     });
-    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(p));
+    await cache.put(credentialCacheKey(hasher.hash("tok")), JSON.stringify(p));
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
     const result = await resolver.resolve("tok");
@@ -115,7 +119,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     const cache = new InMemoryCredentialCache();
     // Unknown mode + out-of-range window: a poisoned/legacy entry must never drive key derivation.
     const poisoned = { orgId: ORG, scopes: [], dedupConfig: { mode: "evil", windowSeconds: 1 } };
-    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(poisoned));
+    await cache.put(credentialCacheKey(hasher.hash("tok")), JSON.stringify(poisoned));
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
     const result = await resolver.resolve("tok");
@@ -128,7 +132,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     // all. The resolver must fall through to the cold path, never let JSON.parse throw out
     // (which would 500 a valid credential for the whole TTL).
     const cache = new InMemoryCredentialCache();
-    await cache.put(hasher.hash("whk_secret").toString("hex"), "not json at all");
+    await cache.put(credentialCacheKey(hasher.hash("whk_secret")), "not json at all");
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
 
@@ -142,7 +146,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     // must validate scope element types, not just that scopes is an array.
     const cache = new InMemoryCredentialCache();
     await cache.put(
-      hasher.hash("whk_secret").toString("hex"),
+      credentialCacheKey(hasher.hash("whk_secret")),
       JSON.stringify({ orgId: ORG, scopes: ["events:read", 42] }),
     );
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
@@ -160,7 +164,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     // would throw mid-unseal.
     const cache = new InMemoryCredentialCache();
     await cache.put(
-      hasher.hash("whk_secret").toString("hex"),
+      credentialCacheKey(hasher.hash("whk_secret")),
       JSON.stringify({
         orgId: ORG,
         scopes: [],
@@ -181,7 +185,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     // junk and defer the failure to GCM; the guard must reject it at the cache boundary instead.
     const cache = new InMemoryCredentialCache();
     await cache.put(
-      hasher.hash("whk_secret").toString("hex"),
+      credentialCacheKey(hasher.hash("whk_secret")),
       JSON.stringify({
         orgId: ORG,
         scopes: [],
@@ -217,7 +221,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     });
     const hash = hasher.hash("whk_secret");
     await resolver.invalidateHash(hash);
-    expect(delSpy).toHaveBeenCalledWith(hash.toString("hex"));
+    expect(delSpy).toHaveBeenCalledWith(credentialCacheKey(hash));
   });
 });
 

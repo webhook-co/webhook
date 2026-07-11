@@ -14,6 +14,18 @@ export interface AuthContext {
   /** Pseudonymous user id when a user principal is present. */
   readonly userId?: string;
   readonly scopes: readonly string[];
+  /**
+   * The id of the api key that authenticated this request, when the principal is a bearer key.
+   *
+   * This is what makes an audited mutation attributable: a standalone key carries NO userId, so before this
+   * every api/mcp/cli mutation was written to the audit chain with `actor = NULL` — indistinguishable from a
+   * genuine system action, and useless to an incident responder, who needs to know WHICH CREDENTIAL TO
+   * ROTATE. See auditActorFromContext in @webhook-co/shared.
+   *
+   * Deliberately NOT part of AuthContextSchema: that schema is the public `whoami` wire contract, and zod
+   * strips unknown keys, so the key id stays server-side rather than silently widening a published response.
+   */
+  readonly keyId?: string;
 }
 
 /**

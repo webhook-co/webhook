@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { importAuditKey, newId } from "@webhook-co/shared";
+import { importAuditKey, newId, SYSTEM_ACTOR } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readAuditChain } from "../src/audit-append";
@@ -101,7 +101,7 @@ async function failOnce(destinationId: string): Promise<boolean> {
       destinationId,
       threshold: TEST_THRESHOLD,
       auditKey,
-      actor: null,
+      actor: SYSTEM_ACTOR,
       lastError: "boom",
       lastStatusCode: 500,
     }),
@@ -261,7 +261,7 @@ describe("markDeliveryTerminalFailure — auto-disable", () => {
         destinationId: dest,
         threshold: TEST_THRESHOLD,
         auditKey,
-        actor: null,
+        actor: SYSTEM_ACTOR,
         lastError: null,
         lastStatusCode: null,
       }),
@@ -282,7 +282,7 @@ describe("markDeliveryTerminalFailure — auto-disable", () => {
         destinationId: dest,
         threshold: TEST_THRESHOLD,
         auditKey,
-        actor: null,
+        actor: SYSTEM_ACTOR,
         lastError: null,
         lastStatusCode: null,
       }),
@@ -293,7 +293,7 @@ describe("markDeliveryTerminalFailure — auto-disable", () => {
         destinationId: dest,
         threshold: TEST_THRESHOLD,
         auditKey,
-        actor: null,
+        actor: SYSTEM_ACTOR,
         lastError: null,
         lastStatusCode: null,
       }),

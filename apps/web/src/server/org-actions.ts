@@ -1,6 +1,7 @@
 "use server";
 
 import { deleteOrgWithAudit, isOrgOwner } from "@webhook-co/db/org-lifecycle";
+import { userActor } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { cookies } from "next/headers";
@@ -35,7 +36,11 @@ export async function deleteOrganization(formData: FormData): Promise<void> {
     if (!(await isOrgOwner(app, session.userId, session.orgId))) {
       throw new Error("only an organization owner can delete the organization");
     }
-    await deleteOrgWithAudit(app, { orgId: session.orgId, actor: session.userId }, auditKey);
+    await deleteOrgWithAudit(
+      app,
+      { orgId: session.orgId, actor: userActor(session.userId) },
+      auditKey,
+    );
   } finally {
     await app.end({ timeout: 5 }).catch(() => {});
   }

@@ -7,7 +7,7 @@
 // (that stays the legacy 1b one-shot terminal). All run under the org's RLS context (webhook_app); the
 // engine binds HYPERDRIVE_TENANT as webhook_app, so the DO writes these directly with no api callback.
 
-import { deliveryVerificationDecision } from "@webhook-co/shared";
+import { deliveryVerificationDecision, type AuditActorInput } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { type TenantTx } from "./client";
@@ -118,7 +118,7 @@ export interface AutoDisableContext {
   readonly threshold: number;
   readonly auditKey: CryptoKey;
   /** Acting principal for the audit row (null for the system/DO actor). */
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 /** Input to enqueue ONE native auto-delivery (S3 Slice 3 PR2c): the event→destination attempt-chain a
@@ -412,7 +412,7 @@ export async function autoDisableDestination(
     destinationId: string;
     threshold: number;
     auditKey: CryptoKey;
-    actor: string | null;
+    actor: AuditActorInput;
     /** The failure that tripped the threshold — snapshotted into the notification for the email. A null
      *  statusCode means a connection/transport error (no HTTP response). */
     lastError: string | null;

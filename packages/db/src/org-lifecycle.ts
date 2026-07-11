@@ -1,3 +1,5 @@
+import { formatAuditActor, type AuditActorInput } from "@webhook-co/shared";
+
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 
@@ -51,7 +53,7 @@ export async function isOrgOwner(app: Sql, userId: string, orgId: string): Promi
  */
 export async function deleteOrgWithAudit(
   app: Sql,
-  input: { orgId: string; actor: string | null },
+  input: { orgId: string; actor: AuditActorInput },
   auditKey: CryptoKey,
 ): Promise<{ orgId: string; deletedAt: string }> {
   return withTenant(app, input.orgId, async (tx) => {
@@ -66,9 +68,12 @@ export async function deleteOrgWithAudit(
     });
     // Enqueue the durable R2 payload-body purge (also FK-free, so it outlives the org row). The
     // insert `with check (org_id = current_org_id())` is why a tenant can't forge another org's job.
+    // `requested_by` is a plain text column (no FK), so it carries the SAME actor vocabulary as the audit
+    // row above rather than a bare id — one representation, so the purge record and the chain agree on who
+    // asked. The purge role deliberately cannot read this column (0051).
     await tx`
       insert into org_deletions (org_id, requested_by)
-      values (${input.orgId}, ${input.actor})`;
+      values (${input.orgId}, ${formatAuditActor(input.actor)})`;
     // Hard-delete: every org_id child cascades; the two WORM audit tables + org_deletions persist.
     const [row] = await tx<{ deletedAt: string }[]>`
       delete from orgs where id = ${input.orgId} returning now()::text as "deletedAt"`;

@@ -18,7 +18,13 @@ import {
   replayDestinationsRotateSigningSecret,
   replayDestinationsSetOrdered,
 } from "@webhook-co/contract";
-import { canonicalizeAndValidateUrl, newId, type SecretSealer } from "@webhook-co/shared";
+import {
+  canonicalizeAndValidateUrl,
+  newId,
+  type SecretSealer,
+  type AuditActorInput,
+  requireAuditActor,
+} from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
@@ -69,7 +75,7 @@ export interface ReplayDestinationRecord {
 export interface ReplayDestinationAudit {
   readonly auditKey: CryptoKey;
   /** Pseudonymous actor (Better Auth user_id), or null for api-key/system actors. */
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 interface ReplayDestinationRow {
@@ -385,7 +391,7 @@ export function createReplayDestinationHandlers(
         lastValidatedAt: new Date(), // the structural check passed now (advisory)
       },
       deps.sealer,
-      { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+      { auditKey: deps.auditKey, actor: requireAuditActor(ctx) },
     );
     return { ...record, signingSecret };
   });
@@ -406,7 +412,7 @@ export function createReplayDestinationHandlers(
       deps.tenant,
       ctx.orgId,
       parsed.data.destinationId,
-      { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+      { auditKey: deps.auditKey, actor: requireAuditActor(ctx) },
     );
     if (removed === null) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
     return removed;
@@ -422,7 +428,7 @@ export function createReplayDestinationHandlers(
       parsed.data.destinationId,
       {
         auditKey: deps.auditKey,
-        actor: ctx.userId ?? null,
+        actor: requireAuditActor(ctx),
       },
     );
     if (record === null) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
@@ -438,7 +444,7 @@ export function createReplayDestinationHandlers(
       ctx.orgId,
       parsed.data.destinationId,
       parsed.data.ordered,
-      { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+      { auditKey: deps.auditKey, actor: requireAuditActor(ctx) },
     );
     if (record === null) throw new CapabilityFault("NOT_FOUND", "replay destination not found");
     return record;
@@ -458,7 +464,7 @@ export function createReplayDestinationHandlers(
       deps.tenant,
       { orgId: ctx.orgId, destinationId: parsed.data.destinationId },
       deps.sealer,
-      { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+      { auditKey: deps.auditKey, actor: requireAuditActor(ctx) },
     );
     return {
       destinationId: parsed.data.destinationId,

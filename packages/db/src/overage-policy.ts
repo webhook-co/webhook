@@ -67,7 +67,7 @@ export async function setOverageEnabled(
     await tx`update org_limits set pause_policy = ${policy}`;
     await appendAuditEntry(tx, auditKey, {
       orgId: args.orgId,
-      actor: args.userId,
+      actor: { kind: "user", id: args.userId },
       action: "policy_changed",
       target: `pause_policy: ${before.pause_policy} -> ${policy}`,
     });

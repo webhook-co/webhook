@@ -34,6 +34,7 @@ import {
   readSecretBinding,
   type DeliverResult,
   type SealedSigningSecret,
+  SYSTEM_ACTOR,
 } from "@webhook-co/shared";
 import { DurableObject } from "cloudflare:workers";
 
@@ -211,7 +212,9 @@ export class DeliveryDO extends DurableObject<Env> {
         orgId,
         threshold: AUTO_DISABLE_THRESHOLD,
         auditKey: await importAuditKey(raw),
-        actor: null,
+        // A genuine system action — the DO auto-disabled the destination, no human or key asked it to. This
+        // used to be NULL, which was byte-identical to every api/mcp/cli mutation; now the two are distinct.
+        actor: SYSTEM_ACTOR,
       };
     } catch (err) {
       console.log(

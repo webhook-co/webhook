@@ -20,7 +20,11 @@ import {
   endpointsRotate,
   endpointsUpdate,
 } from "@webhook-co/contract";
-import { type IngestUrlRevealerRpc, type SecretSealer } from "@webhook-co/shared";
+import {
+  type IngestUrlRevealerRpc,
+  type SecretSealer,
+  requireAuditActor,
+} from "@webhook-co/shared";
 
 import { createAgentTriggerHandlers } from "./agent-triggers";
 import type { Sql } from "./client";
@@ -127,7 +131,7 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
         orgId: ctx.orgId,
         name: parsed.data.name,
         dedupConfig,
-        actor: ctx.userId ?? null,
+        actor: requireAuditActor(ctx),
         maxEndpoints,
       },
       deps.hasher,
@@ -184,7 +188,7 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     const evict = requireEvictor();
     const deleted = await deleteEndpointWithAudit(
       deps.tenant,
-      { orgId: ctx.orgId, endpointId: parsed.data.endpointId, actor: ctx.userId ?? null },
+      { orgId: ctx.orgId, endpointId: parsed.data.endpointId, actor: requireAuditActor(ctx) },
       deps.auditKey,
     );
     // Evict so the deleted endpoint's token stops resolving NOW (the cold-lookup deleted_at filter is
@@ -201,7 +205,7 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     const evict = requireEvictor();
     const rotated = await rotateEndpointWithAudit(
       deps.tenant,
-      { orgId: ctx.orgId, endpointId: parsed.data.endpointId, actor: ctx.userId ?? null },
+      { orgId: ctx.orgId, endpointId: parsed.data.endpointId, actor: requireAuditActor(ctx) },
       deps.hasher,
       deps.auditKey,
       // Reseal the new token so the rotated always-shown URL is retrievable (decision-0018). Optional —
@@ -237,7 +241,7 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
         orgId: ctx.orgId,
         endpointId: parsed.data.endpointId,
         dedupConfig: parsed.data.dedupConfig,
-        actor: ctx.userId ?? null,
+        actor: requireAuditActor(ctx),
       },
       deps.auditKey,
     );
@@ -271,7 +275,7 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
         deps.tenant,
         deps.auditKey,
         ctx.orgId,
-        ctx.userId ?? null,
+        requireAuditActor(ctx),
         parsed.data.endpointId,
       );
     }
@@ -311,7 +315,7 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
         sealer: requireSealer(),
         evict: requireEvictor(),
         auditKey: deps.auditKey,
-        actor: ctx.userId ?? null,
+        actor: requireAuditActor(ctx),
       },
     );
     return { id: added.id, provider: added.provider, status: added.status };
@@ -343,7 +347,7 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
       revokeProviderSecret(
         deps.tenant,
         { orgId: ctx.orgId, endpointId: parsed.data.endpointId, secretId: parsed.data.secretId },
-        { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+        { auditKey: deps.auditKey, actor: requireAuditActor(ctx) },
       ),
       getEndpointIngestTokenHash(deps.tenant, ctx.orgId, parsed.data.endpointId).catch((err) => {
         console.log(

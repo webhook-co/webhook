@@ -6,6 +6,7 @@ import {
   parseVerifyTokenSecret,
   SecretStore,
   type SecretSealer,
+  userActor,
 } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -291,7 +292,7 @@ describe("registerProviderSecret (the shared api/mcp/web core)", () => {
         evicted.push(h);
       },
       auditKey,
-      actor: "user-1",
+      actor: userActor("user-1"),
     };
   }
 
@@ -428,7 +429,7 @@ describe("registerProviderSecret (the shared api/mcp/web core)", () => {
           throw new Error("KV blip");
         },
         auditKey,
-        actor: "user-1",
+        actor: userActor("user-1"),
       },
     );
     // The secret is durably stored despite the evict failure — no throw, no duplicate-inducing retry.

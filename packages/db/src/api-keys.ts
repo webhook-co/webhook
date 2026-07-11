@@ -311,6 +311,7 @@ export async function revokeApiKeyInTx(tx: TenantTx, id: string): Promise<Revoke
 }
 
 interface AuthnVerifyRow {
+  id: string;
   org_id: string;
   scopes: unknown;
   expires_at: Date | null;
@@ -335,7 +336,7 @@ interface AuthnVerifyRow {
 export function makeApiKeyColdLookup(authn: Sql) {
   return async function coldLookup(keyHash: Buffer): Promise<ResolvedPrincipal | null> {
     const rows = await authn<AuthnVerifyRow[]>`
-      select org_id, scopes, expires_at, revoked_at, key_hash, audience
+      select id, org_id, scopes, expires_at, revoked_at, key_hash, audience
       from api_keys
       where key_hash = ${keyHash}`;
     const row = rows[0];
@@ -352,7 +353,12 @@ export function makeApiKeyColdLookup(authn: Sql) {
     // (not `?? undefined`) so an empty-string audience coalesces to "no binding" too — otherwise
     // a stored "" would survive the resolver's `audience !== undefined` guard and fail closed on
     // EVERY surface (assertAudience's strict `!==` rejects ""), silently bricking the key.
-    return { orgId: row.org_id, scopes: toScopes(row.scopes), audience: row.audience || undefined };
+    return {
+      orgId: row.org_id,
+      scopes: toScopes(row.scopes),
+      audience: row.audience || undefined,
+      keyId: row.id,
+    };
   };
 }
 

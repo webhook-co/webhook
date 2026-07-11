@@ -25,6 +25,7 @@ import {
   type ProviderSecretKind,
   type SealedRecord,
   type SecretSealer,
+  type AuditActorInput,
 } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
@@ -46,7 +47,7 @@ export type ProviderSecretStatus = "active" | "retiring" | "revoked";
 export interface ProviderSecretAudit {
   readonly auditKey: CryptoKey;
   /** Pseudonymous actor (Better Auth user_id), or null for api-key/system actors. */
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 export interface AddProviderSecretInput {
@@ -166,7 +167,7 @@ export interface RegisterProviderSecretDeps {
   /** Best-effort eviction of the endpoint's ingest-token hash from the KV verify cache. */
   readonly evict: (tokenHash: Buffer) => Promise<void>;
   readonly auditKey: CryptoKey;
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 /**

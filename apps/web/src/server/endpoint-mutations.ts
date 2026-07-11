@@ -14,6 +14,7 @@ import {
   updateEndpointDedupWithAudit,
 } from "@webhook-co/db/endpoints";
 import type { DedupConfig } from "@webhook-co/shared";
+import { userActor } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
@@ -192,7 +193,13 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
       create: async (orgId, name, actor, dedupConfig) => {
         const r = await createEndpointWithAudit(
           app,
-          { orgId, name, actor, maxEndpoints: DEFAULT_MAX_ENDPOINTS_PER_ORG, dedupConfig },
+          {
+            orgId,
+            name,
+            actor: userActor(actor),
+            maxEndpoints: DEFAULT_MAX_ENDPOINTS_PER_ORG,
+            dedupConfig,
+          },
           await getHasher(),
           auditKey,
           sealer,
@@ -210,7 +217,7 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
       rotate: async (orgId, endpointId, actor) => {
         const r = await rotateEndpointWithAudit(
           app,
-          { orgId, endpointId, actor },
+          { orgId, endpointId, actor: userActor(actor) },
           await getHasher(),
           auditKey,
           sealer,
@@ -228,13 +235,17 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
       update: async (orgId, endpointId, dedupConfig, actor) => {
         const r = await updateEndpointDedupWithAudit(
           app,
-          { orgId, endpointId, dedupConfig, actor },
+          { orgId, endpointId, dedupConfig, actor: userActor(actor) },
           auditKey,
         );
         return { tokenHash: r.tokenHash, dedupConfig: r.dedupConfig };
       },
       remove: async (orgId, endpointId, actor) => {
-        const r = await deleteEndpointWithAudit(app, { orgId, endpointId, actor }, auditKey);
+        const r = await deleteEndpointWithAudit(
+          app,
+          { orgId, endpointId, actor: userActor(actor) },
+          auditKey,
+        );
         return { tokenHash: r.tokenHash };
       },
       evict: (tokenHash, verb) => evictBestEffort(cache, tokenHash, { verb }),

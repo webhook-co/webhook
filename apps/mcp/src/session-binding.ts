@@ -33,7 +33,7 @@ const SESSION_KEY_BYTES = 32; // a dedicated 32-byte secret (MCP_SESSION_KEY), n
  * closed anyway; the bump makes that an explicit, documented break rather than an accidental one, and any
  * MCP session live across the deploy cleanly re-initializes.
  */
-export const SESSION_ENVELOPE_VERSION = 2;
+export const SESSION_ENVELOPE_VERSION = 3;
 
 /**
  * The max session lifetime (24h, in seconds). `bindSessionId` stamps `exp = nowSeconds + this`, and
@@ -91,8 +91,12 @@ export async function importSessionKey(raw: Uint8Array): Promise<CryptoKey> {
  */
 export async function principalDigest(ctx: AuthContext): Promise<string> {
   const scopes = [...new Set(ctx.scopes)].sort();
+  // `k` (the presenting key's id) is in the digest because the DO pins its AuthContext — keyId included — at
+  // session init and routes purely by session id. Without it, two DISTINCT keys of identical authority would
+  // share a session, and every audit row the second one wrote would name the FIRST as the actor. A session
+  // therefore belongs to exactly one credential, not merely to one authority level.
   const bytes = utf8Encoder.encode(
-    JSON.stringify({ o: ctx.orgId, u: ctx.userId ?? null, s: scopes }),
+    JSON.stringify({ o: ctx.orgId, u: ctx.userId ?? null, s: scopes, k: ctx.keyId ?? null }),
   );
   const hash = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
   return bytesToB64url(new Uint8Array(hash));
