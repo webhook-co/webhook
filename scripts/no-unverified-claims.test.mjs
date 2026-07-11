@@ -51,13 +51,49 @@ test("catches the fake status indicator", () => {
 });
 
 test("catches selling a BAA our Terms refuse — singular OR plural", () => {
+  // The full shipped string trips all three capability rules — BAA, SSO and audit export. It claimed
+  // three things we don't do, for €499/mo.
   assert.deepEqual(ids('summary: "Committed volume, SAML SSO, audit export, and a BAA."'), [
     "baa-offer",
+    "sso-offer",
+    "audit-export-offer",
   ]);
-  assert.deepEqual(ids("<p>Need more than Scale, SSO, or a BAA?</p>"), ["baa-offer"]);
+  // The in-product billing page's upsell — the same false promise, repeated to a PAYING customer.
+  assert.deepEqual(ids("<p>Need more than Scale, SSO, or a BAA?</p>"), ["baa-offer", "sso-offer"]);
   // The plural slipped through the first version — and "we sign BAAs" is the AUP's own phrasing.
-  assert.deepEqual(ids("<p>Committed volume, SAML SSO, and we sign BAAs.</p>"), ["baa-offer"]);
+  assert.deepEqual(ids("<p>Committed volume, SAML SSO, and we sign BAAs.</p>"), [
+    "baa-offer",
+    "sso-offer",
+  ]);
   assert.deepEqual(ids("<p>BAAs available on request.</p>"), ["baa-offer"]);
+});
+
+// The Enterprise tier sold "SAML SSO, audit export, and a BAA". Deleting those words is not the same
+// as pinning them: without a rule, the exact string can be pasted back tomorrow and CI stays green.
+// The BAA half was guarded from the start; these two were not, which is the gap that let a false
+// €499 capability claim sit one regex away from returning.
+test("catches selling SSO we haven't built", () => {
+  assert.deepEqual(ids('summary: "Committed volume, SAML SSO, audit export."'), [
+    "sso-offer",
+    "audit-export-offer",
+  ]);
+  assert.deepEqual(ids("<p>Enterprise includes SAML single sign-on.</p>"), ["sso-offer"]);
+});
+
+// The ONE honest SSO surface: a disabled button that says so. It must survive, or the guard forces us
+// to delete the truthful thing along with the false one.
+test("never flags the disabled 'coming soon' SSO button", () => {
+  assert.deepEqual(
+    ids(`<Button variant="secondary" disabled aria-label="SAML single sign-on, coming soon">
+           Continue with SSO
+         </Button>`),
+    [],
+  );
+});
+
+test("catches selling an audit export that does not exist", () => {
+  assert.deepEqual(ids("<p>Audit log export on Enterprise.</p>"), ["audit-export-offer"]);
+  assert.deepEqual(ids("<p>Export your audit trail at any time.</p>"), ["audit-export-offer"]);
 });
 
 test("catches certification claims we can't make", () => {
@@ -98,7 +134,7 @@ test("a denial in a CODE COMMENT does not launder a boast", () => {
     ids(`
       // we do not sign BAAs — see the AUP
       const tier = { summary: "Committed volume, audit export, and a BAA." };`),
-    ["baa-offer"],
+    ["baa-offer", "audit-export-offer"],
   );
   assert.deepEqual(
     ids(`

@@ -124,6 +124,23 @@ export const CLAIM_RULES = [
     re: /\b(guaranteed delivery|never lose (an? )?event|100% (uptime|delivery|reliable))\b/i,
     why: "delivery is best-effort with a dead-letter queue — we guarantee nothing",
   },
+  {
+    id: "sso-offer",
+    // The €499 Enterprise tier sold "SAML SSO" alongside the BAA. Deleting the words is not the same
+    // as pinning them: without a rule, the exact string can be pasted back tomorrow and every test
+    // stays green. The only honest SSO surface we have is a DISABLED "coming soon" button — so that
+    // is precisely what `unless` permits, and nothing else.
+    re: /\b(saml|sso|single sign-on)\b/i,
+    unless: /\b(coming soon|disabled|waitlist|not yet|soon)\b/i,
+    why: "SSO is a disabled 'coming soon' button — we do not offer it. Say 'coming soon', or nothing",
+  },
+  {
+    id: "audit-export-offer",
+    // Same tier, same defect, one line down. `audit.verify` (hash-chain verification) exists; an
+    // EXPORT does not.
+    re: /\baudit\s+(log\s+)?export\b|\bexport\s+(the\s+|your\s+)?audit\b/i,
+    why: "there is no audit export — `audit.verify` verifies the hash chain; it does not export",
+  },
 ];
 
 /**
@@ -257,6 +274,9 @@ export function scanSource(src, file = "x.tsx") {
   };
 
   const hits = [];
+  // One report per (line, rule). "SAML SSO" trips `sso-offer` twice — once per word — and a failure
+  // list that says the same thing twice reads like two problems.
+  const seen = new Set();
   for (const rule of CLAIM_RULES) {
     const re = new RegExp(
       rule.re.source,
@@ -278,13 +298,12 @@ export function scanSource(src, file = "x.tsx") {
       if (rule.deniable && DENIAL.test(clause)) continue;
       if (rule.unless && rule.unless.test(clause)) continue;
 
-      hits.push({
-        file,
-        line: lineAt(map[m.index] ?? 0),
-        id: rule.id,
-        why: rule.why,
-        text: clause.trim().slice(0, 120),
-      });
+      const line = lineAt(map[m.index] ?? 0);
+      const key = `${line}:${rule.id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      hits.push({ file, line, id: rule.id, why: rule.why, text: clause.trim().slice(0, 120) });
     }
   }
   return hits.sort((a, b) => a.line - b.line);
