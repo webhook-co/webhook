@@ -128,9 +128,11 @@ export function PricingDisclosures() {
           <h3 className="text-base font-semibold text-fg">Retries are never billed</h3>
           <p className="text-sm leading-relaxed text-fg-secondary">
             If a destination is down and we retry, you pay nothing extra. A delivery is billed once,
-            when we first dispatch it, however many attempts it takes. Our retry schedule is our
-            cost. Deduplicated duplicates, verification handshakes, and reading your own data are
-            all free.
+            when we first dispatch it, however many attempts it takes — our retry schedule is our
+            cost. Also free: forwarding to your own machine with <code>wbhk listen</code> (your CLI
+            makes that request, not us), a delivery we refuse to send because the URL resolves
+            somewhere private, deduplicated duplicates, verification handshakes, and reading your
+            own data.
           </p>
         </div>
 
