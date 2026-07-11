@@ -7,6 +7,8 @@
 // edge rate-limit (the device code is short-lived + single-use, and approval still requires an authed
 // session at /device — A4c).
 
+import { resolveAudience } from "./audience";
+
 type LogFn = (event: string, fields?: Record<string, unknown>) => void;
 
 // A device_authorization body is tiny (client_id + a few scopes + resource). Cap it as defense in depth on
@@ -52,10 +54,6 @@ function oauthError(error: string, description: string): Response {
   return jsonResponse(400, { error, error_description: description });
 }
 
-function singleResource(resource: string | null): string | null {
-  return resource && resource.length > 0 ? resource : null;
-}
-
 function intersect(requested: string[], allowed: readonly string[]): string[] {
   const set = new Set(allowed);
   return [...new Set(requested.filter((s) => set.has(s)))];
@@ -80,9 +78,10 @@ export async function handleDeviceAuthorization(
     return oauthError("invalid_client", "unknown client");
   }
 
-  // Audience: exactly one allowed resource, from the request — never defaulted.
-  const resource = singleResource(params.get("resource"));
-  if (resource === null || !deps.allowedAudiences.includes(resource)) {
+  // Audience: exactly one allowed resource, from the request — never defaulted, never widened. Canonicalize
+  // (tolerating the MCP-SDK trailing slash) so the device grant's audience matches what the MCP server checks.
+  const resource = resolveAudience(params.get("resource") ?? undefined, deps.allowedAudiences);
+  if (resource === null) {
     return oauthError("invalid_target", "resource must be a single permitted audience");
   }
 

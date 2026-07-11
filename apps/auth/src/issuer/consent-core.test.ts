@@ -135,6 +135,33 @@ describe("buildConsent", () => {
     expect(p.redirectIsLoopback).toBe(false);
   });
 
+  it("accepts the MCP-SDK trailing-slash audience and seals the CANONICAL (no-slash) value", async () => {
+    // Claude Code / Claude Desktop send resource=https://mcp.webhook.co/ (new URL(origin).href). The sealed
+    // audience must be the path-less MCP form so the minted token matches what the MCP server validates —
+    // this is the invalid_target fix.
+    const { deps, signed } = buildDeps();
+    const result = await buildConsent(
+      deps,
+      authRequest({ resource: "https://mcp.webhook.co/" }),
+      "user_dana",
+      ORIGIN,
+    );
+    expect(result.kind).toBe("consent");
+    expect(signed.payload!.audience).toBe("https://mcp.webhook.co"); // canonical, no trailing slash
+  });
+
+  it("still rejects a non-permitted audience even with a trailing slash (no widening)", async () => {
+    const { deps } = buildDeps();
+    const result = await buildConsent(
+      deps,
+      authRequest({ resource: "https://evil.example.com/" }),
+      "user_dana",
+      ORIGIN,
+    );
+    expect(result.kind).toBe("redirect");
+    expect((result as { location: string }).location).toContain("error=invalid_target");
+  });
+
   it("intersects requested scopes with capability (drops unknown scopes)", async () => {
     const { deps, signed } = buildDeps();
     const result = await buildConsent(
