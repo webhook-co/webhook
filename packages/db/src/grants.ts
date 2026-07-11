@@ -13,7 +13,9 @@
 
 import { randomUUID } from "node:crypto";
 
-import { insertApiKey, revokeApiKeyInTx, type RevokedKeyRow } from "./api-keys";
+import { mintableScopes } from "@webhook-co/contract/mint-ceiling";
+
+import { insertApiKey, MintCeilingError, revokeApiKeyInTx, type RevokedKeyRow } from "./api-keys";
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { readMembershipRole, type MembershipRole } from "./orgs";
 import { type CredentialHasher } from "./credential";
@@ -187,20 +189,53 @@ async function mintKeyOnGrantInTx(
   // (`wbhk login` requests the full set) still cannot walk away with an admin-only one.
   const [grantRow] = await tx<{ user_id: string }[]>`
     select user_id from auth_grant where id = ${input.grantId} and org_id = ${input.orgId} limit 1`;
-  const minterUserId = grantRow?.user_id ?? null;
-  const minterRole = minterUserId ? await readMembershipRole(tx, input.orgId, minterUserId) : null;
+  // No grant row = the grant doesn't exist, or belongs to another org (RLS + the org_id predicate make those
+  // indistinguishable, deliberately). Say THAT, rather than letting it fall through to the ceiling and
+  // surface as "your scopes exceed your authority" — which would be a true statement about a null role, and
+  // a completely misleading diagnosis.
+  if (!grantRow) throw new Error("mint: grant not found in this org");
+  const minterUserId = grantRow.user_id;
+  const minterRole = (await readMembershipRole(
+    tx,
+    input.orgId,
+    minterUserId,
+  )) as MembershipRole | null;
+
+  // A mint on a grant is a RENEWAL, not a fresh request — so the ceiling NARROWS it rather than refusing it.
+  //
+  // The distinction matters. When a human explicitly asks for a scope they may not have, the honest answer
+  // is to refuse and name it (insertApiKey throws; the dashboard says which scope). But a refresh is the
+  // client saying "give me my token again", and the grant's consented scopes were fixed months ago. If the
+  // user has since been DEMOTED, the right outcome is that their token SHRINKS to what they may still
+  // exercise — not that their CLI/MCP starts failing with an error they can neither understand nor fix.
+  // A token is a filter over its owner's authority, so when the authority shrinks, so does the token.
+  //
+  // Narrowing here also keeps insertApiKey's ceiling honest: the set it receives is already within bounds,
+  // so its throw remains reserved for a genuine over-request.
+  const allowed = new Set<string>(mintableScopes(minterRole));
+  const scopes = input.scopes.filter((s) => allowed.has(s));
+  // Refuse only when the ceiling took EVERYTHING away — the grant asked for scopes and the user may now
+  // exercise none of them (removed from the org, or demoted below everything the grant was for). Minting a
+  // powerless key there would just fail confusingly at every later call.
+  //
+  // An empty request narrowing to empty is NOT that: a scopeless key is a legitimate thing to mint (it can
+  // do nothing by construction), and treating it as a ceiling violation would report "your scopes exceed
+  // your authority" about a request that asked for no authority at all.
+  if (input.scopes.length > 0 && scopes.length === 0) {
+    throw new MintCeilingError([...input.scopes]);
+  }
 
   const key = await insertApiKey(
     tx,
     {
       orgId: input.orgId,
       name: input.keyName ?? DEFAULT_KEY_NAME,
-      scopes: input.scopes,
+      scopes,
       expiresAt,
       grantId: input.grantId,
       audience: input.audience,
       ownerType: input.ownerType,
-      minterRole: minterRole as MembershipRole | null,
+      minterRole,
       createdBy: minterUserId,
     },
     hasher,

@@ -1,6 +1,6 @@
 import { isBillingManagerRole, type MembershipRole } from "@webhook-co/shared";
 
-import { CAPABILITY_SCOPES, type CapabilityScope } from "./capability";
+import { CAPABILITY_SCOPES, PROFILE_SCOPE } from "./capability";
 
 // The mint ceiling: a key may never grant more than the human who created it.
 //
@@ -23,8 +23,22 @@ import { CAPABILITY_SCOPES, type CapabilityScope } from "./capability";
 // the system is born there, including the OAuth and device-code paths — so a new mint path cannot be added
 // without declaring whose authority it mints under.
 
+/**
+ * The ceiling is defined over the GRANTABLE vocabulary, not the capability one — and that distinction is
+ * load-bearing.
+ *
+ * `profile` is *granted* (it is advertised in `scopes_supported` and consented to on every OAuth/CLI/MCP
+ * login, gating the `whoami` name+email read) but it is deliberately NOT a member of CAPABILITY_SCOPES,
+ * because it binds no tool on any surface. A ceiling built from CAPABILITY_SCOPES alone would therefore
+ * deny `profile` to EVERY role — owner included — and every token exchange would fail. Identity is not a
+ * privilege, so it sits inside every role's ceiling.
+ *
+ * Mirrors `GRANTABLE_SCOPES` in the auth issuer, which is the set the issuer will actually hand out.
+ */
+const GRANTABLE: readonly string[] = [...CAPABILITY_SCOPES, PROFILE_SCOPE];
+
 /** Scopes that encode an owner/admin-only capability, so a plain `member` must not be able to grant them. */
-const MANAGER_ONLY_SCOPES: readonly CapabilityScope[] = [
+const MANAGER_ONLY_SCOPES: readonly string[] = [
   // The billing gate (isBillingManagerRole) is owner/admin. A member who could mint this would simply read
   // billing over the API instead.
   "billing:read",
@@ -37,13 +51,9 @@ const MANAGER_ONLY_SCOPES: readonly CapabilityScope[] = [
  * this file doesn't know about, mints NOTHING — so a future role added by migration is powerless until
  * someone deliberately grants it power here, rather than silently inheriting everything.
  */
-export function mintableScopes(
-  role: MembershipRole | null | undefined,
-): readonly CapabilityScope[] {
-  if (role === "owner" || role === "admin") return CAPABILITY_SCOPES;
-  if (role === "member") {
-    return CAPABILITY_SCOPES.filter((s) => !MANAGER_ONLY_SCOPES.includes(s));
-  }
+export function mintableScopes(role: MembershipRole | null | undefined): readonly string[] {
+  if (role === "owner" || role === "admin") return GRANTABLE;
+  if (role === "member") return GRANTABLE.filter((s) => !MANAGER_ONLY_SCOPES.includes(s));
   return [];
 }
 

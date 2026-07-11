@@ -886,3 +886,176 @@ describe("findApiKeyGrant (the /revoke whk_ -> grant resolver)", () => {
     });
   });
 });
+
+// A grant mint is a RENEWAL, so the ceiling NARROWS it — it does not refuse it.
+//
+// The distinction is the whole point. An explicit request for a scope you may not hold is refused BY NAME
+// (insertApiKey throws; the dashboard says which scope). But a refresh is the client saying "give me my
+// token again", against scopes consented to months ago. If the human has since been DEMOTED, the right
+// outcome is that their token SHRINKS to what they may still exercise — not that their CLI and MCP start
+// failing with an error they can neither understand nor fix. A token is a filter over its owner's
+// authority: when the authority shrinks, so does the token.
+describe("mint ceiling on a grant — demotion shrinks the token, it doesn't break it", () => {
+  /** Change the seeded user's role in the org. */
+  async function setRole(orgId: string, role: "owner" | "admin" | "member"): Promise<void> {
+    await withTenant(app, orgId, async (tx) => {
+      await tx`update memberships set role = ${role} where org_id = ${orgId} and user_id = ${userOf(orgId)}`;
+    });
+  }
+
+  it("re-mints only the scopes the DEMOTED user may still exercise (audit:read is dropped)", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId); // seeded as owner
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read", "audit:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    expect(minted.status).toBe("minted");
+    const grantId = minted.status === "minted" ? minted.grantId : "";
+
+    // The admin who consented to audit:read is demoted to a plain member.
+    await setRole(orgId, "member");
+
+    // Their next refresh still WORKS — it simply no longer carries audit:read.
+    const renewed = await mintKeyForGrant(
+      app,
+      { orgId, grantId, scopes: ["events:read", "audit:read"], audience: API, ttlSeconds: 3600 },
+      hasher,
+      auditKey,
+    );
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${renewed.keyId}`,
+    );
+    expect(row?.scopes).toEqual(["events:read"]);
+  });
+
+  it("REFUSES the renewal when the user may exercise NOTHING the grant was for", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["audit:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    const grantId = minted.status === "minted" ? minted.grantId : "";
+    await setRole(orgId, "member");
+
+    // Nothing left to mint — a powerless key would just fail confusingly at every call, so refuse instead.
+    await expect(
+      mintKeyForGrant(
+        app,
+        { orgId, grantId, scopes: ["audit:read"], audience: API, ttlSeconds: 3600 },
+        hasher,
+        auditKey,
+      ),
+    ).rejects.toThrow(/audit:read/);
+  });
+
+  it("attributes a grant-minted key to the grant's OWN user (created_by)", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    const keyId = minted.status === "minted" ? minted.keyId : "";
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx<{ created_by: string | null }[]>`select created_by from api_keys where id = ${keyId}`,
+    );
+    expect(row?.created_by).toBe(userOf(orgId));
+  });
+});
+
+// The identity scope, through the REAL mint — the case that would have taken login down.
+//
+// `profile` is GRANTED on every OAuth/CLI/MCP login (it is advertised in scopes_supported and gates the
+// whoami name+email read) but it is deliberately NOT a member of CAPABILITY_SCOPES, because it binds no
+// tool. A mint ceiling built from CAPABILITY_SCOPES alone denies it to EVERY role — owner included — so
+// every token exchange throws and login is dead. The auth-side tests could not catch this: they mock the
+// mint. Only a mint against a real database can.
+describe("the identity scope is mintable by every role (login must not break)", () => {
+  it("mints an owner's key carrying `profile` alongside a capability scope", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId); // owner
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read", "profile"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    expect(minted.status).toBe("minted");
+    const keyId = minted.status === "minted" ? minted.keyId : "";
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${keyId}`,
+    );
+    expect(row?.scopes).toEqual(["events:read", "profile"]);
+  });
+
+  it("a plain MEMBER keeps `profile` too — identity is not a privilege", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    await withTenant(app, orgId, async (tx) => {
+      await tx`update memberships set role = 'member' where org_id = ${orgId} and user_id = ${userOf(orgId)}`;
+    });
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read", "profile"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    const keyId = minted.status === "minted" ? minted.keyId : "";
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${keyId}`,
+    );
+    expect(row?.scopes).toContain("profile");
+  });
+});
