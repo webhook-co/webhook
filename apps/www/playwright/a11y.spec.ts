@@ -117,28 +117,87 @@ test.describe("legal section anchors", () => {
     const navBox = await page.locator(".site-nav").boundingBox();
     expect(headingBox!.y).toBeGreaterThanOrEqual(navBox!.y + navBox!.height);
   });
+
+  // THE REGRESSION GUARD. Declaring `scroll-behavior: smooth` on the root makes Chrome drop the
+  // load-time fragment scroll entirely — the page just sits at the top, and every pasted contract
+  // link silently stops working. Smooth is therefore gated behind the first interaction, and this
+  // asserts the gate holds: on a cold load the document must ALREADY be scrolled, with no animation
+  // still in flight.
+  test("a cold load jumps instantly — smooth scrolling must not swallow the fragment", async ({
+    page,
+  }) => {
+    await page.goto("/terms#limitation-of-liability");
+
+    const settled = await page.evaluate(() => window.scrollY);
+    expect(settled, "the cold load never scrolled to the fragment").toBeGreaterThan(1000);
+
+    // Nothing may still be gliding: sample twice and require stillness.
+    await page.waitForTimeout(400);
+    expect(await page.evaluate(() => window.scrollY)).toBe(settled);
+
+    // And smooth must be OFF until the reader touches the page.
+    expect(
+      await page.evaluate(() => document.documentElement.classList.contains("smooth-scroll")),
+    ).toBe(false);
+  });
+
+  test("clicking a heading glides, and marks the section you landed on", async ({ page }) => {
+    await page.goto("/terms");
+
+    const link = page.getByRole("link", { name: "9. Limitation of liability" });
+    await link.click();
+
+    // The click itself (capture phase) turns smooth on, so this very navigation animates.
+    expect(
+      await page.evaluate(() => document.documentElement.classList.contains("smooth-scroll")),
+    ).toBe(true);
+    await expect(page).toHaveURL(/#limitation-of-liability$/);
+
+    // :target drives the landing highlight — assert the browser actually matches it.
+    expect(
+      await page.evaluate(() =>
+        document.getElementById("limitation-of-liability")?.matches(":target"),
+      ),
+    ).toBe(true);
+  });
 });
 
 test.describe("pricing page accessibility (real browser)", () => {
-  test("no violations, including the FAQ opened", async ({ page }) => {
+  test("no violations, in both the default and fully-expanded state", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/pricing");
     await expectClean(page);
 
     // A native <details> changes the a11y tree when it opens; scan the expanded state too.
-    await page.getByText("What counts as an event?").click();
+    await page.getByText("Are retries billed?").click();
     await expectClean(page);
   });
 
-  // The founder's actual complaint: this line wrapped to two lines in the Free card.
-  test("the Free plan's overage line sets on one line", async ({ page }) => {
+  // AGENTS.md: pricing must be "disclosed UP FRONT … on the pricing page". The three surprises are
+  // rendered <details open> precisely so a buyer cannot miss them, and this is the only layer that can
+  // prove a reader actually SEES them — jsdom knows the `open` attribute, a browser knows the pixels.
+  test("the MUST-disclose facts are visible without a single click", async ({ page }) => {
     await page.goto("/pricing");
-    const line = page.getByText("No overage. Capture pauses.", { exact: true });
-    await expect(line).toBeVisible();
 
-    const box = await line.boundingBox();
-    // One line at the tier-card font size. Two lines would be ~44px+.
-    expect(box!.height).toBeLessThan(30);
+    for (const fact of [
+      /A delivery to a destination is one event/i,
+      /capture pauses until you resubscribe/i,
+      /every retry a provider sends is a distinct captured request/i,
+    ]) {
+      await expect(page.getByText(fact)).toBeVisible();
+    }
+  });
+
+  // Both tier overage lines must set on one line in the card.
+  test("the tier overage lines set on one line", async ({ page }) => {
+    await page.goto("/pricing");
+
+    for (const copy of ["No overage. Capture pauses.", "€25 per extra million events"]) {
+      const line = page.getByText(copy, { exact: true }).first();
+      await expect(line).toBeVisible();
+      const box = await line.boundingBox();
+      expect(box!.height, `"${copy}" wrapped to two lines`).toBeLessThan(30);
+    }
   });
 });
 

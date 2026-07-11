@@ -55,7 +55,7 @@ export const TIERS: readonly Tier[] = [
     includedEvents: "500,000 events / month",
     summary: "For a service in production with real traffic.",
     retention: "30-day retention",
-    overage: `${OVERAGE_PER_MILLION} per additional million events`,
+    overage: `${OVERAGE_PER_MILLION} per extra million events`,
     cta: { label: "Start on Pro", href: "https://app.webhook.co/usage" },
     featured: true,
   },
@@ -67,7 +67,7 @@ export const TIERS: readonly Tier[] = [
     includedEvents: "3,000,000 events / month",
     summary: "For high-volume ingestion and fan-out to many destinations.",
     retention: "90-day retention",
-    overage: `${OVERAGE_PER_MILLION} per additional million events`,
+    overage: `${OVERAGE_PER_MILLION} per extra million events`,
     cta: { label: "Start on Scale", href: "https://app.webhook.co/usage" },
   },
   {

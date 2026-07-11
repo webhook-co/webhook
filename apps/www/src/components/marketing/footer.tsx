@@ -1,31 +1,50 @@
 import { cn, Wordmark } from "@webhook-co/ui";
 
 import { GithubIcon, LinkedinIcon, XIcon } from "@/components/ui/brand-icons";
+import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
-// A footer link is either a bare label (placeholder → "#", owned by the L3 wiring lane) or a
-// {label, href} pair. The Legal column (L2) points at the real legal routes; the other three
-// columns stay placeholders until L3 wires them.
+// A footer link is either a bare label — which still renders as an inert `#` — or a {label, href}
+// pair. Every destination that EXISTS is now wired (see `@/lib/links`). The handful that remain bare
+// are the surfaces we genuinely don't have: About, Blog, and the socials. They're left inert on
+// purpose rather than pointed somewhere approximate, because a link whose label lies is worse than a
+// link that doesn't go anywhere.
 type FooterLink = string | { label: string; href: string };
 
 const columns: { title: string; links: FooterLink[] }[] = [
   {
     title: "Product",
-    links: ["Overview", "Capture & replay", "Ingestion", "Delivery", "MCP server", "Pricing"],
+    links: [
+      { label: "Overview", href: LINKS.home },
+      { label: "Capture & replay", href: LINKS.concepts.captureAndReplay },
+      { label: "Ingestion", href: LINKS.concepts.ingestion },
+      { label: "Delivery", href: LINKS.concepts.delivery },
+      { label: "MCP server", href: LINKS.concepts.mcpServer },
+      { label: "Pricing", href: LINKS.pricing },
+    ],
   },
   {
     title: "Developers",
     links: [
-      "Docs",
-      "Quickstart",
-      "API reference",
-      "CLI",
-      "MCP",
-      "Standard Webhooks",
-      "Open source",
+      { label: "Docs", href: LINKS.docs },
+      { label: "Quickstart", href: LINKS.quickstart },
+      { label: "API reference", href: LINKS.apiReference },
+      { label: "CLI", href: LINKS.cli },
+      { label: "MCP", href: LINKS.mcp },
+      { label: "Standard Webhooks", href: LINKS.standardWebhooks },
+      { label: "Open source", href: LINKS.openSource },
     ],
   },
-  { title: "Company", links: ["About", "Blog", "Changelog", "Security", "Contact"] },
+  {
+    title: "Company",
+    links: [
+      "About", // no page yet
+      "Blog", // no blog yet
+      { label: "Changelog", href: LINKS.changelog },
+      { label: "Security", href: LINKS.security },
+      { label: "Contact", href: LINKS.contact },
+    ],
+  },
   {
     title: "Legal",
     links: [
@@ -38,9 +57,11 @@ const columns: { title: string; links: FooterLink[] }[] = [
   },
 ];
 
-const socials = [
+// GitHub is the only social that exists. X and LinkedIn have no accounts behind them, so they stay
+// inert rather than linking nowhere-in-particular.
+const socials: { label: string; icon: typeof GithubIcon; href?: string }[] = [
   { label: "webhook.co on X", icon: XIcon },
-  { label: "webhook.co on GitHub", icon: GithubIcon },
+  { label: "webhook.co on GitHub", icon: GithubIcon, href: LINKS.openSource },
   { label: "webhook.co on LinkedIn", icon: LinkedinIcon },
 ];
 
@@ -55,10 +76,10 @@ export function Footer() {
               Webhooks your AI agents can act on.
             </p>
             <ul className="mt-5 flex gap-2.5">
-              {socials.map(({ label, icon: Icon }) => (
+              {socials.map(({ label, icon: Icon, href }) => (
                 <li key={label}>
                   <a
-                    href="#"
+                    href={href ?? "#"}
                     aria-label={label}
                     className={cn(
                       focusRing,

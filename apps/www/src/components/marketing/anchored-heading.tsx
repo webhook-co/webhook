@@ -50,7 +50,7 @@ export function AnchoredHeading({
     // link, not the heading. `group-focus-visible` keys off the group element's own state, and it is
     // the <a> that takes focus, so a group on the <h2> would never fire. (jsdom cannot see this: the
     // classes are all present and correct, and nothing happens.)
-    <Tag id={id} className="relative scroll-mt-24">
+    <Tag id={id} className="anchor-heading relative scroll-mt-24">
       <a
         href={`#${id}`}
         className={cn(

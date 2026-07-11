@@ -6,7 +6,7 @@ import { Faq } from "@/components/marketing/faq";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { Footer } from "@/components/marketing/footer";
 import { Nav } from "@/components/marketing/nav";
-import { PricingDisclosures, PricingHero, PricingTable } from "@/components/marketing/pricing";
+import { PricingHero, PricingTable } from "@/components/marketing/pricing";
 import { Reveal } from "@/components/marketing/reveal";
 import { focusRing } from "@/lib/styles";
 
@@ -36,9 +36,6 @@ export default function PricingPage() {
       <main id="main">
         <PricingHero />
         <PricingTable />
-        <Reveal>
-          <PricingDisclosures />
-        </Reveal>
         <Reveal>
           <Faq />
         </Reveal>

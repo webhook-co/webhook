@@ -15,10 +15,34 @@ export const viewport = siteViewport;
 // the app), so there is no theme-init script and no `data-theme` — the tokens resolve to their
 // light values. Geist faces are self-hosted via the `geist` package and wired into the type
 // tokens in globals.css.
+
+/**
+ * Turns smooth scrolling on at the first user interaction — and not one moment sooner.
+ *
+ * `scroll-behavior: smooth` cannot simply be declared on the root: Chrome then drops the *load-time*
+ * fragment scroll. Measured on `/terms#limitation-of-liability` — with `auto` the page lands on the
+ * heading (scrollY 5546); with `smooth` it never scrolls at all (scrollY 0). Since a pasted
+ * `/dpa#sub-processors` link is exactly what the legal anchors exist for, breaking that to gain an
+ * animation would be a bad trade.
+ *
+ * Gating on the first click/keypress makes the ordering *structural* rather than lucky: at load time
+ * no interaction has happened, so the class cannot be present, so the cold-load jump is always
+ * native, instant and precise. The listener runs in the capture phase, so the very click that enables
+ * smooth is itself smooth. Reduced-motion is handled in CSS, so this stays a class toggle either way.
+ */
+const ENABLE_SMOOTH_SCROLL_ON_INTERACTION = `
+addEventListener('click',function(){document.documentElement.classList.add('smooth-scroll')},{once:true,capture:true});
+addEventListener('keydown',function(){document.documentElement.classList.add('smooth-scroll')},{once:true,capture:true});
+`;
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
       <body>
+        <script
+          // A static, compile-time constant — no interpolation, no user input.
+          dangerouslySetInnerHTML={{ __html: ENABLE_SMOOTH_SCROLL_ON_INTERACTION }}
+        />
         <StructuredData />
         {children}
       </body>
