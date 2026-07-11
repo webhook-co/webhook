@@ -38,6 +38,24 @@ describe("legal pages only publish email addresses that actually route", () => {
   });
 });
 
+/**
+ * Does the PARAGRAPH that makes `promise` actually link to `address`?
+ *
+ * A character-window check is not enough, and I proved it: with a 900-char window, retargeting the refund
+ * paragraph's address away from support@ still PASSED, because the Terms publish support@ again a little
+ * further down for general support. The test has to be anchored to the paragraph making the promise —
+ * otherwise it proves only that the address exists somewhere on the page, which is not the guarantee we want.
+ */
+function promiseRoutesTo(src: string, promise: string, address: string): boolean {
+  // Split on JSX paragraph boundaries; the promise and its mailto: must live in the SAME <p>.
+  const paragraphs = src.split(/<p>/).map((b) => b.split("</p>")[0]);
+  const p = paragraphs.find((b) =>
+    b.replace(/\s+/g, " ").toLowerCase().includes(promise.toLowerCase()),
+  );
+  if (!p) return false; // the promise itself vanished — also a failure
+  return p.includes(`mailto:${address}`);
+}
+
 describe("each channel the legal docs promise actually exists", () => {
   const read = (page: string) =>
     readFileSync(join(process.cwd(), "src/app", page, "page.tsx"), "utf8");
@@ -46,13 +64,15 @@ describe("each channel the legal docs promise actually exists", () => {
     // These are the two channels an outsider needs. Losing either silently is how a security report
     // ends up in nobody's inbox.
     const aup = read("acceptable-use");
-    expect(aup).toContain("abuse@webhook.co");
-    expect(aup).toContain("security@webhook.co");
+    expect(promiseRoutesTo(aup, "in breach of this policy", "abuse@webhook.co")).toBe(true);
+    expect(promiseRoutesTo(aup, "security vulnerability", "security@webhook.co")).toBe(true);
   });
 
   it("the Privacy Policy routes data-subject requests to privacy@, not a personal inbox", () => {
-    const privacy = read("privacy");
-    expect(privacy).toContain("privacy@webhook.co");
+    // The DSAR sentence itself must carry the address — that is the channel a regulator will look for.
+    expect(promiseRoutesTo(read("privacy"), "to exercise any of these", "privacy@webhook.co")).toBe(
+      true,
+    );
   });
 
   it("the DPA routes the contract + sub-processor notices to legal@", () => {
@@ -60,8 +80,16 @@ describe("each channel the legal docs promise actually exists", () => {
     expect(read("sub-processors")).toContain("legal@webhook.co");
   });
 
-  it("the Terms route the refund-review promise to a support channel", () => {
-    // §6 promises "email us and we'll review it case by case" — that promise needs a reachable address.
-    expect(read("terms")).toContain("support@webhook.co");
+  it("the Terms bind the refund-review PROMISE to the support channel, not merely mention it", () => {
+    // §6 promises "email us and we'll review it case by case". Asserting that support@ appears SOMEWHERE on
+    // the page is too weak: the Terms also publish support@ for general support, so the refund paragraph
+    // could be retargeted or deleted and the test would still pass. Bind the address to the promise.
+    expect(promiseRoutesTo(read("terms"), "case by case", "support@webhook.co")).toBe(true);
+  });
+
+  it("the Terms bind the compromised-credential report to the security channel", () => {
+    // Same reasoning: §3 tells you to report a compromised key. That sentence must keep pointing at
+    // security@, not just leave a security@ somewhere else on the page.
+    expect(promiseRoutesTo(read("terms"), "compromised", "security@webhook.co")).toBe(true);
   });
 });
