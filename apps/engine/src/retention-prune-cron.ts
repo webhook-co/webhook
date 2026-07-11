@@ -46,6 +46,14 @@ export interface RetentionPruneCronDeps {
   deleteEvents: (orgId: string, ids: string[]) => Promise<readonly string[]>;
   /** Max orgs to service per tick. */
   orgLimit: number;
+  /**
+   * Max orgs to drain CONCURRENTLY (a bounded pool over the outer org loop). Defaults to 1 (sequential) when
+   * omitted. With batchesPerOrg raised for scale (S5), a full tick can be many thousands of round-trips; a
+   * small pool keeps the drain comfortably inside the 15-minute cron wall time without exceeding the Worker's
+   * simultaneous-connection headroom. Each org is isolated (see `failed`), so a pool never lets one org's
+   * fault abort a sibling.
+   */
+  orgConcurrency?: number;
   /** Max list→purge→delete batches per org per tick; the rest resumes next tick. */
   batchesPerOrg: number;
   /** Rows per batch (also the R2 batch-delete size; keep <= 1000, R2's per-call ceiling). */
@@ -61,17 +69,36 @@ export interface RetentionPruneCronResult {
   readonly deleted: number;
   /** Events skipped this tick because their stored R2 key failed the principal fence (alarm signal). */
   readonly fenced: number;
+  /** Orgs whose drain THREW a dep fault (DB/R2). Isolated + counted, not fatal — the org's rows survive for
+   *  the next tick (idempotent retry). A persistently non-zero `failed` is the operability alarm. */
+  readonly failed: number;
 }
 
-/** Drain expired events + their R2 payload bodies, one bounded slice at a time. */
-export async function runRetentionPruneCron(
-  deps: RetentionPruneCronDeps,
-): Promise<RetentionPruneCronResult> {
-  const orgs = await deps.claimOrgs(deps.orgLimit);
-  let deleted = 0;
-  let fenced = 0; // events skipped because their stored R2 key failed the principal fence
+/** Per-org tallies from one drain. `failed` marks a dep fault that stopped this org early (isolated). */
+interface OrgDrain {
+  readonly deleted: number;
+  readonly fenced: number;
+  readonly failed: boolean;
+}
 
-  for (const orgId of orgs) {
+/** A bounded, non-PII error descriptor for a log — the message only, never `String(err)` (which for a DB
+ *  error can splice in the whole failing statement, e.g. the `in (...)` id list, or a connection DSN). */
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : "non-error thrown";
+}
+
+/**
+ * Drain ONE org's expiring events, up to `batchesPerOrg` bounded batches. Rows-before-R2 ordering and the
+ * key fence are per batch (see the top-of-file contract). SELF-ISOLATES a dep fault: it returns the tallies
+ * ACCUMULATED SO FAR this tick (earlier batches' deletions are real + committed, so they must still be
+ * counted) with `failed: true`, rather than throwing — so one org's DB/R2 blip neither aborts its siblings
+ * (the caller runs orgs concurrently) nor loses this org's partial-progress count. The failed org's
+ * remaining rows are simply left for the next tick (idempotent retry).
+ */
+async function drainOrg(orgId: string, deps: RetentionPruneCronDeps): Promise<OrgDrain> {
+  let deleted = 0;
+  let fenced = 0;
+  try {
     for (let batch = 0; batch < deps.batchesPerOrg; batch++) {
       const page = await deps.listExpiring(orgId, deps.pageSize);
       if (page.length === 0) break; // org drained
@@ -110,8 +137,40 @@ export async function runRetentionPruneCron(
       if (skipped > 0) break;
       if (page.length < deps.pageSize) break; // last (short) page — org drained
     }
+  } catch (err: unknown) {
+    deps.log?.("retention_prune.org_failed", { orgId, error: errText(err) });
+    return { deleted, fenced, failed: true }; // partial tallies preserved; org retried next tick
   }
+  return { deleted, fenced, failed: false };
+}
 
-  deps.log?.("retention_prune.done", { orgs: orgs.length, deleted, fenced });
-  return { orgs: orgs.length, deleted, fenced };
+/** Drain expired events + their R2 payload bodies, one bounded slice at a time, across a bounded pool of orgs. */
+export async function runRetentionPruneCron(
+  deps: RetentionPruneCronDeps,
+): Promise<RetentionPruneCronResult> {
+  const orgs = await deps.claimOrgs(deps.orgLimit);
+  let deleted = 0;
+  let fenced = 0; // events skipped because their stored R2 key failed the principal fence
+  let failed = 0; // orgs whose drain threw — isolated, counted, left for the next tick
+
+  // Bounded pool over the orgs: at most `concurrency` drains in flight at once. A shared cursor hands each
+  // worker the next org (single-threaded ⇒ the `cursor < len` check and `orgs[cursor++]` read run with no
+  // await between them, so no org is handed to two workers or skipped). `drainOrg` self-isolates a fault
+  // (returns `failed: true` with its partial tallies) so a worker never rejects and one org's DB/R2 blip
+  // neither aborts its siblings nor loses this org's already-committed deletions from the count.
+  const concurrency = Math.max(1, deps.orgConcurrency ?? 1);
+  let cursor = 0;
+  async function worker(): Promise<void> {
+    while (cursor < orgs.length) {
+      const orgId = orgs[cursor++]!;
+      const r = await drainOrg(orgId, deps);
+      deleted += r.deleted;
+      fenced += r.fenced;
+      if (r.failed) failed += 1;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, orgs.length) }, () => worker()));
+
+  deps.log?.("retention_prune.done", { orgs: orgs.length, deleted, fenced, failed });
+  return { orgs: orgs.length, deleted, fenced, failed };
 }
