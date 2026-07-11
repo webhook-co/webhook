@@ -82,7 +82,20 @@ export interface MintInput {
 
 /** The mint seam's result — `pending_approval` is the org-level device-approval policy (dormant in v1). */
 export type MintResult =
-  | { status: "minted"; grantId: string; plaintext: string; keyId: string; expiresAt: Date }
+  | {
+      status: "minted";
+      grantId: string;
+      plaintext: string;
+      keyId: string;
+      expiresAt: Date;
+      /**
+       * The scopes the key ACTUALLY carries. The mint ceiling drops any the user's role can't grant, so this
+       * can be narrower than what was requested — and the token response MUST report these, never the
+       * request. Echoing the requested scopes while the key carries fewer hands the client a lie it then
+       * acts on: it records the scope as granted, uses it, and gets a 403 it cannot diagnose.
+       */
+      scopes: readonly string[];
+    }
   | { status: "pending_approval"; grantId: string };
 
 export interface AuthCodeRequest {
@@ -194,8 +207,30 @@ export interface RefreshDeps {
     audience: string;
     scopes: string[];
     ttlSeconds: number;
-  }) => Promise<{ plaintext: string; keyId: string; expiresAt: Date }>;
+  }) => Promise<{
+    plaintext: string;
+    keyId: string;
+    expiresAt: Date;
+    /** The scopes actually minted (the ceiling may have narrowed them) — reported, never the request. */
+    scopes: readonly string[];
+  }>;
   log?: LogFn;
+}
+
+/**
+ * Did the mint refuse because the user's role cannot grant ANY of the requested scopes?
+ *
+ * The mint ceiling normally NARROWS (drops what the role can't grant); it only throws when that leaves
+ * nothing at all — e.g. a plain member connects a client that asks solely for `billing:read`. That is an
+ * OAuth `invalid_scope` condition, not a server fault: letting it escape would 500 the /token endpoint AFTER
+ * the authorization code has already been burned, leaving the user in a login loop with an error they can
+ * neither diagnose nor retry out of.
+ *
+ * Matched by name rather than by importing the db error class, so token-core stays a pure core over its
+ * injected seams (it has no dependency on the persistence layer, and shouldn't gain one for an error).
+ */
+function isMintCeilingDenial(error: unknown): boolean {
+  return error instanceof Error && error.name === "MintCeilingError";
 }
 
 function parseScopeList(scope: string | undefined): string[] {
@@ -259,14 +294,26 @@ export async function redeemAuthCode(
     return { kind: "error", error: "invalid_scope", description: "no permitted scope to mint" };
   }
 
-  const minted = await deps.mintScopedKey({
-    orgId: props.orgId,
-    userId: props.userId,
-    scopes,
-    audience: props.audience,
-    ttlSeconds: deps.keyTtlSeconds,
-    device: props.device,
-  });
+  let minted: MintResult;
+  try {
+    minted = await deps.mintScopedKey({
+      orgId: props.orgId,
+      userId: props.userId,
+      scopes,
+      audience: props.audience,
+      ttlSeconds: deps.keyTtlSeconds,
+      device: props.device,
+    });
+  } catch (error) {
+    if (isMintCeilingDenial(error)) {
+      return {
+        kind: "error",
+        error: "invalid_scope",
+        description: "no permitted scope to mint",
+      };
+    }
+    throw error;
+  }
 
   if (minted.status === "pending_approval") {
     return { kind: "pending", grantId: minted.grantId, interval: deps.defaultPendingInterval };
@@ -333,7 +380,10 @@ export async function redeemAuthCode(
       // The mint is asked for exactly keyTtlSeconds, so expires_in equals it by construction.
       expires_in: deps.keyTtlSeconds,
       refresh_token: refreshToken,
-      scope: scopes.join(" "),
+      // What the key ACTUALLY carries, not what was asked for. The mint ceiling may have narrowed it (a
+      // member cannot be granted a manager-only scope), and a response that echoed the request would tell
+      // the client it holds a scope it does not — which it would then use, and get an undiagnosable 403.
+      scope: minted.scopes.join(" "),
       resource: props.audience,
     },
   };
@@ -395,13 +445,24 @@ export async function redeemRefresh(deps: RefreshDeps, req: RefreshRequest): Pro
     return { kind: "error", error: "invalid_scope", description: "no permitted scope to mint" };
   }
 
-  const minted = await deps.mintKeyForGrant({
-    grantId: grant.grantId,
-    orgId: grant.orgId,
-    audience: grant.audience,
-    scopes,
-    ttlSeconds: deps.keyTtlSeconds,
-  });
+  let minted: Awaited<ReturnType<RefreshDeps["mintKeyForGrant"]>>;
+  try {
+    minted = await deps.mintKeyForGrant({
+      grantId: grant.grantId,
+      orgId: grant.orgId,
+      audience: grant.audience,
+      scopes,
+      ttlSeconds: deps.keyTtlSeconds,
+    });
+  } catch (error) {
+    // A demoted user whose grant covered ONLY manager-only scopes has nothing left to renew. Say so in the
+    // OAuth vocabulary rather than 500-ing — their handle is already consumed, so a crash here would be
+    // both a fault and a dead end.
+    if (isMintCeilingDenial(error)) {
+      return { kind: "error", error: "invalid_scope", description: "no permitted scope to mint" };
+    }
+    throw error;
+  }
 
   deps.log?.("issuer.token.refreshed", {
     grant_type: "refresh_token",
@@ -418,7 +479,9 @@ export async function redeemRefresh(deps: RefreshDeps, req: RefreshRequest): Pro
       token_type: "Bearer",
       expires_in: deps.keyTtlSeconds,
       refresh_token: grant.newRefresh,
-      scope: scopes.join(" "),
+      // The scopes actually minted — see the authorization_code branch. On a refresh this is also how a
+      // DEMOTED user's client learns its token has shrunk, instead of discovering it at the next 403.
+      scope: minted.scopes.join(" "),
       resource: grant.audience,
     },
   };

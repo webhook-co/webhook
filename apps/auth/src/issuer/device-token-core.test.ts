@@ -25,8 +25,9 @@ function deps(over: Partial<DeviceTokenDeps> = {}): DeviceTokenDeps {
     keyTtlSeconds: 86_400,
     defaultPendingInterval: 5,
     poll: async () => ({ kind: "approved", props: APPROVED_PROPS }),
-    mintScopedKey: async () => ({
-      status: "minted",
+    mintScopedKey: async (i: { scopes: readonly string[] }) => ({
+      status: "minted" as const,
+      scopes: i.scopes,
       grantId: "grant_1",
       plaintext: "whk_" + "x".repeat(40),
       keyId: "key_1",

@@ -43,6 +43,16 @@ export interface MintedKey {
   readonly plaintext: string;
   readonly keyId: string;
   readonly expiresAt: Date;
+  /**
+   * The scopes the key ACTUALLY carries — which may be narrower than the ones requested, because the mint
+   * ceiling drops any the minter's role can't grant.
+   *
+   * The caller MUST report these, not what it asked for. An OAuth token response that echoes the requested
+   * scopes while the key carries fewer is a lie the client then acts on: it records `billing:read` as
+   * granted, uses it, and gets a 403 it cannot diagnose — the exact "later 403" surprise the ceiling exists
+   * to prevent. Returning the truth is what makes the narrowing safe.
+   */
+  readonly scopes: readonly string[];
 }
 
 export interface MintScopedKeyInput {
@@ -240,14 +250,27 @@ async function mintKeyOnGrantInTx(
     },
     hasher,
   );
+  const narrowed = scopes.length !== input.scopes.length;
   await appendAuthAuditEntry(tx, auditKey, {
     orgId: input.orgId,
     actor: actorUserId,
     eventType: "key_minted",
     targetId: key.id,
-    metadata: { grantId: input.grantId, audience: input.audience },
+    // Record the authority the key was minted UNDER and what it actually carries — matching the dashboard
+    // path. MOST keys in the system are born here (OAuth, device, refresh), so omitting this would leave the
+    // tamper-evident chain unable to answer "who could have done this, and with what standing" for the
+    // majority of credentials. `narrowed` is the evidence that the ceiling bit: without it, a reviewer
+    // comparing the grant's consented scopes against the key's actual scopes finds a discrepancy the
+    // append-only log cannot explain.
+    metadata: {
+      grantId: input.grantId,
+      audience: input.audience,
+      minterRole,
+      scopes,
+      ...(narrowed ? { narrowedFrom: [...input.scopes] } : {}),
+    },
   });
-  return { plaintext: key.plaintext, keyId: key.id, expiresAt };
+  return { plaintext: key.plaintext, keyId: key.id, expiresAt, scopes };
 }
 
 /**

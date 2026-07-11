@@ -90,14 +90,25 @@ export async function redeemDeviceCode(
     return err("invalid_scope", "no permitted scope to mint");
   }
 
-  const minted = await deps.mintScopedKey({
-    orgId: props.orgId,
-    userId: props.userId,
-    scopes,
-    audience: props.audience,
-    ttlSeconds: deps.keyTtlSeconds,
-    device: props.device,
-  });
+  // The mint ceiling normally narrows; it throws only when the user's role can grant NOTHING that was asked
+  // for (a member device-authorizing a client that wants solely `billing:read`). That is invalid_scope, not
+  // a server fault — letting it escape would 500 the poll after the device code is already consumed.
+  let minted: MintResult;
+  try {
+    minted = await deps.mintScopedKey({
+      orgId: props.orgId,
+      userId: props.userId,
+      scopes,
+      audience: props.audience,
+      ttlSeconds: deps.keyTtlSeconds,
+      device: props.device,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "MintCeilingError") {
+      return { kind: "error", error: "invalid_scope", description: "no permitted scope to mint" };
+    }
+    throw error;
+  }
 
   // Org-level device-approval policy (dormant in v1) — surface as authorization_pending, mint nothing.
   if (minted.status === "pending_approval") {
@@ -137,7 +148,8 @@ export async function redeemDeviceCode(
       token_type: "Bearer",
       expires_in: deps.keyTtlSeconds,
       refresh_token: refreshToken,
-      scope: scopes.join(" "),
+      // What the key ACTUALLY carries — the ceiling may have narrowed it. See token-core.
+      scope: minted.scopes.join(" "),
       resource: props.audience,
     },
   };

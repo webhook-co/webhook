@@ -212,8 +212,9 @@ describe("listStandaloneApiKeys", () => {
     if (minted.status !== "minted") throw new Error("unreachable");
     const standalone = await createApiKey(
       app,
-      { orgId, name: "standalone", scopes: ["events:read"], minterRole: "owner" as const },
+      { orgId, name: "standalone", scopes: ["events:read"] },
       hasher,
+      userOf(orgId),
     );
 
     const items = await listStandaloneApiKeys(app, orgId);
@@ -867,8 +868,9 @@ describe("findApiKeyGrant (the /revoke whk_ -> grant resolver)", () => {
     expect(await findApiKeyGrant(authn, `whk_${"z".repeat(43)}`, hasher)).toBeNull();
     const standalone = await createApiKey(
       app,
-      { orgId, name: "standalone", scopes: ["events:read"], minterRole: "owner" as const },
+      { orgId, name: "standalone", scopes: ["events:read"] },
       hasher,
+      userOf(orgId),
     );
     expect(await findApiKeyGrant(authn, standalone.plaintext, hasher)).toBeNull();
   });
@@ -1057,5 +1059,81 @@ describe("the identity scope is mintable by every role (login must not break)", 
       (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${keyId}`,
     );
     expect(row?.scopes).toContain("profile");
+  });
+});
+
+// INITIAL login, not just renewal. The narrowing lives in mintKeyOnGrantInTx, which serves both the first
+// mint (mintScopedKey) and every refresh — but a test that only demotes an owner proves the refresh path and
+// leaves the first-login path unproven. `wbhk login` requests the FULL advertised scope set, so a plain
+// member's very first CLI login is exactly the case where the ceiling has to bite.
+describe("mint ceiling on a member's FIRST login (not only on renewal)", () => {
+  async function seedMemberOrg(orgId: string): Promise<void> {
+    await seedOrg(orgId);
+    await withTenant(app, orgId, async (tx) => {
+      await tx`update memberships set role = 'member' where org_id = ${orgId} and user_id = ${userOf(orgId)}`;
+    });
+  }
+
+  it("narrows a member's first login to what they may exercise (the CLI asks for everything)", async () => {
+    const orgId = randomUUID();
+    await seedMemberOrg(orgId);
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        // Exactly what `wbhk login` sends: the whole advertised set.
+        scopes: ["events:read", "endpoints:write", "audit:read", "billing:read", "profile"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    expect(minted.status).toBe("minted");
+    const keyId = minted.status === "minted" ? minted.keyId : "";
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${keyId}`,
+    );
+    // Logged in fine — and simply cannot exercise the two manager-only scopes.
+    expect(row?.scopes).toEqual(["events:read", "endpoints:write", "profile"]);
+    expect(row?.scopes).not.toContain("audit:read");
+    expect(row?.scopes).not.toContain("billing:read");
+  });
+
+  it("REFUSES a member's first login that asks ONLY for manager-only scopes", async () => {
+    const orgId = randomUUID();
+    await seedMemberOrg(orgId);
+    await expect(
+      mintScopedKey(
+        app,
+        {
+          orgId,
+          userId: userOf(orgId),
+          scopes: ["audit:read", "billing:read"],
+          audience: API,
+          ttlSeconds: 3600,
+          authMethod: "pkce_loopback",
+        },
+        hasher,
+        auditKey,
+      ),
+    ).rejects.toThrow(/audit:read|billing:read/);
+  });
+
+  it("a missing grant says so — it does not surface as a ceiling violation", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    await expect(
+      mintKeyForGrant(
+        app,
+        { orgId, grantId: randomUUID(), scopes: ["events:read"], audience: API, ttlSeconds: 3600 },
+        hasher,
+        auditKey,
+      ),
+    ).rejects.toThrow(/grant not found/);
   });
 });

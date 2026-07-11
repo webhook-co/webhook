@@ -107,10 +107,21 @@ export interface ApiKeyListItem {
  */
 export async function createApiKey(
   app: Sql,
-  input: CreateApiKeyInput,
+  input: Omit<CreateApiKeyInput, "minterRole" | "createdBy">,
   hasher: CredentialHasher,
+  actorUserId: string | null,
 ): Promise<CreatedApiKey> {
-  const created = await withTenant(app, input.orgId, (tx) => insertApiKey(tx, input, hasher));
+  const created = await withTenant(app, input.orgId, async (tx) => {
+    // Derived here, never accepted from the caller. Taking `minterRole` as a parameter would make the
+    // ceiling advisory: a caller could simply assert `minterRole: "owner"` for a member and walk through it.
+    // The authority a key is minted under is a FACT about the database, so it is read from the database.
+    const minterRole = (await readMembershipRole(
+      tx,
+      input.orgId,
+      actorUserId ?? "",
+    )) as MembershipRole | null;
+    return insertApiKey(tx, { ...input, minterRole, createdBy: actorUserId }, hasher);
+  });
   const { keyHash: _keyHash, ...rest } = created;
   return rest;
 }

@@ -53,9 +53,18 @@ let auditKey: CryptoKey; // aae1 auth-audit chain key (revokeApiKeyByPlaintext a
 let orgA: string;
 let orgB: string;
 
+/** The org's seeded owner. A key's minter is always a member — the ceiling reads their role. */
+function userOf(orgId: string): string {
+  return `u-${orgId}`;
+}
+
 async function seedOrg(orgId: string): Promise<void> {
+  await owner`
+    insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
+    values (${userOf(orgId)}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userOf(orgId)}, 'owner')`;
   });
 }
 
@@ -117,8 +126,9 @@ describe("createApiKey -> verify -> list -> revoke", () => {
   it("creates a key, returns the plaintext once, and verify discovers its org", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "lifecycle", scopes: ["events:read"], minterRole: "owner" as const },
+      { orgId: orgA, name: "lifecycle", scopes: ["events:read"] },
       hasher,
+      userOf(orgA),
     );
     expect(created.plaintext.startsWith(`${API_KEY_PREFIX}_`)).toBe(true);
     expect(created.orgId).toBe(orgA);
@@ -133,8 +143,9 @@ describe("createApiKey -> verify -> list -> revoke", () => {
   it("lists the org's keys with display metadata only (no hash, no plaintext)", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "listed", scopes: ["events:read"], minterRole: "owner" as const },
+      { orgId: orgA, name: "listed", scopes: ["events:read"] },
       hasher,
+      userOf(orgA),
     );
     const items = await listApiKeys(app, orgA);
     expect(items.length).toBeGreaterThan(0);
@@ -152,8 +163,9 @@ describe("createApiKey -> verify -> list -> revoke", () => {
   it("revoke stamps revoked_at and the key stops verifying", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "revokeme", scopes: [], minterRole: "owner" as const },
+      { orgId: orgA, name: "revokeme", scopes: [] },
       hasher,
+      userOf(orgA),
     );
     const { cache, resolver } = makeResolver();
 
@@ -177,6 +189,7 @@ describe("expiry honored on verify", () => {
       app,
       { orgId: orgA, name: "expired", scopes: [], expiresAt: new Date(Date.now() - 60_000) },
       hasher,
+      userOf(orgA),
     );
     const { resolver } = makeResolver();
     expect(await resolver.resolve(created.plaintext)).toBeNull();
@@ -187,6 +200,7 @@ describe("expiry honored on verify", () => {
       app,
       { orgId: orgA, name: "future", scopes: [], expiresAt: new Date(Date.now() + 3_600_000) },
       hasher,
+      userOf(orgA),
     );
     const { resolver } = makeResolver();
     expect(await resolver.resolve(created.plaintext)).not.toBeNull();
@@ -197,8 +211,9 @@ describe("two-pool design: webhook_authn cold lookup is least-privilege", () => 
   it("the authn pool resolves org via the granted columns (incl. audience)", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "authn", scopes: ["events:read"], minterRole: "owner" as const },
+      { orgId: orgA, name: "authn", scopes: ["events:read"] },
       hasher,
+      userOf(orgA),
     );
     const cold = makeApiKeyColdLookup(authn);
     const principal = await cold(hasher.hash(created.plaintext));
@@ -220,8 +235,9 @@ describe("cross-org isolation (RLS) on the app pool", () => {
   it("org A's app context cannot revoke org B's key", async () => {
     const bKey = await createApiKey(
       app,
-      { orgId: orgB, name: "borg", scopes: [], minterRole: "owner" as const },
+      { orgId: orgB, name: "borg", scopes: [] },
       hasher,
+      userOf(orgB),
     );
     // Under org A's context the row is invisible -> nothing revoked.
     expect(await revokeApiKey(app, orgA, bKey.id)).toBe(false);
@@ -236,8 +252,9 @@ describe("KV hot path vs cold path vs revocation", () => {
   it("hot-path hit avoids a second authn round-trip; revocation forces a cold miss", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "kv", scopes: ["events:read"], minterRole: "owner" as const },
+      { orgId: orgA, name: "kv", scopes: ["events:read"] },
       hasher,
+      userOf(orgA),
     );
     const cache = new InMemoryCredentialCache();
     // Count cold lookups by wrapping the real authn lookup.
@@ -267,8 +284,9 @@ describe("per-key audience (A0b conditional stamp, real DB)", () => {
   it("a key with a stored audience resolves to THAT audience — not widened to the presenting surface", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "perkey", scopes: [], minterRole: "owner" as const },
+      { orgId: orgA, name: "perkey", scopes: [] },
       hasher,
+      userOf(orgA),
     );
     // Bind a per-key audience to mcp (A0c's mintScopedKey will set this at mint; here via SQL).
     await withTenant(app, orgA, async (tx) => {
@@ -283,8 +301,9 @@ describe("per-key audience (A0b conditional stamp, real DB)", () => {
   it("a legacy key (no stored audience) is stamped with the presenting surface's audience", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "legacy-aud", scopes: [], minterRole: "owner" as const },
+      { orgId: orgA, name: "legacy-aud", scopes: [] },
       hasher,
+      userOf(orgA),
     );
     const { resolver } = makeResolver(); // resource = API_RESOURCE
     expect((await resolver.resolve(created.plaintext))?.audience).toBe(API_RESOURCE);
@@ -296,8 +315,9 @@ describe("per-key audience (A0b conditional stamp, real DB)", () => {
     // assertAudience's strict `!==` would reject the key on EVERY surface (a silent fail-closed brick).
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "empty-aud", scopes: [], minterRole: "owner" as const },
+      { orgId: orgA, name: "empty-aud", scopes: [] },
       hasher,
+      userOf(orgA),
     );
     await withTenant(app, orgA, async (tx) => {
       await tx`update api_keys set audience = ${""} where id = ${created.id}`;
@@ -311,8 +331,9 @@ describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () =
   it("finds a key by plaintext alone, revokes it (audited), returns the hash, and is idempotent", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "leaked", scopes: ["events:read"], minterRole: "owner" as const },
+      { orgId: orgA, name: "leaked", scopes: ["events:read"] },
       hasher,
+      userOf(orgA),
     );
     // Resolves before revocation.
     const { resolver } = makeResolver();
@@ -339,8 +360,9 @@ describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () =
   it("revokes the RIGHT org's key (cross-org discovery by hash)", async () => {
     const inB = await createApiKey(
       app,
-      { orgId: orgB, name: "leaked-b", scopes: [], minterRole: "owner" as const },
+      { orgId: orgB, name: "leaked-b", scopes: [] },
       hasher,
+      userOf(orgB),
     );
     const r = await revokeApiKeyByPlaintext(authn, app, inB.plaintext, hasher, auditKey);
     expect(r).toMatchObject({ found: true, revoked: true, orgId: orgB, keyId: inB.id });
@@ -356,8 +378,9 @@ describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () =
   it("returns the key's name + start so the owner can be told WHICH key died — never the secret", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "ci-deploy", scopes: ["events:read"], minterRole: "owner" as const },
+      { orgId: orgA, name: "ci-deploy", scopes: ["events:read"] },
       hasher,
+      userOf(orgA),
     );
     const r = await revokeApiKeyByPlaintext(authn, app, created.plaintext, hasher, auditKey);
     expect(r).toMatchObject({ found: true, revoked: true, keyName: "ci-deploy" });
@@ -380,8 +403,9 @@ describe("enqueueApiKeyRevokedNotification (secret-scanning owner alert)", () =>
   it("queues ONE pending, destination-less intent carrying the key's name/start", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "leaked", scopes: [], minterRole: "owner" as const },
+      { orgId: orgA, name: "leaked", scopes: [] },
       hasher,
+      userOf(orgA),
     );
     await enqueueApiKeyRevokedNotification(app, {
       orgId: orgA,
@@ -416,8 +440,9 @@ describe("enqueueApiKeyRevokedNotification (secret-scanning owner alert)", () =>
   it("writes the intent under the OWNING org (RLS), not a bystander org", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgB, name: "leaked-b", scopes: [], minterRole: "owner" as const },
+      { orgId: orgB, name: "leaked-b", scopes: [] },
       hasher,
+      userOf(orgB),
     );
     await enqueueApiKeyRevokedNotification(app, {
       orgId: orgB,
