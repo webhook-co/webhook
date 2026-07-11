@@ -1,7 +1,7 @@
-// Per-endpoint, per-client-IP edge rate-limiting for the issuer's public endpoints — the in-Worker layer of
-// the deferred "edge rate-limit on auth. sensitive paths". A coarse Cloudflare WAF rate-limit rule is the
-// outer layer (and covers provider-owned /register, which never reaches this dispatch); this is the precise,
-// per-endpoint inner layer applied at the issuer-handler dispatch (before the body is read / a pool opened).
+// Per-endpoint, per-client-IP edge rate-limiting for the issuer's public endpoints, applied at the
+// issuer-handler dispatch (before the body is read / a pool opened). The provider-owned /register never
+// reaches this dispatch — it is throttled separately in the Worker entry (register-guard), before
+// provider.fetch.
 //
 // Reuses the durable fixed-window `consumeRateLimit` (rate-limit.ts), keyed by `<endpoint>:ip:<ip>`. FAILS
 // OPEN — unlike the device-verify guess-throttle (which fails closed), these are VOLUME throttles on the

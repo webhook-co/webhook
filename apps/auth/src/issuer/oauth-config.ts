@@ -33,12 +33,18 @@ export const oauthIssuerConfig = {
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/oauth/token",
   clientRegistrationEndpoint: "/register",
-  // A3 open-DCR hardening: public registration stays enabled (the CLI is a public client —
-  // disallowPublicClientRegistration unset), but every redirect_uri is validated to be https or an http
-  // loopback literal (127.0.0.1/::1) — rejecting the open-redirect/phishing vector (arbitrary http hosts)
-  // and `localhost` (ADR-0026). See ./dcr. Durable DCR rate-limiting is deferred to the deploy slice.
+  // Open-DCR policy: public registration stays enabled (public clients register themselves —
+  // disallowPublicClientRegistration unset), but every redirect_uri is validated to be an http loopback
+  // (127.0.0.1/::1/localhost, any port) OR an allowlisted-vendor https callback — the MCP spec's
+  // "localhost or HTTPS" rule, with open https narrowed to known clients so it can't be a consent-phishing
+  // vector. See ./dcr. POST /register is rate-limited in the Worker entry (register-guard), before the
+  // provider serves it.
   clientRegistrationCallback: (options: { clientMetadata: Record<string, unknown> }) =>
     validateClientRegistration(options.clientMetadata),
+  // Pin the registered-client lifetime (the provider's current default is 90 days) so a registered client —
+  // junk or real — can't outlive this window, and a future library-default change can't silently alter it.
+  // DCR clients transparently re-register when their cached client_id is rejected.
+  clientRegistrationTTL: 90 * 24 * 60 * 60,
   scopesSupported: [...CAPABILITY_SCOPES],
   allowImplicitFlow: false,
   allowPlainPKCE: false,

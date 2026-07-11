@@ -23,7 +23,10 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import openNextHandler from "../.open-next/worker.js";
 import { introspect } from "./issuer/introspect-handler";
 import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
+import { nowSeconds } from "./issuer/issuer-constants";
 import { oauthIssuerConfig } from "./issuer/oauth-config";
+import { guardRegister } from "./issuer/register-guard";
+import type { RateLimitKv } from "./issuer/rate-limit";
 import { deleteAccountRpc } from "./issuer/account-delete-deps";
 import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
@@ -40,8 +43,17 @@ const provider = new OAuthProvider({
 });
 
 export default {
-  // Delegate every request to the OAuth provider unchanged — same fetch handler as before this PR.
-  fetch: (request, env, ctx) => provider.fetch(request, env, ctx),
+  fetch: async (request, env, ctx) => {
+    // Throttle the provider-owned DCR endpoint (POST /register) before delegating — it's public,
+    // unauthenticated, and otherwise unthrottled. Fails open (unbound KV / absent IP / KV fault); a
+    // non-/register request returns null and falls straight through to the provider.
+    const limited = await guardRegister(
+      { kv: env.RATELIMIT_KV as RateLimitKv | undefined, nowSeconds },
+      request,
+    );
+    if (limited) return limited;
+    return provider.fetch(request, env, ctx);
+  },
 
   // Hourly cron (crons: "0 * * * *"). Two independent, non-throwing jobs (each logs + swallows its own
   // errors); both are waitUntil'd so the isolate lives until they + their pool-close finish.
