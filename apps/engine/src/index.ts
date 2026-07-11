@@ -698,6 +698,19 @@ export async function handleFetch(
   makeDeps: MakeIngestDeps = buildIngestDeps,
 ): Promise<Response> {
   const url = new URL(request.url);
+  // Cleartext refusal (S6a). The ingest token rides in the URL PATH, so a plaintext request has already
+  // exposed it — never capture over cleartext (the DPA promises TLS on every external interface). 301 to the
+  // https equivalent, path + query preserved, BEFORE /healthz / the root bounce / token resolution, for ALL
+  // verbs. This is the version-controlled backstop to the zone's Always-Use-HTTPS (which 301s at the edge
+  // before the Worker even runs); the two are defence in depth. HSTS on the https responses then makes a
+  // browser auto-upgrade subsequent requests without hitting this path at all.
+  if (url.protocol === "http:") {
+    url.protocol = "https:";
+    return new Response(null, {
+      status: 301,
+      headers: { location: url.toString(), ...LIVENESS_HEADERS },
+    });
+  }
   if (request.method === "GET" && url.pathname === "/healthz") {
     return new Response("ok", {
       status: 200,
