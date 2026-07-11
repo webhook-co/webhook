@@ -3,8 +3,12 @@
  *
  * These were inlined `href="#"` across nine components — the footer's own comment called them
  * "placeholders … owned by the L3 wiring lane". This is that lane. Centralising them means a docs
- * reorg is one edit, not a scavenger hunt, and it makes the *gaps* legible: a link that points at
- * {@link PLACEHOLDER} is a surface that genuinely does not exist yet, not one someone forgot.
+ * reorg is one edit, not a scavenger hunt.
+ *
+ * There is deliberately NO placeholder constant. The site ships zero `href="#"` and
+ * `scripts/check-no-dead-links.mjs` enforces it, so a surface that doesn't exist yet renders as TEXT
+ * (see the footer) rather than as a link to nowhere. A `PLACEHOLDER = "#"` export would just be a
+ * loaded gun pointed at that guard.
  *
  * `links.spec.ts` actually REQUESTS every external href and asserts a 200 — because a link to a
  * renamed docs slug is a 404, and a unit test comparing strings against the same constants it is
@@ -17,13 +21,6 @@ export const AUTH = "https://auth.webhook.co";
 export const DOCS = "https://docs.webhook.co";
 export const GITHUB = "https://github.com/webhook-co";
 export const REPO = `${GITHUB}/webhook`;
-
-/**
- * The surfaces that do not exist yet: About, Blog, X, LinkedIn, a status page, a public roadmap.
- * Deliberately left inert rather than pointed somewhere approximate — a link whose label lies
- * ("See the roadmap" → the docs) is worse than one that doesn't go anywhere.
- */
-export const PLACEHOLDER = "#";
 
 export const LINKS = {
   // ── product ──────────────────────────────────────────────────────────────

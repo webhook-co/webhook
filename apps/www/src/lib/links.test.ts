@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { APP, AUTH, DOCS, GITHUB, LINKS, PLACEHOLDER } from "./links";
+import { APP, AUTH, DOCS, GITHUB, LINKS, SALES } from "./links";
 
 /**
  * The marketing site's outbound links are the funnel. A link that 404s costs more than a link that
@@ -34,7 +34,7 @@ describe("marketing links", () => {
 
   it("never ships an http:// or protocol-relative external link", () => {
     for (const href of flat) {
-      if (href.startsWith("/") || href.startsWith("mailto:") || href === PLACEHOLDER) continue;
+      if (href.startsWith("/") || href.startsWith("mailto:")) continue;
       expect(href, `${href} must be https`).toMatch(/^https:\/\//);
     }
   });
@@ -43,7 +43,7 @@ describe("marketing links", () => {
   // slash on a *path* is a redirect hop; on a bare origin it's canonical, so it isn't flagged.
   it("has no malformed paths", () => {
     for (const href of flat) {
-      if (href === PLACEHOLDER || href.startsWith("mailto:")) continue;
+      if (href.startsWith("mailto:")) continue;
       expect(href, `${href} has a double slash`).not.toMatch(/[^:]\/\//);
 
       const path = href.startsWith("https://") ? new URL(href).pathname : href;
@@ -51,10 +51,13 @@ describe("marketing links", () => {
     }
   });
 
-  // `PLACEHOLDER` is the deliberate, named "#" for the surfaces that genuinely do not exist yet
-  // (About, Blog, the socials, a status page, a roadmap). Naming it means a reviewer can tell an
-  // *intentional* gap from a link someone simply forgot to wire.
-  it("names its placeholders instead of scattering bare '#'", () => {
-    expect(PLACEHOLDER).toBe("#");
+  // There is no placeholder constant, on purpose. The site ships zero `href="#"` — a surface that
+  // doesn't exist yet renders as TEXT, not as a link to nowhere — and `check-no-dead-links.mjs`
+  // enforces that on the built HTML. A `PLACEHOLDER = "#"` export would be a loaded gun pointed at
+  // that guard, so this pins that no link in the map is a bare `#`.
+  it("holds no link to nowhere", () => {
+    for (const href of [...flat, SALES]) {
+      expect(href, "the links map must never carry a bare '#'").not.toBe("#");
+    }
   });
 });

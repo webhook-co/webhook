@@ -24,7 +24,7 @@
     "tsconfig-boundary": "node scripts/tsconfig-boundary.mjs",
     "dal-gate-guard": "node scripts/dal-gate-guard.mjs",
     "adr-no-dup": "node scripts/adr-no-dup.mjs",
-    "test:scripts": "node --test 'scripts/**/*.test.mjs'",
+    "test:scripts": "node --test 'scripts/**/*.test.mjs' 'apps/*/scripts/**/*.test.mjs'",
     "prepare": "husky"
   },
   "devDependencies": {
