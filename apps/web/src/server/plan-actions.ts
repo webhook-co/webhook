@@ -60,10 +60,18 @@ export async function setOverageAction(formData: FormData): Promise<void> {
  */
 export async function switchPlanAction(formData: FormData): Promise<void> {
   const planId = formData.get("planId");
+  // A per-form-render nonce (ChangePlanCard) → the Stripe Idempotency-Key, so a double-submit collapses to
+  // one charge. A string or nothing; switchPlan simply forwards it.
+  const nonce = formData.get("nonce");
   const session = await verifySession();
   const result =
     typeof planId === "string"
-      ? await switchPlan(session.orgId, session.userId, planId)
+      ? await switchPlan(
+          session.orgId,
+          session.userId,
+          planId,
+          typeof nonce === "string" ? nonce : undefined,
+        )
       : ({ status: "unknown_plan" } as const);
   redirect(`${BILLING}?switch=${result.status}`);
 }

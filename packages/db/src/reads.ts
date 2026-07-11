@@ -773,8 +773,10 @@ export async function readOveragePolicy(tx: TenantTx): Promise<PausePolicy | nul
 export async function readActiveSubscription(
   tx: TenantTx,
 ): Promise<{ subscriptionId: string; plan: string; status: string } | null> {
+  // One sub per org today, but order by most-recent so this stays deterministic if that ever changes.
   const [row] = await tx<{ stripe_subscription_id: string; plan: string; status: string }[]>`
-    select stripe_subscription_id, plan, status from billing_subscriptions limit 1`;
+    select stripe_subscription_id, plan, status
+    from billing_subscriptions order by created_at desc limit 1`;
   return row
     ? { subscriptionId: row.stripe_subscription_id, plan: row.plan, status: row.status }
     : null;

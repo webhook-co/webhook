@@ -384,8 +384,17 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
     };
     enable(active, "cus_1", "pause");
     expect((await loadBillingSummary("org-1", "user-1")).switchTargets).toEqual(["scale"]);
+    // On Scale → offer Pro.
+    enable({ ...active, plan: "price_scale_base" }, "cus_1", "pause");
+    expect((await loadBillingSummary("org-1", "user-1")).switchTargets).toEqual(["pro"]);
     // A canceled sub isn't live → nothing to switch in place (resubscribe instead).
     enable({ ...active, status: "canceled" }, "cus_1", null);
+    expect((await loadBillingSummary("org-1", "user-1")).switchTargets).toEqual([]);
+    // A non-entitled live sub (unpaid) isn't switchable in place.
+    enable({ ...active, status: "unpaid" }, "cus_1", null);
+    expect((await loadBillingSummary("org-1", "user-1")).switchTargets).toEqual([]);
+    // A legacy/unknown base price → tier unknown → no switch targets.
+    enable({ ...active, plan: "price_legacy" }, "cus_1", "pause");
     expect((await loadBillingSummary("org-1", "user-1")).switchTargets).toEqual([]);
   });
 

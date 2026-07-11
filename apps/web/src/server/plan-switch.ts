@@ -7,6 +7,7 @@ import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import {
   isBillingActive,
+  isBillingManagerRole,
   isSelfServePlan,
   planIdForBasePrice,
   planSwitchItems,
@@ -22,6 +23,11 @@ import { getAuditChainKey, getBillingMode, getStripePlans } from "./env";
 // choice): an upgrade charges the prorated difference now, a downgrade credits unused time to the account.
 // The subscription.updated webhook then syncs the new plan + cap into the mirror (existing handler), so this
 // makes NO local mirror write — only the Stripe mutation + an audit of who initiated it. Never throws.
+//
+// The CURRENT plan is derived from LIVE Stripe state (retrieveSubscription), not the local mirror, because
+// the mirror lags a switch until its webhook lands: a mirror-based decision would show a "switch to X" button
+// right after moving to X and then fail confusingly. Live state also makes a retried/duplicate switch a
+// clean same_plan (the sub is already on the target).
 
 export type SwitchPlanResult =
   | { readonly status: "ok"; readonly plan: string }
@@ -37,20 +43,18 @@ export type SwitchPlanResult =
   | { readonly status: "same_plan" }
   | { readonly status: "error" };
 
-/** Roles allowed to change the plan (mirrors setOverageEnabled's gate). */
-function canManage(role: string | null): boolean {
-  return role === "owner" || role === "admin";
-}
-
 /**
  * Switch `orgId`'s subscription to `targetPlanId`. Gates owner/admin, validates the target + that the sub is
  * a LIVE self-serve plan cleanly on its expected prices, then calls Stripe with immediate proration.
  * @param userId the acting user (gated for owner/admin + audited as the initiator).
+ * @param idempotencyKey a per-form-render nonce (from the ChangePlanCard) so a double-submit collapses to one
+ *   Stripe update — a fresh render gets a fresh nonce, so a legitimate later switch is never blocked.
  */
 export async function switchPlan(
   orgId: string,
   userId: string,
   targetPlanId: string,
+  idempotencyKey?: string,
 ): Promise<SwitchPlanResult> {
   if (getBillingMode() === "off") return { status: "disabled" };
   const plans = getStripePlans();
@@ -59,11 +63,9 @@ export async function switchPlan(
   const targetPrices = plans[targetPlanId];
   if (!targetPrices) return { status: "unknown_plan" };
   try {
-    const client = await stripeClientFromEnv();
-    if (!client) return { status: "disabled" };
-
-    // Read the caller's role + the org's subscription under one tenant-RLS tx (role can't come from another
-    // org; the sub is the org's own). No write here — the effect is the Stripe call below.
+    // Gate FIRST — read the caller's role + the org's subscription id under one tenant-RLS tx (the role can't
+    // come from another org; the sub is the org's own), and reject a non-manager BEFORE resolving the Stripe
+    // secret or making any Stripe call. No write here — the effect is the Stripe call below.
     const { role, sub } = await withTenantDb((app) =>
       withTenant(app, orgId, async (tx) => ({
         role:
@@ -75,28 +77,35 @@ export async function switchPlan(
         sub: await readActiveSubscription(tx),
       })),
     );
-    if (!canManage(role)) return { status: "forbidden" };
+    if (!isBillingManagerRole(role)) return { status: "forbidden" };
     if (!sub) return { status: "no_subscription" };
-    // Only a LIVE (entitled) sub can be switched in place. A canceled/lapsed one has no live Stripe sub to
-    // update — the user resubscribes via Checkout (which the /billing picker offers).
-    if (!isBillingActive(sub.status)) return { status: "no_subscription" };
 
-    const currentPlanId = planIdForBasePrice(plans, sub.plan);
+    const client = await stripeClientFromEnv();
+    if (!client) return { status: "disabled" };
+
+    // LIVE state is authoritative for the switch decision (the mirror lags). Retrieve the sub, check it's
+    // still entitled, and derive the CURRENT plan from its actual items — not the possibly-stale mirror.
+    const stripeSub = await client.retrieveSubscription(sub.subscriptionId);
+    if (!isBillingActive(stripeSub.status)) return { status: "no_subscription" };
+    const currentPlanId =
+      stripeSub.items.map((it) => planIdForBasePrice(plans, it.price)).find(Boolean) ?? null;
     if (!currentPlanId) return { status: "unknown_plan" }; // on a legacy/archived base price
-    if (currentPlanId === targetPlanId) return { status: "same_plan" };
+    if (currentPlanId === targetPlanId) return { status: "same_plan" }; // already there (incl. a lagged retry)
     const currentPrices = plans[currentPlanId];
     if (!currentPrices) return { status: "unknown_plan" };
 
-    // Fetch the live sub's items, remap base+overage to the target plan. planSwitchItems refuses (null) if
-    // the sub isn't cleanly on `current`'s prices — never blind-guess which item is the meter.
-    const stripeSub = await client.retrieveSubscription(sub.subscriptionId);
+    // Remap base+overage to the target. planSwitchItems refuses (null) unless the sub is cleanly on exactly
+    // `current`'s two items — never blind-guess which item is the meter, never leave a stray item behind.
     const items = planSwitchItems(stripeSub.items, currentPrices, targetPrices);
     if (!items) return { status: "unknown_plan" };
 
+    // idempotencyKey = the form-render nonce: a double-submit of the same button carries the same key, so
+    // Stripe processes the update once and returns the cached result for the duplicate — no double proration.
     await client.updateSubscription({
       subscriptionId: sub.subscriptionId,
       items,
       prorationBehavior: "create_prorations",
+      idempotencyKey,
     });
 
     // Audit the initiator (the webhook records the OUTCOME, not who asked). Best-effort — the switch already

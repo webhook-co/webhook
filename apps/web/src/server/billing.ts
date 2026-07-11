@@ -6,6 +6,7 @@ import {
   billingDisplayFromSubscription,
   billingEnabled,
   isBillingActive,
+  isBillingManagerRole,
   isLiveSubscriptionStatus,
   isSelfServePlan,
   makeStripeClient,
@@ -235,7 +236,7 @@ export async function loadBillingSummary(orgId: string, userId: string): Promise
       upgradePlanIds,
       hasCustomer: customerId !== null,
       overageEnabled,
-      canManageBilling: role === "owner" || role === "admin",
+      canManageBilling: isBillingManagerRole(role),
       switchTargets,
     };
   } catch (error) {
