@@ -384,7 +384,13 @@ describe("createWriteHandlers — endpoints.delete + endpoints.rotate", () => {
                  ${"dk-" + eventId}, ${"content_hash"})`,
     );
     const { handlers } = handlersWithEvictor();
-    const eventsWriteCtx: AuthContext = { orgId: orgA, scopes: ["events:delete"] };
+    // A bearer api-key principal carries the id of the key that authenticated it — that is what the audit
+    // row attributes the deletion to (`key:<id>`), instead of the NULL actor this lane removed.
+    const eventsWriteCtx: AuthContext = {
+      orgId: orgA,
+      scopes: ["events:delete"],
+      keyId: "key_test",
+    };
 
     // Wrong scope → FORBIDDEN, and the scope check runs FIRST (the event is untouched).
     await expect(
@@ -431,7 +437,10 @@ describe("createWriteHandlers — endpoints.delete + endpoints.rotate", () => {
     const { handlers } = handlersWithEvictor();
 
     await expect(
-      handlers.get("events.delete")!({ orgId: orgA, scopes: ["events:delete"] }, { eventId }),
+      handlers.get("events.delete")!(
+        { orgId: orgA, scopes: ["events:delete"], keyId: "key_test" },
+        { eventId },
+      ),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     // Still readable in orgB — never tombstoned by orgA's call.
     expect((await withTenant(app, orgB, (tx) => getEvent(tx, eventId)))?.id).toBe(eventId);
