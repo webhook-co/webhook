@@ -1,6 +1,7 @@
 import "server-only";
 
 import { withTenant } from "@webhook-co/db/client";
+import { readMembershipRole } from "@webhook-co/db/orgs";
 import { readActiveSubscription } from "@webhook-co/db/reads";
 import { appendAuditEntry } from "@webhook-co/db/audit-append";
 import { importAuditKey } from "@webhook-co/shared/audit";
@@ -80,12 +81,8 @@ export async function switchPlan(
     // secret or making any Stripe call. No write here — the effect is the Stripe call below.
     const { role, sub } = await withTenantDb((app) =>
       withTenant(app, orgId, async (tx) => ({
-        role:
-          (
-            await tx<
-              { role: string }[]
-            >`select role from memberships where org_id = ${orgId} and user_id = ${userId} limit 1`
-          )[0]?.role ?? null,
+        // The ONE org-scoped role read — see readMembershipRole's docblock.
+        role: await readMembershipRole(tx, orgId, userId),
         sub: await readActiveSubscription(tx),
       })),
     );
@@ -233,12 +230,8 @@ export async function cancelPendingDowngrade(
   try {
     const { role, sub } = await withTenantDb((app) =>
       withTenant(app, orgId, async (tx) => ({
-        role:
-          (
-            await tx<
-              { role: string }[]
-            >`select role from memberships where org_id = ${orgId} and user_id = ${userId} limit 1`
-          )[0]?.role ?? null,
+        // The ONE org-scoped role read — see readMembershipRole's docblock.
+        role: await readMembershipRole(tx, orgId, userId),
         sub: await readActiveSubscription(tx),
       })),
     );

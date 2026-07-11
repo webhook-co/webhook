@@ -1,6 +1,7 @@
 import "server-only";
 
 import { withTenant } from "@webhook-co/db/client";
+import { readMembershipRole } from "@webhook-co/db/orgs";
 import {
   readActiveSubscription,
   readBillingCustomerId,
@@ -73,19 +74,9 @@ async function readOrgBilling(
       sub: await readBillingSummary(tx),
       subscriptionId: (await readActiveSubscription(tx))?.subscriptionId ?? null,
       overagePolicy: await readOveragePolicy(tx),
-      // `org_id` is stated EXPLICITLY, not left to RLS. The policy that scopes `memberships` today is
-      // `org_id = current_org_id()`, and withTenant pins that — but Postgres policies are PERMISSIVE and OR
-      // together, so the day a second SELECT policy on `memberships` exists (e.g. a "list my orgs" policy for
-      // an org switcher, `user_id = current_app_user()`), this query silently goes CROSS-ORG and `limit 1`
-      // with no ORDER BY picks an arbitrary row. A member of THIS org who owns their own personal org would
-      // then read back `owner` and pass the billing gate below. Naming the org makes that impossible.
-      role: userId
-        ? ((
-            await tx<{ role: string }[]>`
-              select role from memberships
-              where org_id = ${orgId} and user_id = ${userId} limit 1`
-          )[0]?.role ?? null)
-        : null,
+      // The ONE org-scoped role read (readMembershipRole). It names the org EXPLICITLY rather than leaning
+      // on RLS — see its docblock for why a purely additive `memberships` policy would otherwise widen it.
+      role: userId ? await readMembershipRole(tx, orgId, userId) : null,
     })),
   );
 }
