@@ -32,6 +32,7 @@ import {
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { createRemoteReplayHandler } from "./remote-replay.js";
+import { runRetentionReconcileCron } from "./retention-reconcile-cron.js";
 import { handleRequest, type ApiDeps } from "./router.js";
 import { handleGithubSecretScanning } from "./secret-scanning.js";
 import { handleStripeWebhook } from "./stripe-webhook.js";
@@ -327,6 +328,17 @@ export default {
     } finally {
       await handle?.close();
     }
+  },
+  // Hourly retention reconciler (S2b): re-derive each active subscription's entitled window from Stripe and
+  // repair any org stuck BELOW it, so the prune can never delete a paying customer's data on day 8. Dark
+  // until billing is provisioned (the cron self-guards). waitUntil so a slow Stripe list can't hold the
+  // invocation open past its budget while still completing.
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    ctx.waitUntil(runRetentionReconcileCron(env));
   },
 } satisfies ExportedHandler<Env>;
 

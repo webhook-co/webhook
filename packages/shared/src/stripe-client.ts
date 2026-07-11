@@ -233,6 +233,13 @@ export interface StripeClient {
     endTime: number;
     valueGroupingWindow?: "hour" | "day";
   }): Promise<MeterEventSummary[]>;
+  /**
+   * List the account's subscriptions as raw Stripe objects, paginating fully. Stripe's `GET /v1/subscriptions`
+   * default EXCLUDES canceled subscriptions, which is exactly what the retention reconciler wants — a canceled
+   * org's window is (correctly) the Free one and must not be touched. Returns raw objects so the caller runs
+   * the SAME parseSubscriptionObject the inbound webhook uses (one definition of what a subscription entitles).
+   */
+  listSubscriptions(): Promise<Record<string, unknown>[]>;
 }
 
 /** One Stripe meter-event summary: the value Stripe aggregated over [startTime, endTime). */
@@ -244,6 +251,9 @@ export interface MeterEventSummary {
 
 /** Guard against infinitely looping a broken `has_more` — far above any real page count. */
 const MAX_SUMMARY_PAGES = 1000;
+/** Page cap for the subscription list (100/page → up to 100k subscriptions). A backstop against an
+ *  unbounded loop on a malformed `has_more`, never a real limit at this product's scale. */
+const MAX_SUBSCRIPTION_PAGES = 1000;
 
 /** Stripe's raw subscription-schedule shape, as returned by both create and retrieve. */
 interface RawSchedule {
@@ -496,6 +506,24 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         const last = data[data.length - 1];
         if (!body.has_more || !last) break;
         startingAfter = last.id;
+      }
+      return out;
+    },
+    async listSubscriptions() {
+      const out: Record<string, unknown>[] = [];
+      let startingAfter: string | undefined;
+      for (let page = 0; page < MAX_SUBSCRIPTION_PAGES; page += 1) {
+        const body = await get<{
+          data?: Array<Record<string, unknown>>;
+          has_more?: boolean;
+        }>("/subscriptions", { limit: 100, starting_after: startingAfter });
+        const data = body.data ?? [];
+        out.push(...data);
+        const last = data[data.length - 1];
+        // Advance by the last row's Stripe id (`sub_…`). If it's somehow absent, stop rather than loop.
+        const lastId = last && typeof last.id === "string" ? last.id : undefined;
+        if (!body.has_more || !lastId) break;
+        startingAfter = lastId;
       }
       return out;
     },
