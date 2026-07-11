@@ -102,6 +102,21 @@ describe("buildConsent", () => {
     expect(p.device).toBeUndefined();
   });
 
+  it("keeps a requested `profile` scope through the PKCE consent intersect when wired with GRANTABLE_SCOPES", async () => {
+    // The PKCE /authorize flow is what MCP OAuth clients (Claude, Cursor cloud, VS Code, Zed) actually use.
+    // authorize-deps wires allowedScopes = GRANTABLE_SCOPES; this pins that a consented `profile` survives the
+    // consent-time intersect end-to-end (reverting authorize-deps to CAPABILITY_SCOPES would go red here).
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const { deps, signed } = buildDeps({ allowedScopes: GRANTABLE_SCOPES });
+    await buildConsent(
+      deps,
+      authRequest({ scope: ["events:read", "profile"] }),
+      "user_dana",
+      ORIGIN,
+    );
+    expect(signed.payload!.scopes).toContain("profile");
+  });
+
   it("seals verified=true + the identity domain for an allowlisted vendor https redirect (DCR)", async () => {
     const { deps, signed } = buildDeps();
     // A DCR client (opaque id) with an allowlisted vendor https redirect — Claude Desktop's shape.

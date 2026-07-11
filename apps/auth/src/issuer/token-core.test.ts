@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { GRANTABLE_SCOPES } from "./oauth-config";
 import {
   redeemAuthCode,
   redeemRefresh,
@@ -170,6 +171,24 @@ describe("redeemAuthCode — scope cannot widen on first issuance (MAJOR-C)", ()
     expect(result).toMatchObject({ kind: "error", error: "invalid_scope" });
     expect(deps.mintScopedKey).not.toHaveBeenCalled();
     expect(deps.revokeProviderGrant).not.toHaveBeenCalled();
+  });
+
+  it("mints a consented `profile` scope when allowedScopes = GRANTABLE_SCOPES (identity survives mint)", async () => {
+    // The mint re-intersects props.scopes ∩ allowedScopes (defense in depth). token-deps wires the real
+    // GRANTABLE set; this pins that `profile` (the identity scope) survives that intersect end-to-end — a
+    // revert to CAPABILITY_SCOPES at the deps would drop a consented `profile` at mint and go red here.
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const deps = authCodeDeps({
+      allowedScopes: GRANTABLE_SCOPES,
+      unwrapToken: vi.fn(async () => ({
+        providerGrantId: "pg_1",
+        props: consent({ scopes: ["events:read", "profile"] }),
+      })),
+    });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result.kind).toBe("token");
+    expect(mintMock(deps).mock.calls[0][0].scopes).toContain("profile");
+    if (result.kind === "token") expect(result.body.scope.split(" ")).toContain("profile");
   });
 });
 
