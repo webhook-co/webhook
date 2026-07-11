@@ -58,12 +58,26 @@ grant select (org_id, status) on billing_subscriptions to webhook_retention;
 -- widen what webhook_app (org-scoped) can see.
 create policy events_retention_select on events
   for select to webhook_retention using (true);
--- The DELETE policy's USING is a DEFENSE-IN-DEPTH age FLOOR pinned to the tightest (Free) window: even a
--- buggy or WHERE-less delete can only ever remove events older than 7 days — never an in-retention event.
+-- The DELETE policy's USING is the DB-LAYER security boundary, not just an app-layer filter (data.mdc: never
+-- rely on app filtering alone for data protection). It bounds a bare/WHERE-less DELETE two ways:
+--   1. an age FLOOR pinned to the tightest (Free) window — `7 days` == FREE_RETENTION_DAYS in
+--      packages/shared/src/retention.ts (raw SQL can't import it; keep them in step) — so even a query with
+--      no WHERE can only remove events older than 7 days, never an in-retention one; and
+--   2. the SAME entitled-org anti-join the DAL uses, so a leaked webhook_retention credential running a bare
+--      cross-org `delete from events where received_at < now() - interval '7 days'` still CANNOT delete a
+--      paying org's events (the one thing the design calls catastrophic). The subquery reads
+--      billing_subscriptions under this role's own SELECT policy + (org_id, status) grant.
 -- The cron's own WHERE narrows further to each org's window (paid windows are all > 7d, so the floor permits
--- them). A per-org cutoff can't live in a static policy, hence the conservative floor + query-side narrowing.
+-- them); a per-org cutoff can't live in a static policy, hence the conservative floor + query-side narrowing.
 create policy events_retention_delete on events
-  for delete to webhook_retention using (received_at < now() - interval '7 days');
+  for delete to webhook_retention using (
+    received_at < now() - interval '7 days'
+    and not exists (
+      select 1 from billing_subscriptions b
+      where b.org_id = events.org_id
+        and b.status in ('active', 'trialing', 'past_due')
+    )
+  );
 create policy billing_subscriptions_retention_select on billing_subscriptions
   for select to webhook_retention using (true);
 

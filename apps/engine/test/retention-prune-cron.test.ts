@@ -7,9 +7,9 @@ import {
 } from "../src/retention-prune-cron";
 
 // The retention prune is pure + dependency-injected so it unit-tests with fakes. The load-bearing
-// behaviours: it pages each org to exhaustion (bounded per tick), it deletes the R2 payload objects BEFORE
-// the event rows (the content-addressed key lives only on the row — delete the row first and the object is
-// orphaned forever), and it stays within its per-tick budgets.
+// behaviours: it pages each org to exhaustion (bounded per tick), it deletes the event ROWS first then
+// purges R2 for only the ids the delete returned (so an entitlement flip mid-tick never destroys a paying
+// org's bodies), it fences each key to its principal before touching R2, and it stays within its budgets.
 
 /** A fake org→events store the deps read/mutate, so tests assert what actually got pruned. */
 function makeStore(seed: Record<string, ExpiringEvent[]>) {
@@ -27,7 +27,7 @@ function makeStore(seed: Record<string, ExpiringEvent[]>) {
     deleteR2: async (keys) => {
       order.push(`r2:${keys.join(",")}`);
     },
-    deleteEvents: async (orgId, ids) => {
+    deleteEvents: async (orgId, _retentionDays, ids) => {
       order.push(`rows:${ids.join(",")}`);
       const present = store[orgId].filter((e) => ids.includes(e.id)).map((e) => e.id);
       store[orgId] = store[orgId].filter((e) => !ids.includes(e.id));
@@ -69,7 +69,7 @@ describe("runRetentionPruneCron", () => {
     const result = await runRetentionPruneCron({
       ...deps,
       batchesPerOrg: 1, // one pass — the fake DELETE doesn't mutate the store
-      deleteEvents: async (_org, _ids) => ["a1"], // only a1 was actually deleted
+      deleteEvents: async (_org, _days, _ids) => ["a1"], // only a1 was actually deleted
     });
     expect(result.deleted).toBe(1);
     // Only a1's body was purged from R2; a2 (spared by the DELETE) is untouched.

@@ -1304,9 +1304,9 @@ const RETENTION_PAGE_SIZE = 1000;
  * webhook_retention Hyperdrive is provisioned — activating it ALSO clamps the meter-reconcile lookback (see
  * runMeteringReconcileCron), so the money-guard never recounts a pruned day. One short-lived connection as
  * webhook_retention (its role-targeted policies + column grants scope it to the prune keys). For each org
- * past its window (paid orgs excluded at the claim), it deletes the R2 payload bodies BEFORE the event rows
- * (the content-addressed key lives only on the row), cascading delivery_attempts. Free = 7 days while
- * billing is dark; per-plan windows land with billing activation.
+ * past its window (paid orgs excluded at the claim + re-checked atomically in the DELETE), it deletes the
+ * event rows first (cascading delivery_attempts) then purges R2 for only the ids the delete returned. Free =
+ * 7 days while billing is dark; per-plan windows land with billing activation.
  */
 async function runRetentionPruneDrainCron(env: Env): Promise<void> {
   if (!env.HYPERDRIVE_RETENTION) return; // dark until the retention role + Hyperdrive are provisioned
@@ -1323,7 +1323,8 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
       // The engine is the sole R2 principal — it deletes each expiring event's body from its own
       // R2_PAYLOADS binding (idempotent: an already-gone key is a no-op).
       deleteR2: (keys) => env.R2_PAYLOADS.delete(keys),
-      deleteEvents: (orgId, ids) => deleteExpiredEvents(sql, orgId, FREE_RETENTION_DAYS, ids),
+      deleteEvents: (orgId, retentionDays, ids) =>
+        deleteExpiredEvents(sql, orgId, retentionDays, ids),
       retentionDays: FREE_RETENTION_DAYS,
       orgLimit: RETENTION_ORG_LIMIT,
       batchesPerOrg: RETENTION_BATCHES_PER_ORG,

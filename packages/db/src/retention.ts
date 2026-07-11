@@ -17,7 +17,7 @@ import type { Sql } from "./client";
 /** The `active/trialing/past_due` set that entitles an org to a paid plan — inlined into the anti-joins. */
 const ENTITLED_STATUSES = BILLING_ACTIVE_STATUSES as unknown as string[];
 
-/** One event whose captured body must be purged from R2 before the row is deleted. */
+/** One expiring event: its row is deleted, then (if the delete succeeded) its R2 payload body is purged. */
 export interface ExpiringEvent {
   readonly id: string;
   /** The owning endpoint — used to fence the stored R2 key to `org/{orgId}/ep/{endpointId}/` before delete. */
@@ -56,9 +56,8 @@ export async function claimRetentionOrgs(
  * A page of an org's events older than `retentionDays`, with the owning endpoint + the R2 key to purge.
  * Re-applies the entitled-org anti-join (defence against a subscription appearing after the claim). Bounded
  * by `limit`; the caller pages until a short page signals the org is drained. Returns the content-addressed
- * payload_r2_key so the cron can delete the R2 object BEFORE the row (the key lives only on the row — delete
- * the row first and the object is orphaned forever) and `endpoint_id` so the cron can fence the key to the
- * principal's prefix before deleting it.
+ * payload_r2_key (the caller purges each object AFTER its row is deleted, keyed by the delete's returned ids)
+ * and `endpoint_id` so the cron can fence the key to the principal's prefix before deleting it.
  */
 export async function listExpiringEvents(
   retention: Sql,

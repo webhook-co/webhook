@@ -165,6 +165,18 @@ describe("deleteExpiredEvents", () => {
     expect(await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [])).toEqual([]);
   });
 
+  it("is scoped to the passed org — another org's id is never deleted through the wrong org", async () => {
+    const a = await seedOrg("scope-a");
+    const idA = await seedEvent(a.orgId, a.endpointId, { ageDays: 30 });
+    const b = await seedOrg("scope-b");
+    // Ask to delete A's event but under B's org — the `where org_id = $b` predicate spares it.
+    expect(await deleteExpiredEvents(retention, b.orgId, RETENTION_DAYS, [idA])).toEqual([]);
+    const [{ n }] = await admin<
+      { n: number }[]
+    >`select count(*)::int as n from events where id = ${idA}`;
+    expect(n).toBe(1);
+  });
+
   it("the age-FLOOR DELETE policy REFUSES to remove an in-retention event even if its id is passed", async () => {
     // Defense in depth: the role-targeted DELETE policy USING (received_at < now() - 7d) means a bug that
     // hands a fresh event's id to the delete removes NOTHING — RLS filters it out (0 rows), never an error.
@@ -176,6 +188,28 @@ describe("deleteExpiredEvents", () => {
       { n: number }[]
     >`select count(*)::int as n from events where id = ${freshId}`;
     expect(n).toBe(1); // still there
+  });
+
+  it("the RLS DELETE POLICY itself blocks a bare cross-org delete of a PAID org's aged events", async () => {
+    // Defence-in-depth at the DB, not just the DAL's app-layer anti-join: a leaked webhook_retention
+    // credential running a WHERE-less `delete from events where received_at < now()-7d` must NOT remove an
+    // entitled org's events — the policy's own NOT EXISTS(billing_subscriptions) spares them.
+    const paid = await seedOrg("policy-paid");
+    const paidOld = await seedEvent(paid.orgId, paid.endpointId, { ageDays: 30 });
+    await seedSubscription(paid.orgId, "active");
+    const free = await seedOrg("policy-free");
+    const freeOld = await seedEvent(free.orgId, free.endpointId, { ageDays: 30 });
+
+    // Bare cross-org DELETE with only the age predicate — exactly what a leaked credential could run.
+    const removed = await retention<{ id: string }[]>`
+      delete from events where received_at < now() - interval '7 days' returning id`;
+    const removedIds = removed.map((r) => r.id);
+    expect(removedIds).toContain(freeOld); // the Free org's aged event is gone
+    expect(removedIds).not.toContain(paidOld); // the paid org's is spared by the policy
+    const [{ n }] = await admin<
+      { n: number }[]
+    >`select count(*)::int as n from events where id = ${paidOld}`;
+    expect(n).toBe(1);
   });
 
   it("REFUSES to delete a now-entitled org's events even if their ids are passed (atomic anti-join)", async () => {

@@ -41,11 +41,12 @@ export interface RetentionPruneCronDeps {
   /** Delete the given R2 payload objects (idempotent — an absent key is a no-op). */
   deleteR2: (keys: string[]) => Promise<void>;
   /**
-   * Delete the given event rows for an org (cascades delivery_attempts) and return the ids ACTUALLY deleted.
-   * The DELETE re-asserts age + the entitled-org anti-join, so a paid org that became entitled mid-tick has
-   * FEWER (or zero) ids returned — the caller then purges R2 only for those, never a still-paying org's body.
+   * Delete the given event rows for an org past `retentionDays` (cascades delivery_attempts) and return the
+   * ids ACTUALLY deleted. The DELETE re-asserts age + the entitled-org anti-join, so a paid org that became
+   * entitled mid-tick has FEWER (or zero) ids returned — the caller then purges R2 only for those, never a
+   * still-paying org's body. `retentionDays` flows from the single deps.retentionDays (no separate constant).
    */
-  deleteEvents: (orgId: string, ids: string[]) => Promise<readonly string[]>;
+  deleteEvents: (orgId: string, retentionDays: number, ids: string[]) => Promise<readonly string[]>;
   /** The retention window in days (Free = 7 while billing is dark). */
   retentionDays: number;
   /** Max orgs to service per tick. */
@@ -100,6 +101,7 @@ export async function runRetentionPruneCron(
         const deletedIds = new Set(
           await deps.deleteEvents(
             orgId,
+            deps.retentionDays,
             valid.map((e) => e.id),
           ),
         );
