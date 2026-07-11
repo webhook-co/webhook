@@ -137,10 +137,10 @@ function PendingDowngradeCard({
   return (
     <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
       <h2 className="text-lg font-semibold tracking-heading text-fg">Scheduled plan change</h2>
-      <p className="text-sm font-medium text-fg">
+      <p className="font-medium text-fg">
         You move to {planLabel(pending.plan)} on {fmtUnix(pending.effectiveAt)}.
       </p>
-      <p className="text-sm text-fg-secondary">
+      <p className="text-fg-secondary">
         Nothing changes before then — you keep your current plan for the rest of the period
         you&apos;ve paid for, and nothing is charged or refunded in the meantime.
       </p>
@@ -151,7 +151,7 @@ function PendingDowngradeCard({
           </Button>
         </form>
       ) : (
-        <p className="text-sm text-fg-secondary">Only an owner or admin can change this.</p>
+        <p className="text-fg-secondary">Only an owner or admin can change this.</p>
       )}
     </div>
   );
@@ -181,15 +181,11 @@ function CurrentPlanCard({ display }: { display: BillingDisplay }) {
         <div className="flex items-baseline gap-2">
           <span className="text-2xl font-semibold tracking-heading text-fg">{tierLabel}</span>
         </div>
-        <p
-          className={
-            status.tone === "warn" ? "text-sm font-medium text-fg" : "text-sm text-fg-secondary"
-          }
-        >
+        <p className={status.tone === "warn" ? "font-medium text-fg" : "text-fg-secondary"}>
           {status.label}
         </p>
       </div>
-      <p className="text-sm text-fg-secondary">
+      <p className="text-fg-secondary">
         See your included volume and current usage on the{" "}
         <a className="text-fg underline underline-offset-2" href="/usage">
           Usage
@@ -204,7 +200,7 @@ function ManageBillingCard({ canManage }: { canManage: boolean }) {
   return (
     <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
       <h2 className="text-lg font-semibold tracking-heading text-fg">Payment &amp; invoices</h2>
-      <p className="text-sm text-fg-secondary">
+      <p className="text-fg-secondary">
         Update your payment method, download invoices, or cancel your plan. Cancelling returns you
         to the free tier — and because the free allowance is one-time, capture pauses until you
         resubscribe.
@@ -219,9 +215,7 @@ function ManageBillingCard({ canManage }: { canManage: boolean }) {
           </Button>
         </form>
       ) : (
-        <p className="text-sm text-fg-secondary">
-          Only an owner or admin can manage payment and invoices.
-        </p>
+        <p className="text-fg-secondary">Only an owner or admin can manage payment and invoices.</p>
       )}
     </div>
   );
@@ -236,7 +230,7 @@ function OverageCard({ enabled, canManage }: { enabled: boolean; canManage: bool
           {enabled ? "On" : "Off"}
         </span>
       </div>
-      <p className="text-sm text-fg-secondary">
+      <p className="text-fg-secondary">
         {enabled
           ? "Usage past your included volume is billed at the overage rate, so capture keeps running — you won't be paused at your limit."
           : "Capture pauses when you reach your included volume, so you're never billed past it. Turn this on to keep capturing past your limit and pay for the overage."}
@@ -252,7 +246,7 @@ function OverageCard({ enabled, canManage }: { enabled: boolean; canManage: bool
           </Button>
         </form>
       ) : (
-        <p className="text-sm text-fg-secondary">Only an owner or admin can change this.</p>
+        <p className="text-fg-secondary">Only an owner or admin can change this.</p>
       )}
     </div>
   );
@@ -262,7 +256,7 @@ function ChangePlanCard({ targets }: { targets: readonly string[] }) {
   return (
     <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
       <h2 className="text-lg font-semibold tracking-heading text-fg">Change plan</h2>
-      <p className="text-sm text-fg-secondary">
+      <p className="text-fg-secondary">
         <strong className="text-fg">Upgrades take effect immediately</strong> — you get the extra
         volume right away, and the prorated difference for the rest of this period appears on your
         next invoice.{" "}
@@ -304,7 +298,7 @@ function UpgradeCard({
         <h2 className="text-lg font-semibold tracking-heading text-fg">
           {resubscribe ? "Resubscribe" : "Choose a plan"}
         </h2>
-        <p className="text-sm text-fg-secondary">
+        <p className="text-fg-secondary">
           Every feature is on every plan — including outbound delivery. Plans differ only by
           included events. You&apos;ll see the price before you pay.
         </p>
@@ -323,11 +317,9 @@ function UpgradeCard({
           ))}
         </div>
       ) : (
-        <p className="text-sm text-fg-secondary">
-          Only an owner or admin can start or change a plan.
-        </p>
+        <p className="text-fg-secondary">Only an owner or admin can start or change a plan.</p>
       )}
-      <p className="text-sm text-fg-secondary">
+      <p className="text-fg-secondary">
         Need more than Scale, SSO, or a BAA?{" "}
         <a className="text-fg underline underline-offset-2" href="mailto:sales@webhook.co">
           Talk to us about Enterprise
@@ -368,7 +360,7 @@ export default async function BillingPage({
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-display text-fg">Billing</h1>
-        <p className="mt-1 text-sm text-fg-secondary">Your plan, payment, and invoices.</p>
+        <p className="mt-1 text-fg-secondary">Your plan, payment, and invoices.</p>
       </div>
 
       {errorMsg && <Banner tone="danger">{errorMsg}</Banner>}
@@ -378,7 +370,7 @@ export default async function BillingPage({
 
       {view.hidden ? (
         <div className="rounded-card border border-hairline bg-surface p-6">
-          <p className="text-sm text-fg-secondary">Billing isn&apos;t available right now.</p>
+          <p className="text-fg-secondary">Billing isn&apos;t available right now.</p>
         </div>
       ) : (
         <>
@@ -411,7 +403,7 @@ export default async function BillingPage({
               id to open one) — so give the user context instead of an actionless card. Transient. */}
           {view.display && !view.hasCustomer && view.upgradePlanIds.length === 0 && (
             <div className="rounded-card border border-hairline bg-surface p-6">
-              <p className="text-sm text-fg-secondary">
+              <p className="text-fg-secondary">
                 We&apos;re finishing setting up your billing details. Refresh in a moment to manage
                 your payment method and invoices.
               </p>

@@ -116,7 +116,7 @@ function UsageCard({ usage }: { usage: UsageSummary }) {
           )}
         </div>
 
-        <p className="text-sm text-fg-secondary">
+        <p className="text-fg-secondary">
           {eventCap === null
             ? "No event limit is set for this org."
             : pausePolicy === "pause"

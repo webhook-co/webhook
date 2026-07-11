@@ -41,7 +41,10 @@ export const TIERS: readonly Tier[] = [
     includedEvents: "5,000 events, once",
     summary: "A real trial, not a perpetual tier. The 5,000 events never reset.",
     retention: "7-day retention",
-    overage: "No overage. Capture pauses at the limit.",
+    // Kept short so it sets on one line in the tier card. "At the limit" is already carried by
+    // `includedEvents` directly above it, and the pause is stated in full three more times on the
+    // page — so the MUST-disclose fact (ADR-0004) survives the shorter line intact.
+    overage: "No overage. Capture pauses.",
     cta: { label: "Start free", href: "https://app.webhook.co" },
   },
   {

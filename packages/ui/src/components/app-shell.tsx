@@ -63,7 +63,7 @@ export function AppShell({
   // single "Primary" nav landmark is never duplicated in the accessibility tree.
   const sidebarBody = (
     <>
-      <div className="flex h-[60px] flex-shrink-0 items-center px-4">{lockup}</div>
+      <div className="flex h-[3.75rem] flex-shrink-0 items-center px-4">{lockup}</div>
       {sidebarTop ? <div className="px-3 pb-2">{sidebarTop}</div> : null}
       <nav aria-label="Primary" className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-1">
         {sidebar}
@@ -120,7 +120,7 @@ export function AppShell({
 
       <div className="flex min-h-0 min-w-0 flex-col overflow-hidden">
         {topBar ? (
-          <header className="flex h-[60px] flex-shrink-0 items-center gap-3 border-b border-hairline bg-surface px-4">
+          <header className="flex h-[3.75rem] flex-shrink-0 items-center gap-3 border-b border-hairline bg-surface px-4">
             {topBar}
           </header>
         ) : null}
@@ -153,7 +153,7 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
         "relative flex h-9 items-center gap-2.5 rounded-control px-2.5 text-base text-fg-secondary",
         "transition-colors hover:bg-surface-sunken hover:text-fg",
         "outline-none focus-visible:shadow-[var(--wh-focus-ring)]",
-        "[&_svg]:size-[18px] [&_svg]:shrink-0",
+        "[&_svg]:size-[1.125rem] [&_svg]:shrink-0",
         active &&
           "bg-surface-sunken font-semibold text-fg before:absolute before:bottom-2 before:left-[-12px] before:top-2 before:w-[3px] before:rounded-r-[3px] before:bg-fg before:content-['']",
         className,
@@ -163,7 +163,7 @@ export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
       {icon}
       <span className="flex-1 truncate">{children}</span>
       {count != null ? (
-        <span className="ml-auto rounded-pill border border-hairline bg-surface-sunken px-1.5 py-px font-mono text-[11px] tabular-nums text-fg-faint">
+        <span className="ml-auto rounded-pill border border-hairline bg-surface-sunken px-1.5 py-px font-mono text-[0.6875rem] tabular-nums text-fg-faint">
           {count}
         </span>
       ) : null}
@@ -177,7 +177,7 @@ export function AppNavSection({ className, ...props }: React.HTMLAttributes<HTML
   return (
     <p
       className={cn(
-        "px-2.5 pb-1.5 pt-3.5 font-mono text-[10px] uppercase tracking-mono-label text-fg-faint",
+        "px-2.5 pb-1.5 pt-3.5 font-mono text-[0.625rem] uppercase tracking-mono-label text-fg-faint",
         className,
       )}
       {...props}

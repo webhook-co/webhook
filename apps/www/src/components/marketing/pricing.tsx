@@ -94,7 +94,7 @@ export function PricingTable() {
           <TierCard key={tier.id} tier={tier} />
         ))}
       </div>
-      <p className="mt-6 text-center text-sm text-fg-secondary">
+      <p className="mt-6 text-center text-fg-secondary">
         Every plan includes outbound delivery, replay, deduplication, signature verification, the
         CLI, the API, and the MCP server. We don&apos;t gate features by plan.
       </p>
@@ -116,7 +116,7 @@ export function PricingDisclosures() {
       <div className="mx-auto grid max-w-[900px] gap-6 md:grid-cols-3">
         <div className="flex flex-col gap-2">
           <h3 className="text-base font-semibold text-fg">One capture, or one delivery</h3>
-          <p className="text-sm leading-relaxed text-fg-secondary">
+          <p className="leading-relaxed text-fg-secondary">
             A request we capture is one event. A delivery to a destination is one event. Forward a
             webhook to three destinations and that&apos;s four events — one capture, three
             deliveries. We meter delivery because it costs us real money, and we&apos;d rather
@@ -126,7 +126,7 @@ export function PricingDisclosures() {
 
         <div className="flex flex-col gap-2">
           <h3 className="text-base font-semibold text-fg">Retries are never billed</h3>
-          <p className="text-sm leading-relaxed text-fg-secondary">
+          <p className="leading-relaxed text-fg-secondary">
             If a destination is down and we retry, you pay nothing extra. A delivery is billed once,
             when we first dispatch it, however many attempts it takes — our retry schedule is our
             cost. Also free: forwarding to your own machine with <code>wbhk listen</code> (your CLI
@@ -138,7 +138,7 @@ export function PricingDisclosures() {
 
         <div className="flex flex-col gap-2">
           <h3 className="text-base font-semibold text-fg">At your limit, capture pauses</h3>
-          <p className="text-sm leading-relaxed text-fg-secondary">
+          <p className="leading-relaxed text-fg-secondary">
             We email you before you reach your included volume, not after. At the limit, capture
             pauses rather than silently running up a bill. Turn on overage at {OVERAGE_PER_MILLION}{" "}
             per additional million events if you&apos;d rather keep going.
@@ -150,14 +150,14 @@ export function PricingDisclosures() {
         <h3 className="text-base font-semibold text-fg">
           Two things worth knowing before you subscribe
         </h3>
-        <p className="text-sm leading-relaxed text-fg-secondary">
+        <p className="leading-relaxed text-fg-secondary">
           <strong className="text-fg">The free allowance is one-time.</strong> Those 5,000 events
           are counted across the whole life of your organisation and never reset. If you cancel a
           paid plan you return to the free tier with that allowance already spent, so{" "}
           <strong className="text-fg">capture pauses until you resubscribe</strong>. Your data stays
           exactly where it is, and resubscribing resumes capture immediately.
         </p>
-        <p className="text-sm leading-relaxed text-fg-secondary">
+        <p className="leading-relaxed text-fg-secondary">
           <strong className="text-fg">Deduplication is on by default.</strong>
           {/* An explicit string literal, not JSX text: a leading space directly after a closing tag is
               swallowed here (prettier normalises `{" "}` back to a plain space, which JSX then drops), and

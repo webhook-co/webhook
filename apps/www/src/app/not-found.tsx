@@ -29,7 +29,9 @@ export default function NotFound() {
         <Nav />
       </header>
       <main id="main" className={cn(container, sectionPad, "text-center")}>
-        <p className="font-mono text-[11px] tracking-mono-label text-fg-muted uppercase">404</p>
+        <p className="font-mono text-[0.6875rem] tracking-mono-label text-fg-muted uppercase">
+          404
+        </p>
         <h1 className="mx-auto mt-4 mb-5 max-w-[20ch] text-[clamp(30px,4.6vw,50px)] leading-[1.05] font-semibold tracking-display text-fg">
           That page didn&rsquo;t land.
         </h1>

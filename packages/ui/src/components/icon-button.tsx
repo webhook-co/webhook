@@ -3,7 +3,7 @@ import * as React from "react";
 import { cn } from "../lib/cn";
 import { Button, type ButtonProps } from "./button";
 
-const squareSize = { sm: "size-[34px]", md: "size-[42px]", lg: "size-12" } as const;
+const squareSize = { sm: "size-[2.125rem]", md: "size-[2.625rem]", lg: "size-12" } as const;
 
 export interface IconButtonProps extends ButtonProps {
   /** Required — an icon-only button must carry an accessible name. */

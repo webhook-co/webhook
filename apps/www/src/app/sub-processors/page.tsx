@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
+import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
 import { Nav } from "@/components/marketing/nav";
+import { SUB_PROCESSORS_ANCHORS } from "@/app/legal-anchors";
 import { focusRing } from "@/lib/styles";
 
 export const metadata: Metadata = {
@@ -46,7 +48,9 @@ export default function SubProcessorsPage() {
             Standard Contractual Clauses where personal data is transferred internationally).
           </p>
 
-          <h2>Current sub-processors</h2>
+          <AnchoredHeading id={SUB_PROCESSORS_ANCHORS.currentSubProcessors}>
+            Current sub-processors
+          </AnchoredHeading>
           <div className="overflow-x-auto">
             <table>
               <thead>
@@ -105,7 +109,9 @@ export default function SubProcessorsPage() {
             </table>
           </div>
 
-          <h2>Changes to this list</h2>
+          <AnchoredHeading id={SUB_PROCESSORS_ANCHORS.changes}>
+            Changes to this list
+          </AnchoredHeading>
           <p>
             When we add or replace a sub-processor, we'll update this page and its "Last updated"
             date above, and give <strong>at least 30 days' advance notice</strong> before the new

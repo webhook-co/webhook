@@ -16,7 +16,7 @@ export const Checkbox = React.forwardRef<
   <CheckboxPrimitive.Root
     ref={ref}
     className={cn(
-      "group inline-flex size-[18px] shrink-0 items-center justify-center rounded-control",
+      "group inline-flex size-[1.125rem] shrink-0 items-center justify-center rounded-control",
       "border border-strong bg-surface text-fg-on-inverse",
       "outline-none focus-visible:shadow-[var(--wh-focus-ring)]",
       "transition-[background-color,box-shadow] duration-[var(--wh-dur-instant)] ease-[var(--wh-ease-swift)]",
