@@ -25,6 +25,7 @@ function due(over: Partial<DueDelivery> = {}): DueDelivery {
     url: "https://d.example.com/in",
     verified: over.verified ?? true,
     deliverable: over.deliverable ?? true,
+    sourceDeleted: over.sourceDeleted ?? false,
   };
 }
 const ok = (status = 200): DeliverResult => ({
@@ -55,12 +56,14 @@ function deps(
   retried: [string, number][];
   dead: string[];
   blockedRec: string[];
+  blockedReasons: [string, string | null][];
   delivers: string[];
 } {
   const delivered: [string, number][] = [];
   const retried: [string, number][] = [];
   const dead: string[] = [];
   const blockedRec: string[] = [];
+  const blockedReasons: [string, string | null][] = [];
   const delivers: string[] = [];
   return {
     listDue: async () => list,
@@ -73,12 +76,16 @@ function deps(
     recordDelivered: async (d, sc) => void delivered.push([d.id, sc]),
     recordRetry: async (d, at) => void retried.push([d.id, at.getTime()]),
     recordDead: async (d) => void dead.push(d.id),
-    recordBlocked: async (d) => void blockedRec.push(d.id),
+    recordBlocked: async (d, _sc, error) => {
+      blockedRec.push(d.id);
+      blockedReasons.push([d.id, error]);
+    },
     now: () => NOW,
     delivered,
     retried,
     dead,
     blockedRec,
+    blockedReasons,
     delivers,
   };
 }
@@ -131,9 +138,21 @@ describe("runDeliveryDrain — best-effort (default)", () => {
     await runDeliveryDrain(d);
     expect(d.delivers).toEqual(["b"]); // 'a' is never handed to deliver() — no outbound POST
     expect(d.blockedRec).toEqual(["a"]); // terminally blocked
+    expect(d.blockedReasons).toEqual([
+      ["a", "verification failed: source signature was checked and rejected"],
+    ]);
     expect(d.retried).toEqual([]); // never retried
     expect(d.dead).toEqual([]);
     expect(d.delivered).toEqual([["b", 200]]);
+  });
+
+  it("a TOMBSTONED source event is blocked with an ACCURATE reason (not a bogus verification failure)", async () => {
+    // deliverable is now overloaded (verification-reject OR source-deleted); the drain must record the real
+    // cause so a delivery view doesn't show "signature rejected" for an event the user simply deleted (S3).
+    const d = deps([due({ id: "a", deliverable: false, sourceDeleted: true })], () => ok());
+    await runDeliveryDrain(d);
+    expect(d.delivers).toEqual([]); // never POSTed
+    expect(d.blockedReasons).toEqual([["a", "source event was deleted"]]);
   });
 });
 

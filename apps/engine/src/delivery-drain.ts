@@ -69,10 +69,15 @@ export async function runDeliveryDrain(deps: DrainDeps): Promise<void> {
     // Terminal like an SSRF block: not retried, no auto-disable tally bump; a blocked head advances in
     // ordered mode. The signing gate (buildDeliverArgs) is a separate, narrower check on `verified`.
     if (!d.deliverable) {
+      // Terminal refusal, but the CAUSE differs: a tombstoned source event (S3 — deleted by the user, body
+      // redacted + purged) vs a verification rejection (a forged/tampered signature). Record the accurate
+      // reason so a delivery view doesn't show a bogus "signature rejected" for an event the user deleted.
       await deps.recordBlocked(
         d,
         null,
-        "verification failed: source signature was checked and rejected",
+        d.sourceDeleted
+          ? "source event was deleted"
+          : "verification failed: source signature was checked and rejected",
       );
       continue;
     }

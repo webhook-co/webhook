@@ -188,6 +188,19 @@ export interface DueDelivery {
    *  drain re-checks it per delivery as DEFENSE IN DEPTH — a pre-gate/backlog row (or any future enqueue path
    *  that forgets the gate) is terminally refused at the drain, never POSTed (S8-remainder Slice 3 / ADR-0103). */
   readonly deliverable: boolean;
+  /** True when the SOURCE event was tombstoned (S3) — a distinct non-deliverable CAUSE from a verification
+   *  rejection, so the drain can record an accurate blocked reason instead of a misleading "verification
+   *  failed". Its body is redacted + being purged; the delivery is terminally refused, never POSTed.
+   *
+   *  BOUNDED EDGE (documented, deliberate): this gate is evaluated at prefetch time (listDueDeliveries). A
+   *  tombstone that lands in the sub-second window AFTER the DO prefetched a delivery but BEFORE it POSTs is
+   *  not seen by that in-flight attempt, so the body can be delivered ONCE more. This is NOT a data-egress
+   *  hole: the destination is the customer's OWN, already configured and already queued to receive this
+   *  event, and the R2 body persists until the async purge regardless. Every FUTURE drain filters it (the
+   *  queued row becomes non-deliverable → terminally blocked). Closing the in-memory window would require a
+   *  per-delivery `deleted_at` re-read on the hot delivery path to guard a rare, same-tenant race — a poor
+   *  trade we deliberately don't make. */
+  readonly sourceDeleted: boolean;
 }
 
 interface DueDeliveryRow {
@@ -199,6 +212,9 @@ interface DueDeliveryRow {
   headers: [string, string][];
   url: string;
   verified: boolean;
+  /** NULL unless the SOURCE event was tombstoned (S3). A deleted event's body is redacted + purged, so its
+   *  queued delivery must be terminally refused, never POSTed with an empty body — folded into `deliverable`. */
+  deleted_at: Date | null;
   /** The raw structured verification diagnostic (jsonb) — used ONLY to derive `deliverable` (`failed` vs
    *  `unattempted`); never surfaced on {@link DueDelivery}. */
   verification: unknown;
@@ -223,7 +239,7 @@ export async function listDueDeliveries(
 ): Promise<DueDelivery[]> {
   const rows = await tx<DueDeliveryRow[]>`
     select da.id, da.attempt, da.event_id, e.endpoint_id, e.payload_r2_key, e.headers, e.verified,
-           e.verification, d.url
+           e.verification, e.deleted_at, d.url
     from delivery_attempts da
     join events e on e.id = da.event_id and e.org_id = da.org_id
     join replay_destinations d on d.id = da.destination_id and d.org_id = da.org_id
@@ -255,7 +271,11 @@ export async function listDueDeliveries(
     headers: r.headers,
     url: r.url,
     verified: r.verified,
-    deliverable: deliveryVerificationDecision(r.verified, r.verification).deliver,
+    // A tombstoned source event (redacted body, purged R2) is terminally NON-deliverable — the drain's
+    // existing `!deliverable` path records it blocked (no POST), exactly like an SSRF/verification refusal.
+    sourceDeleted: r.deleted_at !== null,
+    deliverable:
+      r.deleted_at === null && deliveryVerificationDecision(r.verified, r.verification).deliver,
   }));
 }
 
