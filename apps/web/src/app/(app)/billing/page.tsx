@@ -3,7 +3,11 @@ import { planLabel, type BillingDisplay } from "@webhook-co/shared";
 import type { Metadata } from "next";
 
 import { loadBillingSummary } from "@/server/billing";
-import { openBillingPortalAction, startCheckoutAction } from "@/server/plan-actions";
+import {
+  openBillingPortalAction,
+  setOverageAction,
+  startCheckoutAction,
+} from "@/server/plan-actions";
 import { verifySession } from "@/server/session";
 
 // The dedicated Billing section (WS2). Shows the org's CURRENT plan + status (read from the synced
@@ -43,6 +47,21 @@ const BILLING_ERROR: Record<string, string> = {
     "You already have an active subscription — manage or change it below, not by starting a new one.",
   error: "We couldn't reach our payment provider. Nothing was charged — try again.",
   disabled: "Billing isn't available right now.",
+};
+
+/** The `?overage=<status>` result banner (setOverageAction redirects here). `ok` confirms the flip; the rest
+ *  explain why it didn't apply. */
+const OVERAGE_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "danger" }> = {
+  ok: { message: "Overage setting updated.", tone: "ok" },
+  forbidden: {
+    message: "Only an owner or admin can change billing settings.",
+    tone: "warn",
+  },
+  no_subscription: {
+    message: "Overage applies once you're on a paid plan.",
+    tone: "warn",
+  },
+  error: { message: "We couldn't update that setting. Please try again.", tone: "danger" },
 };
 
 export const metadata: Metadata = { title: "Billing · webhook.co" };
@@ -108,6 +127,31 @@ function ManageBillingCard() {
   );
 }
 
+function OverageCard({ enabled }: { enabled: boolean }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-lg font-semibold tracking-heading text-fg">Overage billing</h2>
+        <span className={enabled ? "text-sm text-ok" : "text-sm text-fg-secondary"}>
+          {enabled ? "On" : "Off"}
+        </span>
+      </div>
+      <p className="text-sm text-fg-secondary">
+        {enabled
+          ? "Usage past your included volume is billed at the overage rate, so capture keeps running — you won't be paused at your limit."
+          : "Capture pauses when you reach your included volume, so you're never billed past it. Turn this on to keep capturing past your limit and pay for the overage."}
+      </p>
+      <form action={setOverageAction}>
+        {/* Submit the OPPOSITE of the current state — the action reads this desired value. */}
+        <input type="hidden" name="enabled" value={enabled ? "false" : "true"} />
+        <Button type="submit" variant="secondary">
+          {enabled ? "Turn off overage" : "Turn on overage"}
+        </Button>
+      </form>
+    </div>
+  );
+}
+
 function UpgradeCard({
   planIds,
   resubscribe,
@@ -159,6 +203,11 @@ export default async function BillingPage({
   // prototype method and React would throw trying to render it.
   const errorMsg =
     errorKey && Object.hasOwn(BILLING_ERROR, errorKey) ? BILLING_ERROR[errorKey] : undefined;
+  const overageKey = typeof params.overage === "string" ? params.overage : undefined;
+  const overageStatus =
+    overageKey && Object.hasOwn(OVERAGE_STATUS, overageKey)
+      ? OVERAGE_STATUS[overageKey]
+      : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -168,6 +217,7 @@ export default async function BillingPage({
       </div>
 
       {errorMsg && <Banner tone="danger">{errorMsg}</Banner>}
+      {overageStatus && <Banner tone={overageStatus.tone}>{overageStatus.message}</Banner>}
 
       {view.hidden ? (
         <div className="rounded-card border border-hairline bg-surface p-6">
@@ -176,6 +226,7 @@ export default async function BillingPage({
       ) : (
         <>
           {view.display && <CurrentPlanCard display={view.display} />}
+          {view.overageEnabled !== null && <OverageCard enabled={view.overageEnabled} />}
           {view.upgradePlanIds.length > 0 && (
             <UpgradeCard planIds={view.upgradePlanIds} resubscribe={view.display !== null} />
           )}

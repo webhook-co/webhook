@@ -15,6 +15,7 @@ import {
   DEFAULT_METER_REPORTER_LIMIT,
   DEFAULT_METERING_ROLLUP_LIMIT,
   DEFAULT_RECONCILE_LIMIT,
+  evaluateOrgCap,
   makeCapTransitionEvictor,
   makeIngestHashEvictor,
   reconcileMeteringUsage,
@@ -61,6 +62,7 @@ import {
   readSecretBinding,
   USAGE_SETTLE_DAYS,
   type BoundedPayloadBody,
+  type OrgCapReEvaluated,
   type ReadBoundedBodiesArgs,
   type RevealedIngestToken,
   type SealedRecord,
@@ -878,6 +880,43 @@ export class IngestUrlRevealer extends WorkerEntrypoint<Env> {
         orgId,
         endpointId,
       );
+    } finally {
+      await tenant.end({ timeout: 5 }).catch(() => {});
+    }
+  }
+}
+
+/**
+ * On-demand soft-cap re-evaluation over a service binding (WS3, the overage toggle). The web tier flips
+ * `org_limits.pause_policy` in the DB, then RPCs `env.CAP_REEVALUATOR.reevaluateOrgCap(orgId)` so
+ * enforcement reflects the new policy IMMEDIATELY rather than waiting up to an hour for the metering cron.
+ * IDENTIFIER-only: the caller passes its authenticated orgId; the engine reads usage/limits/pause UNDER THE
+ * ORG'S RLS (webhook_app on HYPERDRIVE_TENANT — an independent tenant check, never a cross-org role) and
+ * reconciles on the EXACT same basis as the cron ({@link evaluateOrgCap}). On a pause↔resume transition it
+ * evicts the org's ingest-token cache entries (same fan-out as the cron's onTransition) so the flip takes
+ * effect on the next cold miss. The Free default cap is read the same way the cron reads it (parseFreeEventCap
+ * of the injected var). WorkerEntrypoint methods aren't publicly fetchable; the binding is worker-to-worker,
+ * deploy-injected into web via the prod overlay.
+ */
+export class CapReEvaluator extends WorkerEntrypoint<Env> {
+  async reevaluateOrgCap(orgId: string): Promise<OrgCapReEvaluated> {
+    const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+    try {
+      const defaultEventCap = parseFreeEventCap(this.env.FREE_EVENT_CAP);
+      const evaluation = await withTenant(tenant, orgId, (tx) =>
+        evaluateOrgCap(tx, { orgId, now: Date.now(), defaultEventCap }),
+      );
+      // Evict AFTER the durable ingest_paused write commits — a stale positive principal on resume would be
+      // a paying-customer outage. Only on a real transition; best-effort (KV errors are logged, not fatal —
+      // the ingest_paused row is the source of truth and the cache TTL is the backstop). Same fan-out the
+      // cron uses (per-org → every live endpoint's token-hash cache key).
+      if (evaluation.transition !== null) {
+        const evict = makeIngestHashEvictor(kvCredentialCache(this.env.KV_CONFIG), (err) =>
+          console.error(JSON.stringify({ event: "cap.reeval.kv_evict_error", error: String(err) })),
+        );
+        await makeCapTransitionEvictor(tenant, evict)(orgId);
+      }
+      return { paused: evaluation.paused, transitioned: evaluation.transition !== null };
     } finally {
       await tenant.end({ timeout: 5 }).catch(() => {});
     }

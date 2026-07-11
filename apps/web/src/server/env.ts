@@ -7,6 +7,7 @@ import {
   parseFreeEventCap,
   parseStripePlans,
   type BillingMode,
+  type CapReEvaluatorRpc,
   type DeliveryDispatcherRpc,
   type IngestUrlRevealerRpc,
   type SecretSealer,
@@ -177,6 +178,26 @@ export function getIngestUrlRevealer(): IngestUrlRevealerRpc | undefined {
     typeof (binding as { revealIngestToken?: unknown }).revealIngestToken === "function"
   ) {
     return binding as IngestUrlRevealerRpc;
+  }
+  return undefined;
+}
+
+/**
+ * The `CAP_REEVALUATOR` Cloudflare service binding — the engine's `CapReEvaluator` WorkerEntrypoint (WS3).
+ * After the web tier flips `org_limits.pause_policy`, it RPCs `reevaluateOrgCap(orgId)` so soft-cap
+ * enforcement (ingest_paused + the edge KV cache) reflects the new policy immediately rather than lagging to
+ * the hourly cron. The engine owns the ingest KV cache, so the eviction must happen there. Bound only at
+ * deploy (the gen-wrangler-prod overlay); `undefined` in dev/preview and before provisioning — the overage
+ * toggle then fails closed (the flip errors rather than leaving enforcement silently stale). Detected
+ * structurally (an object with a `reevaluateOrgCap` method) so a mis-shaped binding can't masquerade.
+ */
+export function getCapReEvaluator(): CapReEvaluatorRpc | undefined {
+  const binding = workerEnv().CAP_REEVALUATOR;
+  if (
+    binding &&
+    typeof (binding as { reevaluateOrgCap?: unknown }).reevaluateOrgCap === "function"
+  ) {
+    return binding as CapReEvaluatorRpc;
   }
   return undefined;
 }

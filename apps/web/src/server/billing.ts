@@ -1,7 +1,7 @@
 import "server-only";
 
 import { withTenant } from "@webhook-co/db/client";
-import { readBillingCustomerId, readBillingSummary } from "@webhook-co/db/reads";
+import { readBillingCustomerId, readBillingSummary, readOveragePolicy } from "@webhook-co/db/reads";
 import {
   billingDisplayFromSubscription,
   billingEnabled,
@@ -40,15 +40,19 @@ export type BillingActionResult =
   | { readonly status: "already_subscribed" }
   | { readonly status: "error" };
 
-/** The org's Stripe customer id (if any) + its synced subscription mirror row (if any), read together
- *  under one tenant-RLS transaction. The pair drives both the already-subscribed guard and the picker. */
-async function readOrgBilling(
-  orgId: string,
-): Promise<{ customerId: string | null; sub: BillingSubscriptionSummary | null }> {
+/** The org's Stripe customer id (if any), its synced subscription mirror row (if any), and its overage
+ *  policy (null when there's no paid org_limits row), read together under one tenant-RLS transaction. Drives
+ *  the already-subscribed guard, the picker, and the overage toggle. */
+async function readOrgBilling(orgId: string): Promise<{
+  customerId: string | null;
+  sub: BillingSubscriptionSummary | null;
+  overagePolicy: "pause" | "allow" | null;
+}> {
   return withTenantDb((app) =>
     withTenant(app, orgId, async (tx) => ({
       customerId: await readBillingCustomerId(tx),
       sub: await readBillingSummary(tx),
+      overagePolicy: await readOveragePolicy(tx),
     })),
   );
 }
@@ -148,6 +152,9 @@ export interface BillingView {
   readonly display: BillingDisplay | null;
   readonly upgradePlanIds: readonly SelfServePlanId[];
   readonly hasCustomer: boolean;
+  /** Whether overage billing is currently ON (pause_policy 'allow'), or null when the org has no paid plan
+   *  (no org_limits row) so the toggle doesn't apply. Drives the overage card's visibility + state. */
+  readonly overageEnabled: boolean | null;
 }
 
 const HIDDEN_VIEW: BillingView = {
@@ -155,6 +162,7 @@ const HIDDEN_VIEW: BillingView = {
   display: null,
   upgradePlanIds: [],
   hasCustomer: false,
+  overageEnabled: null,
 };
 
 /**
@@ -182,14 +190,23 @@ export async function loadBillingSummary(orgId: string): Promise<BillingView> {
   try {
     const secretKey = await getStripeSecretKey();
     if (!secretKey || !stripeKeyMatchesMode(mode, secretKey)) return HIDDEN_VIEW; // transient/dark
-    const { customerId, sub } = await readOrgBilling(orgId);
+    const { customerId, sub, overagePolicy } = await readOrgBilling(orgId);
     const display = sub ? billingDisplayFromSubscription(sub, plans) : null;
     // Offer the picker ONLY when a new Checkout can't create a duplicate subscription (see
     // canStartNewCheckout). Ladder order (pro → scale), configured plans only.
     const upgradePlanIds = canStartNewCheckout(customerId, sub)
       ? SELF_SERVE_PLAN_IDS.filter((id) => plans[id])
       : [];
-    return { hidden: false, display, upgradePlanIds, hasCustomer: customerId !== null };
+    // overageEnabled: null when there's no paid org_limits row (Free/canceled — the toggle doesn't apply),
+    // else whether the policy is currently 'allow'.
+    const overageEnabled = overagePolicy === null ? null : overagePolicy === "allow";
+    return {
+      hidden: false,
+      display,
+      upgradePlanIds,
+      hasCustomer: customerId !== null,
+      overageEnabled,
+    };
   } catch (error) {
     logActionError("billing.summary_failed", error);
     return HIDDEN_VIEW;

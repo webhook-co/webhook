@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { openBillingPortal, startCheckout } from "./billing";
+import { applyOverageToggle } from "./overage";
 import { verifySession } from "./session";
 
 // Server actions behind the dashboard billing panel. Both hand off to a Stripe-HOSTED page (Checkout or the
@@ -37,4 +38,16 @@ export async function openBillingPortalAction(): Promise<void> {
   const result = await openBillingPortal(session.orgId);
   if (result.status === "ok") redirect(result.url);
   redirect(`${BILLING}?billing=${result.status}`);
+}
+
+/**
+ * Toggle overage billing on/off (WS3). The desired state rides a hidden `enabled` field ("true"/"false") — the
+ * form submits the OPPOSITE of the current state. applyOverageToggle never throws (folds faults into a status),
+ * gates owner/admin + audits in the DB, and reconciles enforcement via the engine. Lands back on /billing.
+ */
+export async function setOverageAction(formData: FormData): Promise<void> {
+  const enabled = formData.get("enabled") === "true";
+  const session = await verifySession();
+  const result = await applyOverageToggle(session.orgId, session.userId, enabled);
+  redirect(`${BILLING}?overage=${result.status}`);
 }

@@ -234,14 +234,18 @@ describe("startCheckout — the Stripe key must belong to BILLING_MODE", () => {
 });
 
 describe("loadBillingSummary (dedicated Billing section)", () => {
-  function enable(sub: unknown, customerId: string | null) {
+  function enable(
+    sub: unknown,
+    customerId: string | null,
+    overagePolicy: "pause" | "allow" | null = null,
+  ) {
     env.getBillingMode.mockReturnValue("test");
     env.getStripePlans.mockReturnValue({
       pro: { base: "price_base", overage: "price_overage" },
       scale: { base: "price_scale_base", overage: "price_scale_overage" },
     });
     env.getStripeSecretKey.mockResolvedValue("sk_test_x");
-    db.withTenantDb.mockResolvedValue({ customerId, sub });
+    db.withTenantDb.mockResolvedValue({ customerId, sub, overagePolicy });
   }
 
   it("hides when billing is off / plans unset / key mismatches mode", async () => {
@@ -353,5 +357,20 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
     expect(v.display).toMatchObject({ tier: "pro", state: "active" });
     expect(v.upgradePlanIds).toEqual([]);
     expect(v.hasCustomer).toBe(false);
+  });
+
+  it("maps the overage policy → overageEnabled (null when no paid org_limits row)", async () => {
+    const sub = {
+      plan: "price_base",
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    };
+    enable(sub, "cus_1", "allow");
+    expect((await loadBillingSummary("org-1")).overageEnabled).toBe(true);
+    enable(sub, "cus_1", "pause");
+    expect((await loadBillingSummary("org-1")).overageEnabled).toBe(false);
+    enable(sub, "cus_1", null); // no org_limits row → toggle doesn't apply
+    expect((await loadBillingSummary("org-1")).overageEnabled).toBeNull();
   });
 });

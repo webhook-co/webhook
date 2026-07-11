@@ -317,6 +317,17 @@ const APPS = {
         service: "webhook-engine",
         entrypoint: "IngestUrlRevealer",
       },
+      // CAP_REEVALUATOR (WS3, the overage toggle) — the web→engine binding to the engine's CapReEvaluator
+      // WorkerEntrypoint, so after the dashboard flips org_limits.pause_policy the engine reconciles soft-cap
+      // enforcement (ingest_paused + the ingest KV cache it owns) immediately instead of waiting for the
+      // hourly cron. Deploy-injected (NOT committed): the engine must be LIVE with the CapReEvaluator
+      // entrypoint first (engine-before-web order). apps/web degrades to eventual (cron-backstopped, logged)
+      // when it's unbound, so flipping it on is safe.
+      {
+        binding: "CAP_REEVALUATOR",
+        service: "webhook-engine",
+        entrypoint: "CapReEvaluator",
+      },
     ],
   },
   // The OAuth issuer + Better Auth runtime (auth.webhook.co) — an OpenNext SSR Worker (main = src/worker.ts
