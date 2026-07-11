@@ -27,6 +27,9 @@ vi.mock("@webhook-co/db/audit-append", () => ({ appendAuditEntry: vi.fn() }));
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: vi.fn().mockResolvedValue({}) }));
 vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: vi.fn(() => new Uint8Array()) }));
 
+import { withTenant } from "@webhook-co/db/client";
+import { readActiveSubscription } from "@webhook-co/db/reads";
+
 import { switchPlan } from "./plan-switch";
 
 const PLANS = {
@@ -47,13 +50,24 @@ function enable(opts: {
 }) {
   env.getBillingMode.mockReturnValue("test");
   env.getStripePlans.mockReturnValue(PLANS);
-  db.withTenantDb.mockResolvedValue({
-    role: opts.role === undefined ? "owner" : opts.role,
-    sub:
-      opts.hasSub === false
-        ? null
-        : { subscriptionId: "sub_1", plan: "price_base", status: "active" },
-  });
+
+  // Run the tenant callbacks for REAL (against faked reads) instead of stubbing their return value.
+  // switchPlan opens a tenant tx twice — once for the role/sub gate, once to append the audit entry — and
+  // stubbing the RESULT short-circuits the second one, which would make every "did / didn't audit" assertion
+  // below pass vacuously. The seams (the tx, the reads, appendAuditEntry) stay faked; the wiring is real.
+  const role = opts.role === undefined ? "owner" : opts.role;
+  db.withTenantDb.mockImplementation((cb: (app: unknown) => unknown) => cb({}));
+  vi.mocked(withTenant).mockImplementation(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ((_app: unknown, _org: string, cb: (tx: any) => unknown) =>
+      cb(async () => [{ role }])) as never,
+  );
+  vi.mocked(readActiveSubscription).mockResolvedValue(
+    opts.hasSub === false
+      ? null
+      : { subscriptionId: "sub_1", plan: "price_base", status: "active" },
+  );
+
   const client = {
     retrieveSubscription: vi.fn().mockResolvedValue({
       id: "sub_1",
@@ -252,5 +266,57 @@ describe("switchPlan — downgrade", () => {
     const client = enable({ liveItems: SCALE_ITEMS });
     await switchPlan("org-1", "user-1", "pro");
     expect(client.updateSubscription).not.toHaveBeenCalled();
+  });
+});
+
+describe("switchPlan — downgrade failure paths", () => {
+  /** The audit entries actually written (the mocked appendAuditEntry's payloads). */
+  async function auditActions() {
+    const { appendAuditEntry } = await import("@webhook-co/db/audit-append");
+    return vi.mocked(appendAuditEntry).mock.calls.map((c) => (c[2] as { action: string }).action);
+  }
+
+  it("maps a createSubscriptionSchedule failure to `error` — and never touches the live subscription", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS });
+    client.createSubscriptionSchedule.mockRejectedValue(new Error("stripe down"));
+
+    expect(await switchPlan("org-1", "user-1", "pro")).toEqual({ status: "error" });
+    expect(client.updateSubscriptionSchedule).not.toHaveBeenCalled();
+    // The customer keeps Scale. Nothing was charged, credited, or changed.
+    expect(client.updateSubscription).not.toHaveBeenCalled();
+    expect(await auditActions()).toEqual([]);
+  });
+
+  it("maps an updateSubscriptionSchedule failure to `error` and does NOT audit a downgrade that didn't land", async () => {
+    // The schedule object exists but carries no target phase, so nothing will actually happen at renewal.
+    // Reporting `scheduled` (or auditing one) would tell the user their downgrade is booked when it isn't.
+    const client = enable({ liveItems: SCALE_ITEMS });
+    client.updateSubscriptionSchedule.mockRejectedValue(new Error("stripe down"));
+
+    expect(await switchPlan("org-1", "user-1", "pro")).toEqual({ status: "error" });
+    expect(await auditActions()).not.toContain("plan_downgrade_scheduled");
+    expect(client.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("audits a scheduled downgrade distinctly from an applied switch", async () => {
+    enable({ liveItems: SCALE_ITEMS });
+    await switchPlan("org-1", "user-1", "pro");
+    expect(await auditActions()).toEqual(["plan_downgrade_scheduled"]);
+
+    vi.clearAllMocks();
+    enable({}); // on Pro → upgrade to Scale
+    await switchPlan("org-1", "user-1", "scale");
+    expect(await auditActions()).toEqual(["plan_switched"]);
+  });
+
+  it("uses the SAME exact idempotency key on both Stripe calls of the downgrade", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS });
+    await switchPlan("org-1", "user-1", "pro");
+    expect(client.createSubscriptionSchedule.mock.calls[0][0].idempotencyKey).toBe(
+      "downgrade:sub_1:pro",
+    );
+    expect(client.updateSubscriptionSchedule.mock.calls[0][0].idempotencyKey).toBe(
+      "downgrade:sub_1:pro",
+    );
   });
 });
