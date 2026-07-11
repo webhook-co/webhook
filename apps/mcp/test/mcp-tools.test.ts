@@ -158,7 +158,35 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     );
     expect(res.status).toBe(200);
     const { tools } = res.message?.result as { tools: { name: string }[] };
-    expect(tools.map((t) => t.name).sort()).toEqual([...BOUND_TOOLS].sort());
+    // the capability tools PLUS the standalone identity tool `whoami` (not a capability — see mcp-agent).
+    expect(tools.map((t) => t.name).sort()).toEqual([...BOUND_TOOLS, "whoami"].sort());
+  });
+
+  it("exposes the whoami identity tool", async () => {
+    const { sessionId, protocolVersion } = await handshake();
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      { sessionId, protocolVersion },
+    );
+    const { tools } = res.message?.result as { tools: { name: string; description?: string }[] };
+    const whoami = tools.find((t) => t.name === "whoami");
+    expect(whoami).toBeDefined();
+    expect(whoami?.description).toMatch(/profile/i);
+  });
+
+  it("whoami returns org-only identity for an api-key principal (no userId → no PII, no profile RPC)", async () => {
+    // The seeded principal is an ORG-bound api key (no userId), so whoami must return orgId + scopes and
+    // NEVER name/email — the profile RPC is structurally unreachable without a userId. This drives the tool
+    // end-to-end through tools/call (the registration + content shape), not just tools/list.
+    const session = await handshake();
+    const result = await callTool("whoami", {}, session, 6);
+    expect(result.isError).toBeFalsy();
+    const identity = JSON.parse(result.content[0].text);
+    expect(identity.orgId).toBe("org_test");
+    expect(identity.scopes).toEqual(["endpoints:read", "events:read", "audit:read"]);
+    expect(identity.userId).toBeUndefined();
+    expect(identity.name).toBeUndefined();
+    expect(identity.email).toBeUndefined();
   });
 
   it("advertises an input schema exposing the endpointId parameter for events.list", async () => {

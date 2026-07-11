@@ -1,6 +1,7 @@
 import {
   buildProtectedResourceMetadata,
   CAPABILITY_REGISTRY,
+  PROFILE_SCOPE,
   type ProtectedResourceMetadata,
 } from "@webhook-co/contract";
 import {
@@ -45,9 +46,11 @@ const AUTH_ISSUER = "https://auth.webhook.co";
 /** The injected clock (Unix seconds) for the session-binding envelope's version/expiry stamp + check. */
 const nowSeconds = (): number => Math.floor(Date.now() / 1000);
 
-/** The distinct capability scopes the MCP surface understands (RFC 8414 `scopes_supported`). */
+/** The scopes the MCP surface understands (RFC 8414 `scopes_supported`): the capability scopes plus the
+ *  `profile` identity scope (gates the whoami tool's name/email — a client requests it when connecting). */
 export const SCOPES_SUPPORTED: string[] = [
   ...new Set([...CAPABILITY_REGISTRY.values()].map((c) => c.auth.scope)),
+  PROFILE_SCOPE,
 ].sort();
 
 // The McpAgent Durable Object class must be exported from the Worker entry so wrangler can bind it

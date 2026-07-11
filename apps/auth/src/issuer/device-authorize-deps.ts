@@ -9,7 +9,7 @@ import { API_RESOURCE, MCP_RESOURCE } from "@webhook-co/db";
 import { makeDeviceStoreDeps } from "./device-deps";
 import { createDeviceCode } from "./device-store";
 import { HELPERS_DEFAULT_HANDLER } from "./issuer-constants";
-import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
+import { GRANTABLE_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import type { DeviceAuthorizeDeps } from "./device-authorize-route";
 import type { DeviceAuthorizeEnv } from "../runtime/env";
 
@@ -31,7 +31,7 @@ export function makeDeviceAuthorizeDeps(
   const store = makeDeviceStoreDeps(env.DEVICE_KV);
   return {
     allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
-    allowedScopes: CAPABILITY_SCOPES,
+    allowedScopes: GRANTABLE_SCOPES,
     ttlSeconds: DEVICE_CODE_TTL_SECONDS,
     interval: DEVICE_POLL_INTERVAL,
     verificationUri: new URL("/device", requestUrl).toString(),

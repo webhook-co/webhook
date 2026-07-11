@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { GRANTABLE_SCOPES } from "./oauth-config";
 import {
   redeemAuthCode,
   redeemRefresh,
@@ -170,6 +171,24 @@ describe("redeemAuthCode — scope cannot widen on first issuance (MAJOR-C)", ()
     expect(result).toMatchObject({ kind: "error", error: "invalid_scope" });
     expect(deps.mintScopedKey).not.toHaveBeenCalled();
     expect(deps.revokeProviderGrant).not.toHaveBeenCalled();
+  });
+
+  it("mints a consented `profile` scope when allowedScopes = GRANTABLE_SCOPES (identity survives mint)", async () => {
+    // The mint re-intersects props.scopes ∩ allowedScopes (defense in depth). token-deps wires the real
+    // GRANTABLE set; this pins that `profile` (the identity scope) survives that intersect end-to-end — a
+    // revert to CAPABILITY_SCOPES at the deps would drop a consented `profile` at mint and go red here.
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const deps = authCodeDeps({
+      allowedScopes: GRANTABLE_SCOPES,
+      unwrapToken: vi.fn(async () => ({
+        providerGrantId: "pg_1",
+        props: consent({ scopes: ["events:read", "profile"] }),
+      })),
+    });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result.kind).toBe("token");
+    expect(mintMock(deps).mock.calls[0][0].scopes).toContain("profile");
+    if (result.kind === "token") expect(result.body.scope.split(" ")).toContain("profile");
   });
 });
 
@@ -373,6 +392,22 @@ describe("redeemRefresh — silent re-mint", () => {
     const result = await redeemRefresh(deps, noScope);
     expect(result.kind).toBe("token");
     if (result.kind === "token") expect(result.body.scope).toBe("events:read events:replay");
+  });
+
+  it("re-mints a consented `profile` scope when allowedScopes = GRANTABLE_SCOPES (refresh keeps identity)", async () => {
+    // Refresh remint is the THIRD mint intersect (requested ∩ consented ∩ allowed) — token-deps wires the
+    // real GRANTABLE set here too. Pin that a grant consented for `profile` re-mints it on refresh; a revert
+    // to CAPABILITY_SCOPES at the refresh deps would silently drop it and go red here.
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const deps = refreshDeps({
+      allowedScopes: GRANTABLE_SCOPES,
+      listGrantScopes: vi.fn(async () => ["events:read", "profile"]),
+    });
+    const { scope: _drop, ...noScope } = refreshReq;
+    const result = await redeemRefresh(deps, noScope);
+    expect(result.kind).toBe("token");
+    expect(mintForGrantMock(deps).mock.calls[0][0].scopes).toContain("profile");
+    if (result.kind === "token") expect(result.body.scope.split(" ")).toContain("profile");
   });
 });
 

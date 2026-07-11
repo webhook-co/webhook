@@ -24,7 +24,7 @@ import {
   nowSeconds,
   resolveOrigin,
 } from "./issuer-constants";
-import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
+import { GRANTABLE_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import type { AuthorizeRouteDeps } from "./authorize-route";
 import { LOGIN_PATH, PROD_AUTH_BASE_URL } from "../runtime/urls";
 import { makeAuth, type AuthExecutionContext, type RuntimeAuth } from "../runtime/auth";
@@ -82,7 +82,7 @@ export async function makeAuthorizeDeps(
           // RFC 9207: every authorization response (success AND error) is stamped with this.
           issuer: PROD_AUTH_BASE_URL,
           allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
-          allowedScopes: CAPABILITY_SCOPES,
+          allowedScopes: GRANTABLE_SCOPES,
           keyTtlSeconds: KEY_TTL_SECONDS,
           grantTtlSeconds: GRANT_TTL_SECONDS,
           ticketTtlSeconds: TICKET_TTL_SECONDS,
