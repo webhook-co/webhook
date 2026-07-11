@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { migrateDown, migrateUp, setupSchema } from "./migrate";
+import { migrateDownThrough, migrateUp, setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
 
@@ -28,8 +28,9 @@ afterAll(async () => {
 
 describe("migration 0055 reversibility", () => {
   it("rolls back to 0049 without stripping webhook_meter_audit's delivery_attempts read", async () => {
-    // Down 0055: leaves 0049 applied.
-    migrateDown(pg);
+    // Down THROUGH 0055 (i.e. undo 0055 and anything newer), leaving 0049 applied. Naming the version
+    // rather than stepping once keeps this test about 0055 no matter how many migrations land after it.
+    migrateDownThrough(pg, "0055");
 
     // The 0049-era grant (org_id, created_at) must survive — the reconciler reads exactly these as this role.
     await expect(

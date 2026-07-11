@@ -156,6 +156,25 @@ export function migrateDownAll(pg: EphemeralPostgres): void {
   for (let i = 0; i < migrationCount(); i++) migrateDown(pg);
 }
 
+/**
+ * Roll back every migration NEWER than `version`, and then `version` itself — leaving the schema exactly as
+ * it was before `version` was applied.
+ *
+ * `migrateDown` is one step, so a reversibility test written as "down once" silently means "undo whatever
+ * happens to be newest" — which is the migration under test only until the next one lands, at which point
+ * the test keeps passing while asserting nothing about its own subject (or fails confusingly, as this one
+ * did). Naming the version makes such a test stable against every future migration.
+ */
+export function migrateDownThrough(pg: EphemeralPostgres, version: string): void {
+  const files = readdirSync(join(PACKAGE_ROOT, MIGRATIONS_DIR))
+    .filter((f) => /^\d+_.*\.sql$/.test(f))
+    .sort();
+  const idx = files.findIndex((f) => f.startsWith(version));
+  if (idx === -1) throw new Error(`migrateDownThrough: no migration matching "${version}"`);
+  // Everything strictly newer, plus the target itself.
+  for (let i = 0; i < files.length - idx; i++) migrateDown(pg);
+}
+
 /** Bootstrap ownership, apply all migrations, and (password mode) set role passwords. */
 export async function setupSchema(pg: EphemeralPostgres): Promise<void> {
   await bootstrapOwner(pg);

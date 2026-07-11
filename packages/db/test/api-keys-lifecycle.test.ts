@@ -7,6 +7,7 @@ import { importAuditKey } from "@webhook-co/shared";
 import {
   API_KEY_PREFIX,
   createApiKey,
+  createApiKeyWithAudit,
   listApiKeys,
   makeApiKeyColdLookup,
   enqueueApiKeyRevokedNotification,
@@ -47,6 +48,7 @@ const hasher = createCredentialHasher({ current: Buffer.alloc(CREDENTIAL_PEPPER_
 let pg: EphemeralPostgres;
 let app: Sql; // webhook_app pool — create/list/revoke (tenant DML under RLS)
 let authn: Sql; // webhook_authn pool — verify cold path (column-scoped SELECT)
+let owner: Sql; // webhook_owner — seeds the better-auth "user" rows (ungranted to webhook_app)
 let auditKey: CryptoKey; // aae1 auth-audit chain key (revokeApiKeyByPlaintext audits the revoke)
 let orgA: string;
 let orgB: string;
@@ -92,6 +94,7 @@ beforeAll(async () => {
   // verify path uses its own connection. In prod the authn pool is wired to the
   // CACHE-DISABLED Hyperdrive binding; here both hit the ephemeral PG directly.
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
+  owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 13) % 256)),
@@ -106,6 +109,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await app?.end();
   await authn?.end();
+  await owner?.end();
   await pg?.stop();
 });
 
@@ -113,7 +117,7 @@ describe("createApiKey -> verify -> list -> revoke", () => {
   it("creates a key, returns the plaintext once, and verify discovers its org", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "lifecycle", scopes: ["events:read"] },
+      { orgId: orgA, name: "lifecycle", scopes: ["events:read"], minterRole: "owner" as const },
       hasher,
     );
     expect(created.plaintext.startsWith(`${API_KEY_PREFIX}_`)).toBe(true);
@@ -129,7 +133,7 @@ describe("createApiKey -> verify -> list -> revoke", () => {
   it("lists the org's keys with display metadata only (no hash, no plaintext)", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "listed", scopes: ["events:read"] },
+      { orgId: orgA, name: "listed", scopes: ["events:read"], minterRole: "owner" as const },
       hasher,
     );
     const items = await listApiKeys(app, orgA);
@@ -146,7 +150,11 @@ describe("createApiKey -> verify -> list -> revoke", () => {
   });
 
   it("revoke stamps revoked_at and the key stops verifying", async () => {
-    const created = await createApiKey(app, { orgId: orgA, name: "revokeme", scopes: [] }, hasher);
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "revokeme", scopes: [], minterRole: "owner" as const },
+      hasher,
+    );
     const { cache, resolver } = makeResolver();
 
     expect(await resolver.resolve(created.plaintext)).not.toBeNull(); // warms the cache
@@ -189,7 +197,7 @@ describe("two-pool design: webhook_authn cold lookup is least-privilege", () => 
   it("the authn pool resolves org via the granted columns (incl. audience)", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "authn", scopes: ["events:read"] },
+      { orgId: orgA, name: "authn", scopes: ["events:read"], minterRole: "owner" as const },
       hasher,
     );
     const cold = makeApiKeyColdLookup(authn);
@@ -210,7 +218,11 @@ describe("two-pool design: webhook_authn cold lookup is least-privilege", () => 
 
 describe("cross-org isolation (RLS) on the app pool", () => {
   it("org A's app context cannot revoke org B's key", async () => {
-    const bKey = await createApiKey(app, { orgId: orgB, name: "borg", scopes: [] }, hasher);
+    const bKey = await createApiKey(
+      app,
+      { orgId: orgB, name: "borg", scopes: [], minterRole: "owner" as const },
+      hasher,
+    );
     // Under org A's context the row is invisible -> nothing revoked.
     expect(await revokeApiKey(app, orgA, bKey.id)).toBe(false);
     // And it still verifies as org B's (org-discovery never crosses the boundary).
@@ -224,7 +236,7 @@ describe("KV hot path vs cold path vs revocation", () => {
   it("hot-path hit avoids a second authn round-trip; revocation forces a cold miss", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "kv", scopes: ["events:read"] },
+      { orgId: orgA, name: "kv", scopes: ["events:read"], minterRole: "owner" as const },
       hasher,
     );
     const cache = new InMemoryCredentialCache();
@@ -253,7 +265,11 @@ describe("KV hot path vs cold path vs revocation", () => {
 
 describe("per-key audience (A0b conditional stamp, real DB)", () => {
   it("a key with a stored audience resolves to THAT audience — not widened to the presenting surface", async () => {
-    const created = await createApiKey(app, { orgId: orgA, name: "perkey", scopes: [] }, hasher);
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "perkey", scopes: [], minterRole: "owner" as const },
+      hasher,
+    );
     // Bind a per-key audience to mcp (A0c's mintScopedKey will set this at mint; here via SQL).
     await withTenant(app, orgA, async (tx) => {
       await tx`update api_keys set audience = ${"https://mcp.webhook.co"} where id = ${created.id}`;
@@ -267,7 +283,7 @@ describe("per-key audience (A0b conditional stamp, real DB)", () => {
   it("a legacy key (no stored audience) is stamped with the presenting surface's audience", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "legacy-aud", scopes: [] },
+      { orgId: orgA, name: "legacy-aud", scopes: [], minterRole: "owner" as const },
       hasher,
     );
     const { resolver } = makeResolver(); // resource = API_RESOURCE
@@ -278,7 +294,11 @@ describe("per-key audience (A0b conditional stamp, real DB)", () => {
     // Defense-in-depth: a "" audience must coalesce to undefined in the cold lookup (`|| undefined`),
     // NOT survive as "" — else the resolver's `audience !== undefined` guard would skip the stamp and
     // assertAudience's strict `!==` would reject the key on EVERY surface (a silent fail-closed brick).
-    const created = await createApiKey(app, { orgId: orgA, name: "empty-aud", scopes: [] }, hasher);
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "empty-aud", scopes: [], minterRole: "owner" as const },
+      hasher,
+    );
     await withTenant(app, orgA, async (tx) => {
       await tx`update api_keys set audience = ${""} where id = ${created.id}`;
     });
@@ -291,7 +311,7 @@ describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () =
   it("finds a key by plaintext alone, revokes it (audited), returns the hash, and is idempotent", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "leaked", scopes: ["events:read"] },
+      { orgId: orgA, name: "leaked", scopes: ["events:read"], minterRole: "owner" as const },
       hasher,
     );
     // Resolves before revocation.
@@ -317,7 +337,11 @@ describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () =
   });
 
   it("revokes the RIGHT org's key (cross-org discovery by hash)", async () => {
-    const inB = await createApiKey(app, { orgId: orgB, name: "leaked-b", scopes: [] }, hasher);
+    const inB = await createApiKey(
+      app,
+      { orgId: orgB, name: "leaked-b", scopes: [], minterRole: "owner" as const },
+      hasher,
+    );
     const r = await revokeApiKeyByPlaintext(authn, app, inB.plaintext, hasher, auditKey);
     expect(r).toMatchObject({ found: true, revoked: true, orgId: orgB, keyId: inB.id });
     expect(await makeResolver().resolver.resolve(inB.plaintext)).toBeNull();
@@ -332,7 +356,7 @@ describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () =
   it("returns the key's name + start so the owner can be told WHICH key died — never the secret", async () => {
     const created = await createApiKey(
       app,
-      { orgId: orgA, name: "ci-deploy", scopes: ["events:read"] },
+      { orgId: orgA, name: "ci-deploy", scopes: ["events:read"], minterRole: "owner" as const },
       hasher,
     );
     const r = await revokeApiKeyByPlaintext(authn, app, created.plaintext, hasher, auditKey);
@@ -354,7 +378,11 @@ describe("revokeApiKeyByPlaintext (secret-scanning auto-revoke, ADR-0074)", () =
 
 describe("enqueueApiKeyRevokedNotification (secret-scanning owner alert)", () => {
   it("queues ONE pending, destination-less intent carrying the key's name/start", async () => {
-    const created = await createApiKey(app, { orgId: orgA, name: "leaked", scopes: [] }, hasher);
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "leaked", scopes: [], minterRole: "owner" as const },
+      hasher,
+    );
     await enqueueApiKeyRevokedNotification(app, {
       orgId: orgA,
       keyName: created.name,
@@ -386,7 +414,11 @@ describe("enqueueApiKeyRevokedNotification (secret-scanning owner alert)", () =>
   });
 
   it("writes the intent under the OWNING org (RLS), not a bystander org", async () => {
-    const created = await createApiKey(app, { orgId: orgB, name: "leaked-b", scopes: [] }, hasher);
+    const created = await createApiKey(
+      app,
+      { orgId: orgB, name: "leaked-b", scopes: [], minterRole: "owner" as const },
+      hasher,
+    );
     await enqueueApiKeyRevokedNotification(app, {
       orgId: orgB,
       keyName: created.name,
@@ -402,5 +434,111 @@ describe("enqueueApiKeyRevokedNotification (secret-scanning owner alert)", () =>
         >`select count(*)::text as n from notification_intents where org_id = ${orgB}`,
     );
     expect(Number(inB[0]!.n)).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// THE MINT CEILING, against a real Postgres.
+//
+// Scopes and roles were two unrelated vocabularies: `createApiKey` narrowed a request to the full
+// CAPABILITY_SCOPES and checked nothing else, so ANY member could mint ANY scope. That makes the
+// owner/admin billing gate decorative (mint a `billing:read` key, read billing over the API instead) and
+// hands a member the org's audit chain. Keys are DURABLE — one minted under the old rules would have kept
+// working forever — so this had to land before a second member could ever exist.
+describe("mint ceiling — a key can't grant more than the human who minted it", () => {
+  /** Seed an org whose user holds `role`, and return that user. */
+  async function seedMember(orgId: string, role: "owner" | "admin" | "member"): Promise<string> {
+    const userId = `u-${randomUUID()}`;
+    await owner`
+      insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
+      values (${userId}, ${"Seed"}, ${`${userId}@e.test`}, ${true}, now())`;
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+      await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${role})`;
+    });
+    return userId;
+  }
+
+  it("REFUSES a member minting billing:read — or the owner/admin billing gate is decorative", async () => {
+    const orgId = randomUUID();
+    const userId = await seedMember(orgId, "member");
+    await expect(
+      createApiKeyWithAudit(
+        app,
+        { orgId, name: "sneaky", scopes: ["events:read", "billing:read"] },
+        hasher,
+        auditKey,
+        userId,
+      ),
+    ).rejects.toThrow(/billing:read/);
+
+    // Nothing was minted — the refusal is not a partial write.
+    const keys = await listApiKeys(app, orgId);
+    expect(keys).toHaveLength(0);
+  });
+
+  it("REFUSES a member minting audit:read — the compliance chain is an admin concern", async () => {
+    const orgId = randomUUID();
+    const userId = await seedMember(orgId, "member");
+    await expect(
+      createApiKeyWithAudit(
+        app,
+        { orgId, name: "sneaky", scopes: ["audit:read"] },
+        hasher,
+        auditKey,
+        userId,
+      ),
+    ).rejects.toThrow(/audit:read/);
+  });
+
+  it("ALLOWS a member the operational scopes — they legitimately have write", async () => {
+    const orgId = randomUUID();
+    const userId = await seedMember(orgId, "member");
+    const created = await createApiKeyWithAudit(
+      app,
+      { orgId, name: "ci", scopes: ["endpoints:write", "events:replay"] },
+      hasher,
+      auditKey,
+      userId,
+    );
+    expect(created.scopes).toEqual(["endpoints:write", "events:replay"]);
+  });
+
+  it("ALLOWS an admin every scope, and ATTRIBUTES the key to them (created_by)", async () => {
+    const orgId = randomUUID();
+    const userId = await seedMember(orgId, "admin");
+    const created = await createApiKeyWithAudit(
+      app,
+      { orgId, name: "admin-key", scopes: ["audit:read", "billing:read"] },
+      hasher,
+      auditKey,
+      userId,
+    );
+    // created_by is what offboarding enumerates by — a key it cannot find is a key it cannot revoke.
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx<{ created_by: string | null }[]>`
+        select created_by from api_keys where id = ${created.id}`,
+    );
+    expect(row?.created_by).toBe(userId);
+  });
+
+  it("REFUSES a caller with NO membership in the org (fails closed)", async () => {
+    const orgId = randomUUID();
+    await seedMember(orgId, "owner");
+    const stranger = `u-${randomUUID()}`;
+    await owner`
+      insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
+      values (${stranger}, ${"Stranger"}, ${`${stranger}@e.test`}, ${true}, now())`;
+    await expect(
+      createApiKeyWithAudit(
+        app,
+        { orgId, name: "nope", scopes: ["events:read"] },
+        hasher,
+        auditKey,
+        stranger,
+      ),
+    ).rejects.toThrow(/events:read/);
   });
 });

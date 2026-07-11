@@ -1,6 +1,7 @@
 "use server";
 
 import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
+import { MintCeilingError } from "@webhook-co/db/api-keys";
 
 import { logActionError } from "./action-log";
 import { mintApiKey } from "./credential-mint";
@@ -45,6 +46,17 @@ export async function createApiKey(input: CreateKeyInput): Promise<CreateKeyResu
       scopes,
     });
   } catch (error) {
+    // The mint ceiling: the key asked for authority the acting user doesn't hold. Say WHICH scopes, and say
+    // it plainly — a silently-weakened key would leave the user believing they hold a scope they don't, and
+    // they'd find out at some later 403. This is a legitimate refusal, not a fault, so it is not logged as
+    // one. (The scope names are already visible to this user — they just ticked the boxes — so naming them
+    // discloses nothing.)
+    if (error instanceof MintCeilingError) {
+      return {
+        ok: false,
+        error: `Your role can't grant ${error.deniedScopes.join(", ")}. Ask an owner or admin.`,
+      };
+    }
     logActionError("credential.create_failed", error);
     return { ok: false, error: "We couldn't create the key. Please try again." };
   }

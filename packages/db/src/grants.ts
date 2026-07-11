@@ -15,6 +15,7 @@ import { randomUUID } from "node:crypto";
 
 import { insertApiKey, revokeApiKeyInTx, type RevokedKeyRow } from "./api-keys";
 import { withTenant, type Sql, type TenantTx } from "./client";
+import { readMembershipRole, type MembershipRole } from "./orgs";
 import { type CredentialHasher } from "./credential";
 import { appendAuthAuditEntry } from "./auth-audit";
 import { evaluateAutoApprove, type AutoApproveContext } from "./auto-approve";
@@ -180,6 +181,15 @@ async function mintKeyOnGrantInTx(
     throw new Error("mint: ttlSeconds must be a positive number");
   }
   const expiresAt = new Date(Date.now() + input.ttlSeconds * 1000);
+  // The grant's OWN user is the authority this key is minted under — not the caller's claim about who is
+  // acting. Read it (and their current role) from the grant row in this same transaction, so the ceiling
+  // cannot be widened by a stale or forged actor, and so a member whose CLI asked for every scope
+  // (`wbhk login` requests the full set) still cannot walk away with an admin-only one.
+  const [grantRow] = await tx<{ user_id: string }[]>`
+    select user_id from auth_grant where id = ${input.grantId} and org_id = ${input.orgId} limit 1`;
+  const minterUserId = grantRow?.user_id ?? null;
+  const minterRole = minterUserId ? await readMembershipRole(tx, input.orgId, minterUserId) : null;
+
   const key = await insertApiKey(
     tx,
     {
@@ -190,6 +200,8 @@ async function mintKeyOnGrantInTx(
       grantId: input.grantId,
       audience: input.audience,
       ownerType: input.ownerType,
+      minterRole: minterRole as MembershipRole | null,
+      createdBy: minterUserId,
     },
     hasher,
   );

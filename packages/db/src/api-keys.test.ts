@@ -24,7 +24,12 @@ describe("insertApiKey mint format (ADR-0073)", () => {
   it("mints a checksummed whk_ key (whk_ + 49 base62 chars) that self-verifies", async () => {
     const created = await insertApiKey(
       fakeTx(),
-      { orgId: "8f3854f2-4aee-4357-80d1-e5d323a011b5", name: "test", scopes: ["events:read"] },
+      {
+        orgId: "8f3854f2-4aee-4357-80d1-e5d323a011b5",
+        name: "test",
+        scopes: ["events:read"],
+        minterRole: "owner" as const,
+      },
       hasher,
     );
     expect(created.plaintext).toMatch(/^whk_[0-9A-Za-z]{49}$/);

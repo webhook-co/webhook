@@ -52,6 +52,10 @@ async function seedOrg(orgId: string): Promise<void> {
     values (${userId}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    // A grant always belongs to a MEMBER — that is what consent established. Seeding the membership makes
+    // the fixture model reality: without it the fixture silently describes a user who was already removed,
+    // and every mint would be (correctly) refused by the ceiling for the wrong reason.
+    await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
   });
 }
 
@@ -208,7 +212,7 @@ describe("listStandaloneApiKeys", () => {
     if (minted.status !== "minted") throw new Error("unreachable");
     const standalone = await createApiKey(
       app,
-      { orgId, name: "standalone", scopes: ["events:read"] },
+      { orgId, name: "standalone", scopes: ["events:read"], minterRole: "owner" as const },
       hasher,
     );
 
@@ -863,7 +867,7 @@ describe("findApiKeyGrant (the /revoke whk_ -> grant resolver)", () => {
     expect(await findApiKeyGrant(authn, `whk_${"z".repeat(43)}`, hasher)).toBeNull();
     const standalone = await createApiKey(
       app,
-      { orgId, name: "standalone", scopes: ["events:read"] },
+      { orgId, name: "standalone", scopes: ["events:read"], minterRole: "owner" as const },
       hasher,
     );
     expect(await findApiKeyGrant(authn, standalone.plaintext, hasher)).toBeNull();

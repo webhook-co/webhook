@@ -16,6 +16,7 @@ export const CONTRACT_PACKAGE = "@webhook-co/contract" as const;
 // the leaf subpath (e.g. `@webhook-co/contract/capability`, as `apps/web` does). If a Turbopack app ever
 // needs the whole barrel, convert these `export *` lines to explicit `export { … } from` first.
 export * from "./capability";
+export * from "./mint-ceiling";
 export * from "./target";
 export * from "./auth";
 export * from "./capabilities";
