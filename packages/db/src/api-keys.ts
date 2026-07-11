@@ -19,6 +19,9 @@
 
 import { randomUUID } from "node:crypto";
 
+import { exceedsMintCeiling } from "@webhook-co/contract/mint-ceiling";
+import type { MembershipRole } from "@webhook-co/shared";
+
 import { appendAuthAuditEntry } from "./auth-audit";
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { insertNotificationIntent } from "./delivery";
@@ -28,6 +31,7 @@ import {
   type CredentialHasher,
 } from "./credential";
 import type { ResolvedPrincipal } from "./credential-cache";
+import { readMembershipRole } from "./orgs";
 
 /** Default display prefix for api keys (the non-secret handle). */
 export const API_KEY_PREFIX = "whk";
@@ -43,6 +47,31 @@ export interface CreateApiKeyInput {
   readonly audience?: string | null;
   /** Owner type (api_keys.owner_type). Defaults to 'user'. */
   readonly ownerType?: "user" | "org";
+  /**
+   * The membership role of the human this key is minted UNDER, in `orgId`. REQUIRED — deliberately not
+   * optional — because it is the mint ceiling's only input: a key may not grant more than its creator can
+   * exercise. Making it required means a mint path added later cannot COMPILE without stating whose
+   * authority it mints under; an optional field would default to "unchecked" and the ceiling would rot.
+   *
+   * `null` = no membership ⇒ the ceiling is empty ⇒ nothing can be minted. That is the correct answer for a
+   * caller with no standing in the org, and it fails closed.
+   */
+  readonly minterRole: MembershipRole | null;
+  /**
+   * The user this key is attributed to (api_keys.created_by). Null only for a key with no human minter.
+   * Offboarding enumerates a departing member's keys by this column — what it cannot find, it cannot revoke.
+   */
+  readonly createdBy?: string | null;
+}
+
+/** A mint that asked for more authority than its minter holds. Carries the offending scopes so the caller
+ *  can name them: silently minting a WEAKER key than requested is a bad surprise, and silently minting a
+ *  STRONGER one is the escalation this exists to prevent. */
+export class MintCeilingError extends Error {
+  constructor(readonly deniedScopes: readonly string[]) {
+    super(`scopes exceed the minter's authority: ${deniedScopes.join(", ")}`);
+    this.name = "MintCeilingError";
+  }
 }
 
 export interface CreatedApiKey {
@@ -78,10 +107,21 @@ export interface ApiKeyListItem {
  */
 export async function createApiKey(
   app: Sql,
-  input: CreateApiKeyInput,
+  input: Omit<CreateApiKeyInput, "minterRole" | "createdBy">,
   hasher: CredentialHasher,
+  actorUserId: string | null,
 ): Promise<CreatedApiKey> {
-  const created = await withTenant(app, input.orgId, (tx) => insertApiKey(tx, input, hasher));
+  const created = await withTenant(app, input.orgId, async (tx) => {
+    // Derived here, never accepted from the caller. Taking `minterRole` as a parameter would make the
+    // ceiling advisory: a caller could simply assert `minterRole: "owner"` for a member and walk through it.
+    // The authority a key is minted under is a FACT about the database, so it is read from the database.
+    const minterRole = (await readMembershipRole(
+      tx,
+      input.orgId,
+      actorUserId ?? "",
+    )) as MembershipRole | null;
+    return insertApiKey(tx, { ...input, minterRole, createdBy: actorUserId }, hasher);
+  });
   const { keyHash: _keyHash, ...rest } = created;
   return rest;
 }
@@ -96,19 +136,40 @@ export async function createApiKey(
  */
 export async function createApiKeyWithAudit(
   app: Sql,
-  input: CreateApiKeyInput,
+  input: Omit<CreateApiKeyInput, "minterRole" | "createdBy">,
   hasher: CredentialHasher,
   auditKey: CryptoKey,
   actorUserId: string | null,
 ): Promise<CreatedApiKey> {
   const created = await withTenant(app, input.orgId, async (tx) => {
-    const key = await insertApiKey(tx, input, hasher);
+    // The minter's role is read INSIDE the mint transaction, from the acting user's membership in THIS org.
+    // Deriving it here rather than trusting a caller-supplied value closes the TOCTOU: a role read before
+    // the transaction could have changed by the time the key lands. A caller with no membership reads back
+    // null, and the ceiling then permits nothing.
+    const minterRole = await readMembershipRole(tx, input.orgId, actorUserId ?? "");
+    const key = await insertApiKey(
+      tx,
+      {
+        ...input,
+        minterRole: minterRole as MembershipRole | null,
+        createdBy: actorUserId,
+      },
+      hasher,
+    );
     await appendAuthAuditEntry(tx, auditKey, {
       orgId: input.orgId,
       actor: actorUserId,
       eventType: "key_minted",
       targetId: key.id,
-      metadata: { grantId: input.grantId ?? null, audience: input.audience ?? null },
+      // Record the authority the key was minted UNDER, and what it was granted. When this key is later
+      // found in a log doing something surprising, the chain answers "who could have done this, and with
+      // what standing" — not just "a key existed".
+      metadata: {
+        grantId: input.grantId ?? null,
+        audience: input.audience ?? null,
+        minterRole,
+        scopes: [...input.scopes],
+      },
     });
     return key;
   });
@@ -128,6 +189,13 @@ export async function insertApiKey(
   input: CreateApiKeyInput,
   hasher: CredentialHasher,
 ): Promise<CreatedApiKey & { readonly keyHash: Buffer }> {
+  // THE MINT CEILING. Every api key in the system — dashboard, OAuth, device-code — is born in this
+  // function, which is why the check lives here rather than at each caller: a caller can be forgotten, a
+  // chokepoint cannot. THROW rather than silently narrow: quietly handing back a weaker key than was asked
+  // for teaches the user they hold a scope they don't, and they discover it at some later 403.
+  const denied = exceedsMintCeiling(input.minterRole, input.scopes);
+  if (denied.length > 0) throw new MintCeilingError(denied);
+
   const { plaintext, keyHash, start } = mintChecksummedCredential(API_KEY_PREFIX, hasher);
   const id = randomUUID();
   const scopes = [...input.scopes];
@@ -135,13 +203,15 @@ export async function insertApiKey(
   const grantId = input.grantId ?? null;
   const audience = input.audience ?? null;
   const ownerType = input.ownerType ?? "user";
+  const createdBy = input.createdBy ?? null;
 
   await tx`
     insert into api_keys
-      (id, org_id, key_hash, prefix, start, name, scopes, expires_at, grant_id, audience, owner_type)
+      (id, org_id, key_hash, prefix, start, name, scopes, expires_at, grant_id, audience, owner_type,
+       created_by)
     values
       (${id}, ${input.orgId}, ${keyHash}, ${API_KEY_PREFIX}, ${start}, ${input.name},
-       ${tx.json(scopes)}, ${expiresAt}, ${grantId}, ${audience}, ${ownerType})`;
+       ${tx.json(scopes)}, ${expiresAt}, ${grantId}, ${audience}, ${ownerType}, ${createdBy})`;
 
   return { id, orgId: input.orgId, name: input.name, scopes, start, expiresAt, plaintext, keyHash };
 }

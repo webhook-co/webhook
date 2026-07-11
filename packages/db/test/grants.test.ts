@@ -52,6 +52,10 @@ async function seedOrg(orgId: string): Promise<void> {
     values (${userId}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    // A grant always belongs to a MEMBER — that is what consent established. Seeding the membership makes
+    // the fixture model reality: without it the fixture silently describes a user who was already removed,
+    // and every mint would be (correctly) refused by the ceiling for the wrong reason.
+    await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
   });
 }
 
@@ -210,6 +214,7 @@ describe("listStandaloneApiKeys", () => {
       app,
       { orgId, name: "standalone", scopes: ["events:read"] },
       hasher,
+      userOf(orgId),
     );
 
     const items = await listStandaloneApiKeys(app, orgId);
@@ -865,6 +870,7 @@ describe("findApiKeyGrant (the /revoke whk_ -> grant resolver)", () => {
       app,
       { orgId, name: "standalone", scopes: ["events:read"] },
       hasher,
+      userOf(orgId),
     );
     expect(await findApiKeyGrant(authn, standalone.plaintext, hasher)).toBeNull();
   });
@@ -880,5 +886,254 @@ describe("findApiKeyGrant (the /revoke whk_ -> grant resolver)", () => {
       orgId,
       grantId: res.grantId,
     });
+  });
+});
+
+// A grant mint is a RENEWAL, so the ceiling NARROWS it — it does not refuse it.
+//
+// The distinction is the whole point. An explicit request for a scope you may not hold is refused BY NAME
+// (insertApiKey throws; the dashboard says which scope). But a refresh is the client saying "give me my
+// token again", against scopes consented to months ago. If the human has since been DEMOTED, the right
+// outcome is that their token SHRINKS to what they may still exercise — not that their CLI and MCP start
+// failing with an error they can neither understand nor fix. A token is a filter over its owner's
+// authority: when the authority shrinks, so does the token.
+describe("mint ceiling on a grant — demotion shrinks the token, it doesn't break it", () => {
+  /** Change the seeded user's role in the org. */
+  async function setRole(orgId: string, role: "owner" | "admin" | "member"): Promise<void> {
+    await withTenant(app, orgId, async (tx) => {
+      await tx`update memberships set role = ${role} where org_id = ${orgId} and user_id = ${userOf(orgId)}`;
+    });
+  }
+
+  it("re-mints only the scopes the DEMOTED user may still exercise (audit:read is dropped)", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId); // seeded as owner
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read", "audit:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    expect(minted.status).toBe("minted");
+    const grantId = minted.status === "minted" ? minted.grantId : "";
+
+    // The admin who consented to audit:read is demoted to a plain member.
+    await setRole(orgId, "member");
+
+    // Their next refresh still WORKS — it simply no longer carries audit:read.
+    const renewed = await mintKeyForGrant(
+      app,
+      { orgId, grantId, scopes: ["events:read", "audit:read"], audience: API, ttlSeconds: 3600 },
+      hasher,
+      auditKey,
+    );
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${renewed.keyId}`,
+    );
+    expect(row?.scopes).toEqual(["events:read"]);
+  });
+
+  it("REFUSES the renewal when the user may exercise NOTHING the grant was for", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["audit:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    const grantId = minted.status === "minted" ? minted.grantId : "";
+    await setRole(orgId, "member");
+
+    // Nothing left to mint — a powerless key would just fail confusingly at every call, so refuse instead.
+    await expect(
+      mintKeyForGrant(
+        app,
+        { orgId, grantId, scopes: ["audit:read"], audience: API, ttlSeconds: 3600 },
+        hasher,
+        auditKey,
+      ),
+    ).rejects.toThrow(/audit:read/);
+  });
+
+  it("attributes a grant-minted key to the grant's OWN user (created_by)", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    const keyId = minted.status === "minted" ? minted.keyId : "";
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx<{ created_by: string | null }[]>`select created_by from api_keys where id = ${keyId}`,
+    );
+    expect(row?.created_by).toBe(userOf(orgId));
+  });
+});
+
+// The identity scope, through the REAL mint — the case that would have taken login down.
+//
+// `profile` is GRANTED on every OAuth/CLI/MCP login (it is advertised in scopes_supported and gates the
+// whoami name+email read) but it is deliberately NOT a member of CAPABILITY_SCOPES, because it binds no
+// tool. A mint ceiling built from CAPABILITY_SCOPES alone denies it to EVERY role — owner included — so
+// every token exchange throws and login is dead. The auth-side tests could not catch this: they mock the
+// mint. Only a mint against a real database can.
+describe("the identity scope is mintable by every role (login must not break)", () => {
+  it("mints an owner's key carrying `profile` alongside a capability scope", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId); // owner
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read", "profile"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    expect(minted.status).toBe("minted");
+    const keyId = minted.status === "minted" ? minted.keyId : "";
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${keyId}`,
+    );
+    expect(row?.scopes).toEqual(["events:read", "profile"]);
+  });
+
+  it("a plain MEMBER keeps `profile` too — identity is not a privilege", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    await withTenant(app, orgId, async (tx) => {
+      await tx`update memberships set role = 'member' where org_id = ${orgId} and user_id = ${userOf(orgId)}`;
+    });
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        scopes: ["events:read", "profile"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    const keyId = minted.status === "minted" ? minted.keyId : "";
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${keyId}`,
+    );
+    expect(row?.scopes).toContain("profile");
+  });
+});
+
+// INITIAL login, not just renewal. The narrowing lives in mintKeyOnGrantInTx, which serves both the first
+// mint (mintScopedKey) and every refresh — but a test that only demotes an owner proves the refresh path and
+// leaves the first-login path unproven. `wbhk login` requests the FULL advertised scope set, so a plain
+// member's very first CLI login is exactly the case where the ceiling has to bite.
+describe("mint ceiling on a member's FIRST login (not only on renewal)", () => {
+  async function seedMemberOrg(orgId: string): Promise<void> {
+    await seedOrg(orgId);
+    await withTenant(app, orgId, async (tx) => {
+      await tx`update memberships set role = 'member' where org_id = ${orgId} and user_id = ${userOf(orgId)}`;
+    });
+  }
+
+  it("narrows a member's first login to what they may exercise (the CLI asks for everything)", async () => {
+    const orgId = randomUUID();
+    await seedMemberOrg(orgId);
+    const minted = await mintScopedKey(
+      app,
+      {
+        orgId,
+        userId: userOf(orgId),
+        // Exactly what `wbhk login` sends: the whole advertised set.
+        scopes: ["events:read", "endpoints:write", "audit:read", "billing:read", "profile"],
+        audience: API,
+        ttlSeconds: 3600,
+        authMethod: "pkce_loopback",
+      },
+      hasher,
+      auditKey,
+    );
+    expect(minted.status).toBe("minted");
+    const keyId = minted.status === "minted" ? minted.keyId : "";
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ scopes: string[] }[]>`select scopes from api_keys where id = ${keyId}`,
+    );
+    // Logged in fine — and simply cannot exercise the two manager-only scopes.
+    expect(row?.scopes).toEqual(["events:read", "endpoints:write", "profile"]);
+    expect(row?.scopes).not.toContain("audit:read");
+    expect(row?.scopes).not.toContain("billing:read");
+  });
+
+  it("REFUSES a member's first login that asks ONLY for manager-only scopes", async () => {
+    const orgId = randomUUID();
+    await seedMemberOrg(orgId);
+    await expect(
+      mintScopedKey(
+        app,
+        {
+          orgId,
+          userId: userOf(orgId),
+          scopes: ["audit:read", "billing:read"],
+          audience: API,
+          ttlSeconds: 3600,
+          authMethod: "pkce_loopback",
+        },
+        hasher,
+        auditKey,
+      ),
+    ).rejects.toThrow(/audit:read|billing:read/);
+  });
+
+  it("a missing grant says so — it does not surface as a ceiling violation", async () => {
+    const orgId = randomUUID();
+    await seedOrg(orgId);
+    await expect(
+      mintKeyForGrant(
+        app,
+        { orgId, grantId: randomUUID(), scopes: ["events:read"], audience: API, ttlSeconds: 3600 },
+        hasher,
+        auditKey,
+      ),
+    ).rejects.toThrow(/grant not found/);
   });
 });

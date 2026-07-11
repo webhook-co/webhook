@@ -45,8 +45,9 @@ function authCodeDeps(overrides: Partial<AuthCodeDeps> = {}): AuthCodeDeps {
     revokeProviderGrant: vi.fn(async () => {}),
     rollbackMint: vi.fn(async () => {}),
     isOrgMember: vi.fn(async () => true),
-    mintScopedKey: vi.fn(async () => ({
+    mintScopedKey: vi.fn(async (i: { scopes: readonly string[] }) => ({
       status: "minted" as const,
+      scopes: i.scopes,
       grantId: "g_1",
       plaintext: FAKE_WHK,
       keyId: "k_1",
@@ -344,7 +345,8 @@ function refreshDeps(overrides: Partial<RefreshDeps> = {}): RefreshDeps {
       newRefresh: FAKE_REFRESH,
     })),
     listGrantScopes: vi.fn(async () => ["events:read", "events:replay"]),
-    mintKeyForGrant: vi.fn(async () => ({
+    mintKeyForGrant: vi.fn(async (i: { scopes: readonly string[] }) => ({
+      scopes: i.scopes,
       plaintext: FAKE_WHK,
       keyId: "k_2",
       expiresAt: new Date(0),
@@ -565,5 +567,90 @@ describe("redeemRefresh — no token material in logs", () => {
     const logged = JSON.stringify((log as ReturnType<typeof vi.fn>).mock.calls);
     expect(logged).not.toContain(FAKE_WHK);
     expect(logged).not.toContain(FAKE_REFRESH);
+  });
+});
+
+// The mint ceiling reaches the ISSUER, not just the database.
+//
+// The ceiling narrows a key to what the user's role may actually grant. Two things then have to be true at
+// this layer, and neither was:
+//
+//   1. The token response must report what was MINTED, not what was ASKED FOR. Echoing the request while the
+//      key carries fewer scopes hands the client a lie it then acts on — it records `billing:read` as
+//      granted, uses it, and gets a 403 it cannot diagnose. That is the exact "later 403" the ceiling exists
+//      to prevent, reintroduced one layer up.
+//   2. A TOTAL denial (the role can grant nothing that was asked for) is an OAuth `invalid_scope`, not a
+//      server fault. Letting it escape would 500 /token AFTER the authorization code is burned — a login
+//      loop with an error the user can neither diagnose nor retry out of.
+describe("mint ceiling at the issuer", () => {
+  it("reports the scopes the key ACTUALLY carries, not the ones requested", async () => {
+    const deps = authCodeDeps({
+      // The ceiling narrowed a member's request: the key carries only events:read.
+      mintScopedKey: vi.fn(async () => ({
+        status: "minted" as const,
+        scopes: ["events:read"],
+        grantId: "g_1",
+        plaintext: FAKE_WHK,
+        keyId: "k_1",
+        expiresAt: new Date(0),
+      })),
+    });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result.kind).toBe("token");
+    if (result.kind !== "token") return;
+    // NOT the requested set — the client must not be told it holds a scope the key doesn't carry.
+    expect(result.body.scope).toBe("events:read");
+  });
+
+  it("maps a TOTAL ceiling denial to invalid_scope — never an unhandled 500", async () => {
+    const denial = Object.assign(new Error("scopes exceed the minter's authority: billing:read"), {
+      name: "MintCeilingError",
+    });
+    const deps = authCodeDeps({
+      mintScopedKey: vi.fn(async () => {
+        throw denial;
+      }),
+    });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result).toMatchObject({ kind: "error", error: "invalid_scope" });
+  });
+
+  it("still propagates a genuine fault (a ceiling denial is not a catch-all)", async () => {
+    const deps = authCodeDeps({
+      mintScopedKey: vi.fn(async () => {
+        throw new Error("postgres is on fire");
+      }),
+    });
+    await expect(redeemAuthCode(deps, authCodeReq)).rejects.toThrow(/on fire/);
+  });
+
+  it("a REFRESH reports the narrowed scopes — this is how a demoted client learns its token shrank", async () => {
+    const deps = refreshDeps({
+      mintKeyForGrant: vi.fn(async () => ({
+        scopes: ["events:read"],
+        plaintext: FAKE_WHK,
+        keyId: "k_2",
+        expiresAt: new Date(0),
+      })),
+    });
+    const result = await redeemRefresh(deps, refreshReq);
+    expect(result.kind).toBe("token");
+    if (result.kind !== "token") return;
+    expect(result.body.scope).toBe("events:read");
+  });
+
+  it("a refresh that can mint NOTHING is invalid_scope, not a 500 on a spent handle", async () => {
+    const denial = Object.assign(new Error("scopes exceed the minter's authority: audit:read"), {
+      name: "MintCeilingError",
+    });
+    const deps = refreshDeps({
+      mintKeyForGrant: vi.fn(async () => {
+        throw denial;
+      }),
+    });
+    expect(await redeemRefresh(deps, refreshReq)).toMatchObject({
+      kind: "error",
+      error: "invalid_scope",
+    });
   });
 });

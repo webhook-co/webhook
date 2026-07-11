@@ -13,8 +13,11 @@
 
 import { randomUUID } from "node:crypto";
 
-import { insertApiKey, revokeApiKeyInTx, type RevokedKeyRow } from "./api-keys";
+import { mintableScopes } from "@webhook-co/contract/mint-ceiling";
+
+import { insertApiKey, MintCeilingError, revokeApiKeyInTx, type RevokedKeyRow } from "./api-keys";
 import { withTenant, type Sql, type TenantTx } from "./client";
+import { readMembershipRole, type MembershipRole } from "./orgs";
 import { type CredentialHasher } from "./credential";
 import { appendAuthAuditEntry } from "./auth-audit";
 import { evaluateAutoApprove, type AutoApproveContext } from "./auto-approve";
@@ -40,6 +43,16 @@ export interface MintedKey {
   readonly plaintext: string;
   readonly keyId: string;
   readonly expiresAt: Date;
+  /**
+   * The scopes the key ACTUALLY carries — which may be narrower than the ones requested, because the mint
+   * ceiling drops any the minter's role can't grant.
+   *
+   * The caller MUST report these, not what it asked for. An OAuth token response that echoes the requested
+   * scopes while the key carries fewer is a lie the client then acts on: it records `billing:read` as
+   * granted, uses it, and gets a 403 it cannot diagnose — the exact "later 403" surprise the ceiling exists
+   * to prevent. Returning the truth is what makes the narrowing safe.
+   */
+  readonly scopes: readonly string[];
 }
 
 export interface MintScopedKeyInput {
@@ -180,27 +193,84 @@ async function mintKeyOnGrantInTx(
     throw new Error("mint: ttlSeconds must be a positive number");
   }
   const expiresAt = new Date(Date.now() + input.ttlSeconds * 1000);
+  // The grant's OWN user is the authority this key is minted under — not the caller's claim about who is
+  // acting. Read it (and their current role) from the grant row in this same transaction, so the ceiling
+  // cannot be widened by a stale or forged actor, and so a member whose CLI asked for every scope
+  // (`wbhk login` requests the full set) still cannot walk away with an admin-only one.
+  const [grantRow] = await tx<{ user_id: string }[]>`
+    select user_id from auth_grant where id = ${input.grantId} and org_id = ${input.orgId} limit 1`;
+  // No grant row = the grant doesn't exist, or belongs to another org (RLS + the org_id predicate make those
+  // indistinguishable, deliberately). Say THAT, rather than letting it fall through to the ceiling and
+  // surface as "your scopes exceed your authority" — which would be a true statement about a null role, and
+  // a completely misleading diagnosis.
+  if (!grantRow) throw new Error("mint: grant not found in this org");
+  const minterUserId = grantRow.user_id;
+  const minterRole = (await readMembershipRole(
+    tx,
+    input.orgId,
+    minterUserId,
+  )) as MembershipRole | null;
+
+  // A mint on a grant is a RENEWAL, not a fresh request — so the ceiling NARROWS it rather than refusing it.
+  //
+  // The distinction matters. When a human explicitly asks for a scope they may not have, the honest answer
+  // is to refuse and name it (insertApiKey throws; the dashboard says which scope). But a refresh is the
+  // client saying "give me my token again", and the grant's consented scopes were fixed months ago. If the
+  // user has since been DEMOTED, the right outcome is that their token SHRINKS to what they may still
+  // exercise — not that their CLI/MCP starts failing with an error they can neither understand nor fix.
+  // A token is a filter over its owner's authority, so when the authority shrinks, so does the token.
+  //
+  // Narrowing here also keeps insertApiKey's ceiling honest: the set it receives is already within bounds,
+  // so its throw remains reserved for a genuine over-request.
+  const allowed = new Set<string>(mintableScopes(minterRole));
+  const scopes = input.scopes.filter((s) => allowed.has(s));
+  // Refuse only when the ceiling took EVERYTHING away — the grant asked for scopes and the user may now
+  // exercise none of them (removed from the org, or demoted below everything the grant was for). Minting a
+  // powerless key there would just fail confusingly at every later call.
+  //
+  // An empty request narrowing to empty is NOT that: a scopeless key is a legitimate thing to mint (it can
+  // do nothing by construction), and treating it as a ceiling violation would report "your scopes exceed
+  // your authority" about a request that asked for no authority at all.
+  if (input.scopes.length > 0 && scopes.length === 0) {
+    throw new MintCeilingError([...input.scopes]);
+  }
+
   const key = await insertApiKey(
     tx,
     {
       orgId: input.orgId,
       name: input.keyName ?? DEFAULT_KEY_NAME,
-      scopes: input.scopes,
+      scopes,
       expiresAt,
       grantId: input.grantId,
       audience: input.audience,
       ownerType: input.ownerType,
+      minterRole,
+      createdBy: minterUserId,
     },
     hasher,
   );
+  const narrowed = scopes.length !== input.scopes.length;
   await appendAuthAuditEntry(tx, auditKey, {
     orgId: input.orgId,
     actor: actorUserId,
     eventType: "key_minted",
     targetId: key.id,
-    metadata: { grantId: input.grantId, audience: input.audience },
+    // Record the authority the key was minted UNDER and what it actually carries — matching the dashboard
+    // path. MOST keys in the system are born here (OAuth, device, refresh), so omitting this would leave the
+    // tamper-evident chain unable to answer "who could have done this, and with what standing" for the
+    // majority of credentials. `narrowed` is the evidence that the ceiling bit: without it, a reviewer
+    // comparing the grant's consented scopes against the key's actual scopes finds a discrepancy the
+    // append-only log cannot explain.
+    metadata: {
+      grantId: input.grantId,
+      audience: input.audience,
+      minterRole,
+      scopes,
+      ...(narrowed ? { narrowedFrom: [...input.scopes] } : {}),
+    },
   });
-  return { plaintext: key.plaintext, keyId: key.id, expiresAt };
+  return { plaintext: key.plaintext, keyId: key.id, expiresAt, scopes };
 }
 
 /**
