@@ -4,6 +4,7 @@ import type { Metadata } from "next";
 
 import { loadBillingSummary } from "@/server/billing";
 import {
+  cancelSubscriptionAction,
   openBillingPortalAction,
   setOverageAction,
   startCheckoutAction,
@@ -87,6 +88,29 @@ const SWITCH_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "da
   },
 };
 
+/** The `?cancel=<status>` result banner (cancelSubscriptionAction redirects here). Covers EVERY
+ *  CancelRefundResult status. `refund_failed` is the one that must NOT read as a failed cancellation: the
+ *  subscription IS canceled, and a user who thinks otherwise would try again while we still owe them money. */
+const CANCEL_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "danger" }> = {
+  ok: {
+    message:
+      "Subscription canceled. Any refund for your unused included volume is on its way back to your original payment method.",
+    tone: "ok",
+  },
+  refund_failed: {
+    message:
+      "Your subscription is canceled, but we couldn't process the refund automatically. We've recorded what we owe you — email support@webhook.co and we'll sort it out.",
+    tone: "warn",
+  },
+  forbidden: { message: "Only an owner or admin can cancel the subscription.", tone: "warn" },
+  no_subscription: { message: "You don't have an active subscription to cancel.", tone: "warn" },
+  disabled: { message: "Billing isn't available right now.", tone: "warn" },
+  error: {
+    message: "We couldn't cancel your subscription. Nothing changed — try again.",
+    tone: "danger",
+  },
+};
+
 export const metadata: Metadata = { title: "Billing · webhook.co" };
 
 function fmtDate(iso: string): string {
@@ -137,13 +161,40 @@ function ManageBillingCard() {
     <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
       <h2 className="text-lg font-semibold tracking-heading text-fg">Payment &amp; invoices</h2>
       <p className="text-sm text-fg-secondary">
-        Update your payment method, download invoices, or cancel your plan. Cancelling returns you
-        to the free tier — and because the free allowance is one-time, capture pauses until you
-        resubscribe.
+        Update your payment method or download past invoices.
       </p>
       <form action={openBillingPortalAction}>
         <Button type="submit" variant="secondary">
           Manage payment &amp; invoices
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+/**
+ * Cancel + usage-based refund (slice 2.4). Cancellation lives HERE and not in the hosted Customer Portal on
+ * purpose: only this path computes the refund the Terms promise (the unused proportion of the base fee).
+ * ⚠️ The Stripe Portal's own "cancel subscription" must stay DISABLED in the Portal configuration — if a
+ * customer cancels there, Stripe ends the subscription with no refund and the promise is silently broken.
+ */
+function CancelSubscriptionCard() {
+  return (
+    <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
+      <h2 className="text-lg font-semibold tracking-heading text-fg">Cancel subscription</h2>
+      <p className="text-sm text-fg-secondary">
+        Cancelling takes effect immediately. We refund the unused part of this period&apos;s plan
+        fee based on how little of your included volume you used — not on how many days are left.
+        Usage past your included volume is already billed in arrears, so there&apos;s nothing to
+        refund there.
+      </p>
+      <p className="text-sm text-fg-secondary">
+        You&apos;ll return to the free tier. The free allowance is one-time, so if you&apos;ve
+        already spent it, capture stays paused until you resubscribe.
+      </p>
+      <form action={cancelSubscriptionAction}>
+        <Button type="submit" variant="danger">
+          Cancel subscription
         </Button>
       </form>
     </div>
@@ -265,6 +316,9 @@ export default async function BillingPage({
   const switchKey = typeof params.switch === "string" ? params.switch : undefined;
   const switchStatus =
     switchKey && Object.hasOwn(SWITCH_STATUS, switchKey) ? SWITCH_STATUS[switchKey] : undefined;
+  const cancelKey = typeof params.cancel === "string" ? params.cancel : undefined;
+  const cancelStatus =
+    cancelKey && Object.hasOwn(CANCEL_STATUS, cancelKey) ? CANCEL_STATUS[cancelKey] : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -276,6 +330,7 @@ export default async function BillingPage({
       {errorMsg && <Banner tone="danger">{errorMsg}</Banner>}
       {overageStatus && <Banner tone={overageStatus.tone}>{overageStatus.message}</Banner>}
       {switchStatus && <Banner tone={switchStatus.tone}>{switchStatus.message}</Banner>}
+      {cancelStatus && <Banner tone={cancelStatus.tone}>{cancelStatus.message}</Banner>}
 
       {view.hidden ? (
         <div className="rounded-card border border-hairline bg-surface p-6">
@@ -295,6 +350,13 @@ export default async function BillingPage({
             <UpgradeCard planIds={view.upgradePlanIds} resubscribe={view.display !== null} />
           )}
           {view.hasCustomer && <ManageBillingCard />}
+          {/* Owner/admin only, and only while there's something live to cancel — a sub already canceled or
+              dropped to the free allowance has nothing to end and nothing to refund. The server re-checks
+              both (SEC-RLS-08 + a live-Stripe status read), so this is presentation, not the gate. */}
+          {view.canManageBilling &&
+            view.display &&
+            view.display.state !== "canceled" &&
+            view.display.state !== "inactive" && <CancelSubscriptionCard />}
           {/* A live subscription whose Stripe customer hasn't mirrored yet (the two setup webhooks can
               land out of order): no picker (it would double-subscribe) and no Portal (we have no customer
               id to open one) — so give the user context instead of an actionless card. Transient. */}

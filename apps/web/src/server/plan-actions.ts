@@ -3,6 +3,7 @@
 import { redirect } from "next/navigation";
 
 import { openBillingPortal, startCheckout } from "./billing";
+import { cancelSubscriptionWithRefund } from "./cancel-refund";
 import { applyOverageToggle } from "./overage";
 import { switchPlan } from "./plan-switch";
 import { verifySession } from "./session";
@@ -74,4 +75,19 @@ export async function switchPlanAction(formData: FormData): Promise<void> {
         )
       : ({ status: "unknown_plan" } as const);
   redirect(`${BILLING}?switch=${result.status}`);
+}
+
+/**
+ * Cancel the subscription immediately and refund the unused portion of the prepaid base fee, computed from
+ * USAGE (slice 2.4 — the Terms' refund promise). cancelSubscriptionWithRefund never throws, gates owner/admin,
+ * audits, and is safe to retry (the refund carries an invoice-derived idempotency key).
+ *
+ * The `refund_failed` status is deliberately distinct from `error` and must stay that way through the UI: the
+ * subscription IS canceled in that case, and a user told "it failed" would cancel again while we still owe
+ * them money. Lands back on /billing, which renders the outcome as a banner.
+ */
+export async function cancelSubscriptionAction(): Promise<void> {
+  const session = await verifySession();
+  const result = await cancelSubscriptionWithRefund(session.orgId, session.userId);
+  redirect(`${BILLING}?cancel=${result.status}`);
 }

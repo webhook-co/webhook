@@ -524,3 +524,171 @@ describe("makeStripeClient.updateSubscription", () => {
     expect(p.get("proration_behavior")).toBe("create_prorations");
   });
 });
+
+// ── Cancellation + refund (data-lifecycle slice 2.4) ────────────────────────────────────────────────────────
+// The cancel-with-usage-refund flow needs three calls Stripe-side: read the invoice that actually took the
+// base fee (no money figure may live in this repo), cancel the subscription immediately WITHOUT Stripe's own
+// time-proration (we compute a usage-based refund instead — letting Stripe also prorate would double-credit),
+// and move the money back.
+
+describe("makeStripeClient.retrieveLatestPaidInvoice", () => {
+  it("GETs the newest PAID invoice for the subscription and maps its charge + price lines", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: {
+        data: [
+          {
+            id: "in_1",
+            charge: "ch_1",
+            payment_intent: "pi_1",
+            currency: "eur",
+            lines: {
+              data: [
+                { amount: 1900, price: { id: "price_base" } },
+                { amount: 0, price: { id: "price_overage" } },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const inv = await client.retrieveLatestPaidInvoice("sub_1");
+
+    expect(calls[0]!.init.method).toBe("GET");
+    const url = new URL(calls[0]!.url);
+    expect(url.pathname).toBe("/v1/invoices");
+    expect(url.searchParams.get("subscription")).toBe("sub_1");
+    expect(url.searchParams.get("status")).toBe("paid"); // only money actually TAKEN is refundable
+    expect(url.searchParams.get("limit")).toBe("1");
+
+    expect(inv).toEqual({
+      id: "in_1",
+      charge: "ch_1",
+      paymentIntent: "pi_1",
+      currency: "eur",
+      lines: [
+        { priceId: "price_base", amountMinorUnits: 1900 },
+        { priceId: "price_overage", amountMinorUnits: 0 },
+      ],
+    });
+  });
+
+  it("returns null when the subscription has NO paid invoice (a trial that never billed)", async () => {
+    const { impl } = fakeFetch({ status: 200, body: { data: [] } });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    expect(await client.retrieveLatestPaidInvoice("sub_1")).toBeNull();
+  });
+
+  it("tolerates a line with no price (a one-off/proration line) rather than throwing", async () => {
+    const { impl } = fakeFetch({
+      status: 200,
+      body: {
+        data: [{ id: "in_1", charge: null, lines: { data: [{ amount: 500 }] } }],
+      },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const inv = await client.retrieveLatestPaidInvoice("sub_1");
+    expect(inv?.charge).toBeNull();
+    expect(inv?.lines).toEqual([{ priceId: null, amountMinorUnits: 500 }]);
+  });
+});
+
+describe("makeStripeClient.cancelSubscription", () => {
+  it("DELETEs the subscription (immediate cancel) and sends prorate=false so Stripe adds NO credit of its own", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: { id: "sub_1", status: "canceled" } });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const out = await client.cancelSubscription({ subscriptionId: "sub_1", idempotencyKey: "k1" });
+
+    expect(calls[0]!.url).toBe("https://stripe.test/v1/subscriptions/sub_1");
+    expect(calls[0]!.init.method).toBe("DELETE");
+    const headers = calls[0]!.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe(`Bearer ${SECRET}`);
+    expect(headers["Stripe-Version"]).toBe(STRIPE_API_VERSION);
+    expect(headers["Idempotency-Key"]).toBe("k1");
+    // prorate=false: our refund is USAGE-based, so Stripe must not ALSO issue a time-based proration credit.
+    expect(new URLSearchParams(calls[0]!.init.body as string).get("prorate")).toBe("false");
+    expect(out).toEqual({ id: "sub_1", status: "canceled" });
+  });
+
+  it("throws a StripeError on a non-2xx", async () => {
+    const { impl } = fakeFetch({
+      status: 404,
+      body: { error: { message: "No such subscription", type: "invalid_request_error" } },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    await expect(client.cancelSubscription({ subscriptionId: "sub_x" })).rejects.toBeInstanceOf(
+      StripeError,
+    );
+  });
+});
+
+describe("makeStripeClient.createRefund", () => {
+  it("POSTs /v1/refunds with the charge, amount, and a REQUIRED idempotency key", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: { id: "re_1", status: "succeeded", amount: 950 },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const out = await client.createRefund({
+      charge: "ch_1",
+      amountMinorUnits: 950,
+      idempotencyKey: "refund:sub_1:2026-07-01",
+    });
+
+    expect(calls[0]!.url).toBe("https://stripe.test/v1/refunds");
+    expect(calls[0]!.init.method).toBe("POST");
+    const body = new URLSearchParams(calls[0]!.init.body as string);
+    expect(body.get("charge")).toBe("ch_1");
+    expect(body.get("amount")).toBe("950");
+    // A refund is NOT naturally idempotent — a retry without a key would move the money twice.
+    expect((calls[0]!.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      "refund:sub_1:2026-07-01",
+    );
+    expect(out).toEqual({ id: "re_1", status: "succeeded", amountMinorUnits: 950 });
+  });
+
+  it("REFUSES to send a non-positive amount (a zero/negative refund is a bug, not a no-op request)", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: {} });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    await expect(
+      client.createRefund({ charge: "ch_1", amountMinorUnits: 0, idempotencyKey: "k" }),
+    ).rejects.toThrow(/amount/i);
+    expect(calls).toHaveLength(0); // never reached the network
+  });
+});

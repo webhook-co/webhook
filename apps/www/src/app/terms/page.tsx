@@ -181,8 +181,10 @@ export default function TermsPage() {
           </p>
           <p>
             <strong>Cancellation.</strong> You can cancel anytime from your account. Cancellation
-            takes effect at the <strong>end of your current paid period</strong> — you keep access
-            until then, and you won't be charged again after that.
+            takes effect <strong>immediately</strong>: your subscription ends there and then, you
+            won't be charged again, and we refund the unused part of your prepaid plan fee as
+            described below. You return to the free tier — and because the free allowance is
+            one-time, capture stays paused if you've already spent it, until you resubscribe.
           </p>
           <p>
             <strong>Refunds.</strong> Because overage is billed in arrears, you only pay for what

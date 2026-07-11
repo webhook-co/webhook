@@ -770,14 +770,28 @@ export async function readOveragePolicy(tx: TenantTx): Promise<PausePolicy | nul
 
 /** The org's subscription id + base-price id + raw status (for the WS4 plan switch, which needs the
  *  `sub_…` id to call Stripe), or null if the org has no subscription. Tenant-RLS scoped. */
-export async function readActiveSubscription(
-  tx: TenantTx,
-): Promise<{ subscriptionId: string; plan: string; status: string } | null> {
+export async function readActiveSubscription(tx: TenantTx): Promise<{
+  subscriptionId: string;
+  plan: string;
+  status: string;
+  /** The INCLUDED event volume this subscription bought (null = unlimited). The cancellation refund divides
+   *  by it, and it is read from the subscription itself rather than the `org_limits` mirror — the mirror's
+   *  decrease-defer window can hold a different value mid-cycle, and a wrong denominator is wrong money. */
+  eventCap: number | null;
+} | null> {
   // One sub per org today, but order by most-recent so this stays deterministic if that ever changes.
-  const [row] = await tx<{ stripe_subscription_id: string; plan: string; status: string }[]>`
-    select stripe_subscription_id, plan, status
+  const [row] = await tx<
+    { stripe_subscription_id: string; plan: string; status: string; event_cap: string | null }[]
+  >`
+    select stripe_subscription_id, plan, status, event_cap
     from billing_subscriptions order by created_at desc limit 1`;
   return row
-    ? { subscriptionId: row.stripe_subscription_id, plan: row.plan, status: row.status }
+    ? {
+        subscriptionId: row.stripe_subscription_id,
+        plan: row.plan,
+        status: row.status,
+        // bigint arrives as a string from postgres.js; null stays null (unlimited).
+        eventCap: row.event_cap != null ? Number(row.event_cap) : null,
+      }
     : null;
 }

@@ -165,6 +165,31 @@ export interface StripeClient {
     prorationBehavior: "create_prorations" | "none" | "always_invoice";
     idempotencyKey?: string;
   }): Promise<StripeSubscription>;
+  /**
+   * The newest PAID invoice for a subscription, or null if it never billed (e.g. a trial). This is where the
+   * base fee's ACTUAL amount and the charge that took it both live — the refund reads both from here rather
+   * than from any committed figure (there are none: parseStripePlans rejects an `amount` key).
+   */
+  retrieveLatestPaidInvoice(subscriptionId: string): Promise<StripePaidInvoice | null>;
+  /**
+   * Cancel a subscription IMMEDIATELY (Stripe's DELETE). Sends `prorate=false`: the customer's refund is
+   * computed from USAGE (baseFeeRefundMinorUnits), so letting Stripe also issue its own time-based proration
+   * credit would pay them twice for the same unused period.
+   */
+  cancelSubscription(args: {
+    subscriptionId: string;
+    idempotencyKey?: string;
+  }): Promise<{ id: string; status: string }>;
+  /**
+   * Refund `amountMinorUnits` against a charge. `idempotencyKey` is REQUIRED, not optional: a refund is not
+   * naturally idempotent, and a retried request without one moves the money a second time.
+   */
+  createRefund(args: {
+    charge: string;
+    amountMinorUnits: number;
+    reason?: "requested_by_customer";
+    idempotencyKey: string;
+  }): Promise<StripeRefund>;
   /** Low-level: GET a Stripe path with a query object (no body). Throws StripeError on a non-2xx. */
   get<T = Record<string, unknown>>(path: string, query?: StripeParams): Promise<T>;
   /**
@@ -178,6 +203,32 @@ export interface StripeClient {
     endTime: number;
     valueGroupingWindow?: "hour" | "day";
   }): Promise<MeterEventSummary[]>;
+}
+
+/** One line of a Stripe invoice: the price it billed (null for a one-off/proration line) + its amount. */
+export interface StripeInvoiceLine {
+  readonly priceId: string | null;
+  readonly amountMinorUnits: number;
+}
+
+/**
+ * A PAID Stripe invoice — the only place the base fee's real amount exists (no money figure is committed to
+ * this repo), and the object carrying the charge the refund must be issued against.
+ */
+export interface StripePaidInvoice {
+  readonly id: string;
+  /** The charge that took the money. Null on a zero-value/credit-settled invoice → nothing to refund. */
+  readonly charge: string | null;
+  readonly paymentIntent: string | null;
+  readonly currency: string | null;
+  readonly lines: readonly StripeInvoiceLine[];
+}
+
+/** The result of moving money back to the customer. */
+export interface StripeRefund {
+  readonly id: string;
+  readonly status: string;
+  readonly amountMinorUnits: number;
 }
 
 /** One Stripe meter-event summary: the value Stripe aggregated over [startTime, endTime). */
@@ -217,7 +268,9 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
     return body as unknown as T;
   }
 
-  async function request<T>(
+  // A form-bodied write. Stripe takes params in the body for both POST and DELETE (cancel carries `prorate`).
+  async function sendForm<T>(
+    method: "POST" | "DELETE",
     path: string,
     params: StripeParams,
     idempotencyKey?: string,
@@ -229,11 +282,19 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
     };
     if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
     const res = await doFetch(`${base}/v1${path}`, {
-      method: "POST",
+      method,
       headers,
       body: stripeFormEncode(params),
     });
     return handleResponse<T>(res);
+  }
+
+  async function request<T>(
+    path: string,
+    params: StripeParams,
+    idempotencyKey?: string,
+  ): Promise<T> {
+    return sendForm<T>("POST", path, params, idempotencyKey);
   }
 
   // A GET carries NO body and NO Content-Type; the query goes in the URL. Reuses handleResponse.
@@ -338,6 +399,56 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         status: raw.status,
         items: (raw.items?.data ?? []).map((it) => ({ id: it.id, price: it.price?.id ?? "" })),
       };
+    },
+    async retrieveLatestPaidInvoice(subscriptionId) {
+      // status=paid: only money actually TAKEN can be given back. limit=1 + Stripe's newest-first ordering
+      // gives the invoice for the current period — the one that charged this period's base fee.
+      const body = await get<{
+        data?: Array<{
+          id: string;
+          charge?: string | null;
+          payment_intent?: string | null;
+          currency?: string | null;
+          lines?: { data?: Array<{ amount?: number; price?: { id?: string } | null }> };
+        }>;
+      }>("/invoices", { subscription: subscriptionId, status: "paid", limit: 1 });
+      const raw = body.data?.[0];
+      if (!raw) return null; // never billed (a trial, or a sub canceled before its first invoice)
+      return {
+        id: raw.id,
+        charge: raw.charge ?? null,
+        paymentIntent: raw.payment_intent ?? null,
+        currency: raw.currency ?? null,
+        lines: (raw.lines?.data ?? []).map((l) => ({
+          // A proration/one-off line carries no price — keep it (it still moved money) but leave it unmatched
+          // so the caller's base-price lookup can't accidentally bind to it.
+          priceId: l.price?.id ?? null,
+          amountMinorUnits: Number(l.amount ?? 0),
+        })),
+      };
+    },
+    async cancelSubscription({ subscriptionId, idempotencyKey }) {
+      const raw = await sendForm<{ id: string; status: string }>(
+        "DELETE",
+        `/subscriptions/${subscriptionId}`,
+        // prorate=false — we refund on USAGE, so Stripe must not also credit the unused TIME (double credit).
+        { prorate: false },
+        idempotencyKey,
+      );
+      return { id: raw.id, status: raw.status };
+    },
+    async createRefund({ charge, amountMinorUnits, reason, idempotencyKey }) {
+      // Guard in the client, not just the caller: a 0/negative/garbage amount reaching Stripe is a money bug,
+      // and this is the last place that can still refuse it. Fail loudly rather than send a nonsense request.
+      if (!Number.isInteger(amountMinorUnits) || amountMinorUnits <= 0) {
+        throw new Error("stripe: refund amount must be a positive integer of minor units");
+      }
+      const raw = await request<{ id: string; status: string; amount: number }>(
+        "/refunds",
+        { charge, amount: amountMinorUnits, reason },
+        idempotencyKey,
+      );
+      return { id: raw.id, status: raw.status, amountMinorUnits: Number(raw.amount) };
     },
     get,
     async listMeterEventSummaries({ meterId, customer, startTime, endTime, valueGroupingWindow }) {
