@@ -7,6 +7,10 @@
 //
 // Price per event FALLS as you climb (26k → 30k → 40k events per euro). That is the whole shape of the
 // ladder: upgrading must buy cheaper events, never dearer ones.
+//
+// The `retention` strings below must stay in step with what the engine actually ENFORCES —
+// packages/shared/src/retention.ts (PLAN_RETENTION_DAYS): Free 7d / Pro 30d / Scale 90d. Enterprise is
+// unlimited/contractual there (never auto-pruned); publicly we state "up to 1 year". Change one, change both.
 
 export interface Tier {
   readonly id: string;

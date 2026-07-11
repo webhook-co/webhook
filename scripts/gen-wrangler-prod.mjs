@@ -132,6 +132,10 @@ const APPS = {
       // data-lifecycle: the payload-purge drain's cross-org role. Unset for now, so the overlay strips
       // the @gen-optional block and the engine deploys dark until the role + Hyperdrive are provisioned.
       "HYPERDRIVE_PURGE_ID",
+      // data-lifecycle slice 2.3: the retention-prune drain's cross-org role. Unset for now, so the overlay
+      // strips the @gen-optional block and the engine deploys dark until the role + Hyperdrive are
+      // provisioned (which also clamps the meter-reconcile lookback — they activate together).
+      "HYPERDRIVE_RETENTION_ID",
     ],
   },
   api: {

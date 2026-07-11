@@ -9,7 +9,6 @@ import {
   CREDENTIAL_CACHE_TTL_SECONDS,
   DEFAULT_CAP_PRODUCER_LIMIT,
   DEFAULT_METER_RECONCILE_LIMIT,
-  DEFAULT_METER_RECONCILE_LOOKBACK_DAYS,
   DEFAULT_TRANSPORT_LIMIT,
   DEFAULT_TRANSPORT_LOOKBACK_DAYS,
   DEFAULT_TRANSPORT_SETTLE_LAG_MS,
@@ -51,11 +50,14 @@ import {
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
   billingEnabled,
+  FREE_RETENTION_DAYS,
+  reconcileLookbackDays,
   makeStripeClient,
   parseBillingMode,
   stripeKeyMatchesMode,
   parseFreeEventCap,
   parseSince,
+  readPayloadKey,
   readSecretBinding,
   USAGE_SETTLE_DAYS,
   type BoundedPayloadBody,
@@ -68,9 +70,16 @@ import {
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
+import {
+  claimRetentionOrgs,
+  deleteExpiredEvents,
+  listExpiringEvents,
+} from "@webhook-co/db/retention";
+
 import { runAnchorCron } from "./anchor-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
+import { runRetentionPruneCron } from "./retention-prune-cron";
 import {
   guardedDeliver,
   makeSignDelivery,
@@ -144,6 +153,11 @@ export interface Env {
   /** Hyperdrive config for the webhook_purge cross-org payload-purge drain (query caching off).
    *  Optional: absent until the purge role + Hyperdrive are provisioned, so the drain ships dark. */
   HYPERDRIVE_PURGE?: Hyperdrive;
+  /** Hyperdrive config for the webhook_retention cross-org retention-prune drain (query caching off).
+   *  Optional: absent until the retention role + Hyperdrive are provisioned, so the prune ships dark.
+   *  Its presence ALSO clamps the meter-reconcile lookback strictly inside the Free window (they must
+   *  activate together — see runMeteringReconcileCron + reconcileLookbackDays). */
+  HYPERDRIVE_RETENTION?: Hyperdrive;
   /** Hyperdrive config for the webhook_meter cross-org metering-enumeration read (query caching off). */
   HYPERDRIVE_METER: Hyperdrive;
   /**
@@ -805,6 +819,15 @@ export default {
         console.log(JSON.stringify({ message: "payload purge cron failed", error: String(err) })),
       ),
     );
+    // Retention prune (data-lifecycle slice 2.3): delete each org's events (+ their R2 payload bodies) once
+    // they age past the org's retention window (Free 7d; paid orgs excluded until per-plan windows land).
+    // Dark until the retention role + Hyperdrive are provisioned. Independent of the others — a failure must
+    // not sink them. NB: provisioning it also clamps the reconcile lookback (runMeteringReconcileCron).
+    ctx.waitUntil(
+      runRetentionPruneDrainCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "retention prune cron failed", error: String(err) })),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -1118,7 +1141,10 @@ async function runMeteringReconcileCron(env: Env): Promise<void> {
     const result = await reconcileMeteringUsage({
       audit,
       now: Date.now(),
-      lookbackDays: DEFAULT_METER_RECONCILE_LOOKBACK_DAYS,
+      // Money-guard coupling (slice 2.3): once the retention prune is active (its Hyperdrive is bound),
+      // clamp the lookback strictly INSIDE the Free window so we never recount a day whose events may have
+      // been pruned and false-alarm. Wide (35d) while the prune is dark. reconcileLookbackDays owns the math.
+      lookbackDays: reconcileLookbackDays(!!env.HYPERDRIVE_RETENTION),
       limit: DEFAULT_METER_RECONCILE_LIMIT,
       log,
     });
@@ -1255,6 +1281,54 @@ async function runPayloadPurgeDrainCron(env: Env): Promise<void> {
       jobLimit: PURGE_JOB_LIMIT,
       batchesPerJob: PURGE_BATCHES_PER_JOB,
       pageSize: PURGE_PAGE_SIZE,
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+    });
+  } finally {
+    await sql.end();
+  }
+}
+
+// Retention-prune drain budget: how many orgs to service and how much work per org per tick. Bounded so a
+// large backlog never blows the Workers per-invocation subrequest ceiling — the rest resumes next tick, and
+// the scheduled() budget is SHARED with the other crons. Worst case per tick ≈ orgLimit × batchesPerOrg ×
+// (1 list + 1 R2 delete + 1 events delete) = 50 × 4 × 3 = 600 binding ops, under the 1000 ceiling with
+// margin. On first activation (retention was infinite, so every Free org has a large backlog) the drain
+// spans many hourly ticks by design rather than maxing out a single one. PAGE_SIZE is also the R2
+// batch-delete size (<= 1000, R2's per-call ceiling).
+const RETENTION_ORG_LIMIT = 50;
+const RETENTION_BATCHES_PER_ORG = 4;
+const RETENTION_PAGE_SIZE = 1000;
+
+/**
+ * Wire the real deps and run one retention-prune pass (data-lifecycle slice 2.3). Skips (dark) unless the
+ * webhook_retention Hyperdrive is provisioned — activating it ALSO clamps the meter-reconcile lookback (see
+ * runMeteringReconcileCron), so the money-guard never recounts a pruned day. One short-lived connection as
+ * webhook_retention (its role-targeted policies + column grants scope it to the prune keys). For each org
+ * past its window (paid orgs excluded at the claim + re-checked atomically in the DELETE), it deletes the
+ * event rows first (cascading delivery_attempts) then purges R2 for only the ids the delete returned. Free =
+ * 7 days while billing is dark; per-plan windows land with billing activation.
+ */
+async function runRetentionPruneDrainCron(env: Env): Promise<void> {
+  if (!env.HYPERDRIVE_RETENTION) return; // dark until the retention role + Hyperdrive are provisioned
+  const sql = createClient(env.HYPERDRIVE_RETENTION.connectionString);
+  try {
+    await runRetentionPruneCron({
+      claimOrgs: (retentionDays, limit) => claimRetentionOrgs(sql, retentionDays, limit),
+      listExpiring: (orgId, retentionDays, limit) =>
+        listExpiringEvents(sql, orgId, retentionDays, limit),
+      // Principal fence (H1): only act on a stored key that matches its own org/endpoint prefix. Same
+      // check every delivery/replay/read path applies — never delete an object whose key is corrupt or
+      // points at another tenant.
+      validateKey: (orgId, endpointId, r2Key) => readPayloadKey(orgId, endpointId, r2Key) !== null,
+      // The engine is the sole R2 principal — it deletes each expiring event's body from its own
+      // R2_PAYLOADS binding (idempotent: an already-gone key is a no-op).
+      deleteR2: (keys) => env.R2_PAYLOADS.delete(keys),
+      deleteEvents: (orgId, retentionDays, ids) =>
+        deleteExpiredEvents(sql, orgId, retentionDays, ids),
+      retentionDays: FREE_RETENTION_DAYS,
+      orgLimit: RETENTION_ORG_LIMIT,
+      batchesPerOrg: RETENTION_BATCHES_PER_ORG,
+      pageSize: RETENTION_PAGE_SIZE,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
   } finally {

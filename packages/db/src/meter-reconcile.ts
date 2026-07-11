@@ -8,9 +8,11 @@
 // Independence is the whole point: the rollup COUNTS under webhook_app per-org; this recount reads events
 // cross-org under a SEPARATE role, so a shared bug can't hide on both sides. Only finalized days are checked
 // (an open day is still mutating); the recount is strictly per-org (grouped by org_id, so one tenant's
-// events never inflate another's). NOTE: events retention is INFINITE today (no prune job), so a recount can
-// never undershoot a frozen count — every drift is genuine. WHEN a prune/TTL is added, `lookbackDays` MUST
-// stay within the retention window, or a pruned day would recount low and false-alarm.
+// events never inflate another's). NOTE: `lookbackDays` MUST stay within the events retention window — a
+// recount of a day whose events were pruned would undershoot the frozen count and false-alarm. This is now
+// LIVE: the retention prune (slice 2.3) deletes events past each org's window, and the engine caller clamps
+// this lookback strictly inside the Free window whenever the prune is active (reconcileLookbackDays, keyed on
+// the retention Hyperdrive being bound) so a pruned day is never reconciled. See packages/shared/retention.ts.
 
 import type { Sql } from "./client";
 
