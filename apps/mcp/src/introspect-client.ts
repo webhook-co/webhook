@@ -22,9 +22,21 @@ export interface IntrospectVerifyDeps {
 }
 
 /**
+ * Collapse a single trailing slash so the two RFC-3986-equivalent origin forms compare equal. The provider
+ * mints the opaque token's audience from the token request's `resource`, and the official MCP SDK sends
+ * `https://mcp.webhook.co/` there (`new URL(origin).href` appends `/`) — so the introspected audience arrives
+ * with a trailing slash while our canonical resource is path-less. The MCP spec treats the forms as
+ * equivalent; collapsing one trailing slash never widens the set (a different origin still mismatches).
+ */
+function canonicalAudience(value: string): string {
+  return value.endsWith("/") ? value.slice(0, -1) : value;
+}
+
+/**
  * mcp honors an opaque token only if it is bound EXCLUSIVELY to this resource. A token whose audience is
  * absent, differs, OR additionally names another resource is rejected: a multi-resource token would also
  * be valid at api. — a parallel credential we don't accept here (RFC 8707 + R4). Throws → 401, never coerced.
+ * The single-resource audience is compared after collapsing a trailing slash (the MCP-SDK form).
  */
 function assertSoleAudience(tokenAudience: string | string[] | undefined, expected: string): void {
   const audiences =
@@ -33,7 +45,10 @@ function assertSoleAudience(tokenAudience: string | string[] | undefined, expect
       : Array.isArray(tokenAudience)
         ? tokenAudience
         : [tokenAudience];
-  if (audiences.length !== 1 || audiences[0] !== expected) {
+  if (
+    audiences.length !== 1 ||
+    canonicalAudience(audiences[0] ?? "") !== canonicalAudience(expected)
+  ) {
     throw new AudienceMismatchError(
       expected,
       audiences.length === 0 ? undefined : audiences.join(","),

@@ -42,6 +42,29 @@ describe("makeIntrospectVerifyBearer", () => {
     expect(await verify("tok", RESOURCE)).toEqual({ orgId: "org_1", scopes: ["events:read"] });
   });
 
+  it("accepts the MCP-SDK trailing-slash audience (the reconnect-rejection fix)", async () => {
+    // The provider mints the opaque token's audience from the token request's `resource`, and the MCP SDK
+    // sends https://mcp.webhook.co/ (new URL(origin).href). Introspection surfaces it verbatim; mcp must
+    // treat the trailing-slash form as this resource, or the token is rejected on reconnect.
+    const verify = introspectsTo({
+      active: true,
+      orgId: "org_1",
+      scopes: ["events:read"],
+      audience: "https://mcp.webhook.co/",
+    });
+    expect(await verify("tok", RESOURCE)).toEqual({ orgId: "org_1", scopes: ["events:read"] });
+  });
+
+  it("still rejects a DIFFERENT origin even with a trailing slash (no widening)", async () => {
+    const verify = introspectsTo({
+      active: true,
+      orgId: "org_1",
+      scopes: ["events:read"],
+      audience: "https://api.webhook.co/",
+    });
+    await expect(verify("tok", RESOURCE)).rejects.toBeInstanceOf(AudienceMismatchError);
+  });
+
   it("carries a userId through when the principal has one", async () => {
     const verify = introspectsTo({
       active: true,
