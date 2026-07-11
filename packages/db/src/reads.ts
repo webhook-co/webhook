@@ -358,6 +358,7 @@ export async function listEvents(
            ${verificationStateColumn(tx)}, ${orderKeyCol(tx, "received_at")}
     from events
     where endpoint_id = ${endpointId}
+    and deleted_at is null
     ${provider && provider.length > 0 ? tx`and provider in ${tx([...provider])}` : tx``}
     ${receivedAfter ? tx`and received_at >= ${receivedAfter}` : tx``}
     ${receivedBefore ? tx`and received_at < ${receivedBefore}` : tx``}
@@ -400,6 +401,7 @@ async function tailEventRows(tx: TenantTx, opts: TailEventsOptions): Promise<Eve
            ${verificationStateColumn(tx)}, ${orderKeyCol(tx, "received_at")}
     from events
     where endpoint_id = ${endpointId}
+      and deleted_at is null
       and ${belowWatermark(tx)}
       ${sinceCursor ? keysetAfter(tx, sinceCursor) : tx``}
     order by received_at asc, id asc
@@ -453,6 +455,7 @@ export async function latestTailCursor(
     select ${orderKeyCol(tx, "received_at")}, id
     from events
     where endpoint_id = ${opts.endpointId}
+      and deleted_at is null
       and ${belowWatermark(tx)}
     order by received_at desc, id desc
     limit 1`;
@@ -481,7 +484,7 @@ export async function cursorBelowOldest(
   const [row] = await tx<{ expired: boolean | null }[]>`
     select (${cursor.orderKey}::text::timestamptz) < min(received_at) as expired
     from events
-    where endpoint_id = ${endpointId}`;
+    where endpoint_id = ${endpointId} and deleted_at is null`;
   // min() is null for an endpoint with no events → `< null` is null → not expired (empty tail).
   return row?.expired === true;
 }
@@ -508,6 +511,7 @@ export async function tailMeta(
       select 1
       from events
       where endpoint_id = ${endpointId}
+        and deleted_at is null
         and ${belowWatermark(tx)}
         ${sinceCursor ? keysetAfter(tx, sinceCursor) : tx``}
       limit ${cap + 1}
@@ -548,11 +552,15 @@ export async function resolveSince(
 }
 
 export async function getEvent(tx: TenantTx, id: string): Promise<Event | null> {
+  // `deleted_at is null` hides a tombstoned event (S3). getEvent is the single most load-bearing event read
+  // — events.get, events.getPayload, replay, and every web payload read funnel through it — so this one
+  // filter makes a deleted event inaccessible across four surfaces. A tombstone's row survives (metering
+  // count(*) stays stable) but must never surface its (redacted) content.
   const [r] = await tx<EventRow[]>`
     select id, org_id, endpoint_id, received_at, provider, dedup_key, dedup_strategy, verified,
            payload_r2_key, payload_bytes, content_type, headers, provider_event_id, external_id,
            verification, method
-    from events where id = ${id}`;
+    from events where id = ${id} and deleted_at is null`;
   if (!r) return null;
   return EventSchema.parse({
     id: r.id,

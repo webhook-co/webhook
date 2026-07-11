@@ -2,7 +2,9 @@ import { authorizeBearer, type BearerAuthzDeps } from "@webhook-co/contract";
 import {
   advancePurgeJob,
   API_RESOURCE,
+  claimEventPurgeJobs,
   claimPurgeJobs,
+  completeEventPurgeJob,
   createClient,
   createCredentialHasherFromBase64,
   createIngestResolver,
@@ -76,6 +78,7 @@ import {
 } from "@webhook-co/db/retention";
 
 import { runAnchorCron } from "./anchor-cron";
+import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
 import { runRetentionPruneCron } from "./retention-prune-cron";
@@ -827,6 +830,16 @@ export default {
         console.log(JSON.stringify({ message: "retention prune cron failed", error: String(err) })),
       ),
     );
+    // Event-payload purge (S3): delete the R2 body of each user-tombstoned event, then mark the job done.
+    // Reuses the webhook_purge role/Hyperdrive (0058 extended it to event_payload_purge). Dark until that
+    // Hyperdrive is provisioned; independent of the others — a failure must not sink them.
+    ctx.waitUntil(
+      runEventPayloadPurgeDrainCron(env).catch((err: unknown) =>
+        console.log(
+          JSON.stringify({ message: "event payload purge cron failed", error: String(err) }),
+        ),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -947,9 +960,12 @@ export class PayloadReader extends WorkerEntrypoint<Env> {
               tenant,
               orgId,
               (tx) =>
+                // `deleted_at is null` self-fences this raw-id body lookup (S3): a tombstoned event's body is
+                // redacted + being purged, and this RPC boundary reads by id, so it must never resolve one —
+                // even though its sole caller (triggers.wait) already filters upstream (defense in depth).
                 tx<PayloadEventRow[]>`
                 select id, endpoint_id, payload_r2_key, payload_bytes, content_type
-                from events where id in ${tx([...eventIds])}`,
+                from events where id in ${tx([...eventIds])} and deleted_at is null`,
             );
           } finally {
             await tenant.end({ timeout: 5 }).catch(() => {});
@@ -1314,6 +1330,32 @@ async function runPayloadPurgeDrainCron(env: Env): Promise<void> {
       jobLimit: PURGE_JOB_LIMIT,
       batchesPerJob: PURGE_BATCHES_PER_JOB,
       pageSize: PURGE_PAGE_SIZE,
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+    });
+  } finally {
+    await sql.end();
+  }
+}
+
+/** Max event-purge jobs serviced per tick — bounded so the shared invocation budget isn't blown; the rest
+ *  resumes next tick (each job is 1 R2 delete + 1 completion write). */
+const EVENT_PURGE_JOB_LIMIT = 200;
+
+async function runEventPayloadPurgeDrainCron(env: Env): Promise<void> {
+  if (!env.HYPERDRIVE_PURGE) return; // dark until the purge role + Hyperdrive are provisioned
+  // Same short-lived webhook_purge connection posture as the org purge: its role-targeted SELECT +
+  // column-scoped UPDATE on event_payload_purge (0058) are the sole bound (no tenant-table access).
+  const sql = createClient(env.HYPERDRIVE_PURGE.connectionString);
+  try {
+    await runEventPayloadPurgeCron({
+      claim: (n) => claimEventPurgeJobs(sql, n),
+      // The stored key is fenced to its own org+endpoint prefix before delete (readPayloadKey, H1) — a
+      // poisoned/cross-tenant key returns null → we skip + alarm, never deleting a victim's object.
+      validateKey: (orgId, endpointId, r2Key) => readPayloadKey(orgId, endpointId, r2Key) !== null,
+      // The engine is the sole R2 delete principal — it removes the tombstoned event's body directly.
+      deleteR2: (key) => env.R2_PAYLOADS.delete(key),
+      complete: (eventId) => completeEventPurgeJob(sql, eventId),
+      limit: EVENT_PURGE_JOB_LIMIT,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
   } finally {
