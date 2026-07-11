@@ -2,18 +2,19 @@
 // unit-tests with fakes; the engine's scheduled() handler wires the real deps (a webhook_retention
 // cross-org DB connection that enumerates aged events + deletes them, and the R2_PAYLOADS bucket).
 //
-// Each org's captured events are deleted once they age past that org's retention window (Free = 7 days;
-// paid orgs are EXCLUDED at the claim step until per-plan windows are wired at billing activation). For
-// every expiring event the payload BODY in R2 must go too — the R2 key is content-addressed (it folds in the
-// body hash), so it is read from the stored row.
+// Each org's captured events are deleted once they age past THAT ORG'S OWN retention window — Free 7 days,
+// Pro 30, Scale 90, or unlimited (never pruned). The window is never passed in from here: it lives on the
+// org's row (`orgs.retention_days`, migration 0054) and is enforced by the DELETE policy itself. For every
+// expiring event the payload BODY in R2 must go too — the R2 key is content-addressed (it folds in the body
+// hash), so it is read from the stored row.
 //
-// Ordering is load-bearing: delete the ROWS first (an atomic DELETE that re-checks age + the entitled-org
-// anti-join), then delete R2 for ONLY the ids the DELETE actually removed. This closes the entitlement
-// TOCTOU — if an org gains a paid subscription between listing and deleting, the anti-join returns fewer/zero
-// ids and its payload bodies are never touched. The cost is a benign, sweepable R2 orphan if we crash
-// between the row delete and the R2 delete — strictly preferable to irreversibly destroying a still-paying
-// customer's payloads (deleting R2 first would do exactly that on an entitlement flip). Bounded per tick so
-// a large backlog never blows the Workers subrequest/CPU ceiling — the remainder resumes next tick.
+// Ordering is load-bearing: delete the ROWS first (an atomic DELETE that re-reads the org's window), then
+// delete R2 for ONLY the ids the DELETE actually removed. This closes the TOCTOU on a window that GREW
+// mid-tick — if an org upgrades between listing and deleting, the DELETE returns fewer/zero ids and those
+// payload bodies are never touched. The cost is a benign, sweepable R2 orphan if we crash between the row
+// delete and the R2 delete — strictly preferable to irreversibly destroying data the customer just paid to
+// keep (deleting R2 first would do exactly that on an upgrade). Bounded per tick so a large backlog never
+// blows the Workers subrequest/CPU ceiling — the remainder resumes next tick.
 
 /** One event whose payload body must be purged from R2, then whose row is deleted. */
 export interface ExpiringEvent {
@@ -24,14 +25,10 @@ export interface ExpiringEvent {
 }
 
 export interface RetentionPruneCronDeps {
-  /** The orgs with events older than `retentionDays` that are eligible to prune (paid orgs excluded). */
-  claimOrgs: (retentionDays: number, limit: number) => Promise<readonly string[]>;
+  /** The orgs holding events aged past THEIR OWN plan's retention window (read from the row, not passed in). */
+  claimOrgs: (limit: number) => Promise<readonly string[]>;
   /** A page of an org's expiring events (id + endpoint + the R2 key to purge), oldest-first, up to `limit`. */
-  listExpiring: (
-    orgId: string,
-    retentionDays: number,
-    limit: number,
-  ) => Promise<readonly ExpiringEvent[]>;
+  listExpiring: (orgId: string, limit: number) => Promise<readonly ExpiringEvent[]>;
   /**
    * Validate that a stored R2 key belongs to (orgId, endpointId) — the readPayloadKey principal fence (H1).
    * A destructive path must NOT delete an object whose key doesn't match its own prefix (a corrupted or
@@ -41,14 +38,12 @@ export interface RetentionPruneCronDeps {
   /** Delete the given R2 payload objects (idempotent — an absent key is a no-op). */
   deleteR2: (keys: string[]) => Promise<void>;
   /**
-   * Delete the given event rows for an org past `retentionDays` (cascades delivery_attempts) and return the
-   * ids ACTUALLY deleted. The DELETE re-asserts age + the entitled-org anti-join, so a paid org that became
-   * entitled mid-tick has FEWER (or zero) ids returned — the caller then purges R2 only for those, never a
-   * still-paying org's body. `retentionDays` flows from the single deps.retentionDays (no separate constant).
+   * Delete the given event rows for an org (cascades delivery_attempts) and return the ids ACTUALLY deleted.
+   * The DELETE re-asserts the org's CURRENT window, re-read from its row — so an upgrade that lengthened the
+   * window mid-tick returns FEWER (or zero) ids. The caller purges R2 only for those, and therefore can never
+   * destroy a payload body whose row still exists.
    */
-  deleteEvents: (orgId: string, retentionDays: number, ids: string[]) => Promise<readonly string[]>;
-  /** The retention window in days (Free = 7 while billing is dark). */
-  retentionDays: number;
+  deleteEvents: (orgId: string, ids: string[]) => Promise<readonly string[]>;
   /** Max orgs to service per tick. */
   orgLimit: number;
   /** Max list→purge→delete batches per org per tick; the rest resumes next tick. */
@@ -72,13 +67,13 @@ export interface RetentionPruneCronResult {
 export async function runRetentionPruneCron(
   deps: RetentionPruneCronDeps,
 ): Promise<RetentionPruneCronResult> {
-  const orgs = await deps.claimOrgs(deps.retentionDays, deps.orgLimit);
+  const orgs = await deps.claimOrgs(deps.orgLimit);
   let deleted = 0;
   let fenced = 0; // events skipped because their stored R2 key failed the principal fence
 
   for (const orgId of orgs) {
     for (let batch = 0; batch < deps.batchesPerOrg; batch++) {
-      const page = await deps.listExpiring(orgId, deps.retentionDays, deps.pageSize);
+      const page = await deps.listExpiring(orgId, deps.pageSize);
       if (page.length === 0) break; // org drained
 
       // Fence every stored key to this org+endpoint before touching R2. A key that doesn't match its own
@@ -93,15 +88,14 @@ export async function runRetentionPruneCron(
       }
 
       if (valid.length > 0) {
-        // ROWS first, then R2 for ONLY the ids the DELETE actually removed. The DELETE re-checks age + the
-        // entitled-org anti-join, so if an org became entitled between listing and now, it returns fewer (or
-        // zero) ids and that org's payload bodies are never touched. The tradeoff vs deleting R2 first is a
-        // benign, sweepable R2 ORPHAN if we crash between the row delete and the R2 delete — strictly
-        // preferable to irreversibly destroying a still-paying customer's payloads.
+        // ROWS first, then R2 for ONLY the ids the DELETE actually removed. The DELETE re-reads the org's
+        // window, so if the org upgraded between listing and now (a LONGER window), it returns fewer (or zero)
+        // ids and those payload bodies are never touched. The tradeoff vs deleting R2 first is a benign,
+        // sweepable R2 ORPHAN if we crash between the row delete and the R2 delete — strictly preferable to
+        // irreversibly destroying data the customer just paid to keep.
         const deletedIds = new Set(
           await deps.deleteEvents(
             orgId,
-            deps.retentionDays,
             valid.map((e) => e.id),
           ),
         );

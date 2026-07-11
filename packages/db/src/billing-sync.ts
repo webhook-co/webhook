@@ -5,7 +5,7 @@
 // idempotent per subscription. Cap changes are increase-NOW / decrease-DEFER (never instant-pause a paying
 // customer — a decrease is applied at the period boundary by S4.5b-2's invoice.paid handler).
 
-import { isBillingActive } from "@webhook-co/shared";
+import { FREE_RETENTION_DAYS, isBillingActive } from "@webhook-co/shared";
 
 import { withTenant, type Sql } from "./client";
 
@@ -16,6 +16,9 @@ export interface ParsedSubscription {
   readonly customerId: string;
   readonly plan: string;
   readonly status: string;
+  /** The plan's retention window in days, from the price metadata. `null` = unlimited (never pruned).
+   *  Mirrored onto `orgs.retention_days`, which is what the prune's DELETE policy enforces (0054). */
+  readonly retentionDays: number | null;
   /**
    * The plan's included-event cap from the price metadata (config, never in the repo). A positive integer =
    * that cap; `null` = EXPLICIT unlimited (`event_cap="unlimited"`); `undefined` = UNSPECIFIED (absent or
@@ -69,6 +72,26 @@ function parseCapFromPriceMetadata(metadata: unknown): number | null | undefined
   return n > 0 ? n : undefined; // 0/negative is not a valid cap
 }
 
+/**
+ * The plan's RETENTION WINDOW, in days, from the price metadata (`retention_days`). Mirrors the event_cap
+ * parser above, but FAILS IN THE OPPOSITE DIRECTION — and that asymmetry is the whole point.
+ *
+ * For a CAP, the dangerous mistake is granting more than was paid for, so an unparseable value means
+ * "change nothing". For RETENTION, the dangerous mistake is DELETING A PAYING CUSTOMER'S DATA TOO SOON — so
+ * an absent, unparseable, or explicitly-"unlimited" value all resolve to `null` = UNLIMITED (never pruned).
+ * A misconfigured price therefore over-retains, which costs us storage; the alternative would silently
+ * destroy a Pro customer's data at the Free 7-day window because of a typo in Stripe. Over-retention is the
+ * safe miss; premature deletion is not recoverable.
+ */
+function parseRetentionFromPriceMetadata(metadata: unknown): number | null {
+  if (!metadata || typeof metadata !== "object") return null;
+  const raw = (metadata as Record<string, unknown>).retention_days;
+  if (typeof raw !== "string") return null; // absent → unlimited (safe)
+  if (!/^\d+$/.test(raw)) return null; // "unlimited" or garbage → unlimited (safe)
+  const n = Number(raw);
+  return n > 0 ? n : null;
+}
+
 /** Parse a Stripe subscription object into the mirror fields, or null if a required field is missing. */
 export function parseSubscriptionObject(obj: Record<string, unknown>): ParsedSubscription | null {
   const orgId = resolveOrgId(obj);
@@ -104,6 +127,7 @@ export function parseSubscriptionObject(obj: Record<string, unknown>): ParsedSub
     // subscription — base first, overage second — so a paying customer kept the Free cap while the
     // fail-closed path reported "unspecified". Scan every item.
     eventCap: capFromAnyItem(obj.items),
+    retentionDays: retentionFromAnyItem(obj.items),
     currentPeriodStartIso: new Date(cps * 1000).toISOString(),
     currentPeriodEndIso: new Date(cpe * 1000).toISOString(),
     cancelAtPeriodEnd: obj.cancel_at_period_end === true,
@@ -133,6 +157,19 @@ function capFromAnyItem(items: unknown): number | null | undefined {
     if (cap === null) seen = null; // explicit unlimited; keep scanning for a concrete cap
   }
   return seen;
+}
+
+/**
+ * The retention window across a subscription's items. A CONCRETE number of days on any item wins (the base
+ * price carries it); if no item names one, the answer is `null` = unlimited — over-retain rather than risk
+ * deleting a payer's data at the Free window. See parseRetentionFromPriceMetadata.
+ */
+function retentionFromAnyItem(items: unknown): number | null {
+  for (const price of itemPrices(items)) {
+    const days = parseRetentionFromPriceMetadata(price.metadata);
+    if (typeof days === "number") return days;
+  }
+  return null;
 }
 
 /** The LICENSED (flat base) price id — the thing a human calls "the plan". Falls back to the first item. */
@@ -257,8 +294,24 @@ export async function applySubscriptionUpsert(
       // or a fresh subscribe) re-establishes the cap via the mirror below, since `current` is then undefined.
       if (!isBillingActive(sub.status)) {
         await tx`delete from org_limits`; // back to the injected Free default
+        // ...and back to the FREE retention window. Their plan no longer entitles them to the longer one, so
+        // data past the Free window becomes prunable. The Terms + Privacy disclose exactly this.
+        await tx`update orgs set retention_days = ${FREE_RETENTION_DAYS} where id = ${sub.orgId}`;
         return "applied";
       }
+
+      // Retention mirror — the window the prune's DELETE policy (0054) enforces. Unlike the cap, this is
+      // written UNCONDITIONALLY and immediately, in BOTH directions:
+      //   · an INCREASE (Free 7 → Pro 30) must land at once, or we would keep deleting a new customer's data
+      //     at the Free window while they are paying for a longer one — unrecoverable;
+      //   · a DECREASE (Scale 90 → Pro 30) also lands at once. There is no "defer to period end" subtlety to
+      //     protect here: the plan change itself is already deferred to the period end (ADR-0112 schedules
+      //     downgrades), so by the time this fires the customer IS on the smaller plan.
+      // `null` = unlimited (never pruned). See parseRetentionFromPriceMetadata for why an unparseable value
+      // resolves to unlimited rather than to the Free window.
+      // `?? null` is defensive: `undefined` must never reach this column. A missing value means "no window
+      // we can trust" and resolves to unlimited (never pruned), never to a short one — see the parser.
+      await tx`update orgs set retention_days = ${sub.retentionDays ?? null} where id = ${sub.orgId}`;
 
       // Cap mirror — increase-now/decrease-defer — ONLY for a specified cap. Unspecified (undefined) is
       // fail-closed: leave the existing/Free cap untouched rather than grant unlimited from a bad price config.
@@ -302,6 +355,9 @@ export async function applySubscriptionDeleted(
       returning org_id`;
     if (applied.length > 0) {
       await tx`delete from org_limits`; // back to the injected Free default
+      // Back to the FREE retention window too: cancelling returns the org to the free tier, and the free tier
+      // has a 7-day window. Data older than that becomes prunable. Disclosed in the Terms + Privacy.
+      await tx`update orgs set retention_days = ${FREE_RETENTION_DAYS} where id = ${args.orgId}`;
       return "applied";
     }
     // No row updated: either there is no subscription (nothing to downgrade → idempotent "applied"), or a

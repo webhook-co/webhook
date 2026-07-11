@@ -17,6 +17,8 @@ import {
   isSelfServePlan,
   stripeKeyMatchesMode,
   type BillingSubscriptionSummary,
+  isPlanDowngrade,
+  pendingPlanChangeFromPhases,
 } from "./billing";
 
 describe("planIdForBasePrice + billingDisplayFromSubscription (current-plan card core)", () => {
@@ -379,5 +381,72 @@ describe("stripeKeyMatchesMode — a live key must never run in test mode, and v
       expect(stripeKeyMatchesMode("live", bad)).toBe(false);
       expect(stripeKeyMatchesMode("test", bad)).toBe(false);
     }
+  });
+});
+
+describe("isPlanDowngrade", () => {
+  // Direction decides the money path: an UPGRADE applies immediately with a prorated charge (a customer
+  // hitting their cap needs the headroom now), while a DOWNGRADE is SCHEDULED for the end of the period —
+  // they keep what they paid for, and no money ever flows backward. Getting the direction wrong would either
+  // strand an upgrading customer at their cap, or hand a downgrading one an unearned credit.
+  it("scale → pro is a downgrade", () => {
+    expect(isPlanDowngrade("scale", "pro")).toBe(true);
+  });
+
+  it("pro → scale is NOT a downgrade (an upgrade applies immediately)", () => {
+    expect(isPlanDowngrade("pro", "scale")).toBe(false);
+  });
+
+  it("the same plan is not a downgrade", () => {
+    expect(isPlanDowngrade("pro", "pro")).toBe(false);
+  });
+
+  it("fails CLOSED on an unknown plan — treat as a downgrade, so we never auto-charge on a guess", () => {
+    // An unrecognised tier must never take the immediate-CHARGE path on a guess. Scheduling is the safe
+    // default: the worst case is a customer waits until renewal, not that we bill them for something wrong.
+    expect(isPlanDowngrade("mystery", "pro")).toBe(true);
+    expect(isPlanDowngrade("pro", "mystery")).toBe(true);
+  });
+});
+
+describe("pendingPlanChangeFromPhases", () => {
+  const PLANS = {
+    pro: { base: "price_base_pro", overage: "price_over_pro" },
+    scale: { base: "price_base_scale", overage: "price_over_scale" },
+  };
+  const NOW = 1_751_000_000; // inside phase 0
+
+  const PHASES = [
+    { startDate: 1_750_000_000, endDate: 1_752_000_000, items: [{ price: "price_base_scale" }] },
+    { startDate: 1_752_000_000, items: [{ price: "price_base_pro" }] },
+  ];
+
+  it("reports the FUTURE phase's plan and when it starts", () => {
+    expect(pendingPlanChangeFromPhases(PHASES, PLANS, NOW)).toEqual({
+      plan: "pro",
+      effectiveAt: 1_752_000_000,
+    });
+  });
+
+  it("returns null once the future phase has actually started (it's the current plan now, not pending)", () => {
+    expect(pendingPlanChangeFromPhases(PHASES, PLANS, 1_752_000_001)).toBeNull();
+  });
+
+  it("returns null for a schedule with only the current phase (no change booked)", () => {
+    expect(pendingPlanChangeFromPhases([PHASES[0]!], PLANS, NOW)).toBeNull();
+  });
+
+  it("returns null when the future phase is on a price we can't map (legacy) — never guess a label", () => {
+    const phases = [PHASES[0]!, { startDate: 1_752_000_000, items: [{ price: "price_legacy" }] }];
+    expect(pendingPlanChangeFromPhases(phases, PLANS, NOW)).toBeNull();
+  });
+
+  it("ignores a future phase with no start date (nothing to show a date for)", () => {
+    const phases = [PHASES[0]!, { items: [{ price: "price_base_pro" }] }];
+    expect(pendingPlanChangeFromPhases(phases, PLANS, NOW)).toBeNull();
+  });
+
+  it("returns null on empty phases", () => {
+    expect(pendingPlanChangeFromPhases([], PLANS, NOW)).toBeNull();
   });
 });

@@ -1,7 +1,12 @@
 import "server-only";
 
 import { withTenant } from "@webhook-co/db/client";
-import { readBillingCustomerId, readBillingSummary, readOveragePolicy } from "@webhook-co/db/reads";
+import {
+  readActiveSubscription,
+  readBillingCustomerId,
+  readBillingSummary,
+  readOveragePolicy,
+} from "@webhook-co/db/reads";
 import {
   billingDisplayFromSubscription,
   billingEnabled,
@@ -10,12 +15,15 @@ import {
   isLiveSubscriptionStatus,
   isSelfServePlan,
   makeStripeClient,
+  pendingPlanChangeFromPhases,
   SELF_SERVE_PLAN_IDS,
   stripeKeyMatchesMode,
   type BillingDisplay,
   type BillingSubscriptionSummary,
+  type PendingPlanChange,
   type SelfServePlanId,
   type StripeClient,
+  type StripePlans,
 } from "@webhook-co/shared";
 
 import { logActionError } from "./action-log";
@@ -52,6 +60,8 @@ async function readOrgBilling(
 ): Promise<{
   customerId: string | null;
   sub: BillingSubscriptionSummary | null;
+  /** The Stripe subscription id — needed to read back a booked downgrade from its schedule. */
+  subscriptionId: string | null;
   overagePolicy: "pause" | "allow" | null;
   role: string | null;
 }> {
@@ -59,6 +69,7 @@ async function readOrgBilling(
     withTenant(app, orgId, async (tx) => ({
       customerId: await readBillingCustomerId(tx),
       sub: await readBillingSummary(tx),
+      subscriptionId: (await readActiveSubscription(tx))?.subscriptionId ?? null,
       overagePolicy: await readOveragePolicy(tx),
       role: userId
         ? ((
@@ -176,6 +187,9 @@ export interface BillingView {
   /** The self-serve plans this org can SWITCH to in place (WS4) — the other configured plans, when it's on a
    *  LIVE self-serve subscription. Empty when there's nothing to switch (unsubscribed/canceled/legacy price). */
   readonly switchTargets: readonly SelfServePlanId[];
+  /** A downgrade already BOOKED with Stripe for the end of the current period, if any (ADR-0112). Read live
+   *  from the subscription's schedule, so it can never go stale. null = nothing pending. */
+  readonly pendingDowngrade: PendingPlanChange | null;
 }
 
 const HIDDEN_VIEW: BillingView = {
@@ -186,7 +200,32 @@ const HIDDEN_VIEW: BillingView = {
   overageEnabled: null,
   canManageBilling: false,
   switchTargets: [],
+  pendingDowngrade: null,
 };
+
+/**
+ * Read back the downgrade (if any) already booked for the end of the period, straight from Stripe's schedule.
+ *
+ * BEST-EFFORT by design: this is the only Stripe call the billing page makes, and a Stripe blip must not blank
+ * the entire billing panel (the caller's catch would fall through to HIDDEN_VIEW). On any fault we log and
+ * return null — the page renders, just without the pending-downgrade notice.
+ */
+async function readPendingDowngrade(
+  client: StripeClient,
+  plans: StripePlans,
+  subscriptionId: string,
+  nowSeconds: number,
+): Promise<PendingPlanChange | null> {
+  try {
+    const stripeSub = await client.retrieveSubscription(subscriptionId);
+    if (!stripeSub.scheduleId) return null;
+    const schedule = await client.retrieveSubscriptionSchedule(stripeSub.scheduleId);
+    return pendingPlanChangeFromPhases(schedule.phases, plans, nowSeconds);
+  } catch (error) {
+    logActionError("billing.pending_downgrade_read_failed", error);
+    return null;
+  }
+}
 
 /**
  * Whether it is safe to offer a NEW-subscription Checkout (the upgrade/resubscribe picker) — i.e. the org
@@ -213,7 +252,10 @@ export async function loadBillingSummary(orgId: string, userId: string): Promise
   try {
     const secretKey = await getStripeSecretKey();
     if (!secretKey || !stripeKeyMatchesMode(mode, secretKey)) return HIDDEN_VIEW; // transient/dark
-    const { customerId, sub, overagePolicy, role } = await readOrgBilling(orgId, userId);
+    const { customerId, sub, subscriptionId, overagePolicy, role } = await readOrgBilling(
+      orgId,
+      userId,
+    );
     const display = sub ? billingDisplayFromSubscription(sub, plans) : null;
     // Offer the picker ONLY when a new Checkout can't create a duplicate subscription (see
     // canStartNewCheckout). Ladder order (pro → scale), configured plans only.
@@ -230,6 +272,17 @@ export async function loadBillingSummary(orgId: string, userId: string): Promise
       sub && isBillingActive(sub.status) && currentTier
         ? SELF_SERVE_PLAN_IDS.filter((id) => plans[id] && id !== currentTier)
         : [];
+    // Live-read any booked downgrade (best-effort; never blanks the page). Only meaningful for an entitled sub.
+    const pendingDowngrade =
+      sub && subscriptionId && isBillingActive(sub.status)
+        ? await readPendingDowngrade(
+            makeStripeClient({ mode, secretKey }),
+            plans,
+            subscriptionId,
+            Math.floor(Date.now() / 1000),
+          )
+        : null;
+
     return {
       hidden: false,
       display,
@@ -237,7 +290,9 @@ export async function loadBillingSummary(orgId: string, userId: string): Promise
       hasCustomer: customerId !== null,
       overageEnabled,
       canManageBilling: isBillingManagerRole(role),
-      switchTargets,
+      // Don't offer the plan you're already scheduled to move to — the button would read as a no-op.
+      switchTargets: switchTargets.filter((id) => id !== pendingDowngrade?.plan),
+      pendingDowngrade,
     };
   } catch (error) {
     logActionError("billing.summary_failed", error);

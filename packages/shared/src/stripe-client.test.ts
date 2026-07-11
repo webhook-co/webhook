@@ -487,6 +487,7 @@ describe("makeStripeClient.retrieveSubscription", () => {
         { id: "si_base", price: "price_pro_base" },
         { id: "si_over", price: "price_pro_over" },
       ],
+      scheduleId: null, // no pending plan change in this fixture
     });
   });
 });
@@ -522,5 +523,179 @@ describe("makeStripeClient.updateSubscription", () => {
     expect(p.get("items[1][id]")).toBe("si_over");
     expect(p.get("items[1][price]")).toBe("price_scale_over");
     expect(p.get("proration_behavior")).toBe("create_prorations");
+  });
+});
+
+// ── Subscription schedules: how a DOWNGRADE lands at the end of the period ──────────────────────────────────
+// A downgrade must not change the plan today (they paid for the bigger one) and must not credit them for the
+// rest of the period (we never refund automatically). Stripe's native primitive for "switch plan at renewal"
+// is a subscription schedule: phase 0 keeps the current plan to period end, phase 1 starts the target.
+
+describe("makeStripeClient.createSubscriptionSchedule", () => {
+  it("creates a schedule FROM the live subscription and maps its current phase", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: {
+        id: "sub_sched_1",
+        phases: [
+          {
+            start_date: 1_750_000_000,
+            end_date: 1_752_000_000,
+            items: [
+              { price: "price_base_scale", quantity: 1 },
+              { price: "price_over_scale" }, // metered items carry no quantity
+            ],
+          },
+        ],
+      },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const sched = await client.createSubscriptionSchedule({ fromSubscription: "sub_1" });
+
+    expect(calls[0]!.url).toBe("https://stripe.test/v1/subscription_schedules");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(new URLSearchParams(calls[0]!.init.body as string).get("from_subscription")).toBe(
+      "sub_1",
+    );
+    const phase0 = {
+      startDate: 1_750_000_000,
+      endDate: 1_752_000_000,
+      items: [
+        { price: "price_base_scale", quantity: 1 },
+        { price: "price_over_scale", quantity: undefined },
+      ],
+    };
+    // `phases` carries EVERY phase, so a pending downgrade can be read back on a later page load.
+    expect(sched).toEqual({ id: "sub_sched_1", currentPhase: phase0, phases: [phase0] });
+  });
+});
+
+describe("makeStripeClient.releaseSubscriptionSchedule", () => {
+  it("POSTs /release — how a booked downgrade is CANCELLED (and how an upgrade clears one)", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: { id: "sub_sched_1" } });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    await client.releaseSubscriptionSchedule({
+      scheduleId: "sub_sched_1",
+      idempotencyKey: "release:sub_1",
+    });
+    expect(calls[0]!.url).toBe("https://stripe.test/v1/subscription_schedules/sub_sched_1/release");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect((calls[0]!.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      "release:sub_1",
+    );
+  });
+});
+
+describe("makeStripeClient.updateSubscriptionSchedule", () => {
+  it("sends phase 0 (unchanged, to period end) + phase 1 (the target), with NO proration", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: { id: "sub_sched_1" } });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    await client.updateSubscriptionSchedule({
+      scheduleId: "sub_sched_1",
+      phases: [
+        {
+          startDate: 1_750_000_000,
+          endDate: 1_752_000_000,
+          items: [{ price: "price_base_scale", quantity: 1 }, { price: "price_over_scale" }],
+        },
+        { items: [{ price: "price_base_pro", quantity: 1 }, { price: "price_over_pro" }] },
+      ],
+      idempotencyKey: "downgrade:sub_1:pro",
+    });
+
+    expect(calls[0]!.url).toBe("https://stripe.test/v1/subscription_schedules/sub_sched_1");
+    const p = new URLSearchParams(calls[0]!.init.body as string);
+    // Phase 0 keeps the CURRENT plan until the period ends — the customer keeps what they paid for.
+    expect(p.get("phases[0][items][0][price]")).toBe("price_base_scale");
+    expect(p.get("phases[0][items][0][quantity]")).toBe("1");
+    expect(p.get("phases[0][items][1][price]")).toBe("price_over_scale");
+    expect(p.get("phases[0][items][1][quantity]")).toBeNull(); // metered → no quantity
+    expect(p.get("phases[0][start_date]")).toBe("1750000000");
+    expect(p.get("phases[0][end_date]")).toBe("1752000000");
+    // Phase 1 is the smaller plan, starting when the paid period runs out.
+    expect(p.get("phases[1][items][0][price]")).toBe("price_base_pro");
+    // proration_behavior=none: a downgrade must NEVER credit money back (we don't refund automatically).
+    expect(p.get("proration_behavior")).toBe("none");
+    // release: once the downgrade lands, hand the subscription back to normal renewal.
+    expect(p.get("end_behavior")).toBe("release");
+    expect((calls[0]!.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      "downgrade:sub_1:pro",
+    );
+  });
+});
+
+describe("makeStripeClient — reading back a pending downgrade", () => {
+  it("retrieveSubscription surfaces the schedule id (null when the sub has none)", async () => {
+    const withSched = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", schedule: "sub_sched_1", items: { data: [] } },
+    });
+    const c1 = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: withSched.impl,
+    });
+    expect((await c1.retrieveSubscription("sub_1")).scheduleId).toBe("sub_sched_1");
+
+    const without = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", items: { data: [] } },
+    });
+    const c2 = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: without.impl,
+    });
+    expect((await c2.retrieveSubscription("sub_1")).scheduleId).toBeNull();
+  });
+
+  it("retrieveSubscriptionSchedule maps every phase (so a future phase can be identified)", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: {
+        id: "sub_sched_1",
+        phases: [
+          {
+            start_date: 1_750_000_000,
+            end_date: 1_752_000_000,
+            items: [{ price: "price_base_scale", quantity: 1 }],
+          },
+          { start_date: 1_752_000_000, items: [{ price: "price_base_pro", quantity: 1 }] },
+        ],
+      },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const sched = await client.retrieveSubscriptionSchedule("sub_sched_1");
+
+    expect(new URL(calls[0]!.url).pathname).toBe("/v1/subscription_schedules/sub_sched_1");
+    expect(calls[0]!.init.method).toBe("GET");
+    expect(sched.phases).toHaveLength(2);
+    expect(sched.phases[1]).toEqual({
+      startDate: 1_752_000_000,
+      endDate: undefined,
+      items: [{ price: "price_base_pro", quantity: 1 }],
+    });
   });
 });

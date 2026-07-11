@@ -30,7 +30,7 @@ export default function TermsPage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Terms of Service" updated="10 July 2026">
+        <LegalDoc title="Terms of Service" updated="11 July 2026">
           <blockquote>
             <strong>In short (this summary isn't the contract, but it's honest):</strong> webhook.co
             is a tool for receiving, inspecting, verifying, replaying, and delivering webhooks,
@@ -39,9 +39,11 @@ export default function TermsPage() {
             attack or spam infrastructure. The service is provided <strong>"as is"</strong>, with no
             uptime guarantee on self-serve plans.{" "}
             <strong>If we ever owe you anything, it's capped</strong> at what you paid us in the
-            last 3 months (or €100, whichever is greater). You can <strong>cancel anytime</strong>;
-            you only pay for the usage you actually consume. These terms are governed by{" "}
-            <strong>Portuguese law</strong>, and you keep every consumer right the law gives you.
+            last 3 months (or €100, whichever is greater). You can <strong>cancel anytime</strong>,
+            and you keep the plan you've paid for until the end of that billing period. We don't
+            refund automatically, but if something looks wrong on your bill, email us and we'll
+            review it. These terms are governed by <strong>Portuguese law</strong>, and you keep
+            every consumer right the law gives you.
           </blockquote>
 
           <h2>1. Who we are, and agreeing to these terms</h2>
@@ -181,16 +183,32 @@ export default function TermsPage() {
           </p>
           <p>
             <strong>Cancellation.</strong> You can cancel anytime from your account. Cancellation
-            takes effect at the <strong>end of your current paid period</strong> — you keep access
-            until then, and you won't be charged again after that.
+            takes effect at the <strong>end of your current billing period</strong> — you keep the
+            plan you've paid for until then, and you won't be charged again after that. You then
+            return to the free tier; because the free allowance is one-time, capture stays paused if
+            you've already spent it, until you resubscribe.
           </p>
           <p>
-            <strong>Refunds.</strong> Because overage is billed in arrears, you only pay for what
-            you use, so there's nothing unused to refund there. For the{" "}
-            <strong>prepaid plan fee</strong>, if you cancel, we'll refund the{" "}
-            <strong>unused portion based on your actual usage</strong> — that is, in proportion to
-            how little of your plan's included volume you consumed in the period — rather than by
-            counting calendar days. The free plan involves no charge and so no refund.
+            <strong>Changing plans.</strong> <strong>Upgrades take effect immediately</strong>, so
+            you get the extra volume the moment you need it; the difference for the rest of the
+            period is prorated onto your next invoice.{" "}
+            <strong>Downgrades take effect at the end of your current billing period</strong> — you
+            keep the plan you paid for until it runs out, then move to the smaller one. A downgrade
+            doesn't credit or refund the period you've already bought.
+          </p>
+          <p>
+            <strong>Refunds.</strong> We <strong>don't refund automatically</strong>, and cancelling
+            or downgrading mid-period doesn't trigger one — nothing is cut short, because you keep
+            the plan you paid for until the period ends. Overage is billed in arrears, so you only
+            ever pay for overage you actually used. The free plan involves no charge, so no refund.
+          </p>
+          <p>
+            If you think you've been charged unfairly,{" "}
+            <strong>get in touch and we'll look at it</strong>. Email{" "}
+            <a href="mailto:support@webhook.co">support@webhook.co</a> and we'll review it{" "}
+            <strong>case by case</strong> — we'd rather sort out a genuine problem than keep money
+            we didn't earn. This is in addition to your statutory rights below, which we never ask
+            you to waive.
           </p>
           <p>
             <strong>Your consumer rights.</strong> If you're a consumer in the EU/EEA, you have a

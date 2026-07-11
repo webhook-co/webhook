@@ -97,6 +97,29 @@ export function isSelfServePlan(id: string): id is SelfServePlanId {
   return (SELF_SERVE_PLAN_IDS as readonly string[]).includes(id);
 }
 
+/**
+ * Is moving from `current` to `target` a DOWNGRADE? The direction decides the money path, so this is the one
+ * place that defines it (ADR-0112):
+ *
+ *   · an UPGRADE applies IMMEDIATELY, with the difference prorated onto the next invoice — a customer who has
+ *     hit their cap needs the headroom now, and making them wait for renewal is both a bad experience and a
+ *     lost sale;
+ *   · a DOWNGRADE is SCHEDULED for the end of the current period — they keep the plan they already paid for
+ *     until it runs out, and NO money flows backward (no credit, no refund; we never refund automatically).
+ *
+ * Rank comes from SELF_SERVE_PLAN_IDS' declaration order (pro < scale), so adding a tier in the right place
+ * is the only change needed. FAILS CLOSED on an unrecognised tier: an unknown plan counts as a downgrade, so
+ * a legacy/garbage id can never take the immediate-CHARGE path on a guess. The worst case of failing closed is
+ * that a customer waits until renewal; the worst case of failing open is that we bill them for the wrong thing.
+ */
+export function isPlanDowngrade(current: string, target: string): boolean {
+  const rank = (id: string): number => (SELF_SERVE_PLAN_IDS as readonly string[]).indexOf(id);
+  const from = rank(current);
+  const to = rank(target);
+  if (from < 0 || to < 0) return true; // unknown tier → schedule it, never charge on a guess
+  return to < from;
+}
+
 /** One plan's Stripe PRICE IDS — the licensed base + the metered overage. Ids only: never an amount. */
 export interface StripePlanPrices {
   readonly base: string;
@@ -272,4 +295,42 @@ export function stripeKeyMatchesMode(mode: BillingMode, secretKey: string): bool
   if (mode === "live") return secretKey.startsWith("sk_live_");
   if (mode === "test") return secretKey.startsWith("sk_test_");
   return false; // billing off: no key is legitimate
+}
+
+/** A plan change already booked with Stripe but not yet in effect — today, always a scheduled downgrade. */
+export interface PendingPlanChange {
+  readonly plan: SelfServePlanId;
+  /** Unix SECONDS when it takes effect (i.e. when the current, already-paid-for period ends). */
+  readonly effectiveAt: number;
+}
+
+/** The minimum shape of a schedule phase this needs — structural, so it doesn't drag in the Stripe client. */
+interface PhaseLike {
+  readonly startDate?: number;
+  readonly items: readonly { readonly price: string }[];
+}
+
+/**
+ * Find the plan change a subscription schedule has BOOKED but not yet applied — the phase starting in the
+ * future. This is what lets the dashboard keep saying "you move to Pro on the 30th" on every later visit,
+ * rather than only in the banner at the instant the user clicked (ADR-0112).
+ *
+ * Read from the schedule itself rather than mirrored locally, so it cannot go stale or disagree with Stripe.
+ *
+ * Returns null — "nothing pending" — whenever we can't say something both TRUE and USEFUL: no future phase; a
+ * phase that has since started (that's the CURRENT plan now, not a pending one); a phase with no start date
+ * (there'd be no date to show); or a phase on a price we can't map to a tier (we do not guess a label).
+ */
+export function pendingPlanChangeFromPhases(
+  phases: readonly PhaseLike[],
+  plans: StripePlans,
+  nowSeconds: number,
+): PendingPlanChange | null {
+  const future = phases.find((ph) => ph.startDate != null && ph.startDate > nowSeconds);
+  if (!future?.startDate) return null;
+  for (const item of future.items) {
+    const plan = planIdForBasePrice(plans, item.price);
+    if (plan) return { plan, effectiveAt: future.startDate };
+  }
+  return null; // a legacy/unmappable base price → say nothing rather than guess
 }

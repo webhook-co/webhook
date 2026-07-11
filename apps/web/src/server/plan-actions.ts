@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 
 import { openBillingPortal, startCheckout } from "./billing";
 import { applyOverageToggle } from "./overage";
-import { switchPlan } from "./plan-switch";
+import { cancelPendingDowngrade, switchPlan } from "./plan-switch";
 import { verifySession } from "./session";
 
 // Server actions behind the dashboard billing panel. Both hand off to a Stripe-HOSTED page (Checkout or the
@@ -74,4 +74,15 @@ export async function switchPlanAction(formData: FormData): Promise<void> {
         )
       : ({ status: "unknown_plan" } as const);
   redirect(`${BILLING}?switch=${result.status}`);
+}
+
+/**
+ * Cancel a downgrade that was booked for the end of the period — the UNDO. Releases the Stripe schedule, so
+ * the customer simply stays on their current plan and renews normally. No money moves in either direction.
+ * cancelPendingDowngrade never throws and gates owner/admin. Lands back on /billing.
+ */
+export async function cancelDowngradeAction(): Promise<void> {
+  const session = await verifySession();
+  const result = await cancelPendingDowngrade(session.orgId, session.userId);
+  redirect(`${BILLING}?downgrade=${result.status}`);
 }

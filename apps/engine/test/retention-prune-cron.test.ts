@@ -17,23 +17,22 @@ function makeStore(seed: Record<string, ExpiringEvent[]>) {
   for (const [org, evs] of Object.entries(seed)) store[org] = [...evs];
   const order: string[] = []; // call trace to assert R2-before-rows ordering
   const deps: RetentionPruneCronDeps = {
-    claimOrgs: async (_days, limit) =>
+    claimOrgs: async (limit) =>
       Object.keys(store)
         .filter((o) => store[o].length > 0)
         .slice(0, limit),
-    listExpiring: async (orgId, _days, limit) => store[orgId].slice(0, limit),
+    listExpiring: async (orgId, limit) => store[orgId].slice(0, limit),
     // Default fence: every key is valid. Individual tests override to simulate a poison key.
     validateKey: () => true,
     deleteR2: async (keys) => {
       order.push(`r2:${keys.join(",")}`);
     },
-    deleteEvents: async (orgId, _retentionDays, ids) => {
+    deleteEvents: async (orgId, ids) => {
       order.push(`rows:${ids.join(",")}`);
       const present = store[orgId].filter((e) => ids.includes(e.id)).map((e) => e.id);
       store[orgId] = store[orgId].filter((e) => !ids.includes(e.id));
       return present; // the ids actually removed (all present ones, in this fake)
     },
-    retentionDays: 7,
     orgLimit: 100,
     batchesPerOrg: 50,
     pageSize: 2,
@@ -69,7 +68,7 @@ describe("runRetentionPruneCron", () => {
     const result = await runRetentionPruneCron({
       ...deps,
       batchesPerOrg: 1, // one pass — the fake DELETE doesn't mutate the store
-      deleteEvents: async (_org, _days, _ids) => ["a1"], // only a1 was actually deleted
+      deleteEvents: async (_org, _ids) => ["a1"], // only a1 was actually deleted
     });
     expect(result.deleted).toBe(1);
     // Only a1's body was purged from R2; a2 (spared by the DELETE) is untouched.
@@ -94,7 +93,7 @@ describe("runRetentionPruneCron", () => {
     });
     const claimSpy = vi.fn(deps.claimOrgs);
     const result = await runRetentionPruneCron({ ...deps, orgLimit: 2, claimOrgs: claimSpy });
-    expect(claimSpy).toHaveBeenCalledWith(7, 2);
+    expect(claimSpy).toHaveBeenCalledWith(2);
     expect(result.orgs).toBe(2);
   });
 

@@ -82,6 +82,27 @@ describe("parseSubscriptionObject (pure)", () => {
     expect(cap({ id: "p", metadata: { event_cap: "0" } })).toBeUndefined(); // non-positive → unspecified
   });
 
+  it("retention: parses retention_days from the price metadata", () => {
+    const days = (price: Record<string, unknown>) =>
+      parseSubscriptionObject({ ...base, items: { data: [{ price }] } })?.retentionDays;
+    expect(days({ id: "p", metadata: { retention_days: "30" } })).toBe(30);
+    expect(days({ id: "p", metadata: { retention_days: "90" } })).toBe(90);
+  });
+
+  it("retention FAILS SAFE to unlimited (null) — never to a short window that would delete a payer's data", () => {
+    // The opposite failure direction from the cap, and deliberately so. For a CAP, a bad value must not grant
+    // more than was paid for. For RETENTION, a bad value must not DELETE a paying customer's data at the Free
+    // window — that is unrecoverable. So absent/garbage/"unlimited" all → null = never pruned. Over-retention
+    // costs storage; premature deletion costs the customer their data.
+    const days = (price: Record<string, unknown>) =>
+      parseSubscriptionObject({ ...base, items: { data: [{ price }] } })?.retentionDays;
+    expect(days({ id: "p" })).toBeNull(); // no metadata at all
+    expect(days({ id: "p", metadata: { retention_days: "unlimited" } })).toBeNull();
+    expect(days({ id: "p", metadata: { retention_days: "forever" } })).toBeNull(); // garbage
+    expect(days({ id: "p", metadata: { retention_days: "0" } })).toBeNull(); // non-positive
+    expect(days({ id: "p", metadata: { event_cap: "500000" } })).toBeNull(); // cap set, retention absent
+  });
+
   it("falls back to the ITEM's period bounds when the top-level ones are absent (newer Stripe API)", () => {
     const noTop = { ...base } as Record<string, unknown>;
     delete noTop.current_period_start;
@@ -152,6 +173,7 @@ function sub(orgId: string, overrides: Partial<ParsedSubscription> = {}): Parsed
     plan: "price_pro",
     status: "active",
     eventCap: 500000,
+    retentionDays: 30,
     currentPeriodStartIso: "2026-07-01T00:00:00.000Z",
     currentPeriodEndIso: "2026-08-01T00:00:00.000Z",
     cancelAtPeriodEnd: false,
@@ -356,6 +378,19 @@ describe("webhook_billing cross-tenant write rejection (behavioral RLS WITH CHEC
         (tx) => tx`insert into org_limits (org_id, event_cap) values (${b}, ${100})`,
       ),
     ).rejects.toThrow(/row-level security|policy|violates/i);
+
+    // orgs.retention_days (0054) — a NEW write surface, and the most dangerous one to get wrong: shrinking
+    // ANOTHER tenant's retention window would cause THEIR data to be deleted. RLS confines the update to the
+    // caller's own org, so this silently matches zero rows rather than touching org B.
+    const hijack = await withTenant(
+      billing,
+      a,
+      (tx) => tx`update orgs set retention_days = ${1} where id = ${b} returning id`,
+    );
+    expect(hijack).toHaveLength(0);
+    const [victim] = await admin<{ retention_days: number | null }[]>`
+      select retention_days from orgs where id = ${b}`;
+    expect(victim.retention_days).toBe(7); // org B's window is untouched
     // And an UPDATE of org B's existing row from org A's context is a silent no-op (RLS hides the row), not a
     // cross-tenant mutation: seed B's customer as root, then try to overwrite it as billing under A.
     await admin`insert into billing_customers (org_id, stripe_customer_id) values (${b}, ${"cus_owned"})`;
@@ -508,5 +543,105 @@ describe("readBillingSummary (dashboard current-plan read)", () => {
       values (${b}, ${"sub_b"}, ${"price_scale_base"}, ${"active"},
               ${"2026-07-01T00:00:00Z"}, ${"2026-08-01T00:00:00Z"})`;
     expect(await withTenant(app, a, (tx) => readBillingSummary(tx))).toBeNull();
+  });
+});
+
+// ── The retention mirror (0054): the window the prune's DELETE policy actually enforces ────────────────────
+
+describe("retention window mirror (integration)", () => {
+  /** The org's live retention window, as the prune role would read it. */
+  async function windowOf(orgId: string): Promise<number | null> {
+    const [row] = await admin<{ retention_days: number | null }[]>`
+      select retention_days from orgs where id = ${orgId}`;
+    return row?.retention_days ?? null;
+  }
+
+  it("a new org starts on the FREE window with no application involvement", async () => {
+    expect(await windowOf(await seedOrg())).toBe(7);
+  });
+
+  it("subscribing to a paid plan LENGTHENS the window immediately", async () => {
+    // Immediately, not deferred: if we kept pruning a new Pro customer at the Free 7 days while they paid for
+    // 30, we would be destroying data they had just bought the right to keep. Unrecoverable — so it lands now.
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { retentionDays: 30 }), 1000);
+    expect(await windowOf(org)).toBe(30);
+  });
+
+  it("switching plans moves the window (Pro 30 → Scale 90)", async () => {
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { retentionDays: 30 }), 1000);
+    await applySubscriptionUpsert(billing, sub(org, { retentionDays: 90 }), 2000);
+    expect(await windowOf(org)).toBe(90);
+  });
+
+  it("an unlimited plan (null) is never pruned", async () => {
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { retentionDays: null }), 1000);
+    expect(await windowOf(org)).toBeNull();
+  });
+
+  it("CANCELLING returns the org to the Free window (they're back on the free tier)", async () => {
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { retentionDays: 30 }), 1000);
+    expect(await windowOf(org)).toBe(30);
+
+    await applySubscriptionDeleted(billing, { orgId: org, eventCreated: 2000 });
+
+    // Back to 7. Their data older than 7 days becomes prunable — which is what "you return to the free tier"
+    // means, and what the Terms + Privacy disclose.
+    expect(await windowOf(org)).toBe(7);
+  });
+
+  it("a NON-entitled status (unpaid / incomplete / paused) also drops to the Free window", async () => {
+    for (const status of ["unpaid", "incomplete", "paused"]) {
+      const org = await seedOrg();
+      await applySubscriptionUpsert(billing, sub(org, { retentionDays: 30 }), 1000);
+      await applySubscriptionUpsert(billing, sub(org, { status, retentionDays: 30 }), 2000);
+      expect(await windowOf(org)).toBe(7);
+    }
+  });
+
+  it("past_due KEEPS the longer window — dunning is a grace period, not a downgrade", async () => {
+    // Mirrors the cap's grace rule (ADR-0020). Shrinking a failing-card customer's retention to 7 days would
+    // start deleting their data while we're still retrying their card — a punitive, unrecoverable action.
+    const org = await seedOrg();
+    await applySubscriptionUpsert(billing, sub(org, { retentionDays: 30 }), 1000);
+    await applySubscriptionUpsert(
+      billing,
+      sub(org, { status: "past_due", retentionDays: 30 }),
+      2000,
+    );
+    expect(await windowOf(org)).toBe(30);
+  });
+});
+
+describe("retention vs the cap's fail-closed early return", () => {
+  it("lengthens retention even when an UNSPECIFIED cap makes the cap mirror bail out", async () => {
+    // The two mirrors fail in opposite directions, and they must not be coupled. A price with garbage/absent
+    // `event_cap` fail-closes the CAP (leave it alone — never grant unlimited usage from a bad config). But
+    // the RETENTION write must still land: if it didn't, a paying Pro customer would keep having their data
+    // deleted at the Free 7-day window because of an unrelated typo in their cap metadata. That is exactly
+    // the unrecoverable outcome the whole design exists to prevent — so retention is written BEFORE the cap's
+    // early return, and this pins that ordering.
+    const org = await seedOrg();
+    const [before] = await admin<{ retention_days: number | null }[]>`
+      select retention_days from orgs where id = ${org}`;
+    expect(before.retention_days).toBe(7); // starts on Free
+
+    await applySubscriptionUpsert(
+      billing,
+      sub(org, { eventCap: undefined, retentionDays: 30 }), // cap unspecified, retention specified
+      1000,
+    );
+
+    // Cap: fail-closed — no paid org_limits row was created from a bad config.
+    const limits = await admin`select 1 from org_limits where org_id = ${org}`;
+    expect(limits).toHaveLength(0);
+
+    // Retention: landed anyway. Their data is now kept for 30 days, not 7.
+    const [after] = await admin<{ retention_days: number | null }[]>`
+      select retention_days from orgs where id = ${org}`;
+    expect(after.retention_days).toBe(30);
   });
 });
