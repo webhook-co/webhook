@@ -93,6 +93,28 @@ test("sees through responsive and state variants", () => {
   assert.equal(find('<p className="dark:md:text-[11px]">').length, 1);
 });
 
+// THE BLIND SPOT THAT MATTERED. The first version of this guard modelled the variant prefix as
+// `(?:[a-z-]+:)*`, which admits only plain word variants — so it scored ZERO hits on the `[&_x]:`
+// descendant idiom. That idiom is exactly how `legal-doc.tsx` authors the legal column, and a
+// `[&_blockquote]:text-sm` (13px) rule in precisely that form is the bug this whole guard exists to
+// prevent. It would have printed "✔ No absolute-px font sizes found" over its own use case.
+test("sees through the [&_x]: descendant-variant idiom this codebase actually authors prose in", () => {
+  assert.equal(find('"[&_blockquote]:text-[13px] [&_p]:mt-6"').length, 1);
+  assert.equal(find('"[&_h2]:text-xl [&_table]:text-[12px]"').length, 1);
+});
+
+test("sees through named-group and arbitrary-breakpoint variants", () => {
+  assert.equal(find('"group-hover/anchor:text-[13px]"').length, 1);
+  assert.equal(find('"max-[600px]:text-[13px]"').length, 1);
+  assert.equal(find('"data-[state=open]:text-[11px]"').length, 1);
+});
+
+// The arbitrary-breakpoint variant carries its own `px` — make sure that isn't what we matched.
+test("does not mistake a variant's own px value for a font size", () => {
+  assert.equal(find('<div className="max-[600px]:flex">').length, 0);
+  assert.equal(find('<div className="max-[600px]:text-sm">').length, 0);
+});
+
 // ── the CLI path ────────────────────────────────────────────────────────────────
 // Testing only the pure core would leave the entry guard untested — and a broken entry guard makes
 // the whole gate a no-op that still exits 0 and prints nothing. That failure mode is invisible

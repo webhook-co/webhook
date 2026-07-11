@@ -4,6 +4,12 @@ import { describe, expect, it } from "vitest";
 import { axeComponent } from "@/test/axe";
 
 import { Faq, FAQ_ITEMS } from "./faq";
+import { OVERAGE_PER_MILLION, TIERS } from "./pricing-tiers";
+
+const answerFor = (match: RegExp): string =>
+  FAQ_ITEMS.find((i) => match.test(i.question))?.answer ?? "";
+
+const tier = (id: string) => TIERS.find((t) => t.id === id)!;
 
 describe("FAQ", () => {
   it("renders every question as a disclosure the reader can open", () => {
@@ -38,12 +44,48 @@ describe("FAQ", () => {
     expect(section).toHaveAttribute("id", "faq");
   });
 
-  // The FAQ answers are billing promises. If they drift from the tier data they stop being true, so
-  // the numbers are interpolated from the same module the cards render from — never retyped.
-  it("states the real numbers, taken from the pricing source of truth", () => {
+  it("states the real numbers", () => {
     render(<Faq />);
     expect(screen.getByText(/5,000 events/)).toBeInTheDocument();
-    expect(screen.getByText(/€25/)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(OVERAGE_PER_MILLION))).toBeInTheDocument();
+  });
+});
+
+// ── drift guard ─────────────────────────────────────────────────────────────────
+// These answers are billing promises, and they are ALSO published as machine-readable FAQPage
+// JSON-LD that Google may surface as a rich result. So a number that quietly falls out of step with
+// `pricing-tiers.ts` doesn't just make the copy wrong — it makes the page contradict itself (the tier
+// card says one thing, the FAQ below says another) in a form search engines index.
+//
+// The retention windows and the free allowance read better as prose than as interpolations, so they
+// are written out by hand. That is only safe because this block exists: change a tier and the test
+// fails, naming this file.
+describe("FAQ ↔ pricing-tiers drift", () => {
+  it("quotes each tier's real retention window", () => {
+    const answer = answerFor(/how long do you keep/i);
+    // `TIERS[].retention` is itself pinned to what the engine enforces (PLAN_RETENTION_DAYS).
+    for (const { retention } of TIERS) {
+      const days = /(\d+)-day/.exec(retention)?.[1];
+      if (!days) continue; // Enterprise is contractual ("up to 1 year"), not a day count.
+      expect(
+        answer,
+        `the FAQ's retention answer no longer mentions "${days} days" — pricing-tiers.ts says "${retention}"`,
+      ).toContain(`${days} days`);
+    }
+    expect(answer).toMatch(/year on Enterprise/i);
+  });
+
+  it("quotes the free plan's real one-time allowance", () => {
+    const allowance = /^([\d,]+)/.exec(tier("free").includedEvents)?.[1];
+    expect(allowance).toBeTruthy();
+    expect(
+      answerFor(/free allowance really one-time/i),
+      `the FAQ no longer states the free allowance as "${allowance}"`,
+    ).toContain(allowance!);
+  });
+
+  it("quotes the real overage price", () => {
+    expect(answerFor(/past my included volume/i)).toContain(OVERAGE_PER_MILLION);
   });
 
   it("composes without axe violations", async () => {

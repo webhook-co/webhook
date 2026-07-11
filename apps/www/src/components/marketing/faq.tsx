@@ -8,12 +8,18 @@ import { OVERAGE_PER_MILLION } from "./pricing-tiers";
  * The pricing FAQ.
  *
  * Two rules, inherited from the rest of this page:
- *   1. Say the real number. Every figure below is interpolated from `pricing-tiers.ts` or restates
- *      what the engine actually enforces — none of it is retyped, so none of it can drift into a
- *      lie while the code moves on.
- *   2. Answer the awkward questions too. A FAQ that only answers the flattering ones is marketing;
- *      the churn/pause behaviour and the absence of EU data residency are here because a buyer will
- *      find out anyway, and it's better they find out from us.
+ *
+ *   1. **Say the real number, and don't let it rot.** The overage price is interpolated from
+ *      `pricing-tiers.ts`. The retention windows and the free allowance are *not* — they read better
+ *      as prose than as interpolations ("7 days on Free, 30 days on Pro…" vs a generated list) — so
+ *      they are **pinned by `faq.test.tsx` against `TIERS` instead.** Change a tier's retention or
+ *      the free allowance and that test fails, naming this file. That matters more here than
+ *      anywhere else on the page: these answers are also emitted as machine-readable FAQPage JSON-LD,
+ *      so a stale number doesn't just sit in the copy — it gets published to Google as a rich result
+ *      while the tier card two sections up says something different.
+ *   2. **Answer the awkward questions too.** A FAQ that only answers the flattering ones is
+ *      marketing. The churn/pause behaviour and the absence of EU data residency are here because a
+ *      buyer will find out anyway, and it's better they find out from us.
  *
  * `answer` is plain text on purpose: it is rendered into the DOM *and* into the FAQPage schema, and
  * Google requires those to match. Anything richer (a link) goes in `link`, which the schema ignores

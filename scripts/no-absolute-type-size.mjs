@@ -46,11 +46,19 @@ const TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 /**
  * A Tailwind arbitrary *font-size* utility whose value is an absolute px length.
  *
- * `(?:^|[\s"'`])` anchors to a class-list boundary so we match `text-[13px]` and `sm:text-[13px]`
- * but not `scroll-mt-[13px]` — a utility that merely ends in the letters "text" is a different
- * property and none of our concern.
+ * Deliberately does NOT try to model the variant prefix. An earlier version matched
+ * `(?:[a-z-]+:)*text-\[…]`, which only admits plain word variants (`sm:`, `hover:`) — so it scored
+ * ZERO hits on `[&_blockquote]:text-[13px]`, `group-hover/anchor:text-[13px]` and
+ * `max-[600px]:text-[13px]`. The `[&_x]:` descendant idiom is exactly how this codebase authors
+ * prose type (see `legal-doc.tsx`), and a 13px blockquote in exactly that form is the bug this guard
+ * was written to prevent — so the one shape it couldn't see was the one that mattered. A guard with a
+ * blind spot over its own use case is worse than none, because it reports green.
+ *
+ * Whatever the prefix is, we only care that the *utility* is `text-[<n>px]`. The leading boundary
+ * (start, whitespace, quote, or the `:` that ends any variant) keeps us off `scroll-mt-[13px]` and
+ * off a longer word that merely ends in "text".
  */
-const ABSOLUTE_TYPE = /(?:^|[\s"'`])((?:[a-z-]+:)*text-\[\d+(?:\.\d+)?px\])/g;
+const ABSOLUTE_TYPE = /(?:^|[\s"'`:])(text-\[\d+(?:\.\d+)?px\])/g;
 
 /** Pure core: every absolute-px type utility on one line. Exported so it can be tested directly. */
 export function findAbsoluteTypeSizes(line, file, lineNo) {

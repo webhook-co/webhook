@@ -58,7 +58,7 @@ function Lane({
     <div className={cn(divided && "mt-5 border-t border-hairline pt-5")}>
       <span
         className={cn(
-          "mb-3 inline-flex items-center gap-[7px] font-mono text-[0.625rem] tracking-mono-label uppercase",
+          "mb-3 inline-flex items-center gap-[0.4375rem] font-mono text-[0.625rem] tracking-mono-label uppercase",
           tone === "ok" ? "text-ok" : "text-fg-muted",
         )}
       >
@@ -79,7 +79,7 @@ function PipeNode({ children, soft = false }: { children: ReactNode; soft?: bool
   return (
     <span
       className={cn(
-        "rounded-control border bg-surface-page px-[11px] py-[7px] font-mono text-[0.71875rem] whitespace-nowrap",
+        "rounded-control border bg-surface-page px-[0.6875rem] py-[0.4375rem] font-mono text-[0.71875rem] whitespace-nowrap",
         soft ? "border-dashed border-strong text-fg-muted" : "border-hairline text-fg-secondary",
       )}
     >

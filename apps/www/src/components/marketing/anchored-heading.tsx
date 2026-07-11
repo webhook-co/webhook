@@ -56,9 +56,17 @@ export function AnchoredHeading({
         className={cn(
           focusRing,
           "group/anchor",
-          // Override LegalDoc's prose-link treatment ([&_a]:underline, font-medium): a heading that
-          // happens to be a link should still look like a heading.
-          "rounded-control font-[inherit] text-inherit no-underline",
+          // Colour and underline are inherited/neutralised here; the WEIGHT is not defended at this
+          // level, and deliberately so. `font-[inherit]` used to sit here as a supposed guard against
+          // LegalDoc's `[&_a]:font-medium` — but Tailwind types a non-numeric arbitrary `font-[…]` as
+          // a font-FAMILY, so it compiled to `font-family: inherit` and defended nothing. Worse, it
+          // read as a belt-and-braces that a reviewer would trust.
+          //
+          // A descendant selector on an ancestor outranks any class here anyway, so the only real fix
+          // is the one in legal-doc.tsx: scope the prose-link rule to prose. Rather than keep a class
+          // that looks like protection and isn't, the invariant is pinned where it can actually fail —
+          // a computed-style assertion in the real-browser suite (`font-weight: 620`).
+          "rounded-control text-inherit no-underline",
         )}
       >
         <span
