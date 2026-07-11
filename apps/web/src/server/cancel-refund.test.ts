@@ -483,3 +483,146 @@ describe("cancelSubscriptionWithRefund — gates", () => {
     expect(client.cancelSubscription).not.toHaveBeenCalled();
   });
 });
+
+// ── Found by the AI reviewer, same class as the four above: never report success unless money actually moved ──
+
+describe("cancelSubscriptionWithRefund — the refund RESULT is checked, not assumed", () => {
+  it("reports refund_failed when Stripe RETURNS a failed refund (a throw is not the only failure)", async () => {
+    // createRefund resolving is not the same as the money moving. A `failed` refund reported as `ok` is the
+    // same lie as bug 3 — it just arrives through a 200 instead of an exception.
+    const { client } = fakeStripe({
+      createRefund: vi.fn(async () => ({ id: "re_1", status: "failed", amountMinorUnits: 950 })),
+    });
+
+    const result = await cancelSubscriptionWithRefund(ORG, USER);
+
+    expect(result).toEqual({ status: "refund_failed", refundMinorUnits: 950 });
+    expect(client.cancelSubscription).toHaveBeenCalledOnce(); // the cancel still stands
+  });
+
+  it("accepts a PENDING refund as ok — the money really is on its way (bank refunds settle over days)", async () => {
+    const { client } = fakeStripe({
+      createRefund: vi.fn(async () => ({ id: "re_1", status: "pending", amountMinorUnits: 950 })),
+    });
+
+    const result = await cancelSubscriptionWithRefund(ORG, USER);
+
+    expect(result).toEqual({ status: "ok", refundMinorUnits: 950, currency: "eur" });
+    expect(client.createRefund).toHaveBeenCalledOnce();
+  });
+});
+
+describe("cancelSubscriptionWithRefund — an ambiguous invoice is never guessed at", () => {
+  it("reports refund_unavailable when the invoice carries base lines from TWO different plans", async () => {
+    // The invoice AFTER a mid-cycle switch carries proration lines for both the old and the new base price.
+    // Which plan's included volume is the denominator? There is no safe guess — taking the first line's cap
+    // would silently divide by the wrong plan. Cancel, and flag for a human.
+    const { client } = fakeStripe({
+      retrieveInvoice: vi.fn(async () => ({
+        id: "in_current",
+        status: "paid",
+        charge: "ch_1",
+        paymentIntent: "pi_1",
+        currency: "eur",
+        amountPaidMinorUnits: 8000,
+        lines: [
+          { priceId: "price_base_pro", amountMinorUnits: -900, discountMinorUnits: 0 },
+          { priceId: "price_base_scale", amountMinorUnits: 8900, discountMinorUnits: 0 },
+        ],
+      })),
+    });
+
+    const result = await cancelSubscriptionWithRefund(ORG, USER);
+
+    expect(result.status).toBe("refund_unavailable");
+    expect(client.cancelSubscription).toHaveBeenCalledOnce();
+    expect(client.createRefund).not.toHaveBeenCalled();
+    expect(client.retrievePrice).not.toHaveBeenCalled(); // never guessed a denominator
+  });
+});
+
+describe("cancelSubscriptionWithRefund — usage is measured as LATE as possible", () => {
+  it("re-reads consumption AFTER the Stripe round-trips, so in-flight events can't inflate the refund", async () => {
+    // Usage read before several Stripe calls is stale: events landing in that window are consumption the
+    // customer had, but we'd refund them for it. Measure last.
+    const reads = await import("@webhook-co/db/reads");
+    const seen: string[] = [];
+    vi.mocked(reads.readUsageSummary).mockImplementation(async () => {
+      seen.push("usage");
+      return { events: 250_000 } as never;
+    });
+    const { client } = fakeStripe();
+    vi.mocked(client.retrieveInvoice).mockImplementation(async () => {
+      seen.push("invoice");
+      return {
+        id: "in_current",
+        status: "paid",
+        charge: "ch_1",
+        paymentIntent: "pi_1",
+        currency: "eur",
+        amountPaidMinorUnits: 1900,
+        lines: [{ priceId: "price_base_pro", amountMinorUnits: 1900, discountMinorUnits: 0 }],
+      } as never;
+    });
+
+    await cancelSubscriptionWithRefund(ORG, USER);
+
+    expect(seen.indexOf("usage")).toBeGreaterThan(seen.indexOf("invoice"));
+  });
+});
+
+describe("cancelSubscriptionWithRefund — the audit trail (the recovery path for money we owe)", () => {
+  async function auditCalls() {
+    const { appendAuditEntry } = await import("@webhook-co/db/audit-append");
+    return vi.mocked(appendAuditEntry).mock.calls.map((c) => c[2]);
+  }
+
+  it("audits a successful cancel with the amount refunded", async () => {
+    fakeStripe();
+    await cancelSubscriptionWithRefund(ORG, USER);
+    expect(await auditCalls()).toEqual([
+      expect.objectContaining({
+        orgId: ORG,
+        actor: USER,
+        action: "subscription_canceled",
+        target: "refund minor units: 950",
+      }),
+    ]);
+  });
+
+  it("audits a FAILED refund with the debt, so it's recoverable from durable state and not just a log line", async () => {
+    fakeStripe({
+      createRefund: vi.fn(async () => {
+        throw new Error("stripe down");
+      }),
+    });
+    await cancelSubscriptionWithRefund(ORG, USER);
+    expect(await auditCalls()).toEqual([
+      expect.objectContaining({
+        action: "subscription_canceled_refund_failed",
+        target: "refund minor units: 950",
+      }),
+    ]);
+  });
+
+  it("audits an UNAVAILABLE refund with the amount we believe we owe", async () => {
+    fakeStripe({
+      retrieveInvoice: vi.fn(async () => ({
+        id: "in_current",
+        status: "paid",
+        charge: null, // credit-settled — nothing to reverse
+        paymentIntent: null,
+        currency: "eur",
+        amountPaidMinorUnits: 1900,
+        lines: [{ priceId: "price_base_pro", amountMinorUnits: 1900, discountMinorUnits: 0 }],
+      })),
+    });
+    await cancelSubscriptionWithRefund(ORG, USER);
+    expect(await auditCalls()).toEqual([
+      expect.objectContaining({
+        action: "subscription_canceled_refund_unavailable",
+        target: "refund minor units: 950",
+      }),
+    ]);
+  });
+});

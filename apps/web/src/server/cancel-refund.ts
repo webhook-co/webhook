@@ -76,6 +76,14 @@ export type CancelRefundResult =
   | { readonly status: "no_subscription" }
   | { readonly status: "error" };
 
+/**
+ * The Stripe refund statuses under which the money really is on its way back. An ALLOWLIST, so a status Stripe
+ * adds later is fail-closed (reported as a debt we owe) rather than silently announced as a completed refund.
+ * `pending` counts: refunds to bank debits settle over days, and "on its way" is true of them.
+ * `failed`/`canceled`/`requires_action` do not.
+ */
+const REFUND_MOVING_STATUSES = new Set(["succeeded", "pending"]);
+
 /** What the paid invoice tells us we may give back, and against which charge. */
 interface RefundBasis {
   /** The base fee actually captured for THIS period, net of discounts. 0 when nothing is refundable. */
@@ -118,6 +126,14 @@ async function refundBasis(
     return { ...none, charge: invoice.charge, unresolved: true };
   }
 
+  // Base lines from MORE THAN ONE plan — the invoice that follows a mid-cycle switch carries proration lines
+  // for both the old and the new base price. Which plan's included volume is the denominator? There is no safe
+  // guess, and picking the first line's cap would silently divide by the wrong plan. Refuse to guess.
+  const distinctBasePrices = new Set(baseLines.map((l) => l.priceId));
+  if (distinctBasePrices.size > 1) {
+    return { ...none, charge: invoice.charge, unresolved: true };
+  }
+
   // SUM the base lines, don't take the first: a proration invoice carries several lines on the same price,
   // and one of them can be a NEGATIVE credit. Net each line's discount off it — Stripe's line `amount` is
   // pre-discount, so a coupon would otherwise compute a refund bigger than the charge.
@@ -149,17 +165,13 @@ export async function cancelSubscriptionWithRefund(
   let cancelled = false;
   let owed = 0;
   try {
-    // Gate + measure in ONE tenant-RLS tx: the caller's role, the org's subscription, and the events consumed
-    // this period. Reject a non-manager before any Stripe call is made.
-    const now = Date.now();
-    const { role, sub, consumed } = await withTenantDb((app) =>
+    // Gate FIRST — read the caller's role + the org's subscription under one tenant-RLS tx, and reject a
+    // non-manager before any Stripe call is made. (Usage is read LAST; see below.)
+    const { role, sub } = await withTenantDb((app) =>
       withTenant(app, orgId, async (tx) => {
         const roleRow = await tx<{ role: string }[]>`
           select role from memberships where user_id = ${userId} limit 1`;
-        const activeSub = await readActiveSubscription(tx);
-        // The same basis the soft cap enforces on, so a refund can't disagree with what we metered them for.
-        const usage = activeSub ? await readUsageSummary(tx, now) : null;
-        return { role: roleRow[0]?.role ?? null, sub: activeSub, consumed: usage?.events ?? 0 };
+        return { role: roleRow[0]?.role ?? null, sub: await readActiveSubscription(tx) };
       }),
     );
     if (!isBillingManagerRole(role)) return { status: "forbidden" };
@@ -178,6 +190,14 @@ export async function cancelSubscriptionWithRefund(
       ? await client.retrieveInvoice(stripeSub.latestInvoiceId)
       : null;
     const basis = await refundBasis(client, plans, invoice);
+
+    // Consumption is measured LAST, after the Stripe round-trips — reading it up front would leave it stale by
+    // however long those took, and events that landed in the gap are volume the customer really used. Stale
+    // usage always errs the same way: it under-counts, and so over-refunds. The same basis the soft cap
+    // enforces on, so a refund can't disagree with what we metered them for.
+    const consumed = await withTenantDb((app) =>
+      withTenant(app, orgId, async (tx) => (await readUsageSummary(tx, Date.now())).events),
+    );
 
     owed = baseFeeRefundMinorUnits({
       baseMinorUnits: basis.baseMinorUnits,
@@ -220,13 +240,25 @@ export async function cancelSubscriptionWithRefund(
     }
 
     if (owed > 0 && basis.charge) {
-      await client.createRefund({
+      const refund = await client.createRefund({
         charge: basis.charge,
         amountMinorUnits: owed,
         reason: "requested_by_customer",
         // Keyed on the invoice: concurrent cancels refund the SAME money once. See (2) in the header.
         idempotencyKey: `refund:${sub.subscriptionId}:${invoice?.id ?? "none"}`,
       });
+      // The call RESOLVING is not the money moving. Stripe can hand back a refund that already `failed` — and
+      // reporting that as `ok` is the same lie as claiming a refund on a credit-settled invoice, just
+      // delivered through a 200 instead of an exception. `pending` IS success: a refund to a bank debit
+      // settles over days, and "on its way" is exactly true.
+      if (!REFUND_MOVING_STATUSES.has(refund.status)) {
+        logActionError(
+          "billing.cancel_refund_failed",
+          new Error(`stripe refund status: ${refund.status}`),
+        );
+        await auditCancel(orgId, userId, owed, "subscription_canceled_refund_failed");
+        return { status: "refund_failed", refundMinorUnits: owed };
+      }
     }
 
     await auditCancel(orgId, userId, owed, "subscription_canceled");
