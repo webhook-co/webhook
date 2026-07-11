@@ -15,11 +15,11 @@ const columns: { title: string; links: FooterLink[] }[] = [
   {
     title: "Product",
     links: [
-      { label: "Overview", href: LINKS.home },
-      { label: "Capture & replay", href: LINKS.concepts.captureAndReplay },
-      { label: "Ingestion", href: LINKS.concepts.ingestion },
-      { label: "Delivery", href: LINKS.concepts.delivery },
-      { label: "MCP server", href: LINKS.concepts.mcpServer },
+      { label: "Capture & replay", href: LINKS.product.captureReplay },
+      { label: "Verification", href: LINKS.product.verification },
+      { label: "Delivery", href: LINKS.product.delivery },
+      { label: "MCP server", href: LINKS.product.mcp },
+      { label: "Security", href: LINKS.product.security },
       { label: "Pricing", href: LINKS.pricing },
     ],
   },

@@ -65,16 +65,15 @@ describe("HomePage", () => {
     expect(screen.getByRole("tab", { name: "CLI" })).toHaveAttribute("aria-selected", "false");
   });
 
-  it("renders the Product and Developers nav dropdowns, collapsed by default", () => {
+  it("renders the Product nav dropdown collapsed by default (Developers was removed in the IA lane)", () => {
     render(<HomePage />);
     expect(screen.getByRole("button", { name: /^product$/i })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
-    expect(screen.getByRole("button", { name: /^developers$/i })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    // The Developers dropdown is gone — its docs deep-links live in the footer; the top nav carries a
+    // single "Docs" link instead.
+    expect(screen.queryByRole("button", { name: /^developers$/i })).toBeNull();
   });
 
   // Delivery SHIPPED — the engine, retries, signing and the DLQ are all live. The "soon" badge was

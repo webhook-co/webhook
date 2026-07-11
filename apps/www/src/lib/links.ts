@@ -41,14 +41,23 @@ export const LINKS = {
   changelog: `${DOCS}/changelog`,
   security: `${DOCS}/concepts/security`,
 
-  /** The Product menu has no marketing feature pages behind it, so it points at the concepts docs. */
+  /** The docs pages each /product/* page (and the homepage showcases) deep-link to for detail. */
   concepts: {
     captureAndReplay: `${DOCS}/concepts/how-webhook-co-works`,
-    ingestion: `${DOCS}/concepts/ingest-urls`,
     delivery: `${DOCS}/concepts/delivery-retry-signing`,
     verification: `${DOCS}/guides/verify-inbound-signatures`,
-    mcpServer: `${DOCS}/mcp/overview`,
     security: `${DOCS}/concepts/security`,
+  },
+
+  // ── product pages (www) ────────────────────────────────────────────────────
+  // Real marketing pages now exist for each capability, so the Product nav menu and footer point
+  // here (www) — only "Docs" leaves for docs.webhook.co. These deep-link to the docs for detail.
+  product: {
+    captureReplay: "/product/capture-replay",
+    verification: "/product/verification",
+    delivery: "/product/delivery",
+    mcp: "/product/mcp",
+    security: "/product/security",
   },
 
   // ── site ─────────────────────────────────────────────────────────────────

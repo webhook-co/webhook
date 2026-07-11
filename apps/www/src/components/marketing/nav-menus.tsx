@@ -13,38 +13,27 @@ interface MenuDef {
   links: { label: string; href: string }[];
 }
 
-// The Product menu has no marketing feature pages behind it — those were never built — so it points
-// at the concepts docs, which say the same thing in more depth. Better an honest destination than a
-// thin page invented to justify a nav item. The links render in the SSR HTML (hidden), so they exist
-// without JS.
+// The Product menu now points at real www /product/* pages (built in the IA lane), so the only nav
+// item that leaves for docs.webhook.co is the top-level "Docs" link (see nav.tsx). The old
+// "Developers" dropdown was a set of docs deep-links; those live in the footer now, keeping the top
+// nav to one door per destination. The links render in the SSR HTML (hidden), so they exist without JS.
 const MENUS: readonly MenuDef[] = [
   {
     id: "product",
     label: "Product",
     links: [
-      { label: "Capture & replay", href: LINKS.concepts.captureAndReplay },
-      { label: "Ingestion", href: LINKS.concepts.ingestion },
-      { label: "Delivery", href: LINKS.concepts.delivery },
-      { label: "MCP server", href: LINKS.concepts.mcpServer },
-      { label: "Security", href: LINKS.concepts.security },
-    ],
-  },
-  {
-    id: "developers",
-    label: "Developers",
-    links: [
-      { label: "Docs", href: LINKS.docs },
-      { label: "Quickstart", href: LINKS.quickstart },
-      { label: "API reference", href: LINKS.apiReference },
-      { label: "CLI", href: LINKS.cli },
-      { label: "MCP", href: LINKS.mcp },
+      { label: "Capture & replay", href: LINKS.product.captureReplay },
+      { label: "Verification", href: LINKS.product.verification },
+      { label: "Delivery", href: LINKS.product.delivery },
+      { label: "MCP server", href: LINKS.product.mcp },
+      { label: "Security", href: LINKS.product.security },
     ],
   },
 ];
 
 /**
- * The Product / Developers nav dropdowns — the one client island inside the otherwise server-rendered
- * Nav. These are *navigation links*, so they use the WAI-ARIA **disclosure** pattern (a button with
+ * The Product nav dropdown — the one client island inside the otherwise server-rendered Nav. These
+ * are *navigation links*, so they use the WAI-ARIA **disclosure** pattern (a button with
  * `aria-expanded` revealing a list of links), not the menu/menuitem roles. The trigger toggles on
  * click/Enter/Space; the menu closes on Escape (restoring focus to the trigger), an outside pointer
  * press, or focus leaving the menu. Only one is open at a time.

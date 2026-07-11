@@ -53,6 +53,43 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     a11y: true,
     sitemap: true,
   },
+  // Product pages — the www surfaces the Product nav menu points at (so only "Docs" leaves for the
+  // docs subdomain). priority just under the homepage: these are the pages we most want indexed.
+  {
+    path: "/product/capture-replay",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/product/verification",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/product/delivery",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/product/mcp",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
+  {
+    path: "/product/security",
+    changeFrequency: "monthly",
+    priority: 0.7,
+    a11y: true,
+    sitemap: true,
+  },
   {
     path: "/terms",
     changeFrequency: "yearly",

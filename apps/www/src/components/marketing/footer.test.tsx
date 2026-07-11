@@ -32,14 +32,18 @@ describe("Footer", () => {
     expect(labels).not.toContain("Open source");
   });
 
-  it("wires the Product column, including Pricing (which pointed at nothing while /pricing was live)", () => {
+  // The Product column points at the real www /product/* pages now (the IA lane), plus Pricing.
+  it("wires the Product column to the www product pages, not docs", () => {
     render(<Footer />);
     const byLabel = Object.fromEntries(
       columnLinks("Product").map((a) => [a.textContent, a.getAttribute("href")]),
     );
     expect(byLabel["Pricing"]).toBe("/pricing");
-    expect(byLabel["Overview"]).toBe("/");
-    expect(byLabel["MCP server"]).toBe("https://docs.webhook.co/mcp/overview");
+    expect(byLabel["Capture & replay"]).toBe("/product/capture-replay");
+    expect(byLabel["Verification"]).toBe("/product/verification");
+    expect(byLabel["MCP server"]).toBe("/product/mcp");
+    // No Product-column link leaves for the docs subdomain.
+    expect(Object.values(byLabel).some((h) => h?.includes("docs.webhook.co"))).toBe(false);
   });
 
   // The changelog existed the whole time (a Mintlify tab); it was `#` only because nobody wired it.
