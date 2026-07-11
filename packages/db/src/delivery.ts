@@ -190,7 +190,16 @@ export interface DueDelivery {
   readonly deliverable: boolean;
   /** True when the SOURCE event was tombstoned (S3) — a distinct non-deliverable CAUSE from a verification
    *  rejection, so the drain can record an accurate blocked reason instead of a misleading "verification
-   *  failed". Its body is redacted + being purged; the delivery is terminally refused, never POSTed. */
+   *  failed". Its body is redacted + being purged; the delivery is terminally refused, never POSTed.
+   *
+   *  BOUNDED EDGE (documented, deliberate): this gate is evaluated at prefetch time (listDueDeliveries). A
+   *  tombstone that lands in the sub-second window AFTER the DO prefetched a delivery but BEFORE it POSTs is
+   *  not seen by that in-flight attempt, so the body can be delivered ONCE more. This is NOT a data-egress
+   *  hole: the destination is the customer's OWN, already configured and already queued to receive this
+   *  event, and the R2 body persists until the async purge regardless. Every FUTURE drain filters it (the
+   *  queued row becomes non-deliverable → terminally blocked). Closing the in-memory window would require a
+   *  per-delivery `deleted_at` re-read on the hot delivery path to guard a rare, same-tenant race — a poor
+   *  trade we deliberately don't make. */
   readonly sourceDeleted: boolean;
 }
 

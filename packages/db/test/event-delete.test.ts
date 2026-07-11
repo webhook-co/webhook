@@ -286,3 +286,51 @@ describe("audit + idempotency + not-found", () => {
     await expect(del(orgId, randomUUID())).rejects.toBeInstanceOf(CapabilityFault);
   });
 });
+
+describe("event_payload_purge RLS boundary (the anti-forgery gate — it drives R2 deletion)", () => {
+  it("blocks a tenant from enqueuing a purge job for ANOTHER org's R2 key", async () => {
+    // The load-bearing security property: forging orgB's job would let the drain destroy orgB's R2
+    // payloads. The insert `with check (org_id = current_org_id())` must reject it.
+    const { orgId: orgA } = await seedOrgWithEndpoint();
+    const { orgId: orgB, endpointId: epB } = await seedOrgWithEndpoint();
+    await expect(
+      withTenant(
+        app,
+        orgA,
+        (tx) => tx`insert into event_payload_purge (event_id, org_id, endpoint_id, payload_r2_key)
+                   values (${randomUUID()}, ${orgB}, ${epB}, ${"org/" + orgB + "/ep/" + epB + "/k"})`,
+      ),
+    ).rejects.toThrow();
+    const [row] = await admin<{ n: number }[]>`
+      select count(*)::int as n from event_payload_purge where org_id = ${orgB}`;
+    expect(row.n).toBe(0);
+  });
+
+  it("a tenant cannot read another org's purge job", async () => {
+    const { orgId: orgA } = await seedOrgWithEndpoint();
+    const { orgId: orgB, endpointId: epB } = await seedOrgWithEndpoint();
+    const { eventId } = await seedEvent(orgB, epB);
+    await del(orgB, eventId); // orgB now has a purge job
+
+    const visibleFromA = await withTenant(
+      app,
+      orgA,
+      async (tx) =>
+        (
+          await tx<{ n: number }[]>`
+            select count(*)::int as n from event_payload_purge where org_id = ${orgB}`
+        )[0]!.n,
+    );
+    expect(visibleFromA).toBe(0);
+  });
+
+  it("webhook_app can INSERT+SELECT the job but never UPDATE or DELETE it (drain-only)", async () => {
+    const [g] = await admin<{ ins: boolean; sel: boolean; upd: boolean; del: boolean }[]>`
+      select
+        has_table_privilege(${DB_ROLES.app}, 'event_payload_purge', 'INSERT') as ins,
+        has_table_privilege(${DB_ROLES.app}, 'event_payload_purge', 'SELECT') as sel,
+        has_table_privilege(${DB_ROLES.app}, 'event_payload_purge', 'UPDATE') as upd,
+        has_table_privilege(${DB_ROLES.app}, 'event_payload_purge', 'DELETE') as del`;
+    expect(g).toEqual({ ins: true, sel: true, upd: false, del: false });
+  });
+});
