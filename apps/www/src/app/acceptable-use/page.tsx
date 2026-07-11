@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
+import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
 import { Nav } from "@/components/marketing/nav";
+import { ACCEPTABLE_USE_ANCHORS } from "@/app/legal-anchors";
 import { focusRing } from "@/lib/styles";
 
 export const metadata: Metadata = {
@@ -48,7 +50,9 @@ export default function AcceptableUsePage() {
             We don&apos;t monitor your payloads, but if we learn you&apos;re doing this we will act.
           </blockquote>
 
-          <h2>1. Who this applies to, and how it fits together</h2>
+          <AnchoredHeading id={ACCEPTABLE_USE_ANCHORS.scope}>
+            1. Who this applies to, and how it fits together
+          </AnchoredHeading>
           <p>
             This Acceptable Use Policy (the &ldquo;AUP&rdquo;) applies to everyone who uses the
             hosted webhook.co service — account holders, their team members, and anyone acting
@@ -62,7 +66,9 @@ export default function AcceptableUsePage() {
             build for is on you.
           </p>
 
-          <h2>2. Why this policy is strict</h2>
+          <AnchoredHeading id={ACCEPTABLE_USE_ANCHORS.whyThisIsStrict}>
+            2. Why this policy is strict
+          </AnchoredHeading>
           <p>
             Most services only accept data from people who already have accounts. We don&apos;t: a
             webhook endpoint is a public URL that accepts arbitrary requests from anyone who knows
@@ -75,7 +81,9 @@ export default function AcceptableUsePage() {
             there.
           </p>
 
-          <h2>3. What you must not do</h2>
+          <AnchoredHeading id={ACCEPTABLE_USE_ANCHORS.prohibitedUses}>
+            3. What you must not do
+          </AnchoredHeading>
           <p>
             <strong>Illegal or unauthorised data.</strong> Don&apos;t send, store, or process data
             that is illegal, that you have no lawful right to process, or that infringes someone
@@ -126,7 +134,9 @@ export default function AcceptableUsePage() {
             get around plan limits or the one-time free allowance.
           </p>
 
-          <h2>4. Regulated data — allowed, but at your risk</h2>
+          <AnchoredHeading id={ACCEPTABLE_USE_ANCHORS.regulatedData}>
+            4. Regulated data — allowed, but at your risk
+          </AnchoredHeading>
           <p>
             The Service is <strong>not designed for, and is not certified to handle,</strong>{" "}
             protected health information under HIPAA, full cardholder data under PCI DSS, or
@@ -142,7 +152,9 @@ export default function AcceptableUsePage() {
             because inspecting them is the product.
           </p>
 
-          <h2>5. Monitoring: what we do and don&apos;t do</h2>
+          <AnchoredHeading id={ACCEPTABLE_USE_ANCHORS.monitoring}>
+            5. Monitoring: what we do and don&apos;t do
+          </AnchoredHeading>
           <p>
             <strong>We do not monitor the contents of your webhooks.</strong> We don&apos;t scan
             your payloads for policy violations, and nothing here should be read as a promise that
@@ -155,7 +167,9 @@ export default function AcceptableUsePage() {
             in the ordinary course. We are not.
           </p>
 
-          <h2>6. What happens if you break these rules</h2>
+          <AnchoredHeading id={ACCEPTABLE_USE_ANCHORS.enforcement}>
+            6. What happens if you break these rules
+          </AnchoredHeading>
           <p>
             Depending on what we find, and how bad it is, we may: ask you to fix it; disable a
             specific endpoint, destination, or key; suspend your account; or terminate it.
@@ -174,7 +188,9 @@ export default function AcceptableUsePage() {
             <strong>not refundable</strong>, consistent with §6 of the <a href="/terms">Terms</a>.
           </p>
 
-          <h2>7. Reporting abuse, and reporting vulnerabilities</h2>
+          <AnchoredHeading id={ACCEPTABLE_USE_ANCHORS.reportingAbuse}>
+            7. Reporting abuse, and reporting vulnerabilities
+          </AnchoredHeading>
           <p>
             If you believe someone is using webhook.co in breach of this policy, email{" "}
             <a href="mailto:abuse@webhook.co">abuse@webhook.co</a> with as much detail as you can
@@ -188,7 +204,7 @@ export default function AcceptableUsePage() {
             follows those rules.
           </p>
 
-          <h2>8. Changes</h2>
+          <AnchoredHeading id={ACCEPTABLE_USE_ANCHORS.changes}>8. Changes</AnchoredHeading>
           <p>
             This is a young service and abuse patterns change, so we may update this policy. If we
             make a material change we&apos;ll update the date at the top and, for anything that

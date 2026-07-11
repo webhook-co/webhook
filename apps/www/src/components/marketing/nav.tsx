@@ -12,7 +12,7 @@ const navLinks = [
 export function Nav() {
   return (
     <div className="site-nav sticky top-0 z-50 border-b border-hairline">
-      <div className={cn(container, "flex h-[60px] items-center justify-between")}>
+      <div className={cn(container, "flex h-[3.75rem] items-center justify-between")}>
         <a
           href="/"
           aria-label="webhook.co home"
@@ -29,7 +29,7 @@ export function Nav() {
               href={link.href}
               className={cn(
                 focusRing,
-                "inline-flex h-[34px] items-center rounded-control px-3 text-sm text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+                "inline-flex h-[2.125rem] items-center rounded-control px-3 text-sm text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
               )}
             >
               {link.label}
@@ -42,7 +42,7 @@ export function Nav() {
             href="#"
             className={cn(
               focusRing,
-              "inline-flex h-[34px] items-center rounded-control px-3 text-sm text-fg-secondary transition-colors hover:text-fg",
+              "inline-flex h-[2.125rem] items-center rounded-control px-3 text-sm text-fg-secondary transition-colors hover:text-fg",
             )}
           >
             Sign in

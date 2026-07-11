@@ -2,6 +2,7 @@ import { cn } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { AnnounceBar } from "@/components/marketing/announce-bar";
+import { Faq } from "@/components/marketing/faq";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { Footer } from "@/components/marketing/footer";
 import { Nav } from "@/components/marketing/nav";
@@ -37,6 +38,9 @@ export default function PricingPage() {
         <PricingTable />
         <Reveal>
           <PricingDisclosures />
+        </Reveal>
+        <Reveal>
+          <Faq />
         </Reveal>
         <Reveal>
           <FinalCta />

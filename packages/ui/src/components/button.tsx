@@ -32,8 +32,8 @@ export const buttonVariants = cva(
         danger: "bg-danger text-white shadow-1 hover:bg-danger/90",
       },
       size: {
-        sm: "h-[34px] px-3.5 text-sm",
-        md: "h-[42px] px-5 text-base",
+        sm: "h-[2.125rem] px-3.5 text-sm",
+        md: "h-[2.625rem] px-5 text-base",
         lg: "h-12 px-6 text-md",
       },
     },

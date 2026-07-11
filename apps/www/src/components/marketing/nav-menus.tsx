@@ -105,7 +105,7 @@ export function NavMenus() {
               onClick={() => setOpenId(open ? null : menu.id)}
               className={cn(
                 focusRing,
-                "inline-flex h-[34px] items-center gap-1 rounded-control px-3 text-sm text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+                "inline-flex h-[2.125rem] items-center gap-1 rounded-control px-3 text-sm text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
               )}
             >
               {menu.label}

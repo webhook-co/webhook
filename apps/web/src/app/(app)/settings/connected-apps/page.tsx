@@ -22,7 +22,7 @@ export default async function ConnectedAppsPage() {
       </div>
 
       {result.status === "unavailable" ? (
-        <p className="text-sm text-fg-secondary">
+        <p className="text-fg-secondary">
           Connected apps are temporarily unavailable. Please try again shortly.
         </p>
       ) : (

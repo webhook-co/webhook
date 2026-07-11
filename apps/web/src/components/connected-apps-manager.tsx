@@ -60,7 +60,7 @@ export function ConnectedAppsManager({
 
   if (apps.length === 0) {
     return (
-      <p className="text-sm text-fg-secondary">
+      <p className="text-fg-secondary">
         No apps are connected. When you authorize an app (like Claude or Cursor) to your webhook.co
         account, it&rsquo;ll appear here.
       </p>
@@ -88,7 +88,7 @@ export function ConnectedAppsManager({
                   </Badge>
                 )}
               </span>
-              <span className="break-all font-mono text-[13px] text-fg-secondary">
+              <span className="break-all font-mono text-sm text-fg-secondary">
                 {app.identityDomain ?? "no verified domain"}
               </span>
               <span className="flex flex-wrap gap-1.5 pt-0.5">

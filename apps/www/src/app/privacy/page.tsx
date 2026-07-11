@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
+import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
 import { Nav } from "@/components/marketing/nav";
+import { PRIVACY_ANCHORS } from "@/app/legal-anchors";
 import { focusRing } from "@/lib/styles";
 
 export const metadata: Metadata = {
@@ -47,7 +49,9 @@ export default function PrivacyPage() {
             requests: <a href="mailto:privacy@webhook.co">privacy@webhook.co</a>.
           </blockquote>
 
-          <h2>1. Who we are, and what this policy covers</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.whoWeAre}>
+            1. Who we are, and what this policy covers
+          </AnchoredHeading>
           <p>
             The hosted webhook.co service (the "Service") is operated by{" "}
             <strong>Sourabh Choraria</strong>, a sole trader based in Porto, Portugal ("webhook.co",
@@ -67,7 +71,9 @@ export default function PrivacyPage() {
             privacy compliance.
           </p>
 
-          <h2>2. Our two roles: controller and processor</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.controllerAndProcessor}>
+            2. Our two roles: controller and processor
+          </AnchoredHeading>
           <ul>
             <li>
               <strong>Account data — we're the controller.</strong> Information about you and your
@@ -89,7 +95,7 @@ export default function PrivacyPage() {
             </li>
           </ul>
 
-          <h2>3. What we collect</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.whatWeCollect}>3. What we collect</AnchoredHeading>
           <p>
             <strong>Account &amp; identity data (you give us):</strong> your name, email address,
             and — if you sign in with Google or GitHub — the basic profile information and avatar
@@ -140,7 +146,9 @@ export default function PrivacyPage() {
             help you.
           </p>
 
-          <h2>4. Why we use it, and our legal basis (GDPR)</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.legalBasis}>
+            4. Why we use it, and our legal basis (GDPR)
+          </AnchoredHeading>
           <ul>
             <li>
               <strong>To provide the Service</strong> (create your account, run endpoints,
@@ -173,7 +181,9 @@ export default function PrivacyPage() {
             We don't send marketing emails except transactional/service messages, unless you opt in.
           </p>
 
-          <h2>5. Who we share it with (sub-processors)</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.subProcessors}>
+            5. Who we share it with (sub-processors)
+          </AnchoredHeading>
           <p>
             We don't sell your data or share it for advertising. To run the Service we rely on a
             small set of trusted infrastructure providers (sub-processors) — including{" "}
@@ -187,7 +197,9 @@ export default function PrivacyPage() {
             as part of a business transfer — in which case we'll tell you.
           </p>
 
-          <h2>6. Where your data is, and international transfers</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.internationalTransfers}>
+            6. Where your data is, and international transfers
+          </AnchoredHeading>
           <p>
             Your data is currently hosted <strong>primarily in the United States</strong> (our
             database and object storage default to US regions). We do <strong>not</strong> currently
@@ -199,7 +211,7 @@ export default function PrivacyPage() {
             rather than depending on the EU–US Data Privacy Framework alone.
           </p>
 
-          <h2>7. How long we keep it</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.retention}>7. How long we keep it</AnchoredHeading>
           <ul>
             <li>
               <strong>Account data:</strong> for as long as your account is open, and a reasonable
@@ -230,7 +242,7 @@ export default function PrivacyPage() {
             </li>
           </ul>
 
-          <h2>8. Your rights</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.yourRights}>8. Your rights</AnchoredHeading>
           <p>
             Subject to applicable law, you can ask to <strong>access</strong> your personal data,{" "}
             <strong>correct</strong> it, <strong>delete/erase</strong> it, <strong>restrict</strong>{" "}
@@ -248,7 +260,9 @@ export default function PrivacyPage() {
             underlying request through the customer whose account holds the data.
           </p>
 
-          <h2>9. How we protect your data</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.security}>
+            9. How we protect your data
+          </AnchoredHeading>
           <ul>
             <li>
               <strong>In transit:</strong> all connections use TLS.
@@ -279,7 +293,7 @@ export default function PrivacyPage() {
             requires them (see the <a href="/terms">Terms</a>).
           </p>
 
-          <h2>10. Cookies</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.cookies}>10. Cookies</AnchoredHeading>
           <p>
             We use only <strong>strictly-necessary</strong> cookies, so we don't show a cookie
             banner. These are:
@@ -302,21 +316,23 @@ export default function PrivacyPage() {
             sets no cookies at all.
           </p>
 
-          <h2>11. Children</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.children}>11. Children</AnchoredHeading>
           <p>
             The Service isn't directed to children, and we don't knowingly collect data from anyone
             under 16 (or the age of digital consent where you live). If you believe a child has
             given us data, contact us and we'll remove it.
           </p>
 
-          <h2>12. Data breaches</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.dataBreaches}>12. Data breaches</AnchoredHeading>
           <p>
             If a breach affects your personal data, we'll act without undue delay and, where the law
             requires, notify the relevant supervisory authority within <strong>72 hours</strong>,
             and notify you where there's a high risk to you.
           </p>
 
-          <h2>13. California residents (CCPA/CPRA)</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.californiaResidents}>
+            13. California residents (CCPA/CPRA)
+          </AnchoredHeading>
           <p>
             If you're a California resident:{" "}
             <strong>we do not sell or share your personal information</strong>, and we don't use it
@@ -327,13 +343,13 @@ export default function PrivacyPage() {
             won't discriminate against you for doing so.
           </p>
 
-          <h2>14. Changes to this policy</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.changes}>14. Changes to this policy</AnchoredHeading>
           <p>
             We may update this policy. For material changes we'll give reasonable notice by email or
             in-app and update the "Last updated" date above.
           </p>
 
-          <h2>15. Contact</h2>
+          <AnchoredHeading id={PRIVACY_ANCHORS.contact}>15. Contact</AnchoredHeading>
           <p>
             <strong>Sourabh Choraria</strong> (webhook.co), Porto, Portugal —{" "}
             <a href="mailto:privacy@webhook.co">privacy@webhook.co</a>. For EU/EEA privacy

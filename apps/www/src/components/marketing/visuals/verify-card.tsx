@@ -38,9 +38,9 @@ export function VerifyCard() {
             index > 0 && "border-t border-hairline",
           )}
         >
-          <span className="inline-flex flex-wrap items-center gap-[9px] font-mono text-[13px] font-medium text-fg">
+          <span className="inline-flex flex-wrap items-center gap-[9px] font-mono text-sm font-medium text-fg">
             <span
-              className="grid h-[17px] w-[17px] place-items-center rounded-pill border border-danger-border bg-danger-bg text-[10px] text-danger"
+              className="grid h-[1.0625rem] w-[1.0625rem] place-items-center rounded-pill border border-danger-border bg-danger-bg text-[0.625rem] text-danger"
               aria-hidden="true"
             >
               ✕
@@ -55,10 +55,10 @@ export function VerifyCard() {
               {failure.code}
             </span>
           </span>
-          <span className="pl-[26px] text-[13px] text-fg-muted">{failure.why}</span>
+          <span className="pl-[26px] text-sm text-fg-muted">{failure.why}</span>
         </div>
       ))}
-      <div className="flex items-center gap-[9px] border-t border-hairline bg-surface-page px-5 py-4 text-[13px] text-fg-secondary">
+      <div className="flex items-center gap-[9px] border-t border-hairline bg-surface-page px-5 py-4 text-sm text-fg-secondary">
         <ShieldCheck className="h-4 w-4 text-ok" aria-hidden="true" />
         Each failure names its cause, with the fix attached.
       </div>

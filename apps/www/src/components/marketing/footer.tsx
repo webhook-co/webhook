@@ -62,7 +62,7 @@ export function Footer() {
                     aria-label={label}
                     className={cn(
                       focusRing,
-                      "inline-grid h-[34px] w-[34px] place-items-center rounded-control border border-hairline text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+                      "inline-grid h-[2.125rem] w-[2.125rem] place-items-center rounded-control border border-hairline text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
                     )}
                   >
                     <Icon size={16} />

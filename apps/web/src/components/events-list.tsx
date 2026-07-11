@@ -147,7 +147,7 @@ export function EventsList({
     <div className="flex flex-col gap-4">
       {liveAvailable ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex min-h-[20px] items-center gap-2 text-sm" aria-live="polite">
+          <div className="flex min-h-5 items-center gap-2 text-sm" aria-live="polite">
             {live ? (
               <>
                 <span

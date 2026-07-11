@@ -149,7 +149,7 @@ export function ReplayDialog({
             We couldn&apos;t load your destinations. Refresh and try again.
           </Banner>
         ) : targets.length === 0 ? (
-          <p className="text-sm text-fg-secondary">
+          <p className="text-fg-secondary">
             Register a replay destination first.{" "}
             <Link href="/destinations" className="text-fg underline underline-offset-4">
               Manage destinations
@@ -229,7 +229,7 @@ function ReplayResultBlock({ attempt }: { attempt: ReplayAttemptView }) {
   const copy = deliveryCopy(attempt.status);
   return (
     <div className="flex flex-col gap-2">
-      <p className="text-sm text-fg-secondary">Replay recorded.</p>
+      <p className="text-fg-secondary">Replay recorded.</p>
       <div className="flex items-center gap-2">
         <StatusPill tone={copy.tone} title={copy.hint}>
           {copy.label}
@@ -238,8 +238,8 @@ function ReplayResultBlock({ attempt }: { attempt: ReplayAttemptView }) {
           <span className="text-sm text-fg-secondary">· {attempt.statusCode}</span>
         ) : null}
       </div>
-      {copy.hint ? <p className="text-sm text-fg-secondary">{copy.hint}</p> : null}
-      {attempt.error ? <p className="text-sm text-fg-muted">{attempt.error}</p> : null}
+      {copy.hint ? <p className="text-fg-secondary">{copy.hint}</p> : null}
+      {attempt.error ? <p className="text-fg-muted">{attempt.error}</p> : null}
     </div>
   );
 }

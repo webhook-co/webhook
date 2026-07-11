@@ -326,7 +326,7 @@ export function ProviderSecretsManager({
         </form>
 
         {secrets.length === 0 ? (
-          <p className="text-sm text-fg-secondary">
+          <p className="text-fg-secondary">
             No provider secrets yet. Add one above to start verifying inbound webhooks.
           </p>
         ) : (

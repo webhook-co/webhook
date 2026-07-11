@@ -11,18 +11,36 @@ export const fontFamily = {
   mono: '"Geist Mono", ui-monospace, "SF Mono", "Cascadia Code", monospace',
 } as const;
 
-/** Type scale, in px. `base` is the product-UI default; `md` is marketing/docs body. */
+/**
+ * Type scale, in **rem** — root-relative on purpose.
+ *
+ * Authored against the browser's default 16px root, so the comment on each step is what it renders
+ * at today. We never set `font-size` on `html`: that leaves the root equal to the reader's own
+ * browser preference, and the whole scale (plus spacing, which is already rem) moves with it. An
+ * absolute px scale would ignore that preference entirely — browser *zoom* would still work, but the
+ * default-font-size setting, the one a low-vision reader is most likely to have already changed,
+ * would do nothing.
+ *
+ * Two sizes carry the load, and the distinction is the point:
+ * - `base` is the **product-UI default** — the dashboard's body, dense by design.
+ * - `md` is the **long-form reading size** — marketing and legal prose opt into it. Reading a
+ *   contract is not the same task as scanning a delivery table, and the sizes shouldn't pretend
+ *   otherwise.
+ *
+ * `sm` is the dense workhorse (table cells, labels, metadata), not a size for prose. If a paragraph
+ * is set in `sm`, that's a bug: the reader has to work harder than the body default asks them to.
+ */
 export const fontSize = {
-  xs: "12px",
-  sm: "13px",
-  base: "14px",
-  md: "16px",
-  lg: "18px",
-  xl: "22px",
-  "2xl": "28px",
-  "3xl": "36px",
-  "4xl": "48px",
-  "5xl": "64px",
+  xs: "0.75rem", // 12px — mono labels, column headers, badges. Scanned, never read.
+  sm: "0.875rem", // 14px — table cells, field labels, metadata.
+  base: "0.9375rem", // 15px — product-UI body. The default for all three apps.
+  md: "1rem", // 16px — long-form reading: legal + marketing prose.
+  lg: "1.125rem", // 18px — ledes.
+  xl: "1.375rem", // 22px
+  "2xl": "1.75rem", // 28px
+  "3xl": "2.25rem", // 36px
+  "4xl": "3rem", // 48px
+  "5xl": "4rem", // 64px
 } as const;
 
 /** Geist is variable; 620 is the brand's "semibold". */
