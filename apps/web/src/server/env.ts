@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { ConnectedApp } from "@webhook-co/contract";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 import {
@@ -124,6 +125,26 @@ export function getAccountDeleterBinding(): AccountDeleterBinding | undefined {
   const binding = workerEnv().AUTH_ACCOUNT_DELETER;
   if (binding && typeof (binding as { deleteAccount?: unknown }).deleteAccount === "function") {
     return binding as AccountDeleterBinding;
+  }
+  return undefined;
+}
+
+/** auth.'s ConnectedApps WorkerEntrypoint — a user's active OAuth grants live in auth.'s OAUTH_KV, which the
+ *  dashboard can't read locally, so it RPCs this binding. Keyed by the SERVER-verified session userId. */
+export interface ConnectedAppsBinding {
+  list(userId: string): Promise<ConnectedApp[]>;
+  revoke(userId: string, grantId: string): Promise<boolean>;
+}
+
+/** The bound AUTH_CONNECTED_APPS entrypoint, or undefined when unbound (dev / pre-provision). */
+export function getConnectedAppsBinding(): ConnectedAppsBinding | undefined {
+  const binding = workerEnv().AUTH_CONNECTED_APPS;
+  if (
+    binding &&
+    typeof (binding as { list?: unknown }).list === "function" &&
+    typeof (binding as { revoke?: unknown }).revoke === "function"
+  ) {
+    return binding as ConnectedAppsBinding;
   }
   return undefined;
 }

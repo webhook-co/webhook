@@ -31,3 +31,4 @@ export {
 // Explicit re-exports (not `export *`): apps/auth (a Turbopack/Next consumer) imports the introspection
 // contract; named re-exports resolve reliably there (the barrel note above).
 export { type IntrospectionResult, type TokenIntrospector } from "./introspection";
+export { type ConnectedApp, type ConnectedAppsService } from "./connected-apps";
