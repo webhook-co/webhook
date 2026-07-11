@@ -16,10 +16,27 @@ import { setupHookTimeoutMs } from "./pg-timing";
 // flip always carries its audit row. Idempotent (no-op when already at the target). Free orgs (no
 // org_limits row) cannot opt in.
 
+const NOW = Date.UTC(2026, 6, 15, 12, 0, 0); // 2026-07-15T12:00Z → UTC period [2026-07-01, 2026-08-01)
+const IN_PERIOD = "2026-07-10T00:00:00.000Z";
+
 let pg: EphemeralPostgres;
 let app: Sql;
 let admin: Sql;
 let key: CryptoKey;
+
+/** Seed rolled usage in NOW's period so evaluateOrgCap (inside setOverageEnabled) sees the org over cap. */
+async function seedUsage(orgId: string, count: number): Promise<void> {
+  await withTenant(app, orgId, async (tx) => {
+    await tx`insert into usage (org_id, window_start, event_count) values (${orgId}, ${IN_PERIOD}, ${count})`;
+  });
+}
+
+async function pausedOf(orgId: string): Promise<boolean | null> {
+  return withTenant(app, orgId, async (tx) => {
+    const [row] = await tx<{ paused: boolean }[]>`select paused from ingest_paused`;
+    return row?.paused ?? null;
+  });
+}
 
 async function seedUser(id: string): Promise<void> {
   await admin`
@@ -35,7 +52,9 @@ async function seedOrg(
 ): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+    // created_at anchors the lifetime allowance window; set it BEFORE the seeded usage date so
+    // sumPeriodEventUsage (inside evaluateOrgCap) counts it (else the window excludes it → never over cap).
+    await tx`insert into orgs (id, slug, name, created_at) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"}, ${"2026-01-01T00:00:00.000Z"})`;
     await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${role})`;
     if (opts.policy !== null && opts.policy !== undefined) {
       await tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${1000}, ${opts.policy})`;
@@ -79,9 +98,15 @@ describe("setOverageEnabled", () => {
     await seedUser(u);
     const orgId = await seedOrg(u, "owner", { policy: "pause" });
 
-    const res = await setOverageEnabled(app, key, { orgId, userId: u, enabled: true });
+    const res = await setOverageEnabled(app, key, {
+      orgId,
+      userId: u,
+      enabled: true,
+      now: NOW,
+      defaultEventCap: null,
+    });
 
-    expect(res).toEqual({ status: "ok", policy: "allow", changed: true });
+    expect(res).toEqual({ status: "ok", policy: "allow", changed: true, transitioned: false });
     expect(await policyOf(orgId)).toBe("allow");
     expect(await auditActions(orgId)).toContain("policy_changed");
   });
@@ -91,9 +116,15 @@ describe("setOverageEnabled", () => {
     await seedUser(u);
     const orgId = await seedOrg(u, "admin", { policy: "allow" });
 
-    const res = await setOverageEnabled(app, key, { orgId, userId: u, enabled: false });
+    const res = await setOverageEnabled(app, key, {
+      orgId,
+      userId: u,
+      enabled: false,
+      now: NOW,
+      defaultEventCap: null,
+    });
 
-    expect(res).toEqual({ status: "ok", policy: "pause", changed: true });
+    expect(res).toEqual({ status: "ok", policy: "pause", changed: true, transitioned: false });
     expect(await policyOf(orgId)).toBe("pause");
   });
 
@@ -102,9 +133,15 @@ describe("setOverageEnabled", () => {
     await seedUser(u);
     const orgId = await seedOrg(u, "owner", { policy: "allow" });
 
-    const res = await setOverageEnabled(app, key, { orgId, userId: u, enabled: true }); // already 'allow'
+    const res = await setOverageEnabled(app, key, {
+      orgId,
+      userId: u,
+      enabled: true,
+      now: NOW,
+      defaultEventCap: null,
+    }); // already 'allow'
 
-    expect(res).toEqual({ status: "ok", policy: "allow", changed: false });
+    expect(res).toEqual({ status: "ok", policy: "allow", changed: false, transitioned: false });
     expect(await auditActions(orgId)).toEqual([]); // no policy_changed row for a no-op
   });
 
@@ -113,7 +150,13 @@ describe("setOverageEnabled", () => {
     await seedUser(u);
     const orgId = await seedOrg(u, "member", { policy: "pause" });
 
-    const res = await setOverageEnabled(app, key, { orgId, userId: u, enabled: true });
+    const res = await setOverageEnabled(app, key, {
+      orgId,
+      userId: u,
+      enabled: true,
+      now: NOW,
+      defaultEventCap: null,
+    });
 
     expect(res).toEqual({ status: "forbidden" });
     expect(await policyOf(orgId)).toBe("pause"); // unchanged
@@ -127,7 +170,13 @@ describe("setOverageEnabled", () => {
     await seedUser(ghost);
     const orgId = await seedOrg(u, "owner", { policy: "pause" });
 
-    const res = await setOverageEnabled(app, key, { orgId, userId: ghost, enabled: true });
+    const res = await setOverageEnabled(app, key, {
+      orgId,
+      userId: ghost,
+      enabled: true,
+      now: NOW,
+      defaultEventCap: null,
+    });
 
     expect(res).toEqual({ status: "forbidden" });
     expect(await policyOf(orgId)).toBe("pause");
@@ -138,7 +187,13 @@ describe("setOverageEnabled", () => {
     await seedUser(u);
     const orgId = await seedOrg(u, "owner", { policy: null }); // no org_limits row
 
-    const res = await setOverageEnabled(app, key, { orgId, userId: u, enabled: true });
+    const res = await setOverageEnabled(app, key, {
+      orgId,
+      userId: u,
+      enabled: true,
+      now: NOW,
+      defaultEventCap: null,
+    });
 
     expect(res).toEqual({ status: "no_subscription" });
     expect(await policyOf(orgId)).toBeNull();
@@ -153,9 +208,57 @@ describe("setOverageEnabled", () => {
     await seedOrg(uB, "owner", { policy: "pause" }); // uB owns org B, not org A
 
     // Calling for orgA with uB: withTenant pins RLS to orgA, so uB's (org B) membership is invisible → forbidden.
-    const res = await setOverageEnabled(app, key, { orgId: orgA, userId: uB, enabled: true });
+    const res = await setOverageEnabled(app, key, {
+      orgId: orgA,
+      userId: uB,
+      enabled: true,
+      now: NOW,
+      defaultEventCap: null,
+    });
 
     expect(res).toEqual({ status: "forbidden" });
     expect(await policyOf(orgA)).toBe("pause");
+  });
+
+  it("durably PAUSES an over-cap org when overage is turned OFF (ingest_paused flips in the SAME tx)", async () => {
+    // The money-correctness guarantee: enforcement is reconciled durably here, not left to the cron. An org
+    // over its cap on 'allow' (overage on, unpaused) that turns overage off must be paused immediately.
+    const u = `u_${randomUUID().slice(0, 8)}`;
+    await seedUser(u);
+    const orgId = await seedOrg(u, "owner", { policy: "allow" });
+    await seedUsage(orgId, 1500); // > event_cap (1000)
+
+    const res = await setOverageEnabled(app, key, {
+      orgId,
+      userId: u,
+      enabled: false,
+      now: NOW,
+      defaultEventCap: null,
+    });
+
+    expect(res).toEqual({ status: "ok", policy: "pause", changed: true, transitioned: true });
+    expect(await pausedOf(orgId)).toBe(true); // durable — no cron pass needed
+  });
+
+  it("durably RESUMES an over-cap paused org when overage is turned ON", async () => {
+    const u = `u_${randomUUID().slice(0, 8)}`;
+    await seedUser(u);
+    const orgId = await seedOrg(u, "owner", { policy: "pause" });
+    await seedUsage(orgId, 1500);
+    // Start paused (as the cron would have left it while overage was off + over cap).
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into ingest_paused (org_id, paused, reason, since) values (${orgId}, ${true}, ${"cap"}, now())`;
+    });
+
+    const res = await setOverageEnabled(app, key, {
+      orgId,
+      userId: u,
+      enabled: true,
+      now: NOW,
+      defaultEventCap: null,
+    });
+
+    expect(res).toEqual({ status: "ok", policy: "allow", changed: true, transitioned: true });
+    expect(await pausedOf(orgId)).toBe(false); // resumed durably
   });
 });

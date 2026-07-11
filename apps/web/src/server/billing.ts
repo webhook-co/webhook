@@ -40,19 +40,31 @@ export type BillingActionResult =
   | { readonly status: "already_subscribed" }
   | { readonly status: "error" };
 
-/** The org's Stripe customer id (if any), its synced subscription mirror row (if any), and its overage
- *  policy (null when there's no paid org_limits row), read together under one tenant-RLS transaction. Drives
- *  the already-subscribed guard, the picker, and the overage toggle. */
-async function readOrgBilling(orgId: string): Promise<{
+/** The org's Stripe customer id (if any), its synced subscription mirror row (if any), its overage policy
+ *  (null when there's no paid org_limits row), and — when `userId` is given — the caller's membership role,
+ *  read together under one tenant-RLS transaction. Drives the already-subscribed guard, the picker, and the
+ *  overage toggle (whose button is shown only to an owner/admin). */
+async function readOrgBilling(
+  orgId: string,
+  userId?: string,
+): Promise<{
   customerId: string | null;
   sub: BillingSubscriptionSummary | null;
   overagePolicy: "pause" | "allow" | null;
+  role: string | null;
 }> {
   return withTenantDb((app) =>
     withTenant(app, orgId, async (tx) => ({
       customerId: await readBillingCustomerId(tx),
       sub: await readBillingSummary(tx),
       overagePolicy: await readOveragePolicy(tx),
+      role: userId
+        ? ((
+            await tx<
+              { role: string }[]
+            >`select role from memberships where user_id = ${userId} limit 1`
+          )[0]?.role ?? null)
+        : null,
     })),
   );
 }
@@ -155,6 +167,9 @@ export interface BillingView {
   /** Whether overage billing is currently ON (pause_policy 'allow'), or null when the org has no paid plan
    *  (no org_limits row) so the toggle doesn't apply. Drives the overage card's visibility + state. */
   readonly overageEnabled: boolean | null;
+  /** Whether the caller may CHANGE billing policy (owner/admin) — gates the overage toggle button so a plain
+   *  member sees the state read-only instead of a dead button the server would reject (SEC-RLS-08). */
+  readonly canManageBilling: boolean;
 }
 
 const HIDDEN_VIEW: BillingView = {
@@ -163,6 +178,7 @@ const HIDDEN_VIEW: BillingView = {
   upgradePlanIds: [],
   hasCustomer: false,
   overageEnabled: null,
+  canManageBilling: false,
 };
 
 /**
@@ -183,14 +199,14 @@ function canStartNewCheckout(
   return customerId === null;
 }
 
-export async function loadBillingSummary(orgId: string): Promise<BillingView> {
+export async function loadBillingSummary(orgId: string, userId: string): Promise<BillingView> {
   const mode = getBillingMode();
   const plans = getStripePlans();
   if (mode === "off" || !plans) return HIDDEN_VIEW;
   try {
     const secretKey = await getStripeSecretKey();
     if (!secretKey || !stripeKeyMatchesMode(mode, secretKey)) return HIDDEN_VIEW; // transient/dark
-    const { customerId, sub, overagePolicy } = await readOrgBilling(orgId);
+    const { customerId, sub, overagePolicy, role } = await readOrgBilling(orgId, userId);
     const display = sub ? billingDisplayFromSubscription(sub, plans) : null;
     // Offer the picker ONLY when a new Checkout can't create a duplicate subscription (see
     // canStartNewCheckout). Ladder order (pro → scale), configured plans only.
@@ -206,6 +222,7 @@ export async function loadBillingSummary(orgId: string): Promise<BillingView> {
       upgradePlanIds,
       hasCustomer: customerId !== null,
       overageEnabled,
+      canManageBilling: role === "owner" || role === "admin",
     };
   } catch (error) {
     logActionError("billing.summary_failed", error);

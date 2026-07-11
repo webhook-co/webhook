@@ -317,16 +317,17 @@ const APPS = {
         service: "webhook-engine",
         entrypoint: "IngestUrlRevealer",
       },
-      // CAP_REEVALUATOR (WS3, the overage toggle) — the web→engine binding to the engine's CapReEvaluator
-      // WorkerEntrypoint, so after the dashboard flips org_limits.pause_policy the engine reconciles soft-cap
-      // enforcement (ingest_paused + the ingest KV cache it owns) immediately instead of waiting for the
-      // hourly cron. Deploy-injected (NOT committed): the engine must be LIVE with the CapReEvaluator
-      // entrypoint first (engine-before-web order). apps/web degrades to eventual (cron-backstopped, logged)
-      // when it's unbound, so flipping it on is safe.
+      // INGEST_CACHE_EVICTOR (WS3, the overage toggle) — the web→engine binding to the engine's
+      // IngestCacheEvictor WorkerEntrypoint. The dashboard flips org_limits.pause_policy AND durably
+      // reconciles ingest_paused in one DB tx (setOverageEnabled), then calls this so the engine evicts the
+      // org's ingest-token entries from the KV cache it owns (picked up on the next cold miss instead of at
+      // the TTL). Deploy-injected (NOT committed): the engine must be LIVE with the IngestCacheEvictor
+      // entrypoint first (engine-before-web order). apps/web degrades to TTL-freshness (best-effort, logged)
+      // when it's unbound — enforcement is already durable, so flipping it on is safe.
       {
-        binding: "CAP_REEVALUATOR",
+        binding: "INGEST_CACHE_EVICTOR",
         service: "webhook-engine",
-        entrypoint: "CapReEvaluator",
+        entrypoint: "IngestCacheEvictor",
       },
     ],
   },

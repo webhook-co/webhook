@@ -6,13 +6,14 @@ import { setOverageEnabled } from "@webhook-co/db/overage-policy";
 
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
-import { getAuditChainKey, getCapReEvaluator } from "./env";
+import { getAuditChainKey, getFreeEventCap, getIngestCacheEvictor } from "./env";
 
-// The overage opt-in toggle orchestration (WS3). Flips org_limits.pause_policy in the DB (owner/admin-gated
-// + audited, in setOverageEnabled), then asks the engine to reconcile enforcement IMMEDIATELY so an over-cap
-// org resumes/pauses without waiting for the hourly cron. The DB is the source of truth; the engine RPC is a
-// best-effort immediacy optimization and the metering cron is the guaranteed backstop — so a missing/failing
-// RPC degrades to eventual (logged), never to an incorrect state. Never throws: faults fold into a status.
+// The overage opt-in toggle orchestration (WS3). setOverageEnabled flips org_limits.pause_policy AND durably
+// reconciles ingest_paused in ONE DB tx (owner/admin-gated + audited), so enforcement is correct the instant
+// it commits. This layer then asks the engine to evict the org's ingest KV cache so the flip is picked up on
+// the next cold miss instead of at the cache TTL — but ONLY as a freshness optimization: the durable state is
+// already right, so a missing/failing/slow eviction can never leave the org ingesting past its cap. Never
+// throws: faults fold into a status.
 
 export type OverageToggleResult =
   | { readonly status: "ok"; readonly enabled: boolean }
@@ -21,6 +22,17 @@ export type OverageToggleResult =
   /** No paid plan (no org_limits row) — a Free org can't opt into overage billing. */
   | { readonly status: "no_subscription" }
   | { readonly status: "error" };
+
+/** Cap the best-effort cache-eviction RPC so a hung engine can't hang the toggle's server action — the
+ *  durable flip already committed, so timing out here just leaves the cache to its TTL. */
+const EVICT_TIMEOUT_MS = 3000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("evict timeout")), ms)),
+  ]);
+}
 
 /**
  * Set whether usage past the org's included volume is billed as overage (`enabled` → pause_policy 'allow').
@@ -35,29 +47,33 @@ export async function applyOverageToggle(
     // Resolve the audit key BEFORE opening the pool (a fail-closed getAuditChainKey must not strand a pool).
     const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
     const result = await withTenantDb((app) =>
-      setOverageEnabled(app, auditKey, { orgId, userId, enabled }),
+      setOverageEnabled(app, auditKey, {
+        orgId,
+        userId,
+        enabled,
+        now: Date.now(),
+        defaultEventCap: getFreeEventCap(),
+      }),
     );
     if (result.status === "forbidden") return { status: "forbidden" };
     if (result.status === "no_subscription") return { status: "no_subscription" };
 
-    // The policy actually changed → reconcile enforcement now (resume an over-cap org that just enabled
-    // overage, or pause one that disabled it). Best-effort: the ingest_paused row is the source of truth and
-    // the hourly cron reconciles regardless, so a missing binding (dev/preview, or a prod provisioning gap)
-    // or an engine fault degrades to eventual consistency — logged loudly, never surfaced as a failed save.
-    if (result.changed) {
-      const reevaluator = getCapReEvaluator();
-      if (reevaluator) {
+    // The durable pause state changed → refresh the engine's ingest KV cache so the flip is seen on the next
+    // cold miss. Purely best-effort: a missing binding (dev/preview, or a prod provisioning gap), an engine
+    // fault, or a timeout only delays cache freshness (TTL-backstopped) — the durable ingest_paused row is
+    // already correct, so this can never surface as a failed save.
+    if (result.transitioned) {
+      const evictor = getIngestCacheEvictor();
+      if (evictor) {
         try {
-          await reevaluator.reevaluateOrgCap(orgId);
+          await withTimeout(evictor.evictOrgIngestCache(orgId), EVICT_TIMEOUT_MS);
         } catch (error) {
-          logActionError("billing.overage_reeval_failed", error);
+          logActionError("billing.overage_evict_failed", error);
         }
       } else {
         logActionError(
-          "billing.overage_reeval_unbound",
-          new Error(
-            "CAP_REEVALUATOR binding absent — enforcement reconciles on the next cron pass",
-          ),
+          "billing.overage_evict_unbound",
+          new Error("INGEST_CACHE_EVICTOR binding absent — ingest cache refreshes at its TTL"),
         );
       }
     }

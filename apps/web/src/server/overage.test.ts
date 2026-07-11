@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// overage.ts is thin orchestration: DB flip (setOverageEnabled) → immediate engine re-eval (best-effort) →
-// status. Drive it with fakes and assert the gating + that the RPC fires only on a real change, and that a
-// missing/failing RPC degrades to ok (the cron backstops) rather than throwing.
+// overage.ts is thin orchestration: DB flip + durable ingest_paused reconcile (setOverageEnabled) → a
+// best-effort engine cache eviction (only when the pause state transitioned) → status. Drive it with fakes
+// and assert the gating, that eviction fires ONLY on a transition, and that a missing/failing/slow eviction
+// degrades to ok (the durable flip already stands) rather than throwing.
 
 const env = vi.hoisted(() => ({
   getAuditChainKey: vi.fn().mockResolvedValue("YWJj"),
-  getCapReEvaluator: vi.fn(),
+  getFreeEventCap: vi.fn().mockReturnValue(null),
+  getIngestCacheEvictor: vi.fn(),
 }));
 vi.mock("./env", () => env);
 
@@ -28,89 +30,86 @@ import { applyOverageToggle } from "./overage";
 afterEach(() => vi.clearAllMocks());
 
 describe("applyOverageToggle", () => {
-  it("on a real change, flips the DB then re-evaluates enforcement via the engine RPC", async () => {
-    const reevaluateOrgCap = vi.fn().mockResolvedValue({ paused: false, transitioned: true });
-    env.getCapReEvaluator.mockReturnValue({ reevaluateOrgCap });
+  it("flips the DB then evicts the ingest cache when the pause state TRANSITIONED", async () => {
+    const evictOrgIngestCache = vi.fn().mockResolvedValue(undefined);
+    env.getIngestCacheEvictor.mockReturnValue({ evictOrgIngestCache });
     overagePolicy.setOverageEnabled.mockResolvedValue({
       status: "ok",
-      policy: "allow",
+      policy: "pause",
       changed: true,
+      transitioned: true,
     });
 
-    expect(await applyOverageToggle("org-1", "user-1", true)).toEqual({
+    expect(await applyOverageToggle("org-1", "user-1", false)).toEqual({
       status: "ok",
-      enabled: true,
+      enabled: false,
     });
     expect(overagePolicy.setOverageEnabled).toHaveBeenCalledWith(
       expect.anything(),
       expect.anything(),
-      {
-        orgId: "org-1",
-        userId: "user-1",
-        enabled: true,
-      },
+      expect.objectContaining({ orgId: "org-1", userId: "user-1", enabled: false }),
     );
-    expect(reevaluateOrgCap).toHaveBeenCalledWith("org-1");
+    expect(evictOrgIngestCache).toHaveBeenCalledWith("org-1");
   });
 
-  it("does NOT re-evaluate when the policy was already at the target (changed:false)", async () => {
-    const reevaluateOrgCap = vi.fn();
-    env.getCapReEvaluator.mockReturnValue({ reevaluateOrgCap });
+  it("does NOT evict when the flip changed the policy but NOT the pause state (transitioned:false)", async () => {
+    const evictOrgIngestCache = vi.fn();
+    env.getIngestCacheEvictor.mockReturnValue({ evictOrgIngestCache });
     overagePolicy.setOverageEnabled.mockResolvedValue({
       status: "ok",
       policy: "allow",
-      changed: false,
+      changed: true,
+      transitioned: false,
     });
 
     expect(await applyOverageToggle("org-1", "user-1", true)).toEqual({
       status: "ok",
       enabled: true,
     });
-    expect(reevaluateOrgCap).not.toHaveBeenCalled();
+    expect(evictOrgIngestCache).not.toHaveBeenCalled();
+  });
+
+  it("does NOT evict on a no-op (changed:false)", async () => {
+    const evictOrgIngestCache = vi.fn();
+    env.getIngestCacheEvictor.mockReturnValue({ evictOrgIngestCache });
+    overagePolicy.setOverageEnabled.mockResolvedValue({
+      status: "ok",
+      policy: "allow",
+      changed: false,
+      transitioned: false,
+    });
+
+    expect(await applyOverageToggle("org-1", "user-1", true)).toEqual({
+      status: "ok",
+      enabled: true,
+    });
+    expect(evictOrgIngestCache).not.toHaveBeenCalled();
   });
 
   it("surfaces forbidden (not owner/admin) and never touches the engine", async () => {
-    const reevaluateOrgCap = vi.fn();
-    env.getCapReEvaluator.mockReturnValue({ reevaluateOrgCap });
+    const evictOrgIngestCache = vi.fn();
+    env.getIngestCacheEvictor.mockReturnValue({ evictOrgIngestCache });
     overagePolicy.setOverageEnabled.mockResolvedValue({ status: "forbidden" });
 
     expect(await applyOverageToggle("org-1", "user-1", true)).toEqual({ status: "forbidden" });
-    expect(reevaluateOrgCap).not.toHaveBeenCalled();
+    expect(evictOrgIngestCache).not.toHaveBeenCalled();
   });
 
   it("surfaces no_subscription for a Free org", async () => {
-    env.getCapReEvaluator.mockReturnValue({ reevaluateOrgCap: vi.fn() });
+    env.getIngestCacheEvictor.mockReturnValue({ evictOrgIngestCache: vi.fn() });
     overagePolicy.setOverageEnabled.mockResolvedValue({ status: "no_subscription" });
     expect(await applyOverageToggle("org-1", "user-1", true)).toEqual({
       status: "no_subscription",
     });
   });
 
-  it("degrades to ok (logged) when the engine binding is UNBOUND — the cron backstops", async () => {
-    env.getCapReEvaluator.mockReturnValue(undefined); // dev/preview or a provisioning gap
-    overagePolicy.setOverageEnabled.mockResolvedValue({
-      status: "ok",
-      policy: "allow",
-      changed: true,
-    });
-
-    expect(await applyOverageToggle("org-1", "user-1", true)).toEqual({
-      status: "ok",
-      enabled: true,
-    });
-    expect(log.logActionError).toHaveBeenCalledWith(
-      "billing.overage_reeval_unbound",
-      expect.anything(),
-    );
-  });
-
-  it("degrades to ok (logged) when the engine RPC THROWS — the flip still stands, cron reconciles", async () => {
-    const reevaluateOrgCap = vi.fn().mockRejectedValue(new Error("engine down"));
-    env.getCapReEvaluator.mockReturnValue({ reevaluateOrgCap });
+  it("degrades to ok (logged) when the evictor binding is UNBOUND — the durable flip already stands", async () => {
+    env.getIngestCacheEvictor.mockReturnValue(undefined); // dev/preview or a provisioning gap
     overagePolicy.setOverageEnabled.mockResolvedValue({
       status: "ok",
       policy: "pause",
       changed: true,
+      transitioned: true,
     });
 
     expect(await applyOverageToggle("org-1", "user-1", false)).toEqual({
@@ -118,13 +117,33 @@ describe("applyOverageToggle", () => {
       enabled: false,
     });
     expect(log.logActionError).toHaveBeenCalledWith(
-      "billing.overage_reeval_failed",
+      "billing.overage_evict_unbound",
+      expect.anything(),
+    );
+  });
+
+  it("degrades to ok (logged) when the eviction RPC THROWS — enforcement is already durable", async () => {
+    const evictOrgIngestCache = vi.fn().mockRejectedValue(new Error("engine down"));
+    env.getIngestCacheEvictor.mockReturnValue({ evictOrgIngestCache });
+    overagePolicy.setOverageEnabled.mockResolvedValue({
+      status: "ok",
+      policy: "allow",
+      changed: true,
+      transitioned: true,
+    });
+
+    expect(await applyOverageToggle("org-1", "user-1", true)).toEqual({
+      status: "ok",
+      enabled: true,
+    });
+    expect(log.logActionError).toHaveBeenCalledWith(
+      "billing.overage_evict_failed",
       expect.anything(),
     );
   });
 
   it("maps an unexpected fault to 'error' (never throws)", async () => {
-    env.getCapReEvaluator.mockReturnValue({ reevaluateOrgCap: vi.fn() });
+    env.getIngestCacheEvictor.mockReturnValue({ evictOrgIngestCache: vi.fn() });
     overagePolicy.setOverageEnabled.mockRejectedValue(new Error("db down"));
     expect(await applyOverageToggle("org-1", "user-1", true)).toEqual({ status: "error" });
   });

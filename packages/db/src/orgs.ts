@@ -78,27 +78,6 @@ export async function isOrgMember(app: Sql, userId: string, orgId: string): Prom
   return rows.length > 0;
 }
 
-/**
- * The caller's role in `orgId` (`owner` | `admin` | `member`), or null when not a member. Used to gate
- * org-administrative actions — e.g. the WS3 overage-opt-in toggle, which flips `org_limits.pause_policy`
- * and must be restricted to owner/admin (SEC-RLS-08: a policy change is admin-gated + audited, never a
- * plain-member action). RLS pins the lookup to the context org, so it only ever sees this org's row.
- */
-export async function getOrgMembershipRole(
-  app: Sql,
-  userId: string,
-  orgId: string,
-): Promise<MembershipRole | null> {
-  const rows = await withTenant(
-    app,
-    orgId,
-    (tx) =>
-      tx<{ role: MembershipRole }[]>`
-        select role from memberships where org_id = ${orgId} and user_id = ${userId} limit 1`,
-  );
-  return rows[0]?.role ?? null;
-}
-
 /** Distinguishes the bootstrap advisory-lock space from any other advisory-lock user. */
 const BOOTSTRAP_LOCK_NAMESPACE = 0x42535450; // "BSTP"
 

@@ -127,7 +127,7 @@ function ManageBillingCard() {
   );
 }
 
-function OverageCard({ enabled }: { enabled: boolean }) {
+function OverageCard({ enabled, canManage }: { enabled: boolean; canManage: boolean }) {
   return (
     <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
       <div className="flex items-center justify-between gap-4">
@@ -141,13 +141,19 @@ function OverageCard({ enabled }: { enabled: boolean }) {
           ? "Usage past your included volume is billed at the overage rate, so capture keeps running — you won't be paused at your limit."
           : "Capture pauses when you reach your included volume, so you're never billed past it. Turn this on to keep capturing past your limit and pay for the overage."}
       </p>
-      <form action={setOverageAction}>
-        {/* Submit the OPPOSITE of the current state — the action reads this desired value. */}
-        <input type="hidden" name="enabled" value={enabled ? "false" : "true"} />
-        <Button type="submit" variant="secondary">
-          {enabled ? "Turn off overage" : "Turn on overage"}
-        </Button>
-      </form>
+      {/* Owner/admin only (SEC-RLS-08). A plain member sees the state read-only — not a button the server
+          would reject. */}
+      {canManage ? (
+        <form action={setOverageAction}>
+          {/* Submit the OPPOSITE of the current state — the action reads this desired value. */}
+          <input type="hidden" name="enabled" value={enabled ? "false" : "true"} />
+          <Button type="submit" variant="secondary">
+            {enabled ? "Turn off overage" : "Turn on overage"}
+          </Button>
+        </form>
+      ) : (
+        <p className="text-sm text-fg-secondary">Only an owner or admin can change this.</p>
+      )}
     </div>
   );
 }
@@ -196,8 +202,8 @@ export default async function BillingPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { orgId } = await verifySession();
-  const [view, params] = await Promise.all([loadBillingSummary(orgId), searchParams]);
+  const { orgId, userId } = await verifySession();
+  const [view, params] = await Promise.all([loadBillingSummary(orgId, userId), searchParams]);
   const errorKey = typeof params.billing === "string" ? params.billing : undefined;
   // hasOwn, not a bare index: `?billing=toString` (untrusted query) would otherwise resolve to a
   // prototype method and React would throw trying to render it.
@@ -226,7 +232,9 @@ export default async function BillingPage({
       ) : (
         <>
           {view.display && <CurrentPlanCard display={view.display} />}
-          {view.overageEnabled !== null && <OverageCard enabled={view.overageEnabled} />}
+          {view.overageEnabled !== null && (
+            <OverageCard enabled={view.overageEnabled} canManage={view.canManageBilling} />
+          )}
           {view.upgradePlanIds.length > 0 && (
             <UpgradeCard planIds={view.upgradePlanIds} resubscribe={view.display !== null} />
           )}

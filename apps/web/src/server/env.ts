@@ -7,8 +7,8 @@ import {
   parseFreeEventCap,
   parseStripePlans,
   type BillingMode,
-  type CapReEvaluatorRpc,
   type DeliveryDispatcherRpc,
+  type IngestCacheEvictorRpc,
   type IngestUrlRevealerRpc,
   type SecretSealer,
   type StripePlans,
@@ -183,21 +183,22 @@ export function getIngestUrlRevealer(): IngestUrlRevealerRpc | undefined {
 }
 
 /**
- * The `CAP_REEVALUATOR` Cloudflare service binding — the engine's `CapReEvaluator` WorkerEntrypoint (WS3).
- * After the web tier flips `org_limits.pause_policy`, it RPCs `reevaluateOrgCap(orgId)` so soft-cap
- * enforcement (ingest_paused + the edge KV cache) reflects the new policy immediately rather than lagging to
- * the hourly cron. The engine owns the ingest KV cache, so the eviction must happen there. Bound only at
- * deploy (the gen-wrangler-prod overlay); `undefined` in dev/preview and before provisioning — the overage
- * toggle then fails closed (the flip errors rather than leaving enforcement silently stale). Detected
- * structurally (an object with a `reevaluateOrgCap` method) so a mis-shaped binding can't masquerade.
+ * The `INGEST_CACHE_EVICTOR` Cloudflare service binding — the engine's `IngestCacheEvictor` WorkerEntrypoint
+ * (WS3). The web tier flips `org_limits.pause_policy` AND durably reconciles `ingest_paused` in one DB tx, so
+ * enforcement is already correct; this binding only asks the engine to evict the org's ingest-token entries
+ * from the KV cache the engine owns, so the flip is picked up on the next cold miss instead of at the TTL.
+ * Bound only at deploy (the gen-wrangler-prod overlay); `undefined` in dev/preview and before provisioning —
+ * the overage toggle then degrades to TTL-freshness (best-effort, logged), NEVER to a wrong durable state.
+ * Detected structurally (an object with an `evictOrgIngestCache` method) so a mis-shaped binding can't
+ * masquerade.
  */
-export function getCapReEvaluator(): CapReEvaluatorRpc | undefined {
-  const binding = workerEnv().CAP_REEVALUATOR;
+export function getIngestCacheEvictor(): IngestCacheEvictorRpc | undefined {
+  const binding = workerEnv().INGEST_CACHE_EVICTOR;
   if (
     binding &&
-    typeof (binding as { reevaluateOrgCap?: unknown }).reevaluateOrgCap === "function"
+    typeof (binding as { evictOrgIngestCache?: unknown }).evictOrgIngestCache === "function"
   ) {
-    return binding as CapReEvaluatorRpc;
+    return binding as IngestCacheEvictorRpc;
   }
   return undefined;
 }
