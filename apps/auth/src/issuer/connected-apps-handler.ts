@@ -13,7 +13,8 @@ import { oauthIssuerConfig } from "./oauth-config";
 import type { ConnectedApp } from "@webhook-co/contract";
 import type { IntrospectEnv } from "../runtime/env";
 
-/** The subset of the provider's OAuthHelpers this handler uses (typed locally — the .d.ts isn't re-exported). */
+/** The subset of the provider's OAuthHelpers this handler uses — declared locally so the getOAuthApi return
+ *  (an `any`-ish cast under our DOM tsconfig) is narrowed to exactly the three methods we call. */
 interface GrantHelpers {
   listUserGrants: (
     userId: string,

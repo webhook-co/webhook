@@ -36,6 +36,7 @@ export interface ConnectedApp {
 export interface ConnectedAppsService {
   /** List a user's active connected apps (their authorized OAuth clients). */
   listConnectedApps(userId: string): Promise<ConnectedApp[]>;
-  /** Revoke one connected app by grant id (idempotent). Returns true if a grant was revoked. */
+  /** Revoke one connected app by grant id. Idempotent — always resolves true (the provider's revoke is a
+   *  void no-op on a grantId the user doesn't own, so there is no "was it there" signal). */
   revokeConnectedApp(userId: string, grantId: string): Promise<boolean>;
 }

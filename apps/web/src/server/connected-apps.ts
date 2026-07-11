@@ -2,6 +2,7 @@ import "server-only";
 
 import type { ConnectedApp } from "@webhook-co/contract";
 
+import { logActionError } from "./action-log";
 import { getConnectedAppsBinding } from "./env";
 import { verifySession } from "./session";
 
@@ -22,6 +23,12 @@ export async function loadConnectedApps(): Promise<ConnectedAppsResult> {
   const session = await verifySession();
   const binding = getConnectedAppsBinding();
   if (!binding) return { status: "unavailable" };
-  const apps = await binding.list(session.userId);
-  return { status: "ok", apps };
+  try {
+    const apps = await binding.list(session.userId);
+    return { status: "ok", apps };
+  } catch (error) {
+    // A transient auth.-RPC fault must render the graceful notice, not a 500 (mirrors loadCredentials).
+    logActionError("connected_apps.list_failed", error);
+    return { status: "unavailable" };
+  }
 }

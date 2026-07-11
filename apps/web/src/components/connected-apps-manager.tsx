@@ -69,8 +69,6 @@ export function ConnectedAppsManager({
 
   return (
     <div className="flex flex-col gap-3">
-      {error ? <Banner tone="danger">{error}</Banner> : null}
-
       <ul className="flex flex-col gap-2.5">
         {apps.map((app) => (
           <li
@@ -125,6 +123,9 @@ export function ConnectedAppsManager({
               ) : null}
             </DialogDescription>
           </DialogHeader>
+          {/* Render the error INSIDE the dialog — a Banner in the page body would sit behind the overlay
+              and the user wouldn't see why the revoke failed while the dialog is still open. */}
+          {error ? <Banner tone="danger">{error}</Banner> : null}
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="secondary" disabled={pending}>
