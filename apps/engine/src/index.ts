@@ -753,16 +753,67 @@ export async function handleFetch(
   }
 }
 
+/** The dedicated frequent trigger for the soft-cap producer (S4). Must match a `triggers.crons` entry in
+ *  apps/engine/wrangler.jsonc — enforced by scripts/cap-cron-sync-guard.mjs — or the fast pause path is
+ *  silently lost and only the hourly backstop enforces the cap (pause latency regresses to ~1h). */
+export const CAP_PRODUCER_CRON = "*/5 * * * *";
+
+/** The hourly trigger for the heavy crons (rollup/reconcilers/reporters/purges). Also a `triggers.crons`
+ *  entry in apps/engine/wrangler.jsonc; the sync guard asserts wrangler holds EXACTLY these two crons so an
+ *  added/renamed trigger can't silently run the heavy jobs on an unexpected cadence. */
+export const HOURLY_CRON = "0 * * * *";
+
+/** The crons a scheduled() invocation runs, decided from the cron expression that fired. */
+export interface CronPlan {
+  /** Run the soft-cap producer this tick. */
+  readonly runsCap: boolean;
+  /** Run the heavy hourly crons (rollup/reconcilers/reporters/purges) this tick. */
+  readonly runsHourly: boolean;
+}
+
+/**
+ * Decide which crons a scheduled() invocation runs, from the cron expression that fired. Cloudflare
+ * dispatches EACH `triggers.crons` entry as its own invocation, so this routes by `controller.cron`.
+ *
+ * - The dedicated every-5-minutes cap trigger ({@link CAP_PRODUCER_CRON}) runs ONLY the cap producer — a
+ *   frequent tick must NOT also run the heavy hourly jobs (12× the work, racing the hourly pass), so it
+ *   returns `{cap, !hourly}`.
+ * - EVERY other expression (the hourly trigger, or any UNRECOGNISED one) runs the hourly jobs AND the cap
+ *   producer as an idempotent backstop. This is the fail-safe: if the frequent cap trigger is ever dropped,
+ *   mistyped, or drifts from {@link CAP_PRODUCER_CRON}, the cap is STILL enforced on the hourly tick
+ *   (pause latency degrades to ~1h) rather than failing OPEN to unbounded, unbilled over-cap ingest. The
+ *   cap producer is safe to run on both triggers: `ingest_paused` is an idempotent upsert and the
+ *   threshold-alert insert is `on conflict do nothing`, so a top-of-hour concurrent double-run converges.
+ *
+ * Whitespace-normalised so a reformatted trigger still matches.
+ */
+export function scheduledCronPlan(cron: string | undefined): CronPlan {
+  const normalised = (cron ?? "").trim().replace(/\s+/g, " ");
+  if (normalised === CAP_PRODUCER_CRON) return { runsCap: true, runsHourly: false };
+  return { runsCap: true, runsHourly: true };
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     return handleFetch(request, env, ctx);
   },
 
-  async scheduled(
-    _controller: ScheduledController,
-    env: Env,
-    ctx: ExecutionContext,
-  ): Promise<void> {
+  async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Cloudflare dispatches EACH cron expression as its OWN scheduled() invocation with its own subrequest/
+    // CPU budget; `controller.cron` names the one that fired. scheduledCronPlan routes it: the dedicated
+    // `*/5` trigger runs ONLY the cap producer (so a pause lands within minutes, S4), while every other
+    // trigger runs the heavy hourly jobs AND the cap producer as an idempotent backstop — so a dropped/
+    // drifted `*/5` trigger degrades pause latency to ~1h rather than failing OPEN (see scheduledCronPlan).
+    const plan = scheduledCronPlan(controller.cron);
+    if (plan.runsCap) {
+      ctx.waitUntil(
+        runCapProducerCron(env).catch((err: unknown) =>
+          console.log(JSON.stringify({ message: "cap producer cron failed", error: String(err) })),
+        ),
+      );
+    }
+    // A frequent cap tick must NOT also run the heavy hourly jobs (12× the work, racing the hourly pass).
+    if (!plan.runsHourly) return;
     // Catch + log here so a config error (bad secret/binding) or a DB outage surfaces in
     // observability rather than as a silent unhandled rejection inside waitUntil.
     ctx.waitUntil(
@@ -1086,17 +1137,31 @@ async function runMeteringRollupCron(env: Env): Promise<void> {
       log,
     });
     log("metering.rollup.done", { ...rollup });
+  } finally {
+    await Promise.all([meter.end(), app.end()]);
+  }
+}
 
-    // Soft-cap enforcement (S4.3): after the rollup, flip ingest_paused on any pause/resume transition,
-    // then evict the org's ingest-token cache entries so it takes effect on the next cold miss (a stale
-    // positive principal on resume would be a paying-customer outage). The Free default cap is INJECTED
-    // (a tier figure, never in the repo); unset/blank → uncapped (fail-safe, no Free enforcement).
-    //
-    // Parse fail-safe: ONLY a strict positive integer enables Free enforcement. `0`/negative would make
-    // `shouldPauseForCap` (usage >= cap) always true → pause EVERY Free org — a mass outage from one
-    // fat-fingered deploy var. `Number.parseInt` is also lenient ("10k"→10, "1e6"→1), so we reject any
-    // string that isn't a clean integer. Anything invalid (unset, blank, non-positive, partial) → null
-    // (uncapped), and a SET-but-invalid value logs loudly (a silent mass-pause is the worst outcome).
+/**
+ * Soft-cap enforcement (S4.3), run on its OWN frequent cron (S4 — every 5 minutes, not the hourly rollup)
+ * so a pause lands within MINUTES of an org crossing its limit rather than up to an hour of billed over-cap
+ * ingest. It is independent of the rollup: `sumPeriodEventUsage` counts TODAY's events live (not from the
+ * frozen `usage` row) and only reads PRIOR days from `usage` (already frozen by earlier rollups), so it is
+ * accurate on any tick without a fresh rollup.
+ *
+ * Flip `ingest_paused` on any pause/resume transition, then evict the org's ingest-token cache entries so it
+ * takes effect on the next cold miss (a stale positive principal on resume would be a paying-customer
+ * outage). The Free default cap is INJECTED (a tier figure, never in the repo); unset/blank → uncapped
+ * (fail-safe). Parse fail-safe: ONLY a strict positive integer enables Free enforcement — `0`/negative would
+ * pause EVERY Free org (a mass outage from one fat-fingered deploy var), and `Number.parseInt` is lenient
+ * ("10k"→10), so anything not a clean integer → null (uncapped), logged loudly.
+ */
+async function runCapProducerCron(env: Env): Promise<void> {
+  const meter = createClient(env.HYPERDRIVE_METER.connectionString);
+  const app = createClient(env.HYPERDRIVE_TENANT.connectionString);
+  const log = (message: string, fields?: Record<string, unknown>) =>
+    console.log(JSON.stringify({ message, ...fields }));
+  try {
     const defaultEventCap = parseFreeEventCap(env.FREE_EVENT_CAP);
     if (defaultEventCap === null) {
       if (env.FREE_EVENT_CAP && env.FREE_EVENT_CAP.trim() !== "") {

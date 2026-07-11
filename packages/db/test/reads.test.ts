@@ -23,6 +23,7 @@ import {
   cursorBelowOldest,
   getEndpoint,
   getEvent,
+  isIngestPaused,
   latestTailCursor,
   likeContains,
   listEndpoints,
@@ -1093,5 +1094,49 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
       resolveSince(tx, { endpointId: epTail, since: parsed }),
     );
     expect(c1).toEqual(c2);
+  });
+});
+
+// isIngestPaused (S4): the org-level cap-pause read that the billable replay paths gate on. Proves the real
+// SQL against Postgres under the webhook_app role + RLS — including that it fails safe (absent row = false)
+// and is TENANT-SCOPED (a clauseless `select paused from ingest_paused` returns THIS org's row only, never
+// another org's, because the ingest_paused_select RLS policy scopes it to current_org_id()).
+describe("isIngestPaused", () => {
+  /** A fresh org (avoids contaminating the shared orgA/orgB fixtures used by the read tests above). */
+  async function freshOrg(): Promise<string> {
+    return (await createOrg(app, { slug: randomUUID().slice(0, 12), name: "cap" })).id;
+  }
+  async function setPaused(orgId: string, paused: boolean): Promise<void> {
+    await withTenant(
+      app,
+      orgId,
+      (tx) => tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${paused})
+                 on conflict (org_id) do update set paused = ${paused}`,
+    );
+  }
+
+  it("is false for an org that has never been paused (no row = fail-safe default)", async () => {
+    const org = await freshOrg();
+    expect(await withTenant(app, org, (tx) => isIngestPaused(tx))).toBe(false);
+  });
+
+  it("is true when the org's ingest_paused row is paused, and flips back to false on resume", async () => {
+    const org = await freshOrg();
+    await setPaused(org, true);
+    expect(await withTenant(app, org, (tx) => isIngestPaused(tx))).toBe(true);
+    await setPaused(org, false);
+    expect(await withTenant(app, org, (tx) => isIngestPaused(tx))).toBe(false);
+  });
+
+  it("is TENANT-SCOPED under RLS — one org's pause never leaks to another", async () => {
+    const paused = await freshOrg();
+    const other = await freshOrg();
+    await setPaused(paused, true);
+    // `other` has no ingest_paused row at all; the clauseless read must NOT return `paused`'s row.
+    expect(await withTenant(app, paused, (tx) => isIngestPaused(tx))).toBe(true);
+    expect(await withTenant(app, other, (tx) => isIngestPaused(tx))).toBe(false);
+    // And an `other` that is explicitly NOT paused still reads its own false, not the other org's true.
+    await setPaused(other, false);
+    expect(await withTenant(app, other, (tx) => isIngestPaused(tx))).toBe(false);
   });
 });

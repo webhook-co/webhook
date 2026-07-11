@@ -2,10 +2,15 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { DeliverArgs, DeliverResult, DeliveryAttempt } from "@webhook-co/shared";
 
+import type { Sql } from "@webhook-co/db/client";
+import type { DeliveryDispatcherRpc } from "@webhook-co/shared";
+
 import {
+  boundDeps,
   replayToDestination,
   ReplayConflictError,
   ReplayNotFoundError,
+  ReplayPausedError,
   ReplayUnverifiedError,
   type ClaimOutcome,
   type ReplayDeps,
@@ -154,6 +159,14 @@ describe("replayToDestination", () => {
     expect(d.dispatch).not.toHaveBeenCalled();
   });
 
+  it("THROWS ReplayPausedError when the org is paused at its cap (S4) and never dispatches", async () => {
+    const d = deps({ claim: vi.fn(async () => ({ kind: "paused" })) });
+    await expect(
+      replayToDestination({ orgId: ORG, eventId: EVENT, destinationId: DEST }, d),
+    ).rejects.toBeInstanceOf(ReplayPausedError);
+    expect(d.dispatch).not.toHaveBeenCalled();
+  });
+
   it("records a 'failed' outcome (never throws) when the dispatcher RPC throws", async () => {
     const d = deps({
       dispatch: vi.fn(async () => {
@@ -240,5 +253,47 @@ describe("replayToDestination", () => {
     const res = await replayToDestination({ orgId: ORG, eventId: EVENT, destinationId: DEST }, d);
     expect(res.status).toBe("delivered");
     expect(res.id).toBe(ATTEMPT_ID);
+  });
+});
+
+// The PRODUCTION claim boundary (not the injected `deps` above): drives the REAL `boundDeps.claim` closure —
+// which calls the real `withTenant` + `isIngestPaused` — over a query-aware fake `Sql`. This is what makes
+// the S4 cap-pause gate load-bearing: if lines that check `isIngestPaused` were deleted, the closure would
+// fall through to `getEvent` and the fake throws a recognisable sentinel, failing these tests.
+describe("boundDeps.claim — production cap-pause gate (S4)", () => {
+  const CLAIM_INPUT = {
+    orgId: ORG,
+    eventId: EVENT,
+    destinationId: DEST,
+    target: JSON.stringify({ kind: "destination", destinationId: DEST }),
+    idempotencyKey: "key-1",
+  };
+  const dispatcher = { deliver: vi.fn() } as unknown as DeliveryDispatcherRpc;
+
+  /** A minimal fake postgres.js `Sql`: `begin(cb)` runs the tx callback, and the tagged-template answers ONLY
+   *  the two queries the claim closure runs before the pause decision (set_config + the ingest_paused read).
+   *  ANY other query (i.e. the closure advanced PAST the gate) throws a sentinel — so the gate's presence and
+   *  ordering are both asserted without a Postgres harness. */
+  function fakeSql(paused: boolean): Sql {
+    const tx = (strings: TemplateStringsArray) => {
+      const q = Array.from(strings).join(" ");
+      if (q.includes("set_config")) return Promise.resolve([]);
+      if (q.includes("ingest_paused")) return Promise.resolve([{ paused }]);
+      throw new Error("unexpected query past the cap-pause gate: " + q);
+    };
+    return { begin: (cb: (t: unknown) => unknown) => cb(tx) } as unknown as Sql;
+  }
+
+  it("returns {kind:'paused'} and never reads past the gate when the org IS paused", async () => {
+    const outcome = await boundDeps(fakeSql(true), dispatcher).claim(CLAIM_INPUT);
+    expect(outcome).toEqual({ kind: "paused" });
+  });
+
+  it("advances PAST the gate (reaches getEvent) when the org is NOT paused — proving it's a gate, not a wall", async () => {
+    // Not paused ⇒ the closure proceeds to getEvent; the minimal fake has no events wiring, so it throws the
+    // sentinel. The sentinel firing proves the pause check let a non-paused org through.
+    await expect(boundDeps(fakeSql(false), dispatcher).claim(CLAIM_INPUT)).rejects.toThrow(
+      /unexpected query past the cap-pause gate/,
+    );
   });
 });

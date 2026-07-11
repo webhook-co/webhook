@@ -738,6 +738,25 @@ export async function readBillingCustomerId(tx: TenantTx): Promise<string | null
   return row?.stripe_customer_id ?? null;
 }
 
+/**
+ * Whether the org's ingestion is PAUSED at its soft cap (`ingest_paused.paused`, flipped by the cap
+ * producer). Absent row = never paused = false (the fail-safe default). This is the ORG-level cap pause —
+ * NOT `endpoints.paused` (a per-endpoint manual pause). The billable replay paths read it so a capped org
+ * can't keep minting billable delivery rows via replay while its INGESTION is paused (S4) — the cap-pause
+ * promise applies to every billable leg, not just captures.
+ *
+ * MUST run on a `webhook_app` tenant tx (i.e. inside `withTenant(app, orgId, …)`): the read is clauseless
+ * and relies entirely on the `ingest_paused_select` RLS policy (`org_id = current_org_id()`) to scope it to
+ * exactly this org's row. `webhook_meter`/`webhook_authn` hold a cross-org `USING(true)` SELECT on this
+ * table (migration 0042), so running this helper on one of those connections would read an ARBITRARY org's
+ * paused state. The `TenantTx` type can't encode the role, so this contract is enforced by convention +
+ * both call sites (remote-replay.ts, replay-mutations.ts) using the HYPERDRIVE_TENANT app pool.
+ */
+export async function isIngestPaused(tx: TenantTx): Promise<boolean> {
+  const [row] = await tx<{ paused: boolean }[]>`select paused from ingest_paused`;
+  return row?.paused === true;
+}
+
 /** The org's synced subscription mirror (plan base-price id, raw Stripe status, period end, cancel intent),
  *  or null if the org has no subscription. Runs under tenant RLS (webhook_app has SELECT on
  *  billing_subscriptions scoped to the org). Read-only; the dashboard maps this to a display state via the

@@ -11,7 +11,8 @@
     "deploy:dry": "opennextjs-cloudflare build && wrangler deploy --dry-run",
     "start": "next start",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:db": "vitest run --config vitest.pg.config.ts"
   },
   "dependencies": {
     "@webhook-co/contract": "workspace:*",

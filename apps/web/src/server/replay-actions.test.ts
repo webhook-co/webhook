@@ -15,6 +15,7 @@ const {
   DispatcherUnavailableError,
   ReplayConflictError,
   ReplayUnverifiedError,
+  ReplayPausedError,
 } = vi.hoisted(() => {
   class ReplayNotFoundError extends Error {
     constructor() {
@@ -40,12 +41,19 @@ const {
       this.name = "ReplayUnverifiedError";
     }
   }
+  class ReplayPausedError extends Error {
+    constructor() {
+      super("paused");
+      this.name = "ReplayPausedError";
+    }
+  }
   return {
     replayToDestination: vi.fn(),
     ReplayNotFoundError,
     DispatcherUnavailableError,
     ReplayConflictError,
     ReplayUnverifiedError,
+    ReplayPausedError,
   };
 });
 vi.mock("./replay-mutations", () => ({
@@ -54,6 +62,7 @@ vi.mock("./replay-mutations", () => ({
   DispatcherUnavailableError,
   ReplayConflictError,
   ReplayUnverifiedError,
+  ReplayPausedError,
 }));
 
 const { logActionError } = vi.hoisted(() => ({ logActionError: vi.fn() }));
@@ -133,6 +142,15 @@ describe("replayToDestinationAction", () => {
     const res = await replayToDestinationAction(EVENT, DEST);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/signature was rejected/i);
+  });
+
+  it("maps a ReplayPausedError to a 'paused at your event limit' message (S4)", async () => {
+    // A paused org must be told WHY the replay was refused (it would mint a billable delivery past the cap)
+    // — the one surface where a paused web user learns the reason, so the copy is asserted, not just wired.
+    replayToDestination.mockRejectedValue(new ReplayPausedError());
+    const res = await replayToDestinationAction(EVENT, DEST);
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/paused at your event limit/i);
   });
 
   it("maps an unexpected error to a generic failure (scrubbed log)", async () => {

@@ -5,6 +5,7 @@ import {
   getActiveSigningSecrets,
   getEvent,
   getReplayDestination,
+  isIngestPaused,
   serializeTarget,
   withTenant,
   type ReplayHandler,
@@ -54,6 +55,16 @@ export function createRemoteReplayHandler(deps: RemoteReplayDeps): ReplayHandler
     // is independent of inbound ingestion (the event row already carries endpointId + dedupKey, and its FK
     // guarantees the endpoint exists; a soft-deleted endpoint's events stay replayable, ADR-0076).
     const claimed = await withTenant(deps.tenant, ctx.orgId, async (tx) => {
+      // Cap-pause gate (S4): a remote replay mints a BILLABLE delivery row. If the org is paused at its
+      // event limit, it must not keep billing via replay while its ingestion is paused — refuse until it
+      // resumes/raises the limit. RATE_LIMITED reuses the existing error code (the cap pause IS a
+      // rate-limit condition) — no taxonomy change. Checked before the claim so nothing is minted.
+      if (await isIngestPaused(tx)) {
+        throw new CapabilityFault(
+          "RATE_LIMITED",
+          "paused at your event limit — replay is unavailable until you resume or raise the limit",
+        );
+      }
       const event = await getEvent(tx, eventId);
       if (!event) throw new CapabilityFault("NOT_FOUND", "event not found");
       // SECURITY GATE (S8-remainder Slice 3 / ADR-0103): never replay a `failed` event (its signature was
