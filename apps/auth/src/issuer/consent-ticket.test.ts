@@ -153,6 +153,9 @@ describe("consentRequestFromTicket", () => {
       flow: "device_code",
       userCode: "WXYZ-1234",
       device: { name: "Dana's laptop" },
+      // the device flow has no redirect (the code is polled) — production seals these as null/false
+      redirectHost: null,
+      redirectIsLoopback: false,
     };
     const req = consentRequestFromTicket("t.t", deviceTicket);
     expect(req.flow).toBe("device_code");
@@ -162,7 +165,7 @@ describe("consentRequestFromTicket", () => {
       identityDomain: null,
       verified: false,
     });
-    expect(req.redirect).toEqual({ host: "127.0.0.1", isLoopback: true });
+    expect(req.redirect).toEqual({ host: null, isLoopback: false });
     expect(req.device).toEqual({ name: "Dana's laptop" });
   });
 });

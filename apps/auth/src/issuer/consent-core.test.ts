@@ -623,9 +623,29 @@ describe("buildDeviceConsent", () => {
     expect(p.orgId).toBe("org_dana");
     expect(p.clientId).toBe("cli_wbhk");
     expect(p.clientName).toBe("webhook CLI");
+    // provenance: the device flow has NO redirect (the code is polled, not redirected), so redirectHost is
+    // null + isLoopback false; an opaque client has no proven domain and isn't vetted.
+    expect(p.clientIdentityDomain).toBeNull();
+    expect(p.clientVerified).toBe(false);
+    expect(p.redirectHost).toBeNull();
+    expect(p.redirectIsLoopback).toBe(false);
     expect(p.scopes).toEqual(["events:read", "events:replay"]);
     expect(p.audience).toBe(API);
     expect(p.exp).toBe(NOW + TICKET_TTL);
+  });
+
+  it("seals verified=true + identity domain for a vetted CIMD client on the device flow", async () => {
+    const { deps, signed } = deviceConsentDeps();
+    await buildDeviceConsent(
+      deps,
+      { ...DEVICE_RECORD, clientId: "https://zed.dev/oauth/client-metadata.json" },
+      "user_dana",
+      ORIGIN,
+    );
+    const p = signed.payload!;
+    expect(p.clientIdentityDomain).toBe("zed.dev");
+    expect(p.clientVerified).toBe(true);
+    expect(p.redirectHost).toBeNull(); // still no redirect on the device flow
   });
 
   it("intersects the record's scopes with capability (defense in depth)", async () => {
