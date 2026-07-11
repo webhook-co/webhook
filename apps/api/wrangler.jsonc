@@ -10,6 +10,13 @@
   "observability": {
     "enabled": true,
   },
+  // Hourly retention reconciler (S2b): the scheduled() handler re-derives each active subscription's entitled
+  // retention window from Stripe and repairs any org stuck below it, so the prune can never delete a paying
+  // customer's data on day 8. It reuses the billing bindings this Worker already has (HYPERDRIVE_BILLING +
+  // STRIPE_SECRET_KEY, used by the inbound Stripe webhook) and self-guards to a no-op until billing is live.
+  "triggers": {
+    "crons": ["0 * * * *"],
+  },
   // Plain (non-secret) vars. INGEST_BASE_URL is the cookieless ingest apex the endpoints.create response
   // builds its one-time ingest URL from. It is COMMITTED here (NOT deploy-injected): the prod-overlay
   // generator carries account ids/secrets/routes but NO `vars`, and it only PREPENDS to the committed

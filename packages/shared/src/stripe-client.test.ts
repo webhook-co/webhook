@@ -456,6 +456,43 @@ describe("makeStripeClient.listMeterEventSummaries", () => {
   });
 });
 
+describe("makeStripeClient.listSubscriptions", () => {
+  const base = {
+    mode: "test" as const,
+    secretKey: SECRET,
+    apiBase: "https://stripe.test",
+  };
+
+  it("GETs /v1/subscriptions and returns the raw objects verbatim (for parseSubscriptionObject)", async () => {
+    const sub = { id: "sub_1", status: "active", metadata: { org_id: "org-a" } };
+    const { impl, calls } = fakeFetch({ status: 200, body: { has_more: false, data: [sub] } });
+    const client = makeStripeClient({ ...base, fetchImpl: impl });
+
+    const out = await client.listSubscriptions();
+    expect(out).toEqual([sub]); // untouched — the reconciler parses these itself
+    expect(new URL(calls[0].url).pathname).toBe("/v1/subscriptions");
+    expect(calls[0].init.method).toBe("GET");
+  });
+
+  it("paginates via starting_after (the sub id) until has_more is false and concatenates", async () => {
+    const { impl, calls } = fakeFetchSeq([
+      { status: 200, body: { has_more: true, data: [{ id: "sub_1", status: "active" }] } },
+      { status: 200, body: { has_more: false, data: [{ id: "sub_2", status: "past_due" }] } },
+    ]);
+    const client = makeStripeClient({ ...base, fetchImpl: impl });
+
+    const out = await client.listSubscriptions();
+    expect(out.map((s) => s.id)).toEqual(["sub_1", "sub_2"]);
+    expect(new URL(calls[1].url).searchParams.get("starting_after")).toBe("sub_1");
+  });
+
+  it("returns an empty array when the account has no subscriptions", async () => {
+    const { impl } = fakeFetch({ status: 200, body: { has_more: false, data: [] } });
+    const client = makeStripeClient({ ...base, fetchImpl: impl });
+    expect(await client.listSubscriptions()).toEqual([]);
+  });
+});
+
 describe("makeStripeClient.retrieveSubscription", () => {
   it("GETs /subscriptions/{id} and maps items.data → {id, price}", async () => {
     const { impl, calls } = fakeFetch({
