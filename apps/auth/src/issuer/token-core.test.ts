@@ -393,6 +393,22 @@ describe("redeemRefresh — silent re-mint", () => {
     expect(result.kind).toBe("token");
     if (result.kind === "token") expect(result.body.scope).toBe("events:read events:replay");
   });
+
+  it("re-mints a consented `profile` scope when allowedScopes = GRANTABLE_SCOPES (refresh keeps identity)", async () => {
+    // Refresh remint is the THIRD mint intersect (requested ∩ consented ∩ allowed) — token-deps wires the
+    // real GRANTABLE set here too. Pin that a grant consented for `profile` re-mints it on refresh; a revert
+    // to CAPABILITY_SCOPES at the refresh deps would silently drop it and go red here.
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const deps = refreshDeps({
+      allowedScopes: GRANTABLE_SCOPES,
+      listGrantScopes: vi.fn(async () => ["events:read", "profile"]),
+    });
+    const { scope: _drop, ...noScope } = refreshReq;
+    const result = await redeemRefresh(deps, noScope);
+    expect(result.kind).toBe("token");
+    expect(mintForGrantMock(deps).mock.calls[0][0].scopes).toContain("profile");
+    if (result.kind === "token") expect(result.body.scope.split(" ")).toContain("profile");
+  });
 });
 
 describe("redeemRefresh — consume-before-mint / replay (BLOCKER-A)", () => {

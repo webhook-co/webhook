@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { redeemDeviceCode, type DeviceTokenDeps, DEVICE_GRANT_TYPE } from "./device-token-core";
+import { GRANTABLE_SCOPES } from "./oauth-config";
 
 // A4b — the device-code grant FSM: each non-approved poll state maps to its RFC 8628 §3.5 response, and an
 // approved code mints (+ a refresh handle) with audience/scope defense-in-depth + rollback on refresh failure.
@@ -108,6 +109,27 @@ describe("redeemDeviceCode — approved", () => {
       REQ,
     );
     expect(mint).toHaveBeenCalledWith(expect.objectContaining({ scopes: ["events:read"] }));
+  });
+
+  it("mints a consented `profile` scope when allowedScopes = GRANTABLE_SCOPES (device mint keeps identity)", async () => {
+    // Device mint is a SEPARATE intersect from the auth-code path — token-deps wires the real GRANTABLE set
+    // here too. Pin that a consented `profile` survives the device mint; a revert to CAPABILITY_SCOPES at the
+    // device deps would drop it and go red here.
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const mint = vi.fn(deps().mintScopedKey);
+    const r = await redeemDeviceCode(
+      deps({
+        allowedScopes: GRANTABLE_SCOPES,
+        poll: async () => ({
+          kind: "approved",
+          props: { ...APPROVED_PROPS, scopes: ["events:read", "profile"] },
+        }),
+        mintScopedKey: mint,
+      }),
+      REQ,
+    );
+    expect(mint.mock.calls[0][0].scopes).toContain("profile");
+    if (r.kind === "token") expect(r.body.scope.split(" ")).toContain("profile");
   });
 
   it("rejects invalid_target when the approved audience is not an allowed resource", async () => {
