@@ -127,6 +127,12 @@ export interface TokenEnv {
   OAUTH_KV: unknown;
   /** The device-code store (KVNamespace) — the A4b device_code grant polls it. */
   DEVICE_KV: unknown;
+  /**
+   * The cross-surface resolved-principal cache (KVNamespace). /token needs it because a refresh denied for
+   * lost membership REVOKES the grant, and that cascade's child keys must be evicted — a revoked key would
+   * otherwise keep resolving from cache until its TTL lapses.
+   */
+  KV_AUTHZ: unknown;
 }
 
 /**
@@ -147,7 +153,7 @@ export function readTokenEnv(env: Record<string, unknown>): TokenEnv {
   ) {
     throw new Error("token env: missing or malformed Hyperdrive binding HYPERDRIVE_TENANT");
   }
-  for (const key of ["OAUTH_KV", "DEVICE_KV"] as const) {
+  for (const key of ["OAUTH_KV", "DEVICE_KV", "KV_AUTHZ"] as const) {
     if (env[key] == null || typeof env[key] !== "object") {
       throw new Error(`token env: missing ${key} binding`);
     }

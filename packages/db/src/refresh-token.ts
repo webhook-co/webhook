@@ -32,6 +32,12 @@ export interface MintedRefreshToken {
 export interface ConsumedRefreshToken {
   readonly grantId: string;
   readonly orgId: string;
+  /**
+   * The grant's user, read from the JOINed `auth_grant`. The issuer re-asserts membership against this on
+   * every refresh: the handle embeds an org, but membership is revocable and a grant lives ~90 days, so
+   * "this handle names org X" is not evidence that its user still belongs to org X.
+   */
+  readonly userId: string;
   readonly audience: string;
   /** The rotated replacement handle (single-use rotation). */
   readonly newRefresh: string;
@@ -113,16 +119,18 @@ export async function consumeRefreshToken(
     // Try each pepper candidate (current, then previous) — a handle was stored under exactly one, so at
     // most one matches. Iterating mirrors the api-key cold-lookup (postgres.js doesn't bind a Buffer[]
     // as bytea[] for `= any()`); the first match's UPDATE is the atomic single-use gate.
-    let consumed: { id: string; grant_id: string; audience: string } | undefined;
+    // `g.user_id` rides along on the JOIN that was already here — the issuer's membership re-check costs
+    // no extra query.
+    let consumed: { id: string; grant_id: string; user_id: string; audience: string } | undefined;
     for (const candidate of hasher.candidates(plaintext)) {
-      [consumed] = await tx<{ id: string; grant_id: string; audience: string }[]>`
+      [consumed] = await tx<{ id: string; grant_id: string; user_id: string; audience: string }[]>`
         update auth_refresh_token rt set used_at = now()
         from auth_grant g
         where rt.token_hash = ${candidate}
           and rt.grant_id = g.id and rt.org_id = g.org_id
           and rt.used_at is null and rt.revoked_at is null and rt.expires_at > now()
           and g.status = 'active' and (g.expires_at is null or g.expires_at > now())
-        returning rt.id, rt.grant_id, rt.audience`;
+        returning rt.id, rt.grant_id, g.user_id, rt.audience`;
       if (consumed) break;
     }
     if (!consumed) return null;
@@ -138,7 +146,13 @@ export async function consumeRefreshToken(
       ttlSeconds,
     );
     await tx`update auth_refresh_token set replaced_by = ${newId} where id = ${consumed.id}`;
-    return { grantId: consumed.grant_id, orgId, audience: consumed.audience, newRefresh: next };
+    return {
+      grantId: consumed.grant_id,
+      orgId,
+      userId: consumed.user_id,
+      audience: consumed.audience,
+      newRefresh: next,
+    };
   });
 
   // Housekeeping: after the consume+rotate transaction has COMMITTED, opportunistically prune this org's

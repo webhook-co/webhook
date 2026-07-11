@@ -159,9 +159,22 @@ export interface RefreshDeps {
    * refresh token, in one step. Returns null if the token is unknown or was already consumed (replay) —
    * this is the single-use gate, so it MUST run before any mint.
    */
-  consumeRefresh: (
-    refreshToken: string,
-  ) => Promise<{ grantId: string; orgId: string; audience: string; newRefresh: string } | null>;
+  consumeRefresh: (refreshToken: string) => Promise<{
+    grantId: string;
+    orgId: string;
+    /** The grant's user — carried so refresh can re-check membership, exactly as auth-code redemption does. */
+    userId: string;
+    audience: string;
+    newRefresh: string;
+  } | null>;
+  /**
+   * Is the grant's user STILL a member of the grant's org? Consent recorded membership once, at
+   * authorization time; a grant then lives ~90 days. Without re-checking here, removing someone from an
+   * org would not stop their refresh handle from minting fresh access keys for the rest of that lifetime.
+   */
+  isOrgMember: (userId: string, orgId: string) => Promise<boolean>;
+  /** Terminate a grant. Called when refresh is denied for non-membership, so the grant's live keys die too. */
+  revokeGrant: (grantId: string, orgId: string) => Promise<void>;
   /**
    * The scopes the grant was originally consented for (the union of its child api_keys rows). Takes the
    * grant's org because the lookup is org-scoped (RLS); the org comes from the consumed refresh handle.
@@ -338,6 +351,29 @@ export async function redeemRefresh(deps: RefreshDeps, req: RefreshRequest): Pro
 
   if (!grant.audience || !deps.allowedAudiences.includes(grant.audience)) {
     return { kind: "error", error: "invalid_target", description: "audience not permitted" };
+  }
+
+  // Tenancy re-bind. redeemAuthCode checks this once, at consent; a grant then lives for ~90 days and
+  // refreshes silently. Membership is revocable, so it must be re-asserted on EVERY mint — otherwise
+  // removing a member leaves their refresh handle minting fresh keys into the org until the grant expires.
+  // Revoke the grant on denial: the presented handle is already burned by the consume above, but the
+  // grant's live 24h keys would otherwise outlive the denial, and an active grant invites a retry.
+  if (!(await deps.isOrgMember(grant.userId, grant.orgId))) {
+    try {
+      await deps.revokeGrant(grant.grantId, grant.orgId);
+    } catch {
+      // Best-effort: the denial below is the security outcome. A failed revoke leaves a grant whose only
+      // refresh handle is already spent, so it cannot mint again — but flag it for the reaper.
+      deps.log?.("issuer.refresh_denied_revoke_failed", {
+        grantId: grant.grantId,
+        reapRequired: true,
+      });
+    }
+    return {
+      kind: "error",
+      error: "access_denied",
+      description: "user is not a member of the grant org",
+    };
   }
 
   const consented = await deps.listGrantScopes(grant.grantId, grant.orgId);

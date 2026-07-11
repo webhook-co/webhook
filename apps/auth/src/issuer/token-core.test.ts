@@ -338,15 +338,18 @@ function refreshDeps(overrides: Partial<RefreshDeps> = {}): RefreshDeps {
     consumeRefresh: vi.fn(async () => ({
       grantId: "g_1",
       orgId: "org_1",
+      userId: "u_1",
       audience: API_RESOURCE,
       newRefresh: FAKE_REFRESH,
     })),
+    isOrgMember: vi.fn(async () => true),
     listGrantScopes: vi.fn(async () => ["events:read", "events:replay"]),
     mintKeyForGrant: vi.fn(async () => ({
       plaintext: FAKE_WHK,
       keyId: "k_2",
       expiresAt: new Date(0),
     })),
+    revokeGrant: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -362,6 +365,42 @@ const refreshReq = {
 };
 
 describe("redeemRefresh — silent re-mint", () => {
+  // The membership re-check on refresh. Without it, a refresh handle keeps minting fresh access keys for
+  // the whole grant lifetime (~90d) after its user has been REMOVED from the org — the consumed handle
+  // carries an orgId, and nothing ever asked whether the user still belongs to it. Redemption of an auth
+  // code checks this; refresh must too, or the check is trivially bypassed by waiting for the next refresh.
+  it("refuses to mint when the grant's user is no longer a member of the grant org", async () => {
+    const deps = refreshDeps({ isOrgMember: vi.fn(async () => false) });
+    const result = await redeemRefresh(deps, refreshReq);
+    expect(result).toEqual({
+      kind: "error",
+      error: "access_denied",
+      description: "user is not a member of the grant org",
+    });
+    expect(mintForGrantMock(deps)).not.toHaveBeenCalled();
+  });
+
+  it("checks membership against the grant's user + org, never the request", async () => {
+    const deps = refreshDeps();
+    await redeemRefresh(deps, refreshReq);
+    expect(deps.isOrgMember).toHaveBeenCalledWith("u_1", "org_1");
+  });
+
+  // Belt to that braces: a non-member's refresh terminates the GRANT, not just this one exchange. The
+  // consumed handle is already burned, but the grant's live access keys (24h) would otherwise outlive the
+  // denial — and a still-active grant is a standing invitation to retry.
+  it("revokes the grant when the user is no longer a member", async () => {
+    const deps = refreshDeps({ isOrgMember: vi.fn(async () => false) });
+    await redeemRefresh(deps, refreshReq);
+    expect(deps.revokeGrant).toHaveBeenCalledWith("g_1", "org_1");
+  });
+
+  it("does not revoke the grant on a normal refresh", async () => {
+    const deps = refreshDeps();
+    await redeemRefresh(deps, refreshReq);
+    expect(deps.revokeGrant).not.toHaveBeenCalled();
+  });
+
   it("re-mints a fresh whk_ on the grant and returns the frozen body with the grant audience", async () => {
     const deps = refreshDeps();
     const result = await redeemRefresh(deps, refreshReq);

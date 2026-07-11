@@ -135,7 +135,9 @@ describe("consumeRefreshToken", () => {
 
     const result = await consumeRefreshToken(app, minted.plaintext, hasher, REFRESH_TTL);
     expect(result).not.toBeNull();
-    expect(result).toMatchObject({ grantId, orgId, audience: API });
+    // userId comes from the JOINed grant. The issuer needs it to re-assert membership on every refresh —
+    // a grant lives ~90d, and membership is revocable, so the org on the handle proves nothing by itself.
+    expect(result).toMatchObject({ grantId, orgId, userId: userOf(orgId), audience: API });
     expect(result!.newRefresh).not.toEqual(minted.plaintext);
     expect(result!.newRefresh.startsWith(`rtk_${orgId}_`)).toBe(true);
 
