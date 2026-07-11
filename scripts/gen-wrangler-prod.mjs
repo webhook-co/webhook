@@ -317,6 +317,18 @@ const APPS = {
         service: "webhook-engine",
         entrypoint: "IngestUrlRevealer",
       },
+      // INGEST_CACHE_EVICTOR (WS3, the overage toggle) — the web→engine binding to the engine's
+      // IngestCacheEvictor WorkerEntrypoint. The dashboard flips org_limits.pause_policy AND durably
+      // reconciles ingest_paused in one DB tx (setOverageEnabled), then calls this so the engine evicts the
+      // org's ingest-token entries from the KV cache it owns (picked up on the next cold miss instead of at
+      // the TTL). Deploy-injected (NOT committed): the engine must be LIVE with the IngestCacheEvictor
+      // entrypoint first (engine-before-web order). apps/web degrades to TTL-freshness (best-effort, logged)
+      // when it's unbound — enforcement is already durable, so flipping it on is safe.
+      {
+        binding: "INGEST_CACHE_EVICTOR",
+        service: "webhook-engine",
+        entrypoint: "IngestCacheEvictor",
+      },
     ],
   },
   // The OAuth issuer + Better Auth runtime (auth.webhook.co) — an OpenNext SSR Worker (main = src/worker.ts

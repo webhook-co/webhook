@@ -6,6 +6,7 @@ vi.mock("@opennextjs/cloudflare", () => ({ getCloudflareContext }));
 import {
   getAuthBaseUrl,
   getBillingMode,
+  getIngestCacheEvictor,
   getDeliveryDispatcher,
   getFreeEventCap,
   getListenWsUrl,
@@ -208,5 +209,23 @@ describe("getDeliveryDispatcher", () => {
   it("returns undefined for a mis-shaped binding — never masquerades a non-dispatcher as one", () => {
     getCloudflareContext.mockReturnValue({ env: { DELIVERY_DISPATCHER: { nope: 1 } } });
     expect(getDeliveryDispatcher()).toBeUndefined();
+  });
+});
+
+describe("getIngestCacheEvictor", () => {
+  it("returns the binding when it structurally exposes a evictOrgIngestCache method", () => {
+    const binding = { evictOrgIngestCache: async () => ({ paused: false, transitioned: false }) };
+    getCloudflareContext.mockReturnValue({ env: { INGEST_CACHE_EVICTOR: binding } });
+    expect(getIngestCacheEvictor()).toBe(binding);
+  });
+
+  it("returns undefined when the binding is absent (dev/preview/unprovisioned → toggle degrades)", () => {
+    getCloudflareContext.mockReturnValue({ env: {} });
+    expect(getIngestCacheEvictor()).toBeUndefined();
+  });
+
+  it("returns undefined for a mis-shaped binding — never masquerades a non-reevaluator as one", () => {
+    getCloudflareContext.mockReturnValue({ env: { INGEST_CACHE_EVICTOR: { nope: 1 } } });
+    expect(getIngestCacheEvictor()).toBeUndefined();
   });
 });

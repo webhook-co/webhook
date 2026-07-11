@@ -234,25 +234,30 @@ describe("startCheckout — the Stripe key must belong to BILLING_MODE", () => {
 });
 
 describe("loadBillingSummary (dedicated Billing section)", () => {
-  function enable(sub: unknown, customerId: string | null) {
+  function enable(
+    sub: unknown,
+    customerId: string | null,
+    overagePolicy: "pause" | "allow" | null = null,
+    role: "owner" | "admin" | "member" | null = "owner",
+  ) {
     env.getBillingMode.mockReturnValue("test");
     env.getStripePlans.mockReturnValue({
       pro: { base: "price_base", overage: "price_overage" },
       scale: { base: "price_scale_base", overage: "price_scale_overage" },
     });
     env.getStripeSecretKey.mockResolvedValue("sk_test_x");
-    db.withTenantDb.mockResolvedValue({ customerId, sub });
+    db.withTenantDb.mockResolvedValue({ customerId, sub, overagePolicy, role });
   }
 
   it("hides when billing is off / plans unset / key mismatches mode", async () => {
     env.getBillingMode.mockReturnValue("off");
-    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+    expect(await loadBillingSummary("org-1", "user-1")).toMatchObject({ hidden: true });
     env.getBillingMode.mockReturnValue("test");
     env.getStripePlans.mockReturnValue(null);
-    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+    expect(await loadBillingSummary("org-1", "user-1")).toMatchObject({ hidden: true });
     env.getStripePlans.mockReturnValue({ pro: { base: "b", overage: "o" } });
     env.getStripeSecretKey.mockResolvedValue("sk_live_x"); // live key under test mode → mismatch
-    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+    expect(await loadBillingSummary("org-1", "user-1")).toMatchObject({ hidden: true });
   });
 
   it("an ACTIVE subscription → current-plan display, NO upgrade picker, has customer", async () => {
@@ -265,7 +270,7 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
       },
       "cus_1",
     );
-    const v = await loadBillingSummary("org-1");
+    const v = await loadBillingSummary("org-1", "user-1");
     expect(v.hidden).toBe(false);
     expect(v.display).toMatchObject({ tier: "pro", state: "active" });
     expect(v.upgradePlanIds).toEqual([]); // entitled → no picker
@@ -274,7 +279,7 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
 
   it("NO subscription → no display, upgrade picker (ladder order), no customer", async () => {
     enable(null, null);
-    const v = await loadBillingSummary("org-1");
+    const v = await loadBillingSummary("org-1", "user-1");
     expect(v.display).toBeNull();
     expect(v.upgradePlanIds).toEqual(["pro", "scale"]);
     expect(v.hasCustomer).toBe(false);
@@ -290,7 +295,7 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
       },
       "cus_1",
     );
-    const v = await loadBillingSummary("org-1");
+    const v = await loadBillingSummary("org-1", "user-1");
     expect(v.display).toMatchObject({ state: "canceled" });
     expect(v.upgradePlanIds).toEqual(["pro", "scale"]); // terminal sub → safe to offer resubscribe
     expect(v.hasCustomer).toBe(true);
@@ -306,7 +311,7 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
       },
       "cus_1",
     );
-    const v = await loadBillingSummary("org-1");
+    const v = await loadBillingSummary("org-1", "user-1");
     expect(v.display).toMatchObject({ state: "canceling" });
     expect(v.upgradePlanIds).toEqual([]); // still a live sub → no duplicate; cancel/manage via Portal
     expect(v.hasCustomer).toBe(true);
@@ -322,7 +327,7 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
       },
       "cus_1",
     );
-    const v = await loadBillingSummary("org-1");
+    const v = await loadBillingSummary("org-1", "user-1");
     expect(v.display).toMatchObject({ state: "inactive" });
     expect(v.upgradePlanIds).toEqual([]); // live sub exists → never offer a duplicate
     expect(v.hasCustomer).toBe(true);
@@ -330,7 +335,7 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
 
   it("a customer with NO mirror sub row → NO picker (could be an unmirrored live sub)", async () => {
     enable(null, "cus_1");
-    const v = await loadBillingSummary("org-1");
+    const v = await loadBillingSummary("org-1", "user-1");
     expect(v.display).toBeNull();
     expect(v.upgradePlanIds).toEqual([]); // conservative: don't invite a Checkout we can't prove is safe
     expect(v.hasCustomer).toBe(true);
@@ -349,9 +354,41 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
       },
       null,
     );
-    const v = await loadBillingSummary("org-1");
+    const v = await loadBillingSummary("org-1", "user-1");
     expect(v.display).toMatchObject({ tier: "pro", state: "active" });
     expect(v.upgradePlanIds).toEqual([]);
     expect(v.hasCustomer).toBe(false);
+  });
+
+  it("maps the overage policy → overageEnabled (null when no paid org_limits row)", async () => {
+    const sub = {
+      plan: "price_base",
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    };
+    enable(sub, "cus_1", "allow");
+    expect((await loadBillingSummary("org-1", "user-1")).overageEnabled).toBe(true);
+    enable(sub, "cus_1", "pause");
+    expect((await loadBillingSummary("org-1", "user-1")).overageEnabled).toBe(false);
+    enable(sub, "cus_1", null); // no org_limits row → toggle doesn't apply
+    expect((await loadBillingSummary("org-1", "user-1")).overageEnabled).toBeNull();
+  });
+
+  it("canManageBilling is true only for an owner/admin (gates the overage toggle button)", async () => {
+    const sub = {
+      plan: "price_base",
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    };
+    enable(sub, "cus_1", "pause", "owner");
+    expect((await loadBillingSummary("org-1", "user-1")).canManageBilling).toBe(true);
+    enable(sub, "cus_1", "pause", "admin");
+    expect((await loadBillingSummary("org-1", "user-1")).canManageBilling).toBe(true);
+    enable(sub, "cus_1", "pause", "member");
+    expect((await loadBillingSummary("org-1", "user-1")).canManageBilling).toBe(false);
+    enable(sub, "cus_1", "pause", null); // not a member
+    expect((await loadBillingSummary("org-1", "user-1")).canManageBilling).toBe(false);
   });
 });

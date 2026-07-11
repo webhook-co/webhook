@@ -885,6 +885,40 @@ export class IngestUrlRevealer extends WorkerEntrypoint<Env> {
 }
 
 /**
+ * Ingest-cache eviction over a service binding (WS3, the overage toggle). The web tier flips
+ * `org_limits.pause_policy` AND durably reconciles `ingest_paused` in one DB transaction (setOverageEnabled),
+ * so enforcement is already correct; this RPC does only what web can't — evict the org's ingest-token entries
+ * from the KV cache the ENGINE owns, so the flip is picked up on the next cold miss instead of at the TTL.
+ * IDENTIFIER-only: the caller passes its authenticated orgId; the engine reads that org's live endpoint
+ * token-hashes UNDER ITS RLS (webhook_app on HYPERDRIVE_TENANT — never a cross-org role) and deletes their
+ * cache entries. Best-effort by contract (a per-key KV error is swallowed + logged; the durable ingest_paused
+ * row is the source of truth and the TTL is the backstop), so it never rejects on an eviction failure.
+ * WorkerEntrypoint methods aren't publicly fetchable; the binding is worker-to-worker, deploy-injected into
+ * web via the prod overlay.
+ */
+export class IngestCacheEvictor extends WorkerEntrypoint<Env> {
+  async evictOrgIngestCache(orgId: string): Promise<void> {
+    const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+    try {
+      const evict = makeIngestHashEvictor(kvCredentialCache(this.env.KV_CONFIG), (err) =>
+        console.error(JSON.stringify({ event: "ingest_cache.evict_error", error: String(err) })),
+      );
+      // Same fan-out the cron's onTransition uses (per-org → every live endpoint's token-hash cache key),
+      // integration-tested in cap-producer.test.ts. Wrapped so a transient endpoints-read failure can't
+      // reject the RPC — the caller's flip already stands durably; the cache TTL backstops a missed evict.
+      await makeCapTransitionEvictor(
+        tenant,
+        evict,
+      )(orgId).catch((err) =>
+        console.error(JSON.stringify({ event: "ingest_cache.evict_failed", error: String(err) })),
+      );
+    } finally {
+      await tenant.end({ timeout: 5 }).catch(() => {});
+    }
+  }
+}
+
+/**
  * BOUNDED payload-body read over a service binding (S5 Slice C2). triggers.wait RPCs
  * `env.PAYLOAD_READER.readBoundedBodies({orgId, eventIds, maxBytesEach})` to attach an inline body to each
  * agent-trigger event. The MCP worker has NO R2 binding by design (ADR-0015), so — exactly like

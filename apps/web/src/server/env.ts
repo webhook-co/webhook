@@ -8,6 +8,7 @@ import {
   parseStripePlans,
   type BillingMode,
   type DeliveryDispatcherRpc,
+  type IngestCacheEvictorRpc,
   type IngestUrlRevealerRpc,
   type SecretSealer,
   type StripePlans,
@@ -177,6 +178,27 @@ export function getIngestUrlRevealer(): IngestUrlRevealerRpc | undefined {
     typeof (binding as { revealIngestToken?: unknown }).revealIngestToken === "function"
   ) {
     return binding as IngestUrlRevealerRpc;
+  }
+  return undefined;
+}
+
+/**
+ * The `INGEST_CACHE_EVICTOR` Cloudflare service binding — the engine's `IngestCacheEvictor` WorkerEntrypoint
+ * (WS3). The web tier flips `org_limits.pause_policy` AND durably reconciles `ingest_paused` in one DB tx, so
+ * enforcement is already correct; this binding only asks the engine to evict the org's ingest-token entries
+ * from the KV cache the engine owns, so the flip is picked up on the next cold miss instead of at the TTL.
+ * Bound only at deploy (the gen-wrangler-prod overlay); `undefined` in dev/preview and before provisioning —
+ * the overage toggle then degrades to TTL-freshness (best-effort, logged), NEVER to a wrong durable state.
+ * Detected structurally (an object with an `evictOrgIngestCache` method) so a mis-shaped binding can't
+ * masquerade.
+ */
+export function getIngestCacheEvictor(): IngestCacheEvictorRpc | undefined {
+  const binding = workerEnv().INGEST_CACHE_EVICTOR;
+  if (
+    binding &&
+    typeof (binding as { evictOrgIngestCache?: unknown }).evictOrgIngestCache === "function"
+  ) {
+    return binding as IngestCacheEvictorRpc;
   }
   return undefined;
 }

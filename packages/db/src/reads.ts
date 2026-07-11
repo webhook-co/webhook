@@ -759,3 +759,11 @@ export async function readBillingSummary(tx: TenantTx): Promise<{
       }
     : null;
 }
+
+/** The org's overage policy from its org_limits row: 'allow' = overage billing on, 'pause' = paused at the
+ *  cap (off). `null` when the org has NO org_limits row — a Free org has no paid plan to bill overage
+ *  against, so the toggle doesn't apply. Runs under tenant RLS (webhook_app SELECT on org_limits). */
+export async function readOveragePolicy(tx: TenantTx): Promise<PausePolicy | null> {
+  const [row] = await tx<{ pause_policy: PausePolicy }[]>`select pause_policy from org_limits`;
+  return row?.pause_policy ?? null;
+}

@@ -51,6 +51,7 @@ export * from "./delivery-headers";
 export * from "./delivery-rpc";
 export * from "./reveal-rpc";
 export * from "./payload-reader-rpc";
+export * from "./cap-rpc";
 export * from "./delivery-retry";
 export * from "./billing";
 export * from "./retention";
