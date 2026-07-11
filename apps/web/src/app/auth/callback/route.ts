@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sessionCookieOptions } from "@/server/session-cookie";
 
 import { getSessionSecret } from "@/server/env";
 import { exchangeTicket } from "@/server/session-exchange";
@@ -45,10 +46,7 @@ export async function GET(request: Request): Promise<Response> {
   // Land on the dashboard with a clean URL — the ticket never enters history.
   const response = NextResponse.redirect(new URL("/", url.origin));
   response.cookies.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
+    ...sessionCookieOptions(),
     maxAge: SESSION_TTL_SECONDS,
   });
   response.headers.set("Cache-Control", "no-store");
