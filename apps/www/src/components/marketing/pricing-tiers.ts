@@ -84,7 +84,10 @@ export const TIERS: readonly Tier[] = [
     // "we do not sign BAAs" — a line our test suite already pins. Selling, on the pricing page, a
     // thing the contract explicitly refuses is the worst kind of untrue: the customer finds out at
     // the exact moment they were trusting us most.
-    summary: "Committed volume, audit export, and terms we agree up front.",
+    // "audit export" went the same way as "SAML SSO … and a BAA": we don't have it. There is an
+    // `audit.verify` capability (it verifies the hash chain); there is no export. Selling it on a
+    // €499 tier is the same defect as the BAA, just one line further down.
+    summary: "Committed volume, and terms we agree up front.",
     retention: "Retention up to 1 year",
     overage: "Custom, agreed up front.",
     cta: { label: "Talk to us", href: SALES },

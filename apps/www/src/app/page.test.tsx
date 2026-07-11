@@ -47,11 +47,16 @@ describe("HomePage", () => {
     }
   });
 
-  it("renders the live inspector inside the hero with its seed counter and accessible summary", () => {
+  // The feed is invented, so every name for it has to say so — including the ones only a screen
+  // reader hears. Renaming the visible chip to "demo" while the accessible name still announced
+  // "Live webhook inspector" would have left the fabricated stream presented as real to precisely
+  // the users who cannot see the chip that corrects it.
+  it("renders the demo inspector inside the hero, disclosed as a demo in its accessible name", () => {
     render(<HomePage />);
-    const inspector = screen.getByRole("group", { name: /live webhook inspector/i });
+    const inspector = screen.getByRole("group", { name: /demo webhook inspector/i });
     expect(within(inspector).getByText(/1,284/)).toBeInTheDocument();
-    expect(within(inspector).getByText(/an illustrative live feed/i)).toBeInTheDocument();
+    expect(within(inspector).getByText(/sample webhook events/i)).toBeInTheDocument();
+    expect(within(inspector).getByText(/not live measurements/i)).toBeInTheDocument();
   });
 
   it("renders the surfaces tablist with MCP selected by default", () => {

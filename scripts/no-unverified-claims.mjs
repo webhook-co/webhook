@@ -14,10 +14,21 @@
 // A number nobody measured is worse than no number: it is the one claim a reader cannot check, and
 // the first thing that makes them doubt everything else. We're early. Say less, and mean it.
 //
-// SCOPE: this bans AFFIRMATIVE claims, not the words. The legal pages must keep saying
-// "we hold no SOC 2, ISO 27001, HIPAA, or PCI certification" and "no guaranteed uptime" — that's the
-// honesty we're protecting. So the patterns below match the SHAPE of a boast (a number bound to a
-// unit, a cert bound to a claim verb), never the bare noun.
+// ── How it reads source, and why it does NOT read it line by line ────────────────────────────────
+//
+// The first version of this guard matched claims per-line and judged denial over a 3-line window.
+// Both halves were wrong, and a code review caught it before it shipped:
+//
+//   * A claim that WRAPPED was invisible. Prettier splits `<Stat n="3.4M" k="events / day" />` across
+//     four lines the moment it's nested one level deeper — and then no single line holds both the
+//     magnitude and the unit, so the guard sailed past the exact stat it was written to catch.
+//   * A denial ANYWHERE in the preceding two lines silenced the rule — including a denial inside a
+//     code COMMENT. "Your data is never shared. We are SOC 2 Type II certified." passed clean,
+//     because "never" was in the neighbourhood.
+//
+// So: strip comments, collapse all whitespace to single spaces, and evaluate rules against that.
+// Claims can then never hide in a line break, comments can never launder them, and denial is judged
+// within the SAME CLAUSE as the claim — not merely nearby.
 
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -25,8 +36,9 @@ import { pathToFileURL } from "node:url";
 
 const ROOT = process.cwd();
 
-// User-facing UI only. Legal pages live under apps/www/src/app/<policy>/ and are the source of truth
-// for what we DON'T have — they're excluded by the affirmative-only patterns, not by path.
+// User-facing UI. Legal pages live under apps/www/src/app/<policy>/ and are the source of truth for
+// what we DON'T have — they're kept honest by the affirmative-only patterns, not by a path exclusion.
+// apps/web is in scope because the BAA claim was repeated INSIDE the authenticated product.
 const SCANNED = ["apps/www/src", "apps/auth/src", "apps/web/src", "packages/ui/src"];
 
 const SOURCE_FILE = /\.[cm]?[jt]sx?$/;
@@ -36,18 +48,27 @@ const IGNORED_DIRS = new Set(["node_modules", "dist", "build", ".next", "coverag
 /**
  * Each rule matches the SHAPE of an unbacked boast. The `why` is printed on failure so the next
  * person doesn't have to reverse-engineer the rule from a regex.
+ *
+ *  - `deniable`  the legal pages must be able to say we do NOT have this thing, in the same words a
+ *                boast would use. Only certs and BAAs qualify: "we hold no SOC 2 certification" is a
+ *                sentence we MUST be able to publish. "no 38ms median latency" is not a sentence
+ *                anyone writes, so the metric rules are absolute.
+ *  - `unless`    a context that makes the number legitimate. A plan QUOTA ("your plan includes 5M
+ *                events / month") is a contract term we can prove — the opposite of a boast about how
+ *                much traffic we handle. Without this, the guard bans the one volume number that is
+ *                actually true.
  */
 export const CLAIM_RULES = [
   {
     id: "uptime-sla",
     // "99.9% uptime", "99.99% delivery SLA" — a percentage bound to an availability word.
-    re: /\d{2}(\.\d+)?\s*%[^.\n]{0,24}\b(sla|uptime|availability|availab)/i,
+    re: /\d{2}(\.\d+)?\s*%[^.\n]{0,24}\b(sla|uptime|availability)/i,
     why: "we publish no SLA — the Terms say 'no guaranteed uptime or service-level commitment'",
   },
   {
     id: "latency-metric",
     // "38ms median latency", "sub-50ms p99" — a duration bound to a performance word.
-    re: /\d+\s*ms\b[^.\n]{0,24}\b(latency|p50|p95|p99|median|average|avg)\b/i,
+    re: /\d+\s*ms\b[^.]{0,24}\b(latency|p50|p95|p99|median|average|avg)\b/i,
     why: "we do not measure or publish latency",
   },
   {
@@ -58,14 +79,11 @@ export const CLAIM_RULES = [
   {
     id: "volume-metric",
     // "3.4M events / day", "1.2B requests per month" — a magnitude bound to a throughput unit.
-    //
-    // The gap-tolerance is load-bearing, not sloppiness. The stat we actually shipped was
-    // `<Stat n="3.4M" k="events / day" />` — the magnitude and the unit lived in SEPARATE JSX
-    // ATTRIBUTES, so a pattern requiring them to be adjacent (`3.4M events`) sailed straight past the
-    // real thing while happily catching the prose version of it. A guard tested only against prose is
-    // a guard tested against a claim nobody shipped.
-    re: /\d+(\.\d+)?\s*[KMB]\+?\b[^.\n]{0,24}\b(events|requests|webhooks|deliveries)\b/i,
-    why: "we do not publish traffic volume",
+    // Exempt when it's a plan quota: that number is the billed contract, not a boast about our scale.
+    re: /\d+(\.\d+)?\s*[KMB]\+?\b[^.]{0,24}\b(events|requests|webhooks|deliveries)\b/i,
+    unless:
+      /\b(includes?|included|plan|quota|allowance|cap|capped|limit|up to|per (month|seat))\b/i,
+    why: "we do not publish traffic volume (a PLAN QUOTA is fine — say 'includes'/'up to')",
   },
   {
     id: "social-proof-count",
@@ -87,16 +105,18 @@ export const CLAIM_RULES = [
   {
     id: "certification-claim",
     deniable: true,
-    // "SOC 2 compliant/certified", "HIPAA compliant" — a cert bound to a CLAIM verb. The legal pages
-    // say "we hold NO SOC 2…", which has no claim verb after the cert and so does not match.
-    re: /\b(soc\s?2|iso\s?27001|hipaa|pci[- ]dss)\b[^.\n]{0,20}\b(compliant|certified|certification|attested|audited)\b/i,
+    // "SOC 2 compliant/certified", "HIPAA compliant" — a cert bound to a claim verb.
+    re: /\b(soc\s?2|iso\s?27001|hipaa|pci[- ]dss)\b[^.]{0,24}\b(compliant|certified|certification|attested|audited)\b/i,
     why: "we hold none of these certifications — the DPA and AUP say so explicitly",
   },
   {
     id: "baa-offer",
     deniable: true,
-    // Offering a BAA. Terms: "provide no BAA". AUP: "we do not sign BAAs".
-    re: /\b(a|the|sign|offer|provide|and)\s+baa\b/i,
+    // Any mention of a BAA that isn't a denial. Deliberately just the noun (singular OR plural): the
+    // first version required a verb in front of it, so "we sign BAAs" — the AUP's own wording, in the
+    // plural — slipped straight through the gate. The only honest sentences containing "BAA" are the
+    // ones refusing to sign one, and `deniable` already lets those through.
+    re: /\bbaas?\b/i,
     why: "the Terms say we 'provide no BAA' and the AUP says 'we do not sign BAAs'",
   },
   {
@@ -107,47 +127,171 @@ export const CLAIM_RULES = [
 ];
 
 /**
- * A line that DENIES having something is the honesty we're protecting, not a violation of it.
+ * A clause that DENIES having something is the honesty we're protecting, not a violation of it.
  *
  * "We hold **no** SOC 2, ISO 27001, HIPAA, or PCI certification" is the DPA telling the truth — and a
  * naive cert-rule flags it, because "certification" sits right after the cert name. A guard that
  * silenced the legal pages would be worse than the bug it was written for: it would launder the
  * honesty out of the product and leave only the boasts.
+ *
+ * But the denial must be in the SAME CLAUSE as the claim. Judged over a loose neighbourhood, any
+ * incidental "no"/"not"/"never" — in prose, or in a nearby code comment — becomes a skeleton key that
+ * unlocks a boast. That is the difference between "we are NOT SOC 2 certified" and "your data is
+ * never shared. We are SOC 2 certified."
  */
-const DENIAL = /\b(no|not|never|non|without|don't|doesn't|cannot|can't|lack|hold no|refuse)\b/i;
+const DENIAL = /\b(no|not|never|non|without|don't|doesn't|cannot|can't|lack|lacks|refuse)\b/i;
 
 /**
- * Pure core: every unbacked claim on one line.
+ * A clause boundary in normalized source. `. ` (period + space) is safe: it does not split "3.4M" or
+ * "99.99%", whose periods are followed by a digit. `;`, `!` and `?` end a thought too.
  *
- * `context` is the line plus the couple before it, because PROSE WRAPS AND DENIAL DOESN'T FOLLOW IT.
- * The privacy policy reads "We're **not** SOC 2 / HIPAA certified" — with "not" on one line and the
- * claim on the next. Judged line-by-line, the guard would flag the privacy policy for telling the
- * truth. Judged over the window, it doesn't.
+ * Deliberately NOT `>`: "We're <strong>not</strong> SOC 2 certified" would then have its denial
+ * amputated by the closing tag, and the privacy policy would be flagged for being honest.
  */
-export function findClaims(line, file, lineNo, context = line) {
-  const denied = DENIAL.test(context);
+const CLAUSE_END = /[.;!?]\s|[;!?]/g;
+
+/** Blank out `//`, `/* *\/` and `{/* *\/}` comments, preserving byte offsets so lines still map. */
+export function stripComments(src) {
+  const out = src.split("");
+  let i = 0;
+  let mode = null; // "line" | "block" | "sq" | "dq" | "tpl"
+  const blank = (n) => {
+    if (out[n] !== "\n") out[n] = " ";
+  };
+  while (i < src.length) {
+    const two = src.slice(i, i + 2);
+    if (mode === null) {
+      if (two === "//") {
+        mode = "line";
+        blank(i);
+        blank(i + 1);
+        i += 2;
+        continue;
+      }
+      if (two === "/*") {
+        mode = "block";
+        blank(i);
+        blank(i + 1);
+        i += 2;
+        continue;
+      }
+      if (src[i] === "'") mode = "sq";
+      else if (src[i] === '"') mode = "dq";
+      else if (src[i] === "`") mode = "tpl";
+      i++;
+      continue;
+    }
+    if (mode === "line") {
+      if (src[i] === "\n") mode = null;
+      else blank(i);
+      i++;
+      continue;
+    }
+    if (mode === "block") {
+      if (two === "*/") {
+        blank(i);
+        blank(i + 1);
+        mode = null;
+        i += 2;
+        continue;
+      }
+      blank(i);
+      i++;
+      continue;
+    }
+    // Inside a string literal: don't treat // or /* as a comment, and honour escapes.
+    if (src[i] === "\\") {
+      i += 2;
+      continue;
+    }
+    if (
+      (mode === "sq" && src[i] === "'") ||
+      (mode === "dq" && src[i] === '"') ||
+      (mode === "tpl" && src[i] === "`")
+    ) {
+      mode = null;
+    }
+    i++;
+  }
+  return out.join("");
+}
+
+/**
+ * Collapse runs of whitespace to a single space, keeping a map from each output index back to the
+ * source offset it came from. This is what lets a claim be found even when prettier has wrapped it
+ * across four lines — and what lets us still report the line it landed on.
+ */
+export function normalize(src) {
+  let text = "";
+  const map = [];
+  let prevWs = false;
+  for (let i = 0; i < src.length; i++) {
+    const ws = /\s/.test(src[i]);
+    if (ws) {
+      if (!prevWs) {
+        text += " ";
+        map.push(i);
+      }
+      prevWs = true;
+    } else {
+      text += src[i];
+      map.push(i);
+      prevWs = false;
+    }
+  }
+  return { text, map };
+}
+
+/**
+ * The pure core, run over a WHOLE FILE — the same way production runs it. (The previous test suite
+ * exercised a per-line helper with a defaulted context argument, which is to say: it tested a code
+ * path the scanner never took. Every denial test passed against a window production doesn't use.)
+ */
+export function scanSource(src, file = "x.tsx") {
+  const stripped = stripComments(src);
+  const { text, map } = normalize(stripped);
+  const lineAt = (srcOffset) => {
+    let n = 1;
+    for (let i = 0; i < srcOffset && i < src.length; i++) if (src[i] === "\n") n++;
+    return n;
+  };
+
   const hits = [];
   for (const rule of CLAIM_RULES) {
-    if (!rule.re.test(line)) continue;
-    // Only certs and BAAs are deniable — they're the two things the legal pages must say out loud we
-    // do NOT have, in the same words a boast would use. Every other rule needs a hard number or an
-    // exact phrase the legal pages never use, so a nearby "no" is a coincidence, not a disclaimer —
-    // and `guarantee` has a negation INSIDE its own pattern ("never lose an event"), so making it
-    // deniable would have taught the guard to skip the exact boast it exists to catch.
-    if (rule.deniable && denied) continue;
-    hits.push({ file, line: lineNo, id: rule.id, why: rule.why });
+    const re = new RegExp(
+      rule.re.source,
+      rule.re.flags.includes("g") ? rule.re.flags : rule.re.flags + "g",
+    );
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      if (m[0] === "") break;
+
+      // The clause the claim sits in: back up to the previous clause boundary.
+      CLAUSE_END.lastIndex = 0;
+      let clauseStart = 0;
+      let b;
+      while ((b = CLAUSE_END.exec(text)) !== null && b.index < m.index) {
+        clauseStart = b.index + b[0].length;
+      }
+      const clause = text.slice(clauseStart, m.index + m[0].length);
+
+      if (rule.deniable && DENIAL.test(clause)) continue;
+      if (rule.unless && rule.unless.test(clause)) continue;
+
+      hits.push({
+        file,
+        line: lineAt(map[m.index] ?? 0),
+        id: rule.id,
+        why: rule.why,
+        text: clause.trim().slice(0, 120),
+      });
+    }
   }
-  return hits;
+  return hits.sort((a, b) => a.line - b.line);
 }
 
 async function* walk(dir) {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch (err) {
-    if (err.code === "ENOENT") return;
-    throw err;
-  }
+  const entries = await readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory()) {
       if (IGNORED_DIRS.has(entry.name)) continue;
@@ -164,43 +308,34 @@ function isMain() {
 
 if (isMain()) {
   const violations = [];
-  let scanned = 0;
+  let total = 0;
 
   for (const tree of SCANNED) {
-    for await (const file of walk(join(ROOT, tree))) {
-      scanned++;
-      const contents = await readFile(file, "utf8");
-      const lines = contents.split(/\r?\n/);
-      let inJsxComment = false;
-      lines.forEach((line, idx) => {
-        // A line that's only a comment is documentation ABOUT the rule (like this file's own header),
-        // not a published claim. Skip it, or the guard flags its own explanation.
-        if (/^\s*(\/\/|\*|\/\*|\{\/\*)/.test(line)) return;
-        if (inJsxComment) {
-          if (line.includes("*/")) inJsxComment = false;
-          return;
-        }
-        if (/\{\/\*/.test(line) && !line.includes("*/")) inJsxComment = true;
-        // Denial is judged over the line plus the two before it. JSX prose wraps mid-sentence, so
-        // "We're **not** / SOC 2 / HIPAA certified" lands the negation on a different line from the
-        // claim — and a line-local check would flag the privacy policy for being honest.
-        const context = lines.slice(Math.max(0, idx - 2), idx + 1).join(" ");
-        violations.push(...findClaims(line, relative(ROOT, file), idx + 1, context));
-      });
+    let seen = 0;
+    // A guard on the guard, PER TREE. The old version tolerated a missing directory and only failed
+    // if ALL FOUR vanished — so a renamed app would silently drop out of the sweep while the check
+    // still printed a tick. A gate that reports success over a tree it never opened is worse than no
+    // gate: it looks exactly like coverage.
+    try {
+      for await (const file of walk(join(ROOT, tree))) {
+        seen++;
+        violations.push(...scanSource(await readFile(file, "utf8"), relative(ROOT, file)));
+      }
+    } catch (err) {
+      console.error(`✗ cannot scan ${tree}: ${err.message}`);
+      process.exit(1);
     }
-  }
-
-  // A guard on the guard: if the scanned trees ever move, this must fail loudly rather than pass on
-  // an empty sweep. A check that reports success when it checked nothing looks exactly like coverage.
-  if (scanned === 0) {
-    console.error("✗ scanned 0 files — the source trees moved. Refusing to pass vacuously.");
-    process.exit(1);
+    if (seen === 0) {
+      console.error(`✗ scanned 0 files in ${tree} — the tree moved. Refusing to pass vacuously.`);
+      process.exit(1);
+    }
+    total += seen;
   }
 
   if (violations.length > 0) {
     console.error("✖ Found claims we cannot stand behind:\n");
     for (const v of violations) {
-      console.error(`  ${v.file}:${v.line}  [${v.id}]\n      ${v.why}`);
+      console.error(`  ${v.file}:${v.line}  [${v.id}]\n      ${v.why}\n      → ${v.text}`);
     }
     console.error(
       "\nWe're early. A number nobody measured is the one claim a reader cannot check — and the first\n" +
@@ -209,5 +344,5 @@ if (isMain()) {
     process.exit(1);
   }
 
-  console.log(`✔ No unverified claims — scanned ${scanned} files.`);
+  console.log(`✔ No unverified claims — scanned ${total} files.`);
 }
