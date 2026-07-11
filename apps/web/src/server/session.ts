@@ -1,4 +1,5 @@
 import "server-only";
+import { sessionCookieName } from "./session-cookie";
 
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -11,8 +12,7 @@ import { verifySessionToken } from "./session-token";
  * accepts with Secure + Path=/ + no Domain), a plain name in dev so it works over http://localhost.
  * The value is a signed session token (see session-token.ts), set by the A-SX handoff (auth.→app.).
  */
-export const SESSION_COOKIE =
-  process.env.NODE_ENV === "production" ? "__Host-wh_session" : "wh_session";
+export const SESSION_COOKIE = sessionCookieName();
 
 /**
  * Where the gate sends an unauthenticated request — the sign-in surface on **auth.**, never a relative
