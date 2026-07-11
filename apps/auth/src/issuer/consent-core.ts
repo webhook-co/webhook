@@ -21,7 +21,8 @@
 //     the cross-slice G1 invariant token-core depends on (a mismatch would orphan the vestigial grant);
 //   - PII (device name) lives only in the encrypted `props`, never in the provider's unencrypted metadata.
 
-import { isRegisterableRedirectUri } from "./dcr";
+import { sanitizeClientName } from "./client-display";
+import { isRedirectAllowedForClient } from "./dcr";
 import { withIssParam } from "./iss-param";
 import type { ConsentAuthRequest, ConsentTicketPayload } from "./consent-ticket";
 // The grant-props contract is owned by token-core (the reader). consent-core is the WRITER — it imports the
@@ -115,10 +116,12 @@ export async function buildConsent(
   userId: string,
   origin: AuthorizeOrigin,
 ): Promise<BuildConsentResult> {
-  // The redirect_uri gates whether we can safely bounce errors back. Re-validate it against the DCR policy
-  // (http loopback, or an allowlisted-vendor https callback) — if it isn't registerable, we must NOT
-  // redirect to it; render a 400 instead.
-  if (!isRegisterableRedirectUri(request.redirectUri)) {
+  // The redirect_uri gates whether we can safely bounce errors back. Re-validate it against the policy for
+  // THIS client kind — the DCR policy (http loopback / allowlisted-vendor https) for a DCR or first-party
+  // client, or the same-origin-or-loopback fence for a CIMD client (whose redirect the provider took from a
+  // self-hosted doc our registration callback never saw). If it isn't allowed, we must NOT redirect to it;
+  // render a 400 instead.
+  if (!isRedirectAllowedForClient(request.clientId, request.redirectUri)) {
     return {
       kind: "bad_request",
       error: "invalid_request",
@@ -153,7 +156,12 @@ export async function buildConsent(
     };
   }
 
-  const clientName = (await deps.lookupClientName(request.clientId)) ?? request.clientId;
+  // The client name is attacker-controlled (DCR validates only redirect_uris; a CIMD doc is self-hosted).
+  // Sanitize it (strip bidi/control chars, clamp length) before it's sealed into the ticket and rendered as
+  // the consent headline. The un-spoofable identity — the client's origin — is derived on the screen.
+  const clientName = sanitizeClientName(
+    (await deps.lookupClientName(request.clientId)) ?? request.clientId,
+  );
   const now = deps.nowSeconds();
 
   const ticket = await deps.signTicket({
@@ -246,7 +254,9 @@ export async function buildDeviceConsent(
     return { kind: "error", status: 500, error: "server_error", description: "no consent org" };
   }
 
-  const clientName = (await deps.lookupClientName(record.clientId)) ?? record.clientId;
+  const clientName = sanitizeClientName(
+    (await deps.lookupClientName(record.clientId)) ?? record.clientId,
+  );
   const now = deps.nowSeconds();
 
   const ticket = await deps.signTicket({
@@ -403,10 +413,11 @@ export async function decideConsent(
   }
 
   // Interactive PKCE flow. Defence in depth: the redirect_uri was policy-validated in buildConsent and the
-  // ticket is HMAC-sealed, so this re-check should never fire — but re-asserting it means we never hand the
-  // provider a non-registerable uri even if a future ticket path skipped the check, and it fails closed if
-  // the sealed payload is malformed (a non-string redirectUri makes isRegisterableRedirectUri false).
-  if (!isRegisterableRedirectUri(payload.request.redirectUri)) {
+  // ticket is HMAC-sealed, so this re-check should never fire — but re-asserting it (against the same
+  // client-kind-aware policy) means we never hand the provider a disallowed uri even if a future ticket path
+  // skipped the check, and it fails closed if the sealed payload is malformed (a non-string redirectUri
+  // makes the predicate false).
+  if (!isRedirectAllowedForClient(payload.request.clientId, payload.request.redirectUri)) {
     deps.log?.("consent.bad_redirect_uri", {});
     return {
       kind: "error",
