@@ -86,7 +86,7 @@ export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
           type="button"
           aria-label={`Filter by received date: ${activeDateLabel(value)}`}
           className={[
-            "inline-flex h-[42px] items-center gap-2 rounded-control border bg-surface px-3 text-base",
+            "inline-flex h-[2.625rem] items-center gap-2 rounded-control border bg-surface px-3 text-base",
             "font-sans transition-[box-shadow,border-color] duration-[var(--wh-dur-fast)] ease-[var(--wh-ease-swift)]",
             "outline-none focus-visible:border-focus focus-visible:shadow-[var(--wh-focus-ring)]",
             active ? "border-focus text-fg" : "border-strong text-fg-secondary",

@@ -418,7 +418,19 @@ export async function applyStripeEvent(
     case "customer.subscription.created":
     case "customer.subscription.updated": {
       const sub = parseSubscriptionObject(obj);
-      if (!sub) return "applied"; // unparseable → recorded as seen (no reprocessing helps a bad shape)
+      if (!sub) {
+        // UNPARSEABLE shape — REJECT, do NOT dedup. Recording it as "seen" would be unrepairable: a Stripe
+        // redelivery short-circuits on the dedup marker, so the subscription would never mirror and the org's
+        // retention window would stay at its DEFAULT while the hourly prune deletes a paying customer's data.
+        // (The "Basil" API move of period bounds onto items already broke this parser once.) Returning
+        // "rejected" ACKs 200 — no Stripe retry storm for a shape retries can't fix — but leaves it OUT of the
+        // ledger, so once the parser is fixed a manual replay reprocesses. Log loudly: a spike here is the
+        // signal that a Stripe shape changed and the parser must be updated before day-8 pruning bites.
+        console.log(
+          JSON.stringify({ message: "stripe.webhook.unparseable_subscription", type: event.type }),
+        );
+        return "rejected";
+      }
       const outcome = await applySubscriptionUpsert(billing, sub, event.created);
       if (outcome === "customer_mismatch") {
         // The subscription's customer isn't this org's — a bug/attack. Log + reject (NOT deduped, so a

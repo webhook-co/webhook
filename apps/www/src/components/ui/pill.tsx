@@ -9,7 +9,7 @@ export function Pill({ children, className }: { children: ReactNode; className?:
   return (
     <span
       className={cn(
-        "rounded-pill bg-surface-inverse px-2 py-0.5 font-mono text-[10px] tracking-mono-label text-fg-on-inverse uppercase",
+        "rounded-pill bg-surface-inverse px-2 py-0.5 font-mono text-[0.625rem] tracking-mono-label text-fg-on-inverse uppercase",
         className,
       )}
     >

@@ -61,7 +61,7 @@ export function PayloadViewer({
 
   switch (state.kind) {
     case "loading":
-      return <p className="text-sm text-fg-secondary">Loading payload…</p>;
+      return <p className="text-fg-secondary">Loading payload…</p>;
     case "text":
       return <TextPayload text={state.text} downloadHref={downloadHref} />;
     case "binary":
@@ -120,7 +120,7 @@ function TextPayload({ text, downloadHref }: { text: string; downloadHref: strin
           </Button>
         </div>
       </div>
-      <pre className="max-h-[480px] overflow-auto rounded-control border border-hairline bg-surface-sunken p-3 font-mono text-xs text-fg">
+      <pre className="max-h-[30rem] overflow-auto rounded-control border border-hairline bg-surface-sunken p-3 font-mono text-xs text-fg">
         {shown}
       </pre>
     </div>
@@ -154,7 +154,7 @@ function ToggleButton({
 function DownloadOnly({ message, downloadHref }: { message: string; downloadHref: string }) {
   return (
     <div className="flex flex-col items-start gap-3">
-      <p className="text-sm text-fg-secondary">{message}</p>
+      <p className="text-fg-secondary">{message}</p>
       <Button asChild variant="secondary" size="sm">
         <a href={downloadHref}>Download payload</a>
       </Button>

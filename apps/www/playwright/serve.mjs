@@ -48,17 +48,31 @@ function toFile(urlPath) {
   return candidate;
 }
 
+const fileOrNull = async (path) => {
+  try {
+    return (await stat(path)).isFile() ? path : null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Resolve a mapped path to a file that actually exists.
+ *
+ * The subtlety is that Next's static export emits BOTH `terms.html` and a `terms/` directory — the
+ * latter holding only RSC payload `.txt` files, with no `index.html` in it. So a directory hit is
+ * NOT proof of an index: preferring `<dir>/index.html` unconditionally resolved every route except
+ * `/` to a file that doesn't exist, the read stream errored, and the server killed the socket. Every
+ * non-root page was unreachable — invisible for as long as the only page anyone asked for was `/`.
+ */
 async function pick(file) {
   try {
-    const s = await stat(file);
-    return s.isDirectory() ? join(file, "index.html") : file;
-  } catch {
-    try {
-      await stat(`${file}.html`);
-      return `${file}.html`;
-    } catch {
-      return null;
+    if ((await stat(file)).isDirectory()) {
+      return (await fileOrNull(join(file, "index.html"))) ?? (await fileOrNull(`${file}.html`));
     }
+    return file;
+  } catch {
+    return await fileOrNull(`${file}.html`);
   }
 }
 

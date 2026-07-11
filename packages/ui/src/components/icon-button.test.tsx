@@ -36,7 +36,7 @@ describe("IconButton", () => {
       </IconButton>,
     );
     const btn = screen.getByRole("button", { name: "More" });
-    expect(btn.className).toContain("size-[34px]");
+    expect(btn.className).toContain("size-[2.125rem]");
     expect(btn.className).toContain("p-0");
   });
 

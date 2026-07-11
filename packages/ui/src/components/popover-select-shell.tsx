@@ -68,7 +68,7 @@ function CheckboxIndicator({ checked }: { checked: boolean }) {
     <span
       aria-hidden="true"
       className={cn(
-        "flex size-[18px] shrink-0 items-center justify-center rounded-control border",
+        "flex size-[1.125rem] shrink-0 items-center justify-center rounded-control border",
         checked ? "border-transparent bg-surface-inverse text-fg-on-inverse" : "border-strong",
       )}
     >
@@ -221,7 +221,7 @@ export function PopoverSelectShell({
           disabled={disabled}
           aria-label={`${label}: ${summary}`}
           className={cn(
-            "inline-flex h-[42px] items-center justify-between gap-2 rounded-control border bg-surface px-3 text-base font-sans",
+            "inline-flex h-[2.625rem] items-center justify-between gap-2 rounded-control border bg-surface px-3 text-base font-sans",
             "transition-[box-shadow,border-color] duration-[var(--wh-dur-fast)] ease-[var(--wh-ease-swift)]",
             "outline-none focus-visible:border-focus focus-visible:shadow-[var(--wh-focus-ring)]",
             "disabled:cursor-not-allowed disabled:opacity-60",

@@ -28,11 +28,11 @@ export function Terminal({
     >
       {(title || meta) && (
         <div className="flex items-center justify-between gap-3 border-b border-hairline px-3.5 py-2.5">
-          <span className="font-mono text-[11px] text-fg-muted">{title}</span>
-          {meta ? <span className="font-mono text-[11px] text-fg-muted">{meta}</span> : null}
+          <span className="font-mono text-[0.6875rem] text-fg-muted">{title}</span>
+          {meta ? <span className="font-mono text-[0.6875rem] text-fg-muted">{meta}</span> : null}
         </div>
       )}
-      <div className="overflow-x-auto px-[18px] py-4 font-mono text-[12.5px] leading-[1.85] text-fg">
+      <div className="overflow-x-auto px-[18px] py-4 font-mono text-[0.78125rem] leading-[1.85] text-fg">
         {children}
       </div>
     </div>

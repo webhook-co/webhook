@@ -266,7 +266,7 @@ export function EndpointDedupManager({ endpointId, initial, update }: EndpointDe
             onChange={(v) => handleModeChange(v as DedupMode)}
             className="w-full sm:max-w-sm"
           />
-          <p className="text-sm text-fg-secondary">{MODE_DESCRIPTIONS.get(draft.mode)}</p>
+          <p className="text-fg-secondary">{MODE_DESCRIPTIONS.get(draft.mode)}</p>
         </div>
 
         {draft.mode !== "off" ? (
@@ -287,7 +287,7 @@ export function EndpointDedupManager({ endpointId, initial, update }: EndpointDe
 
         {draft.mode === "fields" ? (
           <div className="flex flex-col gap-5 rounded-card border border-hairline bg-surface-sunken p-5">
-            <p className="text-sm text-fg-secondary">
+            <p className="text-fg-secondary">
               Match on a dot-path into the payload — e.g. <code>body.data.id</code> or{" "}
               <code>headers.x-event-id</code>. Include the fields that identify a delivery; exclude
               any that change between retries.

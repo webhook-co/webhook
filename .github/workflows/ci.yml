@@ -213,11 +213,15 @@ jobs:
       - uses: ./.github/actions/setup
       - run: pnpm --filter @webhook-co/www build
       - run: pnpm --filter @webhook-co/www test:seo
+      # Legal section anchors are pasted into signed agreements and vendor questionnaires. This
+      # asserts every published anchor actually rendered into out/, that no page has a duplicate id,
+      # and that no fragment link — including cross-page ones like /dpa#sub-processors — is an orphan.
+      - run: pnpm --filter @webhook-co/www test:anchors
 
   # Real-browser accessibility gate: builds the static export, serves it, and runs axe-core in
-  # Chromium across the homepage's interactive states. This is the only layer that sees real
-  # layout, so the only one that catches color contrast. Add to the `main` ruleset's required
-  # checks to make it blocking.
+  # Chromium across the homepage's interactive states AND the five legal pages. This is the only
+  # layer that sees real layout, so the only one that catches color contrast and target size. Add to
+  # the `main` ruleset's required checks to make it blocking.
   a11y-e2e:
     name: a11y-e2e
     runs-on: ubuntu-latest

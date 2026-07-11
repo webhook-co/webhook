@@ -32,7 +32,7 @@ function ToneIcon({ tone }: { tone: Tone }) {
     viewBox: "0 0 24 24",
     fill: "none" as const,
     "aria-hidden": true,
-    className: "mt-px size-[18px] shrink-0",
+    className: "mt-px size-[1.125rem] shrink-0",
   };
   if (tone === "ok") {
     return (

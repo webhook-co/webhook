@@ -245,9 +245,7 @@ export function ConsentForm({
             loopback CLI, whose trust is locality (shown in the redirect row), not a domain. */}
         <SummaryRow label="Identity">
           {(identityDomain ?? (verified ? redirectHost : null)) ? (
-            <span className="break-all font-mono text-[13px]">
-              {identityDomain ?? redirectHost}
-            </span>
+            <span className="break-all font-mono text-sm">{identityDomain ?? redirectHost}</span>
           ) : (
             <span className="text-fg-faint">no verified domain</span>
           )}
@@ -255,7 +253,7 @@ export function ConsentForm({
         {redirectHost ? (
           <SummaryRow label="Sends code to">
             <div className="flex flex-col gap-0.5">
-              <span className="break-all font-mono text-[13px]">{redirectHost}</span>
+              <span className="break-all font-mono text-sm">{redirectHost}</span>
               {redirectIsLoopback ? (
                 <span className="text-xs text-fg-faint">
                   Runs on your computer — only continue if you started it.
@@ -273,7 +271,7 @@ export function ConsentForm({
                 {placeFlag ? <span aria-hidden="true"> {placeFlag}</span> : null}
               </span>
             ) : null}
-            <span className="break-all font-mono text-[13px]">{request.origin.ip}</span>
+            <span className="break-all font-mono text-sm">{request.origin.ip}</span>
           </div>
         </SummaryRow>
         <SummaryRow label="Access">
@@ -296,7 +294,7 @@ export function ConsentForm({
         </SummaryRow>
         {/* Both durations: the grant ceiling (a ~90d date) and the per-key TTL (~24h, refreshed). */}
         <SummaryRow label="Authorized until">
-          <span className="font-mono text-[13px]">{fmtExpiry(request.grantExpiresAt)}</span>
+          <span className="font-mono text-sm">{fmtExpiry(request.grantExpiresAt)}</span>
         </SummaryRow>
         <SummaryRow label="Key lifetime">{fmtDuration(request.keyTtlSeconds)}</SummaryRow>
       </dl>

@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
+import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
 import { Nav } from "@/components/marketing/nav";
+import { TERMS_ANCHORS } from "@/app/legal-anchors";
 import { focusRing } from "@/lib/styles";
 
 export const metadata: Metadata = {
@@ -46,11 +48,13 @@ export default function TermsPage() {
             every consumer right the law gives you.
           </blockquote>
 
-          <h2>1. Who we are, and agreeing to these terms</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.whoWeAre}>
+            1. Who we are, and agreeing to these terms
+          </AnchoredHeading>
           <p>
             webhook.co ("webhook.co", "we", "us", "our") is operated by{" "}
             <strong>Sourabh Choraria</strong>, a sole trader based in Porto, Portugal. You can reach
-            us at <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            us at <a href="mailto:legal@webhook.co">legal@webhook.co</a>.
           </p>
           <p>
             These Terms of Service (the "Terms") are a legal agreement between you (or the
@@ -62,7 +66,9 @@ export default function TermsPage() {
           </p>
           <p>If you don't agree to these Terms, please don't use the Service.</p>
 
-          <h2>2. What the Service does</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.whatTheServiceDoes}>
+            2. What the Service does
+          </AnchoredHeading>
           <p>
             webhook.co lets you create endpoints that receive incoming HTTP webhooks, inspect and
             verify them, store them so you can search and replay them, deliver them onward to
@@ -90,12 +96,12 @@ export default function TermsPage() {
             for, or assume any responsibility or liability for, self-hosted deployments.
           </p>
 
-          <h2>3. Your account</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.yourAccount}>3. Your account</AnchoredHeading>
           <p>
             You need an account to use most of the Service. You must provide accurate information,
             keep your credentials (including API keys and ingest tokens) secure, and you're
             responsible for everything that happens under your account. Tell us promptly at{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> if you believe your account
+            <a href="mailto:security@webhook.co">security@webhook.co</a> if you believe your account
             or a credential has been compromised.
           </p>
           <p>
@@ -103,7 +109,7 @@ export default function TermsPage() {
             legally able to enter into these Terms. The Service is not directed to children.
           </p>
 
-          <h2>4. Acceptable use</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.acceptableUse}>4. Acceptable use</AnchoredHeading>
           <p>
             The full rules live in our <a href="/acceptable-use">Acceptable Use Policy</a>, which
             forms part of these Terms. The essentials are below.
@@ -149,7 +155,9 @@ export default function TermsPage() {
             act on abuse reports, including by removing content or suspending access (see §11).
           </p>
 
-          <h2>5. Your data and content</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.yourDataAndContent}>
+            5. Your data and content
+          </AnchoredHeading>
           <p>
             <strong>You own your data.</strong> As between you and us, you retain all rights to the
             webhooks, payloads, and other content you send through or store on the Service ("Your
@@ -166,7 +174,9 @@ export default function TermsPage() {
             Privacy Policy and our <a href="/dpa">Data Processing Agreement</a>).
           </p>
 
-          <h2>6. Plans, billing, renewals, cancellation and refunds</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.billingAndRefunds}>
+            6. Plans, billing, renewals, cancellation and refunds
+          </AnchoredHeading>
           <p>
             <strong>Plans.</strong> We offer a free plan with a one-time usage allowance, paid
             self-serve plans, and enterprise plans arranged separately. Current prices and included
@@ -209,7 +219,7 @@ export default function TermsPage() {
           <p>
             If you think you've been charged unfairly,{" "}
             <strong>get in touch and we'll look at it</strong>. Email{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> and we'll review it{" "}
+            <a href="mailto:support@webhook.co">support@webhook.co</a> and we'll review it{" "}
             <strong>case by case</strong> — we'd rather sort out a genuine problem than keep money
             we didn't earn. This is in addition to your statutory rights below, which we never ask
             you to waive.
@@ -230,7 +240,9 @@ export default function TermsPage() {
             downgrade paid features until payment is resolved.
           </p>
 
-          <h2>7. Availability and support</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.availabilityAndSupport}>
+            7. Availability and support
+          </AnchoredHeading>
           <p>
             We work hard to keep the Service running, but on the free and self-serve paid plans it's
             provided on a{" "}
@@ -241,11 +253,13 @@ export default function TermsPage() {
           </p>
           <p>
             Support on self-serve plans is best-effort by email at{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>. We don't commit to specific
+            <a href="mailto:support@webhook.co">support@webhook.co</a>. We don't commit to specific
             response times except where a separate agreement says so.
           </p>
 
-          <h2>8. The Service is provided "as is"</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.asIs}>
+            8. The Service is provided "as is"
+          </AnchoredHeading>
           <p>
             To the fullest extent permitted by law, the Service is provided{" "}
             <strong>"as is" and "as available"</strong>, without warranties of any kind, whether
@@ -255,7 +269,9 @@ export default function TermsPage() {
             applicable law; nothing here excludes them where that's the case.
           </p>
 
-          <h2>9. Limitation of liability</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.limitationOfLiability}>
+            9. Limitation of liability
+          </AnchoredHeading>
           <p>
             Nothing in these Terms limits liability that can't be limited by law — including
             liability for death or personal injury caused by negligence, for fraud or fraudulent
@@ -284,7 +300,7 @@ export default function TermsPage() {
             the theory of liability.
           </p>
 
-          <h2>10. Indemnification</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.indemnification}>10. Indemnification</AnchoredHeading>
           <p>
             You'll defend and indemnify us against third-party claims, and the resulting losses,
             arising from Your Content, your use of the Service, or your breach of these Terms or of
@@ -293,7 +309,9 @@ export default function TermsPage() {
             rights. Each side must promptly notify the other of a claim and reasonably cooperate.
           </p>
 
-          <h2>11. Suspension and termination</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.suspensionAndTermination}>
+            11. Suspension and termination
+          </AnchoredHeading>
           <p>You may stop using the Service and close your account at any time.</p>
           <p>
             We may suspend or terminate your access — and, where the situation demands it,{" "}
@@ -308,7 +326,9 @@ export default function TermsPage() {
             requests.
           </p>
 
-          <h2>12. Changes to the Service and to these Terms</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.changes}>
+            12. Changes to the Service and to these Terms
+          </AnchoredHeading>
           <p>
             We may change, add, or remove features of the Service over time. We may also update
             these Terms. For <strong>material</strong> changes to these Terms, we'll give reasonable
@@ -319,7 +339,9 @@ export default function TermsPage() {
             Service and cancel.
           </p>
 
-          <h2>13. Intellectual property</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.intellectualProperty}>
+            13. Intellectual property
+          </AnchoredHeading>
           <p>
             We (and our licensors) own the Service, including its software, design, and trademarks.
             We grant you a limited, non-exclusive, non-transferable right to use the Service under
@@ -331,7 +353,9 @@ export default function TermsPage() {
             us a perpetual, royalty-free right to use them without obligation to you.
           </p>
 
-          <h2>14. Governing law and disputes</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.governingLaw}>
+            14. Governing law and disputes
+          </AnchoredHeading>
           <p>
             These Terms are governed by the <strong>laws of Portugal</strong>, without regard to
             conflict-of-laws rules. Any dispute will be subject to the{" "}
@@ -342,7 +366,9 @@ export default function TermsPage() {
             Commission's Online Dispute Resolution platform.
           </p>
 
-          <h2>15. Enterprise and separate agreements</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.enterpriseAgreements}>
+            15. Enterprise and separate agreements
+          </AnchoredHeading>
           <p>
             If you and we sign a separate written agreement for the Service (for example, an
             enterprise order form or master services agreement, with its own SLA, Data Processing
@@ -350,18 +376,18 @@ export default function TermsPage() {
             these Terms for that use.
           </p>
 
-          <h2>16. General</h2>
+          <AnchoredHeading id={TERMS_ANCHORS.general}>16. General</AnchoredHeading>
           <p>
             These Terms (plus any policies they link to and any separate agreement you've signed)
             are the entire agreement between us about the Service. If a provision is found
             unenforceable, the rest stays in effect. Our not enforcing a right isn't a waiver of it.
             You may not assign these Terms without our consent; we may assign them to a successor to
             our business. Notices to you may be given by email or in-app; notices to us go to{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            <a href="mailto:legal@webhook.co">legal@webhook.co</a>.
           </p>
           <p>
             <strong>Contact:</strong> Sourabh Choraria (webhook.co) —{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>
+            <a href="mailto:legal@webhook.co">legal@webhook.co</a>
           </p>
         </LegalDoc>
       </main>

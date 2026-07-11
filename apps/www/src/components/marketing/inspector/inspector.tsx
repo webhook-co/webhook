@@ -135,7 +135,7 @@ function InspectorRow({
       )}
       <span
         aria-hidden="true"
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-control bg-surface-sunken font-mono text-[10px] font-semibold text-fg-secondary"
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-control bg-surface-sunken font-mono text-[0.625rem] font-semibold text-fg-secondary"
       >
         {row.badge}
       </span>
@@ -157,13 +157,15 @@ function InspectorRow({
           aria-label={`Replay ${row.provider} ${row.event}`}
           className={cn(
             focusRing,
-            "rounded-control border border-hairline px-2 py-0.5 font-mono text-[11px] text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+            "rounded-control border border-hairline px-2 py-0.5 font-mono text-[0.6875rem] text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
           )}
         >
           Replay
         </button>
         {replayCount > 0 && (
-          <span className="font-mono text-[11px] text-info">replayed {replayCount}&times;</span>
+          <span className="font-mono text-[0.6875rem] text-info">
+            replayed {replayCount}&times;
+          </span>
         )}
       </span>
     </li>

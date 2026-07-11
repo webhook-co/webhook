@@ -210,7 +210,7 @@ export function EndpointsManager({
                   onChange={(v) => setDedupMode(v as CreateDedupMode)}
                   className="w-full"
                 />
-                <p className="text-sm text-fg-secondary">
+                <p className="text-fg-secondary">
                   By default we log every request. Optionally collapse repeat deliveries into one
                   event — you can tune this, including matching on specific fields, any time on the
                   endpoint&apos;s page.

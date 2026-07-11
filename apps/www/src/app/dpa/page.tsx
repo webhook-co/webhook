@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
+import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
 import { Nav } from "@/components/marketing/nav";
+import { DPA_ANCHORS } from "@/app/legal-anchors";
 import { focusRing } from "@/lib/styles";
 
 export const metadata: Metadata = {
@@ -48,7 +50,9 @@ export default function DpaPage() {
             the Service; you don&apos;t need to sign anything.
           </blockquote>
 
-          <h2>1. What this is, and when it applies</h2>
+          <AnchoredHeading id={DPA_ANCHORS.scope}>
+            1. What this is, and when it applies
+          </AnchoredHeading>
           <p>
             This Data Processing Agreement (&ldquo;<strong>DPA</strong>&rdquo;) forms part of the{" "}
             <a href="/terms">Terms of Service</a> between you (&ldquo;<strong>Controller</strong>
@@ -61,14 +65,16 @@ export default function DpaPage() {
             <strong>GDPR</strong>, and in the UK GDPR where relevant) on your behalf. It is{" "}
             <strong>incorporated automatically</strong> — using the Service is acceptance, and you
             do not need to sign or return a copy. If your procurement process requires a
-            countersignature, email <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            countersignature, email <a href="mailto:legal@webhook.co">legal@webhook.co</a>.
           </p>
           <p>
             Terms defined in the GDPR (controller, processor, personal data, processing, data
             subject, personal data breach, supervisory authority) have the same meaning here.
           </p>
 
-          <h2>2. The two roles — and which data this covers</h2>
+          <AnchoredHeading id={DPA_ANCHORS.controllerAndProcessor}>
+            2. The two roles — and which data this covers
+          </AnchoredHeading>
           <ul>
             <li>
               <strong>The webhooks you capture — we are your processor.</strong> Request bodies,
@@ -83,7 +89,9 @@ export default function DpaPage() {
             </li>
           </ul>
 
-          <h2>3. Scope of the processing (Article 28(3))</h2>
+          <AnchoredHeading id={DPA_ANCHORS.processingDetails}>
+            3. Scope of the processing (Article 28(3))
+          </AnchoredHeading>
           <ul>
             <li>
               <strong>Subject matter:</strong> providing the hosted webhook.co Service — receiving,
@@ -118,7 +126,7 @@ export default function DpaPage() {
             </li>
           </ul>
 
-          <h2>4. Our obligations</h2>
+          <AnchoredHeading id={DPA_ANCHORS.ourObligations}>4. Our obligations</AnchoredHeading>
           <p>
             <strong>We process only on your documented instructions.</strong> Your instructions are:
             this DPA, the Terms, and the configuration you set through the dashboard, API, CLI, or
@@ -143,7 +151,9 @@ export default function DpaPage() {
             webhook.co is operated by one person.
           </p>
 
-          <h2>5. Security measures (Article 32)</h2>
+          <AnchoredHeading id={DPA_ANCHORS.securityMeasures}>
+            5. Security measures (Article 32)
+          </AnchoredHeading>
           <p>
             These are the measures actually in place. We&apos;ve deliberately kept this list to what
             is true, rather than what sounds reassuring.
@@ -208,7 +218,9 @@ export default function DpaPage() {
             questionnaire later.
           </p>
 
-          <h2>6. Sub-processors (Article 28(2) and (4))</h2>
+          <AnchoredHeading id={DPA_ANCHORS.subProcessors}>
+            6. Sub-processors (Article 28(2) and (4))
+          </AnchoredHeading>
           <p>
             You give us <strong>general written authorisation</strong> to engage sub-processors to
             help run the Service. The current list — who they are, what each one handles, and where
@@ -222,7 +234,7 @@ export default function DpaPage() {
           <p>
             <strong>Changes.</strong> Before we add or replace a sub-processor we will update that
             page and give you at least <strong>30 days&apos; notice</strong>. To receive that notice
-            by email, ask us at <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> and
+            by email, ask us at <a href="mailto:legal@webhook.co">legal@webhook.co</a> and
             we&apos;ll add you to the list. If you reasonably object on data-protection grounds
             within that window, tell us and we&apos;ll try to find a way through; if we can&apos;t,
             you may terminate the affected Service and we&apos;ll refund any prepaid, unused fees
@@ -230,7 +242,9 @@ export default function DpaPage() {
             <a href="/terms">Terms</a>).
           </p>
 
-          <h2>7. International transfers</h2>
+          <AnchoredHeading id={DPA_ANCHORS.internationalTransfers}>
+            7. International transfers
+          </AnchoredHeading>
           <p>
             <strong>
               Your data is currently hosted primarily in the United States. We do not offer EU data
@@ -271,7 +285,7 @@ export default function DpaPage() {
             that our transfer basis does not evaporate if a framework is struck down.
           </p>
 
-          <h2>8. Assisting you</h2>
+          <AnchoredHeading id={DPA_ANCHORS.assistance}>8. Assisting you</AnchoredHeading>
           <p>
             <strong>Data-subject requests.</strong> The dashboard, API, CLI, and MCP server let you
             search, export, and delete the data you&apos;ve captured, which is normally enough to
@@ -288,7 +302,7 @@ export default function DpaPage() {
             it elsewhere.
           </p>
 
-          <h2>9. Personal data breaches</h2>
+          <AnchoredHeading id={DPA_ANCHORS.dataBreaches}>9. Personal data breaches</AnchoredHeading>
           <p>
             If we become aware of a personal data breach affecting the data we process for you, we
             will notify you <strong>without undue delay, and in any event within 72 hours</strong>{" "}
@@ -307,7 +321,9 @@ export default function DpaPage() {
             you make it.
           </p>
 
-          <h2>10. Return and deletion</h2>
+          <AnchoredHeading id={DPA_ANCHORS.returnAndDeletion}>
+            10. Return and deletion
+          </AnchoredHeading>
           <p>
             You can delete your data at any time from your account, and captured webhooks expire
             automatically at the end of your plan&apos;s retention window without you doing
@@ -324,7 +340,7 @@ export default function DpaPage() {
             and remain subject to this DPA until they are.
           </p>
 
-          <h2>11. Audits (Article 28(3)(h))</h2>
+          <AnchoredHeading id={DPA_ANCHORS.audits}>11. Audits (Article 28(3)(h))</AnchoredHeading>
           <p>
             On reasonable request, and no more than once a year unless a supervisory authority or a
             breach requires otherwise, we will give you the information you need to verify that
@@ -339,7 +355,9 @@ export default function DpaPage() {
             before you build on us.
           </p>
 
-          <h2>12. Liability, and how this fits the Terms</h2>
+          <AnchoredHeading id={DPA_ANCHORS.liability}>
+            12. Liability, and how this fits the Terms
+          </AnchoredHeading>
           <p>
             Each party&apos;s liability under this DPA is subject to the limitations and exclusions
             in the <a href="/terms">Terms of Service</a> — except where the GDPR or other applicable
@@ -351,7 +369,7 @@ export default function DpaPage() {
             personal data we process on your behalf.
           </p>
 
-          <h2>13. Changes</h2>
+          <AnchoredHeading id={DPA_ANCHORS.changes}>13. Changes</AnchoredHeading>
           <p>
             We may update this DPA — to reflect a change in the law, in our sub-processors, or in
             the Service. If a change materially reduces your protection we&apos;ll give you
@@ -360,7 +378,7 @@ export default function DpaPage() {
           </p>
           <p>
             Questions, or a countersignature request:{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            <a href="mailto:legal@webhook.co">legal@webhook.co</a>.
           </p>
         </LegalDoc>
       </main>
