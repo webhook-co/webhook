@@ -59,6 +59,15 @@ describe("oauthIssuerConfig", () => {
     // callback is the gate), so disallowPublicClientRegistration stays unset. DCR rate-limit → deploy slice.
     expect(typeof oauthIssuerConfig.clientRegistrationCallback).toBe("function");
     expect(oauthIssuerConfig).not.toHaveProperty("disallowPublicClientRegistration");
+  });
+
+  it("enables CIMD — a domain-proven https client_id is the spec's forward path (DCR is deprecated)", () => {
+    // CIMD ON lets Claude Code / VS Code / Zed present a domain-proven client_id → shown "verified" on
+    // consent. Open to any https client_id, gated by the origin-honest consent screen + the same-origin/
+    // loopback redirect fence + the CIMD-fetch throttle (see ./dcr, ./cimd-fetch-guard, ./client-display).
+    // The provider advertises client_id_metadata_document_supported only when this AND the
+    // global_fetch_strictly_public compat flag are both set.
+    expect(oauthIssuerConfig.clientIdMetadataDocumentEnabled).toBe(true);
     // The callback rejects an arbitrary-http redirect, allows loopback.
     expect(
       oauthIssuerConfig.clientRegistrationCallback({
