@@ -51,9 +51,14 @@ async function seedApiKey(scopes: readonly string[]): Promise<void> {
   const pepper = await readSecretBinding(env.CREDENTIAL_PEPPER as SecretsStoreSecret | string);
   const hasher = createCredentialHasherFromBase64(pepper);
   const keyHash = hasher.candidates(TOKEN)[0];
+  // `keyId` is part of the resolved principal: it names the credential that authenticated the request, so an
+  // audited mutation can record `key:<id>` instead of a NULL actor. The api-key resolver runs with
+  // `requireKeyId`, so a cached principal WITHOUT one is treated as a stale shape and re-resolved from the
+  // cold path (which, in this test, has no Postgres and would 401). Seeding it here is therefore not a
+  // formality — it is what a real cached principal looks like now.
   await (env.KV_AUTHZ as KVNamespace).put(
     credentialCacheKey(keyHash),
-    JSON.stringify({ orgId: "org_test", scopes, audience: ORIGIN }),
+    JSON.stringify({ orgId: "org_test", scopes, audience: ORIGIN, keyId: "key_test" }),
   );
 }
 
