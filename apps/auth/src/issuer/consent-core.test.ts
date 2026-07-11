@@ -119,6 +119,18 @@ describe("buildConsent", () => {
     });
   });
 
+  it("accepts an allowlisted vendor https redirect_uri (Claude Desktop / web MCP clients)", async () => {
+    const { deps, signed } = buildDeps();
+    const result = await buildConsent(
+      deps,
+      authRequest({ redirectUri: "https://claude.ai/api/mcp/auth_callback" }),
+      "user_dana",
+      ORIGIN,
+    );
+    expect(result.kind).toBe("consent");
+    expect(signed.payload!.request.redirectUri).toBe("https://claude.ai/api/mcp/auth_callback");
+  });
+
   it("omits state from the error redirect when the request carries an empty state", async () => {
     const { deps } = buildDeps();
     const result = await buildConsent(
@@ -475,6 +487,32 @@ describe("decideConsent", () => {
     );
     expect(result).toEqual(expect.objectContaining({ kind: "error", status: 400 }));
     expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("completes an approval for an allowlisted vendor https redirect_uri (not just loopback)", async () => {
+    const complete = vi.fn(async () => ({
+      redirectTo: "https://claude.ai/api/mcp/auth_callback?code=AC&state=st_123",
+    }));
+    const result = await decideConsent(
+      decideDeps({
+        completeAuthorization: complete,
+        verifyTicket: async () =>
+          ticketPayload({
+            request: authRequest({ redirectUri: "https://claude.ai/api/mcp/auth_callback" }),
+          }),
+      }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(result).toEqual({
+      kind: "ok",
+      redirectTo: "https://claude.ai/api/mcp/auth_callback?code=AC&state=st_123",
+    });
+    expect(complete).toHaveBeenCalledOnce();
   });
 });
 

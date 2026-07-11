@@ -21,7 +21,7 @@
 //     the cross-slice G1 invariant token-core depends on (a mismatch would orphan the vestigial grant);
 //   - PII (device name) lives only in the encrypted `props`, never in the provider's unencrypted metadata.
 
-import { isAllowedRedirectUri } from "./dcr";
+import { isRegisterableRedirectUri } from "./dcr";
 import type { ConsentAuthRequest, ConsentTicketPayload } from "./consent-ticket";
 // The grant-props contract is owned by token-core (the reader). consent-core is the WRITER — it imports the
 // SAME type so the two halves of the G1 invariant can't drift (a divergence here would silently break the
@@ -108,9 +108,10 @@ export async function buildConsent(
   userId: string,
   origin: AuthorizeOrigin,
 ): Promise<BuildConsentResult> {
-  // The redirect_uri gates whether we can safely bounce errors back. Re-validate it as an http loopback
-  // literal (A3a/ADR-0026) — if it isn't, we must NOT redirect to it; render a 400 instead.
-  if (!isAllowedRedirectUri(request.redirectUri)) {
+  // The redirect_uri gates whether we can safely bounce errors back. Re-validate it against the DCR policy
+  // (http loopback, or an allowlisted-vendor https callback) — if it isn't registerable, we must NOT
+  // redirect to it; render a 400 instead.
+  if (!isRegisterableRedirectUri(request.redirectUri)) {
     return {
       kind: "bad_request",
       error: "invalid_request",
@@ -392,11 +393,11 @@ export async function decideConsent(
     };
   }
 
-  // PKCE-loopback flow. Defence in depth: the redirect_uri was loopback-validated in buildConsent and the
-  // ticket is HMAC-sealed, so this re-check should never fire — but re-asserting it means we never bounce to
-  // (or hand the provider) a non-loopback uri even if a future ticket path skipped the check, and it fails
-  // closed if the sealed payload is malformed (a non-string redirectUri makes isAllowedRedirectUri false).
-  if (!isAllowedRedirectUri(payload.request.redirectUri)) {
+  // Interactive PKCE flow. Defence in depth: the redirect_uri was policy-validated in buildConsent and the
+  // ticket is HMAC-sealed, so this re-check should never fire — but re-asserting it means we never hand the
+  // provider a non-registerable uri even if a future ticket path skipped the check, and it fails closed if
+  // the sealed payload is malformed (a non-string redirectUri makes isRegisterableRedirectUri false).
+  if (!isRegisterableRedirectUri(payload.request.redirectUri)) {
     deps.log?.("consent.bad_redirect_uri", {});
     return {
       kind: "error",

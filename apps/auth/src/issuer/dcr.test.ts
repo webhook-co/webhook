@@ -1,55 +1,161 @@
 import { describe, expect, it } from "vitest";
 
-import { isAllowedRedirectUri, validateClientRegistration } from "./dcr";
+import {
+  ALLOWED_HTTPS_REDIRECT_HOSTS,
+  isHttpLoopbackRedirect,
+  isRegisterableRedirectUri,
+  validateClientRegistration,
+} from "./dcr";
 
-// A3 — open-DCR hardening: a registered redirect_uri must be https or an http loopback literal
-// (127.0.0.1/::1), never plain-http-to-another-host (the phishing vector) or localhost (hijackable).
+// The MCP authorization spec (every revision) requires the AS to accept redirect URIs that are either
+// an http loopback (RFC 8252: 127.0.0.0/8, ::1, or localhost, ANY port/path) or remote https. To keep
+// open DCR from becoming a consent-phishing vector, remote https is restricted to an allowlist of the
+// known MCP-vendor callback hosts (an attacker can't self-register https://evil.com). Custom schemes
+// (Cursor desktop's cursor://) and plain-http-to-a-remote-host are rejected; those callers use a
+// first-party `whk_` bearer token instead.
 
-describe("isAllowedRedirectUri", () => {
-  it("allows http loopback literals (incl. shorthands that canonicalize to a true loopback)", () => {
-    expect(isAllowedRedirectUri("http://127.0.0.1:53123/cb")).toBe(true);
-    expect(isAllowedRedirectUri("http://[::1]:53123/cb")).toBe(true);
-    // IPv4 shorthands canonicalize to 127.0.0.1 (a genuine loopback) → allowed.
-    expect(isAllowedRedirectUri("http://2130706433/cb")).toBe(true);
-    expect(isAllowedRedirectUri("http://127.1/cb")).toBe(true);
+describe("isRegisterableRedirectUri — http loopback (any port/path)", () => {
+  it("accepts the loopback IP literals with any port and path", () => {
+    expect(isRegisterableRedirectUri("http://127.0.0.1:53123/cb")).toBe(true);
+    expect(isRegisterableRedirectUri("http://[::1]:53123/cb")).toBe(true);
+    expect(isRegisterableRedirectUri("http://127.0.0.1/cb")).toBe(true); // no port
   });
 
-  it("rejects https (v1 is loopback-only; A8 relaxes once the consent screen gates remote clients)", () => {
-    expect(isAllowedRedirectUri("https://app.example.com/cb")).toBe(false);
-    expect(isAllowedRedirectUri("https://127.0.0.1/cb")).toBe(false);
+  it("accepts `localhost` — Claude Code, VS Code, Continue use it (RFC 8252 / provider parity)", () => {
+    expect(isRegisterableRedirectUri("http://localhost:33333/callback")).toBe(true);
+    expect(isRegisterableRedirectUri("http://localhost:3000/?state=abc")).toBe(true); // Continue
   });
 
-  it("rejects userinfo-confusion, non-loopback http, localhost, and non-URLs", () => {
-    // The classic bypass: the host is evil.com, the "127.0.0.1" is userinfo — url.hostname catches it.
-    expect(isAllowedRedirectUri("http://127.0.0.1@evil.com/cb")).toBe(false);
-    expect(isAllowedRedirectUri("http://evil.com#@127.0.0.1/cb")).toBe(false);
-    expect(isAllowedRedirectUri("http://evil.example.com/cb")).toBe(false);
-    expect(isAllowedRedirectUri("http://localhost:53123/cb")).toBe(false); // ADR-0026: hijackable, not a true loopback
-    expect(isAllowedRedirectUri("http://127.0.0.1.evil.com/cb")).toBe(false);
-    expect(isAllowedRedirectUri("ftp://127.0.0.1/cb")).toBe(false);
-    expect(isAllowedRedirectUri("not-a-url")).toBe(false);
+  it("accepts the whole 127.0.0.0/8 block (provider isLoopbackUri parity)", () => {
+    expect(isRegisterableRedirectUri("http://127.5.5.5:9000/cb")).toBe(true);
+  });
+
+  it("accepts real MCP-client loopback callback paths", () => {
+    expect(isRegisterableRedirectUri("http://127.0.0.1:1455/callback/AbC123")).toBe(true); // Codex
+    expect(isRegisterableRedirectUri("http://127.0.0.1:1456/mcp/oauth/callback")).toBe(true); // Cline
+    expect(isRegisterableRedirectUri("http://localhost:3118/callback")).toBe(true); // Claude Code
+  });
+
+  it("accepts IPv4 shorthands that WHATWG-canonicalize to a loopback", () => {
+    expect(isRegisterableRedirectUri("http://2130706433/cb")).toBe(true); // 127.0.0.1
+    expect(isRegisterableRedirectUri("http://127.1/cb")).toBe(true); // 127.0.0.1
+  });
+});
+
+describe("isRegisterableRedirectUri — allowlisted vendor https", () => {
+  it("accepts each known MCP-vendor callback host", () => {
+    expect(isRegisterableRedirectUri("https://claude.ai/api/mcp/auth_callback")).toBe(true);
+    expect(isRegisterableRedirectUri("https://claude.com/api/mcp/auth_callback")).toBe(true);
+    expect(isRegisterableRedirectUri("https://www.cursor.com/agents/mcp/oauth/callback")).toBe(
+      true,
+    );
+    expect(isRegisterableRedirectUri("https://cursor.com/agents/mcp/oauth/callback")).toBe(true);
+    expect(isRegisterableRedirectUri("https://vscode.dev/redirect")).toBe(true);
+    expect(isRegisterableRedirectUri("https://insiders.vscode.dev/redirect")).toBe(true);
+  });
+
+  it("treats userinfo as credentials for the real host, not the host itself", () => {
+    // hostname is claude.ai (evil.com is userinfo) → the code still goes to claude.ai → allowed.
+    expect(isRegisterableRedirectUri("https://evil.com@claude.ai/cb")).toBe(true);
+  });
+
+  it("exposes the allowlist for docs/other callers", () => {
+    expect(ALLOWED_HTTPS_REDIRECT_HOSTS.has("claude.ai")).toBe(true);
+    expect(ALLOWED_HTTPS_REDIRECT_HOSTS.has("evil.com")).toBe(false);
+  });
+});
+
+describe("isRegisterableRedirectUri — rejections", () => {
+  it("rejects non-allowlisted https (the phishing vector)", () => {
+    expect(isRegisterableRedirectUri("https://app.example.com/cb")).toBe(false);
+    expect(isRegisterableRedirectUri("https://evil.com/cb")).toBe(false);
+  });
+
+  it("rejects lookalikes of an allowlisted host", () => {
+    expect(isRegisterableRedirectUri("https://claude.ai.evil.com/cb")).toBe(false);
+    expect(isRegisterableRedirectUri("https://evil.com/claude.ai")).toBe(false); // host is evil.com
+    // userinfo-confusion: the real host is evil.com.
+    expect(isRegisterableRedirectUri("https://claude.ai@evil.com/cb")).toBe(false);
+    // punycode homoglyph ("clаude.ai" with a Cyrillic а) is NOT claude.ai.
+    expect(isRegisterableRedirectUri("https://xn--clude-4va.ai/cb")).toBe(false);
+  });
+
+  it("rejects our own origins (never a third-party client redirect)", () => {
+    expect(isRegisterableRedirectUri("https://webhook.co/cb")).toBe(false);
+    expect(isRegisterableRedirectUri("https://auth.webhook.co/cb")).toBe(false);
+    expect(isRegisterableRedirectUri("https://mcp.webhook.co/cb")).toBe(false);
+    expect(isRegisterableRedirectUri("https://wbhk.my/cb")).toBe(false);
+  });
+
+  it("rejects plain http to a non-loopback host, and loopback lookalikes", () => {
+    expect(isRegisterableRedirectUri("http://evil.example.com/cb")).toBe(false);
+    expect(isRegisterableRedirectUri("http://127.0.0.1@evil.com/cb")).toBe(false); // host is evil.com
+    expect(isRegisterableRedirectUri("http://localhost.evil.com/cb")).toBe(false);
+    expect(isRegisterableRedirectUri("http://127.0.0.1.evil.com/cb")).toBe(false);
+  });
+
+  it("rejects custom schemes, dangerous schemes, and non-URLs", () => {
+    expect(isRegisterableRedirectUri("cursor://anysphere.cursor-mcp/oauth/callback")).toBe(false);
+    expect(isRegisterableRedirectUri("vscode://callback")).toBe(false);
+    expect(isRegisterableRedirectUri("javascript:alert(1)")).toBe(false);
+    expect(isRegisterableRedirectUri("ftp://127.0.0.1/cb")).toBe(false);
+    expect(isRegisterableRedirectUri("https://127.0.0.1/cb")).toBe(false); // https loopback: not allowlisted
+    expect(isRegisterableRedirectUri("not-a-url")).toBe(false);
+  });
+});
+
+describe("isHttpLoopbackRedirect — the narrow classifier for the server-302 bounce", () => {
+  it("is true only for an http loopback (never https / remote)", () => {
+    expect(isHttpLoopbackRedirect("http://127.0.0.1:53123/cb")).toBe(true);
+    expect(isHttpLoopbackRedirect("http://[::1]/cb")).toBe(true);
+    expect(isHttpLoopbackRedirect("http://localhost:8080/cb")).toBe(true);
+  });
+
+  it("is false for allowlisted https (those navigate directly, never through the bounce)", () => {
+    expect(isHttpLoopbackRedirect("https://claude.ai/api/mcp/auth_callback")).toBe(false);
+    expect(isHttpLoopbackRedirect("https://127.0.0.1/cb")).toBe(false); // https, not http
+  });
+
+  it("is false for remote http and non-URLs", () => {
+    expect(isHttpLoopbackRedirect("http://evil.com/cb")).toBe(false);
+    expect(isHttpLoopbackRedirect("not-a-url")).toBe(false);
   });
 });
 
 describe("validateClientRegistration", () => {
-  it("allows a registration whose every redirect_uri is an http loopback", () => {
+  it("allows a registration whose every redirect_uri is loopback or allowlisted https", () => {
     expect(
       validateClientRegistration({
         redirect_uris: ["http://127.0.0.1:9000/cb", "http://[::1]:9001/cb"],
       }),
     ).toBeUndefined();
-  });
-
-  it("rejects when any redirect_uri is disallowed (a remote host, or https in v1)", () => {
     expect(
       validateClientRegistration({
-        redirect_uris: ["http://127.0.0.1:9000/cb", "http://evil.example.com/cb"],
+        redirect_uris: ["https://claude.ai/api/mcp/auth_callback"],
+      }),
+    ).toBeUndefined();
+    // A native client that registers both localhost + 127.0.0.1 (Claude Code's CIMD shape).
+    expect(
+      validateClientRegistration({
+        redirect_uris: ["http://localhost/callback", "http://127.0.0.1/callback"],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects when any redirect_uri is disallowed (fail the whole registration)", () => {
+    expect(
+      validateClientRegistration({
+        redirect_uris: ["http://127.0.0.1:9000/cb", "https://evil.example.com/cb"],
       }),
     ).toMatchObject({ code: "invalid_redirect_uri", status: 400 });
-    // https is rejected in v1 (loopback-only) — even a single https entry fails the registration.
-    expect(validateClientRegistration({ redirect_uris: ["https://x.test/cb"] })).toMatchObject({
+    expect(validateClientRegistration({ redirect_uris: ["https://evil.com/cb"] })).toMatchObject({
       code: "invalid_redirect_uri",
     });
+    expect(
+      validateClientRegistration({
+        redirect_uris: ["cursor://anysphere.cursor-mcp/oauth/callback"],
+      }),
+    ).toMatchObject({ code: "invalid_redirect_uri" });
   });
 
   it("rejects a missing / empty / non-array redirect_uris", () => {

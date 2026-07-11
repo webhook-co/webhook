@@ -13,6 +13,8 @@
 
 import { ConsentDecisionSchema } from "@webhook-co/contract";
 
+import { isHttpLoopbackRedirect } from "./dcr";
+
 import type {
   AuthorizeOrigin,
   BuildConsentResult,
@@ -46,11 +48,6 @@ export interface AuthorizeRouteDeps {
   sealLoopbackRedirect: (redirectTo: string) => Promise<string>;
   /** Open a `/consent/complete` ticket → the sealed loopback URL, or null if invalid/expired/non-loopback. */
   openLoopbackRedirect: (ticket: string) => Promise<string | null>;
-}
-
-/** A loopback redirect is an absolute http(s) URL; the device flow returns a same-origin relative path. */
-function isAbsoluteUrl(target: string): boolean {
-  return /^https?:\/\//i.test(target);
 }
 
 function redirect(location: string): Response {
@@ -160,10 +157,11 @@ export async function handleConsentDecision(
   });
 
   if (result.kind === "ok") {
-    // An absolute redirect is the cross-origin loopback callback — the browser can't reach it via a
-    // client-side nav (PNA), so hand back a same-origin /consent/complete bounce that 302s to it. A relative
-    // target (the device flow's /device?status=…) is same-origin → navigate to it directly.
-    const redirectTo = isAbsoluteUrl(result.redirectTo)
+    // Only an http-LOOPBACK callback needs the /consent/complete bounce: the browser can't client-side
+    // navigate https://auth → http://127.0.0.1 (Private Network Access), so we hand back a same-origin bounce
+    // that 302s to it server-side. A remote https callback (Claude Desktop / web MCP clients) and a relative
+    // device target (/device?status=…) are same-origin-navigable → return them directly.
+    const redirectTo = isHttpLoopbackRedirect(result.redirectTo)
       ? await deps.sealLoopbackRedirect(result.redirectTo)
       : result.redirectTo;
     return jsonResponse(200, { redirectTo });
