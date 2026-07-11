@@ -6,6 +6,7 @@ import {
   replayToDestination,
   ReplayConflictError,
   ReplayNotFoundError,
+  ReplayPausedError,
   ReplayUnverifiedError,
   type ClaimOutcome,
   type ReplayDeps,
@@ -151,6 +152,14 @@ describe("replayToDestination", () => {
     await expect(
       replayToDestination({ orgId: ORG, eventId: EVENT, destinationId: DEST }, d),
     ).rejects.toBeInstanceOf(ReplayUnverifiedError);
+    expect(d.dispatch).not.toHaveBeenCalled();
+  });
+
+  it("THROWS ReplayPausedError when the org is paused at its cap (S4) and never dispatches", async () => {
+    const d = deps({ claim: vi.fn(async () => ({ kind: "paused" })) });
+    await expect(
+      replayToDestination({ orgId: ORG, eventId: EVENT, destinationId: DEST }, d),
+    ).rejects.toBeInstanceOf(ReplayPausedError);
     expect(d.dispatch).not.toHaveBeenCalled();
   });
 

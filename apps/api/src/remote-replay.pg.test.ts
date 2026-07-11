@@ -205,6 +205,34 @@ describe("createRemoteReplayHandler", () => {
     }
   });
 
+  it("REFUSES with RATE_LIMITED when the org is PAUSED at its cap — never mints a billable delivery (S4)", async () => {
+    // The ORG-level cap pause (ingest_paused), distinct from the endpoint pause above. A remote replay is a
+    // billable delivery, so a capped org must not keep billing via replay while its ingestion is paused.
+    await withTenant(
+      app,
+      orgId,
+      (tx) => tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${true})
+                 on conflict (org_id) do update set paused = true`,
+    );
+    try {
+      const d = dispatcherReturning({
+        outcome: "delivered",
+        status: 200,
+        error: null,
+        latencyMs: 1,
+      });
+      const h = createRemoteReplayHandler({ tenant: app, dispatcher: d.rpc });
+      await expect(h(ctx(), input())).rejects.toMatchObject({ code: "RATE_LIMITED" });
+      expect(d.calls).toHaveLength(0); // never dispatched — refused before the claim
+    } finally {
+      await withTenant(
+        app,
+        orgId,
+        (tx) => tx`update ingest_paused set paused = false where org_id = ${orgId}`,
+      );
+    }
+  });
+
   it("passes the destination's sealed signing secret(s) to the dispatcher (S3 Slice 2)", async () => {
     // A destination WITH a signing secret → the api relays the sealed envelope + a fresh webhook-id (the
     // attempt id). The engine (tested separately) unseals + signs; here we assert the api built `signing`.

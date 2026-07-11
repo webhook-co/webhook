@@ -7,7 +7,7 @@ import {
   finalizeDeliveryAttempt,
   serializeTarget,
 } from "@webhook-co/db/replay";
-import { getEvent } from "@webhook-co/db/reads";
+import { getEvent, isIngestPaused } from "@webhook-co/db/reads";
 import { getActiveSigningSecrets } from "@webhook-co/db/signing-keys";
 import {
   deliveryVerificationDecision,
@@ -64,6 +64,15 @@ export class ReplayUnverifiedError extends Error {
   }
 }
 
+/** Raised when the org is PAUSED at its event limit (S4): a remote replay mints a billable delivery, so it
+ *  is refused while ingestion is paused, matching the api handler's RATE_LIMITED gate. */
+export class ReplayPausedError extends Error {
+  constructor() {
+    super("paused at your event limit — replay is unavailable until you resume or raise the limit");
+    this.name = "ReplayPausedError";
+  }
+}
+
 export interface ReplayInput {
   readonly orgId: string;
   readonly eventId: string;
@@ -75,6 +84,7 @@ export interface ReplayInput {
 export type ClaimOutcome =
   | { readonly kind: "not_found" }
   | { readonly kind: "blocked" }
+  | { readonly kind: "paused" }
   | {
       readonly kind: "claimed";
       readonly event: {
@@ -123,6 +133,9 @@ function boundDeps(app: Sql, dispatcher: DeliveryDispatcherRpc): ReplayDeps {
   return {
     claim: (input) =>
       withTenant(app, input.orgId, async (tx): Promise<ClaimOutcome> => {
+        // Cap-pause gate (S4): a remote replay mints a BILLABLE delivery — refuse it while the org is paused
+        // at its event limit, so a capped org can't keep billing via replay. Checked before the claim.
+        if (await isIngestPaused(tx)) return { kind: "paused" };
         const event = await getEvent(tx, input.eventId);
         if (!event) return { kind: "not_found" };
         // SECURITY GATE (ADR-0103): a `failed` event (signature checked + REJECTED = forged) must never be
@@ -202,6 +215,7 @@ async function orchestrate(input: ReplayInput, deps: ReplayDeps): Promise<Delive
   const claimed = await deps.claim({ ...input, target, idempotencyKey });
   if (claimed.kind === "not_found") throw new ReplayNotFoundError();
   if (claimed.kind === "blocked") throw new ReplayUnverifiedError();
+  if (claimed.kind === "paused") throw new ReplayPausedError();
   if (!claimed.won) {
     // A fresh key ⇒ won is practically always true; a non-won re-claim can only be a same-(event,target)
     // sibling (a transient retry) → return it (idempotent, no re-POST). Defense-in-depth (api parity): if the
