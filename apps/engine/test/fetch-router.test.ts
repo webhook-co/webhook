@@ -56,6 +56,103 @@ function post(path: string, body = `{"hello":"world"}`): Request {
     headers: { "content-type": "application/json" },
   });
 }
+function httpGet(path: string): Request {
+  return new Request(`http://wbhk.my${path}`, { method: "GET" });
+}
+function httpPost(path: string, body = `{"hello":"world"}`): Request {
+  return new Request(`http://wbhk.my${path}`, {
+    method: "POST",
+    body,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("handleFetch cleartext refusal (S6a — the DPA's TLS-everywhere promise)", () => {
+  it("301-redirects a plaintext ingest POST to https BEFORE resolving the token or building deps", async () => {
+    // The ingest token rides in the URL PATH, so a cleartext request already exposed it. Refuse it: 301 to
+    // the https equivalent (the version-controlled backstop to the zone's Always-Use-HTTPS). The redirect
+    // must precede token resolution/capture — a plaintext event must never be captured (a DPA breach).
+    let built = 0;
+    const res = await handleFetch(httpPost("/whep_good"), bindings, ctx, () => {
+      built += 1;
+      return Promise.resolve(fakeHandle().handle);
+    });
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("https://wbhk.my/whep_good");
+    expect(built).toBe(0); // never resolved the token, never captured over cleartext
+  });
+
+  it("301s plaintext BEFORE /healthz and BEFORE the bare-root 302 (every wbhk.my surface is https-only)", async () => {
+    const health = await handleFetch(httpGet("/healthz"), bindings, ctx, () =>
+      Promise.resolve(fakeHandle().handle),
+    );
+    expect(health.status).toBe(301);
+    expect(health.headers.get("location")).toBe("https://wbhk.my/healthz");
+
+    const root = await handleFetch(httpGet("/"), bindings, ctx, () =>
+      Promise.resolve(fakeHandle().handle),
+    );
+    expect(root.status).toBe(301); // the http→https 301 wins over the root's https 302
+    expect(root.headers.get("location")).toBe("https://wbhk.my/");
+  });
+
+  it("preserves the path AND query string in the https redirect", async () => {
+    const res = await handleFetch(httpGet("/whep_good?a=1&b=2"), bindings, ctx, () =>
+      Promise.resolve(fakeHandle().handle),
+    );
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("https://wbhk.my/whep_good?a=1&b=2");
+  });
+
+  it("serves HSTS on the https liveness surfaces (so a browser auto-upgrades future requests)", async () => {
+    const health = await handleFetch(get("/healthz"), bindings, ctx, () =>
+      Promise.resolve(fakeHandle().handle),
+    );
+    expect(health.headers.get("strict-transport-security")).toBe("max-age=63072000");
+    const root = await handleFetch(get("/"), bindings, ctx, () =>
+      Promise.resolve(fakeHandle().handle),
+    );
+    expect(root.headers.get("strict-transport-security")).toBe("max-age=63072000");
+  });
+
+  it("serves HSTS on the plain() ingest responses too (the capture ACK and the unknown-token 404)", async () => {
+    // /healthz + / above go through `new Response(...)` with LIVENESS_HEADERS; these go through plain()'s
+    // OWN base headers instead — so this is the assertion that actually guards the HSTS line in plain().
+    const ack = await handleFetch(post("/whep_good"), bindings, ctx, () =>
+      Promise.resolve(fakeHandle().handle),
+    );
+    expect(ack.status).toBe(200); // captured
+    expect(ack.headers.get("strict-transport-security")).toBe("max-age=63072000");
+
+    const notFound = await handleFetch(post("/whep_nope"), bindings, ctx, () =>
+      Promise.resolve(fakeHandle().handle),
+    );
+    expect(notFound.status).toBe(404); // unknown token
+    expect(notFound.headers.get("strict-transport-security")).toBe("max-age=63072000");
+  });
+
+  it("refuses cleartext for ALL verbs (a non-ingest verb over http is 301'd BEFORE the method gate) + HSTS on the 301", async () => {
+    // The http check is hoisted above the method gate, so even an unsupported verb over http gets the 301,
+    // never the 405 — locking in "cleartext refusal precedes method handling".
+    const put = await handleFetch(
+      new Request("http://wbhk.my/whep_good", { method: "PUT" }),
+      bindings,
+      ctx,
+      () => Promise.resolve(fakeHandle().handle),
+    );
+    expect(put.status).toBe(301);
+    expect(put.headers.get("location")).toBe("https://wbhk.my/whep_good");
+    expect(put.headers.get("strict-transport-security")).toBe("max-age=63072000");
+
+    const trace = await handleFetch(
+      new Request("http://wbhk.my/x", { method: "TRACE" }),
+      bindings,
+      ctx,
+      () => Promise.resolve(fakeHandle().handle),
+    );
+    expect(trace.status).toBe(301); // NOT the 405 the method gate would give over https
+  });
+});
 
 describe("handleFetch routing + lifecycle", () => {
   it("GET / 302-redirects to the marketing homepage, and does NOT build ingest deps", async () => {
