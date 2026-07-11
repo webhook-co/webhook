@@ -8,7 +8,7 @@ import { SITE_URL } from "./metadata";
 //
 // Every route in app/ that a human should be able to find belongs here. A pricing page missing from the
 // sitemap is a pricing page search engines have to stumble onto.
-const LAST_MODIFIED = "2026-07-10";
+const LAST_MODIFIED = "2026-07-11";
 
 // Opt the metadata route into static rendering so it's emitted as a file under `output: 'export'`.
 export const dynamic = "force-static";
@@ -35,6 +35,18 @@ export default function sitemap(): MetadataRoute.Sitemap {
     },
     {
       url: `${SITE_URL}/privacy`,
+      lastModified: LAST_MODIFIED,
+      changeFrequency: "yearly",
+      priority: 0.3,
+    },
+    {
+      url: `${SITE_URL}/dpa`,
+      lastModified: LAST_MODIFIED,
+      changeFrequency: "yearly",
+      priority: 0.3,
+    },
+    {
+      url: `${SITE_URL}/acceptable-use`,
       lastModified: LAST_MODIFIED,
       changeFrequency: "yearly",
       priority: 0.3,

@@ -105,6 +105,10 @@ export default function TermsPage() {
 
           <h2>4. Acceptable use</h2>
           <p>
+            The full rules live in our <a href="/acceptable-use">Acceptable Use Policy</a>, which
+            forms part of these Terms. The essentials are below.
+          </p>
+          <p>
             You may use the Service only for lawful purposes and in line with these Terms. Because
             webhook.co receives arbitrary data and can deliver it onward to destinations you choose,
             we're strict about misuse. You must <strong>not</strong>, and must not allow anyone else
@@ -159,7 +163,7 @@ export default function TermsPage() {
             You're responsible for Your Content and for having the rights and lawful basis to send
             it to us — including, where the webhooks you capture contain other people's personal
             data, for being the controller of that data (we act as your processor for it; see the
-            Privacy Policy and, for enterprise arrangements, a Data Processing Agreement).
+            Privacy Policy and our <a href="/dpa">Data Processing Agreement</a>).
           </p>
 
           <h2>6. Plans, billing, renewals, cancellation and refunds</h2>
@@ -205,7 +209,7 @@ export default function TermsPage() {
           <p>
             If you think you've been charged unfairly,{" "}
             <strong>get in touch and we'll look at it</strong>. Email{" "}
-            <a href="mailto:support@webhook.co">support@webhook.co</a> and we'll review it{" "}
+            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> and we'll review it{" "}
             <strong>case by case</strong> — we'd rather sort out a genuine problem than keep money
             we didn't earn. This is in addition to your statutory rights below, which we never ask
             you to waive.
