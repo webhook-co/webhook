@@ -81,7 +81,7 @@ import { runAnchorCron } from "./anchor-cron";
 import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
-import { runRetentionPruneCron } from "./retention-prune-cron";
+import { isTotalRetentionFailure, runRetentionPruneCron } from "./retention-prune-cron";
 import {
   guardedDeliver,
   makeSignDelivery,
@@ -1480,13 +1480,11 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
       pageSize: RETENTION_PAGE_SIZE,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
-    // Per-org faults are isolated (each org retried next tick), so the cron never rejects on a partial
-    // failure — which is right. But a TOTAL failure (every claimed org threw: a bad role grant, schema drift,
-    // Hyperdrive down) would otherwise be invisible, sitting only as `failed: N` inside the success-path
-    // done-line. Retention is a COMPLIANCE-critical path (we promise to delete on time), so escalate a total
-    // outage by throwing — the scheduled() catch then emits the standard "retention prune cron failed" error
-    // line that alerting keys on. Fail direction is safe either way (data is RETAINED, never wrongly deleted).
-    if (result.orgs > 0 && result.failed === result.orgs) {
+    // Escalate a TOTAL outage (every claimed org threw) by throwing — the scheduled() catch then emits the
+    // standard "retention prune cron failed" error line that alerting keys on. A PARTIAL failure does NOT
+    // throw (the healthy orgs' deletions are valid). Fail direction is safe either way (data is RETAINED,
+    // never wrongly deleted). The decision is the pure, unit-tested `isTotalRetentionFailure`.
+    if (isTotalRetentionFailure(result)) {
       throw new Error(`retention prune: all ${result.orgs} claimed orgs failed`);
     }
   } finally {

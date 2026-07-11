@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  isTotalRetentionFailure,
   runRetentionPruneCron,
   type ExpiringEvent,
   type RetentionPruneCronDeps,
+  type RetentionPruneCronResult,
 } from "../src/retention-prune-cron";
 
 // The retention prune is pure + dependency-injected so it unit-tests with fakes. The load-bearing
@@ -254,5 +256,56 @@ describe("runRetentionPruneCron", () => {
     expect(store["org-clean"]).toHaveLength(0); // clean org fully pruned
     // The poison key never reached R2 (only the clean key did).
     expect(order.filter((o) => o.startsWith("r2:"))).toEqual(["r2:key-c1"]);
+  });
+});
+
+// The compliance-critical escalation the engine wrapper (runRetentionPruneDrainCron) throws on. It is the
+// ONLY signal that distinguishes a benign partial failure (heal-next-tick) from a total outage that must
+// page — so it gets its own coverage rather than riding on the wrapper (which wires un-testable real deps).
+describe("isTotalRetentionFailure", () => {
+  const result = (over: Partial<RetentionPruneCronResult>): RetentionPruneCronResult => ({
+    orgs: 0,
+    deleted: 0,
+    fenced: 0,
+    failed: 0,
+    ...over,
+  });
+
+  it("is TRUE only when every claimed org faulted (a total outage → escalate)", () => {
+    expect(isTotalRetentionFailure(result({ orgs: 3, failed: 3 }))).toBe(true);
+    expect(isTotalRetentionFailure(result({ orgs: 1, failed: 1 }))).toBe(true);
+  });
+
+  it("is FALSE for a partial failure (healthy orgs' deletions are valid — don't page)", () => {
+    expect(isTotalRetentionFailure(result({ orgs: 3, failed: 1 }))).toBe(false);
+    expect(isTotalRetentionFailure(result({ orgs: 3, failed: 2, deleted: 5 }))).toBe(false);
+  });
+
+  it("is FALSE for a fully-healthy run and for a no-op (zero orgs claimed is not a failure)", () => {
+    expect(isTotalRetentionFailure(result({ orgs: 3, failed: 0, deleted: 9 }))).toBe(false);
+    expect(isTotalRetentionFailure(result({ orgs: 0, failed: 0 }))).toBe(false);
+  });
+
+  it("flags a REAL total-outage run and clears a partial one (driven through the cron, not hand-built)", async () => {
+    const total = await runRetentionPruneCron({
+      ...makeStore({ "org-a": [ev("a1")], "org-b": [ev("b1")] }).deps,
+      orgConcurrency: 2,
+      deleteEvents: async () => {
+        throw new Error("role grant revoked"); // EVERY org faults
+      },
+    });
+    expect(total).toMatchObject({ orgs: 2, failed: 2, deleted: 0 });
+    expect(isTotalRetentionFailure(total)).toBe(true);
+
+    const partial = await runRetentionPruneCron({
+      ...makeStore({ "org-a": [ev("a1")], "org-b": [ev("b1")] }).deps,
+      orgConcurrency: 2,
+      deleteEvents: async (orgId, ids) => {
+        if (orgId === "org-a") throw new Error("one org blip");
+        return ids; // org-b deletes fine
+      },
+    });
+    expect(partial).toMatchObject({ orgs: 2, failed: 1 });
+    expect(isTotalRetentionFailure(partial)).toBe(false);
   });
 });

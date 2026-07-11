@@ -74,6 +74,17 @@ export interface RetentionPruneCronResult {
   readonly failed: number;
 }
 
+/**
+ * A TOTAL outage: every claimed org's drain faulted (nothing was accomplished). Per-org isolation means the
+ * cron never rejects on a PARTIAL failure — right, since the healthy orgs' deletions are valid — but a total
+ * outage (a bad role grant, schema drift, Hyperdrive down) would otherwise be invisible, sitting only as
+ * `failed: N` in the success-path done-line. Retention is a COMPLIANCE-critical path, so the caller escalates
+ * this (throws) to fire the standard "cron failed" alert. Zero claimed orgs is NOT a failure (nothing to do).
+ */
+export function isTotalRetentionFailure(result: RetentionPruneCronResult): boolean {
+  return result.orgs > 0 && result.failed === result.orgs;
+}
+
 /** Per-org tallies from one drain. `failed` marks a dep fault that stopped this org early (isolated). */
 interface OrgDrain {
   readonly deleted: number;
