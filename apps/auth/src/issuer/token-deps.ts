@@ -27,6 +27,7 @@ import {
 import { b64ToBytes, importAuditKey, readSecretBinding } from "@webhook-co/shared";
 
 import { makeDeviceStoreDeps } from "./device-deps";
+import { revokeGrantAndEvict } from "./grant-revoke";
 import { pollDeviceCode } from "./device-store";
 import type { DeviceTokenDeps } from "./device-token-core";
 import { GRANT_TTL_SECONDS, HELPERS_DEFAULT_HANDLER, KEY_TTL_SECONDS } from "./issuer-constants";
@@ -152,39 +153,26 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
     keyTtlSeconds: KEY_TTL_SECONDS,
 
     // Atomic single-use consume + ~90d rotation (the new handle replaces the presented one). Returns the
-    // grant's org + user + audience so the seams below need no cross-org lookup (ADR-0028).
+    // grant's org + user + audience so the seams below need no cross-org lookup (ADR-0028) — AND whether the
+    // grant's user is still a member, resolved in the same statement so the re-check costs no extra
+    // round-trip and cannot be stranded by a fault after the handle is burned.
     consumeRefresh: (refreshToken) =>
       consumeRefreshToken(app, refreshToken, hasher, REFRESH_TTL_SECONDS),
 
-    // Re-assert tenancy on EVERY refresh. Consent checked membership once; the grant then lives ~90 days,
-    // so without this a removed member's handle keeps minting fresh 24h keys into the org for a quarter.
-    isOrgMember: (userId, orgId) => isOrgMember(app, userId, orgId),
-
     // Denial terminates the grant, so its already-minted 24h access keys die too rather than aging out.
-    // Mirrors /revoke's cascade (revoke-deps.ts): DB commit is authoritative; KV eviction is best-effort
-    // (a miss self-heals at the cache TTL) and so never fails the revoke. Without the eviction the cascade
-    // would be invisible to api./mcp. until the cached principal expired — i.e. the removed member would
-    // keep working for the length of the cache TTL, which is exactly the hole this check exists to close.
-    revokeGrant: async (grantId, orgId) => {
-      const { revokedKeyHashes } = await revokeGrant(
-        app,
-        { orgId, grantId, reason: "membership_revoked" },
-        auditKey,
-      );
-      await revokeRefreshTokensForGrant(app, { orgId, grantId });
-      await Promise.all(
-        revokedKeyHashes.map((keyHash) =>
-          cache.delete(credentialCacheKey(keyHash)).catch((error: unknown) =>
-            console.log(
-              JSON.stringify({
-                message: "issuer.refresh_denied_evict_failed",
-                error: String(error),
-              }),
-            ),
-          ),
-        ),
-      );
-    },
+    // The cascade — DB commit → KV eviction → refresh-handle sweep, in that ORDER — is shared with /revoke;
+    // grant-revoke.ts documents why the eviction must precede the (merely tidying) sweep.
+    revokeGrant: (grantId, orgId) =>
+      revokeGrantAndEvict({
+        revokeGrant: () =>
+          revokeGrant(app, { orgId, grantId, reason: "membership_revoked" }, auditKey),
+        revokeRefreshTokens: async () => {
+          await revokeRefreshTokensForGrant(app, { orgId, grantId });
+        },
+        cache,
+        cacheKey: credentialCacheKey,
+        log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+      }),
 
     // The grant's consented scope set = the union of its NON-REVOKED child api_keys' scopes (stable: the
     // first key, from the auth-code mint, carries the full consent; refreshes only narrow). token-core

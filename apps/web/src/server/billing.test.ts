@@ -224,7 +224,9 @@ describe("startCheckout — plan gating (planId is untrusted form input)", () =>
   it("rejects an unknown/garbage plan id BEFORE any Stripe call", async () => {
     const client = enableBilling(null);
     for (const bad of ["free", "", "pro; drop table", "__proto__"]) {
-      expect(await startCheckout("org-9", bad, "a@b.test")).toEqual({ status: "unknown_plan" });
+      expect(await startCheckout("org-9", "u-1", bad, "a@b.test")).toEqual({
+        status: "unknown_plan",
+      });
     }
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });

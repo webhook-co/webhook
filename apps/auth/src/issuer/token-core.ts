@@ -162,17 +162,21 @@ export interface RefreshDeps {
   consumeRefresh: (refreshToken: string) => Promise<{
     grantId: string;
     orgId: string;
-    /** The grant's user — carried so refresh can re-check membership, exactly as auth-code redemption does. */
     userId: string;
+    /**
+     * Is the grant's user STILL a member of the grant's org? Consent recorded membership once, at
+     * authorization time; a grant then lives ~90 days, and membership is revocable — so this must be
+     * re-asserted on every mint, or removing someone from an org would not stop their refresh handle from
+     * minting fresh access keys for the rest of that lifetime.
+     *
+     * Resolved by the consume itself, in the same statement. That is deliberate: a separate lookup would
+     * run AFTER the handle is irreversibly burned, so a transient DB fault would strand the client on a
+     * dead handle and force an interactive re-login. Folded into the consume, a fault rolls the burn back.
+     */
+    isMember: boolean;
     audience: string;
     newRefresh: string;
   } | null>;
-  /**
-   * Is the grant's user STILL a member of the grant's org? Consent recorded membership once, at
-   * authorization time; a grant then lives ~90 days. Without re-checking here, removing someone from an
-   * org would not stop their refresh handle from minting fresh access keys for the rest of that lifetime.
-   */
-  isOrgMember: (userId: string, orgId: string) => Promise<boolean>;
   /** Terminate a grant. Called when refresh is denied for non-membership, so the grant's live keys die too. */
   revokeGrant: (grantId: string, orgId: string) => Promise<void>;
   /**
@@ -353,19 +357,25 @@ export async function redeemRefresh(deps: RefreshDeps, req: RefreshRequest): Pro
     return { kind: "error", error: "invalid_target", description: "audience not permitted" };
   }
 
-  // Tenancy re-bind. redeemAuthCode checks this once, at consent; a grant then lives for ~90 days and
-  // refreshes silently. Membership is revocable, so it must be re-asserted on EVERY mint — otherwise
-  // removing a member leaves their refresh handle minting fresh keys into the org until the grant expires.
-  // Revoke the grant on denial: the presented handle is already burned by the consume above, but the
-  // grant's live 24h keys would otherwise outlive the denial, and an active grant invites a retry.
-  if (!(await deps.isOrgMember(grant.userId, grant.orgId))) {
+  // Tenancy re-bind. redeemAuthCode checks membership once, at consent; a grant then lives ~90 days and
+  // refreshes silently. Membership is revocable, so it is re-asserted on EVERY mint — the consume above
+  // resolved it atomically, in the same statement that burned the handle (see RefreshDeps.consumeRefresh).
+  //
+  // Denial REVOKES the grant rather than only failing this exchange: the presented handle is already burned,
+  // but the grant's live 24h access keys would otherwise outlive the denial, and an active grant invites a
+  // retry. The revoke also evicts those keys from the shared principal cache — without that, api./mcp. would
+  // keep honouring them for the cache TTL, which is precisely the hole this check exists to close.
+  if (!grant.isMember) {
     try {
       await deps.revokeGrant(grant.grantId, grant.orgId);
-    } catch {
-      // Best-effort: the denial below is the security outcome. A failed revoke leaves a grant whose only
-      // refresh handle is already spent, so it cannot mint again — but flag it for the reaper.
+    } catch (error) {
+      // Best-effort: the denial below is the security outcome and is unconditional. A failed revoke leaves a
+      // grant whose only refresh handle is already spent, so it cannot mint again — but its live access keys
+      // survive to their 24h expiry, so this needs a reaper. Carry the cause; an undiagnosable log line here
+      // is a log line nobody can act on.
       deps.log?.("issuer.refresh_denied_revoke_failed", {
         grantId: grant.grantId,
+        error: String(error),
         reapRequired: true,
       });
     }

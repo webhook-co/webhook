@@ -32,12 +32,17 @@ export interface MintedRefreshToken {
 export interface ConsumedRefreshToken {
   readonly grantId: string;
   readonly orgId: string;
-  /**
-   * The grant's user, read from the JOINed `auth_grant`. The issuer re-asserts membership against this on
-   * every refresh: the handle embeds an org, but membership is revocable and a grant lives ~90 days, so
-   * "this handle names org X" is not evidence that its user still belongs to org X.
-   */
+  /** The grant's user, read from the JOINed `auth_grant`. */
   readonly userId: string;
+  /**
+   * Is that user STILL a member of the grant's org, as of this very transaction? The handle embeds an org,
+   * but membership is revocable and a grant lives ~90 days — so "this handle names org X" is not evidence
+   * that its user still belongs to org X. The issuer refuses to mint when this is false.
+   *
+   * Resolved in the SAME statement as the consume, which makes it both free (no extra query) and atomic
+   * (no TOCTOU window between burning the handle and checking the membership).
+   */
+  readonly isMember: boolean;
   readonly audience: string;
   /** The rotated replacement handle (single-use rotation). */
   readonly newRefresh: string;
@@ -119,18 +124,34 @@ export async function consumeRefreshToken(
     // Try each pepper candidate (current, then previous) — a handle was stored under exactly one, so at
     // most one matches. Iterating mirrors the api-key cold-lookup (postgres.js doesn't bind a Buffer[]
     // as bytea[] for `= any()`); the first match's UPDATE is the atomic single-use gate.
-    // `g.user_id` rides along on the JOIN that was already here — the issuer's membership re-check costs
-    // no extra query.
-    let consumed: { id: string; grant_id: string; user_id: string; audience: string } | undefined;
+    //
+    // The grant's user AND whether that user is STILL a member both ride the JOIN this UPDATE already
+    // performed, so the issuer's membership re-check costs no extra query — and, more importantly, no extra
+    // ROUND-TRIP after the burn. A separate post-consume lookup would sit in an unprotected window: the
+    // handle is already spent, so a transient DB fault there would strand the client on a dead handle and
+    // force an interactive re-login. Inside this transaction a fault simply rolls the burn back, and the
+    // client can retry with the handle it still holds.
+    //
+    // The LEFT JOIN is RLS-consistent: `memberships` is scoped `org_id = current_org_id()`, which withTenant
+    // has pinned to this org, and `g.org_id` is that same org — so `m` resolves iff a membership exists here.
+    type ConsumedRow = {
+      id: string;
+      grant_id: string;
+      user_id: string;
+      audience: string;
+      is_member: boolean;
+    };
+    let consumed: ConsumedRow | undefined;
     for (const candidate of hasher.candidates(plaintext)) {
-      [consumed] = await tx<{ id: string; grant_id: string; user_id: string; audience: string }[]>`
+      [consumed] = await tx<ConsumedRow[]>`
         update auth_refresh_token rt set used_at = now()
         from auth_grant g
+        left join memberships m on m.org_id = g.org_id and m.user_id = g.user_id
         where rt.token_hash = ${candidate}
           and rt.grant_id = g.id and rt.org_id = g.org_id
           and rt.used_at is null and rt.revoked_at is null and rt.expires_at > now()
           and g.status = 'active' and (g.expires_at is null or g.expires_at > now())
-        returning rt.id, rt.grant_id, g.user_id, rt.audience`;
+        returning rt.id, rt.grant_id, g.user_id, rt.audience, (m.user_id is not null) as is_member`;
       if (consumed) break;
     }
     if (!consumed) return null;
@@ -150,6 +171,7 @@ export async function consumeRefreshToken(
       grantId: consumed.grant_id,
       orgId,
       userId: consumed.user_id,
+      isMember: consumed.is_member,
       audience: consumed.audience,
       newRefresh: next,
     };
