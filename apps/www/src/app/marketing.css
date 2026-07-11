@@ -241,3 +241,68 @@
     opacity var(--wh-dur-slow) var(--wh-ease-smooth),
     transform var(--wh-dur-slow) var(--wh-ease-smooth);
 }
+
+/* ── FAQ accordion ──────────────────────────────────────────────────────────
+   The disclosure state machine is the browser's (<details>/<summary>) — keyboard operation, the
+   expanded state and screen-reader semantics all come free, and none of it is re-implemented here.
+   All we add is the motion, in CSS, so the pricing page stays a server component with zero client JS
+   and no bytes against the Lighthouse budget.
+
+   Only the OPEN transition animates. Animating the close would mean holding the panel in the DOM
+   after `open` flips, which native <details> won't do without JS — and a 200ms collapse is not worth
+   a client boundary. */
+@media (prefers-reduced-motion: no-preference) {
+  details[open] > .faq-panel {
+    animation: faqOpen var(--wh-dur-smooth) var(--wh-ease-smooth) both;
+  }
+}
+
+@keyframes faqOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── legal section anchors ──────────────────────────────────────────────────
+   Landing on a section should be legible: the heading you arrived at flashes briefly so you can see
+   where you are in a 4,000px contract. `box-shadow` spread paints the halo OUTSIDE the box, so the
+   highlight has breathing room without shifting a single line of the document. */
+@media (prefers-reduced-motion: no-preference) {
+  .anchor-heading:target {
+    animation: anchorLand 1.6s var(--wh-ease-smooth) both;
+    border-radius: var(--wh-radius-control);
+  }
+}
+
+@keyframes anchorLand {
+  0%,
+  25% {
+    background-color: var(--wh-info-bg);
+    box-shadow: 0 0 0 8px var(--wh-info-bg);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 8px transparent;
+  }
+}
+
+/* Clicking a heading glides to it — but ONLY after the reader has interacted.
+   
+   `scroll-behavior: smooth` on the root is not safe to declare unconditionally: Chrome then drops the
+   load-time fragment scroll entirely. Measured on /terms#limitation-of-liability — with `auto` the page
+   lands at the heading (scrollY 5546); with `smooth` it never scrolls at all (scrollY 0). That would
+   silently break every pasted contract link, which is the one thing these anchors exist to serve.
+
+   So the class is added by the first click/keypress (see the inline script in layout.tsx). At load time
+   it is absent by construction, so the cold-load jump stays native, instant and precise; every
+   subsequent in-page anchor click glides. */
+@media (prefers-reduced-motion: no-preference) {
+  html.smooth-scroll {
+    scroll-behavior: smooth;
+  }
+}

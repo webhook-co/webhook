@@ -1,16 +1,18 @@
 import { Button, cn } from "@webhook-co/ui";
 
-import { container, focusRing, sectionPad } from "@/lib/styles";
+import { container, focusRing } from "@/lib/styles";
 
-import { OVERAGE_PER_MILLION, TIERS, type Tier } from "./pricing-tiers";
+import { TIERS, type Tier } from "./pricing-tiers";
 
 // The pricing page. Two rules govern the copy:
 //
 //   1. Say the real number. Never "affordable", never "generous", never "unlimited".
 //   2. Disclose what surprises people BEFORE they pay — not in a footnote. Three things surprise people
 //      here: a delivery is a billed event; a cancelled plan lands you paused (the free allowance is
-//      one-time and already spent); and dedup=off makes every provider retry a new billable event. All
-//      three are on this page, in the user's words. (ADR-0004 marks the churn one MUST-disclose.)
+//      one-time and already spent); and dedup=off makes every provider retry a new billable event.
+//      Those three now live in the FAQ below, rendered `<details open>` so they are visible without a
+//      click — collapsed, they would BE the footnote this rule forbids. `faq.tsx` carries the
+//      MUST-DISCLOSE flag and `faq.test.tsx` pins it. (ADR-0004 marks the churn one MUST-disclose.)
 
 export function PricingHero() {
   return (
@@ -98,75 +100,6 @@ export function PricingTable() {
         Every plan includes outbound delivery, replay, deduplication, signature verification, the
         CLI, the API, and the MCP server. We don&apos;t gate features by plan.
       </p>
-    </section>
-  );
-}
-
-/** The three things that surprise people. Stated plainly, before they pay. */
-export function PricingDisclosures() {
-  return (
-    <section aria-labelledby="what-counts" className={cn(container, sectionPad)}>
-      <h2
-        id="what-counts"
-        className="mb-8 text-center text-[clamp(24px,3vw,34px)] leading-tight font-semibold tracking-heading text-fg"
-      >
-        What counts as an event
-      </h2>
-
-      <div className="mx-auto grid max-w-[900px] gap-6 md:grid-cols-3">
-        <div className="flex flex-col gap-2">
-          <h3 className="text-base font-semibold text-fg">One capture, or one delivery</h3>
-          <p className="leading-relaxed text-fg-secondary">
-            A request we capture is one event. A delivery to a destination is one event. Forward a
-            webhook to three destinations and that&apos;s four events — one capture, three
-            deliveries. We meter delivery because it costs us real money, and we&apos;d rather
-            charge for it honestly than lock it behind a paid tier.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <h3 className="text-base font-semibold text-fg">Retries are never billed</h3>
-          <p className="leading-relaxed text-fg-secondary">
-            If a destination is down and we retry, you pay nothing extra. A delivery is billed once,
-            when we first dispatch it, however many attempts it takes — our retry schedule is our
-            cost. Also free: forwarding to your own machine with <code>wbhk listen</code> (your CLI
-            makes that request, not us), a delivery we refuse to send because the URL resolves
-            somewhere private, deduplicated duplicates, verification handshakes, and reading your
-            own data.
-          </p>
-        </div>
-
-        <div className="flex flex-col gap-2">
-          <h3 className="text-base font-semibold text-fg">At your limit, capture pauses</h3>
-          <p className="leading-relaxed text-fg-secondary">
-            We email you before you reach your included volume, not after. At the limit, capture
-            pauses rather than silently running up a bill. Turn on overage at {OVERAGE_PER_MILLION}{" "}
-            per additional million events if you&apos;d rather keep going.
-          </p>
-        </div>
-      </div>
-
-      <div className="mx-auto mt-10 flex max-w-[900px] flex-col gap-4 rounded-card border border-hairline bg-surface p-6">
-        <h3 className="text-base font-semibold text-fg">
-          Two things worth knowing before you subscribe
-        </h3>
-        <p className="leading-relaxed text-fg-secondary">
-          <strong className="text-fg">The free allowance is one-time.</strong> Those 5,000 events
-          are counted across the whole life of your organisation and never reset. If you cancel a
-          paid plan you return to the free tier with that allowance already spent, so{" "}
-          <strong className="text-fg">capture pauses until you resubscribe</strong>. Your data stays
-          exactly where it is, and resubscribing resumes capture immediately.
-        </p>
-        <p className="leading-relaxed text-fg-secondary">
-          <strong className="text-fg">Deduplication is on by default.</strong>
-          {/* An explicit string literal, not JSX text: a leading space directly after a closing tag is
-              swallowed here (prettier normalises `{" "}` back to a plain space, which JSX then drops), and
-              the sentence renders as "default.If you". Inside a string literal the space is verbatim. */}
-          {
-            " If you turn it off for an endpoint, every retry a provider sends is a distinct captured request, and each one counts. That’s the trade you’re making when you disable it."
-          }
-        </p>
-      </div>
     </section>
   );
 }

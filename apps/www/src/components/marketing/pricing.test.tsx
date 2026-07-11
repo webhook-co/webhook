@@ -3,13 +3,16 @@ import { describe, expect, it } from "vitest";
 
 import { axeComponent } from "@/test/axe";
 
-import { PricingDisclosures, PricingHero, PricingTable } from "./pricing";
+import { PricingHero, PricingTable } from "./pricing";
 import { OVERAGE_PER_MILLION, TIERS } from "./pricing-tiers";
 
-// The figures on this page are what Stripe actually charges. The disclosures are not decoration: ADR-0004
-// marks "churn lands you paused" as MUST-disclose, and Definition B makes "a delivery is a billed event"
-// something a customer must be able to read before they pay. These tests exist so neither can be quietly
-// dropped in a redesign.
+// The figures on this page are what Stripe actually charges.
+//
+// The MUST-disclose set — "churn lands you paused" (ADR-0004) and "a delivery is a billed event"
+// (Definition B) — used to be pinned here against <PricingDisclosures>. That component is gone; the
+// disclosures now live in the FAQ, rendered `<details open>` so they stay visible without a click.
+// **The tripwire moved with them: see `faq.test.tsx` → "FAQ — the MUST-disclose set".** It was not
+// deleted, because deleting the guard is not the same as satisfying it.
 
 describe("pricing ladder (the sanctioned figures)", () => {
   it("is exactly Free / Pro / Scale / Enterprise, in ladder order", () => {
@@ -70,69 +73,12 @@ describe("PricingTable", () => {
   });
 });
 
-describe("PricingDisclosures — the MUST-disclose set", () => {
-  it("says a delivery is a billed event (Definition B)", () => {
-    render(<PricingDisclosures />);
-    expect(screen.getByText(/A delivery to a destination is one event/i)).toBeInTheDocument();
-    expect(screen.getByText(/that's four events/i)).toBeInTheDocument();
-  });
-
-  it("says retries are never billed", () => {
-    render(<PricingDisclosures />);
-    expect(screen.getByRole("heading", { name: /Retries are never billed/i })).toBeInTheDocument();
-  });
-
-  // The code now matches these two promises (migration 0055 / delivery_attempts.billable). Both were
-  // being billed as full deliveries: `wbhk listen --forward` billed the wedge command's every webhook
-  // TWICE, and a delivery the SSRF guard refused to send billed the same as a 200. Pin the copy — if
-  // someone re-bills either leg, this is the test that says the page is now lying.
-  it("says forwarding to your own machine is free — we make no outbound request", () => {
-    render(<PricingDisclosures />);
-    expect(screen.getByText(/forwarding to your own machine/i)).toBeInTheDocument();
-    expect(screen.getByText(/your CLI makes that request, not us/i)).toBeInTheDocument();
-  });
-
-  it("says a delivery we REFUSE to send is not billed", () => {
-    render(<PricingDisclosures />);
-    expect(screen.getByText(/a delivery we refuse to send/i)).toBeInTheDocument();
-  });
-
-  it("says capture PAUSES at the limit rather than billing", () => {
-    render(<PricingDisclosures />);
-    expect(screen.getByRole("heading", { name: /capture pauses/i })).toBeInTheDocument();
-  });
-
-  it("discloses that CANCELLING lands you paused — ADR-0004 marks this MUST-disclose", () => {
-    render(<PricingDisclosures />);
-    expect(screen.getByText(/capture pauses until you resubscribe/i)).toBeInTheDocument();
-    expect(screen.getByText(/never reset/i)).toBeInTheDocument();
-  });
-
-  it("discloses the dedup=off trade", () => {
-    render(<PricingDisclosures />);
-    expect(
-      screen.getByText(/every retry a provider sends is a distinct captured request/i),
-    ).toBeInTheDocument();
-  });
-
-  it("does not swallow the space after a bolded lead-in", () => {
-    // JSX drops a leading space that sits directly after a closing tag, and prettier normalises `{" "}`
-    // back into that same droppable space. It rendered as "default.If you". Pinned here because it is
-    // invisible in review and only shows up in the built HTML.
-    const { container } = render(<PricingDisclosures />);
-    const text = container.textContent ?? "";
-    expect(text).toContain("Deduplication is on by default. If you turn it off");
-    expect(text).not.toContain("default.If");
-  });
-});
-
 describe("public-repo content hygiene", () => {
   it("never names a competitor", () => {
     const { container } = render(
       <>
         <PricingHero />
         <PricingTable />
-        <PricingDisclosures />
       </>,
     );
     const text = container.textContent ?? "";
@@ -142,7 +88,12 @@ describe("public-repo content hygiene", () => {
   });
 
   it('never claims "unlimited"', () => {
-    const { container } = render(<PricingDisclosures />);
+    const { container } = render(
+      <>
+        <PricingHero />
+        <PricingTable />
+      </>,
+    );
     expect(container.textContent ?? "").not.toMatch(/unlimited/i);
   });
 });
@@ -150,11 +101,6 @@ describe("public-repo content hygiene", () => {
 describe("accessibility", () => {
   it("the pricing table has no axe violations", async () => {
     const { container } = render(<PricingTable />);
-    expect(await axeComponent(container)).toHaveNoViolations();
-  });
-
-  it("the disclosures have no axe violations", async () => {
-    const { container } = render(<PricingDisclosures />);
     expect(await axeComponent(container)).toHaveNoViolations();
   });
 });

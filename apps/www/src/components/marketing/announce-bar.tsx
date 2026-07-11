@@ -1,11 +1,17 @@
 import { cn } from "@webhook-co/ui";
 
 import { Pill } from "@/components/ui/pill";
+import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
 /**
- * The top announcement bar. The MCP server isn't GA yet, so this is framed as roadmap
- * ("soon") rather than a present-tense launch — honest top-of-funnel, per the positioning call.
+ * The top announcement bar.
+ *
+ * It used to say "soon" and link to a roadmap that didn't exist — framed that way back when the MCP
+ * server was genuinely unshipped. It has since shipped, been prod-verified, and picked up a full docs
+ * section, while the hero pill two inches below this already said "new". So the bar was
+ * simultaneously underselling the product's named differentiator and contradicting the page it sits
+ * on. Present tense now, pointing at the docs that exist.
  */
 export function AnnounceBar() {
   return (
@@ -16,17 +22,17 @@ export function AnnounceBar() {
           "flex flex-wrap items-center justify-center gap-x-2.5 gap-y-1 py-[9px] text-center text-sm text-fg-secondary",
         )}
       >
-        <Pill>soon</Pill>
+        <Pill>new</Pill>
         <span>
-          The webhook.co MCP server — turn any webhook into an agent event.{" "}
+          The webhook.co MCP server is live — turn any webhook into an agent event.{" "}
           <a
-            href="#"
+            href={LINKS.mcp}
             className={cn(
               focusRing,
               "rounded-control text-fg underline decoration-strong underline-offset-2 transition-colors hover:decoration-fg",
             )}
           >
-            See the roadmap <span aria-hidden="true">→</span>
+            Read the docs <span aria-hidden="true">→</span>
           </a>
         </span>
       </div>

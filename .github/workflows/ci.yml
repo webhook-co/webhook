@@ -217,6 +217,10 @@ jobs:
       # asserts every published anchor actually rendered into out/, that no page has a duplicate id,
       # and that no fragment link — including cross-page ones like /dpa#sub-processors — is an orphan.
       - run: pnpm --filter @webhook-co/www test:anchors
+      # The site ships no link to nowhere. `href="#"` was 40-strong standing tech debt; it's now zero,
+      # and a dead link is worse than a missing one — it's a tab stop that announces as a link and,
+      # with smooth scrolling on, yanks the reader back to the top of the page.
+      - run: pnpm --filter @webhook-co/www test:links
 
   # Real-browser accessibility gate: builds the static export, serves it, and runs axe-core in
   # Chromium across the homepage's interactive states AND the five legal pages. This is the only

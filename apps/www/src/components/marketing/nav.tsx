@@ -1,12 +1,13 @@
 import { Button, cn, Wordmark } from "@webhook-co/ui";
 
 import { NavMenus } from "@/components/marketing/nav-menus";
+import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
 // Plain top-level links; the Product / Developers dropdowns are the <NavMenus/> client island.
 const navLinks = [
   { label: "Pricing", href: "/pricing" },
-  { label: "Changelog", href: "#" },
+  { label: "Changelog", href: LINKS.changelog },
 ];
 
 export function Nav() {
@@ -39,7 +40,7 @@ export function Nav() {
 
         <div className="flex items-center gap-1.5">
           <a
-            href="#"
+            href={LINKS.signIn}
             className={cn(
               focusRing,
               "inline-flex h-[2.125rem] items-center rounded-control px-3 text-sm text-fg-secondary transition-colors hover:text-fg",
@@ -48,7 +49,7 @@ export function Nav() {
             Sign in
           </a>
           <Button asChild size="md">
-            <a href="#">Start free</a>
+            <a href={LINKS.startFree}>Start free</a>
           </Button>
         </div>
       </div>

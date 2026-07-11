@@ -2,6 +2,7 @@ import { cn } from "@webhook-co/ui";
 
 import { focusRing } from "@/lib/styles";
 
+import { LINKS } from "@/lib/links";
 import { Showcase } from "./showcase";
 import { DeliveryPipeline } from "./visuals/delivery-pipeline";
 import { VerifyCard } from "./visuals/verify-card";
@@ -23,7 +24,7 @@ export function Showcases() {
         }
         badge={{ label: "soon" }}
         body="The same engine that captures your events runs the pipeline that moves them. Events are deduplicated by id, acknowledged fast, then processed. Each endpoint keeps first-in-first-out ordering and its own isolation. Failed deliveries retry with backoff; what still can't land is held in a dead-letter queue, not dropped."
-        link={{ label: "How delivery works", href: "#" }}
+        link={{ label: "How delivery works", href: LINKS.concepts.delivery }}
         visual={<DeliveryPipeline />}
       />
 
@@ -49,7 +50,7 @@ export function Showcases() {
             compliant, for both sending and receiving.
           </>
         }
-        link={{ label: "Read the verification guide", href: "#" }}
+        link={{ label: "Read the verification guide", href: LINKS.concepts.verification }}
         visual={<VerifyCard />}
       />
     </>

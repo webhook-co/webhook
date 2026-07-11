@@ -23,9 +23,11 @@ describe("NavMenus", () => {
     expect(trigger(/^product$/i)).toHaveAttribute("aria-expanded", "false");
     const panel = document.getElementById("navmenu-product");
     expect(panel).toHaveAttribute("hidden");
+    // Was `href="#"` until the destinations existed. The Product menu has no marketing feature pages,
+    // so it points at the concepts docs — which is an honest destination, not an invented page.
     expect(
       within(panel as HTMLElement).getByRole("link", { name: "Capture & replay", hidden: true }),
-    ).toHaveAttribute("href", "#");
+    ).toHaveAttribute("href", "https://docs.webhook.co/concepts/how-webhook-co-works");
   });
 
   it("opens on click and reveals the links", async () => {
