@@ -316,12 +316,12 @@ export const endpointsUpdateCommand = buildCommand<UpdateFlags, [string], AppCon
 // (ConfirmationError, exit 2) so a script can't destroy an endpoint by accident. Delete prints the
 // {id, deleted} record; rotate reveals the NEW one-time ingest url exactly like create.
 
-interface DestructiveFlags extends GlobalFlags {
+export interface DestructiveFlags extends GlobalFlags {
   yes: boolean;
 }
 
 /** The `--yes` boolean shared by the destructive commands. */
-const yesFlag = {
+export const yesFlag = {
   yes: {
     kind: "boolean" as const,
     brief: "skip the confirmation prompt (required to delete/rotate non-interactively)",
@@ -335,7 +335,7 @@ const yesFlag = {
  * promptLine (an ECHOING read on stderr, so the user sees what they type and stdout stays clean for
  * `--output json`); a non-TTY without `--yes` refuses rather than acting.
  */
-async function confirmDestructive(
+export async function confirmDestructive(
   ctx: AppContext,
   yes: boolean,
   prompt: string,

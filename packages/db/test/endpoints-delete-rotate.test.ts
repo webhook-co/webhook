@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import {
   CreatedEndpointSchema,
   DeletedEndpointSchema,
+  DeletedEventSchema,
   type AuthContext,
 } from "@webhook-co/contract";
 import { importAuditKey, verifyAuditChain } from "@webhook-co/shared";
@@ -22,7 +23,7 @@ import { credentialCacheKey } from "../src/credential";
 import type { CredentialCache } from "../src/credential-cache";
 import { makeIngestHashEvictor } from "../src/ingest-resolver";
 import { createOrg } from "../src/orgs";
-import { getEndpoint, listEndpoints } from "../src/reads";
+import { getEndpoint, getEvent, listEndpoints } from "../src/reads";
 import { createWriteHandlers } from "../src/write-handlers";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -348,6 +349,71 @@ describe("createWriteHandlers — endpoints.delete + endpoints.rotate", () => {
     await expect(
       handlers.get("endpoints.rotate")!({ ...writeCtx, orgId: orgA }, { endpointId: "nope" }),
     ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("events.delete handler tombstones the event and is scope-gated (events:delete FIRST)", async () => {
+    const ep = await makeLiveEndpoint(orgA, "handler-event-del");
+    const eventId = randomUUID();
+    await withTenant(
+      app,
+      orgA,
+      (tx) =>
+        tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+         values (${eventId}, ${orgA}, ${ep.id}, ${"org/" + orgA + "/ep/" + ep.id + "/k"}, ${10},
+                 ${"dk-" + eventId}, ${"content_hash"})`,
+    );
+    const { handlers } = handlersWithEvictor();
+    const eventsWriteCtx: AuthContext = { orgId: orgA, scopes: ["events:delete"] };
+
+    // Wrong scope → FORBIDDEN, and the scope check runs FIRST (the event is untouched).
+    await expect(
+      handlers.get("events.delete")!({ orgId: orgA, scopes: ["events:read"] }, { eventId }),
+    ).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect((await withTenant(app, orgA, (tx) => getEvent(tx, eventId)))?.id).toBe(eventId);
+
+    // Right scope → tombstoned, contract-shaped, gone from reads, purge job enqueued.
+    const out = (await handlers.get("events.delete")!(eventsWriteCtx, { eventId })) as Record<
+      string,
+      unknown
+    >;
+    expect(out.id).toBe(eventId);
+    expect(DeletedEventSchema.safeParse(out).success).toBe(true);
+    expect(await withTenant(app, orgA, (tx) => getEvent(tx, eventId))).toBeNull();
+    const [purge] = await withTenant(
+      app,
+      orgA,
+      (tx) => tx<{ n: number }[]>`
+        select count(*)::int as n from event_payload_purge where event_id = ${eventId}`,
+    );
+    expect(purge.n).toBe(1);
+
+    // A non-uuid is VALIDATION_ERROR.
+    await expect(
+      handlers.get("events.delete")!(eventsWriteCtx, { eventId: "nope" }),
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+  });
+
+  it("events.delete cannot reach ANOTHER org's event — cross-org id is NOT_FOUND, victim untouched", async () => {
+    // orgB owns the event; orgA holds events:delete for its OWN org. The handler runs under orgA's RLS, so
+    // orgB's event is invisible → NOT_FOUND, and it stays fully readable in orgB. Proves the handler doesn't
+    // leak the DB fn's tenant fence.
+    const epB = await makeLiveEndpoint(orgB, "handler-xorg-event");
+    const eventId = randomUUID();
+    await withTenant(
+      app,
+      orgB,
+      (tx) =>
+        tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)
+         values (${eventId}, ${orgB}, ${epB.id}, ${"org/" + orgB + "/ep/" + epB.id + "/k"}, ${10},
+                 ${"dk-" + eventId}, ${"content_hash"})`,
+    );
+    const { handlers } = handlersWithEvictor();
+
+    await expect(
+      handlers.get("events.delete")!({ orgId: orgA, scopes: ["events:delete"] }, { eventId }),
+    ).rejects.toMatchObject({ code: "NOT_FOUND" });
+    // Still readable in orgB — never tombstoned by orgA's call.
+    expect((await withTenant(app, orgB, (tx) => getEvent(tx, eventId)))?.id).toBe(eventId);
   });
 
   it("fails LOUD (not a CapabilityFault) if the evictor dep is missing — a write surface must wire it", async () => {

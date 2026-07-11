@@ -37,6 +37,7 @@ const BOUND_TOOLS = [
   "events.get",
   "events.list",
   "events.tail",
+  "events.delete",
   "triggers.create",
   "triggers.list",
   "triggers.revoke",
