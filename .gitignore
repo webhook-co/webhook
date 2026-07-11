@@ -56,3 +56,7 @@ playwright-report/
 # Internal build plans / founder working docs — local-only, never committed.
 # The public repo intentionally excludes internal planning (see AGENTS.md).
 internal/
+
+# Git worktrees created by coding agents (EnterWorktree). These are LOCAL scratch checkouts:
+# committing them records phantom 160000 gitlink entries that break `git clone` for everyone else.
+.claude/worktrees/
