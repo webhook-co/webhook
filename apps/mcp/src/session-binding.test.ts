@@ -41,8 +41,33 @@ describe("importSessionKey", () => {
 });
 
 describe("principalDigest", () => {
-  it("is stable for the same principal across requests (scopes don't affect it)", async () => {
-    expect(await principalDigest(ALICE)).toBe(await principalDigest(ALICE_AGAIN));
+  // The digest binds AUTHORITY, not merely identity. It previously hashed only (org, user) — deliberately
+  // excluding scopes so a re-scoped token kept its session. That was the bug: an org-scoped api key carries
+  // NO userId, so EVERY api key in an org hashed to the SAME digest, while the DO pins its AuthContext
+  // (scopes included) at session init. A key holding only `events:read` could therefore present a session
+  // initialised by an `endpoints:write` key, match the digest, route to that DO, and run its tools with the
+  // STRONGER key's scopes. Scopes are part of the principal's authority, so they belong in the binding.
+  it("DIFFERS when the scope set differs, even for the same org+user (no scope escalation)", async () => {
+    expect(await principalDigest(ALICE)).not.toBe(await principalDigest(ALICE_AGAIN));
+  });
+
+  it("differs for two org keys in the same org holding different scopes", async () => {
+    const weak: AuthContext = { orgId: "org_alice", scopes: ["events:read"] };
+    const strong: AuthContext = { orgId: "org_alice", scopes: ["events:read", "endpoints:write"] };
+    expect(await principalDigest(weak)).not.toBe(await principalDigest(strong));
+  });
+
+  // Canonicalised (sorted + de-duplicated) so an equivalent scope set that merely arrives in a different
+  // order — or with a repeat — is the SAME authority and keeps its session, rather than spuriously
+  // re-initialising on every request.
+  it("is stable across scope ORDER and duplicates (same authority ⇒ same session)", async () => {
+    const a: AuthContext = { orgId: "o", userId: "u", scopes: ["events:read", "audit:read"] };
+    const b: AuthContext = {
+      orgId: "o",
+      userId: "u",
+      scopes: ["audit:read", "events:read", "audit:read"],
+    };
+    expect(await principalDigest(a)).toBe(await principalDigest(b));
   });
 
   it("differs across orgs", async () => {
@@ -51,6 +76,24 @@ describe("principalDigest", () => {
 
   it("differs for the same org with vs without a user (an org key is a distinct principal)", async () => {
     expect(await principalDigest(ALICE)).not.toBe(await principalDigest(ALICE_ORGKEY));
+  });
+});
+
+// The escalation, end-to-end through the real bind/unbind codec.
+describe("scope escalation via session-id reuse (S.3)", () => {
+  it("a weaker org key CANNOT unbind a session initialised by a stronger org key in the same org", async () => {
+    const k = await key();
+    const strong: AuthContext = { orgId: "org_alice", scopes: ["events:read", "endpoints:write"] };
+    const weak: AuthContext = { orgId: "org_alice", scopes: ["events:read"] };
+
+    // The strong key initialises a session; the DO behind it is pinned with endpoints:write.
+    const wrapped = await bindSessionId(k, "base-1", await principalDigest(strong), NOW);
+
+    // The weak key presents that same session id. It must NOT resolve — no base id, no DO, no escalation.
+    expect(await unbindSessionId(k, wrapped, await principalDigest(weak), NOW)).toBeNull();
+
+    // ...and the strong key itself still works, so the fix isn't just breaking everything.
+    expect(await unbindSessionId(k, wrapped, await principalDigest(strong), NOW)).toBe("base-1");
   });
 });
 
