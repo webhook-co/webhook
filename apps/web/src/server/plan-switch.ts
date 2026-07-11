@@ -84,7 +84,7 @@ export async function switchPlan(
           (
             await tx<
               { role: string }[]
-            >`select role from memberships where user_id = ${userId} limit 1`
+            >`select role from memberships where org_id = ${orgId} and user_id = ${userId} limit 1`
           )[0]?.role ?? null,
         sub: await readActiveSubscription(tx),
       })),
@@ -237,7 +237,7 @@ export async function cancelPendingDowngrade(
           (
             await tx<
               { role: string }[]
-            >`select role from memberships where user_id = ${userId} limit 1`
+            >`select role from memberships where org_id = ${orgId} and user_id = ${userId} limit 1`
           )[0]?.role ?? null,
         sub: await readActiveSubscription(tx),
       })),

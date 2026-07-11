@@ -47,6 +47,7 @@ const BILLING_ERROR: Record<string, string> = {
   no_customer: "You don't have a subscription to manage yet.",
   already_subscribed:
     "You already have an active subscription — manage or change it below, not by starting a new one.",
+  forbidden: "Only an owner or admin can manage billing.",
   error: "We couldn't reach our payment provider. Nothing was charged — try again.",
   disabled: "Billing isn't available right now.",
 };
