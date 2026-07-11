@@ -11,6 +11,7 @@ import {
   getConsentOrg,
   isOrgMember,
   personalOrgId,
+  readMembershipRole,
 } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -324,5 +325,58 @@ describe("bootstrapPersonalOrg — hardening", () => {
         tx<{ n: number }[]>`select count(*)::int as n from endpoints where org_id = ${a.orgId}`,
     );
     expect(n).toBe(1);
+  });
+});
+
+// readMembershipRole — the ONE org-scoped membership-role read, against a REAL Postgres with TWO orgs.
+//
+// This is the test that makes the `org_id` predicate load-bearing. Every owner/admin gate in the product
+// (billing manage, plan switch, overage toggle) is decided by this read, and the escalation it prevents is
+// specific: a user who is a plain `member` of the TEAM but `owner` of their own PERSONAL org must not read
+// back `owner` when the team org is being billed.
+//
+// It is safe today only because RLS pins `memberships` to the context org — but Postgres policies are
+// PERMISSIVE and OR together, so the moment a second SELECT policy exists (the `user_id = current_app_user()`
+// one an org switcher needs to list "the orgs I belong to"), a query that leaned on RLS alone would go
+// cross-org, and `limit 1` with no ORDER BY would return an arbitrary row. Naming the org in the query is
+// what makes that unrepresentable — so it is asserted here, not assumed.
+describe("readMembershipRole — the role is read IN the org being asked about", () => {
+  it("returns the role in the QUERIED org, for a user who holds a different role elsewhere", async () => {
+    const userId = `u-${randomUUID()}`;
+    await seedUser(userId);
+
+    // The classic collaboration shape: owner of my own org, plain member of the team.
+    const personalOrg = randomUUID();
+    const teamOrg = randomUUID();
+    await withTenant(app, personalOrg, async (tx) => {
+      await tx`insert into orgs (id, slug, name) values (${personalOrg}, ${`p-${personalOrg.slice(0, 8)}`}, ${"Personal"})`;
+    });
+    await withTenant(app, teamOrg, async (tx) => {
+      await tx`insert into orgs (id, slug, name) values (${teamOrg}, ${`t-${teamOrg.slice(0, 8)}`}, ${"Team"})`;
+    });
+    await createMembership(app, { orgId: personalOrg, userId, role: "owner" });
+    await createMembership(app, { orgId: teamOrg, userId, role: "member" });
+
+    // Asked about the TEAM, they are a member — NOT the owner they are in their personal org. A gate that
+    // read back `owner` here would let a plain member change the team's plan. Real money.
+    const inTeam = await withTenant(app, teamOrg, (tx) => readMembershipRole(tx, teamOrg, userId));
+    expect(inTeam).toBe("member");
+
+    // ...and asked about their own org, they really are the owner.
+    const inPersonal = await withTenant(app, personalOrg, (tx) =>
+      readMembershipRole(tx, personalOrg, userId),
+    );
+    expect(inPersonal).toBe("owner");
+  });
+
+  it("returns null for a user with no membership in that org (fails closed)", async () => {
+    const userId = `u-${randomUUID()}`;
+    await seedUser(userId);
+    const orgId = randomUUID();
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${`n-${orgId.slice(0, 8)}`}, ${"No members"})`;
+    });
+    const role = await withTenant(app, orgId, (tx) => readMembershipRole(tx, orgId, userId));
+    expect(role).toBeNull();
   });
 });

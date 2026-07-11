@@ -27,8 +27,13 @@ const SESSION_KEY_BYTES = 32; // a dedicated 32-byte secret (MCP_SESSION_KEY), n
  * The current envelope version. `unbindSessionId` rejects any envelope whose `v` is missing or != this, so
  * a future codec change is a clean break: pre-versioning / mismatched envelopes fail to unbind (→ null) and
  * the in-flight session cleanly re-initializes. Bump this whenever the envelope shape or semantics change.
+ *
+ * v2: `p` now digests the principal's AUTHORITY (org + user + scope set), not just its identity — see
+ * `principalDigest`. A v1 envelope's digest can no longer match any v2 principal, so v1 sessions would fail
+ * closed anyway; the bump makes that an explicit, documented break rather than an accidental one, and any
+ * MCP session live across the deploy cleanly re-initializes.
  */
-export const SESSION_ENVELOPE_VERSION = 1;
+export const SESSION_ENVELOPE_VERSION = 2;
 
 /**
  * The max session lifetime (24h, in seconds). `bindSessionId` stamps `exp = nowSeconds + this`, and
@@ -62,17 +67,33 @@ export async function importSessionKey(raw: Uint8Array): Promise<CryptoKey> {
 }
 
 /**
- * A stable, non-secret digest of the PRINCIPAL identity (org + optional user) — NOT the token or its
- * scopes, so a refreshed/re-scoped token for the same identity keeps the same session. An org-scoped api
- * key (no userId) is a distinct principal from a user in the same org. Goes inside the signed envelope,
- * so it needn't be keyed; equality is all the binding check needs.
+ * A stable, non-secret digest of the principal's AUTHORITY: org + optional user + the granted scope set.
+ * Goes inside the signed envelope, so it needn't be keyed; equality is all the binding check needs.
  *
- * The identity is hashed as canonical JSON so the org/user boundary is UNAMBIGUOUS — JSON quotes + escapes
- * both fields, so no `orgId`/`userId` value can be crafted to collide with a different (org, user) pair (a
- * raw delimiter like a separator byte would rely on that byte never appearing in an id; this doesn't).
+ * SCOPES ARE PART OF THE BINDING, and that is the whole point. This digest previously covered only
+ * (org, user), on the reasoning that a re-scoped token for the same identity should keep its session. But an
+ * org-scoped api key carries NO userId, so every api key in an org collapsed to the SAME digest — while the
+ * McpAgent DO pins its AuthContext (scopes included) at session init and never refreshes it on warm
+ * requests. A key holding only `events:read` could therefore present a session id initialised by an
+ * `endpoints:write` key, satisfy the digest check, route to that DO, and invoke tools with the STRONGER
+ * key's scopes. Binding the authority — not merely the identity — makes that unrepresentable: a principal
+ * can only ever reach a session opened at exactly its own authority.
+ *
+ * The cost is intended: changing a token's scopes now re-initialises the session rather than silently
+ * inheriting the old one. A change of authority SHOULD start a new session.
+ *
+ * Scopes are canonicalised (de-duplicated + sorted) so an equivalent set that merely arrives in a different
+ * order, or with a repeat, is the same authority and keeps its session.
+ *
+ * Hashed as canonical JSON so the field boundaries are UNAMBIGUOUS — JSON quotes and escapes every value, so
+ * no `orgId`/`userId`/scope value can be crafted to collide with a different principal (a raw delimiter byte
+ * would rely on that byte never appearing inside an id; this doesn't).
  */
 export async function principalDigest(ctx: AuthContext): Promise<string> {
-  const bytes = utf8Encoder.encode(JSON.stringify({ o: ctx.orgId, u: ctx.userId ?? null }));
+  const scopes = [...new Set(ctx.scopes)].sort();
+  const bytes = utf8Encoder.encode(
+    JSON.stringify({ o: ctx.orgId, u: ctx.userId ?? null, s: scopes }),
+  );
   const hash = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
   return bytesToB64url(new Uint8Array(hash));
 }

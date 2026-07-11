@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
-import { withTenant, type Sql } from "./client";
+import { withTenant, type Sql, type TenantTx } from "./client";
 import { mintCredential, type CredentialHasher } from "./credential";
 import { INGEST_TOKEN_PREFIX } from "./endpoints";
 
@@ -76,6 +76,31 @@ export async function isOrgMember(app: Sql, userId: string, orgId: string): Prom
         select 1 as one from memberships where org_id = ${orgId} and user_id = ${userId} limit 1`,
   );
   return rows.length > 0;
+}
+
+/**
+ * `userId`'s role IN `orgId` — the ONE org-scoped membership-role read. Null when they aren't a member.
+ *
+ * Takes an open tenant transaction because every caller already has one (the role is read alongside the
+ * org's own billing/limits state, under a single RLS context).
+ *
+ * The `org_id` predicate is stated EXPLICITLY and must stay that way. RLS scopes `memberships` with
+ * `org_id = current_org_id()` today, which withTenant pins — but Postgres policies are PERMISSIVE and OR
+ * together, so the day a second SELECT policy exists (e.g. `user_id = current_app_user()`, which listing
+ * "the orgs I belong to" for an org switcher requires), a query that leaned on RLS alone would silently go
+ * CROSS-ORG. With `limit 1` and no `ORDER BY` it would then return an ARBITRARY row: a user who is a plain
+ * `member` of the team but `owner` of their own personal org could read back `owner` and pass an
+ * owner/admin gate on the TEAM. That is a real-money escalation opened by a policy that looks purely
+ * additive — so the isolation lives here, in the query, not in an assumption about the policy set.
+ */
+export async function readMembershipRole(
+  tx: TenantTx,
+  orgId: string,
+  userId: string,
+): Promise<string | null> {
+  const rows = await tx<{ role: string }[]>`
+    select role from memberships where org_id = ${orgId} and user_id = ${userId} limit 1`;
+  return rows[0]?.role ?? null;
 }
 
 /** Distinguishes the bootstrap advisory-lock space from any other advisory-lock user. */

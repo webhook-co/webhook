@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./client": "./src/client.ts",
+    "./orgs": "./src/orgs.ts",
     "./api-keys": "./src/api-keys.ts",
     "./grants": "./src/grants.ts",
     "./credential": "./src/credential.ts",

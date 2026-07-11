@@ -25,7 +25,7 @@ export async function startCheckoutAction(formData: FormData): Promise<void> {
   const session = await verifySession();
   const result =
     typeof planId === "string"
-      ? await startCheckout(session.orgId, planId, session.user.email)
+      ? await startCheckout(session.orgId, session.userId, planId, session.user.email)
       : ({ status: "unknown_plan" } as const);
 
   // Outside any try/catch — see above.
@@ -33,10 +33,10 @@ export async function startCheckoutAction(formData: FormData): Promise<void> {
   redirect(`${BILLING}?billing=${result.status}`);
 }
 
-/** Open the hosted Customer Portal (manage payment method / cancel). Requires an existing Stripe customer. */
+/** Open the hosted Customer Portal (manage payment method / cancel). Owner/admin only, gated server-side. */
 export async function openBillingPortalAction(): Promise<void> {
   const session = await verifySession();
-  const result = await openBillingPortal(session.orgId);
+  const result = await openBillingPortal(session.orgId, session.userId);
   if (result.status === "ok") redirect(result.url);
   redirect(`${BILLING}?billing=${result.status}`);
 }

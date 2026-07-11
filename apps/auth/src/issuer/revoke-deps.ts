@@ -15,13 +15,9 @@ import {
 } from "@webhook-co/db";
 import { b64ToBytes, importAuditKey, readSecretBinding } from "@webhook-co/shared";
 
+import { revokeGrantAndEvict as cascadeRevoke, type CacheEvicter } from "./grant-revoke";
 import type { RevokeDeps } from "./revoke-route";
 import type { RevokeEnv } from "../runtime/env";
-
-/** The slice of KV we use for principal-cache eviction (structural — avoids a Workers-global lib dep). */
-interface CacheEvicter {
-  delete(key: string): Promise<void>;
-}
 
 export interface RevokeRuntime {
   deps: RevokeDeps;
@@ -43,28 +39,19 @@ export async function makeRevokeDeps(env: RevokeEnv): Promise<RevokeRuntime> {
   const deps: RevokeDeps = {
     resolveAccessTokenGrant: (token) => findApiKeyGrant(authn, token, hasher),
     resolveRefreshTokenGrant: (token) => findRefreshTokenGrant(app, token, hasher),
-    revokeGrantAndEvict: async (orgId, grantId) => {
-      const { revokedKeyHashes } = await revokeGrant(
-        app,
-        { orgId, grantId, reason: "cli_logout" },
-        auditKey,
-      );
-      // Also kill the grant's refresh handles (defense-in-depth — the consume gate already blocks a revoked
-      // grant from refreshing). DB commit is authoritative; KV eviction is best-effort (a miss self-heals
-      // at the cache TTL), so a KV error never fails the revoke.
-      await revokeRefreshTokensForGrant(app, { orgId, grantId });
-      await Promise.all(
-        revokedKeyHashes.map((keyHash) =>
-          cache
-            .delete(credentialCacheKey(keyHash))
-            .catch((error: unknown) =>
-              console.log(
-                JSON.stringify({ message: "revoke.kv_evict_failed", error: String(error) }),
-              ),
-            ),
-        ),
-      );
-    },
+    // DB commit → KV eviction → refresh-handle sweep, in that ORDER. The sweep is defense in depth only (the
+    // consume gate already blocks a revoked grant from refreshing), so it must not be able to skip the
+    // eviction, which is the step that actually stops the credential at api./mcp. See grant-revoke.ts.
+    revokeGrantAndEvict: (orgId, grantId) =>
+      cascadeRevoke({
+        revokeGrant: () => revokeGrant(app, { orgId, grantId, reason: "cli_logout" }, auditKey),
+        revokeRefreshTokens: async () => {
+          await revokeRefreshTokensForGrant(app, { orgId, grantId });
+        },
+        cache,
+        cacheKey: credentialCacheKey,
+        log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+      }),
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
 

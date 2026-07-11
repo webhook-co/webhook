@@ -1,6 +1,7 @@
 import "server-only";
 
 import { withTenant } from "@webhook-co/db/client";
+import { readMembershipRole } from "@webhook-co/db/orgs";
 import {
   readActiveSubscription,
   readBillingCustomerId,
@@ -48,6 +49,8 @@ export type BillingActionResult =
   | { readonly status: "no_customer" }
   /** The org already has a LIVE subscription — a new Checkout would double-subscribe it. Manage via Portal. */
   | { readonly status: "already_subscribed" }
+  /** The acting user isn't an owner/admin. Billing is a manager-only action (SEC-RLS-08). */
+  | { readonly status: "forbidden" }
   | { readonly status: "error" };
 
 /** The org's Stripe customer id (if any), its synced subscription mirror row (if any), its overage policy
@@ -71,13 +74,9 @@ async function readOrgBilling(
       sub: await readBillingSummary(tx),
       subscriptionId: (await readActiveSubscription(tx))?.subscriptionId ?? null,
       overagePolicy: await readOveragePolicy(tx),
-      role: userId
-        ? ((
-            await tx<
-              { role: string }[]
-            >`select role from memberships where user_id = ${userId} limit 1`
-          )[0]?.role ?? null)
-        : null,
+      // The ONE org-scoped role read (readMembershipRole). It names the org EXPLICITLY rather than leaning
+      // on RLS — see its docblock for why a purely additive `memberships` policy would otherwise widen it.
+      role: userId ? await readMembershipRole(tx, orgId, userId) : null,
     })),
   );
 }
@@ -109,6 +108,7 @@ export async function stripeClientFromEnv(): Promise<StripeClient | null> {
  */
 export async function startCheckout(
   orgId: string,
+  userId: string,
   planId: string,
   email?: string,
 ): Promise<BillingActionResult> {
@@ -125,7 +125,11 @@ export async function startCheckout(
     // becomes an "error" banner, never an unhandled server-action rejection. A null key = not configured.
     const client = await stripeClientFromEnv();
     if (!client) return { status: "disabled" };
-    const { customerId, sub } = await readOrgBilling(orgId);
+    const { customerId, sub, role } = await readOrgBilling(orgId, userId);
+    // Billing is owner/admin only (SEC-RLS-08), enforced SERVER-side. `canManageBilling` only hides buttons;
+    // a server action is a plain POST, so hiding is not a gate. Checked before the Stripe call — starting a
+    // subscription is a money action, and a member must not be able to commit the org to a charge.
+    if (!isBillingManagerRole(role)) return { status: "forbidden" };
     // Money backstop — the SAME rule the UI picker gates on (canStartNewCheckout), enforced server-side so
     // a forged/stale server-action POST can't bypass it. Refuse a fresh Checkout unless it provably can't
     // create a duplicate: a LIVE mirrored sub (active/trialing/past_due/unpaid/paused/incomplete) or a
@@ -149,14 +153,23 @@ export async function startCheckout(
   }
 }
 
-/** Open the hosted Customer Portal to manage/cancel the subscription. Requires an existing customer. */
-export async function openBillingPortal(orgId: string): Promise<BillingActionResult> {
+/**
+ * Open the hosted Customer Portal to manage/cancel the subscription. Requires an existing customer, and an
+ * owner/admin: the Portal can cancel the subscription, swap the payment method, and read every invoice, so it
+ * is strictly more powerful than the in-dashboard billing controls that already gate on owner/admin.
+ */
+export async function openBillingPortal(
+  orgId: string,
+  userId: string,
+): Promise<BillingActionResult> {
   if (!billingEnabled(getBillingMode())) return { status: "disabled" };
   try {
     // Secret resolution is inside the try (see startCheckout) — a Secrets Store fault → "error", not a 500.
     const client = await stripeClientFromEnv();
     if (!client) return { status: "disabled" };
-    const { customerId } = await readOrgBilling(orgId);
+    const { customerId, role } = await readOrgBilling(orgId, userId);
+    // Server-side gate — see startCheckout. Hiding the button is not a gate.
+    if (!isBillingManagerRole(role)) return { status: "forbidden" };
     if (!customerId) return { status: "no_customer" };
     const session = await client.createPortalSession({
       customer: customerId,

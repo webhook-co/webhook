@@ -15,16 +15,19 @@ import {
   consumeRefreshToken,
   createClient,
   createCredentialHasherFromBase64,
+  credentialCacheKey,
   isOrgMember,
   listApiKeysForGrant,
   mintKeyForGrant,
   mintRefreshToken,
   mintScopedKey,
   revokeGrant,
+  revokeRefreshTokensForGrant,
 } from "@webhook-co/db";
 import { b64ToBytes, importAuditKey, readSecretBinding } from "@webhook-co/shared";
 
 import { makeDeviceStoreDeps } from "./device-deps";
+import { revokeGrantAndEvict } from "./grant-revoke";
 import { pollDeviceCode } from "./device-store";
 import type { DeviceTokenDeps } from "./device-token-core";
 import { GRANT_TTL_SECONDS, HELPERS_DEFAULT_HANDLER, KEY_TTL_SECONDS } from "./issuer-constants";
@@ -60,6 +63,8 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
   ]);
   const hasher = createCredentialHasherFromBase64(pepper);
   const auditKey = await importAuditKey(b64ToBytes(auditRaw));
+  // Structural slice of KV (avoids a Workers-global lib dep) — same shape revoke-deps.ts uses.
+  const cache = env.KV_AUTHZ as { delete(key: string): Promise<void> };
   const helpers = getOAuthApi(
     { ...oauthIssuerConfig, defaultHandler: HELPERS_DEFAULT_HANDLER },
     env as never,
@@ -148,9 +153,26 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
     keyTtlSeconds: KEY_TTL_SECONDS,
 
     // Atomic single-use consume + ~90d rotation (the new handle replaces the presented one). Returns the
-    // grant's org + audience so the seams below need no cross-org lookup (ADR-0028).
+    // grant's org + user + audience so the seams below need no cross-org lookup (ADR-0028) — AND whether the
+    // grant's user is still a member, resolved in the same statement so the re-check costs no extra
+    // round-trip and cannot be stranded by a fault after the handle is burned.
     consumeRefresh: (refreshToken) =>
       consumeRefreshToken(app, refreshToken, hasher, REFRESH_TTL_SECONDS),
+
+    // Denial terminates the grant, so its already-minted 24h access keys die too rather than aging out.
+    // The cascade — DB commit → KV eviction → refresh-handle sweep, in that ORDER — is shared with /revoke;
+    // grant-revoke.ts documents why the eviction must precede the (merely tidying) sweep.
+    revokeGrant: (grantId, orgId) =>
+      revokeGrantAndEvict({
+        revokeGrant: () =>
+          revokeGrant(app, { orgId, grantId, reason: "membership_revoked" }, auditKey),
+        revokeRefreshTokens: async () => {
+          await revokeRefreshTokensForGrant(app, { orgId, grantId });
+        },
+        cache,
+        cacheKey: credentialCacheKey,
+        log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
+      }),
 
     // The grant's consented scope set = the union of its NON-REVOKED child api_keys' scopes (stable: the
     // first key, from the auth-code mint, carries the full consent; refreshes only narrow). token-core
