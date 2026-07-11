@@ -173,18 +173,38 @@ test.describe("pricing page accessibility (real browser)", () => {
     await expectClean(page);
   });
 
-  // AGENTS.md: pricing must be "disclosed UP FRONT … on the pricing page". The three surprises are
-  // rendered <details open> precisely so a buyer cannot miss them, and this is the only layer that can
-  // prove a reader actually SEES them — jsdom knows the `open` attribute, a browser knows the pixels.
-  test("the MUST-disclose facts are visible without a single click", async ({ page }) => {
+  // AGENTS.md: pricing must be "disclosed UP FRONT … on the pricing page". The four MUST-disclose
+  // items render <details open> precisely so a buyer cannot miss them, and this is the only layer that
+  // can prove a reader actually SEES them — jsdom knows the `open` attribute, a browser knows pixels.
+  //
+  // `toBeVisible()` is NOT enough here and asserting it would be self-deception: Playwright's
+  // visibility check ignores OPACITY, and the FAQ is wrapped in <Reveal>, whose `.reveal-hidden` sets
+  // `opacity: 0` — as does the `faqOpen` keyframe's first frame. A regression that painted the
+  // disclosures invisible would sail straight through. So assert the computed opacity.
+  test("the MUST-disclose facts are actually painted, not merely present", async ({ page }) => {
     await page.goto("/pricing");
+    await page
+      .getByRole("heading", { name: /frequently asked questions/i })
+      .scrollIntoViewIfNeeded();
 
     for (const fact of [
       /A delivery to a destination is one event/i,
+      /We email you before you reach your included volume/i,
       /capture pauses until you resubscribe/i,
       /every retry a provider sends is a distinct captured request/i,
     ]) {
-      await expect(page.getByText(fact)).toBeVisible();
+      const el = page.getByText(fact);
+      await expect(el).toBeVisible();
+
+      // Walk up the tree: any ancestor at opacity 0 makes this text unreadable, however "visible".
+      const effectiveOpacity = await el.evaluate((node) => {
+        let opacity = 1;
+        for (let n: Element | null = node; n; n = n.parentElement) {
+          opacity *= Number(getComputedStyle(n).opacity);
+        }
+        return opacity;
+      });
+      expect(effectiveOpacity, `"${fact}" is present but painted invisible`).toBeGreaterThan(0.9);
     }
   });
 

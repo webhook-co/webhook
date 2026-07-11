@@ -6,8 +6,10 @@
  * reorg is one edit, not a scavenger hunt, and it makes the *gaps* legible: a link that points at
  * {@link PLACEHOLDER} is a surface that genuinely does not exist yet, not one someone forgot.
  *
- * The Playwright link spec actually REQUESTS every external href and asserts a 200 — because a link
- * to a renamed docs slug is a 404, and a unit test comparing strings can't tell the difference.
+ * `links.spec.ts` actually REQUESTS every external href and asserts a 200 — because a link to a
+ * renamed docs slug is a 404, and a unit test comparing strings against the same constants it is
+ * testing cannot tell the difference. That check is the only thing standing between a docs reorg and
+ * a footer full of 404s.
  */
 
 export const APP = "https://app.webhook.co";
@@ -28,7 +30,8 @@ export const LINKS = {
   /** Sign-in. Matches what apps/web redirects to (`apps/web/src/server/session.ts`). */
   signIn: `${AUTH}/login`,
   startFree: APP,
-  dashboard: APP,
+  /** Where the paid-tier CTAs land: the usage page, which is where a plan is chosen. */
+  usage: `${APP}/usage`,
 
   // ── docs ─────────────────────────────────────────────────────────────────
   docs: DOCS,
@@ -58,3 +61,6 @@ export const LINKS = {
   standardWebhooks: "https://www.standardwebhooks.com/",
   contact: "mailto:sourabh@webhook.co",
 } as const;
+
+/** Enterprise is contact-sales, and it routes to a different inbox than the general contact link. */
+export const SALES = "mailto:sales@webhook.co";

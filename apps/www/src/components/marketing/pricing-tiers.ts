@@ -12,6 +12,8 @@
 // packages/shared/src/retention.ts (PLAN_RETENTION_DAYS): Free 7d / Pro 30d / Scale 90d. Enterprise is
 // unlimited/contractual there (never auto-pruned); publicly we state "up to 1 year". Change one, change both.
 
+import { LINKS, SALES } from "@/lib/links";
+
 export interface Tier {
   readonly id: string;
   readonly name: string;
@@ -45,7 +47,7 @@ export const TIERS: readonly Tier[] = [
     // `includedEvents` directly above it, and the pause is stated in full three more times on the
     // page — so the MUST-disclose fact (ADR-0004) survives the shorter line intact.
     overage: "No overage. Capture pauses.",
-    cta: { label: "Start free", href: "https://app.webhook.co" },
+    cta: { label: "Start free", href: LINKS.startFree },
   },
   {
     id: "pro",
@@ -56,7 +58,7 @@ export const TIERS: readonly Tier[] = [
     summary: "For a service in production with real traffic.",
     retention: "30-day retention",
     overage: `${OVERAGE_PER_MILLION} per extra million events`,
-    cta: { label: "Start on Pro", href: "https://app.webhook.co/usage" },
+    cta: { label: "Start on Pro", href: LINKS.usage },
     featured: true,
   },
   {
@@ -68,7 +70,7 @@ export const TIERS: readonly Tier[] = [
     summary: "For high-volume ingestion and fan-out to many destinations.",
     retention: "90-day retention",
     overage: `${OVERAGE_PER_MILLION} per extra million events`,
-    cta: { label: "Start on Scale", href: "https://app.webhook.co/usage" },
+    cta: { label: "Start on Scale", href: LINKS.usage },
   },
   {
     id: "enterprise",
@@ -80,6 +82,6 @@ export const TIERS: readonly Tier[] = [
     summary: "Committed volume, SAML SSO, audit export, and a BAA.",
     retention: "Retention up to 1 year",
     overage: "Custom, agreed up front.",
-    cta: { label: "Talk to us", href: "mailto:sales@webhook.co" },
+    cta: { label: "Talk to us", href: SALES },
   },
 ];

@@ -61,22 +61,27 @@ describe("Footer", () => {
     );
   });
 
-  // About / Blog / X / LinkedIn / the status indicator have no destination in the product yet. They
-  // are deliberately inert — this pins that it's a KNOWN gap, so the count can't quietly grow.
-  it("leaves exactly the known-missing surfaces inert", () => {
+  // About / Blog / X / LinkedIn / the status indicator have no destination in the product. They are
+  // rendered as TEXT, not as links to nowhere. An `href="#"` would be focusable, would announce as a
+  // link, and — with smooth scrolling enabled by any earlier click — would glide the reader from the
+  // footer back to the hero. Ships zero dead links, and the labels still say the surface is coming.
+  it("ships no link that goes nowhere", () => {
     const { container } = render(<Footer />);
-    const inert = [...container.querySelectorAll('a[href="#"]')].map(
-      (a) => a.getAttribute("aria-label") ?? a.textContent,
-    );
-    expect(inert.sort()).toEqual(
-      [
-        "About",
-        "All systems operational",
-        "Blog",
-        "webhook.co on LinkedIn",
-        "webhook.co on X",
-      ].sort(),
-    );
+    expect(container.querySelectorAll('a[href="#"]')).toHaveLength(0);
+    for (const a of container.querySelectorAll("a")) {
+      expect(a.getAttribute("href"), "a footer link with no destination").toBeTruthy();
+    }
+  });
+
+  it("still shows the surfaces that don't exist yet, just not as links", () => {
+    render(<Footer />);
+    for (const label of ["About", "Blog"]) {
+      expect(screen.getByText(label)).toBeInTheDocument();
+      expect(screen.queryByRole("link", { name: label })).toBeNull();
+    }
+    // The uptime line stays visible, but it is no longer a link to a status page we don't have.
+    expect(screen.getByText(/All systems operational/i)).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /All systems operational/i })).toBeNull();
   });
 
   it("composes without axe violations", async () => {

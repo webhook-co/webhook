@@ -76,20 +76,35 @@ export function Footer() {
               Webhooks your AI agents can act on.
             </p>
             <ul className="mt-5 flex gap-2.5">
-              {socials.map(({ label, icon: Icon, href }) => (
-                <li key={label}>
-                  <a
-                    href={href ?? "#"}
-                    aria-label={label}
-                    className={cn(
-                      focusRing,
-                      "inline-grid h-[2.125rem] w-[2.125rem] place-items-center rounded-control border border-hairline text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+              {socials.map(({ label, icon: Icon, href }) => {
+                const chrome =
+                  "inline-grid h-[2.125rem] w-[2.125rem] place-items-center rounded-control border border-hairline text-fg-secondary";
+                // No account behind it → the mark still shows, but it isn't a link. An `href="#"`
+                // here would announce as a link to a screen reader and, with smooth scrolling now on,
+                // glide the reader back to the hero. `aria-hidden` because a non-interactive brand
+                // mark is decoration, not information.
+                return (
+                  <li key={label}>
+                    {href ? (
+                      <a
+                        href={href}
+                        aria-label={label}
+                        className={cn(
+                          focusRing,
+                          chrome,
+                          "transition-colors hover:bg-surface-sunken hover:text-fg",
+                        )}
+                      >
+                        <Icon size={16} />
+                      </a>
+                    ) : (
+                      <span aria-hidden="true" className={cn(chrome, "text-fg-faint")}>
+                        <Icon size={16} />
+                      </span>
                     )}
-                  >
-                    <Icon size={16} />
-                  </a>
-                </li>
-              ))}
+                  </li>
+                );
+              })}
             </ul>
           </div>
 
@@ -99,11 +114,22 @@ export function Footer() {
               <ul className="mt-4 flex flex-col gap-3">
                 {column.links.map((link) => {
                   const label = typeof link === "string" ? link : link.label;
-                  const href = typeof link === "string" ? "#" : link.href;
+                  // A bare label has no destination (About, Blog). It renders as TEXT, not as a link
+                  // to nowhere: an `href="#"` is focusable, announces as a link, and — now that an
+                  // in-page click enables smooth scrolling — would glide the reader all the way back
+                  // to the hero. Saying "this exists but isn't a page yet" quietly is the honest
+                  // version of that.
+                  if (typeof link === "string") {
+                    return (
+                      <li key={label} className="text-sm text-fg-muted">
+                        {label}
+                      </li>
+                    );
+                  }
                   return (
                     <li key={label}>
                       <a
-                        href={href}
+                        href={link.href}
                         className={cn(
                           focusRing,
                           "rounded-control text-sm text-fg-muted transition-colors hover:text-fg",
@@ -121,16 +147,12 @@ export function Footer() {
 
         <div className="mt-[clamp(40px,5vw,64px)] flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-6 text-sm text-fg-muted">
           <span>© 2026 webhook.co</span>
-          <a
-            href="#"
-            className={cn(
-              focusRing,
-              "inline-flex items-center gap-2 rounded-control transition-colors hover:text-fg",
-            )}
-          >
+          {/* Not a link: there is no status page to point at. Left as plain text rather than an
+              `href="#"` that would now glide the reader back to the top of the page. */}
+          <span className="inline-flex items-center gap-2">
             <span className="h-[7px] w-[7px] rounded-pill bg-ok" aria-hidden="true" />
             All systems operational
-          </a>
+          </span>
         </div>
       </div>
     </footer>

@@ -158,14 +158,32 @@ describe("FAQ — the MUST-disclose set", () => {
   // Both of these were being billed as full deliveries until migration 0055
   // (`delivery_attempts.billable`). If someone re-bills either leg, this is the test that says the
   // page is now lying about the bill.
+  //
+  // Asserted against the RENDERED DOM, not against `FAQ_ITEMS`. Reading the data array back proves
+  // only that the string exists in the module — it would stay green if `FaqEntry` stopped rendering
+  // `answer` at all, or if the item were dropped from the list. The obligation is about what reaches
+  // the page, so the test has to look at the page.
   it("says forwarding to your own machine is free — we make no outbound request", () => {
-    const answer = answerOf(/retries billed/i)?.answer ?? "";
-    expect(answer).toMatch(/forwarding to your own machine/i);
-    expect(answer).toMatch(/your CLI makes that request, not us/i);
+    const { container } = render(<Faq />);
+    expect(screen.getByText(/forwarding to your own machine/i)).toBeInTheDocument();
+    expect(screen.getByText(/your CLI makes that request, not us/i)).toBeInTheDocument();
+    expect(disclosureFor(container, /forwarding to your own machine/i)?.open).toBe(true);
   });
 
   it("says a delivery we REFUSE to send is not billed", () => {
-    expect(answerOf(/retries billed/i)?.answer ?? "").toMatch(/a delivery we refuse to send/i);
+    const { container } = render(<Faq />);
+    expect(screen.getByText(/a delivery we refuse to send/i)).toBeInTheDocument();
+    expect(disclosureFor(container, /a delivery we refuse to send/i)?.open).toBe(true);
+  });
+
+  // `answer` is rendered as plain text into a <p> and serialised into the FAQPage JSON-LD. Markdown
+  // is never parsed, so a backtick or a ** here renders literally on the page AND gets published to
+  // Google as part of the rich result. Shipped exactly that (`` `wbhk listen` ``) once.
+  it("never smuggles markdown into an answer", () => {
+    for (const { question, answer } of FAQ_ITEMS) {
+      expect(answer, `"${question}" contains a backtick — answers are plain text`).not.toMatch(/`/);
+      expect(answer, `"${question}" contains markdown emphasis`).not.toMatch(/\*\*|__/);
+    }
   });
 
   it("says capture PAUSES at the limit rather than billing", () => {

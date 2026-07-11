@@ -52,15 +52,23 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
   },
   {
     question: "Are retries billed?",
+    discloses: true,
     // The carve-outs are not marketing garnish — they're what the code actually does (migration 0055,
     // `delivery_attempts.billable`). Both used to be billed as full deliveries: `wbhk listen --forward`
     // billed every webhook twice, and a delivery the SSRF guard refused to send billed the same as a
     // 200. The page has to say so, or it's lying about the bill.
+    //
+    // NO MARKDOWN. `answer` is rendered as plain text into a <p> AND serialised into the FAQPage
+    // JSON-LD — backticks here would show up literally in the prose and get published to Google as
+    // part of the rich result.
     answer:
-      "No. A delivery is billed once, when we first dispatch it, however many attempts it takes to land. If a destination is down and we retry, you pay nothing extra — our retry schedule is our cost. Also free: forwarding to your own machine with `wbhk listen` (your CLI makes that request, not us), a delivery we refuse to send because the URL resolves somewhere private, deduplicated duplicates, verification handshakes, and reading your own data.",
+      "No. A delivery is billed once, when we first dispatch it, however many attempts it takes to land. If a destination is down and we retry, you pay nothing extra — our retry schedule is our cost. Also free: forwarding to your own machine with wbhk listen (your CLI makes that request, not us), a delivery we refuse to send because the URL resolves somewhere private, deduplicated duplicates, verification handshakes, and reading your own data.",
   },
   {
     question: "What happens when I hit my limit?",
+    // AGENTS.md's promise is "disclosure + ALERTS + pause" — the pre-limit email is a load-bearing
+    // third of it, so it can't sit behind a click either.
+    discloses: true,
     answer:
       "Capture pauses. We email you before you reach your included volume — not after — and at the limit we stop capturing rather than silently run up a bill. Nothing is deleted, and nothing is charged that you didn't agree to.",
   },
@@ -141,8 +149,13 @@ function FaqEntry({ item }: { item: FaqItem }) {
         </svg>
       </summary>
       {/* `faq-panel` animates the open transition in CSS (see marketing.css). Native <details> gives
-          us the state machine for free; all we add is the motion. */}
-      <div className="faq-panel pb-5">
+          us the state machine for free; all we add is the motion.
+
+          The MUST-disclose panels are deliberately NOT animated. They are open on load, so the
+          keyframe would fade them in from `opacity: 0` — and a disclosure the constitution requires
+          to be "up front" has no business being transparent, even for 280ms. Motion is for the panels
+          a reader chooses to open. */}
+      <div className={cn("pb-5", !item.discloses && "faq-panel")}>
         <p className="max-w-[68ch] leading-relaxed text-fg-secondary">{item.answer}</p>
         {item.link ? (
           <a
