@@ -297,6 +297,11 @@ const APPS = {
       // AccountDeleter entrypoint first (same deploy-ordering note as SessionExchange); apps/web fails
       // closed (the action throws "temporarily unavailable") when it's unbound (dev / pre-provision).
       { binding: "AUTH_ACCOUNT_DELETER", service: "webhook-auth", entrypoint: "AccountDeleter" },
+      // AUTH_CONNECTED_APPS — the web→auth binding to auth.'s ConnectedApps entrypoint, so the dashboard
+      // lists/revokes a user's OAuth grants (which live in auth.'s OAUTH_KV, unreadable from web). auth. must
+      // be LIVE with the ConnectedApps entrypoint first (same deploy-ordering note as SessionExchange);
+      // apps/web renders "temporarily unavailable" (list) / errors (revoke) when it's unbound (dev/pre-provision).
+      { binding: "AUTH_CONNECTED_APPS", service: "webhook-auth", entrypoint: "ConnectedApps" },
       {
         binding: "PROVIDER_SECRET_SEALER",
         service: "webhook-engine",

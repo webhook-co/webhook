@@ -42,6 +42,21 @@ export default async function SettingsPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Connected apps</CardTitle>
+          <CardDescription>
+            Apps you&apos;ve authorized (like Claude or Cursor) to access your account over OAuth.
+            Review them and revoke access anytime.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild variant="secondary">
+            <a href="/settings/connected-apps">Manage connected apps</a>
+          </Button>
+        </CardContent>
+      </Card>
+
       {/* Deliberate product choice: log out is the red danger button (like "Delete endpoint"), not a
           neutral secondary — it's the most consequential control on this page and reads as session-ending. */}
       <form action={logout}>
