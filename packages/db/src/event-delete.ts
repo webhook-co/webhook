@@ -6,6 +6,7 @@
 // transaction, and enqueues the R2 body for async purge. Mirrors deleteEndpointWithAudit (ADR-0076).
 
 import { CapabilityFault } from "@webhook-co/contract";
+import type { AuditActorInput } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
@@ -13,8 +14,8 @@ import { withTenant, type Sql } from "./client";
 export interface DeleteEventInput {
   readonly orgId: string;
   readonly eventId: string;
-  /** Acting principal for the audit row (null for a system actor). */
-  readonly actor: string | null;
+  /** Acting principal for the audit row — a typed actor, never a bare id (see audit-actor). */
+  readonly actor: AuditActorInput;
 }
 
 export interface DeletedEventRow {

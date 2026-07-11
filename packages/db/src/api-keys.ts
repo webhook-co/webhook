@@ -426,7 +426,7 @@ export async function revokeApiKeyByPlaintext(
   auditKey: CryptoKey,
 ): Promise<RevokedByPlaintext> {
   // Discovery uses ONLY webhook_authn's column-scoped grant (org_id + key_hash — same columns the
-  // cold lookup reads). It deliberately does NOT select `id` even though 0058 now grants it: this query
+  // cold lookup reads). It deliberately does NOT select `id` even though 0059 now grants it: this query
   // only needs to find the row, and the keyId is resolved later under webhook_app alongside the columns
   // (like created_by) that authn must never see.
   let match: { orgId: string; keyHash: Buffer } | null = null;
