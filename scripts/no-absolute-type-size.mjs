@@ -17,6 +17,7 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ROOT = process.cwd();
 
@@ -61,7 +62,17 @@ export function findAbsoluteTypeSizes(line, file, lineNo) {
 }
 
 async function* walk(dir) {
-  for (const entry of await readdir(dir, { withFileTypes: true })) {
+  let entries;
+  try {
+    entries = await readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    // A scanned tree that isn't there is not an error: the open-core boundary means a self-host
+    // checkout ships without `ee/` (see AGENTS.md). Crashing the lint gate on its absence would
+    // break the build for exactly the people the boundary exists to serve.
+    if (err.code === "ENOENT") return;
+    throw err;
+  }
+  for (const entry of entries) {
     if (entry.isDirectory()) {
       if (IGNORED_DIRS.has(entry.name)) continue;
       yield* walk(join(dir, entry.name));
@@ -71,8 +82,21 @@ async function* walk(dir) {
   }
 }
 
-// Only run the filesystem sweep when invoked as a script, so the test can import the pure core.
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * True when this module was run as a script (rather than imported by its test).
+ *
+ * `pathToFileURL`, not a hand-built `file://${argv[1]}` — the two agree today only because this
+ * repo's path happens to contain no characters that need percent-encoding. Put the checkout under a
+ * directory with a space in it and the naive comparison silently stops matching: the sweep never
+ * runs, the script exits 0, and the lint gate becomes a no-op that still reports success. A guard
+ * that can quietly stop guarding is worse than no guard, so `no-absolute-type-size.test.mjs` also
+ * executes this file as a subprocess to prove the CLI path really runs.
+ */
+function isMain() {
+  return process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href;
+}
+
+if (isMain()) {
   const violations = [];
 
   for (const tree of SCANNED) {

@@ -1,9 +1,38 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
 import { findAbsoluteTypeSizes } from "./no-absolute-type-size.mjs";
 
 const find = (line) => findAbsoluteTypeSizes(line, "x.tsx", 1);
+const SCRIPT = fileURLToPath(new URL("./no-absolute-type-size.mjs", import.meta.url));
+
+/** Run the guard as a real subprocess against a throwaway tree. Returns {status, output}. */
+function runGuard(files) {
+  const root = mkdtempSync(join(tmpdir(), "type-size-guard-"));
+  try {
+    mkdirSync(join(root, "apps", "x", "src"), { recursive: true });
+    for (const [name, contents] of Object.entries(files)) {
+      writeFileSync(join(root, "apps", "x", "src", name), contents);
+    }
+    try {
+      const output = execFileSync(process.execPath, [SCRIPT], {
+        cwd: root,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      return { status: 0, output };
+    } catch (err) {
+      return { status: err.status, output: `${err.stdout ?? ""}${err.stderr ?? ""}` };
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 test("flags a fixed-px arbitrary type size", () => {
   assert.equal(find('<p className="text-[13px]">').length, 1);
@@ -62,4 +91,27 @@ test("sees through responsive and state variants", () => {
   assert.equal(find('<p className="sm:text-[13px]">').length, 1);
   assert.equal(find('<p className="hover:text-[13px]">').length, 1);
   assert.equal(find('<p className="dark:md:text-[11px]">').length, 1);
+});
+
+// ── the CLI path ────────────────────────────────────────────────────────────────
+// Testing only the pure core would leave the entry guard untested — and a broken entry guard makes
+// the whole gate a no-op that still exits 0 and prints nothing. That failure mode is invisible
+// precisely because it looks like success, so the script has to actually be RUN.
+
+test("CLI: exits non-zero and names the offender when a fixed-px size is present", () => {
+  const { status, output } = runGuard({
+    "bad.tsx": '<p className="text-[13px]">nope</p>\n',
+  });
+  assert.equal(status, 1, "the guard must FAIL the build, not just print");
+  assert.match(output, /text-\[13px\]/);
+  assert.match(output, /bad\.tsx/);
+});
+
+test("CLI: exits zero and says so when the tree is clean", () => {
+  const { status, output } = runGuard({
+    "good.tsx":
+      '<p className="text-sm">fine</p>\n<h1 className="text-[clamp(2rem,5vw,4rem)]">x</h1>\n',
+  });
+  assert.equal(status, 0);
+  assert.match(output, /No absolute-px font sizes found/);
 });
