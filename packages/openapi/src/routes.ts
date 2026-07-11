@@ -340,6 +340,16 @@ export const ROUTES: readonly RouteDef[] = [
     buildInput: pathParam("eventId", "eventId"),
   },
   {
+    method: "DELETE",
+    path: "/v1/events/{eventId}",
+    capability: "events.delete",
+    successStatus: 200,
+    dispatch: "shared",
+    body: false,
+    summary: "Delete a captured event (tombstone: redacts + purges its body; idempotent)",
+    buildInput: pathParam("eventId", "eventId"),
+  },
+  {
     method: "GET",
     path: "/v1/events/{eventId}/payload",
     capability: "events.getPayload",

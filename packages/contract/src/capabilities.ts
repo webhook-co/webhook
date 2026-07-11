@@ -351,6 +351,29 @@ export const eventsReplay = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED, mcp: REPLAY_MCP_EXEMPT },
 });
 
+// events.delete TOMBSTONES a captured event (S3): its content is redacted immediately (so it stops
+// surfacing on every read) and its R2 payload body is purged shortly after by the engine. The ROW is
+// retained (metering count(*) stability + the dedup slot stays occupied so the same webhook can't be
+// re-ingested and re-billed), but the event is gone from the customer's point of view. Idempotent
+// (idempotent:true): a re-delete of an already-deleted event returns its recorded deletedAt; an unknown
+// id is NOT_FOUND. Bound on ALL FOUR surfaces (parity) INCLUDING mcp — with mitigations, because it is
+// destructive and an agent may act on attacker-controlled payloads: single-id only (never bulk/filter),
+// a DESTRUCTIVE tool description, a hash-chained audit row per delete, and a per-org rate limit.
+export const DeletedEventSchema = z.object({ id: uuid, deletedAt: z.coerce.date() });
+export type DeletedEvent = z.infer<typeof DeletedEventSchema>;
+
+export const eventsDelete = defineCapability({
+  name: "events.delete",
+  input: z.object({ eventId: uuid }),
+  output: DeletedEventSchema,
+  // FORBIDDEN: a bearer lacking events:delete (the api edge 403s before dispatch; on mcp the handler's
+  // scope check is the sole gate). NOT_FOUND: an unknown id (a re-delete is a 200 idempotent success).
+  // RATE_LIMITED: the per-org delete throttle (the destructive-op mitigation) trips.
+  errors: ["NOT_FOUND", "UNAUTHORIZED", "FORBIDDEN", "VALIDATION_ERROR", "RATE_LIMITED"],
+  auth: { scope: "events:delete" },
+  semantics: { idempotent: true },
+});
+
 // ── Provider signing-secret management (ADR-0078, decisions D1/D2) ───────────────────────────────
 // Per-endpoint inbound-verification secrets. The plaintext secret is sealed under the KMS envelope —
 // api/mcp delegate sealing to the engine's ProviderSecretSealer over a service binding and NEVER hold
@@ -826,6 +849,7 @@ export const CAPABILITIES: readonly AnyCapability[] = [
   eventsGetPayload,
   eventsTail,
   eventsReplay,
+  eventsDelete,
   auditVerify,
   replayDestinationsCreate,
   replayDestinationsList,

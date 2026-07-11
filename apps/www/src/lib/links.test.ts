@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { APP, AUTH, DOCS, GITHUB, LINKS, SALES } from "./links";
+import { APP, DOCS, GITHUB, LINKS, SALES } from "./links";
 
 /**
  * The marketing site's outbound links are the funnel. A link that 404s costs more than a link that
@@ -17,13 +17,17 @@ const flat = Object.values(LINKS).flatMap((v) =>
 describe("marketing links", () => {
   it("points every product link at a real webhook.co host", () => {
     expect(APP).toBe("https://app.webhook.co");
-    expect(AUTH).toBe("https://auth.webhook.co");
     expect(DOCS).toBe("https://docs.webhook.co");
     expect(GITHUB).toBe("https://github.com/webhook-co");
   });
 
-  it("uses the established sign-in destination (apps/web resolves the same one)", () => {
-    expect(LINKS.signIn).toBe("https://auth.webhook.co/login");
+  // The nav carried BOTH "Sign in" and "Start free". They landed the same visitor in the same place —
+  // app.webhook.co bounces a signed-out user to the login screen, and that screen says "No account
+  // yet? Signing in creates one." Two doors into one room, asking a first-time visitor to guess which
+  // one is theirs. Now: one door, labelled "Get started".
+  it("has one front door, not two", () => {
+    expect(LINKS.startFree).toBe("https://app.webhook.co");
+    expect(LINKS).not.toHaveProperty("signIn");
   });
 
   // The changelog DOES exist — it's a Mintlify tab (apps/docs/changelog.mdx). It was a `#` only

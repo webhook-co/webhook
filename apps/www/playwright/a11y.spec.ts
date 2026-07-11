@@ -13,7 +13,7 @@ const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
 async function settle(page: Page) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
-  await page.getByRole("group", { name: /live webhook inspector/i }).waitFor();
+  await page.getByRole("group", { name: /demo webhook inspector/i }).waitFor();
 }
 
 async function expectClean(page: Page) {

@@ -19,7 +19,17 @@ describe("Footer", () => {
     expect(byLabel["API reference"]).toBe("https://docs.webhook.co/api-reference/introduction");
     expect(byLabel["CLI"]).toBe("https://docs.webhook.co/cli/overview");
     expect(byLabel["MCP"]).toBe("https://docs.webhook.co/mcp/overview");
-    expect(byLabel["Open source"]).toBe("https://github.com/webhook-co/webhook");
+  });
+
+  // Developers is where a developer looks for OUR docs. "Standard Webhooks" (a third-party spec) and
+  // "Open source" (the repo) both sent them off-site from the column meant to keep them here, and the
+  // repo already has a home in the socials row below. Removed on purpose — pinned so a future tidy-up
+  // doesn't quietly re-add them.
+  it("sends nobody off-site from the Developers column", () => {
+    render(<Footer />);
+    const labels = columnLinks("Developers").map((a) => a.textContent);
+    expect(labels).not.toContain("Standard Webhooks");
+    expect(labels).not.toContain("Open source");
   });
 
   it("wires the Product column, including Pricing (which pointed at nothing while /pricing was live)", () => {
@@ -79,9 +89,15 @@ describe("Footer", () => {
       expect(screen.getByText(label)).toBeInTheDocument();
       expect(screen.queryByRole("link", { name: label })).toBeNull();
     }
-    // The uptime line stays visible, but it is no longer a link to a status page we don't have.
-    expect(screen.getByText(/All systems operational/i)).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: /All systems operational/i })).toBeNull();
+  });
+
+  // "All systems operational", with a green dot, on every page of the site — wired to nothing. There
+  // is no status page and nothing monitoring anything, so it was an uptime claim we could not have
+  // known to be true, sitting a few centimetres from a Terms link that disclaims any uptime
+  // commitment at all. Un-linking it wasn't enough: the LIE was the sentence, not the href.
+  it("publishes no uptime claim it cannot back", () => {
+    const { container } = render(<Footer />);
+    expect(container.textContent).not.toMatch(/all systems (operational|go|nominal)/i);
   });
 
   it("composes without axe violations", async () => {

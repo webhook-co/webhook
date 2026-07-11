@@ -410,6 +410,41 @@ describe("handleRequest — routing, auth, input construction, error mapping", (
     expect(res.status).toBe(403);
     expect(called).toBe(false); // never dispatched
   });
+
+  it("dispatches DELETE /v1/events/:id to events.delete with the path id as input", async () => {
+    const EV = "55555555-5555-7555-8555-555555555555";
+    let seen: unknown;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ orgId: ORG, scopes: ["events:delete"] })),
+      handlers: handlersOf({
+        "events.delete": async (_ctx, input) => {
+          seen = input;
+          return { id: EV, deletedAt: "2026-07-11T00:00:00.000Z" };
+        },
+      }),
+    };
+    const res = await handleRequest(del(`/v1/events/${EV}`), deps);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual({ eventId: EV });
+    expect(await res.json()).toMatchObject({ id: EV });
+  });
+
+  it("403s DELETE /v1/events/:id when the bearer lacks events:delete (scope before dispatch)", async () => {
+    const EV = "55555555-5555-7555-8555-555555555555";
+    let called = false;
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)), // read scopes only (no events:delete)
+      handlers: handlersOf({
+        "events.delete": async () => {
+          called = true;
+          return {};
+        },
+      }),
+    };
+    const res = await handleRequest(del(`/v1/events/${EV}`), deps);
+    expect(res.status).toBe(403);
+    expect(called).toBe(false); // never dispatched — scope enforced at the edge
+  });
 });
 
 describe("handleRequest — replayDestinations.* (ADR-0081, dedicated api-only map)", () => {

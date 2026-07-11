@@ -95,6 +95,9 @@ describe("capability parity — current GA surfaces conformance", () => {
     "events.list",
     "events.get",
     "events.tail",
+    // events.delete (S3): the TOMBSTONE. api+mcp+cli+web parity — MCP-BOUND despite being destructive,
+    // with mitigations (single-id, rate limit, audit row per delete, DESTRUCTIVE tool description).
+    "events.delete",
     // Deliveries reads (S3 Slice 3 PR3): full api+mcp+cli parity (reading delivery status steers nothing —
     // unlike the subscriptions/destinations WRITE caps, which are mcp-exempt). Web-deferred.
     "deliveries.get",
@@ -130,6 +133,8 @@ describe("capability parity — current GA surfaces conformance", () => {
     "events.list",
     "events.get",
     "events.getPayload",
+    // events.delete (S3): the dashboard's event delete — a DB-direct server action (event-actions.ts).
+    "events.delete",
     // usage.get (S4.2): the dashboard usage view — a DB-direct server read (usage.ts), like events.list.
     "usage.get",
     // triggers.* (S5 web slice): the dashboard agent-triggers view (list + create + revoke) via DB-direct
