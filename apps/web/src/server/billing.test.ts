@@ -19,19 +19,20 @@ vi.mock("@webhook-co/shared", async (orig) => ({
   makeStripeClient: stripe.makeStripeClient,
 }));
 
-import { openBillingPortal, startCheckout } from "./billing";
+import { loadBillingSummary, openBillingPortal, startCheckout } from "./billing";
 
 afterEach(() => vi.clearAllMocks());
 
-/** Configure a fully-enabled billing env + a fake Stripe client that records calls. */
-function enableBilling(customerId: string | null) {
+/** Configure a fully-enabled billing env + a fake Stripe client that records calls. `sub` is the org's
+ *  synced subscription mirror row (null = never subscribed / no live sub) that readOrgBilling returns. */
+function enableBilling(customerId: string | null, sub: unknown = null) {
   env.getBillingMode.mockReturnValue("test");
   env.getStripePlans.mockReturnValue({
     pro: { base: "price_base", overage: "price_overage" },
     scale: { base: "price_scale_base", overage: "price_scale_overage" },
   });
   env.getStripeSecretKey.mockResolvedValue("sk_test_x");
-  db.withTenantDb.mockResolvedValue(customerId); // short-circuits withTenant(readBillingCustomerId)
+  db.withTenantDb.mockResolvedValue({ customerId, sub }); // short-circuits withTenant(readOrgBilling)
   const client = {
     createCheckoutSession: vi.fn().mockResolvedValue({ id: "cs_1", url: "https://checkout" }),
     createPortalSession: vi.fn().mockResolvedValue({ id: "ps_1", url: "https://portal" }),
@@ -78,12 +79,60 @@ describe("startCheckout", () => {
     ]);
   });
 
-  it("for a returning org reuses the existing Stripe customer", async () => {
-    const client = enableBilling("cus_existing");
-    await startCheckout("org-7", "pro", "ignored@x.test");
-    const args = client.createCheckoutSession.mock.calls[0][0];
-    expect(args.customer).toBe("cus_existing");
-    expect(args.customerEmail).toBeUndefined();
+  it("REFUSES a Checkout for a customer with NO mirror sub row (matches the hidden picker)", async () => {
+    // A customer exists but no subscription is mirrored — possibly an unmirrored live sub (the two setup
+    // webhooks can land out of order). The server refuses exactly as the UI hides the picker, so a forged
+    // POST can't slip through. (A genuine resubscribe has a `canceled` mirror row — see the next test.)
+    const client = enableBilling("cus_existing"); // sub=null
+    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+      status: "already_subscribed",
+    });
+    expect(client.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES a new Checkout when a LIVE subscription exists — never double-subscribes", async () => {
+    // The core double-subscribe guard: an org with a still-living Stripe sub (even a non-entitled one like
+    // unpaid/paused) must NOT get a fresh Checkout, which would create a second concurrent subscription.
+    for (const status of ["active", "trialing", "past_due", "unpaid", "paused", "incomplete"]) {
+      const client = enableBilling("cus_live", {
+        plan: "price_base",
+        status,
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+      });
+      expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+        status: "already_subscribed",
+      });
+      expect(client.createCheckoutSession).not.toHaveBeenCalled();
+    }
+  });
+
+  it("ALLOWS a Checkout when the existing sub is terminal (canceled) — a real resubscribe", async () => {
+    const client = enableBilling("cus_1", {
+      plan: "price_base",
+      status: "canceled",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: true,
+    });
+    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+      status: "ok",
+      url: "https://checkout",
+    });
+    expect(client.createCheckoutSession.mock.calls[0][0].customer).toBe("cus_1");
+  });
+
+  it("ALLOWS a Checkout when the existing sub is terminal (incomplete_expired) — a real resubscribe", async () => {
+    const client = enableBilling("cus_2", {
+      plan: "price_base",
+      status: "incomplete_expired",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    });
+    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+      status: "ok",
+      url: "https://checkout",
+    });
+    expect(client.createCheckoutSession.mock.calls[0][0].customer).toBe("cus_2");
   });
 
   it("maps a Stripe failure to 'error' (never throws)", async () => {
@@ -181,5 +230,128 @@ describe("startCheckout — the Stripe key must belong to BILLING_MODE", () => {
       url: "https://checkout",
     });
     expect(client.createCheckoutSession).toHaveBeenCalled();
+  });
+});
+
+describe("loadBillingSummary (dedicated Billing section)", () => {
+  function enable(sub: unknown, customerId: string | null) {
+    env.getBillingMode.mockReturnValue("test");
+    env.getStripePlans.mockReturnValue({
+      pro: { base: "price_base", overage: "price_overage" },
+      scale: { base: "price_scale_base", overage: "price_scale_overage" },
+    });
+    env.getStripeSecretKey.mockResolvedValue("sk_test_x");
+    db.withTenantDb.mockResolvedValue({ customerId, sub });
+  }
+
+  it("hides when billing is off / plans unset / key mismatches mode", async () => {
+    env.getBillingMode.mockReturnValue("off");
+    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+    env.getBillingMode.mockReturnValue("test");
+    env.getStripePlans.mockReturnValue(null);
+    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+    env.getStripePlans.mockReturnValue({ pro: { base: "b", overage: "o" } });
+    env.getStripeSecretKey.mockResolvedValue("sk_live_x"); // live key under test mode → mismatch
+    expect(await loadBillingSummary("org-1")).toMatchObject({ hidden: true });
+  });
+
+  it("an ACTIVE subscription → current-plan display, NO upgrade picker, has customer", async () => {
+    enable(
+      {
+        plan: "price_base",
+        status: "active",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+      },
+      "cus_1",
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.hidden).toBe(false);
+    expect(v.display).toMatchObject({ tier: "pro", state: "active" });
+    expect(v.upgradePlanIds).toEqual([]); // entitled → no picker
+    expect(v.hasCustomer).toBe(true);
+  });
+
+  it("NO subscription → no display, upgrade picker (ladder order), no customer", async () => {
+    enable(null, null);
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toBeNull();
+    expect(v.upgradePlanIds).toEqual(["pro", "scale"]);
+    expect(v.hasCustomer).toBe(false);
+  });
+
+  it("a CANCELED subscription → canceled display AND a resubscribe picker (has customer for the Portal)", async () => {
+    enable(
+      {
+        plan: "price_base",
+        status: "canceled",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      "cus_1",
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toMatchObject({ state: "canceled" });
+    expect(v.upgradePlanIds).toEqual(["pro", "scale"]); // terminal sub → safe to offer resubscribe
+    expect(v.hasCustomer).toBe(true);
+  });
+
+  it("a CANCELING sub (active + cancel_at_period_end) is still entitled → NO picker, has customer", async () => {
+    enable(
+      {
+        plan: "price_base",
+        status: "active",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: true,
+      },
+      "cus_1",
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toMatchObject({ state: "canceling" });
+    expect(v.upgradePlanIds).toEqual([]); // still a live sub → no duplicate; cancel/manage via Portal
+    expect(v.hasCustomer).toBe(true);
+  });
+
+  it("an INACTIVE (unpaid) sub still LIVES → NO picker (a Checkout would double-subscribe; use Portal)", async () => {
+    enable(
+      {
+        plan: "price_base",
+        status: "unpaid",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+      },
+      "cus_1",
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toMatchObject({ state: "inactive" });
+    expect(v.upgradePlanIds).toEqual([]); // live sub exists → never offer a duplicate
+    expect(v.hasCustomer).toBe(true);
+  });
+
+  it("a customer with NO mirror sub row → NO picker (could be an unmirrored live sub)", async () => {
+    enable(null, "cus_1");
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toBeNull();
+    expect(v.upgradePlanIds).toEqual([]); // conservative: don't invite a Checkout we can't prove is safe
+    expect(v.hasCustomer).toBe(true);
+  });
+
+  it("a LIVE sub whose customer hasn't mirrored yet → display, NO picker, NO customer (sync-race)", async () => {
+    // Reverse-ordered setup webhooks: the subscription mirrored before its billing_customers row. The page
+    // shows the plan but neither a picker (would double-subscribe) nor the Portal (no customer id) — it
+    // renders a transient "finishing setup" note off exactly this shape.
+    enable(
+      {
+        plan: "price_base",
+        status: "active",
+        currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+        cancelAtPeriodEnd: false,
+      },
+      null,
+    );
+    const v = await loadBillingSummary("org-1");
+    expect(v.display).toMatchObject({ tier: "pro", state: "active" });
+    expect(v.upgradePlanIds).toEqual([]);
+    expect(v.hasCustomer).toBe(false);
   });
 });

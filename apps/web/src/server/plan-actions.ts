@@ -15,7 +15,7 @@ import { verifySession } from "./session";
 // `redirect()` works by throwing a control-flow signal that Next catches, so it MUST be called outside any
 // try/catch — otherwise the redirect is swallowed and reported as an error.
 
-const USAGE = "/usage";
+const BILLING = "/billing";
 
 /** Start hosted Checkout for `planId` (untrusted form input; startCheckout gates it before any Stripe call). */
 export async function startCheckoutAction(formData: FormData): Promise<void> {
@@ -28,7 +28,7 @@ export async function startCheckoutAction(formData: FormData): Promise<void> {
 
   // Outside any try/catch — see above.
   if (result.status === "ok") redirect(result.url);
-  redirect(`${USAGE}?billing=${result.status}`);
+  redirect(`${BILLING}?billing=${result.status}`);
 }
 
 /** Open the hosted Customer Portal (manage payment method / cancel). Requires an existing Stripe customer. */
@@ -36,5 +36,5 @@ export async function openBillingPortalAction(): Promise<void> {
   const session = await verifySession();
   const result = await openBillingPortal(session.orgId);
   if (result.status === "ok") redirect(result.url);
-  redirect(`${USAGE}?billing=${result.status}`);
+  redirect(`${BILLING}?billing=${result.status}`);
 }

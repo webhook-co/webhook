@@ -1,15 +1,105 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  billingDisplayFromSubscription,
   billingEnabled,
   billingLive,
   parseBillingMode,
   isBillingActive,
+  isLiveSubscriptionStatus,
   parseStripePlans,
+  planIdForBasePrice,
+  planLabel,
   SELF_SERVE_PLAN_IDS,
+  SELF_SERVE_PLAN_LABELS,
   isSelfServePlan,
   stripeKeyMatchesMode,
+  type BillingSubscriptionSummary,
 } from "./billing";
+
+describe("planIdForBasePrice + billingDisplayFromSubscription (current-plan card core)", () => {
+  const PLANS = {
+    pro: { base: "price_pro_base", overage: "price_pro_over" },
+    scale: { base: "price_scale_base", overage: "price_scale_over" },
+  };
+  const sub = (over: Partial<BillingSubscriptionSummary> = {}): BillingSubscriptionSummary => ({
+    plan: "price_pro_base",
+    status: "active",
+    currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+    cancelAtPeriodEnd: false,
+    ...over,
+  });
+
+  it("reverse-looks-up the tier from the base price id", () => {
+    expect(planIdForBasePrice(PLANS, "price_pro_base")).toBe("pro");
+    expect(planIdForBasePrice(PLANS, "price_scale_base")).toBe("scale");
+    expect(planIdForBasePrice(PLANS, "price_scale_over")).toBeNull(); // overage id is not a base
+    expect(planIdForBasePrice(PLANS, "price_unknown")).toBeNull();
+  });
+
+  it("active subscription → active on its tier", () => {
+    expect(billingDisplayFromSubscription(sub(), PLANS)).toEqual({
+      tier: "pro",
+      state: "active",
+      periodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    });
+  });
+
+  it("cancel_at_period_end while still active → canceling (not yet canceled)", () => {
+    expect(billingDisplayFromSubscription(sub({ cancelAtPeriodEnd: true }), PLANS).state).toBe(
+      "canceling",
+    );
+  });
+
+  it("status 'canceled' is terminal (overrides cancelAtPeriodEnd)", () => {
+    expect(
+      billingDisplayFromSubscription(sub({ status: "canceled", cancelAtPeriodEnd: true }), PLANS)
+        .state,
+    ).toBe("canceled");
+  });
+
+  it("past_due is a distinct grace state (entitled, NOT inactive) — ADR-0020", () => {
+    expect(billingDisplayFromSubscription(sub({ status: "past_due" }), PLANS).state).toBe(
+      "past_due",
+    );
+  });
+
+  it("past_due OUTRANKS canceling — a failing card during the cancel grace must still surface", () => {
+    // A customer who scheduled cancellation AND whose (final) charge is failing: the actionable
+    // dunning message must win over 'canceling', or the failing payment is hidden. past_due is checked
+    // before cancelAtPeriodEnd for exactly this.
+    expect(
+      billingDisplayFromSubscription(sub({ status: "past_due", cancelAtPeriodEnd: true }), PLANS)
+        .state,
+    ).toBe("past_due");
+  });
+
+  it("trialing → a distinct 'trialing' state (entitled, but no charge has happened yet)", () => {
+    // trialing is entitled (in BILLING_ACTIVE_STATUSES) but rendering it as 'active'/"Renews" would
+    // misstate money: the shown date is the trial's FIRST charge, not a renewal of an already-paid plan.
+    expect(billingDisplayFromSubscription(sub({ status: "trialing" }), PLANS).state).toBe(
+      "trialing",
+    );
+    // A trial scheduled to cancel still reads as canceling (it will simply end, un-charged).
+    expect(
+      billingDisplayFromSubscription(sub({ status: "trialing", cancelAtPeriodEnd: true }), PLANS)
+        .state,
+    ).toBe("canceling");
+  });
+
+  it("non-entitled statuses (unpaid/incomplete/paused) → inactive (back on Free)", () => {
+    for (const status of ["unpaid", "incomplete", "incomplete_expired", "paused"]) {
+      expect(billingDisplayFromSubscription(sub({ status }), PLANS).state).toBe("inactive");
+    }
+  });
+
+  it("an unknown base price (legacy/archived) still renders a state, tier 'unknown'", () => {
+    const d = billingDisplayFromSubscription(sub({ plan: "price_legacy" }), PLANS);
+    expect(d.tier).toBe("unknown");
+    expect(d.state).toBe("active");
+  });
+});
 
 describe("parseBillingMode (fail-safe billing flag)", () => {
   it("accepts the three known modes (case-insensitive, trimmed)", () => {
@@ -118,6 +208,44 @@ describe("parseStripePlans — the self-serve plan → price-id map (fail-closed
     expect(
       parseStripePlans('{"pro":{"base":"price_pb","overage":"price_po"},"scale":{}}'),
     ).toBeNull();
+  });
+});
+
+describe("isLiveSubscriptionStatus — does a NEW Checkout risk a duplicate subscription?", () => {
+  it("TERMINAL statuses are not live — resubscribing via Checkout is safe (no duplicate)", () => {
+    // A canceled/incomplete_expired subscription no longer exists at Stripe, so a fresh Checkout is the
+    // correct resubscribe path — it cannot create a second live subscription.
+    expect(isLiveSubscriptionStatus("canceled")).toBe(false);
+    expect(isLiveSubscriptionStatus("incomplete_expired")).toBe(false);
+  });
+
+  it("every non-terminal status IS live — a new Checkout would double-subscribe the customer", () => {
+    // These subscriptions still EXIST at Stripe (even the non-entitled ones like unpaid/paused). Starting
+    // a new Checkout on the same customer creates a SECOND concurrent subscription → double billing.
+    for (const s of ["active", "trialing", "past_due", "unpaid", "paused", "incomplete"]) {
+      expect(isLiveSubscriptionStatus(s)).toBe(true);
+    }
+  });
+
+  it("is fail-SAFE — an unknown status Stripe adds later counts as live (block the duplicate)", () => {
+    expect(isLiveSubscriptionStatus("some_future_status")).toBe(true);
+    expect(isLiveSubscriptionStatus("")).toBe(true);
+  });
+});
+
+describe("plan labels (single source of truth, co-located with the plan ids)", () => {
+  it("SELF_SERVE_PLAN_LABELS covers every self-serve plan id", () => {
+    for (const id of SELF_SERVE_PLAN_IDS) {
+      expect(SELF_SERVE_PLAN_LABELS[id]).toBeTruthy();
+    }
+    expect(SELF_SERVE_PLAN_LABELS).toEqual({ pro: "Pro", scale: "Scale" });
+  });
+
+  it("planLabel returns the display name for a known plan, a generic fallback otherwise", () => {
+    expect(planLabel("pro")).toBe("Pro");
+    expect(planLabel("scale")).toBe("Scale");
+    expect(planLabel("unknown")).toBe("Paid plan");
+    expect(planLabel("enterprise")).toBe("Paid plan");
   });
 });
 

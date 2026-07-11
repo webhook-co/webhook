@@ -43,6 +43,14 @@
       "description": "Configure auto-delivery routing rules."
     },
     {
+      "name": "Triggers",
+      "description": "Subscribe agents to endpoints and wait for matching events."
+    },
+    {
+      "name": "Usage",
+      "description": "Read the org's metering usage for the current billing period."
+    },
+    {
       "name": "Audit",
       "description": "Verify the tamper-evident audit chain."
     },
@@ -1228,7 +1236,7 @@
         "operationId": "usageGet",
         "summary": "Get the org's metering usage for the current billing period",
         "tags": [
-          "usage"
+          "Usage"
         ],
         "security": [
           {
@@ -1970,7 +1978,7 @@
         "operationId": "triggersList",
         "summary": "List agent trigger subscriptions",
         "tags": [
-          "triggers"
+          "Triggers"
         ],
         "security": [
           {
@@ -2022,7 +2030,7 @@
         "operationId": "triggersCreate",
         "summary": "Create an agent trigger subscription",
         "tags": [
-          "triggers"
+          "Triggers"
         ],
         "security": [
           {
@@ -2076,7 +2084,7 @@
         "operationId": "triggersRevoke",
         "summary": "Revoke an agent trigger subscription",
         "tags": [
-          "triggers"
+          "Triggers"
         ],
         "security": [
           {
@@ -2132,7 +2140,7 @@
         "operationId": "triggersWait",
         "summary": "Consume the next events for an agent trigger subscription (short-poll)",
         "tags": [
-          "triggers"
+          "Triggers"
         ],
         "security": [
           {
