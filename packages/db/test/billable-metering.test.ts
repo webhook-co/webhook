@@ -7,7 +7,12 @@ import { DB_ROLES } from "../src/constants";
 import { markDeliveryTerminalFailure } from "../src/delivery";
 import { reconcileMeteringUsage } from "../src/meter-reconcile";
 import { sumPeriodEventUsage } from "../src/period-usage";
-import { recordDeliveryAttempt, serializeTarget } from "../src/replay";
+import {
+  claimDeliveryAttempt,
+  finalizeDeliveryAttempt,
+  recordDeliveryAttempt,
+  serializeTarget,
+} from "../src/replay";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -85,6 +90,16 @@ async function seedOrgWithEvent(daysAgo = 0): Promise<{ orgId: string; eventId: 
     await tx`update events set received_at = ${at} where id = ${eventId}`;
   });
   return { orgId, eventId };
+}
+
+/** A real destination the claim path FKs to. */
+async function seedDestination(orgId: string): Promise<string> {
+  const id = randomUUID();
+  await withTenant(app, orgId, async (tx) => {
+    await tx`insert into replay_destinations (id, org_id, url)
+             values (${id}, ${orgId}, ${"https://x.test/dest"})`;
+  });
+  return id;
 }
 
 /** A raw dispatch row on `daysAgo`, with an explicit `billable`. Returns its id. */
@@ -211,6 +226,59 @@ describe("markDeliveryTerminalFailure — an SSRF-blocked delivery", () => {
     );
 
     expect(await billableOf(orgId, id)).toBe(false);
+  });
+
+  it("un-bills a `blocked` delivery via the claim → finalize path (remote replay)", async () => {
+    // The SECOND un-billing site: apps/api/remote-replay + apps/web/replay-mutations claim a 'pending' row
+    // and finalize it with the delivery outcome. A regression here would silently overcharge every remote
+    // replay to a private/internal URL, while the DO drain path (markDeliveryTerminalFailure) stayed correct.
+    const { orgId, eventId } = await seedOrgWithEvent(0);
+    const destinationId = await seedDestination(orgId);
+    const { attempt, won } = await withTenant(app, orgId, (tx) =>
+      claimDeliveryAttempt(tx, {
+        orgId,
+        eventId,
+        destinationId,
+        target: serializeTarget({ kind: "destination", destinationId }),
+        idempotencyKey: "rr-1",
+      }),
+    );
+    expect(won).toBe(true);
+    expect(await billableOf(orgId, attempt.id)).toBe(true); // claimed as billable
+
+    await withTenant(app, orgId, (tx) =>
+      finalizeDeliveryAttempt(tx, {
+        id: attempt.id,
+        status: "blocked",
+        statusCode: null,
+        error: "destination url rejected at delivery",
+      }),
+    );
+
+    expect(await billableOf(orgId, attempt.id)).toBe(false);
+    // …and the meter reflects only the capture, not the refused dispatch.
+    const total = await withTenant(app, orgId, (tx) =>
+      sumPeriodEventUsage(tx, { start: dayIso(30), end: null }, NOW),
+    );
+    expect(total).toBe(1);
+  });
+
+  it("keeps a finalized `delivered` delivery billable", async () => {
+    const { orgId, eventId } = await seedOrgWithEvent(0);
+    const destinationId = await seedDestination(orgId);
+    const { attempt } = await withTenant(app, orgId, (tx) =>
+      claimDeliveryAttempt(tx, {
+        orgId,
+        eventId,
+        destinationId,
+        target: serializeTarget({ kind: "destination", destinationId }),
+        idempotencyKey: "rr-2",
+      }),
+    );
+    await withTenant(app, orgId, (tx) =>
+      finalizeDeliveryAttempt(tx, { id: attempt.id, status: "delivered", statusCode: 200 }),
+    );
+    expect(await billableOf(orgId, attempt.id)).toBe(true);
   });
 
   it("keeps a `dead` delivery billable — we made every attempt, that is the work", async () => {
