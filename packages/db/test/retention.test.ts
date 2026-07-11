@@ -25,11 +25,14 @@ async function setRetentionDays(orgId: string, days: number | null): Promise<voi
 }
 
 /** Seed an org + owner endpoint; returns { orgId, endpointId }. */
+// Seed a FREE org (retention_days = 7). Set EXPLICITLY, because the column default is now NULL = unlimited
+// (0056, the fail-safe against pruning an unmirrored paid org) — bootstrapPersonalOrg writes the Free window
+// itself, and so must these prune fixtures, which model free orgs.
 async function seedOrg(slug: string): Promise<{ orgId: string; endpointId: string }> {
   const orgId = randomUUID();
   const endpointId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${slug}, ${slug})`;
+    await tx`insert into orgs (id, slug, name, retention_days) values (${orgId}, ${slug}, ${slug}, ${7})`;
     await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
              values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
   });
@@ -345,12 +348,31 @@ describe("per-plan retention windows", () => {
     expect(await claimRetentionOrgs(retention, 100)).not.toContain(orgId);
   });
 
-  it("a NEW org defaults to the Free 7-day window with no application involvement", async () => {
-    const { orgId, endpointId } = await seedOrg("default-window");
+  it("an org created with the Free 7-day window prunes events past it", async () => {
+    // seedOrg writes retention_days = 7 explicitly, exactly as bootstrapPersonalOrg now does for a free org.
+    const { orgId, endpointId } = await seedOrg("free-window");
     const expired = await seedEvent(orgId, endpointId, { ageDays: 10 });
     await seedEvent(orgId, endpointId, { ageDays: 3 });
 
     expect((await listExpiringEvents(retention, orgId, 100)).map((e) => e.id)).toEqual([expired]);
+  });
+
+  it("FAIL-SAFE: an org inserted with NO window (the NULL default, 0056) is NEVER pruned", async () => {
+    // The whole point of flipping the column default to NULL: a row that reaches the prune with an unset
+    // window — e.g. a paid org whose subscription hasn't mirrored yet — must OVER-retain, not be deleted at
+    // the Free window on day 8. Insert an org WITHOUT retention_days and prove nothing prunes it.
+    const orgId = randomUUID();
+    const endpointId = randomUUID();
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"nulldefault"}, ${"nulldefault"})`;
+      await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
+               values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
+    });
+    const ancient = await seedEvent(orgId, endpointId, { ageDays: 3650 });
+
+    expect(await listExpiringEvents(retention, orgId, 100)).toEqual([]);
+    expect(await deleteExpiredEvents(retention, orgId, [ancient])).toEqual([]);
+    expect(await claimRetentionOrgs(retention, 100)).not.toContain(orgId);
   });
 
   it("claims each org against its OWN window, oldest-data-first", async () => {

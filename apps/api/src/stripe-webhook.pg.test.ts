@@ -140,6 +140,27 @@ describe("processStripeEvent (integration)", () => {
     expect(await ledgerCount(bad.id)).toBe(1);
   });
 
+  it("DATA-SAFETY: an UNPARSEABLE subscription is REJECTED, NOT deduped, so a parser fix + replay repairs it", async () => {
+    // The worst bug this slice fixes. If Stripe ships a subscription shape our parser can't read (it has
+    // ALREADY happened once — the "Basil" API move of period bounds onto items), the event was recorded as
+    // permanently `seen`. A redelivery then short-circuits on the dedup marker and can NEVER repair it, so the
+    // org's retention window is never mirrored from its plan → it stays at the Free 7-day DEFAULT → the hourly
+    // prune irreversibly deletes a paying customer's events AND R2 bodies on day 8. Rejecting instead (ACK 200,
+    // NO ledger row) makes it repairable: once the parser is fixed, a manual Stripe replay reprocesses.
+    const org = await seedOrg();
+    // A subscription object missing the required period bounds (neither top-level nor on the item) → the
+    // parser returns null. Everything else is present, so this is specifically the "bad shape" path.
+    const unparseable = ev("customer.subscription.updated", {
+      id: "sub_x",
+      customer: "cus_x",
+      status: "active",
+      metadata: { org_id: org },
+      items: { data: [{ price: { id: "price_pro", metadata: {} } }] },
+    });
+    expect(await processStripeEvent(billing, unparseable)).toBe("rejected");
+    expect(await ledgerCount(unparseable.id)).toBe(0); // NOT deduped → reprocessable, never silently swallowed
+  });
+
   it("MONEY-SAFETY: an apply FAILURE records NO ledger row, so a redelivery re-applies (no loss)", async () => {
     // A subscription event for an org that doesn't exist yet → the applier's FK insert throws. Because the
     // dedup marker is written only AFTER a successful apply, NOTHING is recorded — Stripe would 500 + retry.
