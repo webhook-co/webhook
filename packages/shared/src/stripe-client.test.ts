@@ -487,6 +487,7 @@ describe("makeStripeClient.retrieveSubscription", () => {
         { id: "si_base", price: "price_pro_base" },
         { id: "si_over", price: "price_pro_over" },
       ],
+      latestInvoiceId: null, // absent in this fixture
     });
   });
 });
@@ -531,71 +532,117 @@ describe("makeStripeClient.updateSubscription", () => {
 // time-proration (we compute a usage-based refund instead — letting Stripe also prorate would double-credit),
 // and move the money back.
 
-describe("makeStripeClient.retrieveLatestPaidInvoice", () => {
-  it("GETs the newest PAID invoice for the subscription and maps its charge + price lines", async () => {
-    const { impl, calls } = fakeFetch({
-      status: 200,
-      body: {
-        data: [
-          {
-            id: "in_1",
-            charge: "ch_1",
-            payment_intent: "pi_1",
-            currency: "eur",
-            lines: {
-              data: [
-                { amount: 1900, price: { id: "price_base" } },
-                { amount: 0, price: { id: "price_overage" } },
-              ],
-            },
-          },
-        ],
+describe("makeStripeClient.retrieveInvoice", () => {
+  /** The invoice GET, then the PAGINATED lines GET (Stripe caps embedded lines at 10 by default — a period
+   *  with several proration + metered lines would silently drop the base line off the end). */
+  function invoiceFetch(
+    invoice: unknown,
+    linePages: Array<{ data: unknown[]; has_more?: boolean }>,
+  ) {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    let page = 0;
+    const impl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      const body = url.includes("/lines") ? linePages[page++] : invoice;
+      return { ok: true, status: 200, json: async () => body } as Response;
+    }) as unknown as typeof fetch;
+    return { impl, calls };
+  }
+
+  it("maps status/charge/amount_paid/currency and PAGINATES the lines (never truncates at 10)", async () => {
+    const { impl, calls } = invoiceFetch(
+      {
+        id: "in_1",
+        status: "paid",
+        charge: "ch_1",
+        payment_intent: "pi_1",
+        currency: "eur",
+        amount_paid: 1900,
       },
-    });
+      [
+        { data: [{ id: "il_1", amount: 1900, price: { id: "price_base" } }], has_more: true },
+        { data: [{ id: "il_2", amount: 500, price: { id: "price_over" } }], has_more: false },
+      ],
+    );
     const client = makeStripeClient({
       mode: "test",
       secretKey: SECRET,
       apiBase: "https://stripe.test",
       fetchImpl: impl,
     });
-    const inv = await client.retrieveLatestPaidInvoice("sub_1");
+    const inv = await client.retrieveInvoice("in_1");
 
-    expect(calls[0]!.init.method).toBe("GET");
-    const url = new URL(calls[0]!.url);
-    expect(url.pathname).toBe("/v1/invoices");
-    expect(url.searchParams.get("subscription")).toBe("sub_1");
-    expect(url.searchParams.get("status")).toBe("paid"); // only money actually TAKEN is refundable
-    expect(url.searchParams.get("limit")).toBe("1");
+    expect(new URL(calls[0]!.url).pathname).toBe("/v1/invoices/in_1");
+    expect(new URL(calls[1]!.url).pathname).toBe("/v1/invoices/in_1/lines");
+    expect(new URL(calls[2]!.url).searchParams.get("starting_after")).toBe("il_1"); // followed has_more
 
     expect(inv).toEqual({
       id: "in_1",
+      status: "paid",
       charge: "ch_1",
       paymentIntent: "pi_1",
       currency: "eur",
+      amountPaidMinorUnits: 1900,
       lines: [
-        { priceId: "price_base", amountMinorUnits: 1900 },
-        { priceId: "price_overage", amountMinorUnits: 0 },
+        { priceId: "price_base", amountMinorUnits: 1900, discountMinorUnits: 0 },
+        { priceId: "price_over", amountMinorUnits: 500, discountMinorUnits: 0 },
       ],
     });
   });
 
-  it("returns null when the subscription has NO paid invoice (a trial that never billed)", async () => {
-    const { impl } = fakeFetch({ status: 200, body: { data: [] } });
+  it("nets discount_amounts off a line (invoice line `amount` is PRE-discount — a coupon would over-refund)", async () => {
+    const { impl } = invoiceFetch(
+      { id: "in_1", status: "paid", charge: "ch_1", currency: "eur", amount_paid: 950 },
+      [
+        {
+          data: [
+            {
+              id: "il_1",
+              amount: 1900,
+              price: { id: "price_base" },
+              discount_amounts: [{ amount: 950 }],
+            },
+          ],
+        },
+      ],
+    );
     const client = makeStripeClient({
       mode: "test",
       secretKey: SECRET,
       apiBase: "https://stripe.test",
       fetchImpl: impl,
     });
-    expect(await client.retrieveLatestPaidInvoice("sub_1")).toBeNull();
+    const inv = await client.retrieveInvoice("in_1");
+    expect(inv.lines[0]).toEqual({
+      priceId: "price_base",
+      amountMinorUnits: 1900,
+      discountMinorUnits: 950,
+    });
+    expect(inv.amountPaidMinorUnits).toBe(950);
   });
 
-  it("tolerates a line with no price (a one-off/proration line) rather than throwing", async () => {
-    const { impl } = fakeFetch({
+  it("surfaces an UNPAID invoice's status (a past_due renewal is `open`, and must not be refunded)", async () => {
+    const { impl } = invoiceFetch(
+      { id: "in_2", status: "open", charge: null, currency: "eur", amount_paid: 0 },
+      [{ data: [] }],
+    );
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const inv = await client.retrieveInvoice("in_2");
+    expect(inv.status).toBe("open");
+    expect(inv.amountPaidMinorUnits).toBe(0);
+  });
+});
+
+describe("makeStripeClient.retrieveCharge", () => {
+  it("returns the amount captured and the amount ALREADY refunded (the refundable headroom)", async () => {
+    const { impl, calls } = fakeFetch({
       status: 200,
-      body: {
-        data: [{ id: "in_1", charge: null, lines: { data: [{ amount: 500 }] } }],
-      },
+      body: { id: "ch_1", amount: 1900, amount_refunded: 400 },
     });
     const client = makeStripeClient({
       mode: "test",
@@ -603,9 +650,56 @@ describe("makeStripeClient.retrieveLatestPaidInvoice", () => {
       apiBase: "https://stripe.test",
       fetchImpl: impl,
     });
-    const inv = await client.retrieveLatestPaidInvoice("sub_1");
-    expect(inv?.charge).toBeNull();
-    expect(inv?.lines).toEqual([{ priceId: null, amountMinorUnits: 500 }]);
+    const charge = await client.retrieveCharge("ch_1");
+    expect(new URL(calls[0]!.url).pathname).toBe("/v1/charges/ch_1");
+    expect(charge).toEqual({ amountMinorUnits: 1900, amountRefundedMinorUnits: 400 });
+  });
+});
+
+describe("makeStripeClient.retrievePrice", () => {
+  it("returns the price's event_cap metadata (the INCLUDED volume of the plan actually paid for)", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: { id: "price_base", metadata: { event_cap: "500000" } },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    expect(await client.retrievePrice("price_base")).toEqual({
+      id: "price_base",
+      eventCap: 500_000,
+    });
+    expect(new URL(calls[0]!.url).pathname).toBe("/v1/prices/price_base");
+  });
+
+  it('maps event_cap="unlimited" to null (no denominator → the refund declines rather than divides)', async () => {
+    const { impl } = fakeFetch({
+      status: 200,
+      body: { id: "price_ent", metadata: { event_cap: "unlimited" } },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    expect((await client.retrievePrice("price_ent")).eventCap).toBeNull();
+  });
+
+  it("maps an ABSENT or garbage event_cap to null (fail closed — never guess a denominator)", async () => {
+    for (const metadata of [{}, { event_cap: "not-a-number" }, undefined]) {
+      const { impl } = fakeFetch({ status: 200, body: { id: "price_x", metadata } });
+      const client = makeStripeClient({
+        mode: "test",
+        secretKey: SECRET,
+        apiBase: "https://stripe.test",
+        fetchImpl: impl,
+      });
+      expect((await client.retrievePrice("price_x")).eventCap).toBeNull();
+    }
   });
 });
 
@@ -690,5 +784,59 @@ describe("makeStripeClient.createRefund", () => {
       client.createRefund({ charge: "ch_1", amountMinorUnits: 0, idempotencyKey: "k" }),
     ).rejects.toThrow(/amount/i);
     expect(calls).toHaveLength(0); // never reached the network
+  });
+});
+
+describe("makeStripeClient.retrieveSubscription — latest invoice", () => {
+  it("returns latestInvoiceId so the refund can anchor to THIS period's invoice, not the last PAID one", async () => {
+    // The bug this exists to kill: a past_due sub's current-period invoice is `open`, so a
+    // `status=paid&limit=1` search silently returns the PREVIOUS (already fully consumed) period's
+    // invoice — and refunding against that hands back money for a period the customer used up.
+    const { impl } = fakeFetch({
+      status: 200,
+      body: {
+        id: "sub_1",
+        status: "past_due",
+        latest_invoice: "in_july_unpaid",
+        items: { data: [{ id: "si_1", price: { id: "price_base_pro" } }] },
+      },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const sub = await client.retrieveSubscription("sub_1");
+    expect(sub.latestInvoiceId).toBe("in_july_unpaid");
+    expect(sub.status).toBe("past_due");
+  });
+
+  it("tolerates latest_invoice arriving EXPANDED as an object rather than an id string", async () => {
+    const { impl } = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", latest_invoice: { id: "in_1" }, items: { data: [] } },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    expect((await client.retrieveSubscription("sub_1")).latestInvoiceId).toBe("in_1");
+  });
+
+  it("returns null latestInvoiceId when the subscription never produced one", async () => {
+    const { impl } = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", items: { data: [] } },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    expect((await client.retrieveSubscription("sub_1")).latestInvoiceId).toBeNull();
   });
 });

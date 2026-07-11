@@ -89,17 +89,25 @@ const SWITCH_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "da
 };
 
 /** The `?cancel=<status>` result banner (cancelSubscriptionAction redirects here). Covers EVERY
- *  CancelRefundResult status. `refund_failed` is the one that must NOT read as a failed cancellation: the
- *  subscription IS canceled, and a user who thinks otherwise would try again while we still owe them money. */
+ *  CancelRefundResult status.
+ *
+ *  `refund_failed` and `refund_unavailable` must NOT read as a failed cancellation: the subscription IS
+ *  cancelled in both, and a user who thinks otherwise would cancel again while we still owe them money.
+ *  Equally, `ok` must never promise a refund we didn't actually make — hence the separate statuses. */
 const CANCEL_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "danger" }> = {
   ok: {
     message:
-      "Subscription canceled. Any refund for your unused included volume is on its way back to your original payment method.",
+      "Subscription cancelled. Any refund for your unused included volume is on its way back to your original payment method.",
     tone: "ok",
+  },
+  refund_unavailable: {
+    message:
+      "Your subscription is cancelled. We may owe you a refund but couldn't return it automatically to your original payment method — we've recorded it. Email support@webhook.co and we'll sort it out.",
+    tone: "warn",
   },
   refund_failed: {
     message:
-      "Your subscription is canceled, but we couldn't process the refund automatically. We've recorded what we owe you — email support@webhook.co and we'll sort it out.",
+      "Your subscription is cancelled, but the refund didn't go through. We've recorded what we owe you — email support@webhook.co and we'll sort it out.",
     tone: "warn",
   },
   forbidden: { message: "Only an owner or admin can cancel the subscription.", tone: "warn" },

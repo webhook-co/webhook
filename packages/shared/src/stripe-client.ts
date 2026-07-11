@@ -80,6 +80,9 @@ export interface StripeSubscription {
   readonly id: string;
   readonly status: string;
   readonly items: readonly SubscriptionItemRef[];
+  /** The invoice for the CURRENT period — paid or not. The refund anchors to this rather than searching for
+   *  the latest *paid* invoice, which on a `past_due` sub is the previous (already consumed) period's. */
+  readonly latestInvoiceId: string | null;
 }
 
 /** One metered-usage report to a Stripe Billing Meter (the metered-overage counter). */
@@ -166,11 +169,17 @@ export interface StripeClient {
     idempotencyKey?: string;
   }): Promise<StripeSubscription>;
   /**
-   * The newest PAID invoice for a subscription, or null if it never billed (e.g. a trial). This is where the
-   * base fee's ACTUAL amount and the charge that took it both live — the refund reads both from here rather
-   * than from any committed figure (there are none: parseStripePlans rejects an `amount` key).
+   * Retrieve one invoice, with its lines FULLY PAGINATED. Stripe embeds only the first 10 lines by default,
+   * and a period carrying several proration + metered lines can push the base line off the end — which would
+   * silently compute a zero base and refund nothing.
    */
-  retrieveLatestPaidInvoice(subscriptionId: string): Promise<StripePaidInvoice | null>;
+  retrieveInvoice(invoiceId: string): Promise<StripeInvoice>;
+  /** A charge's captured + already-refunded amounts, so a refund can be clamped to the remaining headroom
+   *  (a support agent or the Portal may already have refunded part of it). */
+  retrieveCharge(chargeId: string): Promise<StripeCharge>;
+  /** A price + its `event_cap` metadata — the included volume of the plan a given invoice actually bought.
+   *  Read per-invoice rather than from the live subscription, which may have switched plans mid-period. */
+  retrievePrice(priceId: string): Promise<StripePrice>;
   /**
    * Cancel a subscription IMMEDIATELY (Stripe's DELETE). Sends `prorate=false`: the customer's refund is
    * computed from USAGE (baseFeeRefundMinorUnits), so letting Stripe also issue its own time-based proration
@@ -205,23 +214,46 @@ export interface StripeClient {
   }): Promise<MeterEventSummary[]>;
 }
 
-/** One line of a Stripe invoice: the price it billed (null for a one-off/proration line) + its amount. */
+/**
+ * One line of a Stripe invoice. `amountMinorUnits` is Stripe's `amount`, which is **pre-discount** — a coupon
+ * lives in `discount_amounts` and must be netted off, or a discounted subscription over-refunds.
+ */
 export interface StripeInvoiceLine {
   readonly priceId: string | null;
   readonly amountMinorUnits: number;
+  readonly discountMinorUnits: number;
 }
 
 /**
- * A PAID Stripe invoice — the only place the base fee's real amount exists (no money figure is committed to
- * this repo), and the object carrying the charge the refund must be issued against.
+ * A Stripe invoice — the only place the base fee's real amount exists (no money figure is committed to this
+ * repo), and the object carrying the charge a refund must be issued against.
+ *
+ * `status` is carried deliberately: a `past_due` subscription's CURRENT-period invoice is `open`, and paying
+ * out against anything other than a `paid` current-period invoice refunds a period the customer already used.
  */
-export interface StripePaidInvoice {
+export interface StripeInvoice {
   readonly id: string;
+  readonly status: string;
   /** The charge that took the money. Null on a zero-value/credit-settled invoice → nothing to refund. */
   readonly charge: string | null;
   readonly paymentIntent: string | null;
   readonly currency: string | null;
+  /** What was ACTUALLY captured. The hard ceiling on any refund — `amount` lines are pre-discount. */
+  readonly amountPaidMinorUnits: number;
   readonly lines: readonly StripeInvoiceLine[];
+}
+
+/** A charge's refundable headroom: what it took, and what has already been given back. */
+export interface StripeCharge {
+  readonly amountMinorUnits: number;
+  readonly amountRefundedMinorUnits: number;
+}
+
+/** A Stripe price + the INCLUDED event volume carried in its metadata (`event_cap`). */
+export interface StripePrice {
+  readonly id: string;
+  /** null = unlimited, absent, or unparseable — all fail closed to "no denominator". */
+  readonly eventCap: number | null;
 }
 
 /** The result of moving money back to the customer. */
@@ -374,11 +406,15 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         id: string;
         status: string;
         items?: { data?: Array<{ id: string; price?: { id?: string } }> };
+        latest_invoice?: string | { id?: string } | null;
       }>(`/subscriptions/${subscriptionId}`);
+      // latest_invoice is an id by default, but an object if anything ever expands it. Accept both.
+      const li = raw.latest_invoice;
       return {
         id: raw.id,
         status: raw.status,
         items: (raw.items?.data ?? []).map((it) => ({ id: it.id, price: it.price?.id ?? "" })),
+        latestInvoiceId: typeof li === "string" ? li : (li?.id ?? null),
       };
     },
     async updateSubscription({ subscriptionId, items, prorationBehavior, idempotencyKey }) {
@@ -386,6 +422,7 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         id: string;
         status: string;
         items?: { data?: Array<{ id: string; price?: { id?: string } }> };
+        latest_invoice?: string | { id?: string } | null;
       }>(
         `/subscriptions/${subscriptionId}`,
         {
@@ -394,37 +431,83 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         },
         idempotencyKey,
       );
+      const li = raw.latest_invoice;
       return {
         id: raw.id,
         status: raw.status,
         items: (raw.items?.data ?? []).map((it) => ({ id: it.id, price: it.price?.id ?? "" })),
+        latestInvoiceId: typeof li === "string" ? li : (li?.id ?? null),
       };
     },
-    async retrieveLatestPaidInvoice(subscriptionId) {
-      // status=paid: only money actually TAKEN can be given back. limit=1 + Stripe's newest-first ordering
-      // gives the invoice for the current period — the one that charged this period's base fee.
-      const body = await get<{
-        data?: Array<{
-          id: string;
-          charge?: string | null;
-          payment_intent?: string | null;
-          currency?: string | null;
-          lines?: { data?: Array<{ amount?: number; price?: { id?: string } | null }> };
-        }>;
-      }>("/invoices", { subscription: subscriptionId, status: "paid", limit: 1 });
-      const raw = body.data?.[0];
-      if (!raw) return null; // never billed (a trial, or a sub canceled before its first invoice)
+    async retrieveInvoice(invoiceId) {
+      const raw = await get<{
+        id: string;
+        status?: string;
+        charge?: string | null;
+        payment_intent?: string | null;
+        currency?: string | null;
+        amount_paid?: number;
+      }>(`/invoices/${invoiceId}`);
+
+      // Lines are fetched from the dedicated paginated endpoint, never the (max-10) embedded list.
+      type RawLine = {
+        id: string;
+        amount?: number;
+        price?: { id?: string } | null;
+        discount_amounts?: Array<{ amount?: number }> | null;
+      };
+      const lines: StripeInvoiceLine[] = [];
+      let startingAfter: string | undefined;
+      for (let page = 0; page < MAX_SUMMARY_PAGES; page += 1) {
+        const body = await get<{ data?: RawLine[]; has_more?: boolean }>(
+          `/invoices/${invoiceId}/lines`,
+          { limit: 100, starting_after: startingAfter },
+        );
+        const data = body.data ?? [];
+        for (const l of data) {
+          lines.push({
+            priceId: l.price?.id ?? null,
+            // PRE-discount, per Stripe. The discount is reported separately and netted by the caller.
+            amountMinorUnits: Number(l.amount ?? 0),
+            discountMinorUnits: (l.discount_amounts ?? []).reduce(
+              (sum, d) => sum + Number(d.amount ?? 0),
+              0,
+            ),
+          });
+        }
+        const last = data[data.length - 1];
+        if (!body.has_more || !last) break;
+        startingAfter = last.id;
+      }
+
       return {
         id: raw.id,
+        status: raw.status ?? "",
         charge: raw.charge ?? null,
         paymentIntent: raw.payment_intent ?? null,
         currency: raw.currency ?? null,
-        lines: (raw.lines?.data ?? []).map((l) => ({
-          // A proration/one-off line carries no price — keep it (it still moved money) but leave it unmatched
-          // so the caller's base-price lookup can't accidentally bind to it.
-          priceId: l.price?.id ?? null,
-          amountMinorUnits: Number(l.amount ?? 0),
-        })),
+        amountPaidMinorUnits: Number(raw.amount_paid ?? 0),
+        lines,
+      };
+    },
+    async retrieveCharge(chargeId) {
+      const raw = await get<{ amount?: number; amount_refunded?: number }>(`/charges/${chargeId}`);
+      return {
+        amountMinorUnits: Number(raw.amount ?? 0),
+        amountRefundedMinorUnits: Number(raw.amount_refunded ?? 0),
+      };
+    },
+    async retrievePrice(priceId) {
+      const raw = await get<{ id: string; metadata?: Record<string, unknown> }>(
+        `/prices/${priceId}`,
+      );
+      // Fail CLOSED on anything not a positive integer — "unlimited", absent, or garbage all become null
+      // ("no denominator"), so the refund declines rather than dividing by a value we guessed.
+      const cap = raw.metadata?.event_cap;
+      const parsed = typeof cap === "string" ? Number(cap) : NaN;
+      return {
+        id: raw.id,
+        eventCap: Number.isInteger(parsed) && parsed > 0 ? parsed : null,
       };
     },
     async cancelSubscription({ subscriptionId, idempotencyKey }) {

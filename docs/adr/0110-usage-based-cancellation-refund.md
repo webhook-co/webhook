@@ -29,12 +29,41 @@ refund = base × (1 − consumed / included)
 
 - `consumed` = billable events in the current period (`sumPeriodEventUsage` — the same basis the soft cap
   enforces on, so the refund can never disagree with what we metered them for).
-- `included` = the subscription's own `event_cap` — what the customer actually *bought*. Deliberately not the
-  `org_limits` mirror, whose decrease-defer window can hold a different value mid-cycle. A wrong denominator
-  is wrong money.
-- `base` = read from the **paid Stripe invoice** at runtime. No price or amount figure exists in this repo
-  (`parseStripePlans` rejects a config carrying an `amount`), so the only honest source of what we charged is
-  the invoice that charged it.
+- `base` and `included` both come from **the invoice that actually took the money** — see the invariant below.
+
+## The invariant: every figure comes from the invoice, never from live subscription state
+
+This is the load-bearing rule, and it was learned the hard way. The first implementation read the base price
+from the *live* subscription and searched for the most recent *paid* invoice. A security review found **four**
+ways that moves wrong money, and all four share one root cause: live state and the money that was taken can
+disagree.
+
+| Failure | What live state says | What actually happened |
+| --- | --- | --- |
+| **`past_due` cancel** | sub is entitled (`past_due` is in `BILLING_ACTIVE_STATUSES`) | the current period's invoice is `open` — never paid. "Latest *paid* invoice" reaches back to the **previous, fully consumed** period, and this period's ~0 usage refunds ~100% of it. **Money out of nothing.** |
+| **Mid-cycle plan switch** (ADR-0108/WS4, `create_prorations` issues no invoice) | items hold the **new** price | the paid invoice holds the **old** one → no line matches → a silent **€0 refund** for every customer who ever switched plans, under a banner promising their money back |
+| **A coupon** | line `amount` = 1900 | only 950 was captured — line `amount` is **pre-discount**; the discount lives in `discount_amounts`. Refunding a proportion of 1900 can exceed the charge. |
+| **Credit-settled invoice** | invoice is `paid` | there is no `charge` to reverse. Reporting success promises a refund *and writes a signed audit record of one that never happened*. |
+
+So the rules are:
+
+- Anchor to **`subscription.latest_invoice`** — *this* period's invoice, paid or not — never a search for the
+  latest paid one. If it isn't `paid`, nothing was prepaid for this period and nothing comes back. That is the
+  correct answer for a `past_due` cancellation.
+- **Sum** every base line net of its discounts. Don't take the first: a proration invoice carries several lines
+  on the same price, and one can be a **negative** credit.
+- Take `included` from **that invoice's base price** (`price.metadata.event_cap`), not the live subscription's
+  mirrored cap — after a plan switch the mirror describes a different plan entirely.
+- Clamp the result to `invoice.amount_paid` **and** to the charge's remaining headroom
+  (`charge.amount − charge.amount_refunded`) — support or the Portal may already have refunded part of it.
+- `base` figures are read from Stripe at runtime. No price or amount exists in this repo (`parseStripePlans`
+  rejects a config carrying an `amount`), so the only honest source of what we charged is the invoice that
+  charged it.
+
+**Never claim a refund we didn't make.** When money was taken but we cannot issue the refund — no charge to
+reverse, or no recognisable base line (a legacy/archived price) — we still cancel, but return a distinct
+`refund_unavailable` status and audit the debt. Telling a user their money is on its way when it isn't is worse
+than telling them nothing.
 
 **Cancellation is immediate**, not end-of-period. The two go together: if you keep access until the period
 ends, you have consumed the period and there is nothing unused to refund. (The Terms previously said both, and
@@ -56,8 +85,14 @@ subscription that never billed (a trial), or a credit-settled invoice with no ch
    cancel again while we still owe them.
 
 2. **The refund's idempotency key is derived from the paid INVOICE**, not from a per-click nonce. Two
-   independent cancel attempts against the same invoice therefore collapse to **one** refund at Stripe. A
-   nonce would mint a fresh key per attempt and refund the same money twice.
+   concurrent cancel attempts against the same invoice therefore collapse to **one** refund at Stripe. A nonce
+   would mint a fresh key per attempt and refund the same money twice.
+
+   Note the honest limit: there is **no automatic retry** of a failed refund. A re-cancel sees the subscription
+   already cancelled and stops before the refund leg, so recovery today is a human reading the
+   `subscription_canceled_refund_failed` audit row and refunding in Stripe. A refund-recovery job (re-drive
+   those audit rows, checking Stripe for an existing refund on the charge first) is **follow-up work** — this
+   path must not be described as self-healing until it exists.
 
 **Stripe's own cancel-time proration is switched OFF** (`prorate=false`). Our refund is usage-based; letting
 Stripe also credit the unused *time* would pay the customer twice for the same period.
