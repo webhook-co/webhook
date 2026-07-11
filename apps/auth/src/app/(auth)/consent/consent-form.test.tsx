@@ -28,7 +28,8 @@ const baseRequest: ConsentRequest = {
   requestId: "areq_123",
   csrfToken: "csrf_abc",
   flow: "device_code",
-  client: { id: "cli_wbhk", name: "webhook CLI" },
+  client: { id: "cli_wbhk", name: "webhook CLI", identityDomain: null, verified: false },
+  redirect: { host: null, isLoopback: false },
   device: { name: "Dana's MacBook Pro" },
   org: { id: "org_1", name: "Acme Inc" },
   origin: {
@@ -109,7 +110,89 @@ describe("ConsentForm", () => {
     render(<ConsentForm request={loopback} actions={makeActions()} />);
     // the subject IS the client here, so a "· {client}" suffix would render "webhook CLI · webhook CLI"
     const appRow = screen.getByText("App").parentElement?.querySelector("dd");
-    expect(appRow?.textContent?.trim()).toBe("webhook CLI");
+    // the name appears exactly once (a trust badge follows it, but the name isn't duplicated)
+    const occurrences = appRow?.textContent?.match(/webhook CLI/g) ?? [];
+    expect(occurrences).toHaveLength(1);
+  });
+
+  it("warns and makes Cancel dominant for a remote UNVERIFIED client (origin-honest, anti-phishing)", () => {
+    const remote: ConsentRequest = {
+      ...baseRequest,
+      flow: "pkce_loopback",
+      device: undefined,
+      client: {
+        id: "https://acme.dev/c.json",
+        name: "Acme",
+        identityDomain: "acme.dev",
+        verified: false,
+      },
+      redirect: { host: "acme.dev", isLoopback: false },
+    };
+    render(<ConsentForm request={remote} actions={makeActions()} />);
+    // an "unverified app" warning naming the un-spoofable identity domain
+    expect(screen.getByText(/unverified app/i)).toBeInTheDocument();
+    expect(screen.getAllByText(/acme\.dev/).length).toBeGreaterThan(0);
+    // the redirect host is shown (MCP spec MUST)
+    expect(screen.getByText("Sends code to")).toBeInTheDocument();
+    // the safe action is the primary button — labelled Cancel, not Deny
+    expect(screen.getByRole("button", { name: /cancel/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^deny$/i })).toBeNull();
+  });
+
+  it("shows a verified indicator and the usual Deny for a vetted client, no warning", () => {
+    const verified: ConsentRequest = {
+      ...baseRequest,
+      flow: "pkce_loopback",
+      device: undefined,
+      client: {
+        id: "https://claude.ai/oauth/claude-code-client-metadata",
+        name: "Claude Code",
+        identityDomain: "claude.ai",
+        verified: true,
+      },
+      redirect: { host: "127.0.0.1", isLoopback: true },
+    };
+    render(<ConsentForm request={verified} actions={makeActions()} />);
+    expect(screen.getByText(/verified/i)).toBeInTheDocument();
+    expect(screen.queryByText(/unverified app/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /deny/i })).toBeInTheDocument();
+  });
+
+  it("never shows the unverified warning for a device flow (no redirect host)", () => {
+    render(<ConsentForm request={baseRequest} actions={makeActions()} />);
+    expect(screen.queryByText(/unverified app/i)).toBeNull();
+    expect(screen.getByRole("button", { name: /deny/i })).toBeInTheDocument();
+  });
+
+  it("shows the vetted vendor host as Identity for a DCR-verified client with no CIMD domain", () => {
+    // Claude Desktop registers via DCR (opaque client_id, no CIMD url) with an https://claude.ai redirect.
+    // It's verified via the redirect host, so the Identity row must show that host — never "no verified
+    // domain" alongside a ✓ verified badge (the contradiction N1 guards against).
+    const dcrVerified: ConsentRequest = {
+      ...baseRequest,
+      flow: "pkce_loopback",
+      device: undefined,
+      client: { id: "dcr_opaque", name: "Claude", identityDomain: null, verified: true },
+      redirect: { host: "claude.ai", isLoopback: false },
+    };
+    render(<ConsentForm request={dcrVerified} actions={makeActions()} />);
+    expect(screen.queryByText(/no verified domain/i)).toBeNull();
+    const identityRow = screen.getByText("Identity").parentElement?.querySelector("dd");
+    expect(identityRow?.textContent).toContain("claude.ai");
+    expect(screen.queryByText(/unverified app/i)).toBeNull();
+  });
+
+  it("shows the 'runs on your computer' note for a loopback redirect", () => {
+    const loopback: ConsentRequest = {
+      ...baseRequest,
+      flow: "pkce_loopback",
+      device: undefined,
+      redirect: { host: "localhost", isLoopback: true },
+    };
+    render(<ConsentForm request={loopback} actions={makeActions()} />);
+    expect(screen.getByText(/runs on your computer/i)).toBeInTheDocument();
+    // loopback carries no cross-origin phishing surface → no scary "unverified app" banner
+    expect(screen.queryByText(/unverified app/i)).toBeNull();
   });
 
   it("keeps 'device · app' in the Device row (the app suffix is meaningful when they differ)", () => {

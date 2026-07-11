@@ -83,6 +83,12 @@ describe("buildConsent", () => {
     expect(p.orgId).toBe("org_dana");
     expect(p.orgName).toBe("Dana's projects");
     expect(p.clientName).toBe("webhook CLI");
+    // provenance sealed for the origin-honest screen: an opaque loopback CLI has no proven domain and isn't
+    // vetted, but the code lands on its own machine.
+    expect(p.clientIdentityDomain).toBeNull();
+    expect(p.clientVerified).toBe(false);
+    expect(p.redirectHost).toBe("127.0.0.1");
+    expect(p.redirectIsLoopback).toBe(true);
     expect(p.audience).toBe(API);
     expect(p.scopes).toEqual(["events:read", "events:replay"]);
     expect(p.flow).toBe("pkce_loopback");
@@ -93,6 +99,40 @@ describe("buildConsent", () => {
     expect(p.grantExpiresAt).toBe(new Date((NOW + GRANT_TTL) * 1000).toISOString());
     expect(p.request).toEqual(authRequest());
     expect(p.device).toBeUndefined();
+  });
+
+  it("seals verified=true + the identity domain for an allowlisted vendor https redirect (DCR)", async () => {
+    const { deps, signed } = buildDeps();
+    // A DCR client (opaque id) with an allowlisted vendor https redirect — Claude Desktop's shape.
+    const result = await buildConsent(
+      deps,
+      authRequest({ redirectUri: "https://claude.ai/api/mcp/auth_callback" }),
+      "user_dana",
+      ORIGIN,
+    );
+    expect(result.kind).toBe("consent");
+    const p = signed.payload!;
+    expect(p.clientVerified).toBe(true); // vetted via the redirect host
+    expect(p.clientIdentityDomain).toBeNull(); // opaque id → no CIMD domain; the screen falls back to the host
+    expect(p.redirectHost).toBe("claude.ai");
+    expect(p.redirectIsLoopback).toBe(false);
+  });
+
+  it("seals the CIMD identity domain + verified=false for an arbitrary CIMD client", async () => {
+    const { deps, signed } = buildDeps();
+    // An arbitrary CIMD client: client_id is an https metadata URL, redirect same-origin. Not vetted.
+    const result = await buildConsent(
+      deps,
+      authRequest({ clientId: "https://acme.dev/client.json", redirectUri: "https://acme.dev/cb" }),
+      "user_dana",
+      ORIGIN,
+    );
+    expect(result.kind).toBe("consent");
+    const p = signed.payload!;
+    expect(p.clientIdentityDomain).toBe("acme.dev");
+    expect(p.clientVerified).toBe(false);
+    expect(p.redirectHost).toBe("acme.dev");
+    expect(p.redirectIsLoopback).toBe(false);
   });
 
   it("intersects requested scopes with capability (drops unknown scopes)", async () => {
@@ -228,6 +268,10 @@ function ticketPayload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketP
     audience: API,
     clientId: "cli_wbhk",
     clientName: "webhook CLI",
+    clientIdentityDomain: null,
+    clientVerified: false,
+    redirectHost: "127.0.0.1",
+    redirectIsLoopback: true,
     origin: ORIGIN,
     flow: "pkce_loopback",
     grantExpiresAt: "2026-09-18T00:00:00.000Z",
@@ -250,6 +294,10 @@ function deviceTicketPayload(over: Partial<ConsentTicketPayload> = {}): ConsentT
     audience: API,
     clientId: "cli_wbhk",
     clientName: "webhook CLI",
+    clientIdentityDomain: null,
+    clientVerified: false,
+    redirectHost: null,
+    redirectIsLoopback: false,
     origin: ORIGIN,
     grantExpiresAt: "2026-09-18T00:00:00.000Z",
     keyTtlSeconds: KEY_TTL,
@@ -575,9 +623,29 @@ describe("buildDeviceConsent", () => {
     expect(p.orgId).toBe("org_dana");
     expect(p.clientId).toBe("cli_wbhk");
     expect(p.clientName).toBe("webhook CLI");
+    // provenance: the device flow has NO redirect (the code is polled, not redirected), so redirectHost is
+    // null + isLoopback false; an opaque client has no proven domain and isn't vetted.
+    expect(p.clientIdentityDomain).toBeNull();
+    expect(p.clientVerified).toBe(false);
+    expect(p.redirectHost).toBeNull();
+    expect(p.redirectIsLoopback).toBe(false);
     expect(p.scopes).toEqual(["events:read", "events:replay"]);
     expect(p.audience).toBe(API);
     expect(p.exp).toBe(NOW + TICKET_TTL);
+  });
+
+  it("seals verified=true + identity domain for a vetted CIMD client on the device flow", async () => {
+    const { deps, signed } = deviceConsentDeps();
+    await buildDeviceConsent(
+      deps,
+      { ...DEVICE_RECORD, clientId: "https://zed.dev/oauth/client-metadata.json" },
+      "user_dana",
+      ORIGIN,
+    );
+    const p = signed.payload!;
+    expect(p.clientIdentityDomain).toBe("zed.dev");
+    expect(p.clientVerified).toBe(true);
+    expect(p.redirectHost).toBeNull(); // still no redirect on the device flow
   });
 
   it("intersects the record's scopes with capability (defense in depth)", async () => {

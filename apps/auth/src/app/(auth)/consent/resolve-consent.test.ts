@@ -29,6 +29,10 @@ function payload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketPayload
     audience: "https://api.webhook.co",
     clientId: "cli_wbhk",
     clientName: "webhook CLI",
+    clientIdentityDomain: null,
+    clientVerified: false,
+    redirectHost: "127.0.0.1",
+    redirectIsLoopback: true,
     origin: {
       ip: "203.0.113.7",
       location: "US",
@@ -48,7 +52,7 @@ function payload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketPayload
       state: "st",
     },
     ...over,
-  } as ConsentTicketPayload;
+  };
 }
 
 async function makeTicket(over?: Partial<ConsentTicketPayload>): Promise<string> {
@@ -69,6 +73,10 @@ describe("resolveConsentRequest", () => {
     expect(request?.requestId).toBe(ticket); // the ticket IS the requestId
     expect(request?.csrfToken).toBe("csrf_nonce");
     expect(request?.client.name).toBe("webhook CLI");
+    // the anti-phishing provenance survives the seal→verify→project round-trip
+    expect(request?.client.identityDomain).toBeNull();
+    expect(request?.client.verified).toBe(false);
+    expect(request?.redirect).toEqual({ host: "127.0.0.1", isLoopback: true });
     expect(request?.org.name).toBe("Acme Inc");
     expect(request?.scopes).toEqual(["events:read"]);
     expect(request?.keyTtlSeconds).toBe(86_400);

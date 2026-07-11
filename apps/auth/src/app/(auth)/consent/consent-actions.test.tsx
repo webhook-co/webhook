@@ -8,7 +8,8 @@ const request: ConsentRequest = {
   requestId: "tkt_abc",
   csrfToken: "csrf_xyz",
   flow: "pkce_loopback",
-  client: { id: "cli", name: "webhook CLI" },
+  client: { id: "cli", name: "webhook CLI", identityDomain: null, verified: false },
+  redirect: { host: "127.0.0.1", isLoopback: true },
   org: { id: "org", name: "Acme Inc" },
   origin: {
     ip: "203.0.113.7",

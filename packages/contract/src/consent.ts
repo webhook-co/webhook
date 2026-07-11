@@ -17,8 +17,26 @@ export const ConsentRequestSchema = z.object({
   csrfToken: z.string(),
   /** Which flow asked for consent. Loopback PKCE still shows this screen (deliberate-grant model). */
   flow: z.enum(["pkce_loopback", "device_code"]),
-  /** The requesting client, by display name (never just the opaque client_id). */
-  client: z.object({ id: z.string(), name: z.string() }),
+  /**
+   * The requesting client. `name` is the client's self-asserted, sanitized display label — NEVER trusted as
+   * identity. `identityDomain` is the un-spoofable proven-controlled domain (a CIMD client's host), or null
+   * for a client with no proven domain (opaque DCR / loopback-only). `verified` is true only for a client on
+   * the curated vetted list; otherwise the screen shows an "unverified app" treatment and leans on the
+   * origin. The consent screen must never render a client-supplied logo/URL.
+   */
+  client: z.object({
+    id: z.string(),
+    name: z.string(),
+    identityDomain: z.string().nullable(),
+    verified: z.boolean(),
+  }),
+  /**
+   * Where the authorization code will be delivered — shown verbatim (MCP spec: the AS MUST display the
+   * redirect hostname). `host` is null only if the sealed redirect_uri is unparseable. `isLoopback` drives
+   * the "this app runs on your machine" note (loopback carries no cross-origin phishing surface, but CIMD
+   * can't prevent localhost impersonation, so the user is told where the code goes).
+   */
+  redirect: z.object({ host: z.string().nullable(), isLoopback: z.boolean() }),
   /** Present for the device-code flow: the device the user-code was entered on. */
   device: z.object({ name: z.string() }).optional(),
   /** The org the grant is for (the consenting user's active org). */

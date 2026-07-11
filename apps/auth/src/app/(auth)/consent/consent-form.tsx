@@ -49,7 +49,8 @@ export const mockConsentRequest: ConsentRequest = {
   requestId: "areq_mock",
   csrfToken: "csrf_mock",
   flow: "device_code",
-  client: { id: "cli_wbhk", name: "webhook CLI" },
+  client: { id: "cli_wbhk", name: "webhook CLI", identityDomain: null, verified: false },
+  redirect: { host: null, isLoopback: false },
   device: { name: "Dana's MacBook Pro" },
   org: { id: "org_personal", name: "Dana's projects" },
   origin: {
@@ -182,6 +183,16 @@ export function ConsentForm({
   const placeLabel = originPlaceLabel(request.origin);
   const placeFlag = flagFromCountry(request.origin.location);
 
+  const { verified, identityDomain } = request.client;
+  const redirectHost = request.redirect.host;
+  const redirectIsLoopback = request.redirect.isLoopback;
+  // A client with a REMOTE (non-loopback) redirect that we haven't vetted is the phishing-risk case: the
+  // name is self-asserted, so we warn and lean on the origin. A loopback client can only reach the user's
+  // own machine — no cross-origin phishing surface — so it gets an informational note, not a warning. The
+  // device flow (no redirect host) and vetted clients don't warn. (Never render a client-supplied logo/URL —
+  // those are attacker-controlled.)
+  const remoteUnverified = !verified && redirectHost !== null && !redirectIsLoopback;
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
@@ -195,13 +206,64 @@ export function ConsentForm({
 
       {error ? <Banner tone="danger">{error}</Banner> : null}
 
+      {remoteUnverified ? (
+        <Banner tone="warn">
+          <span className="font-medium">Unverified app.</span> webhook.co hasn&rsquo;t reviewed
+          {identityDomain ? (
+            <>
+              {" "}
+              <span className="font-mono">{identityDomain}</span>
+            </>
+          ) : (
+            " this app"
+          )}
+          . Only continue if you started it and trust it — approving grants the access below to your
+          account.
+        </Banner>
+      ) : null}
+
       <dl className="divide-y divide-hairline rounded-control border border-hairline px-4">
         <SummaryRow label={request.device ? "Device" : "App"}>
-          <span className="font-medium">{subject}</span>
-          {/* The "· app" suffix names the app accessing the device — only meaningful in the Device row.
-              In the App row the subject IS the app, so the suffix would just repeat it. */}
-          {request.device ? <span className="text-fg-faint"> · {request.client.name}</span> : null}
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="font-medium">{subject}</span>
+            {request.device ? (
+              <span className="text-fg-faint">· {request.client.name}</span>
+            ) : verified ? (
+              <Badge tone="ok" className="text-xs">
+                ✓ verified
+              </Badge>
+            ) : (
+              <Badge tone="neutral" className="text-xs">
+                unverified
+              </Badge>
+            )}
+          </span>
         </SummaryRow>
+        {/* The un-spoofable identity anchor: the domain the client proved it controls (a CIMD host), or —
+            for a vetted DCR client that has no CIMD URL but delivers to a vetted vendor host — that host.
+            Null (→ "no verified domain") only for a genuinely un-vetted client with no proven domain, e.g. a
+            loopback CLI, whose trust is locality (shown in the redirect row), not a domain. */}
+        <SummaryRow label="Identity">
+          {(identityDomain ?? (verified ? redirectHost : null)) ? (
+            <span className="break-all font-mono text-[13px]">
+              {identityDomain ?? redirectHost}
+            </span>
+          ) : (
+            <span className="text-fg-faint">no verified domain</span>
+          )}
+        </SummaryRow>
+        {redirectHost ? (
+          <SummaryRow label="Sends code to">
+            <div className="flex flex-col gap-0.5">
+              <span className="break-all font-mono text-[13px]">{redirectHost}</span>
+              {redirectIsLoopback ? (
+                <span className="text-xs text-fg-faint">
+                  Runs on your computer — only continue if you started it.
+                </span>
+              ) : null}
+            </div>
+          </SummaryRow>
+        ) : null}
         <SummaryRow label="Organization">{request.org.name}</SummaryRow>
         <SummaryRow label="Requesting from">
           <div className="flex flex-col gap-0.5">
@@ -230,11 +292,22 @@ export function ConsentForm({
         <SummaryRow label="Key lifetime">{fmtDuration(request.keyTtlSeconds)}</SummaryRow>
       </dl>
 
+      {/* For an unverified remote client, the safe action (Deny) is the primary button and Authorize is
+          demoted — the evidence-backed lever against illicit-consent-grant phishing. For a vetted/loopback
+          client the usual order stands. */}
       <div className="flex flex-col-reverse gap-2.5 sm:flex-row sm:justify-end">
-        <Button variant="secondary" disabled={busy} onClick={() => decide("deny")}>
-          {pending === "deny" ? "Denying…" : "Deny"}
+        <Button
+          variant={remoteUnverified ? undefined : "secondary"}
+          disabled={busy}
+          onClick={() => decide("deny")}
+        >
+          {pending === "deny" ? "Denying…" : remoteUnverified ? "Cancel" : "Deny"}
         </Button>
-        <Button disabled={busy} onClick={() => decide("approve")}>
+        <Button
+          variant={remoteUnverified ? "secondary" : undefined}
+          disabled={busy}
+          onClick={() => decide("approve")}
+        >
           {pending === "approve" ? "Authorizing…" : "Authorize"}
         </Button>
       </div>

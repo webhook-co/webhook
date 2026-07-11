@@ -56,8 +56,16 @@ interface ConsentTicketBase {
   audience: string;
   /** The requesting client id (→ ConsentRequest.client.id). */
   clientId: string;
-  /** Display: the requesting client's human name. */
+  /** Display: the requesting client's human name (already sanitized — never trusted as identity). */
   clientName: string;
+  /** Display: the client's proven-controlled identity domain (a CIMD host), or null. */
+  clientIdentityDomain: string | null;
+  /** Display: whether the client is on the curated vetted list (→ a "verified" indicator). */
+  clientVerified: boolean;
+  /** Display: the redirect host the code is delivered to (MCP spec MUST show it), or null if unparseable. */
+  redirectHost: string | null;
+  /** Display: whether the redirect is an http loopback (drives the "runs on your machine" note). */
+  redirectIsLoopback: boolean;
   /** Display: the device the user-code was entered on. Forward-looking — NOT populated in v1
    * (/device_authorization captures no device name yet); decideConsent forwards it into props if present. */
   device?: { name: string };
@@ -178,7 +186,13 @@ export function consentRequestFromTicket(
     requestId: ticket,
     csrfToken: payload.csrf,
     flow: payload.flow,
-    client: { id: payload.clientId, name: payload.clientName },
+    client: {
+      id: payload.clientId,
+      name: payload.clientName,
+      identityDomain: payload.clientIdentityDomain,
+      verified: payload.clientVerified,
+    },
+    redirect: { host: payload.redirectHost, isLoopback: payload.redirectIsLoopback },
     ...(payload.device ? { device: payload.device } : {}),
     org: { id: payload.orgId, name: payload.orgName },
     origin: payload.origin,

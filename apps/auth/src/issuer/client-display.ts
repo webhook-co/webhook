@@ -6,10 +6,21 @@
 // This is the anti-phishing posture Google / Microsoft / GitHub / Bluesky use: never trust the name; show
 // the domain. The name is a convenience label, never the identity.
 
-import { isCimdClientId } from "./dcr";
+import { ALLOWED_HTTPS_REDIRECT_HOSTS, isCimdClientId } from "./dcr";
 
 const MAX_NAME_LENGTH = 80;
 const NEUTRAL_NAME = "Unnamed app";
+
+/**
+ * The curated set of client domains we've vetted — these show a "verified" indicator on consent. It's the
+ * DCR vendor allowlist plus the known CIMD-client hosts (zed.dev). A client whose proven identity domain (or,
+ * for a DCR client, whose redirect host) is here is shown as verified; ANY other client is shown as
+ * unverified with its origin prominent. Adding a host here is the reviewed way to mark a new client verified.
+ */
+export const VERIFIED_CLIENT_DOMAINS: ReadonlySet<string> = new Set([
+  ...ALLOWED_HTTPS_REDIRECT_HOSTS,
+  "zed.dev",
+]);
 
 // Characters stripped from a display name: C0 controls (minus U+0009–U+000D, kept so they collapse to a
 // space) + DEL + C1; the ARABIC LETTER MARK; the bidi overrides / embeddings / isolates that can visually
@@ -60,6 +71,18 @@ export function clientIdentityDomain(clientId: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Is this client one we've vetted (→ a "verified" indicator on consent)? True when the client's proven
+ * identity domain (a CIMD host) OR its redirect host is on VERIFIED_CLIENT_DOMAINS. Everything else — an
+ * opaque DCR client, a loopback-only client with no domain, an arbitrary CIMD client — is unverified, and
+ * the consent screen leans on the origin + redirect host instead of a name it can't trust.
+ */
+export function isVerifiedClient(clientId: string, redirectHost: string | null): boolean {
+  const identity = clientIdentityDomain(clientId);
+  if (identity && VERIFIED_CLIENT_DOMAINS.has(identity)) return true;
+  return redirectHost !== null && VERIFIED_CLIENT_DOMAINS.has(redirectHost);
 }
 
 /**
