@@ -296,3 +296,41 @@ export function stripeKeyMatchesMode(mode: BillingMode, secretKey: string): bool
   if (mode === "test") return secretKey.startsWith("sk_test_");
   return false; // billing off: no key is legitimate
 }
+
+/** A plan change already booked with Stripe but not yet in effect — today, always a scheduled downgrade. */
+export interface PendingPlanChange {
+  readonly plan: SelfServePlanId;
+  /** Unix SECONDS when it takes effect (i.e. when the current, already-paid-for period ends). */
+  readonly effectiveAt: number;
+}
+
+/** The minimum shape of a schedule phase this needs — structural, so it doesn't drag in the Stripe client. */
+interface PhaseLike {
+  readonly startDate?: number;
+  readonly items: readonly { readonly price: string }[];
+}
+
+/**
+ * Find the plan change a subscription schedule has BOOKED but not yet applied — the phase starting in the
+ * future. This is what lets the dashboard keep saying "you move to Pro on the 30th" on every later visit,
+ * rather than only in the banner at the instant the user clicked (ADR-0112).
+ *
+ * Read from the schedule itself rather than mirrored locally, so it cannot go stale or disagree with Stripe.
+ *
+ * Returns null — "nothing pending" — whenever we can't say something both TRUE and USEFUL: no future phase; a
+ * phase that has since started (that's the CURRENT plan now, not a pending one); a phase with no start date
+ * (there'd be no date to show); or a phase on a price we can't map to a tier (we do not guess a label).
+ */
+export function pendingPlanChangeFromPhases(
+  phases: readonly PhaseLike[],
+  plans: StripePlans,
+  nowSeconds: number,
+): PendingPlanChange | null {
+  const future = phases.find((ph) => ph.startDate != null && ph.startDate > nowSeconds);
+  if (!future?.startDate) return null;
+  for (const item of future.items) {
+    const plan = planIdForBasePrice(plans, item.price);
+    if (plan) return { plan, effectiveAt: future.startDate };
+  }
+  return null; // a legacy/unmappable base price → say nothing rather than guess
+}

@@ -62,6 +62,34 @@ so plainly, up front and in the plain-language summary, rather than only in clau
 human review is stated in the same breath. We would rather be clear about a firm policy than quietly generous
 about a vague one.
 
-**Follow-up (not built):** the dashboard does not yet *persistently* surface a pending downgrade — the user is
-told at the moment they schedule it, but a later visit won't show "downgrades to Pro on the 30th". That needs
-the pending schedule mirrored locally (or read live from Stripe on the billing page). Tracked separately.
+## A booked downgrade must be visible, undoable, and must never outlive an upgrade
+
+Scheduling is not enough on its own — the schedule is a real object attached to the subscription, and three
+things follow from that. All three are implemented:
+
+1. **It is shown on every visit, not just once.** The billing page reads the schedule back from Stripe live
+   (`pendingPlanChangeFromPhases` over the schedule's phases) and renders "you move to Pro on the 30th". A
+   banner shown only at the instant the user clicked would leave them with a booked change they cannot see.
+   Read live rather than mirrored so it can never go stale or disagree with Stripe; the read is **best-effort**
+   (a Stripe blip logs and returns null rather than blanking the whole billing panel).
+
+2. **It can be undone.** `cancelPendingDowngrade` **releases** the schedule, leaving the subscription exactly as
+   it is — the customer stays on their plan and renews normally, and no money moves in either direction.
+   Without this a downgrade is a one-way door: the only escape would be an upgrade (a charge) or emailing
+   support.
+
+3. **An upgrade RELEASES it first.** This is the sharp edge. A schedule left attached still fires its "smaller
+   plan at renewal" phase — so a customer who books Scale→Pro, changes their mind, and upgrades back would pay
+   *more* now and be silently *demoted* at renewal. The release happens before the upgrade is applied, so
+   there is no window in which both are live.
+
+Related: a subscription may hold only **one** schedule, so a repeat downgrade request **reuses** the existing
+one rather than calling `createSubscriptionSchedule` again (which Stripe rejects, surfacing as a generic error
+on a perfectly reasonable action).
+
+## Note on the Stripe Customer Portal
+
+The Portal's own cancel flow is already correct and needs no change: the live configuration sets
+`subscription_cancel.mode = at_period_end` with `proration_behavior = none`, and `subscription_update` is
+**disabled** — so a customer cannot self-serve a plan change there and bypass the rules above, and cancelling
+there moves no money. Cancellation is therefore left to the Portal; this ADR governs plan *changes*.

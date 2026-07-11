@@ -30,7 +30,7 @@ vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: vi.fn(() => new Uint8Ar
 import { withTenant } from "@webhook-co/db/client";
 import { readActiveSubscription } from "@webhook-co/db/reads";
 
-import { switchPlan } from "./plan-switch";
+import { cancelPendingDowngrade, switchPlan } from "./plan-switch";
 
 const PLANS = {
   pro: { base: "price_base", overage: "price_overage" },
@@ -47,6 +47,7 @@ function enable(opts: {
   hasSub?: boolean; // the mirror row exists (controls the pre-retrieve no_subscription check)
   liveStatus?: string;
   liveItems?: Array<{ id: string; price: string }>;
+  scheduleId?: string | null;
 }) {
   env.getBillingMode.mockReturnValue("test");
   env.getStripePlans.mockReturnValue(PLANS);
@@ -73,7 +74,26 @@ function enable(opts: {
       id: "sub_1",
       status: opts.liveStatus ?? "active",
       items: opts.liveItems ?? PRO_ITEMS,
+      // A schedule already attached = a downgrade already booked for the end of the period.
+      scheduleId: opts.scheduleId ?? null,
     }),
+    retrieveSubscriptionSchedule: vi.fn().mockResolvedValue({
+      id: "sub_sched_1",
+      currentPhase: {
+        startDate: 1_750_000_000,
+        endDate: 1_752_000_000,
+        items: [{ price: "price_scale_base", quantity: 1 }],
+      },
+      phases: [
+        {
+          startDate: 1_750_000_000,
+          endDate: 1_752_000_000,
+          items: [{ price: "price_scale_base", quantity: 1 }],
+        },
+        { startDate: 1_752_000_000, items: [{ price: "price_base", quantity: 1 }] },
+      ],
+    }),
+    releaseSubscriptionSchedule: vi.fn().mockResolvedValue({ id: "sub_sched_1" }),
     updateSubscription: vi.fn().mockResolvedValue({ id: "sub_1", status: "active", items: [] }),
     // A DOWNGRADE goes through a subscription schedule instead (see below).
     createSubscriptionSchedule: vi.fn().mockResolvedValue({
@@ -320,5 +340,96 @@ describe("switchPlan — downgrade failure paths", () => {
     expect(client.updateSubscriptionSchedule.mock.calls[0][0].idempotencyKey).toBe(
       "downgrade:sub_1:pro",
     );
+  });
+});
+
+// ── The two seams a reviewer found: a booked downgrade must be undoable, and must never outlive an upgrade ──
+
+describe("switchPlan — when a downgrade is ALREADY booked", () => {
+  it("an UPGRADE releases the pending schedule first — or the customer would be demoted at renewal anyway", async () => {
+    // The dangerous one. Customer books Scale→Pro, changes their mind, upgrades back to Scale. If the schedule
+    // is left attached, its "Pro at renewal" phase still fires: they pay MORE now and get DEMOTED later.
+    const client = enable({ liveItems: SCALE_ITEMS, scheduleId: "sub_sched_1" });
+    // They're on Scale with a Pro downgrade booked; "upgrading" back to Scale is a same_plan no-op, so model
+    // the real case: currently on PRO (schedule attached), upgrading to Scale.
+    client.retrieveSubscription.mockResolvedValue({
+      id: "sub_1",
+      status: "active",
+      items: PRO_ITEMS,
+      scheduleId: "sub_sched_1",
+    });
+
+    const res = await switchPlan("org-1", "user-1", "scale");
+
+    expect(res).toEqual({ status: "ok", plan: "scale" });
+    expect(client.releaseSubscriptionSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ scheduleId: "sub_sched_1" }),
+    );
+    // Released BEFORE the upgrade is applied, so no window where both are live.
+    const releaseOrder = client.releaseSubscriptionSchedule.mock.invocationCallOrder[0];
+    const updateOrder = client.updateSubscription.mock.invocationCallOrder[0];
+    expect(releaseOrder).toBeLessThan(updateOrder);
+  });
+
+  it("a repeat DOWNGRADE updates the EXISTING schedule instead of creating a second one (Stripe would reject)", async () => {
+    // Past Stripe's ~24h idempotency window, a second createSubscriptionSchedule on a sub that already has one
+    // errors out and the user just sees "something went wrong". Reuse the schedule instead.
+    const client = enable({ liveItems: SCALE_ITEMS, scheduleId: "sub_sched_1" });
+
+    const res = await switchPlan("org-1", "user-1", "pro");
+
+    expect(res).toEqual({ status: "scheduled", plan: "pro" });
+    expect(client.createSubscriptionSchedule).not.toHaveBeenCalled();
+    expect(client.updateSubscriptionSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ scheduleId: "sub_sched_1" }),
+    );
+  });
+
+  it("an upgrade with NO schedule attached does not call release at all", async () => {
+    const client = enable({});
+    await switchPlan("org-1", "user-1", "scale");
+    expect(client.releaseSubscriptionSchedule).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelPendingDowngrade", () => {
+  it("releases the schedule, so the booked downgrade never fires", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS, scheduleId: "sub_sched_1" });
+
+    const res = await cancelPendingDowngrade("org-1", "user-1");
+
+    expect(res).toEqual({ status: "ok" });
+    expect(client.releaseSubscriptionSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ scheduleId: "sub_sched_1" }),
+    );
+    // Releasing leaves the subscription exactly as it is — it must NOT change the plan.
+    expect(client.updateSubscription).not.toHaveBeenCalled();
+  });
+
+  it("audits the undo", async () => {
+    enable({ liveItems: SCALE_ITEMS, scheduleId: "sub_sched_1" });
+    await cancelPendingDowngrade("org-1", "user-1");
+    const { appendAuditEntry } = await import("@webhook-co/db/audit-append");
+    expect(
+      vi.mocked(appendAuditEntry).mock.calls.map((c) => (c[2] as { action: string }).action),
+    ).toEqual(["plan_downgrade_cancelled"]);
+  });
+
+  it("is a no-op `nothing_pending` when there's no schedule attached", async () => {
+    const client = enable({});
+    expect(await cancelPendingDowngrade("org-1", "user-1")).toEqual({ status: "nothing_pending" });
+    expect(client.releaseSubscriptionSchedule).not.toHaveBeenCalled();
+  });
+
+  it("FORBIDS a non-owner/admin, before any Stripe call", async () => {
+    enable({ role: "member", scheduleId: "sub_sched_1" });
+    expect(await cancelPendingDowngrade("org-1", "user-1")).toEqual({ status: "forbidden" });
+    expect(billing.stripeClientFromEnv).not.toHaveBeenCalled();
+  });
+
+  it("never throws — a Stripe fault becomes a clean error", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS, scheduleId: "sub_sched_1" });
+    client.releaseSubscriptionSchedule.mockRejectedValue(new Error("stripe down"));
+    expect(await cancelPendingDowngrade("org-1", "user-1")).toEqual({ status: "error" });
   });
 });

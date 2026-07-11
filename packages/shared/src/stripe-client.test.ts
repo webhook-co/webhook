@@ -487,6 +487,7 @@ describe("makeStripeClient.retrieveSubscription", () => {
         { id: "si_base", price: "price_pro_base" },
         { id: "si_over", price: "price_pro_over" },
       ],
+      scheduleId: null, // no pending plan change in this fixture
     });
   });
 });
@@ -561,17 +562,37 @@ describe("makeStripeClient.createSubscriptionSchedule", () => {
     expect(new URLSearchParams(calls[0]!.init.body as string).get("from_subscription")).toBe(
       "sub_1",
     );
-    expect(sched).toEqual({
-      id: "sub_sched_1",
-      currentPhase: {
-        startDate: 1_750_000_000,
-        endDate: 1_752_000_000,
-        items: [
-          { price: "price_base_scale", quantity: 1 },
-          { price: "price_over_scale", quantity: undefined },
-        ],
-      },
+    const phase0 = {
+      startDate: 1_750_000_000,
+      endDate: 1_752_000_000,
+      items: [
+        { price: "price_base_scale", quantity: 1 },
+        { price: "price_over_scale", quantity: undefined },
+      ],
+    };
+    // `phases` carries EVERY phase, so a pending downgrade can be read back on a later page load.
+    expect(sched).toEqual({ id: "sub_sched_1", currentPhase: phase0, phases: [phase0] });
+  });
+});
+
+describe("makeStripeClient.releaseSubscriptionSchedule", () => {
+  it("POSTs /release — how a booked downgrade is CANCELLED (and how an upgrade clears one)", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: { id: "sub_sched_1" } });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
     });
+    await client.releaseSubscriptionSchedule({
+      scheduleId: "sub_sched_1",
+      idempotencyKey: "release:sub_1",
+    });
+    expect(calls[0]!.url).toBe("https://stripe.test/v1/subscription_schedules/sub_sched_1/release");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect((calls[0]!.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
+      "release:sub_1",
+    );
   });
 });
 
@@ -615,5 +636,66 @@ describe("makeStripeClient.updateSubscriptionSchedule", () => {
     expect((calls[0]!.init.headers as Record<string, string>)["Idempotency-Key"]).toBe(
       "downgrade:sub_1:pro",
     );
+  });
+});
+
+describe("makeStripeClient — reading back a pending downgrade", () => {
+  it("retrieveSubscription surfaces the schedule id (null when the sub has none)", async () => {
+    const withSched = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", schedule: "sub_sched_1", items: { data: [] } },
+    });
+    const c1 = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: withSched.impl,
+    });
+    expect((await c1.retrieveSubscription("sub_1")).scheduleId).toBe("sub_sched_1");
+
+    const without = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", items: { data: [] } },
+    });
+    const c2 = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: without.impl,
+    });
+    expect((await c2.retrieveSubscription("sub_1")).scheduleId).toBeNull();
+  });
+
+  it("retrieveSubscriptionSchedule maps every phase (so a future phase can be identified)", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: {
+        id: "sub_sched_1",
+        phases: [
+          {
+            start_date: 1_750_000_000,
+            end_date: 1_752_000_000,
+            items: [{ price: "price_base_scale", quantity: 1 }],
+          },
+          { start_date: 1_752_000_000, items: [{ price: "price_base_pro", quantity: 1 }] },
+        ],
+      },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const sched = await client.retrieveSubscriptionSchedule("sub_sched_1");
+
+    expect(new URL(calls[0]!.url).pathname).toBe("/v1/subscription_schedules/sub_sched_1");
+    expect(calls[0]!.init.method).toBe("GET");
+    expect(sched.phases).toHaveLength(2);
+    expect(sched.phases[1]).toEqual({
+      startDate: 1_752_000_000,
+      endDate: undefined,
+      items: [{ price: "price_base_pro", quantity: 1 }],
+    });
   });
 });

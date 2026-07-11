@@ -1,9 +1,10 @@
 import { Banner, Button } from "@webhook-co/ui";
-import { planLabel, type BillingDisplay } from "@webhook-co/shared";
+import { planLabel, type BillingDisplay, type PendingPlanChange } from "@webhook-co/shared";
 import type { Metadata } from "next";
 
 import { loadBillingSummary } from "@/server/billing";
 import {
+  cancelDowngradeAction,
   openBillingPortalAction,
   setOverageAction,
   startCheckoutAction,
@@ -92,7 +93,68 @@ const SWITCH_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "da
   },
 };
 
+/** The `?downgrade=<status>` banner (cancelDowngradeAction redirects here) — the UNDO of a booked downgrade. */
+const DOWNGRADE_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "danger" }> = {
+  ok: {
+    message: "Downgrade cancelled. You'll stay on your current plan and renew as normal.",
+    tone: "ok",
+  },
+  nothing_pending: { message: "You don't have a downgrade scheduled.", tone: "warn" },
+  forbidden: { message: "Only an owner or admin can change the plan.", tone: "warn" },
+  no_subscription: { message: "You don't have an active subscription.", tone: "warn" },
+  disabled: { message: "Billing isn't available right now.", tone: "warn" },
+  error: {
+    message: "We couldn't cancel the downgrade. Nothing changed — try again.",
+    tone: "danger",
+  },
+};
+
 export const metadata: Metadata = { title: "Billing · webhook.co" };
+
+/** Format a Unix-SECONDS instant as a date (UTC-pinned, like the other dates on this page). */
+function fmtUnix(seconds: number): string {
+  return new Date(seconds * 1000).toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+/**
+ * A downgrade already booked for the end of the period (ADR-0112). Shown on EVERY visit, not just in the
+ * banner at the instant it was scheduled — otherwise a user who books one and comes back tomorrow has no way
+ * to know it is coming, and no way to undo it.
+ */
+function PendingDowngradeCard({
+  pending,
+  canManage,
+}: {
+  pending: PendingPlanChange;
+  canManage: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
+      <h2 className="text-lg font-semibold tracking-heading text-fg">Scheduled plan change</h2>
+      <p className="text-sm font-medium text-fg">
+        You move to {planLabel(pending.plan)} on {fmtUnix(pending.effectiveAt)}.
+      </p>
+      <p className="text-sm text-fg-secondary">
+        Nothing changes before then — you keep your current plan for the rest of the period
+        you&apos;ve paid for, and nothing is charged or refunded in the meantime.
+      </p>
+      {canManage ? (
+        <form action={cancelDowngradeAction}>
+          <Button type="submit" variant="secondary">
+            Cancel this change &amp; keep my plan
+          </Button>
+        </form>
+      ) : (
+        <p className="text-sm text-fg-secondary">Only an owner or admin can change this.</p>
+      )}
+    </div>
+  );
+}
 
 function fmtDate(iso: string): string {
   const t = Date.parse(iso);
@@ -276,6 +338,11 @@ export default async function BillingPage({
   const switchKey = typeof params.switch === "string" ? params.switch : undefined;
   const switchStatus =
     switchKey && Object.hasOwn(SWITCH_STATUS, switchKey) ? SWITCH_STATUS[switchKey] : undefined;
+  const downgradeKey = typeof params.downgrade === "string" ? params.downgrade : undefined;
+  const downgradeStatus =
+    downgradeKey && Object.hasOwn(DOWNGRADE_STATUS, downgradeKey)
+      ? DOWNGRADE_STATUS[downgradeKey]
+      : undefined;
 
   return (
     <div className="flex flex-col gap-6">
@@ -287,6 +354,7 @@ export default async function BillingPage({
       {errorMsg && <Banner tone="danger">{errorMsg}</Banner>}
       {overageStatus && <Banner tone={overageStatus.tone}>{overageStatus.message}</Banner>}
       {switchStatus && <Banner tone={switchStatus.tone}>{switchStatus.message}</Banner>}
+      {downgradeStatus && <Banner tone={downgradeStatus.tone}>{downgradeStatus.message}</Banner>}
 
       {view.hidden ? (
         <div className="rounded-card border border-hairline bg-surface p-6">
@@ -295,6 +363,14 @@ export default async function BillingPage({
       ) : (
         <>
           {view.display && <CurrentPlanCard display={view.display} />}
+          {/* A booked downgrade, shown on EVERY visit — with the undo. Without this the user schedules one,
+              comes back tomorrow, and has no way to see it coming or call it off. */}
+          {view.pendingDowngrade && (
+            <PendingDowngradeCard
+              pending={view.pendingDowngrade}
+              canManage={view.canManageBilling}
+            />
+          )}
           {/* Owner/admin only — plan switching is a billing change (SEC-RLS-08); the server re-checks. */}
           {view.canManageBilling && view.switchTargets.length > 0 && (
             <ChangePlanCard targets={view.switchTargets} />
