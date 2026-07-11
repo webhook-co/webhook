@@ -11,7 +11,9 @@
 
 import { makeAuthorizeDeps } from "./authorize-deps";
 import { handleAuthorize, handleConsentComplete, handleConsentDecision } from "./authorize-route";
+import { CIMD_AUTHORIZE_RULE, isCimdAuthorizeRequest } from "./cimd-fetch-guard";
 import { EDGE_RULES, edgeRateLimit } from "./edge-rate-limit";
+import { throttleByIp } from "./ip-throttle";
 import { nowSeconds } from "./issuer-constants";
 import type { RateLimitKv } from "./rate-limit";
 import { makeDeviceAuthorizeDeps } from "./device-authorize-deps";
@@ -77,6 +79,22 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
       if (request.method === "GET" && url.pathname === "/authorize") {
         const limited = await edgeRateLimit(rl, "authorize", request, EDGE_RULES.authorize);
         if (limited) return limited;
+        // A CIMD client_id makes the provider fetch that URL inside parseAuthRequest, BEFORE the session
+        // check — an unauthenticated fetch-reflector path. Apply a tighter per-IP ceiling on top, before the
+        // pool opens and the fetch fires.
+        if (isCimdAuthorizeRequest(request)) {
+          const cimdLimited = await throttleByIp(
+            rl,
+            "cimd_authorize",
+            request,
+            CIMD_AUTHORIZE_RULE,
+            {
+              description: "too many requests",
+              faultEvent: "cimd_authorize_rate_limit.fault",
+            },
+          );
+          if (cimdLimited) return cimdLimited;
+        }
         const { deps, close } = await makeAuthorizeDeps(readAuthorizeEnv(rawEnv), ctx);
         try {
           return await handleAuthorize(deps, request);
