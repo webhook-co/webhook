@@ -82,6 +82,27 @@ export interface StripeSubscription {
   readonly items: readonly SubscriptionItemRef[];
 }
 
+/** One item of a subscription-schedule phase. A METERED price carries no quantity (Stripe rejects it). */
+export interface SchedulePhaseItem {
+  readonly price: string;
+  readonly quantity?: number;
+}
+
+/** One phase of a subscription schedule. Phase 0 carries explicit dates (the period already paid for);
+ *  a following phase omits them and simply starts when the previous one ends. */
+export interface SchedulePhase {
+  readonly items: readonly SchedulePhaseItem[];
+  /** Unix seconds. Present on the current phase; omitted on a phase that just follows the previous one. */
+  readonly startDate?: number;
+  readonly endDate?: number;
+}
+
+/** A subscription schedule + the phase it is currently in (the period the customer has already paid for). */
+export interface StripeSubscriptionSchedule {
+  readonly id: string;
+  readonly currentPhase: SchedulePhase;
+}
+
 /** One metered-usage report to a Stripe Billing Meter (the metered-overage counter). */
 export interface ReportMeterEventArgs {
   /** The meter's `event_name` (config, e.g. "webhook_events") — which meter this usage counts against. */
@@ -165,6 +186,25 @@ export interface StripeClient {
     prorationBehavior: "create_prorations" | "none" | "always_invoice";
     idempotencyKey?: string;
   }): Promise<StripeSubscription>;
+  /**
+   * Create a subscription schedule FROM a live subscription — Stripe's native "change the plan at renewal"
+   * primitive, and how a DOWNGRADE is applied. Returns the current phase (the period already paid for), which
+   * the caller resends as phase 0 when appending the target phase.
+   */
+  createSubscriptionSchedule(args: {
+    fromSubscription: string;
+    idempotencyKey?: string;
+  }): Promise<StripeSubscriptionSchedule>;
+  /**
+   * Set a schedule's phases. Used to append the downgraded plan as a phase that begins when the paid period
+   * ends. Always sent with `proration_behavior: none` — a downgrade must never credit money back — and
+   * `end_behavior: release`, which hands the subscription back to normal renewal once the change lands.
+   */
+  updateSubscriptionSchedule(args: {
+    scheduleId: string;
+    phases: readonly SchedulePhase[];
+    idempotencyKey?: string;
+  }): Promise<{ id: string }>;
   /** Low-level: GET a Stripe path with a query object (no body). Throws StripeError on a non-2xx. */
   get<T = Record<string, unknown>>(path: string, query?: StripeParams): Promise<T>;
   /**
@@ -338,6 +378,49 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         status: raw.status,
         items: (raw.items?.data ?? []).map((it) => ({ id: it.id, price: it.price?.id ?? "" })),
       };
+    },
+    async createSubscriptionSchedule({ fromSubscription, idempotencyKey }) {
+      const raw = await request<{
+        id: string;
+        phases?: Array<{
+          start_date?: number;
+          end_date?: number;
+          items?: Array<{ price?: string | { id?: string }; quantity?: number }>;
+        }>;
+      }>("/subscription_schedules", { from_subscription: fromSubscription }, idempotencyKey);
+      const phase = raw.phases?.[0];
+      return {
+        id: raw.id,
+        currentPhase: {
+          startDate: phase?.start_date,
+          endDate: phase?.end_date,
+          items: (phase?.items ?? []).map((it) => ({
+            // `price` comes back as an id string, but tolerate an expanded object.
+            price: typeof it.price === "string" ? it.price : (it.price?.id ?? ""),
+            quantity: it.quantity,
+          })),
+        },
+      };
+    },
+    async updateSubscriptionSchedule({ scheduleId, phases, idempotencyKey }) {
+      return request<{ id: string }>(
+        `/subscription_schedules/${scheduleId}`,
+        {
+          phases: phases.map((ph) => ({
+            // The encoder DROPS undefined, so a metered item's absent quantity is simply not sent (Stripe
+            // rejects a quantity on a metered price), and a following phase sends no dates.
+            items: ph.items.map((it) => ({ price: it.price, quantity: it.quantity })),
+            start_date: ph.startDate,
+            end_date: ph.endDate,
+          })),
+          // A downgrade NEVER credits money back — we don't refund automatically, and a proration credit is
+          // money flowing backward by another name.
+          proration_behavior: "none",
+          // Once the downgrade lands, release the subscription back to ordinary renewal.
+          end_behavior: "release",
+        },
+        idempotencyKey,
+      );
     },
     get,
     async listMeterEventSummaries({ meterId, customer, startTime, endTime, valueGroupingWindow }) {

@@ -70,7 +70,12 @@ const OVERAGE_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "d
 const SWITCH_STATUS: Record<string, { message: string; tone: "ok" | "warn" | "danger" }> = {
   ok: {
     message:
-      "Plan changed. The prorated difference for the rest of this period appears on your next invoice.",
+      "Upgraded. Your new volume is available right now, and the prorated difference for the rest of this period appears on your next invoice.",
+    tone: "ok",
+  },
+  scheduled: {
+    message:
+      "Downgrade scheduled. You keep your current plan until the end of this billing period, then move to the smaller one — nothing is charged or refunded in the meantime.",
     tone: "ok",
   },
   forbidden: { message: "Only an owner or admin can change the plan.", tone: "warn" },
@@ -186,8 +191,14 @@ function ChangePlanCard({ targets }: { targets: readonly string[] }) {
     <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
       <h2 className="text-lg font-semibold tracking-heading text-fg">Change plan</h2>
       <p className="text-sm text-fg-secondary">
-        Switching takes effect immediately. The prorated difference for the rest of this billing
-        period — a charge on an upgrade, a credit on a downgrade — appears on your next invoice.
+        <strong className="text-fg">Upgrades take effect immediately</strong> — you get the extra
+        volume right away, and the prorated difference for the rest of this period appears on your
+        next invoice.{" "}
+        <strong className="text-fg">
+          Downgrades take effect at the end of this billing period
+        </strong>
+        : you keep the plan you&apos;ve paid for until it runs out, then move to the smaller one. We
+        don&apos;t refund or credit the part you&apos;ve already paid for.
       </p>
       <div className="flex flex-wrap gap-3">
         {targets.map((planId) => (

@@ -61,10 +61,28 @@ function enable(opts: {
       items: opts.liveItems ?? PRO_ITEMS,
     }),
     updateSubscription: vi.fn().mockResolvedValue({ id: "sub_1", status: "active", items: [] }),
+    // A DOWNGRADE goes through a subscription schedule instead (see below).
+    createSubscriptionSchedule: vi.fn().mockResolvedValue({
+      id: "sub_sched_1",
+      currentPhase: {
+        startDate: 1_750_000_000,
+        endDate: 1_752_000_000,
+        items: [
+          { price: "price_scale_base", quantity: 1 },
+          { price: "price_scale_overage", quantity: undefined },
+        ],
+      },
+    }),
+    updateSubscriptionSchedule: vi.fn().mockResolvedValue({ id: "sub_sched_1" }),
   };
   billing.stripeClientFromEnv.mockResolvedValue(client);
   return client;
 }
+
+const SCALE_ITEMS = [
+  { id: "si_base", price: "price_scale_base" },
+  { id: "si_over", price: "price_scale_overage" },
+];
 
 afterEach(() => vi.clearAllMocks());
 
@@ -166,5 +184,73 @@ describe("switchPlan", () => {
     const client = enable({});
     client.updateSubscription.mockRejectedValue(new Error("stripe down"));
     expect(await switchPlan("org-1", "user-1", "scale")).toEqual({ status: "error" });
+  });
+});
+
+// ── A DOWNGRADE is scheduled, never applied now, and never credits money back ───────────────────────────────
+// Founder policy: cancellations and downgrades take effect at the END of the billing period, and we NEVER
+// refund automatically. An immediate downgrade would both take away volume the customer already paid for and
+// hand them a proration credit — money flowing backward by another name.
+
+describe("switchPlan — downgrade", () => {
+  it("SCHEDULES a downgrade for the end of the period instead of applying it now", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS }); // currently on Scale
+
+    const res = await switchPlan("org-1", "user-1", "pro"); // → downgrade
+
+    expect(res).toEqual({ status: "scheduled", plan: "pro" });
+    // The live subscription is NOT touched — they keep Scale for the rest of the period they paid for.
+    expect(client.updateSubscription).not.toHaveBeenCalled();
+    expect(client.createSubscriptionSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ fromSubscription: "sub_1" }),
+    );
+  });
+
+  it("keeps the CURRENT plan as phase 0 (to period end) and starts the target as phase 1", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS });
+
+    await switchPlan("org-1", "user-1", "pro");
+
+    const args = client.updateSubscriptionSchedule.mock.calls[0][0];
+    expect(args.scheduleId).toBe("sub_sched_1");
+    // Phase 0 = what they paid for, ending exactly when the period does.
+    expect(args.phases[0]).toEqual({
+      startDate: 1_750_000_000,
+      endDate: 1_752_000_000,
+      items: [
+        { price: "price_scale_base", quantity: 1 },
+        { price: "price_scale_overage", quantity: undefined },
+      ],
+    });
+    // Phase 1 = the smaller plan, with no dates: it simply begins when phase 0 runs out.
+    expect(args.phases[1]).toEqual({
+      items: [{ price: "price_base", quantity: 1 }, { price: "price_overage" }],
+    });
+    expect(args.phases[1].startDate).toBeUndefined();
+  });
+
+  it("uses a DETERMINISTIC idempotency key, so a double-click can't create two schedules", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS });
+    await switchPlan("org-1", "user-1", "pro", "nonce-1");
+    // Keyed on the subscription + target, NOT the per-render nonce: two independent downgrade attempts to the
+    // same plan must collapse to one schedule at Stripe, not stack up.
+    const key = client.createSubscriptionSchedule.mock.calls[0][0].idempotencyKey as string;
+    expect(key).toContain("sub_1");
+    expect(key).toContain("pro");
+    expect(key).not.toContain("nonce-1");
+  });
+
+  it("an UPGRADE still applies immediately with a prorated CHARGE (never scheduled)", async () => {
+    const client = enable({}); // currently on Pro
+    const res = await switchPlan("org-1", "user-1", "scale");
+    expect(res).toEqual({ status: "ok", plan: "scale" });
+    expect(client.updateSubscription).toHaveBeenCalledOnce();
+    expect(client.createSubscriptionSchedule).not.toHaveBeenCalled();
+  });
+
+  it("NEVER lets a downgrade reach updateSubscription with create_prorations (that would credit them)", async () => {
+    const client = enable({ liveItems: SCALE_ITEMS });
+    await switchPlan("org-1", "user-1", "pro");
+    expect(client.updateSubscription).not.toHaveBeenCalled();
   });
 });

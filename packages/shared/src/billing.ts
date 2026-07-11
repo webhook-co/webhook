@@ -97,6 +97,29 @@ export function isSelfServePlan(id: string): id is SelfServePlanId {
   return (SELF_SERVE_PLAN_IDS as readonly string[]).includes(id);
 }
 
+/**
+ * Is moving from `current` to `target` a DOWNGRADE? The direction decides the money path, so this is the one
+ * place that defines it (ADR-0112):
+ *
+ *   · an UPGRADE applies IMMEDIATELY, with the difference prorated onto the next invoice — a customer who has
+ *     hit their cap needs the headroom now, and making them wait for renewal is both a bad experience and a
+ *     lost sale;
+ *   · a DOWNGRADE is SCHEDULED for the end of the current period — they keep the plan they already paid for
+ *     until it runs out, and NO money flows backward (no credit, no refund; we never refund automatically).
+ *
+ * Rank comes from SELF_SERVE_PLAN_IDS' declaration order (pro < scale), so adding a tier in the right place
+ * is the only change needed. FAILS CLOSED on an unrecognised tier: an unknown plan counts as a downgrade, so
+ * a legacy/garbage id can never take the immediate-CHARGE path on a guess. The worst case of failing closed is
+ * that a customer waits until renewal; the worst case of failing open is that we bill them for the wrong thing.
+ */
+export function isPlanDowngrade(current: string, target: string): boolean {
+  const rank = (id: string): number => (SELF_SERVE_PLAN_IDS as readonly string[]).indexOf(id);
+  const from = rank(current);
+  const to = rank(target);
+  if (from < 0 || to < 0) return true; // unknown tier → schedule it, never charge on a guess
+  return to < from;
+}
+
 /** One plan's Stripe PRICE IDS — the licensed base + the metered overage. Ids only: never an amount. */
 export interface StripePlanPrices {
   readonly base: string;
