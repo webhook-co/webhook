@@ -77,10 +77,18 @@ export async function reconcileMeteringUsage(
       where finalized_at is not null and window_start >= ${horizon}`;
 
     // Definition B: recount BOTH legs — captures and delivery dispatches — from scratch, on this separate
-    // code path and role. Critically, each day is recounted under the basis that PRODUCED it
-    // (`usage.counts_deliveries`): rows finalized before Definition B landed were counted capture-only and
-    // are immutable (F1), so adding deliveries to their recount would report drift on every historical day
-    // and drown the real signal. One `delivery_attempts` row = one dispatch; retries update it in place.
+    // code path and role. Critically, each day is recounted under the basis that PRODUCED it. There are now
+    // TWO basis flags, and a day is recounted under whichever pair it was frozen with:
+    //
+    //   counts_deliveries   (0049) — did this day count outbound dispatches at all?
+    //   counts_only_billable (0055) — did it count only BILLABLE dispatches (excluding localhost tunnel
+    //                                 forwards and SSRF-blocked deliveries)?
+    //
+    // A frozen count is immutable (F1), so recounting a historical day under today's definition would report
+    // drift on EVERY such day and drown the real signal — which is how you train a team to ignore the one
+    // alarm guarding live money. One `delivery_attempts` row = one dispatch; retries update it in place. The
+    // `billable` column is itself immutable-once-frozen (0055's trigger), which is what keeps this recount a
+    // pure function of state the frozen day can no longer disagree with.
     const rows = await tx<{ org_id: string; day: string; rollup: string; recount: string }[]>`
       with captures as (
         select org_id, date_trunc('day', received_at) as day, count(*)::bigint as n
@@ -89,24 +97,33 @@ export async function reconcileMeteringUsage(
         group by org_id, date_trunc('day', received_at)
       ),
       dispatches as (
-        select org_id, date_trunc('day', created_at) as day, count(*)::bigint as n
+        select org_id, date_trunc('day', created_at) as day,
+               count(*)::bigint as n_all,
+               count(*) filter (where billable)::bigint as n_billable
         from delivery_attempts
         where created_at >= ${horizon}
         group by org_id, date_trunc('day', created_at)
+      ),
+      recounted as (
+        select u.org_id, u.window_start, u.event_count,
+               coalesce(c.n, 0) + case
+                 when not u.counts_deliveries then 0
+                 when u.counts_only_billable then coalesce(d.n_billable, 0)
+                 else coalesce(d.n_all, 0)
+               end as recount
+        from usage u
+        left join captures c on c.org_id = u.org_id and c.day = u.window_start
+        left join dispatches d on d.org_id = u.org_id and d.day = u.window_start
+        where u.finalized_at is not null
+          and u.window_start >= ${horizon}
       )
-      select u.org_id,
-             to_char(u.window_start, 'YYYY-MM-DD') as day,
-             u.event_count::text as rollup,
-             (coalesce(c.n, 0) + case when u.counts_deliveries then coalesce(d.n, 0) else 0 end)::text
-               as recount
-      from usage u
-      left join captures c on c.org_id = u.org_id and c.day = u.window_start
-      left join dispatches d on d.org_id = u.org_id and d.day = u.window_start
-      where u.finalized_at is not null
-        and u.window_start >= ${horizon}
-        and u.event_count
-            <> coalesce(c.n, 0) + case when u.counts_deliveries then coalesce(d.n, 0) else 0 end
-      order by u.window_start, u.org_id
+      select org_id,
+             to_char(window_start, 'YYYY-MM-DD') as day,
+             event_count::text as rollup,
+             recount::text as recount
+      from recounted
+      where event_count <> recount
+      order by window_start, org_id
       limit ${deps.limit}`;
 
     const mismatches: MeterUsageDrift[] = rows.map((r) => ({

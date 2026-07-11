@@ -55,6 +55,13 @@ export interface RecordDeliveryAttemptInput {
  * Insert a delivery_attempts row, idempotent on (org_id, idempotency_key) (H6): a retry with the same
  * key returns the EXISTING row instead of inserting a duplicate. A null key never conflicts (the
  * partial unique index). RLS pins the org; the FK (event_id, org_id) guarantees the event is same-org.
+ *
+ * NOT BILLABLE (migration 0055). This is the LOCALHOST TUNNEL writer, and only that — the CLI already
+ * POSTed to the user's own machine and calls events.replay purely to record it, so our Worker makes no
+ * outbound request. Definition B bills a delivery DISPATCH; this is not one. `billable` is hard-coded
+ * rather than taken from the input so no future caller can bill a forward by passing the wrong flag; the
+ * two writers that DO dispatch (claimDeliveryAttempt, insertQueuedDelivery) take the column's `true`
+ * default. This is why `wbhk listen --forward` billed every webhook twice.
  */
 export async function recordDeliveryAttempt(
   tx: TenantTx,
@@ -62,10 +69,11 @@ export async function recordDeliveryAttempt(
 ): Promise<DeliveryAttempt> {
   const [row] = await tx<DeliveryAttemptRow[]>`
     insert into delivery_attempts
-      (id, org_id, event_id, target, idempotency_key, status, status_code, error)
+      (id, org_id, event_id, target, idempotency_key, status, status_code, error, billable)
     values
       (${crypto.randomUUID()}, ${input.orgId}, ${input.eventId}, ${input.target},
-       ${input.idempotencyKey}, ${input.status}, ${input.statusCode ?? null}, ${input.error ?? null})
+       ${input.idempotencyKey}, ${input.status}, ${input.statusCode ?? null}, ${input.error ?? null},
+       false)
     on conflict (org_id, idempotency_key) where idempotency_key is not null do nothing
     returning id, org_id, event_id, target, idempotency_key, status, status_code, attempt, error, created_at`;
   if (row) return toDeliveryAttempt(row);
@@ -129,6 +137,10 @@ export interface FinalizeDeliveryAttemptInput {
  * (WHERE id=$id AND status='pending'), so it transitions exactly the row this call claimed, exactly once —
  * a concurrent finalize can't clobber it, and the update is itself idempotent. Returns the finalized row,
  * or null if it was no longer 'pending' (already finalized / gone).
+ *
+ * A `blocked` outcome UN-BILLS the dispatch (0055): the SSRF guard refused to send, so the bytes never left
+ * our network and Definition B's "one outbound dispatch" never happened. The `billable` trigger owns the one
+ * case this must not do — a day already finalized in `usage` is immutable, and stays billed.
  */
 export async function finalizeDeliveryAttempt(
   tx: TenantTx,
@@ -136,7 +148,8 @@ export async function finalizeDeliveryAttempt(
 ): Promise<DeliveryAttempt | null> {
   const [row] = await tx<DeliveryAttemptRow[]>`
     update delivery_attempts
-       set status = ${input.status}, status_code = ${input.statusCode ?? null}, error = ${input.error ?? null}
+       set status = ${input.status}, status_code = ${input.statusCode ?? null}, error = ${input.error ?? null},
+           billable = case when ${input.status} = 'blocked' then false else billable end
      where id = ${input.id} and status = 'pending'
     returning id, org_id, event_id, target, idempotency_key, status, status_code, attempt, error, created_at`;
   return row ? toDeliveryAttempt(row) : null;
