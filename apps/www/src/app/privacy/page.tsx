@@ -30,7 +30,7 @@ export default function PrivacyPage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Privacy Policy" updated="10 July 2026">
+        <LegalDoc title="Privacy Policy" updated="11 July 2026">
           <blockquote>
             <strong>In short (this summary isn't the legal text, but it's honest):</strong> This
             policy covers the <strong>hosted</strong> webhook.co service. We play{" "}
@@ -39,12 +39,12 @@ export default function PrivacyPage() {
             we're a <em>processor</em> acting on your instructions.{" "}
             <strong>We don't sell your data</strong> and we don't use it for advertising. Your data
             is currently hosted mainly in the <strong>United States</strong>, and we protect
-            transfers with <strong>Standard Contractual Clauses</strong>. We keep captured data{" "}
-            <strong>until you delete it or close your account</strong> (we don't auto-expire it
-            yet), and we'll <strong>honour deletion/erasure requests within 30 days</strong>. We're{" "}
-            <strong>not</strong> SOC 2 / HIPAA certified, so please don't send data that needs
-            those. Questions or requests: <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>
-            .
+            transfers with <strong>Standard Contractual Clauses</strong>. Captured webhooks{" "}
+            <strong>expire automatically</strong> once they pass your plan&apos;s retention window
+            (7 days on the free plan), you can delete anything yourself at any time, and we&apos;ll{" "}
+            <strong>honour erasure requests within 30 days</strong>. We&apos;re <strong>not</strong>{" "}
+            SOC 2 / HIPAA certified, so please don&apos;t send data that needs those. Questions or
+            requests: <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
           </blockquote>
 
           <h2>1. Who we are, and what this policy covers</h2>
@@ -203,26 +203,22 @@ export default function PrivacyPage() {
               period afterwards for legal, tax, and security purposes.
             </li>
             <li>
-              <strong>The webhooks you capture:</strong> we keep them{" "}
-              <strong>until you delete them or close your account</strong> — we do{" "}
-              <strong>not</strong> currently auto-expire or set a fixed retention window on captured
-              data.
+              <strong>The webhooks you capture:</strong> these <strong>expire automatically</strong>
+              . Captured events and their stored payload bodies are deleted once they pass your
+              plan&apos;s retention window — on the free plan, <strong>7 days</strong>. The window
+              for each paid plan is listed at <a href="/pricing">webhook.co/pricing</a>. Expiry runs
+              on a schedule; deletion happens shortly after an event passes the window rather than
+              at the exact second it does. You can also delete data yourself at any time, which
+              takes effect immediately.
             </li>
             <li>
-              <strong>Deletion &amp; erasure:</strong> you can delete endpoints and data from your
-              account, and you can ask us to erase your personal data (see §8). We complete verified
-              erasure requests <strong>within 30 days</strong>; today some erasure steps are carried
-              out manually. Residual copies in encrypted backups are removed on our normal
-              backup-rotation cycle.
+              <strong>Deletion &amp; erasure:</strong> you can delete endpoints, events, and your
+              whole organisation from your account — this removes the stored records and the payload
+              bodies, not just a listing. You can also ask us to erase your personal data (see §8);
+              we complete verified erasure requests <strong>within 30 days</strong>. Residual copies
+              in encrypted backups are removed on our normal backup-rotation cycle.
             </li>
           </ul>
-          <p>
-            <em>
-              (We're actively building automated data-retention and one-click erasure; until then,
-              the timelines above reflect how it works today — we'd rather tell you that plainly
-              than promise more than the system does.)
-            </em>
-          </p>
 
           <h2>8. Your rights</h2>
           <p>
