@@ -1,6 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
+import { FAQ_ITEMS } from "../src/components/marketing/faq";
+
 // WCAG 2.0/2.1/2.2 A + AA. This is the only layer that sees real layout, so the only one that
 // catches color contrast (1.4.3) — e.g. the dark terminal's dim text and the monochrome gray ramp.
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
@@ -173,28 +175,33 @@ test.describe("pricing page accessibility (real browser)", () => {
     await expectClean(page);
   });
 
-  // AGENTS.md: pricing must be "disclosed UP FRONT … on the pricing page". The four MUST-disclose
-  // items render <details open> precisely so a buyer cannot miss them, and this is the only layer that
-  // can prove a reader actually SEES them — jsdom knows the `open` attribute, a browser knows pixels.
+  // AGENTS.md: pricing must be "disclosed UP FRONT … on the pricing page". The MUST-disclose items
+  // render <details open> precisely so a buyer cannot miss them, and this is the only layer that can
+  // prove a reader actually SEES them — jsdom knows the `open` attribute, a browser knows pixels.
   //
   // `toBeVisible()` is NOT enough here and asserting it would be self-deception: Playwright's
-  // visibility check ignores OPACITY, and the FAQ is wrapped in <Reveal>, whose `.reveal-hidden` sets
-  // `opacity: 0` — as does the `faqOpen` keyframe's first frame. A regression that painted the
-  // disclosures invisible would sail straight through. So assert the computed opacity.
-  test("the MUST-disclose facts are actually painted, not merely present", async ({ page }) => {
+  // visibility check ignores OPACITY, and <Reveal> paints its children at `opacity: 0` until an
+  // IntersectionObserver fires — as does the `faqOpen` keyframe's first frame. A regression that
+  // painted the disclosures invisible would sail straight through. So assert the computed opacity.
+  //
+  // The set is DERIVED from the `discloses` flag rather than hand-listed. A hardcoded list drifts the
+  // moment someone marks a sixth item MUST-disclose — the browser check would silently stop covering
+  // it while still looking thorough. The flag is the contract; this reads the contract.
+  test("every MUST-disclose fact is actually painted, not merely present", async ({ page }) => {
     await page.goto("/pricing");
     await page
       .getByRole("heading", { name: /frequently asked questions/i })
       .scrollIntoViewIfNeeded();
 
-    for (const fact of [
-      /A delivery to a destination is one event/i,
-      /We email you before you reach your included volume/i,
-      /capture pauses until you resubscribe/i,
-      /every retry a provider sends is a distinct captured request/i,
-    ]) {
-      const el = page.getByText(fact);
-      await expect(el).toBeVisible();
+    const disclosed = FAQ_ITEMS.filter((i) => i.discloses);
+    expect(disclosed.length, "no MUST-disclose items — the flag has been lost").toBeGreaterThan(0);
+
+    for (const item of disclosed) {
+      // The first sentence of the answer is enough to locate the panel, and it is what a scanning
+      // buyer's eye lands on.
+      const opener = item.answer.split(". ").slice(0, 2).join(". ");
+      const el = page.getByText(opener.slice(0, 60), { exact: false }).first();
+      await expect(el, `"${item.question}" is not on the page`).toBeVisible();
 
       // Walk up the tree: any ancestor at opacity 0 makes this text unreadable, however "visible".
       const effectiveOpacity = await el.evaluate((node) => {
@@ -204,7 +211,20 @@ test.describe("pricing page accessibility (real browser)", () => {
         }
         return opacity;
       });
-      expect(effectiveOpacity, `"${fact}" is present but painted invisible`).toBeGreaterThan(0.9);
+      expect(
+        effectiveOpacity,
+        `"${item.question}" is present but painted invisible`,
+      ).toBeGreaterThan(0.9);
+    }
+  });
+
+  // The carve-outs from migration 0055 (`delivery_attempts.billable`): forwarding to your own machine
+  // and a delivery we refuse to send are both FREE. They live inside a disclosed panel, so they must
+  // be readable without a click too — if we re-bill either leg, the page is lying about the bill.
+  test("the billing carve-outs are readable without a click", async ({ page }) => {
+    await page.goto("/pricing");
+    for (const fact of [/forwarding to your own machine/i, /a delivery we refuse to send/i]) {
+      await expect(page.getByText(fact)).toBeVisible();
     }
   });
 

@@ -47,6 +47,26 @@ describe("FAQ", () => {
     expect(shouldBeOpen.length).toBeGreaterThan(0);
   });
 
+  // `faq-panel` is the fade-in-from-opacity-0 animation. A MUST-disclose panel is open on page load,
+  // so carrying that class would mean the disclosure starts TRANSPARENT — which is exactly the bug
+  // this whole model exists to avoid. Motion belongs only on panels a reader chooses to open.
+  it("never animates a MUST-disclose panel in from transparent", () => {
+    const { container } = render(<Faq />);
+    for (const details of container.querySelectorAll<HTMLDetailsElement>("details")) {
+      const panel = details.querySelector("div");
+      const question = details.querySelector("summary")?.textContent?.trim();
+      const disclosed = FAQ_ITEMS.find((i) => i.question === question)?.discloses;
+
+      if (disclosed) {
+        expect(panel?.className, `"${question}" would fade in from opacity 0`).not.toContain(
+          "faq-panel",
+        );
+      } else {
+        expect(panel?.className, `"${question}" lost its open animation`).toContain("faq-panel");
+      }
+    }
+  });
+
   it("exposes a linkable, labelled section", () => {
     render(<Faq />);
     const section = screen.getByRole("region", { name: /frequently asked/i });
