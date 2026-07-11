@@ -34,6 +34,10 @@ function basePayload(over: Partial<ConsentTicketPayload> = {}): ConsentTicketPay
     audience: "https://api.webhook.co",
     clientId: "cli_wbhk",
     clientName: "webhook CLI",
+    clientIdentityDomain: null,
+    clientVerified: false,
+    redirectHost: "127.0.0.1",
+    redirectIsLoopback: true,
     origin: {
       ip: "203.0.113.7",
       location: "US",
@@ -120,7 +124,13 @@ describe("consentRequestFromTicket", () => {
     expect(req.requestId).toBe(ticket);
     expect(req.csrfToken).toBe("csrf_nonce_abc");
     expect(req.flow).toBe("pkce_loopback");
-    expect(req.client).toEqual({ id: "cli_wbhk", name: "webhook CLI" });
+    expect(req.client).toEqual({
+      id: "cli_wbhk",
+      name: "webhook CLI",
+      identityDomain: null,
+      verified: false,
+    });
+    expect(req.redirect).toEqual({ host: "127.0.0.1", isLoopback: true });
     expect(req.org).toEqual({ id: "org_1", name: "Dana's projects" });
     expect(req.origin).toEqual({
       ip: "203.0.113.7",
@@ -146,7 +156,13 @@ describe("consentRequestFromTicket", () => {
     };
     const req = consentRequestFromTicket("t.t", deviceTicket);
     expect(req.flow).toBe("device_code");
-    expect(req.client).toEqual({ id: "cli_wbhk", name: "webhook CLI" });
+    expect(req.client).toEqual({
+      id: "cli_wbhk",
+      name: "webhook CLI",
+      identityDomain: null,
+      verified: false,
+    });
+    expect(req.redirect).toEqual({ host: "127.0.0.1", isLoopback: true });
     expect(req.device).toEqual({ name: "Dana's laptop" });
   });
 });
