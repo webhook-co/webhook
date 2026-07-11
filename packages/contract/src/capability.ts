@@ -84,6 +84,15 @@ export type CapabilityScope = (typeof CAPABILITY_SCOPES)[number];
 export const RESERVED_SCOPES = ["keys:manage"] as const;
 export type ReservedScope = (typeof RESERVED_SCOPES)[number];
 
+/**
+ * `profile` — an OIDC-style IDENTITY scope, granted (unlike RESERVED_SCOPES) but NOT a capability: it binds
+ * no tool on any surface, so it lives outside the closed CAPABILITY_SCOPES tuple + the parity iteration. It
+ * is the consent gate for a token reading the user's own name + email (via the MCP `whoami` tool). Defined
+ * here as the single source both auth. (GRANTABLE_SCOPES) and mcp (SCOPES_SUPPORTED) import, so the string
+ * can't drift. See apps/auth oauth-config + apps/mcp whoami.
+ */
+export const PROFILE_SCOPE = "profile";
+
 export interface CapabilityAuth {
   /** The OAuth/API-key scope verifyBearer must grant. */
   readonly scope: CapabilityScope;

@@ -5,7 +5,7 @@
 // (later slices). tokenEndpoint=/oauth/token deliberately frees /token for the frozen-whk_ route (the
 // provider has no token-body hook — Option B, ADR-0024). OAuth 2.1 hardening: S256-only PKCE, no implicit.
 
-import { CAPABILITY_REGISTRY } from "@webhook-co/contract";
+import { CAPABILITY_REGISTRY, PROFILE_SCOPE } from "@webhook-co/contract";
 import { API_RESOURCE } from "@webhook-co/db";
 
 import { validateClientRegistration } from "./dcr";
@@ -20,6 +20,13 @@ import { PROD_AUTH_BASE_URL } from "../runtime/urls";
 export const CAPABILITY_SCOPES = [
   ...new Set([...CAPABILITY_REGISTRY.values()].map((c) => c.auth.scope)),
 ].sort();
+
+// Every scope the issuer will ADVERTISE, CONSENT to, and MINT — the capability scopes plus `profile` (the
+// identity scope, single-sourced from @webhook-co/contract). This is
+// the single source the advertise / consent-intersect / mint-intersect points all use, so `profile` can't
+// drift (advertised but not mintable, or consented but dropped at mint). MUST stay in sync across those 7
+// auth-side references + the mcp PRM.
+export const GRANTABLE_SCOPES = [...CAPABILITY_SCOPES, PROFILE_SCOPE].sort();
 
 export const oauthIssuerConfig = {
   // Pure issuer = NO protected API routes (auth. is the authorization server, not a resource server). But
@@ -57,7 +64,7 @@ export const oauthIssuerConfig = {
   // wrangler.jsonc) for SSRF safety; the provider advertises client_id_metadata_document_supported only when
   // BOTH are true. Follow-up safety net: connected-apps + one-click revoke.
   clientIdMetadataDocumentEnabled: true,
-  scopesSupported: [...CAPABILITY_SCOPES],
+  scopesSupported: [...GRANTABLE_SCOPES],
   allowImplicitFlow: false,
   allowPlainPKCE: false,
   // RFC 9728 PRM, served by the provider at /.well-known/oauth-protected-resource. This intentionally
@@ -67,7 +74,7 @@ export const oauthIssuerConfig = {
   resourceMetadata: {
     resource: API_RESOURCE,
     authorization_servers: [PROD_AUTH_BASE_URL],
-    scopes_supported: [...CAPABILITY_SCOPES],
+    scopes_supported: [...GRANTABLE_SCOPES],
     bearer_methods_supported: ["header"],
     resource_name: "webhook.co API",
   },

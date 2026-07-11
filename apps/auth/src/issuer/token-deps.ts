@@ -28,7 +28,7 @@ import { makeDeviceStoreDeps } from "./device-deps";
 import { pollDeviceCode } from "./device-store";
 import type { DeviceTokenDeps } from "./device-token-core";
 import { GRANT_TTL_SECONDS, HELPERS_DEFAULT_HANDLER, KEY_TTL_SECONDS } from "./issuer-constants";
-import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
+import { GRANTABLE_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import { mapProviderTokenError } from "./token-error";
 import type { AuthCodeDeps, ConsentProps, RefreshDeps } from "./token-core";
 import type { TokenEnv } from "../runtime/env";
@@ -71,7 +71,7 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
 
   const authCode: AuthCodeDeps = {
     allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
-    allowedScopes: CAPABILITY_SCOPES,
+    allowedScopes: GRANTABLE_SCOPES,
     keyTtlSeconds: KEY_TTL_SECONDS,
     defaultPendingInterval: DEFAULT_PENDING_INTERVAL,
 
@@ -144,7 +144,7 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
 
   const refresh: RefreshDeps = {
     allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
-    allowedScopes: CAPABILITY_SCOPES,
+    allowedScopes: GRANTABLE_SCOPES,
     keyTtlSeconds: KEY_TTL_SECONDS,
 
     // Atomic single-use consume + ~90d rotation (the new handle replaces the presented one). Returns the
@@ -177,7 +177,7 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
   const deviceStore = makeDeviceStoreDeps(env.DEVICE_KV);
   const device: DeviceTokenDeps = {
     allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
-    allowedScopes: CAPABILITY_SCOPES,
+    allowedScopes: GRANTABLE_SCOPES,
     keyTtlSeconds: KEY_TTL_SECONDS,
     defaultPendingInterval: DEFAULT_PENDING_INTERVAL,
     poll: (deviceCode) => pollDeviceCode(deviceStore, deviceCode),

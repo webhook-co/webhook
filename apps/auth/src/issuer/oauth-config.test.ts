@@ -27,9 +27,10 @@ describe("oauthIssuerConfig", () => {
     expect(oauthIssuerConfig.apiHandlers).toEqual({});
   });
 
-  it("advertises exactly the CAPABILITY_REGISTRY scopes (the SoT) — sorted, deduped, no keys:manage", () => {
-    // Pinned to the exact derived set so a drift between discovery and the mint path fails CI. These are
-    // the distinct CAPABILITY_REGISTRY scopes; `keys:manage` (reserved, never granted) is absent.
+  it("advertises the grantable scopes (capability scopes + the profile identity scope), sorted, no keys:manage", () => {
+    // Pinned to the exact GRANTABLE set so a drift between discovery and the mint path fails CI. These are
+    // the distinct CAPABILITY_REGISTRY scopes plus `profile` (the identity scope — consented to expose the
+    // user's name/email via whoami); `keys:manage` (reserved, never granted) is absent.
     expect(oauthIssuerConfig.scopesSupported).toEqual([
       "audit:read",
       "billing:read",
@@ -37,9 +38,10 @@ describe("oauthIssuerConfig", () => {
       "endpoints:write",
       "events:read",
       "events:replay",
+      "profile",
       "triggers:write",
     ]);
-    // The PRM scope list is the same SoT (discovery + PRM cannot disagree).
+    // The PRM scope list is the same set (discovery + PRM cannot disagree).
     expect(oauthIssuerConfig.resourceMetadata.scopes_supported).toEqual(
       oauthIssuerConfig.scopesSupported,
     );

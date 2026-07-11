@@ -158,7 +158,20 @@ describe("mcp tool surface — authenticated end-to-end", () => {
     );
     expect(res.status).toBe(200);
     const { tools } = res.message?.result as { tools: { name: string }[] };
-    expect(tools.map((t) => t.name).sort()).toEqual([...BOUND_TOOLS].sort());
+    // the capability tools PLUS the standalone identity tool `whoami` (not a capability — see mcp-agent).
+    expect(tools.map((t) => t.name).sort()).toEqual([...BOUND_TOOLS, "whoami"].sort());
+  });
+
+  it("exposes the whoami identity tool", async () => {
+    const { sessionId, protocolVersion } = await handshake();
+    const res = await rpc(
+      { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
+      { sessionId, protocolVersion },
+    );
+    const { tools } = res.message?.result as { tools: { name: string; description?: string }[] };
+    const whoami = tools.find((t) => t.name === "whoami");
+    expect(whoami).toBeDefined();
+    expect(whoami?.description).toMatch(/profile/i);
   });
 
   it("advertises an input schema exposing the endpointId parameter for events.list", async () => {
