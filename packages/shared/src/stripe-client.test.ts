@@ -455,3 +455,72 @@ describe("makeStripeClient.listMeterEventSummaries", () => {
     expect(new URL(calls[1].url).searchParams.get("starting_after")).toBe("mes_1");
   });
 });
+
+describe("makeStripeClient.retrieveSubscription", () => {
+  it("GETs /subscriptions/{id} and maps items.data → {id, price}", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: {
+        id: "sub_1",
+        status: "active",
+        items: {
+          data: [
+            { id: "si_base", price: { id: "price_pro_base" } },
+            { id: "si_over", price: { id: "price_pro_over" } },
+          ],
+        },
+      },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    const sub = await client.retrieveSubscription("sub_1");
+    expect(calls[0].url).toBe("https://stripe.test/v1/subscriptions/sub_1");
+    expect(calls[0].init.method).toBe("GET");
+    expect(sub).toEqual({
+      id: "sub_1",
+      status: "active",
+      items: [
+        { id: "si_base", price: "price_pro_base" },
+        { id: "si_over", price: "price_pro_over" },
+      ],
+    });
+  });
+});
+
+describe("makeStripeClient.updateSubscription", () => {
+  it("POSTs /subscriptions/{id} with the item remap + proration_behavior", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", items: { data: [] } },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    await client.updateSubscription({
+      subscriptionId: "sub_1",
+      items: [
+        { id: "si_base", price: "price_scale_base" },
+        { id: "si_over", price: "price_scale_over" },
+      ],
+      prorationBehavior: "create_prorations",
+      idempotencyKey: "switch-1",
+    });
+    const { url, init } = calls[0];
+    expect(url).toBe("https://stripe.test/v1/subscriptions/sub_1");
+    expect(init.method).toBe("POST");
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe("switch-1");
+    const p = new URLSearchParams(init.body as string);
+    expect(p.get("items[0][id]")).toBe("si_base");
+    expect(p.get("items[0][price]")).toBe("price_scale_base");
+    expect(p.get("items[1][id]")).toBe("si_over");
+    expect(p.get("items[1][price]")).toBe("price_scale_over");
+    expect(p.get("proration_behavior")).toBe("create_prorations");
+  });
+});

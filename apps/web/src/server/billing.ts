@@ -5,6 +5,7 @@ import { readBillingCustomerId, readBillingSummary, readOveragePolicy } from "@w
 import {
   billingDisplayFromSubscription,
   billingEnabled,
+  isBillingActive,
   isLiveSubscriptionStatus,
   isSelfServePlan,
   makeStripeClient,
@@ -69,8 +70,9 @@ async function readOrgBilling(
   );
 }
 
-/** Build the Stripe client from env, or null when billing isn't fully configured (key missing). */
-async function stripeClientFromEnv(): Promise<StripeClient | null> {
+/** Build the Stripe client from env, or null when billing isn't fully configured (key missing). Exported so
+ *  the plan-switch orchestration reuses the SAME mode-match guard (a live key under test mode never builds). */
+export async function stripeClientFromEnv(): Promise<StripeClient | null> {
   const mode = getBillingMode();
   const secretKey = await getStripeSecretKey();
   if (!secretKey) return null;
@@ -170,6 +172,9 @@ export interface BillingView {
   /** Whether the caller may CHANGE billing policy (owner/admin) — gates the overage toggle button so a plain
    *  member sees the state read-only instead of a dead button the server would reject (SEC-RLS-08). */
   readonly canManageBilling: boolean;
+  /** The self-serve plans this org can SWITCH to in place (WS4) — the other configured plans, when it's on a
+   *  LIVE self-serve subscription. Empty when there's nothing to switch (unsubscribed/canceled/legacy price). */
+  readonly switchTargets: readonly SelfServePlanId[];
 }
 
 const HIDDEN_VIEW: BillingView = {
@@ -179,6 +184,7 @@ const HIDDEN_VIEW: BillingView = {
   hasCustomer: false,
   overageEnabled: null,
   canManageBilling: false,
+  switchTargets: [],
 };
 
 /**
@@ -216,6 +222,13 @@ export async function loadBillingSummary(orgId: string, userId: string): Promise
     // overageEnabled: null when there's no paid org_limits row (Free/canceled — the toggle doesn't apply),
     // else whether the policy is currently 'allow'.
     const overageEnabled = overagePolicy === null ? null : overagePolicy === "allow";
+    // switchTargets: the OTHER configured self-serve plans, offered only when the org is on a LIVE self-serve
+    // sub (a known tier + an entitled status). A canceled/legacy sub has nothing to switch in place.
+    const currentTier = display && display.tier !== "unknown" ? display.tier : null;
+    const switchTargets =
+      sub && isBillingActive(sub.status) && currentTier
+        ? SELF_SERVE_PLAN_IDS.filter((id) => plans[id] && id !== currentTier)
+        : [];
     return {
       hidden: false,
       display,
@@ -223,6 +236,7 @@ export async function loadBillingSummary(orgId: string, userId: string): Promise
       hasCustomer: customerId !== null,
       overageEnabled,
       canManageBilling: role === "owner" || role === "admin",
+      switchTargets,
     };
   } catch (error) {
     logActionError("billing.summary_failed", error);

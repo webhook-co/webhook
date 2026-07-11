@@ -7,7 +7,7 @@
 // live key can never be used by a test-mode deploy (real charges) and a test key can never be used by a live
 // one (no money taken). See stripeKeyMatchesMode.
 
-import { stripeKeyMatchesMode, type BillingMode } from "./billing";
+import { stripeKeyMatchesMode, type BillingMode, type SubscriptionItemRef } from "./billing";
 
 /** Pinned Stripe API version — supports Billing Meters (the metered-overage model). Bump deliberately. */
 export const STRIPE_API_VERSION = "2024-06-20";
@@ -73,6 +73,13 @@ export interface StripeClientOptions {
 export interface StripeHostedSession {
   readonly id: string;
   readonly url: string;
+}
+
+/** A subscription as the plan switch needs it: its id, raw Stripe status, and its price items. */
+export interface StripeSubscription {
+  readonly id: string;
+  readonly status: string;
+  readonly items: readonly SubscriptionItemRef[];
 }
 
 /** One metered-usage report to a Stripe Billing Meter (the metered-overage counter). */
@@ -144,6 +151,20 @@ export interface StripeClient {
   }): Promise<StripeHostedSession>;
   /** Report one metered-usage event to a Stripe Billing Meter (the outbox drainer's send step). */
   reportMeterEvent(args: ReportMeterEventArgs): Promise<StripeMeterEventResult>;
+  /** Retrieve a subscription — its status + items (each with its `si_…` id and current price id). The plan
+   *  switch reads this to find which item holds the base vs the overage price before remapping them. */
+  retrieveSubscription(subscriptionId: string): Promise<StripeSubscription>;
+  /**
+   * Update a subscription's price items in place (the plan switch), with a proration behavior.
+   * `create_prorations` (WS4) credits/charges the mid-cycle difference on the next invoice. Idempotency-Key
+   * optional (a per-attempt token collapses a double-click; a switch is otherwise not naturally idempotent).
+   */
+  updateSubscription(args: {
+    subscriptionId: string;
+    items: readonly SubscriptionItemRef[];
+    prorationBehavior: "create_prorations" | "none" | "always_invoice";
+    idempotencyKey?: string;
+  }): Promise<StripeSubscription>;
   /** Low-level: GET a Stripe path with a query object (no body). Throws StripeError on a non-2xx. */
   get<T = Record<string, unknown>>(path: string, query?: StripeParams): Promise<T>;
   /**
@@ -286,6 +307,37 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         },
         identifier,
       );
+    },
+    async retrieveSubscription(subscriptionId) {
+      const raw = await get<{
+        id: string;
+        status: string;
+        items?: { data?: Array<{ id: string; price?: { id?: string } }> };
+      }>(`/subscriptions/${subscriptionId}`);
+      return {
+        id: raw.id,
+        status: raw.status,
+        items: (raw.items?.data ?? []).map((it) => ({ id: it.id, price: it.price?.id ?? "" })),
+      };
+    },
+    async updateSubscription({ subscriptionId, items, prorationBehavior, idempotencyKey }) {
+      const raw = await request<{
+        id: string;
+        status: string;
+        items?: { data?: Array<{ id: string; price?: { id?: string } }> };
+      }>(
+        `/subscriptions/${subscriptionId}`,
+        {
+          items: items.map((i) => ({ id: i.id, price: i.price })),
+          proration_behavior: prorationBehavior,
+        },
+        idempotencyKey,
+      );
+      return {
+        id: raw.id,
+        status: raw.status,
+        items: (raw.items?.data ?? []).map((it) => ({ id: it.id, price: it.price?.id ?? "" })),
+      };
     },
     get,
     async listMeterEventSummaries({ meterId, customer, startTime, endTime, valueGroupingWindow }) {

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 
 import { openBillingPortal, startCheckout } from "./billing";
 import { applyOverageToggle } from "./overage";
+import { switchPlan } from "./plan-switch";
 import { verifySession } from "./session";
 
 // Server actions behind the dashboard billing panel. Both hand off to a Stripe-HOSTED page (Checkout or the
@@ -50,4 +51,19 @@ export async function setOverageAction(formData: FormData): Promise<void> {
   const session = await verifySession();
   const result = await applyOverageToggle(session.orgId, session.userId, enabled);
   redirect(`${BILLING}?overage=${result.status}`);
+}
+
+/**
+ * Switch the subscription to `planId` (WS4). switchPlan never throws (folds faults into a status), gates
+ * owner/admin, validates the target, and calls Stripe with immediate proration. `planId` is untrusted form
+ * input — switchPlan gates it before any Stripe call. Lands back on /billing.
+ */
+export async function switchPlanAction(formData: FormData): Promise<void> {
+  const planId = formData.get("planId");
+  const session = await verifySession();
+  const result =
+    typeof planId === "string"
+      ? await switchPlan(session.orgId, session.userId, planId)
+      : ({ status: "unknown_plan" } as const);
+  redirect(`${BILLING}?switch=${result.status}`);
 }

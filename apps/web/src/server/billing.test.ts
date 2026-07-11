@@ -375,6 +375,20 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
     expect((await loadBillingSummary("org-1", "user-1")).overageEnabled).toBeNull();
   });
 
+  it("switchTargets offers the OTHER self-serve plan for a live sub, empty for a canceled one", async () => {
+    const active = {
+      plan: "price_base", // pro's base
+      status: "active",
+      currentPeriodEnd: "2026-08-01T00:00:00.000Z",
+      cancelAtPeriodEnd: false,
+    };
+    enable(active, "cus_1", "pause");
+    expect((await loadBillingSummary("org-1", "user-1")).switchTargets).toEqual(["scale"]);
+    // A canceled sub isn't live → nothing to switch in place (resubscribe instead).
+    enable({ ...active, status: "canceled" }, "cus_1", null);
+    expect((await loadBillingSummary("org-1", "user-1")).switchTargets).toEqual([]);
+  });
+
   it("canManageBilling is true only for an owner/admin (gates the overage toggle button)", async () => {
     const sub = {
       plan: "price_base",

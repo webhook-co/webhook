@@ -9,6 +9,7 @@ import {
   isLiveSubscriptionStatus,
   parseStripePlans,
   planIdForBasePrice,
+  planSwitchItems,
   planLabel,
   SELF_SERVE_PLAN_IDS,
   SELF_SERVE_PLAN_LABELS,
@@ -207,6 +208,49 @@ describe("parseStripePlans — the self-serve plan → price-id map (fail-closed
   it("rejects the whole config if ANY plan is bad — a partial map would silently hide a plan", () => {
     expect(
       parseStripePlans('{"pro":{"base":"price_pb","overage":"price_po"},"scale":{}}'),
+    ).toBeNull();
+  });
+});
+
+describe("planSwitchItems (WS4 plan switch — remap a live sub's items to the target plan)", () => {
+  const PRO = { base: "price_pro_base", overage: "price_pro_over" };
+  const SCALE = { base: "price_scale_base", overage: "price_scale_over" };
+
+  it("remaps BOTH items (base + overage) to the target plan, preserving the item ids", () => {
+    const items = [
+      { id: "si_base", price: "price_pro_base" },
+      { id: "si_over", price: "price_pro_over" },
+    ];
+    expect(planSwitchItems(items, PRO, SCALE)).toEqual([
+      { id: "si_base", price: "price_scale_base" },
+      { id: "si_over", price: "price_scale_over" },
+    ]);
+  });
+
+  it("is order-independent — matches by price, not position (overage listed first)", () => {
+    const items = [
+      { id: "si_over", price: "price_pro_over" },
+      { id: "si_base", price: "price_pro_base" },
+    ];
+    expect(planSwitchItems(items, PRO, SCALE)).toEqual([
+      { id: "si_base", price: "price_scale_base" },
+      { id: "si_over", price: "price_scale_over" },
+    ]);
+  });
+
+  it("REFUSES (null) when the sub isn't cleanly on `current` — a legacy/hand-edited sub", () => {
+    // Missing the overage price → we can't know which item is the meter → refuse rather than mis-bill.
+    expect(planSwitchItems([{ id: "si_base", price: "price_pro_base" }], PRO, SCALE)).toBeNull();
+    // A base price from neither plan → not on `current` at all.
+    expect(
+      planSwitchItems(
+        [
+          { id: "si_x", price: "price_legacy_base" },
+          { id: "si_y", price: "price_legacy_over" },
+        ],
+        PRO,
+        SCALE,
+      ),
     ).toBeNull();
   });
 });

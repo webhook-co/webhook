@@ -767,3 +767,15 @@ export async function readOveragePolicy(tx: TenantTx): Promise<PausePolicy | nul
   const [row] = await tx<{ pause_policy: PausePolicy }[]>`select pause_policy from org_limits`;
   return row?.pause_policy ?? null;
 }
+
+/** The org's subscription id + base-price id + raw status (for the WS4 plan switch, which needs the
+ *  `sub_…` id to call Stripe), or null if the org has no subscription. Tenant-RLS scoped. */
+export async function readActiveSubscription(
+  tx: TenantTx,
+): Promise<{ subscriptionId: string; plan: string; status: string } | null> {
+  const [row] = await tx<{ stripe_subscription_id: string; plan: string; status: string }[]>`
+    select stripe_subscription_id, plan, status from billing_subscriptions limit 1`;
+  return row
+    ? { subscriptionId: row.stripe_subscription_id, plan: row.plan, status: row.status }
+    : null;
+}

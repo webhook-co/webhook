@@ -104,6 +104,34 @@ export interface StripePlanPrices {
 }
 export type StripePlans = Partial<Record<SelfServePlanId, StripePlanPrices>>;
 
+/** One item of a Stripe subscription — the subscription-item id (`si_…`) + the price id it currently holds. */
+export interface SubscriptionItemRef {
+  readonly id: string;
+  readonly price: string;
+}
+
+/**
+ * Compute the subscription-item updates to switch a live subscription from `current` plan prices to `target`
+ * (WS4 plan switch). A self-serve subscription has TWO items — the licensed base + the metered overage — so
+ * we remap EACH by matching its present price to `current.base`/`current.overage` and pointing it at the
+ * same role's price in `target`. Returns null (caller aborts) if the subscription's items don't hold BOTH of
+ * `current`'s prices exactly — i.e. it isn't cleanly on `current` (a legacy/hand-edited sub), where a blind
+ * remap could drop the overage meter or mis-bill. Pure: ids only, no Stripe call, no amount.
+ */
+export function planSwitchItems(
+  items: readonly SubscriptionItemRef[],
+  current: StripePlanPrices,
+  target: StripePlanPrices,
+): SubscriptionItemRef[] | null {
+  const baseItem = items.find((it) => it.price === current.base);
+  const overageItem = items.find((it) => it.price === current.overage);
+  if (!baseItem || !overageItem) return null; // not cleanly on `current` → refuse to guess
+  return [
+    { id: baseItem.id, price: target.base },
+    { id: overageItem.id, price: target.overage },
+  ];
+}
+
 /** A plan entry carries exactly these keys — anything else (notably an `amount`) is a misconfiguration. */
 const PLAN_PRICE_KEYS = ["base", "overage"] as const;
 
