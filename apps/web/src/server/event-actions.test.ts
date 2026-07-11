@@ -19,7 +19,31 @@ const { loadMoreEvents, revealHeader, loadEventPayload } = vi.hoisted(() => ({
 vi.mock("./events", () => ({ loadMoreEvents, revealHeader }));
 vi.mock("./payloads", () => ({ loadEventPayload }));
 
-import { loadEventPayloadAction, loadMoreEventsAction, revealHeaderAction } from "./event-actions";
+// The event-delete seam + its deps — mocked; the DB behaviour is unit-tested in packages/db/event-delete.
+const { deleteEventWithAudit, enforceEventDeleteRateLimit, withTenantDb } = vi.hoisted(() => ({
+  deleteEventWithAudit: vi.fn(),
+  enforceEventDeleteRateLimit: vi.fn(),
+  withTenantDb: vi.fn(async (fn: (db: unknown) => Promise<unknown>) => fn({})),
+}));
+vi.mock("@webhook-co/db/event-delete", () => ({
+  deleteEventWithAudit,
+  enforceEventDeleteRateLimit,
+}));
+vi.mock("./db", () => ({ withTenantDb }));
+vi.mock("./env", () => ({
+  getAuditChainKey: vi.fn(async () => "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="),
+}));
+vi.mock("@webhook-co/shared/audit", () => ({
+  importAuditKey: vi.fn(async () => ({}) as CryptoKey),
+}));
+vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: () => new Uint8Array(32) }));
+
+import {
+  deleteEventAction,
+  loadEventPayloadAction,
+  loadMoreEventsAction,
+  revealHeaderAction,
+} from "./event-actions";
 
 const ENDPOINT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const CURSOR_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
@@ -177,5 +201,33 @@ describe("loadEventPayloadAction", () => {
       await loadEventPayloadAction({ endpointId: 123 as unknown as string, eventId: CURSOR_ID }),
     ).toEqual({ kind: "not_found" });
     expect(loadEventPayload).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleteEventAction", () => {
+  it("rejects a non-uuid eventId WITHOUT touching the db", async () => {
+    deleteEventWithAudit.mockClear();
+    expect(await deleteEventAction({ eventId: "not-a-uuid" })).toEqual({ ok: false });
+    expect(deleteEventWithAudit).not.toHaveBeenCalled();
+  });
+
+  it("enforces the rate limit then tombstones under the session org, returning {ok:true}", async () => {
+    enforceEventDeleteRateLimit.mockResolvedValueOnce(undefined);
+    deleteEventWithAudit.mockResolvedValueOnce({ id: CURSOR_ID, deletedAt: new Date() });
+    expect(await deleteEventAction({ eventId: CURSOR_ID })).toEqual({ ok: true });
+    // org comes from the SESSION (mocked "o"), never the input; single eventId.
+    expect(enforceEventDeleteRateLimit).toHaveBeenCalledWith({}, "o");
+    expect(deleteEventWithAudit).toHaveBeenCalledWith(
+      {},
+      { orgId: "o", eventId: CURSOR_ID, actor: { kind: "user", id: "u" } },
+      expect.anything(),
+    );
+  });
+
+  it("returns {ok:false} (never throws) when the rate limit trips", async () => {
+    enforceEventDeleteRateLimit.mockRejectedValueOnce(new Error("RATE_LIMITED"));
+    deleteEventWithAudit.mockClear();
+    expect(await deleteEventAction({ eventId: CURSOR_ID })).toEqual({ ok: false });
+    expect(deleteEventWithAudit).not.toHaveBeenCalled();
   });
 });

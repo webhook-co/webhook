@@ -19,6 +19,7 @@ import {
   endpointsRevokeProviderSecret,
   endpointsRotate,
   endpointsUpdate,
+  eventsDelete,
 } from "@webhook-co/contract";
 import { type IngestUrlRevealerRpc, type SecretSealer } from "@webhook-co/shared";
 import { requireAuditActor } from "./audit-actor-fault";
@@ -34,6 +35,7 @@ import {
   rotateEndpointWithAudit,
   updateEndpointDedupWithAudit,
 } from "./endpoints";
+import { deleteEventWithAudit, enforceEventDeleteRateLimit } from "./event-delete";
 import { appendIngestUrlRevealAudit, enforceIngestUrlRevealRateLimit } from "./ingest-url-reveal";
 import {
   listEndpointProviderSecrets,
@@ -191,6 +193,23 @@ export function createWriteHandlers(deps: WriteHandlerDeps): CapabilityHandlers 
     // Evict so the deleted endpoint's token stops resolving NOW (the cold-lookup deleted_at filter is
     // the durable stop + the TTL self-heal; this makes it immediate). Best-effort — never fails the call.
     await evict(deleted.tokenHash);
+    return { id: deleted.id, deletedAt: deleted.deletedAt };
+  });
+
+  handlers.set(eventsDelete.name, async (ctx, input) => {
+    ensureScope(ctx, eventsDelete); // FIRST — sole authz gate on mcp
+    const parsed = eventsDelete.input.safeParse(input);
+    if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
+    // Destructive-op mitigation (esp. on mcp, where an agent may act on attacker-controlled payloads):
+    // a per-org rate limit BEFORE the tombstone bounds a runaway/compromised deleter. Single-id only (the
+    // input schema takes ONE eventId — never a bulk/filter delete). deleteEventWithAudit redacts + enqueues
+    // the R2 purge + appends the hash-chained audit row, all in one tx; NOT_FOUND for unknown/cross-org.
+    await enforceEventDeleteRateLimit(deps.tenant, ctx.orgId);
+    const deleted = await deleteEventWithAudit(
+      deps.tenant,
+      { orgId: ctx.orgId, eventId: parsed.data.eventId, actor: requireAuditActor(ctx) },
+      deps.auditKey,
+    );
     return { id: deleted.id, deletedAt: deleted.deletedAt };
   });
 

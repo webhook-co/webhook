@@ -1,12 +1,17 @@
 "use server";
 
-import { ORDER_KEY_RE, type Cursor } from "@webhook-co/shared";
+import { deleteEventWithAudit, enforceEventDeleteRateLimit } from "@webhook-co/db/event-delete";
+import { ORDER_KEY_RE, type Cursor, userActor } from "@webhook-co/shared";
+import { importAuditKey } from "@webhook-co/shared/audit";
+import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { PROVIDERS } from "@webhook-co/webhooks-spec";
 
 import { parseEventFilters, type EventFilterParams } from "@/lib/event-filters";
 
 import { logActionError } from "./action-log";
+import { withTenantDb } from "./db";
 import { isUuid } from "./endpoints";
+import { getAuditChainKey } from "./env";
 import {
   loadMoreEvents,
   revealHeader,
@@ -115,4 +120,36 @@ export async function loadEventPayloadAction(input: {
   const { endpointId, eventId } = input ?? {};
   if (typeof endpointId !== "string" || typeof eventId !== "string") return { kind: "not_found" };
   return loadEventPayload(session.orgId, endpointId, eventId);
+}
+
+export type DeleteEventResult = { readonly ok: true } | { readonly ok: false };
+
+/**
+ * Delete (tombstone) a captured event from the dashboard (S3). Session + RLS-org-pinning is the authz (any
+ * org member may manage the org's events), the SESSION counterpart of the api/mcp scope-gated handler — it
+ * binds the raw db fn directly under withTenant, but reuses the SAME rate limit + tombstone so behaviour
+ * can't drift between surfaces. deleteEventWithAudit redacts the content, enqueues the R2 body purge, and
+ * appends the hash-chained audit row in one tx; NOT_FOUND (an unknown/cross-org id) or a db fault resolves
+ * to `{ok:false}` (already logged) rather than throwing.
+ */
+export async function deleteEventAction(input: { eventId: string }): Promise<DeleteEventResult> {
+  const session = await verifySession();
+  const eventId = input?.eventId;
+  if (typeof eventId !== "string" || !isUuid(eventId)) return { ok: false };
+
+  try {
+    const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
+    await withTenantDb(async (db) => {
+      await enforceEventDeleteRateLimit(db, session.orgId);
+      await deleteEventWithAudit(
+        db,
+        { orgId: session.orgId, eventId, actor: userActor(session.userId) },
+        auditKey,
+      );
+    });
+    return { ok: true };
+  } catch (error) {
+    logActionError("events.delete_failed", error);
+    return { ok: false };
+  }
 }

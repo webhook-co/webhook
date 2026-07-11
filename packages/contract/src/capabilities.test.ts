@@ -8,6 +8,7 @@ import {
   endpointsAddProviderSecret,
   endpointsCreate,
   endpointsDelete,
+  eventsDelete,
   endpointsList,
   endpointsRotate,
   eventsList,
@@ -40,6 +41,7 @@ const EXPECTED_NAMES = [
   "events.getPayload",
   "events.tail",
   "events.replay",
+  "events.delete",
   "audit.verify",
   "replayDestinations.create",
   "replayDestinations.list",
@@ -344,6 +346,36 @@ describe("endpoints.delete", () => {
     expect(ok.success).toBe(true);
     const bad = endpointsDelete.output.safeParse({ id: "not-a-uuid", deletedAt: "x" });
     expect(bad.success).toBe(false);
+  });
+});
+
+describe("events.delete (the tombstone)", () => {
+  it("uses a DEDICATED events:delete scope, bound on ALL surfaces incl. mcp, idempotent", () => {
+    expect(eventsDelete.auth.scope).toBe("events:delete");
+    // Not events:read/replay and not a generic events:write — deleting captured data is a strictly higher
+    // privilege than reading/replaying it, and there is no event create/update a write scope would cover.
+    expect(eventsDelete.auth.scope).not.toBe("events:read");
+    expect(eventsDelete.auth.scope).not.toBe("events:replay");
+    expect(eventsDelete.semantics.idempotent).toBe(true);
+    // Bound on all four (parity), MCP included with mitigations — no surface exemption.
+    expect(requiredSurfaces(eventsDelete)).toEqual(["api", "cli", "mcp", "web"]);
+    expect(Object.keys(eventsDelete.surfaceExempt ?? {})).toEqual([]);
+    expect(eventsDelete.errors).toContain("FORBIDDEN");
+    expect(eventsDelete.errors).toContain("NOT_FOUND");
+    expect(eventsDelete.errors).toContain("RATE_LIMITED"); // the destructive-op mitigation
+  });
+
+  it("validates a single eventId (never a bulk/filter delete) and coerces the output", () => {
+    expect(
+      eventsDelete.input.safeParse({ eventId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060" }).success,
+    ).toBe(true);
+    expect(eventsDelete.input.safeParse({ eventId: "not-a-uuid" }).success).toBe(false);
+    expect(eventsDelete.input.safeParse({}).success).toBe(false);
+    const ok = eventsDelete.output.safeParse({
+      id: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
+      deletedAt: "2026-07-11T00:00:00.000Z",
+    });
+    expect(ok.success).toBe(true);
   });
 });
 

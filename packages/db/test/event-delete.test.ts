@@ -4,11 +4,15 @@ import { CapabilityFault } from "@webhook-co/contract";
 import { importAuditKey, userActor } from "@webhook-co/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { readAuditChain } from "../src/audit-append";
+import { appendAuditEntry, readAuditChain } from "../src/audit-append";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { listDueDeliveries } from "../src/delivery";
-import { deleteEventWithAudit } from "../src/event-delete";
+import {
+  deleteEventWithAudit,
+  enforceEventDeleteRateLimit,
+  EVENT_DELETE_MAX_PER_WINDOW,
+} from "../src/event-delete";
 import { reconcileMeteringUsage } from "../src/meter-reconcile";
 import { sumPeriodEventUsage } from "../src/period-usage";
 import { getEvent, listEvents, tailEvents } from "../src/reads";
@@ -284,6 +288,46 @@ describe("audit + idempotency + not-found", () => {
   it("throws NOT_FOUND for an unknown or cross-org id", async () => {
     const { orgId } = await seedOrgWithEndpoint();
     await expect(del(orgId, randomUUID())).rejects.toBeInstanceOf(CapabilityFault);
+  });
+});
+
+describe("enforceEventDeleteRateLimit (the destructive-op mitigation)", () => {
+  it("passes under the cap and throws RATE_LIMITED at it", async () => {
+    const { orgId } = await seedOrgWithEndpoint();
+    // No deletes yet → passes.
+    await expect(enforceEventDeleteRateLimit(app, orgId)).resolves.toBeUndefined();
+
+    // Seed exactly the cap's worth of `event.deleted` audit rows in this org's window.
+    await withTenant(app, orgId, async (tx) => {
+      for (let i = 0; i < EVENT_DELETE_MAX_PER_WINDOW; i++) {
+        await appendAuditEntry(tx, auditKey, {
+          orgId,
+          actor: userActor(`u_${i}`),
+          action: "event.deleted",
+          target: randomUUID(),
+        });
+      }
+    });
+    await expect(enforceEventDeleteRateLimit(app, orgId)).rejects.toThrow(
+      /too many event deletes/i,
+    );
+  });
+
+  it("is per-org — one org's deletes never throttle another", async () => {
+    const { orgId: busy } = await seedOrgWithEndpoint();
+    const { orgId: quiet } = await seedOrgWithEndpoint();
+    await withTenant(app, busy, async (tx) => {
+      for (let i = 0; i < EVENT_DELETE_MAX_PER_WINDOW; i++) {
+        await appendAuditEntry(tx, auditKey, {
+          orgId: busy,
+          actor: userActor(`u_${i}`),
+          action: "event.deleted",
+          target: randomUUID(),
+        });
+      }
+    });
+    await expect(enforceEventDeleteRateLimit(app, busy)).rejects.toThrow();
+    await expect(enforceEventDeleteRateLimit(app, quiet)).resolves.toBeUndefined();
   });
 });
 

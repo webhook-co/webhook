@@ -22,7 +22,12 @@ import {
   endpointsUpdateCommand,
 } from "./commands/endpoints.js";
 import { deliveriesGetCommand, deliveriesListCommand } from "./commands/deliveries.js";
-import { eventsGetCommand, eventsListCommand, eventsPayloadCommand } from "./commands/events.js";
+import {
+  eventsDeleteCommand,
+  eventsGetCommand,
+  eventsListCommand,
+  eventsPayloadCommand,
+} from "./commands/events.js";
 import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
@@ -78,6 +83,7 @@ export const CAPABILITY_COMMANDS: Record<string, readonly string[]> = {
   "events.list": ["events", "list"],
   "events.get": ["events", "get"],
   "events.getPayload": ["events", "payload"],
+  "events.delete": ["events", "delete"],
   "events.tail": ["listen"],
   "events.replay": ["replay"],
   "deliveries.list": ["deliveries", "list"],
@@ -121,6 +127,7 @@ const eventsRoute = buildRouteMap({
     list: eventsListCommand,
     get: eventsGetCommand,
     payload: eventsPayloadCommand,
+    delete: eventsDeleteCommand,
   },
   docs: { brief: "inspect captured events" },
 });

@@ -1,4 +1,8 @@
-import { CapabilityFault } from "@webhook-co/contract";
+// Leaf import (not the @webhook-co/contract barrel): apps/web pulls db modules DB-direct under Turbopack,
+// where a named binding from a transpiled-package `export *` barrel resolves to `undefined` at runtime — so
+// `new CapabilityFault` would throw "not a constructor" instead of refusing cleanly, turning a fail-closed
+// guard into a different crash (see [[turbopack-contract-barrel]]).
+import { CapabilityFault } from "@webhook-co/contract/capability";
 import {
   auditActorFromContext,
   type AuditActorContext,

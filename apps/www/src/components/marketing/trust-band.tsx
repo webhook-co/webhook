@@ -36,9 +36,10 @@ export function TrustBand() {
         </h2>
         <p className="text-md text-pretty text-fg-on-inverse/75">
           Private-by-default capture, encryption in transit and at rest, a hash-chained audit log,
-          and tenant isolation by row-level security, all designed in from the start. SOC 2 Type II
-          and GDPR/DPA are near-term; a HIPAA BAA follows. The core engine, CLI, MCP server, and
-          signing implementation are open source under Apache-2.0.
+          and tenant isolation by row-level security, all designed in from the start. A Data
+          Processing Agreement is published and applies without asking. We hold no SOC 2 or HIPAA
+          certification today, and we&apos;d rather say so than imply otherwise. The core engine,
+          CLI, MCP server, and signing implementation are open source under Apache-2.0.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-2.5">
           {BADGES.map(({ icon: Icon, label }) => (

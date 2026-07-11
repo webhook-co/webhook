@@ -9,13 +9,19 @@ import { FAIL_REASON_LABEL, type SigStatus, type StreamRow } from "./stream-data
 import { useLiveStream } from "./use-live-stream";
 
 /**
- * The live inspector — the homepage's signature element, embedded directly in the hero as its right
+ * The demo inspector — the homepage's signature element, embedded directly in the hero as its right
  * column. An illustrative stream of webhook events arriving, getting signature-checked, and staying
  * ready to replay. The cycling logic lives in `useLiveStream` (over the pure engine); this file is
  * the card view plus its interaction state (replay).
  *
+ * It says "demo", everywhere, on purpose. A pulsing green dot, the word "live", and a counter ticking
+ * upward is the exact visual grammar of real telemetry — and every figure in this feed is invented.
+ * The disclosure used to be a screen-reader-only line and a source comment, neither of which a sighted
+ * visitor ever sees. We don't publish numbers we don't measure; that has to include the ones that
+ * merely LOOK measured.
+ *
  * Headless of any section/heading chrome: the hero's h1 is the page's only heading, so the inspector
- * is labeled by `role="group"` + its own visible "live · N events" header rather than an <h2>.
+ * is labeled by `role="group"` + its own visible "demo · N sample events" header rather than an <h2>.
  *
  * Accessibility, deliberately: the auto-update is pausable (WCAG 2.2.2) via a real pause/play button;
  * reduced-motion users start paused but can opt in; the moving list is `aria-live="off"` with one
@@ -48,7 +54,11 @@ export function Inspector() {
   return (
     <div
       role="group"
-      aria-label="Live webhook inspector"
+      // "Demo", not "Live" — the accessible name has to tell the same truth the visible one does.
+      // Renaming the sighted label to "demo" while a screen reader still announced "Live webhook
+      // inspector" would have left the fabricated feed presented as real to exactly the users who
+      // can't see the "demo" chip that says otherwise.
+      aria-label="Demo webhook inspector"
       className="overflow-hidden rounded-card border border-hairline bg-surface shadow-2"
     >
       <header className="flex items-center justify-between gap-3 border-b border-hairline px-4 py-2.5">
@@ -61,12 +71,17 @@ export function Inspector() {
                 isPlaying ? "inspector-live-dot bg-ok" : "bg-fg-faint",
               )}
             />
-            {isPlaying ? "live" : "paused"}
+            {/* "demo", not "live". A pulsing green dot, the word "live", and a counter ticking upward
+                is the exact visual grammar of real telemetry — and this feed is invented. The only
+                disclosure used to be a screen-reader-only line and a source comment, neither of which
+                a sighted visitor ever sees. We don't publish numbers we don't measure; that has to
+                include the ones that merely LOOK measured. */}
+            {isPlaying ? "demo" : "paused"}
           </span>
           <span aria-hidden="true" className="text-fg-faint">
             ·
           </span>
-          <span className="tabular-nums">{state.counter.toLocaleString()} events</span>
+          <span className="tabular-nums">{state.counter.toLocaleString()} sample events</span>
         </div>
         <button
           type="button"
@@ -99,8 +114,9 @@ export function Inspector() {
       </ul>
 
       <p className="sr-only">
-        An illustrative live feed of incoming webhook events plays here, each showing its provider,
-        signature status, and latency.
+        A demo feed of sample webhook events plays here, each showing its provider, signature
+        status, and an example latency. The events and figures are illustrative, not live
+        measurements.
       </p>
     </div>
   );

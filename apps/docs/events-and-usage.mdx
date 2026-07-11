@@ -32,6 +32,15 @@ So a webhook captured and forwarded to a single destination is **two** events; f
 
 The single lever that most changes your event count is deduplication. With it **off**, every retry a sender sends is a distinct capture and each one counts — that's the trade for seeing every raw request. Turn on a [dedup mode](/deduplication) once a sender's retries stop being interesting.
 
+<Note>
+  **Deleting an event does not reduce your usage.** You can delete an individual captured event at
+  any time (via the API, the CLI, or an MCP agent) — its content is redacted immediately and its
+  stored payload body is purged shortly after, so it can no longer be read or replayed. But the
+  event was already counted when it was captured, so deleting it never lowers what you were billed.
+  This is deliberate: a metered unit you can un-count by deleting after the fact isn't an honest
+  counter.
+</Note>
+
 ## The metering model
 
 Two principles fall out of the single unit above:

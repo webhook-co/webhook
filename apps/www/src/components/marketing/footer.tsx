@@ -31,8 +31,6 @@ const columns: { title: string; links: FooterLink[] }[] = [
       { label: "API reference", href: LINKS.apiReference },
       { label: "CLI", href: LINKS.cli },
       { label: "MCP", href: LINKS.mcp },
-      { label: "Standard Webhooks", href: LINKS.standardWebhooks },
-      { label: "Open source", href: LINKS.openSource },
     ],
   },
   {
@@ -145,14 +143,12 @@ export function Footer() {
           ))}
         </div>
 
+        {/* No "All systems operational" indicator. It was a hardcoded string next to a green dot,
+            with nothing monitoring anything — its own comment admitted "there is no status page to
+            point at". A health indicator that isn't wired to a health check is a lie told in the most
+            trustworthy-looking way available. It comes back when a real status page does. */}
         <div className="mt-[clamp(40px,5vw,64px)] flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-6 text-sm text-fg-muted">
           <span>© 2026 webhook.co</span>
-          {/* Not a link: there is no status page to point at. Left as plain text rather than an
-              `href="#"` that would now glide the reader back to the top of the page. */}
-          <span className="inline-flex items-center gap-2">
-            <span className="h-[7px] w-[7px] rounded-pill bg-ok" aria-hidden="true" />
-            All systems operational
-          </span>
         </div>
       </div>
     </footer>

@@ -26,7 +26,8 @@
     "./provider-secrets": "./src/provider-secrets.ts",
     "./replay": "./src/replay.ts",
     "./org-lifecycle": "./src/org-lifecycle.ts",
-    "./retention": "./src/retention.ts"
+    "./retention": "./src/retention.ts",
+    "./event-delete": "./src/event-delete.ts"
   },
   "scripts": {
     "build": "tsc",

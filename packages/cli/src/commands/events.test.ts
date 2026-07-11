@@ -205,3 +205,24 @@ describe("wbhk events payload", () => {
     expect(new URL(cap.urls[0]).pathname).toBe(`/v1/events/${EV}/payload`);
   });
 });
+
+describe("events delete", () => {
+  const deleted = { id: EV, deletedAt: "2026-07-11T00:00:00.000Z" };
+
+  it("with --yes, deletes the event and prints the {id, deletedAt} record", async () => {
+    const cap = capturingFetch(deleted);
+    const t = makeTestContext({ store: loggedInStore(), fetch: cap.fetch });
+    await run(app, ["events", "delete", EV, "--yes"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(cap.urls[0]).toContain(`/v1/events/${EV}`);
+    expect(t.stdout()).toContain(EV);
+  });
+
+  it("refuses without --yes in a non-TTY (usage error) and never calls the api", async () => {
+    // Default makeTestContext: isInteractive=false, and io.fetch throws if ever called → destructive-safe.
+    const t = makeTestContext({ store: loggedInStore() });
+    await run(app, ["events", "delete", EV], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("--yes");
+  });
+});

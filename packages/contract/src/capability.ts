@@ -63,6 +63,11 @@ export const CAPABILITY_SCOPES = [
   "endpoints:write",
   "events:read",
   "events:replay",
+  // events:delete (S3) — TOMBSTONE a captured event (redact + purge its body). A DEDICATED destructive
+  // scope, not events:read/replay and not a generic events:write (there is no event create/update — a
+  // write scope would over-grant): deleting a customer's captured data is a materially higher privilege
+  // than reading or replaying it, so a passive consumer key never holds it by accident.
+  "events:delete",
   "audit:read",
   // triggers:write (S5) — manage (create/revoke) webhook→agent trigger subscriptions. A dedicated write
   // scope keeps the read scopes side-effect-free: a passive event-consumer key holds only events:read
