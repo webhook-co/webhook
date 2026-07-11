@@ -21,6 +21,7 @@
 //     the cross-slice G1 invariant token-core depends on (a mismatch would orphan the vestigial grant);
 //   - PII (device name) lives only in the encrypted `props`, never in the provider's unencrypted metadata.
 
+import { resolveAudience } from "./audience";
 import {
   clientIdentityDomain,
   isVerifiedClient,
@@ -98,13 +99,6 @@ function errorRedirect(redirectUri: string, error: string, state: string, issuer
   return withIssParam(url.toString(), issuer);
 }
 
-/** Normalize the RFC 8707 resource param to exactly one value, or null if absent / more than one. */
-function singleResource(resource: string | string[] | undefined): string | null {
-  if (typeof resource === "string") return resource;
-  if (Array.isArray(resource) && resource.length === 1) return resource[0]!;
-  return null;
-}
-
 function intersect(requested: readonly string[], allowed: readonly string[]): string[] {
   const set = new Set(allowed);
   return [...new Set(requested.filter((s) => set.has(s)))];
@@ -134,9 +128,11 @@ export async function buildConsent(
     };
   }
 
-  // Audience: exactly one allowed resource, from the request — never defaulted, never widened.
-  const resource = singleResource(request.resource);
-  if (resource === null || !deps.allowedAudiences.includes(resource)) {
+  // Audience: exactly one allowed resource, from the request — never defaulted, never widened. Resolve to
+  // the CANONICAL audience (tolerating the MCP-SDK trailing slash) so the sealed + minted audience matches
+  // what the MCP server validates against.
+  const resource = resolveAudience(request.resource, deps.allowedAudiences);
+  if (resource === null) {
     return {
       kind: "redirect",
       location: errorRedirect(request.redirectUri, "invalid_target", request.state, deps.issuer),

@@ -80,6 +80,19 @@ describe("handleDeviceAuthorization", () => {
     expect(create).not.toHaveBeenCalled();
   });
 
+  it("accepts the MCP-SDK trailing-slash resource and stores the CANONICAL (no-slash) audience", async () => {
+    const create = vi.fn(deps().createDeviceCode);
+    await handleDeviceAuthorization(
+      deps({ createDeviceCode: create }),
+      formRequest({
+        client_id: "cli_wbhk",
+        scope: "events:read",
+        resource: "https://mcp.webhook.co/",
+      }),
+    );
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ audience: MCP })); // no trailing slash
+  });
+
   it("rejects a missing or non-allowed resource (invalid_target)", async () => {
     const missing = await handleDeviceAuthorization(
       deps(),
