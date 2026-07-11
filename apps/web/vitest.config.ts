@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 // Test harness for the dashboard's client + server components. jsdom + Testing Library,
 // mirroring packages/ui. Coverage is collected but NOT threshold-gated here: most of apps/web
@@ -22,5 +22,9 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: ["./vitest.setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
+    // `*.pg.test.ts` are real-Postgres integration tests (they spin an ephemeral cluster via the db
+    // harness) — EXCLUDED here and run under `pnpm test:db` (vitest.pg.config.ts), like apps/api. Running
+    // them in the jsdom `test` lane fails (no cluster / initdb ENOENT).
+    exclude: [...configDefaults.exclude, "src/**/*.pg.test.ts"],
   },
 });

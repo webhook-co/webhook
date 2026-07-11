@@ -18,7 +18,7 @@
     "format:check": "prettier --check .",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test --filter=!@webhook-co/db",
-    "test:db": "turbo run test --filter=@webhook-co/db && turbo run test:db --filter=@webhook-co/api",
+    "test:db": "turbo run test --filter=@webhook-co/db && turbo run test:db --filter=@webhook-co/api --filter=@webhook-co/web",
     "no-skipped-tests": "node scripts/no-skipped-tests.mjs",
     "no-absolute-type-size": "node scripts/no-absolute-type-size.mjs",
     "no-unverified-claims": "node scripts/no-unverified-claims.mjs",
