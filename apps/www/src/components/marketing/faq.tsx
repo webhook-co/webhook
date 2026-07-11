@@ -70,7 +70,7 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
     // third of it, so it can't sit behind a click either.
     discloses: true,
     answer:
-      "Capture pauses within minutes of your limit. We email you before you reach your included volume — not after — and then stop capturing rather than silently run up a bill. Nothing is deleted, and nothing is charged that you didn't agree to.",
+      "Capture pauses. We email you before you reach your included volume — not after — and at the limit we stop capturing rather than silently run up a bill. Nothing is deleted, and nothing is charged that you didn't agree to.",
   },
   {
     question: "Can I keep going past my included volume?",

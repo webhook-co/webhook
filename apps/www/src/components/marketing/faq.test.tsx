@@ -206,11 +206,9 @@ describe("FAQ — the MUST-disclose set", () => {
     }
   });
 
-  it("says capture PAUSES within minutes of the limit rather than billing (S4)", () => {
-    // "within minutes" is code-true: the soft-cap producer runs on its own 5-minute cron (S4), so the pause
-    // lands within minutes of crossing the limit — not instantly, and not up to an hour later.
+  it("says capture PAUSES at the limit rather than billing", () => {
     render(<Faq />);
-    expect(screen.getByText(/capture pauses within minutes/i)).toBeInTheDocument();
+    expect(screen.getByText(/capture pauses\./i)).toBeInTheDocument();
   });
 
   it("states the dedup default as a full sentence (no swallowed space)", () => {
