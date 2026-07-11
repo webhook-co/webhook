@@ -212,6 +212,13 @@ export default function PrivacyPage() {
               takes effect immediately.
             </li>
             <li>
+              <strong>If your window gets shorter:</strong> if you move to a plan with a shorter
+              retention window — by downgrading, or by cancelling and returning to the free tier —
+              the shorter window applies from then on, and captured data already older than it
+              becomes eligible for deletion. Export anything you want to keep <em>before</em> you
+              downgrade or cancel.
+            </li>
+            <li>
               <strong>Deletion &amp; erasure:</strong> you can delete endpoints, events, and your
               whole organisation from your account — this removes the stored records and the payload
               bodies, not just a listing. You can also ask us to erase your personal data (see §8);

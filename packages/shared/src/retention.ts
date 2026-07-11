@@ -14,6 +14,12 @@
 /** The Free-tier retention window (days). The only tier that can enforce while billing is dark. */
 export const FREE_RETENTION_DAYS = 7;
 
+// ⚠️ These are the values the PRICING PAGE advertises. They are NOT what the prune reads at runtime: the
+// window it enforces lives on `orgs.retention_days`, mirrored from each plan's Stripe price metadata
+// (`retention_days`) by billing-sync, and enforced by the DELETE policy in migration 0054. This map is the
+// human-facing source of truth used to keep the pricing copy honest — if you change a number here, change
+// the matching Stripe price metadata too, or the page will advertise a window the database doesn't keep.
+
 /**
  * Retention window per plan tier, in days. `null` = unlimited (never pruned). The keys are tier NAMES
  * (`free`/`pro`/`scale`/`enterprise`), the same intensity vocabulary as {@link SELF_SERVE_PLAN_IDS};

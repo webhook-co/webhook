@@ -9,17 +9,20 @@ import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
 
-// Drives the retention-prune DAL against a real Postgres so the cross-org `webhook_retention` role's
-// policies + column grants (0053) are exercised for real: the aged-event enumeration, the entitled-org
-// exclusion, the R2-key read, and the age-FLOOR DELETE policy that must refuse to remove an in-retention
-// event even when its id is handed straight to the delete.
+// Drives the retention-prune DAL against a real Postgres so the cross-org `webhook_retention` role's policies
+// + column grants (0053/0054) are exercised for real: the aged-event enumeration, the PER-PLAN window, the
+// R2-key read, and the DELETE policy that must refuse to remove an event still inside its org's window even
+// when its id is handed straight to the delete.
 
 let pg: EphemeralPostgres;
 let app: Sql; // webhook_app — seeds orgs/endpoints/events under RLS
 let admin: Sql; // superuser — seeds the SELECT-only billing_subscriptions
 let retention: Sql; // webhook_retention — the DAL under test (cross-org)
 
-const RETENTION_DAYS = 7;
+/** Set an org's retention window. NULL = unlimited (never pruned) — e.g. an Enterprise contract. */
+async function setRetentionDays(orgId: string, days: number | null): Promise<void> {
+  await admin`update orgs set retention_days = ${days} where id = ${orgId}`;
+}
 
 /** Seed an org + owner endpoint; returns { orgId, endpointId }. */
 async function seedOrg(slug: string): Promise<{ orgId: string; endpointId: string }> {
@@ -47,13 +50,6 @@ async function seedEvent(
     await tx`update events set received_at = now() - (${opts.ageDays} * interval '1 day') where id = ${id}`;
   });
   return id;
-}
-
-async function seedSubscription(orgId: string, status: string): Promise<void> {
-  await admin`
-    insert into billing_subscriptions
-      (org_id, stripe_subscription_id, plan, status, current_period_start, current_period_end)
-    values (${orgId}, ${"sub_" + orgId.slice(0, 8)}, ${"price_pro"}, ${status}, now(), now() + interval '30 days')`;
 }
 
 beforeAll(async () => {
@@ -86,27 +82,33 @@ describe("claimRetentionOrgs", () => {
     const fresh = await seedOrg("fresh");
     await seedEvent(fresh.orgId, fresh.endpointId, { ageDays: 2 });
 
-    const orgs = await claimRetentionOrgs(retention, RETENTION_DAYS, 100);
+    const orgs = await claimRetentionOrgs(retention, 100);
     expect(orgs).toContain(stale.orgId);
     expect(orgs).not.toContain(fresh.orgId);
   });
 
-  it("EXCLUDES orgs entitled to a paid plan (active/trialing/past_due), so paying customers aren't pruned", async () => {
-    for (const status of ["active", "trialing", "past_due"]) {
-      const paid = await seedOrg(`paid-${status}`);
-      await seedEvent(paid.orgId, paid.endpointId, { ageDays: 30 });
-      await seedSubscription(paid.orgId, status);
-      const orgs = await claimRetentionOrgs(retention, RETENTION_DAYS, 100);
-      expect(orgs).not.toContain(paid.orgId);
-    }
+  it("does NOT claim a paid org whose data is still inside its longer window", async () => {
+    // 0053 skipped paid orgs entirely (over-retaining forever). Now they simply have a longer window: a Pro
+    // org's 10-day-old event is past the Free 7 but well inside Pro's 30, so there is nothing to prune.
+    const pro = await seedOrg("claim-pro-inwindow");
+    await setRetentionDays(pro.orgId, 30);
+    await seedEvent(pro.orgId, pro.endpointId, { ageDays: 10 });
+    expect(await claimRetentionOrgs(retention, 100)).not.toContain(pro.orgId);
   });
 
-  it("INCLUDES an org whose subscription is NON-entitled (e.g. canceled) — it is back on the Free window", async () => {
+  it("DOES claim a paid org once its data ages past its own (longer) window", async () => {
+    // The whole point of 0054: a Pro org's data is not kept forever — it is pruned at 30 days.
+    const pro = await seedOrg("claim-pro-expired");
+    await setRetentionDays(pro.orgId, 30);
+    await seedEvent(pro.orgId, pro.endpointId, { ageDays: 40 });
+    expect(await claimRetentionOrgs(retention, 100)).toContain(pro.orgId);
+  });
+
+  it("claims a CHURNED org at the Free window (billing-sync resets retention_days on cancellation)", async () => {
     const churned = await seedOrg("churned");
+    await setRetentionDays(churned.orgId, 7); // what applySubscriptionDeleted writes
     await seedEvent(churned.orgId, churned.endpointId, { ageDays: 30 });
-    await seedSubscription(churned.orgId, "canceled");
-    const orgs = await claimRetentionOrgs(retention, RETENTION_DAYS, 100);
-    expect(orgs).toContain(churned.orgId);
+    expect(await claimRetentionOrgs(retention, 100)).toContain(churned.orgId);
   });
 });
 
@@ -117,21 +119,24 @@ describe("listExpiringEvents", () => {
     const oldB = await seedEvent(o.orgId, o.endpointId, { ageDays: 9, r2Key: "key-B" });
     await seedEvent(o.orgId, o.endpointId, { ageDays: 1 }); // in-retention — must not appear
 
-    const page = await listExpiringEvents(retention, o.orgId, RETENTION_DAYS, 100);
+    const page = await listExpiringEvents(retention, o.orgId, 100);
     expect(page.map((e) => e.id).sort()).toEqual([oldA, oldB].sort());
     expect(page.map((e) => e.r2Key).sort()).toEqual(["key-A", "key-B"]);
     // endpoint_id rides along so the cron can fence the key to org/{org}/ep/{endpoint}/ before deleting.
     expect(page.every((e) => e.endpointId === o.endpointId)).toBe(true);
 
-    const limited = await listExpiringEvents(retention, o.orgId, RETENTION_DAYS, 1);
+    const limited = await listExpiringEvents(retention, o.orgId, 1);
     expect(limited).toHaveLength(1);
   });
 
-  it("EXCLUDES an org that became entitled after the claim (defence at list time, not just claim)", async () => {
-    const o = await seedOrg("list-entitled");
-    await seedEvent(o.orgId, o.endpointId, { ageDays: 30 });
-    await seedSubscription(o.orgId, "active"); // subscription appears mid-tick
-    expect(await listExpiringEvents(retention, o.orgId, RETENTION_DAYS, 100)).toEqual([]);
+  it("spares data when the org's window LENGTHENS after the claim (an upgrade lands mid-tick)", async () => {
+    // Defence at list time, not just claim time. The org was claimed on the Free window; by the time we list,
+    // they have upgraded to Pro (30 days) and their 10-day-old event is no longer expired. Re-reading the
+    // window in the list is what stops us pruning data the customer now pays to keep.
+    const o = await seedOrg("list-upgraded");
+    await seedEvent(o.orgId, o.endpointId, { ageDays: 10 });
+    await setRetentionDays(o.orgId, 30); // upgrade lands mid-tick
+    expect(await listExpiringEvents(retention, o.orgId, 100)).toEqual([]);
   });
 });
 
@@ -147,7 +152,7 @@ describe("deleteExpiredEvents", () => {
                  values (${randomUUID()}, ${o.orgId}, ${oldId}, ${"https://x.test"}, ${"pending"})`,
     );
 
-    const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [oldId]);
+    const deleted = await deleteExpiredEvents(retention, o.orgId, [oldId]);
     expect(deleted).toEqual([oldId]);
 
     const [{ n: events }] = await admin<
@@ -162,7 +167,7 @@ describe("deleteExpiredEvents", () => {
 
   it("is a no-op for an empty id list", async () => {
     const o = await seedOrg("empty");
-    expect(await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [])).toEqual([]);
+    expect(await deleteExpiredEvents(retention, o.orgId, [])).toEqual([]);
   });
 
   it("is scoped to the passed org — another org's id is never deleted through the wrong org", async () => {
@@ -170,7 +175,7 @@ describe("deleteExpiredEvents", () => {
     const idA = await seedEvent(a.orgId, a.endpointId, { ageDays: 30 });
     const b = await seedOrg("scope-b");
     // Ask to delete A's event but under B's org — the `where org_id = $b` predicate spares it.
-    expect(await deleteExpiredEvents(retention, b.orgId, RETENTION_DAYS, [idA])).toEqual([]);
+    expect(await deleteExpiredEvents(retention, b.orgId, [idA])).toEqual([]);
     const [{ n }] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${idA}`;
@@ -182,7 +187,7 @@ describe("deleteExpiredEvents", () => {
     // hands a fresh event's id to the delete removes NOTHING — RLS filters it out (0 rows), never an error.
     const o = await seedOrg("floor");
     const freshId = await seedEvent(o.orgId, o.endpointId, { ageDays: 1 });
-    const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [freshId]);
+    const deleted = await deleteExpiredEvents(retention, o.orgId, [freshId]);
     expect(deleted).toEqual([]);
     const [{ n }] = await admin<
       { n: number }[]
@@ -190,40 +195,39 @@ describe("deleteExpiredEvents", () => {
     expect(n).toBe(1); // still there
   });
 
-  it("the RLS DELETE POLICY itself blocks a bare cross-org delete of a PAID org's aged events", async () => {
-    // Defence-in-depth at the DB, not just the DAL's app-layer anti-join: a leaked webhook_retention
-    // credential running a WHERE-less `delete from events where received_at < now()-7d` must NOT remove an
-    // entitled org's events — the policy's own NOT EXISTS(billing_subscriptions) spares them.
-    const paid = await seedOrg("policy-paid");
-    const paidOld = await seedEvent(paid.orgId, paid.endpointId, { ageDays: 30 });
-    await seedSubscription(paid.orgId, "active");
+  it("the RLS DELETE POLICY blocks a bare cross-org delete of a PAID org's data inside its window", async () => {
+    // Defence-in-depth at the DB, not just the DAL's WHERE clause. A leaked webhook_retention credential
+    // running `delete from events where received_at < now()-7d` — i.e. asserting the FREE window against
+    // everyone — must not remove a Pro org's 20-day-old event. The policy uses the org's OWN window.
+    const pro = await seedOrg("policy-pro");
+    await setRetentionDays(pro.orgId, 30);
+    const proInWindow = await seedEvent(pro.orgId, pro.endpointId, { ageDays: 20 });
     const free = await seedOrg("policy-free");
     const freeOld = await seedEvent(free.orgId, free.endpointId, { ageDays: 30 });
 
-    // Bare cross-org DELETE with only the age predicate — exactly what a leaked credential could run.
     const removed = await retention<{ id: string }[]>`
       delete from events where received_at < now() - interval '7 days' returning id`;
     const removedIds = removed.map((r) => r.id);
-    expect(removedIds).toContain(freeOld); // the Free org's aged event is gone
-    expect(removedIds).not.toContain(paidOld); // the paid org's is spared by the policy
+    expect(removedIds).toContain(freeOld); // past the Free org's window → removable
+    expect(removedIds).not.toContain(proInWindow); // inside Pro's 30 days → the policy spares it
     const [{ n }] = await admin<
       { n: number }[]
-    >`select count(*)::int as n from events where id = ${paidOld}`;
+    >`select count(*)::int as n from events where id = ${proInWindow}`;
     expect(n).toBe(1);
   });
 
-  it("REFUSES to delete a now-entitled org's events even if their ids are passed (atomic anti-join)", async () => {
-    // The catastrophic miss the design guards against: pruning a paid org's data. If a subscription appears
-    // between the id list and the delete, the DELETE's own NOT EXISTS must still spare it — 0 rows removed.
-    const o = await seedOrg("del-entitled");
-    const oldId = await seedEvent(o.orgId, o.endpointId, { ageDays: 30 });
-    await seedSubscription(o.orgId, "active");
-    const deleted = await deleteExpiredEvents(retention, o.orgId, RETENTION_DAYS, [oldId]);
+  it("REFUSES to delete an event whose org UPGRADED mid-tick, even if its id is passed (atomic re-check)", async () => {
+    // The catastrophic miss: destroying data a customer now pays to keep. If the window lengthens between the
+    // id list and the delete, the DELETE re-reads it and removes nothing.
+    const o = await seedOrg("del-upgraded");
+    const oldId = await seedEvent(o.orgId, o.endpointId, { ageDays: 10 }); // expired on Free
+    await setRetentionDays(o.orgId, 30); // upgrade lands between list and delete
+    const deleted = await deleteExpiredEvents(retention, o.orgId, [oldId]);
     expect(deleted).toEqual([]);
     const [{ n }] = await admin<
       { n: number }[]
     >`select count(*)::int as n from events where id = ${oldId}`;
-    expect(n).toBe(1); // the paid org's event survives
+    expect(n).toBe(1); // survives
   });
 });
 
@@ -235,7 +239,7 @@ describe("claimRetentionOrgs fairness", () => {
     await seedEvent(newer.orgId, newer.endpointId, { ageDays: 10 });
 
     // limit 1 must pick the org whose oldest event is furthest past the window.
-    expect(await claimRetentionOrgs(retention, RETENTION_DAYS, 1)).toEqual([older.orgId]);
+    expect(await claimRetentionOrgs(retention, 1)).toEqual([older.orgId]);
   });
 });
 
@@ -260,13 +264,21 @@ describe("webhook_retention least privilege", () => {
     expect(w).toEqual({ del: true, ins: false, upd: false });
   });
 
-  it("reads ONLY (org_id, status) on billing_subscriptions — never the plan/price id, and no write", async () => {
-    const [g] = await admin<{ orgId: boolean; status: boolean; plan: boolean; ins: boolean }[]>`
-      select has_column_privilege(${DB_ROLES.retention}, 'billing_subscriptions', 'org_id', 'SELECT') as "orgId",
-             has_column_privilege(${DB_ROLES.retention}, 'billing_subscriptions', 'status', 'SELECT') as status,
-             has_column_privilege(${DB_ROLES.retention}, 'billing_subscriptions', 'plan', 'SELECT') as plan,
+  it("reads ONLY (id, retention_days) on orgs — never the org's name/slug — and cannot write it", async () => {
+    const [g] = await admin<{ id: boolean; days: boolean; name: boolean; upd: boolean }[]>`
+      select has_column_privilege(${DB_ROLES.retention}, 'orgs', 'id', 'SELECT') as id,
+             has_column_privilege(${DB_ROLES.retention}, 'orgs', 'retention_days', 'SELECT') as days,
+             has_column_privilege(${DB_ROLES.retention}, 'orgs', 'name', 'SELECT') as name,
+             has_table_privilege(${DB_ROLES.retention}, 'orgs', 'UPDATE') as upd`;
+    expect(g).toEqual({ id: true, days: true, name: false, upd: false });
+  });
+
+  it("has NO access to billing_subscriptions at all — the window comes from orgs, not subscription state", async () => {
+    // 0054 revoked it. This role has no business knowing who pays us.
+    const [g] = await admin<{ sel: boolean; ins: boolean }[]>`
+      select has_column_privilege(${DB_ROLES.retention}, 'billing_subscriptions', 'status', 'SELECT') as sel,
              has_table_privilege(${DB_ROLES.retention}, 'billing_subscriptions', 'INSERT') as ins`;
-    expect(g).toEqual({ orgId: true, status: true, plan: false, ins: false });
+    expect(g).toEqual({ sel: false, ins: false });
   });
 
   it("holds no privilege on identity/tenant tables it has no business touching", async () => {
@@ -289,5 +301,89 @@ describe("webhook_retention least privilege", () => {
       where relkind = 'r' and relnamespace = 'public'::regnamespace
         and pg_get_userbyid(relowner) = ${DB_ROLES.retention}`;
     expect(owned.n).toBe(0);
+  });
+});
+
+// ── Per-plan windows (0054) ──────────────────────────────────────────────────────────────────────────────
+// 0053 pruned everyone at 7 days and skipped paid orgs entirely, so Pro/Scale data was kept forever while
+// the pricing page advertised 30/90-day windows. The window is now the org's own.
+
+describe("per-plan retention windows", () => {
+  it("prunes a PRO org at 30 days, not at the Free 7", async () => {
+    const { orgId, endpointId } = await seedOrg("pro-window");
+    await setRetentionDays(orgId, 30);
+    const inWindow = await seedEvent(orgId, endpointId, { ageDays: 20 }); // still covered by Pro
+    const expired = await seedEvent(orgId, endpointId, { ageDays: 40 }); // past 30 days
+
+    const found = await listExpiringEvents(retention, orgId, 100);
+    expect(found.map((e) => e.id)).toEqual([expired]);
+
+    // Hand BOTH ids to the delete: the 20-day-old one must survive — the window is re-asserted in the
+    // DELETE itself, so a stale id list can't remove data the org's plan still covers.
+    const deleted = await deleteExpiredEvents(retention, orgId, [inWindow, expired]);
+    expect(deleted).toEqual([expired]);
+  });
+
+  it("prunes a SCALE org at 90 days", async () => {
+    const { orgId, endpointId } = await seedOrg("scale-window");
+    await setRetentionDays(orgId, 90);
+    await seedEvent(orgId, endpointId, { ageDays: 60 }); // in window
+    const expired = await seedEvent(orgId, endpointId, { ageDays: 120 });
+
+    expect((await listExpiringEvents(retention, orgId, 100)).map((e) => e.id)).toEqual([expired]);
+  });
+
+  it("NEVER prunes an org on an unlimited window (retention_days NULL) — not even a very old event", async () => {
+    // Enterprise / contractual retention. NULL * interval → NULL, so the predicate is never true. Proven
+    // through the DAL *and* through a bare cross-org DELETE below.
+    const { orgId, endpointId } = await seedOrg("unlimited-window");
+    await setRetentionDays(orgId, null);
+    const ancient = await seedEvent(orgId, endpointId, { ageDays: 3650 });
+
+    expect(await listExpiringEvents(retention, orgId, 100)).toEqual([]);
+    expect(await deleteExpiredEvents(retention, orgId, [ancient])).toEqual([]);
+    expect(await claimRetentionOrgs(retention, 100)).not.toContain(orgId);
+  });
+
+  it("a NEW org defaults to the Free 7-day window with no application involvement", async () => {
+    const { orgId, endpointId } = await seedOrg("default-window");
+    const expired = await seedEvent(orgId, endpointId, { ageDays: 10 });
+    await seedEvent(orgId, endpointId, { ageDays: 3 });
+
+    expect((await listExpiringEvents(retention, orgId, 100)).map((e) => e.id)).toEqual([expired]);
+  });
+
+  it("claims each org against its OWN window, oldest-data-first", async () => {
+    const free = await seedOrg("claim-free");
+    const pro = await seedOrg("claim-pro");
+    await setRetentionDays(pro.orgId, 30);
+    // 10 days old: PAST the Free window, but well INSIDE Pro's. Only the free org is claimable.
+    await seedEvent(free.orgId, free.endpointId, { ageDays: 10 });
+    await seedEvent(pro.orgId, pro.endpointId, { ageDays: 10 });
+
+    const claimed = await claimRetentionOrgs(retention, 100);
+    expect(claimed).toContain(free.orgId);
+    expect(claimed).not.toContain(pro.orgId);
+  });
+
+  it("THE SECURITY BOUNDARY: a bare cross-org DELETE as webhook_retention still respects every org's window", async () => {
+    // The RLS DELETE policy — not the app's WHERE clause — is what a leaked credential runs into. A raw
+    // `delete from events` must not remove a Pro org's 20-day-old event, nor anything from an unlimited org.
+    const pro = await seedOrg("boundary-pro");
+    const ent = await seedOrg("boundary-ent");
+    const free = await seedOrg("boundary-free");
+    await setRetentionDays(pro.orgId, 30);
+    await setRetentionDays(ent.orgId, null);
+
+    const proInWindow = await seedEvent(pro.orgId, pro.endpointId, { ageDays: 20 });
+    const entAncient = await seedEvent(ent.orgId, ent.endpointId, { ageDays: 3650 });
+    const freeExpired = await seedEvent(free.orgId, free.endpointId, { ageDays: 10 });
+
+    const removed = await retention<{ id: string }[]>`delete from events returning id`;
+    const removedIds = removed.map((r) => r.id);
+
+    expect(removedIds).toContain(freeExpired); // past its window → fair game
+    expect(removedIds).not.toContain(proInWindow); // inside Pro's 30 days → policy refuses
+    expect(removedIds).not.toContain(entAncient); // unlimited → policy refuses, at any age
   });
 });

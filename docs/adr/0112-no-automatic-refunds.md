@@ -93,3 +93,41 @@ The Portal's own cancel flow is already correct and needs no change: the live co
 `subscription_cancel.mode = at_period_end` with `proration_behavior = none`, and `subscription_update` is
 **disabled** — so a customer cannot self-serve a plan change there and bypass the rules above, and cancelling
 there moves no money. Cancellation is therefore left to the Portal; this ADR governs plan *changes*.
+
+---
+
+## Addendum: per-plan retention (migration 0054)
+
+Slice 2.3 shipped the retention prune with a **hardcoded 7-day window** and an anti-join that **excluded every
+org with a paid subscription**. That was safe while billing was dark (no paid orgs exist, so every org is Free)
+but it left a live inconsistency: the pricing page already advertises **30-day (Pro)** and **90-day (Scale)**
+retention, and nothing enforced them — a paid org's data would have been kept forever.
+
+0054 makes the window **per-org**:
+
+- `orgs.retention_days` — on `orgs`, not `org_limits`, because `org_limits` is **sparse** (it only gets a row
+  when a subscription is mirrored, so a Free org has none). Every org has an `orgs` row by construction.
+- **`NULL` = unlimited**, and this needs no special case: `NULL * interval` is `NULL`, so
+  `received_at < now() - NULL` is `NULL` — never true — and the row is never selected or deleted. Enterprise
+  (contractual retention) is exactly this.
+- **`DEFAULT 7`** so a brand-new org is pruned correctly with zero application involvement.
+- Mirrored from the plan's Stripe **price metadata** (`retention_days`) by billing-sync, the same path
+  `event_cap` already takes. The API worker has no `STRIPE_PLANS` binding, so the plan slug cannot be resolved
+  there — the price is the only carrier available.
+- The **DELETE policy** (not the app's `WHERE` clause) enforces it. A leaked `webhook_retention` credential
+  running a bare `delete from events` still cannot remove anything inside any org's window.
+
+**The retention mirror fails in the OPPOSITE direction to the cap mirror, deliberately.** For a *cap*, the
+dangerous mistake is granting more than was paid for, so an unparseable value changes nothing. For *retention*,
+the dangerous mistake is **deleting a paying customer's data too soon** — which is unrecoverable. So an absent,
+garbage, or explicitly-"unlimited" `retention_days` all resolve to **unlimited (never pruned)**. A misconfigured
+price over-retains, which costs us storage; the alternative would destroy a Pro customer's data at the Free
+7-day window because of a typo in Stripe.
+
+**Grace and shrinkage.** `past_due` **keeps** the longer window — dunning is a grace period (ADR-0020), and
+starting to delete a customer's data while we retry their card would be punitive. A cancellation, or any
+non-entitled status, returns the org to the Free window, so data older than 7 days becomes prunable. That is
+what "you return to the free tier" means, and the Privacy Policy discloses it explicitly, telling customers to
+export before downgrading.
+
+**Ordering note:** the reconcile lookback must stay ≤ the *shortest* live window (Free = 7). It is 6.

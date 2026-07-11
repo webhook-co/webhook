@@ -50,7 +50,6 @@ import {
   MAX_VERIFIABLE_BODY_BYTES,
   OrgScopedDekCache,
   billingEnabled,
-  FREE_RETENTION_DAYS,
   reconcileLookbackDays,
   makeStripeClient,
   parseBillingMode,
@@ -1347,9 +1346,10 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
   const sql = createClient(env.HYPERDRIVE_RETENTION.connectionString);
   try {
     await runRetentionPruneCron({
-      claimOrgs: (retentionDays, limit) => claimRetentionOrgs(sql, retentionDays, limit),
-      listExpiring: (orgId, retentionDays, limit) =>
-        listExpiringEvents(sql, orgId, retentionDays, limit),
+      // No window is passed in: each org's own `orgs.retention_days` drives the claim, the list, and the
+      // delete (0054), and the DELETE policy enforces it independently of anything the app sends.
+      claimOrgs: (limit) => claimRetentionOrgs(sql, limit),
+      listExpiring: (orgId, limit) => listExpiringEvents(sql, orgId, limit),
       // Principal fence (H1): only act on a stored key that matches its own org/endpoint prefix. Same
       // check every delivery/replay/read path applies — never delete an object whose key is corrupt or
       // points at another tenant.
@@ -1357,9 +1357,7 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
       // The engine is the sole R2 principal — it deletes each expiring event's body from its own
       // R2_PAYLOADS binding (idempotent: an already-gone key is a no-op).
       deleteR2: (keys) => env.R2_PAYLOADS.delete(keys),
-      deleteEvents: (orgId, retentionDays, ids) =>
-        deleteExpiredEvents(sql, orgId, retentionDays, ids),
-      retentionDays: FREE_RETENTION_DAYS,
+      deleteEvents: (orgId, ids) => deleteExpiredEvents(sql, orgId, ids),
       orgLimit: RETENTION_ORG_LIMIT,
       batchesPerOrg: RETENTION_BATCHES_PER_ORG,
       pageSize: RETENTION_PAGE_SIZE,
