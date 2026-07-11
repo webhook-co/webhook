@@ -79,6 +79,24 @@ export interface CredentialResolverOptions {
    * key-checksum.ts); its value here is cheap DoS-shedding + a self-validating format.
    */
   readonly precheck?: (plaintext: string) => boolean;
+  /**
+   * Reject a cached principal that carries no `keyId`, falling through to the cold path to repopulate it.
+   * Set by the API-KEY resolver only; the ingest resolver leaves it off (its principals legitimately have no
+   * key, and requiring one would make every ingest request miss the cache forever).
+   *
+   * This is what makes the audit-attribution change safe to DEPLOY. `keyId` names the credential that
+   * authenticated the request, and an audited mutation whose principal is unidentifiable now FAILS CLOSED —
+   * so a principal cached under the pre-keyId shape must never be served, or every api/mcp mutation would
+   * break until the 5-minute TTL drained.
+   *
+   * We reject the stale SHAPE rather than bumping the cache KEY, and the distinction is load-bearing: the
+   * readers (api/mcp/engine) and the evictors (apps/web) are separate Workers on separate deploy workflows
+   * over ONE shared KV namespace, and web lands minutes later. A key-format change would therefore open a
+   * window where an old-web revoke deletes one key while a new-api read caches under another — leaving a
+   * REVOKED credential authenticating for the full TTL. Holding the key stable keeps every evict site
+   * matching across versions; a stale entry simply takes the cold path and is rewritten with a keyId.
+   */
+  readonly requireKeyId?: boolean;
 }
 
 function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
@@ -94,6 +112,9 @@ function isResolvedPrincipal(value: unknown): value is ResolvedPrincipal {
   // or legacy) entry must fall through to the cold path, never resolve with a truthy garble.
   if (v.paused !== undefined && typeof v.paused !== "boolean") return false;
   if (v.audience !== undefined && typeof v.audience !== "string") return false;
+  // keyId names the credential an audited mutation is attributed to, so a garbled entry must fall through
+  // to the cold path rather than resolve with a non-string (which would be written into the audit chain).
+  if (v.keyId !== undefined && typeof v.keyId !== "string") return false;
   // sealedSecrets feeds the verify path. A poisoned/partial entry (wrong shape, missing base64
   // field) must fall through to the cold path, never resolve a half-formed secret list that would
   // later throw mid-unseal. Validate every element fully.
@@ -192,7 +213,14 @@ export function createCredentialResolver(opts: CredentialResolverOptions): Crede
         } catch {
           parsed = null;
         }
-        if (isResolvedPrincipal(parsed)) return stampAudience(parsed);
+        // A stale-SHAPE entry (cached before `keyId` existed) is a miss, not a fault — fall through to the
+        // cold path, which repopulates it. Same fail-closed instinct as the malformed-entry case above.
+        if (
+          isResolvedPrincipal(parsed) &&
+          !(opts.requireKeyId === true && parsed.keyId === undefined)
+        ) {
+          return stampAudience(parsed);
+        }
       }
     }
 

@@ -219,7 +219,7 @@ describe("deleteEventAction", () => {
     expect(enforceEventDeleteRateLimit).toHaveBeenCalledWith({}, "o");
     expect(deleteEventWithAudit).toHaveBeenCalledWith(
       {},
-      { orgId: "o", eventId: CURSOR_ID, actor: "u" },
+      { orgId: "o", eventId: CURSOR_ID, actor: { kind: "user", id: "u" } },
       expect.anything(),
     );
   });

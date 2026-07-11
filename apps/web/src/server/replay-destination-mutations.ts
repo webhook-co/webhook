@@ -1,4 +1,5 @@
 import "server-only";
+import { userActor } from "@webhook-co/shared";
 
 import { withTenant } from "@webhook-co/db/client";
 import {
@@ -111,13 +112,14 @@ async function defaultDeps(): Promise<{ deps: ReplayDestinationDeps; close: () =
           app,
           { orgId, url: canonicalUrl, label, lastValidatedAt: new Date() },
           requireSealer(sealer),
-          { auditKey, actor },
+          { auditKey, actor: userActor(actor) },
         ),
       remove: (orgId, id, actor) =>
-        softDeleteReplayDestination(app, orgId, id, { auditKey, actor }),
-      enable: (orgId, id, actor) => enableReplayDestination(app, orgId, id, { auditKey, actor }),
+        softDeleteReplayDestination(app, orgId, id, { auditKey, actor: userActor(actor) }),
+      enable: (orgId, id, actor) =>
+        enableReplayDestination(app, orgId, id, { auditKey, actor: userActor(actor) }),
       setOrdered: (orgId, id, ordered, actor) =>
-        dbSetDestinationOrdered(app, orgId, id, ordered, { auditKey, actor }),
+        dbSetDestinationOrdered(app, orgId, id, ordered, { auditKey, actor: userActor(actor) }),
       rotate: async (orgId, id, actor) => {
         // Resolve the destination FIRST (mirrors the api handler): an unknown / cross-org / soft-deleted id
         // is NOT_FOUND (null) — never mint + reveal a fresh secret or write audit rows for a dead resource,
@@ -130,7 +132,7 @@ async function defaultDeps(): Promise<{ deps: ReplayDestinationDeps; close: () =
         if (!live) return null;
         return rotateSigningSecret(app, { orgId, destinationId: id }, requireSealer(sealer), {
           auditKey,
-          actor,
+          actor: userActor(actor),
         });
       },
     },

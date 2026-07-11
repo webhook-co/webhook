@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "./credential";
+import {
+  credentialCacheKey,
+  createCredentialHasher,
+  CREDENTIAL_PEPPER_MIN_BYTES,
+} from "./credential";
 import { InMemoryCredentialCache, type ResolvedPrincipal } from "./credential-cache";
 import { createCredentialResolver, type ColdLookup } from "./credential-resolver";
 
@@ -36,8 +40,50 @@ describe("createCredentialResolver — hot/cold path", () => {
     });
     await resolver.resolve("whk_secret");
     const [key, value] = putSpy.mock.calls[0];
-    expect(key).toBe(hasher.hash("whk_secret").toString("hex"));
+    expect(key).toBe(credentialCacheKey(hasher.hash("whk_secret")));
     expect(value).not.toContain("whk_secret");
+  });
+
+  // DEPLOY-SKEW SAFETY. `keyId` (the id of the api key that authenticated the request) was added to the
+  // principal so an audited mutation can name the credential that performed it; an audited mutation whose
+  // principal is unidentifiable now FAILS CLOSED. A principal cached before that change carries no keyId, so
+  // it must not be served — it would break every api/mcp mutation until the TTL drained.
+  //
+  // The obvious fix — bumping the cache KEY namespace — is WRONG here, and that matters: the readers
+  // (api/mcp/engine) and the evictors (apps/web) are separate Workers on separate deploy workflows sharing
+  // ONE KV namespace, and web lands minutes later. Mid-deploy, an old-web revoke would delete the old key
+  // while new-api cached under the new one, so a REVOKED credential would keep authenticating for the whole
+  // TTL. Keeping the key stable and rejecting the stale SHAPE instead is self-healing with no such window:
+  // evictions keep matching across versions, and a stale entry simply takes the cold path.
+  it("treats a cached principal with no keyId as a MISS and re-resolves it (stale shape)", async () => {
+    const cache = new InMemoryCredentialCache();
+    const stale = { orgId: ORG, scopes: ["events:read"] }; // the pre-keyId shape
+    await cache.put(credentialCacheKey(hasher.hash("whk_secret")), JSON.stringify(stale));
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal({ keyId: "k_1" }));
+    const resolver = createCredentialResolver({
+      hasher,
+      cache,
+      coldLookup: cold,
+      requireKeyId: true,
+    });
+
+    const resolved = await resolver.resolve("whk_secret");
+    expect(cold).toHaveBeenCalledTimes(1); // the stale entry did NOT satisfy the read
+    expect(resolved?.keyId).toBe("k_1");
+  });
+
+  // The ingest resolver shares this cache and its principals legitimately carry no keyId (ingest writes no
+  // audit rows), so the rule must be opt-in per resolver, never global — otherwise every ingest request
+  // would miss the cache forever and hammer the cold path.
+  it("still serves a keyId-less principal when the resolver does not require one (ingest)", async () => {
+    const cache = new InMemoryCredentialCache();
+    const stored = { orgId: ORG, scopes: [], endpointId: "ep_1" };
+    await cache.put(credentialCacheKey(hasher.hash("whk_secret")), JSON.stringify(stored));
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(null);
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+
+    expect((await resolver.resolve("whk_secret"))?.endpointId).toBe("ep_1");
+    expect(cold).not.toHaveBeenCalled();
   });
 
   it("returns null and does NOT cache a negative (cold miss)", async () => {
@@ -72,7 +118,7 @@ describe("createCredentialResolver — hot/cold path", () => {
 
   it("treats a malformed cache entry as a miss (fails closed to the cold path)", async () => {
     const cache = new InMemoryCredentialCache();
-    await cache.put(hasher.hash("whk_secret").toString("hex"), '{"not":"a principal"}');
+    await cache.put(credentialCacheKey(hasher.hash("whk_secret")), '{"not":"a principal"}');
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
 
@@ -87,7 +133,7 @@ describe("createCredentialResolver — hot/cold path", () => {
       endpointId: "22222222-2222-7222-8222-222222222222",
       dedupConfig: { mode: "identifier", windowSeconds: 86_400 },
     });
-    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(p));
+    await cache.put(credentialCacheKey(hasher.hash("tok")), JSON.stringify(p));
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
     const result = await resolver.resolve("tok");
@@ -103,7 +149,7 @@ describe("createCredentialResolver — hot/cold path", () => {
       endpointId: "22222222-2222-7222-8222-222222222222",
       dedupConfig: { mode: "off" },
     });
-    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(p));
+    await cache.put(credentialCacheKey(hasher.hash("tok")), JSON.stringify(p));
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
     const result = await resolver.resolve("tok");
@@ -115,7 +161,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     const cache = new InMemoryCredentialCache();
     // Unknown mode + out-of-range window: a poisoned/legacy entry must never drive key derivation.
     const poisoned = { orgId: ORG, scopes: [], dedupConfig: { mode: "evil", windowSeconds: 1 } };
-    await cache.put(hasher.hash("tok").toString("hex"), JSON.stringify(poisoned));
+    await cache.put(credentialCacheKey(hasher.hash("tok")), JSON.stringify(poisoned));
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
     const result = await resolver.resolve("tok");
@@ -128,7 +174,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     // all. The resolver must fall through to the cold path, never let JSON.parse throw out
     // (which would 500 a valid credential for the whole TTL).
     const cache = new InMemoryCredentialCache();
-    await cache.put(hasher.hash("whk_secret").toString("hex"), "not json at all");
+    await cache.put(credentialCacheKey(hasher.hash("whk_secret")), "not json at all");
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
     const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
 
@@ -142,7 +188,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     // must validate scope element types, not just that scopes is an array.
     const cache = new InMemoryCredentialCache();
     await cache.put(
-      hasher.hash("whk_secret").toString("hex"),
+      credentialCacheKey(hasher.hash("whk_secret")),
       JSON.stringify({ orgId: ORG, scopes: ["events:read", 42] }),
     );
     const cold = vi.fn<ColdLookup>().mockResolvedValue(principal());
@@ -160,7 +206,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     // would throw mid-unseal.
     const cache = new InMemoryCredentialCache();
     await cache.put(
-      hasher.hash("whk_secret").toString("hex"),
+      credentialCacheKey(hasher.hash("whk_secret")),
       JSON.stringify({
         orgId: ORG,
         scopes: [],
@@ -181,7 +227,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     // junk and defer the failure to GCM; the guard must reject it at the cache boundary instead.
     const cache = new InMemoryCredentialCache();
     await cache.put(
-      hasher.hash("whk_secret").toString("hex"),
+      credentialCacheKey(hasher.hash("whk_secret")),
       JSON.stringify({
         orgId: ORG,
         scopes: [],
@@ -217,7 +263,7 @@ describe("createCredentialResolver — hot/cold path", () => {
     });
     const hash = hasher.hash("whk_secret");
     await resolver.invalidateHash(hash);
-    expect(delSpy).toHaveBeenCalledWith(hash.toString("hex"));
+    expect(delSpy).toHaveBeenCalledWith(credentialCacheKey(hash));
   });
 });
 

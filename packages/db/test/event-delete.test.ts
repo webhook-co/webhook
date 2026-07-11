@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 
 import { CapabilityFault } from "@webhook-co/contract";
-import { importAuditKey } from "@webhook-co/shared";
+import { importAuditKey, userActor } from "@webhook-co/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { appendAuditEntry, readAuditChain } from "../src/audit-append";
@@ -77,7 +77,7 @@ async function seedEvent(
 }
 
 function del(orgId: string, eventId: string) {
-  return deleteEventWithAudit(app, { orgId, eventId, actor: "user-1" }, auditKey);
+  return deleteEventWithAudit(app, { orgId, eventId, actor: userActor("user-1") }, auditKey);
 }
 
 async function rollup(orgId: string, windowIso: string): Promise<void> {
@@ -302,7 +302,7 @@ describe("enforceEventDeleteRateLimit (the destructive-op mitigation)", () => {
       for (let i = 0; i < EVENT_DELETE_MAX_PER_WINDOW; i++) {
         await appendAuditEntry(tx, auditKey, {
           orgId,
-          actor: null,
+          actor: userActor(`u_${i}`),
           action: "event.deleted",
           target: randomUUID(),
         });
@@ -320,7 +320,7 @@ describe("enforceEventDeleteRateLimit (the destructive-op mitigation)", () => {
       for (let i = 0; i < EVENT_DELETE_MAX_PER_WINDOW; i++) {
         await appendAuditEntry(tx, auditKey, {
           orgId: busy,
-          actor: null,
+          actor: userActor(`u_${i}`),
           action: "event.deleted",
           target: randomUUID(),
         });

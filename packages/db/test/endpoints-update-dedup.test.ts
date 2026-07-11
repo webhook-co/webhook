@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { importAuditKey } from "@webhook-co/shared";
+import { importAuditKey, userActor } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readAuditChain } from "../src/audit-append";
@@ -55,7 +55,13 @@ describe("endpoints.update — dedup config round-trip", () => {
   it("create persists a dedup config; getEndpoint + the cold lookup both return it (DB -> engine read path)", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "with-config", dedupConfig: OFF, actor: null, maxEndpoints: 100 },
+      {
+        orgId: orgA,
+        name: "with-config",
+        dedupConfig: OFF,
+        actor: userActor("user_alice"),
+        maxEndpoints: 100,
+      },
       hasher,
       auditKey,
     );
@@ -70,7 +76,7 @@ describe("endpoints.update — dedup config round-trip", () => {
   it("a create WITHOUT a config leaves dedupConfig null (the default)", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "no-config", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "no-config", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
     );
@@ -82,14 +88,14 @@ describe("endpoints.update — dedup config round-trip", () => {
   it("update mutates the config, appends one audit row, and returns the token hash for KV eviction", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "to-update", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "to-update", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
     );
     const before = (await withTenant(app, orgA, (tx) => readAuditChain(tx, orgA))).length;
     const updated = await updateEndpointDedupWithAudit(
       app,
-      { orgId: orgA, endpointId: created.id, dedupConfig: FIELDS, actor: null },
+      { orgId: orgA, endpointId: created.id, dedupConfig: FIELDS, actor: userActor("user_alice") },
       auditKey,
     );
     expect(updated.dedupConfig).toEqual(FIELDS);
@@ -105,13 +111,19 @@ describe("endpoints.update — dedup config round-trip", () => {
   it("update with null RESETS the config to the default", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "to-reset", dedupConfig: FIELDS, actor: null, maxEndpoints: 100 },
+      {
+        orgId: orgA,
+        name: "to-reset",
+        dedupConfig: FIELDS,
+        actor: userActor("user_alice"),
+        maxEndpoints: 100,
+      },
       hasher,
       auditKey,
     );
     await updateEndpointDedupWithAudit(
       app,
-      { orgId: orgA, endpointId: created.id, dedupConfig: null, actor: null },
+      { orgId: orgA, endpointId: created.id, dedupConfig: null, actor: userActor("user_alice") },
       auditKey,
     );
     expect(
@@ -122,7 +134,7 @@ describe("endpoints.update — dedup config round-trip", () => {
   it("read FAILS SAFE: a schema-drifted stored dedup_config degrades to null (no 500 for the org)", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "poisoned", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "poisoned", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
     );
@@ -141,7 +153,7 @@ describe("endpoints.update — dedup config round-trip", () => {
     await expect(
       updateEndpointDedupWithAudit(
         app,
-        { orgId: orgA, endpointId: randomUUID(), dedupConfig: OFF, actor: null },
+        { orgId: orgA, endpointId: randomUUID(), dedupConfig: OFF, actor: userActor("user_alice") },
         auditKey,
       ),
     ).rejects.toThrow(/not found/i);

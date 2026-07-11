@@ -1,4 +1,5 @@
 import "server-only";
+import { userActor } from "@webhook-co/shared";
 
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 import { credentialCacheKey } from "@webhook-co/db/credential";
@@ -124,14 +125,14 @@ async function defaultDeps(): Promise<{ deps: ProviderSecretDeps; close: () => P
             sealer: requireSealer(sealer),
             evict: (tokenHash) => evictBestEffort(cache, tokenHash, "add"),
             auditKey,
-            actor: input.actor,
+            actor: userActor(input.actor),
           },
         ),
       revoke: async (input) => {
         const revoked = await revokeProviderSecret(
           app,
           { orgId: input.orgId, endpointId: input.endpointId, secretId: input.secretId },
-          { auditKey, actor: input.actor },
+          { auditKey, actor: userActor(input.actor) },
         );
         if (!revoked) return null;
         // The revoked secret rides on the endpoint's KV verify snapshot until evicted — bust it now so a

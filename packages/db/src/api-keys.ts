@@ -311,6 +311,7 @@ export async function revokeApiKeyInTx(tx: TenantTx, id: string): Promise<Revoke
 }
 
 interface AuthnVerifyRow {
+  id: string;
   org_id: string;
   scopes: unknown;
   expires_at: Date | null;
@@ -335,7 +336,7 @@ interface AuthnVerifyRow {
 export function makeApiKeyColdLookup(authn: Sql) {
   return async function coldLookup(keyHash: Buffer): Promise<ResolvedPrincipal | null> {
     const rows = await authn<AuthnVerifyRow[]>`
-      select org_id, scopes, expires_at, revoked_at, key_hash, audience
+      select id, org_id, scopes, expires_at, revoked_at, key_hash, audience
       from api_keys
       where key_hash = ${keyHash}`;
     const row = rows[0];
@@ -352,7 +353,12 @@ export function makeApiKeyColdLookup(authn: Sql) {
     // (not `?? undefined`) so an empty-string audience coalesces to "no binding" too — otherwise
     // a stored "" would survive the resolver's `audience !== undefined` guard and fail closed on
     // EVERY surface (assertAudience's strict `!==` rejects ""), silently bricking the key.
-    return { orgId: row.org_id, scopes: toScopes(row.scopes), audience: row.audience || undefined };
+    return {
+      orgId: row.org_id,
+      scopes: toScopes(row.scopes),
+      audience: row.audience || undefined,
+      keyId: row.id,
+    };
   };
 }
 
@@ -420,7 +426,9 @@ export async function revokeApiKeyByPlaintext(
   auditKey: CryptoKey,
 ): Promise<RevokedByPlaintext> {
   // Discovery uses ONLY webhook_authn's column-scoped grant (org_id + key_hash — same columns the
-  // cold lookup reads); `id` is NOT granted to authn, so the keyId is resolved later under webhook_app.
+  // cold lookup reads). It deliberately does NOT select `id` even though 0059 now grants it: this query
+  // only needs to find the row, and the keyId is resolved later under webhook_app alongside the columns
+  // (like created_by) that authn must never see.
   let match: { orgId: string; keyHash: Buffer } | null = null;
   for (const candidate of hasher.candidates(plaintext)) {
     const [row] = await authn<{ org_id: string; key_hash: Buffer }[]>`

@@ -47,6 +47,21 @@ describe("principalDigest", () => {
   // (scopes included) at session init. A key holding only `events:read` could therefore present a session
   // initialised by an `endpoints:write` key, match the digest, route to that DO, and run its tools with the
   // STRONGER key's scopes. Scopes are part of the principal's authority, so they belong in the binding.
+  // The DO pins its AuthContext — keyId included — at session init, and routes purely by session id. So if
+  // two DISTINCT api keys with identical authority (same org, same scopes) hashed to the same digest, key B
+  // could resume the session key A initialised, and every audit row B wrote would name A as the actor. The
+  // credential's IDENTITY is part of the principal, not just its authority — attribution depends on it.
+  it("DIFFERS for two distinct keys with identical authority (no cross-key attribution)", async () => {
+    const keyA: AuthContext = { orgId: "org_alice", scopes: ["events:read"], keyId: "k_a" };
+    const keyB: AuthContext = { orgId: "org_alice", scopes: ["events:read"], keyId: "k_b" };
+    expect(await principalDigest(keyA)).not.toBe(await principalDigest(keyB));
+  });
+
+  it("DIFFERS between a key-bearing principal and the same authority with no key", async () => {
+    const keyed: AuthContext = { orgId: "org_alice", scopes: ["events:read"], keyId: "k_a" };
+    expect(await principalDigest(keyed)).not.toBe(await principalDigest(ALICE_ORGKEY));
+  });
+
   it("DIFFERS when the scope set differs, even for the same org+user (no scope escalation)", async () => {
     expect(await principalDigest(ALICE)).not.toBe(await principalDigest(ALICE_AGAIN));
   });

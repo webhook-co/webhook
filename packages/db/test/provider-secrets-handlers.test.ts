@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { type AuthContext } from "@webhook-co/contract";
 import {
+  formatAuditActor,
   importAuditKey,
   LocalKmsProvider,
   parseBraintreePublicKey,
@@ -56,7 +57,14 @@ function handlers() {
   });
 }
 
-const ctx = (orgId: string, scopes: string[]): AuthContext => ({ orgId, scopes });
+// A bearer api key: an org + scopes + the key's own id, and NO userId. That keyId is what every write
+// below must be attributed to in the audit chain.
+const TEST_KEY_ID = "key_test";
+const ctx = (orgId: string, scopes: string[]): AuthContext => ({
+  orgId,
+  scopes,
+  keyId: TEST_KEY_ID,
+});
 const rw = (orgId: string) => ctx(orgId, ["endpoints:read", "endpoints:write"]);
 
 beforeAll(async () => {
@@ -95,12 +103,12 @@ describe("endpoints.addProviderSecret handler", () => {
     const hash = await getEndpointIngestTokenHash(app, orgA, epA);
     expect(evicted.some((e) => e.equals(hash!))).toBe(true);
     // An in-tx wha1 audit row was appended (parity with the endpoints lifecycle): provider_secret.added,
-    // target = the new secret id, actor null (api-key bearer), and the chain still verifies.
+    // target = the new secret id, actor = the api key that authenticated the call, and the chain verifies.
     const rows = await withTenant(app, orgA, (tx) => readAuditChain(tx, orgA));
     const last = rows[rows.length - 1]!;
     expect(last.action).toBe("provider_secret.added");
     expect(last.target).toBe(out.id);
-    expect(last.actor).toBeNull();
+    expect(last.actor).toBe(formatAuditActor({ kind: "key", id: TEST_KEY_ID }));
     expect((await verifyAuditChain(auditKey, orgA, rows)).ok).toBe(true);
   });
 

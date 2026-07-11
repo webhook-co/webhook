@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { importAuditKey, verifyAuditChain } from "@webhook-co/shared";
+import { importAuditKey, userActor, verifyAuditChain } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { appendAuditEntry, readAuditChain } from "../src/audit-append";
@@ -43,13 +43,13 @@ async function seedOrg(slug: string, ownerUserId: string): Promise<string> {
     await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${ownerUserId}, ${"owner"})`;
     await appendAuditEntry(tx, key, {
       orgId,
-      actor: ownerUserId,
+      actor: userActor(ownerUserId),
       action: "org.created",
       target: null,
     });
     await appendAuditEntry(tx, key, {
       orgId,
-      actor: ownerUserId,
+      actor: userActor(ownerUserId),
       action: "endpoint.created",
       target: "ep_1",
     });
@@ -90,7 +90,7 @@ describe("deleteOrgWithAudit", () => {
     await seedUser(otherId);
     const orgB = await seedOrg("del-b", otherId); // control — must be untouched
 
-    const result = await deleteOrgWithAudit(app, { orgId: orgA, actor: ownerId }, key);
+    const result = await deleteOrgWithAudit(app, { orgId: orgA, actor: userActor(ownerId) }, key);
     expect(result.orgId).toBe(orgA);
     expect(result.deletedAt).toEqual(expect.any(String));
 
@@ -112,6 +112,7 @@ describe("deleteOrgWithAudit", () => {
         select status, requested_by, objects_purged from org_deletions where org_id = ${orgA}`,
     );
     expect(job.status).toBe("purging");
+    // The column keeps its pre-existing encoding: a bare user id, so old rows and new rows stay comparable.
     expect(job.requested_by).toBe(ownerId);
     expect(Number(job.objects_purged)).toBe(0);
 
@@ -122,9 +123,9 @@ describe("deleteOrgWithAudit", () => {
 
   it("rolls back cleanly (no orphan audit row or purge job) when the org does not exist", async () => {
     const ghost = randomUUID();
-    await expect(deleteOrgWithAudit(app, { orgId: ghost, actor: "x" }, key)).rejects.toBeInstanceOf(
-      OrgNotFoundError,
-    );
+    await expect(
+      deleteOrgWithAudit(app, { orgId: ghost, actor: userActor("x") }, key),
+    ).rejects.toBeInstanceOf(OrgNotFoundError);
     expect(await countIn(ghost, "org_deletions")).toBe(0);
     expect(await countIn(ghost, "audit_log")).toBe(0);
   });
@@ -156,8 +157,8 @@ describe("purge drain (webhook_purge)", () => {
     await seedUser(u);
     const o1 = await seedOrg("drain-1", u);
     const o2 = await seedOrg("drain-2", u);
-    await deleteOrgWithAudit(app, { orgId: o1, actor: u }, key);
-    await deleteOrgWithAudit(app, { orgId: o2, actor: u }, key);
+    await deleteOrgWithAudit(app, { orgId: o1, actor: userActor(u) }, key);
+    await deleteOrgWithAudit(app, { orgId: o2, actor: userActor(u) }, key);
 
     // Both jobs are outstanding and unstarted (cursor null).
     const claimed = await claimPurgeJobs(purge, 10);
@@ -255,7 +256,7 @@ describe("org_deletions RLS boundary (the anti-forgery gate)", () => {
     await seedUser(u);
     const orgA = await seedOrg("read-a", u);
     const orgB = await seedOrg("read-b", u);
-    await deleteOrgWithAudit(app, { orgId: orgB, actor: u }, key); // orgB now has a purge job
+    await deleteOrgWithAudit(app, { orgId: orgB, actor: userActor(u) }, key); // orgB now has a purge job
     const visibleFromA = await withTenant(
       app,
       orgA,

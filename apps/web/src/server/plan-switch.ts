@@ -1,4 +1,5 @@
 import "server-only";
+import { userActor } from "@webhook-co/shared";
 
 import { withTenant } from "@webhook-co/db/client";
 import { readMembershipRole } from "@webhook-co/db/orgs";
@@ -193,7 +194,7 @@ async function auditSwitch(
       withTenant(app, orgId, (tx) =>
         appendAuditEntry(tx, auditKey, {
           orgId,
-          actor: userId,
+          actor: userActor(userId),
           action,
           target: `plan: ${from} -> ${to}`,
         }),

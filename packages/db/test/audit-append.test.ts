@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import { importAuditKey, verifyAuditChain, type StoredAuditRow } from "@webhook-co/shared";
+import {
+  importAuditKey,
+  SYSTEM_ACTOR,
+  userActor,
+  verifyAuditChain,
+  type StoredAuditRow,
+} from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { appendAuditEntry, readAuditChain } from "../src/audit-append";
@@ -45,7 +51,12 @@ describe("appendAuditEntry (append-service)", () => {
   it("writes a genesis row at seq 1 with a null prev_hash, and it verifies", async () => {
     const orgId = await seedOrg("audit-genesis");
     const written = await withTenant(app, orgId, (tx) =>
-      appendAuditEntry(tx, key, { orgId, actor: "user_1", action: "org.created", target: null }),
+      appendAuditEntry(tx, key, {
+        orgId,
+        actor: userActor("user_1"),
+        action: "org.created",
+        target: null,
+      }),
     );
     expect(written.seq).toBe(1);
     expect(written.prevHash).toBeNull();
@@ -60,16 +71,21 @@ describe("appendAuditEntry (append-service)", () => {
   it("links successive rows into a chain that the walker verifies clean", async () => {
     const orgId = await seedOrg("audit-chain");
     await withTenant(app, orgId, async (tx) => {
-      await appendAuditEntry(tx, key, { orgId, actor: "u", action: "org.created", target: null });
       await appendAuditEntry(tx, key, {
         orgId,
-        actor: "u",
+        actor: userActor("u"),
+        action: "org.created",
+        target: null,
+      });
+      await appendAuditEntry(tx, key, {
+        orgId,
+        actor: userActor("u"),
         action: "endpoint.created",
         target: "ep_1",
       });
       await appendAuditEntry(tx, key, {
         orgId,
-        actor: null,
+        actor: SYSTEM_ACTOR,
         action: "key.rotated",
         target: "ep_1",
       });
@@ -85,10 +101,15 @@ describe("appendAuditEntry (append-service)", () => {
   it("produces a chain the walker rejects once a stored payload is tampered (DB-side edit)", async () => {
     const orgId = await seedOrg("audit-tamper");
     await withTenant(app, orgId, async (tx) => {
-      await appendAuditEntry(tx, key, { orgId, actor: "u", action: "org.created", target: null });
       await appendAuditEntry(tx, key, {
         orgId,
-        actor: "u",
+        actor: userActor("u"),
+        action: "org.created",
+        target: null,
+      });
+      await appendAuditEntry(tx, key, {
+        orgId,
+        actor: userActor("u"),
         action: "endpoint.created",
         target: "ep_1",
       });
@@ -111,14 +132,24 @@ describe("appendAuditEntry (append-service)", () => {
   it("the walker catches a deleted row (seq gap) in a real stored chain", async () => {
     const orgId = await seedOrg("audit-gap");
     await withTenant(app, orgId, async (tx) => {
-      await appendAuditEntry(tx, key, { orgId, actor: "u", action: "org.created", target: null });
       await appendAuditEntry(tx, key, {
         orgId,
-        actor: "u",
+        actor: userActor("u"),
+        action: "org.created",
+        target: null,
+      });
+      await appendAuditEntry(tx, key, {
+        orgId,
+        actor: userActor("u"),
         action: "endpoint.created",
         target: "ep",
       });
-      await appendAuditEntry(tx, key, { orgId, actor: "u", action: "key.rotated", target: "ep" });
+      await appendAuditEntry(tx, key, {
+        orgId,
+        actor: userActor("u"),
+        action: "key.rotated",
+        target: "ep",
+      });
     });
     const chain = await withTenant(app, orgId, (tx) => readAuditChain(tx, orgId));
     const withGap = chain.filter((r) => r.seq !== 2); // drop the middle row
@@ -140,7 +171,7 @@ describe("appendAuditEntry (append-service)", () => {
         withTenant(app, orgId, (tx) =>
           appendAuditEntry(tx, key, {
             orgId,
-            actor: `u${i}`,
+            actor: userActor(`u${i}`),
             action: "endpoint.created",
             target: `ep_${i}`,
           }),
@@ -159,15 +190,25 @@ describe("appendAuditEntry (append-service)", () => {
     const orgA = await seedOrg("audit-iso-a");
     const orgB = await seedOrg("audit-iso-b");
     await withTenant(app, orgA, (tx) =>
-      appendAuditEntry(tx, key, { orgId: orgA, actor: "u", action: "org.created", target: null }),
-    );
-    await withTenant(app, orgB, (tx) =>
-      appendAuditEntry(tx, key, { orgId: orgB, actor: "u", action: "org.created", target: null }),
+      appendAuditEntry(tx, key, {
+        orgId: orgA,
+        actor: userActor("u"),
+        action: "org.created",
+        target: null,
+      }),
     );
     await withTenant(app, orgB, (tx) =>
       appendAuditEntry(tx, key, {
         orgId: orgB,
-        actor: "u",
+        actor: userActor("u"),
+        action: "org.created",
+        target: null,
+      }),
+    );
+    await withTenant(app, orgB, (tx) =>
+      appendAuditEntry(tx, key, {
+        orgId: orgB,
+        actor: userActor("u"),
         action: "endpoint.created",
         target: "e",
       }),

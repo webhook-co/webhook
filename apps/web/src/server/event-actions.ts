@@ -1,7 +1,7 @@
 "use server";
 
 import { deleteEventWithAudit, enforceEventDeleteRateLimit } from "@webhook-co/db/event-delete";
-import { ORDER_KEY_RE, type Cursor } from "@webhook-co/shared";
+import { ORDER_KEY_RE, type Cursor, userActor } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { PROVIDERS } from "@webhook-co/webhooks-spec";
@@ -143,7 +143,7 @@ export async function deleteEventAction(input: { eventId: string }): Promise<Del
       await enforceEventDeleteRateLimit(db, session.orgId);
       await deleteEventWithAudit(
         db,
-        { orgId: session.orgId, eventId, actor: session.userId },
+        { orgId: session.orgId, eventId, actor: userActor(session.userId) },
         auditKey,
       );
     });

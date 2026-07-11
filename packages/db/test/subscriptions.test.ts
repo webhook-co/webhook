@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { CapabilityFault, type AuthContext } from "@webhook-co/contract";
-import { importAuditKey } from "@webhook-co/shared";
+import { importAuditKey, userActor } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
@@ -333,9 +333,9 @@ describe("audit", () => {
     const sub = await createSubscription(
       app,
       { orgId: orgA, sourceEndpointId: epA, destinationId: dest },
-      { auditKey, actor: null },
+      { auditKey, actor: userActor("user_alice") },
     );
-    await deleteSubscription(app, orgA, sub.id, { auditKey, actor: null });
+    await deleteSubscription(app, orgA, sub.id, { auditKey, actor: userActor("user_alice") });
     const rows = await withTenant(
       app,
       orgA,
@@ -356,12 +356,12 @@ describe("audit", () => {
     const sub = await createSubscription(
       app,
       { orgId: orgA, sourceEndpointId: epA, destinationId: dest },
-      { auditKey, actor: null },
+      { auditKey, actor: userActor("user_alice") },
     );
     await createSubscription(
       app,
       { orgId: orgA, sourceEndpointId: epA, destinationId: dest, eventTypes: ["charge.*"] },
-      { auditKey, actor: null },
+      { auditKey, actor: userActor("user_alice") },
     );
     const rows = await withTenant(
       app,
@@ -377,7 +377,7 @@ describe("audit", () => {
 });
 
 describe("createSubscriptionHandlers (capability handlers)", () => {
-  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
+  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes, keyId: "key_test" });
   const handlers = () => createSubscriptionHandlers({ tenant: app, auditKey: undefined as never });
 
   it("enforces the capability scope (FORBIDDEN without endpoints:write / endpoints:read)", async () => {

@@ -35,6 +35,7 @@ export * from "./cursor";
 export * from "./lag";
 export * from "./since";
 export * from "./audit";
+export * from "./audit-actor";
 export * from "./audit-chain";
 export * from "./audit-anchor";
 export * from "./r2";
