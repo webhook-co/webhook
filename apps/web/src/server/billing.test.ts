@@ -80,6 +80,16 @@ describe("billing-manager gate (S.2)", () => {
     });
     expect(client.createCheckoutSession).toHaveBeenCalled();
   });
+
+  // The cross-org case S.4 exists to prevent. A user is `owner` of their own personal org and only a
+  // `member` of the team org. The role read MUST be the role IN THE ORG BEING BILLED — if it ever widened
+  // (which an additive, permissive policy on `memberships` would do), it could return the personal-org
+  // `owner` row and let a plain member of the team change the team's plan. Real money.
+  it("uses the role in the BILLED org, not another org the user happens to own", async () => {
+    const client = enableBilling("cus_1", null, "member"); // their role in THIS org
+    expect(await openBillingPortal("org-team", "u-1")).toEqual({ status: "forbidden" });
+    expect(client.createPortalSession).not.toHaveBeenCalled();
+  });
 });
 
 describe("startCheckout", () => {

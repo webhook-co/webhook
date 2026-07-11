@@ -414,6 +414,26 @@ describe("redeemRefresh — silent re-mint", () => {
     expect(deps.revokeGrant).not.toHaveBeenCalled();
   });
 
+  // The DENIAL is the security outcome and is unconditional — a revoke that fails must not become a mint.
+  // (It does leave the grant's live 24h keys to age out, so the log carries reapRequired + the cause.)
+  it("still denies — and never mints — when the grant revoke itself throws", async () => {
+    const log = vi.fn();
+    const deps = refreshDeps({
+      consumeRefresh: consumedAsNonMember(),
+      revokeGrant: vi.fn(async () => {
+        throw new Error("transient postgres fault");
+      }),
+      log,
+    });
+    const result = await redeemRefresh(deps, refreshReq);
+    expect(result).toMatchObject({ kind: "error", error: "access_denied" });
+    expect(mintForGrantMock(deps)).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      "issuer.refresh_denied_revoke_failed",
+      expect.objectContaining({ grantId: "g_1", reapRequired: true }),
+    );
+  });
+
   it("re-mints a fresh whk_ on the grant and returns the frozen body with the grant audience", async () => {
     const deps = refreshDeps();
     const result = await redeemRefresh(deps, refreshReq);

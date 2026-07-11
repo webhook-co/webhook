@@ -5,6 +5,7 @@ import {
   readIntrospectEnv,
   readSweepEnv,
   readNotifyEnv,
+  readTokenEnv,
   resolveAuthSecrets,
   type AuthEnv,
 } from "./env";
@@ -166,5 +167,45 @@ describe("resolveAuthSecrets", () => {
   it("fails closed when TURNSTILE_SECRET_KEY is present but resolves EMPTY (never run the gate keyless)", async () => {
     const env = readAuthEnv({ ...RAW, TURNSTILE_SECRET_KEY: { get: async () => "" } }) as AuthEnv;
     await expect(resolveAuthSecrets(env)).rejects.toThrow(/turnstileSecretKey/);
+  });
+});
+
+// /token mints credentials AND, when a refresh is denied for lost membership, revokes the grant and evicts
+// its cascaded keys from the shared principal cache. That eviction is the step that actually stops the
+// credential at api./mcp./engine — without it a revoked key keeps authenticating for the cache TTL. So a
+// deploy that forgets the KV_AUTHZ binding must fail LOUDLY on the first /token request, not silently skip
+// the eviction forever.
+describe("readTokenEnv", () => {
+  const TOKEN_RAW = {
+    HYPERDRIVE_TENANT: { connectionString: "postgres://app@hd/db" },
+    CREDENTIAL_PEPPER: "cGVwcGVy",
+    AUDIT_CHAIN_HMAC_KEY: "a2V5",
+    OAUTH_KV: {},
+    DEVICE_KV: {},
+    KV_AUTHZ: {},
+  };
+
+  it("accepts a fully-bound token env", () => {
+    expect(() => readTokenEnv({ ...TOKEN_RAW })).not.toThrow();
+  });
+
+  it("fails closed, naming the binding, when KV_AUTHZ is missing", () => {
+    const { KV_AUTHZ: _omitted, ...withoutCache } = TOKEN_RAW;
+    expect(() => readTokenEnv(withoutCache)).toThrow(/KV_AUTHZ/);
+  });
+
+  it.each(["OAUTH_KV", "DEVICE_KV", "KV_AUTHZ"])("fails closed when %s is not an object", (key) => {
+    expect(() => readTokenEnv({ ...TOKEN_RAW, [key]: "not-a-binding" })).toThrow(new RegExp(key));
+  });
+
+  it("fails closed on a missing secret, naming it and never its value", () => {
+    const { CREDENTIAL_PEPPER: _omitted, ...withoutPepper } = TOKEN_RAW;
+    expect(() => readTokenEnv(withoutPepper)).toThrow(/CREDENTIAL_PEPPER/);
+  });
+
+  it("fails closed on a malformed Hyperdrive binding", () => {
+    expect(() => readTokenEnv({ ...TOKEN_RAW, HYPERDRIVE_TENANT: {} })).toThrow(
+      /HYPERDRIVE_TENANT/,
+    );
   });
 });
