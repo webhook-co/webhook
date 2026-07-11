@@ -50,7 +50,7 @@ export default function TermsPage() {
           <p>
             webhook.co ("webhook.co", "we", "us", "our") is operated by{" "}
             <strong>Sourabh Choraria</strong>, a sole trader based in Porto, Portugal. You can reach
-            us at <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            us at <a href="mailto:legal@webhook.co">legal@webhook.co</a>.
           </p>
           <p>
             These Terms of Service (the "Terms") are a legal agreement between you (or the
@@ -95,7 +95,7 @@ export default function TermsPage() {
             You need an account to use most of the Service. You must provide accurate information,
             keep your credentials (including API keys and ingest tokens) secure, and you're
             responsible for everything that happens under your account. Tell us promptly at{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> if you believe your account
+            <a href="mailto:security@webhook.co">security@webhook.co</a> if you believe your account
             or a credential has been compromised.
           </p>
           <p>
@@ -209,7 +209,7 @@ export default function TermsPage() {
           <p>
             If you think you've been charged unfairly,{" "}
             <strong>get in touch and we'll look at it</strong>. Email{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> and we'll review it{" "}
+            <a href="mailto:support@webhook.co">support@webhook.co</a> and we'll review it{" "}
             <strong>case by case</strong> — we'd rather sort out a genuine problem than keep money
             we didn't earn. This is in addition to your statutory rights below, which we never ask
             you to waive.
@@ -241,7 +241,7 @@ export default function TermsPage() {
           </p>
           <p>
             Support on self-serve plans is best-effort by email at{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>. We don't commit to specific
+            <a href="mailto:support@webhook.co">support@webhook.co</a>. We don't commit to specific
             response times except where a separate agreement says so.
           </p>
 
@@ -357,11 +357,11 @@ export default function TermsPage() {
             unenforceable, the rest stays in effect. Our not enforcing a right isn't a waiver of it.
             You may not assign these Terms without our consent; we may assign them to a successor to
             our business. Notices to you may be given by email or in-app; notices to us go to{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            <a href="mailto:legal@webhook.co">legal@webhook.co</a>.
           </p>
           <p>
             <strong>Contact:</strong> Sourabh Choraria (webhook.co) —{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>
+            <a href="mailto:legal@webhook.co">legal@webhook.co</a>
           </p>
         </LegalDoc>
       </main>

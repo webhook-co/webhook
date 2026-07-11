@@ -44,7 +44,7 @@ export default function PrivacyPage() {
             (7 days on the free plan), you can delete anything yourself at any time, and we&apos;ll{" "}
             <strong>honour erasure requests within 30 days</strong>. We&apos;re <strong>not</strong>{" "}
             SOC 2 / HIPAA certified, so please don&apos;t send data that needs those. Questions or
-            requests: <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            requests: <a href="mailto:privacy@webhook.co">privacy@webhook.co</a>.
           </blockquote>
 
           <h2>1. Who we are, and what this policy covers</h2>
@@ -52,7 +52,7 @@ export default function PrivacyPage() {
             The hosted webhook.co service (the "Service") is operated by{" "}
             <strong>Sourabh Choraria</strong>, a sole trader based in Porto, Portugal ("webhook.co",
             "we", "us"). For data-protection purposes, we are the controller of your account data.
-            Contact: <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            Contact: <a href="mailto:privacy@webhook.co">privacy@webhook.co</a>.
           </p>
           <p>
             This policy explains what personal data we handle through the hosted Service and why. It
@@ -236,7 +236,7 @@ export default function PrivacyPage() {
             <strong>correct</strong> it, <strong>delete/erase</strong> it, <strong>restrict</strong>{" "}
             or <strong>object</strong> to certain processing, receive a <strong>portable</strong>{" "}
             copy, and <strong>withdraw consent</strong> where we rely on it. To exercise any of
-            these, email <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>; we'll respond
+            these, email <a href="mailto:privacy@webhook.co">privacy@webhook.co</a>; we'll respond
             within the time the law requires (generally one month). You also have the right to
             complain to a supervisory authority — in Portugal, the{" "}
             <strong>Comissão Nacional de Proteção de Dados (CNPD)</strong> — or your local EU/EEA
@@ -323,7 +323,7 @@ export default function PrivacyPage() {
             for cross-context behavioural advertising. When we handle the data you capture, we act
             as your <strong>service provider</strong> and use it only to provide the Service. You
             have rights to know, delete, and correct your personal information; email{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> to exercise them, and we
+            <a href="mailto:privacy@webhook.co">privacy@webhook.co</a> to exercise them, and we
             won't discriminate against you for doing so.
           </p>
 
@@ -336,7 +336,7 @@ export default function PrivacyPage() {
           <h2>15. Contact</h2>
           <p>
             <strong>Sourabh Choraria</strong> (webhook.co), Porto, Portugal —{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>. For EU/EEA privacy
+            <a href="mailto:privacy@webhook.co">privacy@webhook.co</a>. For EU/EEA privacy
             complaints you may also contact the <strong>CNPD</strong> (the Portuguese
             data-protection authority) or your local supervisory authority.
           </p>

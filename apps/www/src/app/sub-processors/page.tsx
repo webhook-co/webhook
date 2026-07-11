@@ -110,8 +110,8 @@ export default function SubProcessorsPage() {
             When we add or replace a sub-processor, we'll update this page and its "Last updated"
             date above, and give <strong>at least 30 days' advance notice</strong> before the new
             sub-processor starts handling your data — so you have time to object. To get that notice
-            by email, ask us at <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> and we'll
-            add you to the list.
+            by email, ask us at <a href="mailto:legal@webhook.co">legal@webhook.co</a> and we'll add
+            you to the list.
           </p>
           <p>
             If you object on reasonable data-protection grounds within that window, your rights are
