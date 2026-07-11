@@ -46,9 +46,10 @@ Four capabilities, each useful on its own. Start wherever your problem is.
 </Card>
 
   <Card title="Trigger an agent" icon="robot" href="/mcp/wake-an-agent">
-    Over MCP, an agent can call `triggers.wait` and block until a matching webhook lands, then act on
-    the payload. It's an inbound trigger for the agent era — a webhook that wakes a program up rather
-    than one you poll for.
+    Over MCP, an agent calls `triggers.wait` to consume the webhooks captured for it since its last
+    cursor — verified, in order, at-least-once, and held even while the agent is offline. It returns
+    what's landed plus a cursor to resume, so your agent reads one durable subscription instead of
+    polling each provider's API.
   </Card>
 </CardGroup>
 
