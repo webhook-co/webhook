@@ -41,8 +41,8 @@ export function Hero() {
           </h1>
 
           <p className="mb-8 max-w-[52ch] text-[clamp(17px,2.1vw,20px)] leading-snug tracking-tight text-pretty text-fg-secondary">
-            Capture any webhook, inspect every request, and replay it to localhost. Then hand your
-            agents an event they can act on.
+            Capture the webhooks other services send you — inspect every request, verify it, replay
+            it to localhost. Then hand your agents an event they can act on.
           </p>
 
           <div className="mb-8 flex flex-wrap gap-3">

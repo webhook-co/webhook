@@ -21,8 +21,8 @@ export function SurfacesTabs() {
         eyebrow="one platform, every surface"
         title="The same event, wherever you work"
       >
-        CLI, API, dashboard, MCP — every capability is reachable identically. Here&rsquo;s one
-        verified event, seen from each.
+        CLI, API, dashboard, MCP &mdash; four surfaces over one capability contract. Here&rsquo;s
+        one verified event, seen from each.
       </SectionHeading>
 
       {/* A focused, centered code card — the terminal reads better narrow than full-bleed. */}

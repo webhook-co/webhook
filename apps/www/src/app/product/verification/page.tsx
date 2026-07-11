@@ -10,7 +10,7 @@ export const metadata = pageMetadata({
   // "authenticated" state, so a standalone SERP snippet must not imply all 142 are cryptographically
   // verified (the page body makes the four-state distinction; the description can't rely on it).
   description:
-    "142 providers checked at the edge. Every event lands in one of four states, and when a signature fails we name which of eleven reasons — with the fix.",
+    "142 providers checked at the edge. Every event lands in one of four states, and when a signature fails we name the likely reason — one of eleven codes — with the fix.",
 });
 
 export default function VerificationPage() {
@@ -18,7 +18,7 @@ export default function VerificationPage() {
     <ProductShell
       eyebrow="verification"
       title="When a signature fails, you'll know why"
-      lede="142 providers, checked at the edge. Every event lands in one of four states — and when a signature doesn't match, we name which of eleven reasons, with the fix, instead of a generic mismatch."
+      lede="142 providers, checked at the edge. Every event lands in one of four states — and when a signature doesn't match, we name the likely reason, one of eleven codes, with the fix, instead of a bare match/no-match."
       path="/product/verification"
       name="Verification"
       docsHref={LINKS.concepts.verification}
@@ -37,7 +37,7 @@ export default function VerificationPage() {
       <ProductFeature id="eleven-reasons" heading="Eleven named reasons, each with the fix">
         <p>
           Wrong secret. Raw body modified. A proxy mutated the bytes. Timestamp outside the window.
-          No matching key. When verification fails, the edge names the actual cause in plain
+          No matching key. When verification fails, the edge names the likely cause in plain
           language &mdash; not &ldquo;no signatures found matching the expected signature.&rdquo;
           The one you hit most, <code>raw_body_modified</code>, usually means a framework
           re-serialized the body before you verified it; the message says so.

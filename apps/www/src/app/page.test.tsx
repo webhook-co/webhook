@@ -38,7 +38,7 @@ describe("HomePage", () => {
     const titles = [
       /the same event, wherever you work/i,
       /received once, in order, never silently dropped/i,
-      /when a signature fails/i,
+      /every provider you add is a new way to fail silently/i,
       /private by default, open at the core/i,
       /point a webhook at it/i,
     ];
@@ -89,8 +89,10 @@ describe("HomePage", () => {
 
   it("renders the real Standard Webhooks link in the verification showcase", () => {
     render(<HomePage />);
-    // Scoped to the verification section — the footer and nav also link "Standard Webhooks".
-    const verification = screen.getByRole("region", { name: /when a signature fails/i });
+    // Scoped to the verification ("provider tax") section — the footer and nav also link "Standard Webhooks".
+    const verification = screen.getByRole("region", {
+      name: /every provider you add is a new way to fail silently/i,
+    });
     expect(within(verification).getByRole("link", { name: "Standard Webhooks" })).toHaveAttribute(
       "href",
       "https://www.standardwebhooks.com/",
