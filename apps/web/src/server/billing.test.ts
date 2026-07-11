@@ -415,3 +415,110 @@ describe("loadBillingSummary (dedicated Billing section)", () => {
     expect((await loadBillingSummary("org-1", "user-1")).canManageBilling).toBe(false);
   });
 });
+
+// ── The pending downgrade the billing page shows on every visit (ADR-0112) ──────────────────────────────────
+
+describe("loadBillingSummary — a booked downgrade", () => {
+  const NOW_SEC = Math.floor(Date.now() / 1000);
+  const FUTURE = NOW_SEC + 86_400 * 10;
+
+  /** An entitled SCALE org whose subscription carries a schedule booking a move to Pro at period end. */
+  function enableWithSchedule(over: Record<string, unknown> = {}) {
+    env.getBillingMode.mockReturnValue("test");
+    env.getStripePlans.mockReturnValue({
+      pro: { base: "price_base", overage: "price_overage" },
+      scale: { base: "price_scale_base", overage: "price_scale_overage" },
+    });
+    env.getStripeSecretKey.mockResolvedValue("sk_test_x");
+    db.withTenantDb.mockResolvedValue({
+      customerId: "cus_1",
+      sub: {
+        plan: "price_scale_base", // on Scale
+        status: "active",
+        currentPeriodEnd: new Date(FUTURE * 1000).toISOString(),
+        cancelAtPeriodEnd: false,
+      },
+      subscriptionId: "sub_1",
+      overagePolicy: "pause",
+      role: "owner",
+    });
+    const client = {
+      retrieveSubscription: vi.fn().mockResolvedValue({
+        id: "sub_1",
+        status: "active",
+        items: [],
+        scheduleId: "sub_sched_1",
+      }),
+      retrieveSubscriptionSchedule: vi.fn().mockResolvedValue({
+        id: "sub_sched_1",
+        currentPhase: { items: [] },
+        phases: [
+          { startDate: NOW_SEC - 100, endDate: FUTURE, items: [{ price: "price_scale_base" }] },
+          { startDate: FUTURE, items: [{ price: "price_base" }] }, // → Pro, in the future
+        ],
+      }),
+      ...over,
+    };
+    stripe.makeStripeClient.mockReturnValue(client);
+    return client;
+  }
+
+  it("reports the booked plan + when it takes effect, and stops offering that plan as a switch target", async () => {
+    enableWithSchedule();
+
+    const view = await loadBillingSummary("org-1", "user-1");
+
+    expect(view.pendingDowngrade).toEqual({ plan: "pro", effectiveAt: FUTURE });
+    // Offering "Switch to Pro" when Pro is ALREADY booked would read as a dead no-op button.
+    expect(view.switchTargets).toEqual([]);
+    expect(view.hidden).toBe(false);
+  });
+
+  it("reports nothing pending when the subscription carries no schedule", async () => {
+    enableWithSchedule({
+      retrieveSubscription: vi
+        .fn()
+        .mockResolvedValue({ id: "sub_1", status: "active", items: [], scheduleId: null }),
+    });
+
+    const view = await loadBillingSummary("org-1", "user-1");
+
+    expect(view.pendingDowngrade).toBeNull();
+    expect(view.switchTargets).toEqual(["pro"]); // a Scale org can still switch down
+  });
+
+  it("a Stripe FAULT hides only the downgrade notice — never the whole billing panel", async () => {
+    // The contract that matters: readPendingDowngrade is best-effort. If a Stripe blip escaped to the outer
+    // catch, every paying customer would see "Billing isn't available right now" instead of their plan.
+    const { logActionError } = await import("./action-log");
+    enableWithSchedule({
+      retrieveSubscription: vi.fn().mockRejectedValue(new Error("stripe down")),
+    });
+
+    const view = await loadBillingSummary("org-1", "user-1");
+
+    expect(view.hidden).toBe(false); // the panel still renders
+    expect(view.pendingDowngrade).toBeNull(); // just without the notice
+    expect(view.display).not.toBeNull(); // and the plan card is intact
+    expect(vi.mocked(logActionError)).toHaveBeenCalledWith(
+      "billing.pending_downgrade_read_failed",
+      expect.any(Error),
+    );
+    // NOT the outer summary failure — that would mean it took the whole page down.
+    expect(vi.mocked(logActionError)).not.toHaveBeenCalledWith(
+      "billing.summary_failed",
+      expect.anything(),
+    );
+  });
+
+  it("survives a fault reading the SCHEDULE itself (the second Stripe call), too", async () => {
+    enableWithSchedule({
+      retrieveSubscriptionSchedule: vi.fn().mockRejectedValue(new Error("stripe down")),
+    });
+
+    const view = await loadBillingSummary("org-1", "user-1");
+
+    expect(view.hidden).toBe(false);
+    expect(view.pendingDowngrade).toBeNull();
+  });
+});
