@@ -1,5 +1,3 @@
-import { cn } from "@webhook-co/ui";
-
 import { pageMetadata } from "../metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Faq } from "@/components/marketing/faq";
@@ -8,7 +6,7 @@ import { Footer } from "@/components/marketing/footer";
 import { Nav } from "@/components/marketing/nav";
 import { PricingHero, PricingTable } from "@/components/marketing/pricing";
 import { Reveal } from "@/components/marketing/reveal";
-import { focusRing } from "@/lib/styles";
+import { SkipLink } from "@/components/marketing/skip-link";
 
 // pageMetadata sets this page's own canonical + og:url (the root's canonical:"/" is otherwise
 // inherited, canonicalising /pricing to the homepage). Title template appends " — webhook.co".
@@ -22,15 +20,7 @@ export const metadata = pageMetadata({
 export default function PricingPage() {
   return (
     <>
-      <a
-        href="#main"
-        className={cn(
-          focusRing,
-          "sr-only rounded-control bg-surface px-4 py-2 text-sm text-fg shadow-2 focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100]",
-        )}
-      >
-        Skip to content
-      </a>
+      <SkipLink />
       <header>
         <AnnounceBar />
         <Nav />

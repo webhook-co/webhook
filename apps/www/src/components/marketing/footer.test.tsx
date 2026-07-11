@@ -43,11 +43,15 @@ describe("Footer", () => {
   });
 
   // The changelog existed the whole time (a Mintlify tab); it was `#` only because nobody wired it.
+  // About is now a real /about page (the entity lane), and "Blog" is renamed to "Guides" pointing at
+  // the existing docs guides estate — we don't run a separate blog (founder decision).
   it("wires the Company column to what exists", () => {
     render(<Footer />);
     const byLabel = Object.fromEntries(
       columnLinks("Company").map((a) => [a.textContent, a.getAttribute("href")]),
     );
+    expect(byLabel["About"]).toBe("/about");
+    expect(byLabel["Guides"]).toBe("https://docs.webhook.co/guides");
     expect(byLabel["Changelog"]).toBe("https://docs.webhook.co/changelog");
     expect(byLabel["Security"]).toBe("https://docs.webhook.co/concepts/security");
     expect(byLabel["Contact"]).toBe("mailto:sourabh@webhook.co");
@@ -71,10 +75,11 @@ describe("Footer", () => {
     );
   });
 
-  // About / Blog / X / LinkedIn / the status indicator have no destination in the product. They are
-  // rendered as TEXT, not as links to nowhere. An `href="#"` would be focusable, would announce as a
-  // link, and — with smooth scrolling enabled by any earlier click — would glide the reader from the
-  // footer back to the hero. Ships zero dead links, and the labels still say the surface is coming.
+  // X / LinkedIn / the status indicator have no destination in the product. They are rendered as
+  // TEXT, not as links to nowhere. An `href="#"` would be focusable, would announce as a link, and —
+  // with smooth scrolling enabled by any earlier click — would glide the reader from the footer back
+  // to the hero. Ships zero dead links. (About and Blog USED to be here; About is now a real page and
+  // Blog became Guides — both real links.)
   it("ships no link that goes nowhere", () => {
     const { container } = render(<Footer />);
     expect(container.querySelectorAll('a[href="#"]')).toHaveLength(0);
@@ -83,12 +88,12 @@ describe("Footer", () => {
     }
   });
 
-  it("still shows the surfaces that don't exist yet, just not as links", () => {
+  // "Blog" is gone entirely — renamed to Guides, no separate blog. Its former inert-text sibling
+  // "About" is now a real link. The socials that still have no account (X, LinkedIn) remain text.
+  it("no longer advertises a Blog, and never as inert text", () => {
     render(<Footer />);
-    for (const label of ["About", "Blog"]) {
-      expect(screen.getByText(label)).toBeInTheDocument();
-      expect(screen.queryByRole("link", { name: label })).toBeNull();
-    }
+    expect(screen.queryByText("Blog")).toBeNull();
+    expect(screen.queryByRole("link", { name: "Blog" })).toBeNull();
   });
 
   // "All systems operational", with a green dot, on every page of the site — wired to nothing. There

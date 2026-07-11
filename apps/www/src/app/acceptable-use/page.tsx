@@ -1,5 +1,3 @@
-import { cn } from "@webhook-co/ui";
-
 import { pageMetadata } from "@/app/metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
@@ -7,7 +5,7 @@ import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
 import { Nav } from "@/components/marketing/nav";
 import { ACCEPTABLE_USE_ANCHORS } from "@/app/legal-anchors";
-import { focusRing } from "@/lib/styles";
+import { SkipLink } from "@/components/marketing/skip-link";
 
 // pageMetadata sets this page's own canonical + og:url (root inherits canonical:"/" otherwise).
 export const metadata = pageMetadata({
@@ -26,15 +24,7 @@ export const metadata = pageMetadata({
 export default function AcceptableUsePage() {
   return (
     <>
-      <a
-        href="#main"
-        className={cn(
-          focusRing,
-          "sr-only rounded-control bg-surface px-4 py-2 text-sm text-fg shadow-2 focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100]",
-        )}
-      >
-        Skip to content
-      </a>
+      <SkipLink />
       <header>
         <AnnounceBar />
         <Nav />

@@ -2,7 +2,8 @@ import { Button, cn } from "@webhook-co/ui";
 
 import { Footer } from "@/components/marketing/footer";
 import { Nav } from "@/components/marketing/nav";
-import { container, focusRing, sectionPad } from "@/lib/styles";
+import { container, sectionPad } from "@/lib/styles";
+import { SkipLink } from "@/components/marketing/skip-link";
 
 // Rendered by Next for any unmatched route. Under `output: "export"` Next emits this to
 // out/404.html, which the Worker serves — with a 404 status — for unknown paths via wrangler's
@@ -16,15 +17,7 @@ import { container, focusRing, sectionPad } from "@/lib/styles";
 export default function NotFound() {
   return (
     <>
-      <a
-        href="#main"
-        className={cn(
-          focusRing,
-          "sr-only rounded-control bg-surface px-4 py-2 text-sm text-fg shadow-2 focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100]",
-        )}
-      >
-        Skip to content
-      </a>
+      <SkipLink />
       <header>
         <Nav />
       </header>

@@ -47,6 +47,13 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     sitemap: true,
   },
   {
+    path: "/about",
+    changeFrequency: "monthly",
+    priority: 0.6,
+    a11y: true,
+    sitemap: true,
+  },
+  {
     path: "/terms",
     changeFrequency: "yearly",
     priority: 0.3,

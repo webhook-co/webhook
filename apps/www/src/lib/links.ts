@@ -36,6 +36,8 @@ export const LINKS = {
   apiReference: `${DOCS}/api-reference/introduction`,
   cli: `${DOCS}/cli/overview`,
   mcp: `${DOCS}/mcp/overview`,
+  /** The existing docs guides estate. We rename "Blog" → "Guides" here rather than run a blog. */
+  guides: `${DOCS}/guides`,
   changelog: `${DOCS}/changelog`,
   security: `${DOCS}/concepts/security`,
 
@@ -52,6 +54,7 @@ export const LINKS = {
   // ── site ─────────────────────────────────────────────────────────────────
   home: "/",
   pricing: "/pricing",
+  about: "/about",
 
   // ── external ─────────────────────────────────────────────────────────────
   openSource: REPO,
