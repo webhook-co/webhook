@@ -140,6 +140,7 @@
           "mcp/wake-an-agent",
           "mcp/trigger-semantics",
           "mcp/using-from-a-client",
+          "mcp/authorization",
           "mcp/connect-the-docs-mcp"
         ]
       },
