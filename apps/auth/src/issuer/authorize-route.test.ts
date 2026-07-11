@@ -137,6 +137,27 @@ describe("handleConsentDecision (POST /consent/decision)", () => {
     expect(seal).toHaveBeenCalledWith("http://127.0.0.1:51763/callback?code=AC");
   });
 
+  it("returns an allowlisted https redirect directly — no loopback bounce (Claude Desktop / web clients)", async () => {
+    // A remote https callback CAN be navigated to client-side, so it must NOT go through the loopback
+    // server-302 bounce (that path is http-loopback-only, per Private Network Access).
+    const seal = vi.fn(async (r: string) => `/consent/complete?c=${r}`);
+    const res = await handleConsentDecision(
+      routeDeps({
+        decideConsent: async () => ({
+          kind: "ok",
+          redirectTo: "https://claude.ai/api/mcp/auth_callback?code=AC",
+        }),
+        sealLoopbackRedirect: seal,
+      }),
+      decisionRequest({ requestId: "TICKET", csrfToken: "csrf", decision: "approve" }),
+    );
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      redirectTo: "https://claude.ai/api/mcp/auth_callback?code=AC",
+    });
+    expect(seal).not.toHaveBeenCalled();
+  });
+
   it("returns a relative (device) redirect unchanged — no bounce for a same-origin target", async () => {
     const seal = vi.fn();
     const res = await handleConsentDecision(

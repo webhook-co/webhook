@@ -13,7 +13,7 @@ import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
 import { signLoopbackTicket, verifyLoopbackTicket } from "./completion-ticket";
 import { buildConsent, decideConsent } from "./consent-core";
 import { importConsentTicketKey, signConsentTicket, verifyConsentTicket } from "./consent-ticket";
-import { isAllowedRedirectUri } from "./dcr";
+import { isHttpLoopbackRedirect } from "./dcr";
 import { makeDeviceStoreDeps } from "./device-deps";
 import { setDeviceDecision } from "./device-store";
 import {
@@ -123,7 +123,10 @@ export async function makeAuthorizeDeps(
     },
     openLoopbackRedirect: async (ticket) => {
       const url = await verifyLoopbackTicket(ticket, ticketKey, nowSeconds());
-      return url && isAllowedRedirectUri(url) ? url : null;
+      // Re-assert an http LOOPBACK literal (never https/remote): GET /consent/complete issues a server 302
+      // to whatever this returns, so this narrow gate is the only thing keeping the bounce from becoming an
+      // own-origin open redirect. Remote-https redirects never take the bounce (they navigate client-side).
+      return url && isHttpLoopbackRedirect(url) ? url : null;
     },
   };
 
