@@ -16,6 +16,8 @@ import type { ConsentAuthRequest, ConsentTicketPayload } from "./consent-ticket"
 
 const API = "https://api.webhook.co";
 const MCP = "https://mcp.webhook.co";
+/** Our RFC 9207 issuer identifier — stamped as `iss` on every authorization response (success + error). */
+const ISSUER = "https://auth.webhook.co";
 const CAPABILITY = ["events:read", "events:replay", "endpoints:read"];
 const NOW = 1_000_000;
 const TICKET_TTL = 600;
@@ -42,6 +44,7 @@ function buildDeps(over: Partial<BuildConsentDeps> = {}): {
 } {
   const signed: { payload?: ConsentTicketPayload } = {};
   const deps: BuildConsentDeps = {
+    issuer: ISSUER,
     allowedAudiences: [API, MCP],
     allowedScopes: CAPABILITY,
     keyTtlSeconds: KEY_TTL,
@@ -141,7 +144,8 @@ describe("buildConsent", () => {
     );
     expect(result).toEqual({
       kind: "redirect",
-      location: "http://127.0.0.1:51763/callback?error=invalid_target",
+      location:
+        "http://127.0.0.1:51763/callback?error=invalid_target&iss=https%3A%2F%2Fauth.webhook.co",
     });
   });
 
@@ -155,7 +159,8 @@ describe("buildConsent", () => {
     );
     expect(missing).toEqual({
       kind: "redirect",
-      location: "http://127.0.0.1:51763/callback?error=invalid_target&state=st_123",
+      location:
+        "http://127.0.0.1:51763/callback?error=invalid_target&state=st_123&iss=https%3A%2F%2Fauth.webhook.co",
     });
     const wrong = await buildConsent(
       deps,
@@ -256,9 +261,11 @@ function deviceTicketPayload(over: Partial<ConsentTicketPayload> = {}): ConsentT
 
 function decideDeps(over: Partial<DecideConsentDeps> = {}): DecideConsentDeps {
   return {
+    issuer: ISSUER,
     verifyTicket: async () => ticketPayload(),
     completeAuthorization: vi.fn(async () => ({
-      redirectTo: "http://127.0.0.1:51763/callback?code=AC&state=st_123",
+      redirectTo:
+        "http://127.0.0.1:51763/callback?code=AC&state=st_123&iss=https%3A%2F%2Fauth.webhook.co",
     })),
     ...over,
   };
@@ -307,7 +314,8 @@ describe("decideConsent", () => {
 
   it("approves: completes the authorization with consent props and the same userId (G1 invariant)", async () => {
     const complete = vi.fn(async () => ({
-      redirectTo: "http://127.0.0.1:51763/callback?code=AC&state=st_123",
+      redirectTo:
+        "http://127.0.0.1:51763/callback?code=AC&state=st_123&iss=https%3A%2F%2Fauth.webhook.co",
     }));
     const result = await decideConsent(decideDeps({ completeAuthorization: complete }), {
       requestId: "TICKET",
@@ -317,7 +325,8 @@ describe("decideConsent", () => {
     });
     expect(result).toEqual({
       kind: "ok",
-      redirectTo: "http://127.0.0.1:51763/callback?code=AC&state=st_123",
+      redirectTo:
+        "http://127.0.0.1:51763/callback?code=AC&state=st_123&iss=https%3A%2F%2Fauth.webhook.co",
     });
     expect(complete).toHaveBeenCalledWith({
       request: authRequest(),
@@ -447,7 +456,8 @@ describe("decideConsent", () => {
     });
     expect(result).toEqual({
       kind: "ok",
-      redirectTo: "http://127.0.0.1:51763/callback?error=access_denied&state=st_123",
+      redirectTo:
+        "http://127.0.0.1:51763/callback?error=access_denied&state=st_123&iss=https%3A%2F%2Fauth.webhook.co",
     });
     expect(complete).not.toHaveBeenCalled();
   });
@@ -466,7 +476,8 @@ describe("decideConsent", () => {
     );
     expect(result).toEqual({
       kind: "ok",
-      redirectTo: "http://127.0.0.1:51763/callback?error=access_denied",
+      redirectTo:
+        "http://127.0.0.1:51763/callback?error=access_denied&iss=https%3A%2F%2Fauth.webhook.co",
     });
   });
 
@@ -491,7 +502,8 @@ describe("decideConsent", () => {
 
   it("completes an approval for an allowlisted vendor https redirect_uri (not just loopback)", async () => {
     const complete = vi.fn(async () => ({
-      redirectTo: "https://claude.ai/api/mcp/auth_callback?code=AC&state=st_123",
+      redirectTo:
+        "https://claude.ai/api/mcp/auth_callback?code=AC&state=st_123&iss=https%3A%2F%2Fauth.webhook.co",
     }));
     const result = await decideConsent(
       decideDeps({
@@ -510,7 +522,8 @@ describe("decideConsent", () => {
     );
     expect(result).toEqual({
       kind: "ok",
-      redirectTo: "https://claude.ai/api/mcp/auth_callback?code=AC&state=st_123",
+      redirectTo:
+        "https://claude.ai/api/mcp/auth_callback?code=AC&state=st_123&iss=https%3A%2F%2Fauth.webhook.co",
     });
     expect(complete).toHaveBeenCalledOnce();
   });

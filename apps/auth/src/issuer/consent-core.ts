@@ -22,6 +22,7 @@
 //   - PII (device name) lives only in the encrypted `props`, never in the provider's unencrypted metadata.
 
 import { isRegisterableRedirectUri } from "./dcr";
+import { withIssParam } from "./iss-param";
 import type { ConsentAuthRequest, ConsentTicketPayload } from "./consent-ticket";
 // The grant-props contract is owned by token-core (the reader). consent-core is the WRITER — it imports the
 // SAME type so the two halves of the G1 invariant can't drift (a divergence here would silently break the
@@ -45,6 +46,8 @@ export interface AuthorizeOrigin {
 
 /** Injected seams for building the consent screen state from an authorization request. */
 export interface BuildConsentDeps {
+  /** Our issuer identifier, stamped onto every authorization response as RFC 9207 `iss`. */
+  issuer: string;
   allowedAudiences: readonly string[];
   /** The capability scope set; requested scopes are intersected against this. */
   allowedScopes: readonly string[];
@@ -77,12 +80,16 @@ export type BuildConsentResult =
   /** The request itself is untrustworthy (redirect_uri not loopback) — cannot redirect; render a 400. */
   | { kind: "bad_request"; error: string; description: string };
 
-/** Build a redirect back to the client's redirect_uri carrying an OAuth error (+ the echoed state). */
-function errorRedirect(redirectUri: string, error: string, state: string): string {
+/**
+ * Build a redirect back to the client's redirect_uri carrying an OAuth error (+ the echoed state), stamped
+ * with the RFC 9207 `iss`. The spec requires `iss` on ERROR responses too: without it a client cannot
+ * attribute an error to the AS it redirected to, and is required to refuse to act on it.
+ */
+function errorRedirect(redirectUri: string, error: string, state: string, issuer: string): string {
   const url = new URL(redirectUri);
   url.searchParams.set("error", error);
   if (state) url.searchParams.set("state", state);
-  return url.toString();
+  return withIssParam(url.toString(), issuer);
 }
 
 /** Normalize the RFC 8707 resource param to exactly one value, or null if absent / more than one. */
@@ -124,7 +131,7 @@ export async function buildConsent(
   if (resource === null || !deps.allowedAudiences.includes(resource)) {
     return {
       kind: "redirect",
-      location: errorRedirect(request.redirectUri, "invalid_target", request.state),
+      location: errorRedirect(request.redirectUri, "invalid_target", request.state, deps.issuer),
     };
   }
 
@@ -133,7 +140,7 @@ export async function buildConsent(
   if (scopes.length === 0) {
     return {
       kind: "redirect",
-      location: errorRedirect(request.redirectUri, "invalid_scope", request.state),
+      location: errorRedirect(request.redirectUri, "invalid_scope", request.state, deps.issuer),
     };
   }
 
@@ -142,7 +149,7 @@ export async function buildConsent(
     deps.log?.("consent.no_org", { userId });
     return {
       kind: "redirect",
-      location: errorRedirect(request.redirectUri, "server_error", request.state),
+      location: errorRedirect(request.redirectUri, "server_error", request.state, deps.issuer),
     };
   }
 
@@ -266,6 +273,8 @@ export async function buildDeviceConsent(
 
 /** Injected seams for the consent decision. */
 export interface DecideConsentDeps {
+  /** Our issuer identifier, stamped onto every authorization response as RFC 9207 `iss`. */
+  issuer: string;
   /** Verify + open the round-tripped ticket (null = invalid/expired/forged). */
   verifyTicket: (ticket: string) => Promise<ConsentTicketPayload | null>;
   /** PKCE flow: complete the authorization on the provider → the loopback redirect carrying the code. */
@@ -414,6 +423,7 @@ export async function decideConsent(
         payload.request.redirectUri,
         "access_denied",
         payload.request.state,
+        deps.issuer,
       ),
     };
   }
@@ -431,5 +441,7 @@ export async function decideConsent(
     orgId: payload.orgId,
     scopeCount: payload.scopes.length,
   });
-  return { kind: "ok", redirectTo };
+  // RFC 9207: stamp the issuer onto the success response so the client can detect a mix-up attack (the
+  // provider builds redirectTo with only code + state).
+  return { kind: "ok", redirectTo: withIssParam(redirectTo, deps.issuer) };
 }
