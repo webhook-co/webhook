@@ -58,6 +58,9 @@ export function makeApiKeyAuthDeps(opts: ApiKeyAuthDepsOptions): ApiKeyAuthDeps 
     // no checksum) omits it. Forgetting it elsewhere only forfeits cheap DoS-shedding, never auth
     // (the by-hash lookup is the real auth); the checksum is not a security control.
     precheck: (plaintext) => verifyKeyChecksum(API_KEY_PREFIX, plaintext),
+    // Never serve a principal cached before `keyId` existed: an audited mutation whose principal is
+    // unidentifiable fails closed, so a stale entry would break every api/mcp mutation for the TTL.
+    requireKeyId: true,
   });
   return { verifyBearer: makeVerifyBearer(resolver), resource: opts.resource };
 }

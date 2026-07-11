@@ -221,28 +221,12 @@ export function credentialHashEquals(a: Buffer, b: Buffer): boolean {
   return timingSafeEqual(a, b);
 }
 
-/**
- * The cache namespace for a resolved principal. BUMP THIS whenever ResolvedPrincipal's shape changes in a
- * way the readers depend on.
- *
- * v2 added `keyId` — the id of the api key that authenticated the request — so an audited mutation can name
- * the credential that performed it instead of writing `actor = NULL`. An audited mutation whose principal is
- * unidentifiable now fails CLOSED, so a principal cached under the v1 shape (no keyId) would make every
- * api/mcp mutation throw until the TTL drained. Bumping the namespace makes v1 entries unreadable: the first
- * request after deploy takes the cold path and caches a principal that HAS a keyId. The cost is one cold
- * lookup per credential at deploy — the same warm-up any KV flush causes.
- *
- * This is safe for REVOCATION because every read, write, AND evict derives its key from this one function,
- * so they all move to the new namespace together. Orphaned v1 entries are never read again and simply expire.
- */
-const CACHE_NAMESPACE = "v2:";
-
-/** A credential's display key for a cache (namespaced hex of the hash — never the plaintext). */
+/** A credential's display key for a cache (hex of the hash — never the plaintext). */
 export function credentialCacheKey(keyHash: Uint8Array): string {
   // Manual hex (not Buffer.toString("hex")) so a Workers caller can pass a plain Uint8Array off the wire —
   // Uint8Array.toString ignores the "hex" arg. Byte-identical to the old Buffer path (a Buffer IS a
   // Uint8Array), so existing cache keys are unchanged.
   let hex = "";
   for (const byte of keyHash) hex += byte.toString(16).padStart(2, "0");
-  return `${CACHE_NAMESPACE}${hex}`;
+  return hex;
 }

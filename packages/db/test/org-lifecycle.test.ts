@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { formatAuditActor, importAuditKey, userActor, verifyAuditChain } from "@webhook-co/shared";
+import { importAuditKey, userActor, verifyAuditChain } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { appendAuditEntry, readAuditChain } from "../src/audit-append";
@@ -112,7 +112,8 @@ describe("deleteOrgWithAudit", () => {
         select status, requested_by, objects_purged from org_deletions where org_id = ${orgA}`,
     );
     expect(job.status).toBe("purging");
-    expect(job.requested_by).toBe(formatAuditActor(userActor(ownerId)));
+    // The column keeps its pre-existing encoding: a bare user id, so old rows and new rows stay comparable.
+    expect(job.requested_by).toBe(ownerId);
     expect(Number(job.objects_purged)).toBe(0);
 
     // The control org is fully intact.

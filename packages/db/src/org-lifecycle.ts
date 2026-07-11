@@ -68,12 +68,18 @@ export async function deleteOrgWithAudit(
     });
     // Enqueue the durable R2 payload-body purge (also FK-free, so it outlives the org row). The
     // insert `with check (org_id = current_org_id())` is why a tenant can't forge another org's job.
-    // `requested_by` is a plain text column (no FK), so it carries the SAME actor vocabulary as the audit
-    // row above rather than a bare id — one representation, so the purge record and the chain agree on who
-    // asked. The purge role deliberately cannot read this column (0051).
+    // `requested_by` keeps the encoding it ALREADY has. This column (0051) holds bare user ids for every org
+    // deleted before today, and there is no migration to rewrite them — so writing the prefixed `user:<id>`
+    // form here would leave one column carrying two incompatible encodings, and a lookup of "who requested
+    // this deletion" would silently find nothing for exactly the rows we meant to attribute. A user actor
+    // therefore still writes its bare id (org deletion is only ever a web session action today). A non-user
+    // actor writes the prefixed form, which cannot collide with a bare id and cannot pre-exist. The purge
+    // role deliberately cannot read this column at all (0051).
+    const requestedBy =
+      input.actor.kind === "user" ? input.actor.id : formatAuditActor(input.actor);
     await tx`
       insert into org_deletions (org_id, requested_by)
-      values (${input.orgId}, ${formatAuditActor(input.actor)})`;
+      values (${input.orgId}, ${requestedBy})`;
     // Hard-delete: every org_id child cascades; the two WORM audit tables + org_deletions persist.
     const [row] = await tx<{ deletedAt: string }[]>`
       delete from orgs where id = ${input.orgId} returning now()::text as "deletedAt"`;

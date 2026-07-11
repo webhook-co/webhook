@@ -23,9 +23,9 @@ import {
   newId,
   type SecretSealer,
   type AuditActorInput,
-  requireAuditActor,
 } from "@webhook-co/shared";
 
+import { requireAuditActor } from "./audit-actor-fault";
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { cancelOpenDeliveries } from "./delivery";

@@ -44,6 +44,48 @@ describe("createCredentialResolver — hot/cold path", () => {
     expect(value).not.toContain("whk_secret");
   });
 
+  // DEPLOY-SKEW SAFETY. `keyId` (the id of the api key that authenticated the request) was added to the
+  // principal so an audited mutation can name the credential that performed it; an audited mutation whose
+  // principal is unidentifiable now FAILS CLOSED. A principal cached before that change carries no keyId, so
+  // it must not be served — it would break every api/mcp mutation until the TTL drained.
+  //
+  // The obvious fix — bumping the cache KEY namespace — is WRONG here, and that matters: the readers
+  // (api/mcp/engine) and the evictors (apps/web) are separate Workers on separate deploy workflows sharing
+  // ONE KV namespace, and web lands minutes later. Mid-deploy, an old-web revoke would delete the old key
+  // while new-api cached under the new one, so a REVOKED credential would keep authenticating for the whole
+  // TTL. Keeping the key stable and rejecting the stale SHAPE instead is self-healing with no such window:
+  // evictions keep matching across versions, and a stale entry simply takes the cold path.
+  it("treats a cached principal with no keyId as a MISS and re-resolves it (stale shape)", async () => {
+    const cache = new InMemoryCredentialCache();
+    const stale = { orgId: ORG, scopes: ["events:read"] }; // the pre-keyId shape
+    await cache.put(credentialCacheKey(hasher.hash("whk_secret")), JSON.stringify(stale));
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(principal({ keyId: "k_1" }));
+    const resolver = createCredentialResolver({
+      hasher,
+      cache,
+      coldLookup: cold,
+      requireKeyId: true,
+    });
+
+    const resolved = await resolver.resolve("whk_secret");
+    expect(cold).toHaveBeenCalledTimes(1); // the stale entry did NOT satisfy the read
+    expect(resolved?.keyId).toBe("k_1");
+  });
+
+  // The ingest resolver shares this cache and its principals legitimately carry no keyId (ingest writes no
+  // audit rows), so the rule must be opt-in per resolver, never global — otherwise every ingest request
+  // would miss the cache forever and hammer the cold path.
+  it("still serves a keyId-less principal when the resolver does not require one (ingest)", async () => {
+    const cache = new InMemoryCredentialCache();
+    const stored = { orgId: ORG, scopes: [], endpointId: "ep_1" };
+    await cache.put(credentialCacheKey(hasher.hash("whk_secret")), JSON.stringify(stored));
+    const cold = vi.fn<ColdLookup>().mockResolvedValue(null);
+    const resolver = createCredentialResolver({ hasher, cache, coldLookup: cold });
+
+    expect((await resolver.resolve("whk_secret"))?.endpointId).toBe("ep_1");
+    expect(cold).not.toHaveBeenCalled();
+  });
+
   it("returns null and does NOT cache a negative (cold miss)", async () => {
     const cache = new InMemoryCredentialCache();
     const putSpy = vi.spyOn(cache, "put");

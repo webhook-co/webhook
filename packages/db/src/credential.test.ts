@@ -178,24 +178,11 @@ describe("createCredentialHasherFromBase64", () => {
 });
 
 describe("credentialCacheKey", () => {
-  it("is the hex of the hash under a schema namespace, and never contains the plaintext", () => {
+  it("is the hex of the hash and never contains the plaintext", () => {
     const { plaintext, keyHash } = mintCredential("whk", hasherA);
     const key = credentialCacheKey(keyHash);
-    expect(key).toBe(`v2:${keyHash.toString("hex")}`);
+    expect(key).toBe(keyHash.toString("hex"));
     expect(key).not.toContain(plaintext.slice(4)); // the secret body
-  });
-
-  // The namespace is what makes the audit-attribution fix safe to DEPLOY. A principal cached under the old
-  // schema carries no `keyId`, and an audited mutation with an unidentifiable principal now FAILS CLOSED
-  // (requireAuditActor throws) rather than silently writing `actor = NULL`. Without a namespace bump, every
-  // api/mcp mutation served from a pre-deploy cache entry would 500 until the 5-minute TTL drained. Bumping
-  // the namespace makes every old entry unreadable, so the first request after deploy takes the cold path
-  // and repopulates a principal that HAS a keyId. Reads, writes, and evictions all derive their key from
-  // this one function, so they move together — a revocation can never miss a live entry.
-  it("changes when the principal schema changes, so a stale-shape entry is never read", () => {
-    const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
-    expect(credentialCacheKey(bytes)).not.toBe("deadbeef"); // the v1 (un-namespaced) key
-    expect(credentialCacheKey(bytes).endsWith("deadbeef")).toBe(true);
   });
 
   it("hexes a PLAIN Uint8Array identically to a Buffer (the Workers wire path)", () => {
@@ -203,8 +190,8 @@ describe("credentialCacheKey", () => {
     // `Uint8Array.prototype.toString('hex')` is a silent no-op, so the manual byte loop is load-bearing:
     // the evictor MUST compute the same key the resolver cached under, or a resume never clears.
     const bytes = new Uint8Array([0x00, 0x0f, 0xff, 0xa0, 0x7b]);
-    expect(credentialCacheKey(bytes)).toBe("v2:000fffa07b");
-    expect(credentialCacheKey(bytes)).toBe(`v2:${Buffer.from(bytes).toString("hex")}`);
+    expect(credentialCacheKey(bytes)).toBe("000fffa07b");
+    expect(credentialCacheKey(bytes)).toBe(Buffer.from(bytes).toString("hex"));
     // Byte-identical for a real 32-byte hash whether it arrives as a Buffer or a plain Uint8Array copy.
     const { keyHash } = mintCredential("whk", hasherA);
     expect(credentialCacheKey(new Uint8Array(keyHash))).toBe(credentialCacheKey(keyHash));

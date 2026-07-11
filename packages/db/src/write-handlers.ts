@@ -20,11 +20,8 @@ import {
   endpointsRotate,
   endpointsUpdate,
 } from "@webhook-co/contract";
-import {
-  type IngestUrlRevealerRpc,
-  type SecretSealer,
-  requireAuditActor,
-} from "@webhook-co/shared";
+import { type IngestUrlRevealerRpc, type SecretSealer } from "@webhook-co/shared";
+import { requireAuditActor } from "./audit-actor-fault";
 
 import { createAgentTriggerHandlers } from "./agent-triggers";
 import type { Sql } from "./client";

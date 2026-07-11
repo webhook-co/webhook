@@ -116,22 +116,3 @@ export function auditActorFromContext(ctx: AuditActorContext): AuditActor {
   if (ctx.userId !== undefined) return { kind: "user", id: ctx.userId };
   return { kind: "unattributed" };
 }
-
-/**
- * The actor for an audited mutation, or a throw.
- *
- * An audited mutation whose principal we cannot identify must FAIL, not quietly write `actor = NULL` — the
- * null actor is precisely the defect this module exists to remove, and a compliance chain that silently
- * records "someone did this" is worse than one that refuses. This is unreachable by construction on every
- * live path (verifyBearer always resolves a keyId for a bearer key; a web action always has a session user),
- * and both of the ways a principal could have arrived without one — a KV principal cached before keyId
- * existed, and an MCP session whose DO props predate it — are foreclosed by a cache-namespace bump and a
- * session-envelope version bump respectively.
- */
-export function requireAuditActor(ctx: AuditActorContext): AuditActorInput {
-  const actor = auditActorFromContext(ctx);
-  if (actor.kind === "unattributed") {
-    throw new Error("audit: the request principal identifies neither a key nor a user");
-  }
-  return actor;
-}

@@ -10,13 +10,9 @@ import {
   subscriptionsDelete,
   subscriptionsList,
 } from "@webhook-co/contract";
-import {
-  deliveryVerificationDecision,
-  newId,
-  type AuditActorInput,
-  requireAuditActor,
-} from "@webhook-co/shared";
+import { deliveryVerificationDecision, newId, type AuditActorInput } from "@webhook-co/shared";
 
+import { requireAuditActor } from "./audit-actor-fault";
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
 import { insertQueuedDelivery } from "./delivery";

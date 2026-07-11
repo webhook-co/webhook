@@ -28,9 +28,9 @@ import {
   type EventSummary,
   type PayloadReaderRpc,
   type AuditActorInput,
-  requireAuditActor,
 } from "@webhook-co/shared";
 
+import { requireAuditActor } from "./audit-actor-fault";
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import { tailEventsWithCursors, type ItemWithCursor } from "./reads";
