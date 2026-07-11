@@ -9,6 +9,7 @@ import {
   replayToDestination,
   ReplayConflictError,
   ReplayNotFoundError,
+  ReplayPausedError,
   ReplayUnverifiedError,
 } from "./replay-mutations";
 import { verifySession } from "./session";
@@ -63,6 +64,13 @@ export async function replayToDestinationAction(
       return {
         ok: false,
         error: "This event's signature was rejected, so it can't be replayed to a destination.",
+      };
+    }
+    if (error instanceof ReplayPausedError) {
+      // The org is paused at its event limit (S4) — a replay would mint a billable delivery past the cap.
+      return {
+        ok: false,
+        error: "You're paused at your event limit. Resume or raise the limit to replay.",
       };
     }
     if (error instanceof ReplayConflictError) {

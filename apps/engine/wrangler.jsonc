@@ -203,8 +203,11 @@
     { "tag": "v1", "new_sqlite_classes": ["ListenSession"] },
     { "tag": "v2", "new_sqlite_classes": ["DeliveryDO"] },
   ],
-  // Hourly head-anchor cron (ADR-0004). The interval IS the tamper-detection window.
+  // Two cron triggers, each its OWN scheduled() invocation (switched on controller.cron, index.ts
+  // scheduledCronKind): the hourly head-anchor + rollup/reconcilers/purges, and a 5-minute soft-cap
+  // producer (S4) so a pause lands within minutes of an org crossing its event limit, not up to an hour of
+  // billed over-cap ingest. Paid Cloudflare accounts allow up to 250 cron triggers, so two is ample.
   "triggers": {
-    "crons": ["0 * * * *"],
+    "crons": ["0 * * * *", "*/5 * * * *"],
   },
 }
