@@ -75,9 +75,21 @@ describe("each channel the legal docs promise actually exists", () => {
     );
   });
 
-  it("the DPA routes the contract + sub-processor notices to legal@", () => {
-    expect(read("dpa")).toContain("legal@webhook.co");
-    expect(read("sub-processors")).toContain("legal@webhook.co");
+  it("the DPA binds each legal@ promise to the PARAGRAPH that makes it, not merely the page", () => {
+    // toContain("legal@") is too weak: the DPA publishes legal@ in THREE distinct paragraphs
+    // (countersignature, the sub-processor-change notice, and the closing questions line). Any one could
+    // be retargeted or deleted and a page-level toContain would still pass on the other two. Bind each
+    // promise to the address it must keep pointing at.
+    const dpa = read("dpa");
+    expect(promiseRoutesTo(dpa, "requires a countersignature", "legal@webhook.co")).toBe(true);
+    expect(promiseRoutesTo(dpa, "To receive that notice", "legal@webhook.co")).toBe(true);
+    expect(promiseRoutesTo(dpa, "countersignature request", "legal@webhook.co")).toBe(true);
+  });
+
+  it("the sub-processors page binds the change-notice promise to legal@", () => {
+    expect(promiseRoutesTo(read("sub-processors"), "To get that notice", "legal@webhook.co")).toBe(
+      true,
+    );
   });
 
   it("the Terms bind the refund-review PROMISE to the support channel, not merely mention it", () => {
