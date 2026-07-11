@@ -117,6 +117,11 @@ export async function sumPeriodEventUsage(
   // must count BOTH legs, or today's deliveries stay invisible to the cap until the rollup lands, and the
   // usage surface would disagree with enforcement. One `delivery_attempts` row = one dispatch: the enqueue
   // inserts it and every retry UPDATES it in place, so `count(*)` can never bill a retry.
+  //
+  // `and billable` is the SAME filter rollup_usage applies (0055), and it must stay that way: this half and
+  // the rolled half are two views of one number, and the soft cap enforces on their sum. A localhost tunnel
+  // forward (we make no outbound request) and an SSRF-blocked delivery (we refused to send) are not
+  // dispatches, so neither is billed nor counted against the cap.
   const [todayRow] = await tx<{ events: string }[]>`
     select (
       (select count(*) from events
@@ -125,7 +130,8 @@ export async function sumPeriodEventUsage(
       +
       (select count(*) from delivery_attempts
         where created_at >= ${todayStart}
-          and (${end}::timestamptz is null or created_at < ${end}))
+          and (${end}::timestamptz is null or created_at < ${end})
+          and billable)
     )::bigint as events`;
   return Number(rolledRow?.events ?? 0) + Number(todayRow?.events ?? 0);
 }
