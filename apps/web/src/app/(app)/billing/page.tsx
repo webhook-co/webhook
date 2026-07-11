@@ -47,6 +47,7 @@ const BILLING_ERROR: Record<string, string> = {
   no_customer: "You don't have a subscription to manage yet.",
   already_subscribed:
     "You already have an active subscription — manage or change it below, not by starting a new one.",
+  forbidden: "Only an owner or admin can manage billing.",
   error: "We couldn't reach our payment provider. Nothing was charged — try again.",
   disabled: "Billing isn't available right now.",
 };
@@ -199,7 +200,7 @@ function CurrentPlanCard({ display }: { display: BillingDisplay }) {
   );
 }
 
-function ManageBillingCard() {
+function ManageBillingCard({ canManage }: { canManage: boolean }) {
   return (
     <div className="flex flex-col gap-3 rounded-card border border-hairline bg-surface p-6">
       <h2 className="text-lg font-semibold tracking-heading text-fg">Payment &amp; invoices</h2>
@@ -208,11 +209,20 @@ function ManageBillingCard() {
         to the free tier — and because the free allowance is one-time, capture pauses until you
         resubscribe.
       </p>
-      <form action={openBillingPortalAction}>
-        <Button type="submit" variant="secondary">
-          Manage payment &amp; invoices
-        </Button>
-      </form>
+      {/* The Portal is owner/admin only, and the server now enforces it. Show a plain member the state and
+          say who can act, rather than a button whose only possible outcome is an error (the same
+          show-and-explain shape OverageCard uses). */}
+      {canManage ? (
+        <form action={openBillingPortalAction}>
+          <Button type="submit" variant="secondary">
+            Manage payment &amp; invoices
+          </Button>
+        </form>
+      ) : (
+        <p className="text-sm text-fg-secondary">
+          Only an owner or admin can manage payment and invoices.
+        </p>
+      )}
     </div>
   );
 }
@@ -282,9 +292,11 @@ function ChangePlanCard({ targets }: { targets: readonly string[] }) {
 function UpgradeCard({
   planIds,
   resubscribe,
+  canManage,
 }: {
   planIds: readonly string[];
   resubscribe: boolean;
+  canManage: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4 rounded-card border border-hairline bg-surface p-6">
@@ -297,16 +309,24 @@ function UpgradeCard({
           included events. You&apos;ll see the price before you pay.
         </p>
       </div>
-      <div className="flex flex-wrap gap-3">
-        {planIds.map((planId) => (
-          <form key={planId} action={startCheckoutAction}>
-            <input type="hidden" name="planId" value={planId} />
-            <Button type="submit" variant={planId === "pro" ? "primary" : "secondary"}>
-              {resubscribe ? "Resubscribe to" : "Start on"} {planLabel(planId)}
-            </Button>
-          </form>
-        ))}
-      </div>
+      {/* Starting a subscription commits the org to a charge — owner/admin only, and the server enforces it.
+          A plain member still sees what the plans are; they just can't be the one to buy. */}
+      {canManage ? (
+        <div className="flex flex-wrap gap-3">
+          {planIds.map((planId) => (
+            <form key={planId} action={startCheckoutAction}>
+              <input type="hidden" name="planId" value={planId} />
+              <Button type="submit" variant={planId === "pro" ? "primary" : "secondary"}>
+                {resubscribe ? "Resubscribe to" : "Start on"} {planLabel(planId)}
+              </Button>
+            </form>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-fg-secondary">
+          Only an owner or admin can start or change a plan.
+        </p>
+      )}
       <p className="text-sm text-fg-secondary">
         Need more than Scale, SSO, or a BAA?{" "}
         <a className="text-fg underline underline-offset-2" href="mailto:sales@webhook.co">
@@ -379,9 +399,13 @@ export default async function BillingPage({
             <OverageCard enabled={view.overageEnabled} canManage={view.canManageBilling} />
           )}
           {view.upgradePlanIds.length > 0 && (
-            <UpgradeCard planIds={view.upgradePlanIds} resubscribe={view.display !== null} />
+            <UpgradeCard
+              planIds={view.upgradePlanIds}
+              resubscribe={view.display !== null}
+              canManage={view.canManageBilling}
+            />
           )}
-          {view.hasCustomer && <ManageBillingCard />}
+          {view.hasCustomer && <ManageBillingCard canManage={view.canManageBilling} />}
           {/* A live subscription whose Stripe customer hasn't mirrored yet (the two setup webhooks can
               land out of order): no picker (it would double-subscribe) and no Portal (we have no customer
               id to open one) — so give the user context instead of an actionless card. Transient. */}

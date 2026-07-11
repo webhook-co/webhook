@@ -21,7 +21,7 @@ import {
   nowSeconds,
   resolveOrigin,
 } from "./issuer-constants";
-import { CAPABILITY_SCOPES, oauthIssuerConfig } from "./oauth-config";
+import { GRANTABLE_SCOPES, oauthIssuerConfig } from "./oauth-config";
 import { consumeRateLimit } from "./rate-limit";
 import { makeAuth, type AuthExecutionContext, type RuntimeAuth } from "../runtime/auth";
 import type { DeviceVerifyEnv } from "../runtime/env";
@@ -83,7 +83,7 @@ export async function makeDeviceVerifyDeps(
       buildDeviceConsent(
         {
           allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
-          allowedScopes: CAPABILITY_SCOPES,
+          allowedScopes: GRANTABLE_SCOPES,
           keyTtlSeconds: KEY_TTL_SECONDS,
           grantTtlSeconds: GRANT_TTL_SECONDS,
           ticketTtlSeconds: TICKET_TTL_SECONDS,

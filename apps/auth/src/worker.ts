@@ -23,6 +23,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import openNextHandler from "../.open-next/worker.js";
 import { listUserConnectedApps, revokeUserConnectedApp } from "./issuer/connected-apps-handler";
 import { introspect } from "./issuer/introspect-handler";
+import { resolveProfileRpc } from "./issuer/resolve-profile-deps";
 import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
 import { nowSeconds } from "./issuer/issuer-constants";
 import { oauthIssuerConfig } from "./issuer/oauth-config";
@@ -82,6 +83,13 @@ export default {
 export class IssuerIntrospect extends WorkerEntrypoint {
   async introspect(token) {
     return introspect(readIntrospectEnv(this.env), token);
+  }
+  // resolveProfile: the on-demand identity lookup for mcp's `whoami` tool (gated there on the `profile`
+  // scope). Runs in THIS Worker over HYPERDRIVE_AUTH (webhook_auth) — the only role that may read the global
+  // user table — off the introspection hot path. mcp passes the userId from its OWN introspected token, so a
+  // client can only resolve the profile of the user whose token it holds.
+  async resolveProfile(userId) {
+    return resolveProfileRpc(this.env, userId);
   }
 }
 

@@ -24,15 +24,21 @@ import { loadBillingSummary, openBillingPortal, startCheckout } from "./billing"
 afterEach(() => vi.clearAllMocks());
 
 /** Configure a fully-enabled billing env + a fake Stripe client that records calls. `sub` is the org's
- *  synced subscription mirror row (null = never subscribed / no live sub) that readOrgBilling returns. */
-function enableBilling(customerId: string | null, sub: unknown = null) {
+ *  synced subscription mirror row (null = never subscribed / no live sub) that readOrgBilling returns.
+ *  `role` is the ACTING USER's membership role — owner by default, so the money paths are exercised as a
+ *  billing manager unless a test says otherwise. */
+function enableBilling(
+  customerId: string | null,
+  sub: unknown = null,
+  role: string | null = "owner",
+) {
   env.getBillingMode.mockReturnValue("test");
   env.getStripePlans.mockReturnValue({
     pro: { base: "price_base", overage: "price_overage" },
     scale: { base: "price_scale_base", overage: "price_scale_overage" },
   });
   env.getStripeSecretKey.mockResolvedValue("sk_test_x");
-  db.withTenantDb.mockResolvedValue({ customerId, sub }); // short-circuits withTenant(readOrgBilling)
+  db.withTenantDb.mockResolvedValue({ customerId, sub, role }); // short-circuits withTenant(readOrgBilling)
   const client = {
     createCheckoutSession: vi.fn().mockResolvedValue({ id: "cs_1", url: "https://checkout" }),
     createPortalSession: vi.fn().mockResolvedValue({ id: "ps_1", url: "https://portal" }),
@@ -43,10 +49,53 @@ function enableBilling(customerId: string | null, sub: unknown = null) {
   return client;
 }
 
+// The billing-manager gate on the two MONEY paths. switchPlan/cancelDowngrade/setOverage already gate
+// owner/admin server-side; Checkout and the Customer Portal did not — they took no userId at all, so
+// `canManageBilling` was decorative, used only to hide buttons. A plain member could POST the server action
+// directly and open the Portal: cancel the subscription, change the card, read every invoice.
+describe("billing-manager gate (S.2)", () => {
+  it("startCheckout refuses a plain member and never reaches Stripe", async () => {
+    const client = enableBilling(null, null, "member");
+    expect(await startCheckout("org-1", "u-1", "pro", "a@b.test")).toEqual({ status: "forbidden" });
+    expect(client.createCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("openBillingPortal refuses a plain member and never reaches Stripe", async () => {
+    const client = enableBilling("cus_1", null, "member");
+    expect(await openBillingPortal("org-1", "u-1")).toEqual({ status: "forbidden" });
+    expect(client.createPortalSession).not.toHaveBeenCalled();
+  });
+
+  it("refuses a user with NO membership row (null role)", async () => {
+    const client = enableBilling("cus_1", null, null);
+    expect(await openBillingPortal("org-1", "u-1")).toEqual({ status: "forbidden" });
+    expect(client.createPortalSession).not.toHaveBeenCalled();
+  });
+
+  it("admin is a billing manager — Checkout proceeds", async () => {
+    const client = enableBilling(null, null, "admin");
+    expect(await startCheckout("org-1", "u-1", "pro", "a@b.test")).toEqual({
+      status: "ok",
+      url: "https://checkout",
+    });
+    expect(client.createCheckoutSession).toHaveBeenCalled();
+  });
+
+  // The cross-org case S.4 exists to prevent. A user is `owner` of their own personal org and only a
+  // `member` of the team org. The role read MUST be the role IN THE ORG BEING BILLED — if it ever widened
+  // (which an additive, permissive policy on `memberships` would do), it could return the personal-org
+  // `owner` row and let a plain member of the team change the team's plan. Real money.
+  it("uses the role in the BILLED org, not another org the user happens to own", async () => {
+    const client = enableBilling("cus_1", null, "member"); // their role in THIS org
+    expect(await openBillingPortal("org-team", "u-1")).toEqual({ status: "forbidden" });
+    expect(client.createPortalSession).not.toHaveBeenCalled();
+  });
+});
+
 describe("startCheckout", () => {
   it("is disabled when BILLING_MODE is off (no Stripe client, no db read)", async () => {
     env.getBillingMode.mockReturnValue("off");
-    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
+    expect(await startCheckout("org-1", "u-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
     expect(stripe.makeStripeClient).not.toHaveBeenCalled();
     expect(db.withTenantDb).not.toHaveBeenCalled();
   });
@@ -55,19 +104,19 @@ describe("startCheckout", () => {
     env.getBillingMode.mockReturnValue("test");
     env.getStripePlans.mockReturnValue({ pro: { base: "price_base", overage: "price_overage" } });
     env.getStripeSecretKey.mockResolvedValue(null);
-    expect(await startCheckout("org-1", "pro")).toEqual({ status: "disabled" });
+    expect(await startCheckout("org-1", "u-1", "pro")).toEqual({ status: "disabled" });
   });
 
   it("is disabled when the price ids are not configured", async () => {
     env.getBillingMode.mockReturnValue("test");
     env.getStripePlans.mockReturnValue(null);
     env.getStripeSecretKey.mockResolvedValue("sk_test_x");
-    expect(await startCheckout("org-1", "pro")).toEqual({ status: "disabled" });
+    expect(await startCheckout("org-1", "u-1", "pro")).toEqual({ status: "disabled" });
   });
 
   it("for a NEW org (no customer) creates a session with the email prefilled", async () => {
     const client = enableBilling(null);
-    const res = await startCheckout("org-7", "pro", "new@x.test");
+    const res = await startCheckout("org-7", "u-1", "pro", "new@x.test");
     expect(res).toEqual({ status: "ok", url: "https://checkout" });
     const args = client.createCheckoutSession.mock.calls[0][0];
     expect(args.customer).toBeUndefined();
@@ -84,7 +133,7 @@ describe("startCheckout", () => {
     // webhooks can land out of order). The server refuses exactly as the UI hides the picker, so a forged
     // POST can't slip through. (A genuine resubscribe has a `canceled` mirror row — see the next test.)
     const client = enableBilling("cus_existing"); // sub=null
-    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+    expect(await startCheckout("org-7", "u-1", "pro", "a@b.test")).toEqual({
       status: "already_subscribed",
     });
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
@@ -100,7 +149,7 @@ describe("startCheckout", () => {
         currentPeriodEnd: "2026-08-01T00:00:00.000Z",
         cancelAtPeriodEnd: false,
       });
-      expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+      expect(await startCheckout("org-7", "u-1", "pro", "a@b.test")).toEqual({
         status: "already_subscribed",
       });
       expect(client.createCheckoutSession).not.toHaveBeenCalled();
@@ -114,7 +163,7 @@ describe("startCheckout", () => {
       currentPeriodEnd: "2026-08-01T00:00:00.000Z",
       cancelAtPeriodEnd: true,
     });
-    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+    expect(await startCheckout("org-7", "u-1", "pro", "a@b.test")).toEqual({
       status: "ok",
       url: "https://checkout",
     });
@@ -128,7 +177,7 @@ describe("startCheckout", () => {
       currentPeriodEnd: "2026-08-01T00:00:00.000Z",
       cancelAtPeriodEnd: false,
     });
-    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({
+    expect(await startCheckout("org-7", "u-1", "pro", "a@b.test")).toEqual({
       status: "ok",
       url: "https://checkout",
     });
@@ -138,24 +187,24 @@ describe("startCheckout", () => {
   it("maps a Stripe failure to 'error' (never throws)", async () => {
     const client = enableBilling(null);
     client.createCheckoutSession.mockRejectedValue(new Error("stripe down"));
-    expect(await startCheckout("org-7", "pro", "a@b.test")).toEqual({ status: "error" });
+    expect(await startCheckout("org-7", "u-1", "pro", "a@b.test")).toEqual({ status: "error" });
   });
 });
 
 describe("openBillingPortal", () => {
   it("is disabled when BILLING_MODE is off", async () => {
     env.getBillingMode.mockReturnValue("off");
-    expect(await openBillingPortal("org-1")).toEqual({ status: "disabled" });
+    expect(await openBillingPortal("org-1", "u-1")).toEqual({ status: "disabled" });
   });
 
   it("returns no_customer when the org has never subscribed", async () => {
     enableBilling(null);
-    expect(await openBillingPortal("org-1")).toEqual({ status: "no_customer" });
+    expect(await openBillingPortal("org-1", "u-1")).toEqual({ status: "no_customer" });
   });
 
   it("opens the portal for an org with a customer", async () => {
     const client = enableBilling("cus_1");
-    const res = await openBillingPortal("org-1");
+    const res = await openBillingPortal("org-1", "u-1");
     expect(res).toEqual({ status: "ok", url: "https://portal" });
     expect(client.createPortalSession.mock.calls[0][0].customer).toBe("cus_1");
   });
@@ -164,7 +213,7 @@ describe("openBillingPortal", () => {
 describe("startCheckout — plan gating (planId is untrusted form input)", () => {
   it("sells the requested plan's OWN price pair, not a hardcoded one", async () => {
     const client = enableBilling(null);
-    expect(await startCheckout("org-9", "scale", "a@b.test")).toEqual({
+    expect(await startCheckout("org-9", "u-1", "scale", "a@b.test")).toEqual({
       status: "ok",
       url: "https://checkout",
     });
@@ -176,7 +225,7 @@ describe("startCheckout — plan gating (planId is untrusted form input)", () =>
 
   it("rejects a contact-sales plan — enterprise never reaches Stripe", async () => {
     const client = enableBilling(null);
-    expect(await startCheckout("org-9", "enterprise", "a@b.test")).toEqual({
+    expect(await startCheckout("org-9", "u-1", "enterprise", "a@b.test")).toEqual({
       status: "unknown_plan",
     });
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
@@ -185,7 +234,9 @@ describe("startCheckout — plan gating (planId is untrusted form input)", () =>
   it("rejects an unknown/garbage plan id BEFORE any Stripe call", async () => {
     const client = enableBilling(null);
     for (const bad of ["free", "", "pro; drop table", "__proto__"]) {
-      expect(await startCheckout("org-9", bad, "a@b.test")).toEqual({ status: "unknown_plan" });
+      expect(await startCheckout("org-9", "u-1", bad, "a@b.test")).toEqual({
+        status: "unknown_plan",
+      });
     }
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });
@@ -193,7 +244,9 @@ describe("startCheckout — plan gating (planId is untrusted form input)", () =>
   it("rejects a self-serve plan this deploy has no prices for (partial config)", async () => {
     const client = enableBilling(null);
     env.getStripePlans.mockReturnValue({ pro: { base: "price_base", overage: "price_overage" } });
-    expect(await startCheckout("org-9", "scale", "a@b.test")).toEqual({ status: "unknown_plan" });
+    expect(await startCheckout("org-9", "u-1", "scale", "a@b.test")).toEqual({
+      status: "unknown_plan",
+    });
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });
 });
@@ -202,7 +255,7 @@ describe("startCheckout — the Stripe key must belong to BILLING_MODE", () => {
   it("refuses a LIVE key under BILLING_MODE=test (it would charge real cards)", async () => {
     const client = enableBilling(null);
     env.getStripeSecretKey.mockResolvedValue("sk_live_realmoney");
-    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
+    expect(await startCheckout("org-1", "u-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });
 
@@ -210,14 +263,14 @@ describe("startCheckout — the Stripe key must belong to BILLING_MODE", () => {
     const client = enableBilling(null);
     env.getBillingMode.mockReturnValue("live");
     env.getStripeSecretKey.mockResolvedValue("sk_test_sandbox");
-    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
+    expect(await startCheckout("org-1", "u-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });
 
   it("refuses a PUBLISHABLE key used as a secret", async () => {
     const client = enableBilling(null);
     env.getStripeSecretKey.mockResolvedValue("pk_test_publishable");
-    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
+    expect(await startCheckout("org-1", "u-1", "pro", "a@b.test")).toEqual({ status: "disabled" });
     expect(client.createCheckoutSession).not.toHaveBeenCalled();
   });
 
@@ -225,7 +278,7 @@ describe("startCheckout — the Stripe key must belong to BILLING_MODE", () => {
     const client = enableBilling(null);
     env.getBillingMode.mockReturnValue("live");
     env.getStripeSecretKey.mockResolvedValue("sk_live_realmoney");
-    expect(await startCheckout("org-1", "pro", "a@b.test")).toEqual({
+    expect(await startCheckout("org-1", "u-1", "pro", "a@b.test")).toEqual({
       status: "ok",
       url: "https://checkout",
     });

@@ -82,6 +82,21 @@ describe("PricingDisclosures — the MUST-disclose set", () => {
     expect(screen.getByRole("heading", { name: /Retries are never billed/i })).toBeInTheDocument();
   });
 
+  // The code now matches these two promises (migration 0055 / delivery_attempts.billable). Both were
+  // being billed as full deliveries: `wbhk listen --forward` billed the wedge command's every webhook
+  // TWICE, and a delivery the SSRF guard refused to send billed the same as a 200. Pin the copy — if
+  // someone re-bills either leg, this is the test that says the page is now lying.
+  it("says forwarding to your own machine is free — we make no outbound request", () => {
+    render(<PricingDisclosures />);
+    expect(screen.getByText(/forwarding to your own machine/i)).toBeInTheDocument();
+    expect(screen.getByText(/your CLI makes that request, not us/i)).toBeInTheDocument();
+  });
+
+  it("says a delivery we REFUSE to send is not billed", () => {
+    render(<PricingDisclosures />);
+    expect(screen.getByText(/a delivery we refuse to send/i)).toBeInTheDocument();
+  });
+
   it("says capture PAUSES at the limit rather than billing", () => {
     render(<PricingDisclosures />);
     expect(screen.getByRole("heading", { name: /capture pauses/i })).toBeInTheDocument();

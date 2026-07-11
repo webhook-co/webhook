@@ -9,6 +9,7 @@ import {
   type DecideConsentDeps,
 } from "./consent-core";
 import type { ConsentAuthRequest, ConsentTicketPayload } from "./consent-ticket";
+import { GRANTABLE_SCOPES } from "./oauth-config";
 
 // A3c — the pure consent flow logic (injected seams). buildConsent turns a parsed authorization request +
 // the authenticated user into a signed consent ticket (or a safe OAuth error redirect); decideConsent
@@ -99,6 +100,21 @@ describe("buildConsent", () => {
     expect(p.grantExpiresAt).toBe(new Date((NOW + GRANT_TTL) * 1000).toISOString());
     expect(p.request).toEqual(authRequest());
     expect(p.device).toBeUndefined();
+  });
+
+  it("keeps a requested `profile` scope through the PKCE consent intersect when wired with GRANTABLE_SCOPES", async () => {
+    // The PKCE /authorize flow is what MCP OAuth clients (Claude, Cursor cloud, VS Code, Zed) actually use.
+    // authorize-deps wires allowedScopes = GRANTABLE_SCOPES; this pins that a consented `profile` survives the
+    // consent-time intersect end-to-end (reverting authorize-deps to CAPABILITY_SCOPES would go red here).
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const { deps, signed } = buildDeps({ allowedScopes: GRANTABLE_SCOPES });
+    await buildConsent(
+      deps,
+      authRequest({ scope: ["events:read", "profile"] }),
+      "user_dana",
+      ORIGIN,
+    );
+    expect(signed.payload!.scopes).toContain("profile");
   });
 
   it("seals verified=true + the identity domain for an allowlisted vendor https redirect (DCR)", async () => {
@@ -684,6 +700,22 @@ describe("buildDeviceConsent", () => {
       ORIGIN,
     );
     expect(signed.payload!.scopes).toEqual(["events:read"]);
+  });
+
+  it("keeps a requested `profile` scope through consent→mint when wired with the real GRANTABLE_SCOPES", async () => {
+    // Regression guard for the device (RFC 8628 / CLI `wbhk login`) mint path: the deps must pass the
+    // GRANTABLE set (capability + `profile`), NOT the capability-only set — otherwise the consent-time
+    // intersect silently drops `profile` even after the user approved it. This pins the source-of-truth
+    // (GRANTABLE_SCOPES includes `profile`) AND that the intersect keeps it end-to-end.
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const { deps, signed } = deviceConsentDeps({ allowedScopes: GRANTABLE_SCOPES });
+    await buildDeviceConsent(
+      deps,
+      { ...DEVICE_RECORD, scopes: ["events:read", "profile"] },
+      "user_dana",
+      ORIGIN,
+    );
+    expect(signed.payload!.scopes).toContain("profile");
   });
 
   it("errors invalid_target / invalid_scope / server_error on the respective failures", async () => {

@@ -27,9 +27,22 @@ export interface IntrospectionResult {
 }
 
 /**
+ * A user's display identity — their own name + email. Resolved on-demand (never in the hot introspection
+ * path) for the MCP `whoami` tool, and only when the token carries the consented `profile` scope. It is the
+ * user's OWN data (GDPR right of access), returned only to a principal holding that user's token.
+ */
+export interface UserProfile {
+  readonly name: string;
+  readonly email: string;
+}
+
+/**
  * The introspection RPC seam — a Cloudflare service-binding entrypoint on auth. (IssuerIntrospect). mcp
  * types its `env.<binding>` against this so the cross-Worker call site is checked against the contract.
+ * `resolveProfile` is the on-demand identity lookup for the `whoami` tool (gated on the `profile` scope +
+ * the userId from the caller's own introspected token) — kept off the `introspect` hot path.
  */
 export interface TokenIntrospector {
   introspect(token: string): Promise<IntrospectionResult>;
+  resolveProfile(userId: string): Promise<UserProfile | null>;
 }

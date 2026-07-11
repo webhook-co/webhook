@@ -277,13 +277,22 @@ export function ConsentForm({
           </div>
         </SummaryRow>
         <SummaryRow label="Access">
-          <span className="flex flex-wrap gap-1.5">
-            {request.scopes.map((scope) => (
-              <Badge key={scope} tone="neutral" className="font-mono text-xs">
-                {scope}
-              </Badge>
-            ))}
-          </span>
+          <div className="flex flex-col gap-1.5">
+            <span className="flex flex-wrap gap-1.5">
+              {request.scopes.map((scope) => (
+                <Badge key={scope} tone="neutral" className="font-mono text-xs">
+                  {scope}
+                </Badge>
+              ))}
+            </span>
+            {/* The `profile` scope isn't self-describing like the capability scopes — spell out that it
+                exposes the user's identity, so consent to sharing name/email is informed. */}
+            {request.scopes.includes("profile") ? (
+              <span className="text-xs text-fg-faint">
+                <span className="font-mono">profile</span> shares your name and email with this app.
+              </span>
+            ) : null}
+          </div>
         </SummaryRow>
         {/* Both durations: the grant ceiling (a ~90d date) and the per-key TTL (~24h, refreshed). */}
         <SummaryRow label="Authorized until">

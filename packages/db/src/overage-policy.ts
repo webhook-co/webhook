@@ -13,7 +13,7 @@ import { isBillingManagerRole, type PausePolicy } from "@webhook-co/shared";
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import { evaluateOrgCap } from "./cap-producer";
-import type { MembershipRole } from "./orgs";
+import { readMembershipRole } from "./orgs";
 
 /** The result of a toggle attempt. `changed` = a real flip (vs a no-op set to the current value);
  *  `transitioned` = the durable ingest_paused pause state also flipped (→ the caller should refresh the KV
@@ -52,9 +52,9 @@ export async function setOverageEnabled(
 ): Promise<SetOverageResult> {
   const policy: PausePolicy = args.enabled ? "allow" : "pause";
   return withTenant(app, args.orgId, async (tx): Promise<SetOverageResult> => {
-    const [member] = await tx<{ role: MembershipRole }[]>`
-      select role from memberships where org_id = ${args.orgId} and user_id = ${args.userId} limit 1`;
-    if (!member || !isBillingManagerRole(member.role)) return { status: "forbidden" };
+    // The ONE org-scoped role read — see readMembershipRole's docblock for why the org is named explicitly.
+    const role = await readMembershipRole(tx, args.orgId, args.userId);
+    if (!isBillingManagerRole(role)) return { status: "forbidden" };
 
     const [before] = await tx<{ pause_policy: PausePolicy }[]>`
       select pause_policy from org_limits`;

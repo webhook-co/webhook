@@ -43,6 +43,17 @@ async function seedOrg(orgId: string): Promise<void> {
     values (${userOf(orgId)}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    // The grant's user is a MEMBER of the org — that is what consent established, and what the consume's
+    // membership re-check reads back. Without this row the fixture would model a user who has already been
+    // removed, which is the exception, not the norm.
+    await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userOf(orgId)}, 'owner')`;
+  });
+}
+
+/** Remove the seeded user from the org — the offboarding this whole check exists to enforce. */
+async function removeMembership(orgId: string): Promise<void> {
+  await withTenant(app, orgId, async (tx) => {
+    await tx`delete from memberships where org_id = ${orgId} and user_id = ${userOf(orgId)}`;
   });
 }
 
@@ -135,7 +146,17 @@ describe("consumeRefreshToken", () => {
 
     const result = await consumeRefreshToken(app, minted.plaintext, hasher, REFRESH_TTL);
     expect(result).not.toBeNull();
-    expect(result).toMatchObject({ grantId, orgId, audience: API });
+    // userId + isMember both come from the JOIN the consume already performed. The issuer re-asserts
+    // membership on every refresh — a grant lives ~90d and membership is revocable, so the org embedded in
+    // the handle proves nothing by itself. Resolving it here (rather than in a second round-trip after the
+    // burn) also means a fault rolls the burn back instead of stranding the client on a dead handle.
+    expect(result).toMatchObject({
+      grantId,
+      orgId,
+      userId: userOf(orgId),
+      isMember: true,
+      audience: API,
+    });
     expect(result!.newRefresh).not.toEqual(minted.plaintext);
     expect(result!.newRefresh.startsWith(`rtk_${orgId}_`)).toBe(true);
 
@@ -143,6 +164,26 @@ describe("consumeRefreshToken", () => {
     const consumed = await rowState(orgId, hasher.hash(minted.plaintext));
     expect(consumed?.used_at).not.toBeNull();
     expect(consumed?.replaced_by).not.toBeNull();
+  });
+
+  // The offboarding case, against a real Postgres. A grant lives ~90 days and refreshes silently, so if the
+  // consume didn't report membership the issuer would keep minting fresh access keys for a removed member
+  // until the grant expired. Resolved in the SAME statement as the burn: no extra round-trip, no TOCTOU.
+  it("reports isMember=false once the grant's user has been removed from the org", async () => {
+    const orgId = randomUUID();
+    const grantId = await seedGrant(orgId);
+    const minted = await mintRefreshToken(
+      app,
+      { orgId, grantId, audience: API, ttlSeconds: REFRESH_TTL },
+      hasher,
+    );
+
+    await removeMembership(orgId);
+
+    const result = await consumeRefreshToken(app, minted.plaintext, hasher, REFRESH_TTL);
+    // The handle still resolves (it is a valid handle on an active grant) — but it now carries the fact that
+    // its user no longer belongs to the org, which is what the issuer refuses to mint on.
+    expect(result).toMatchObject({ grantId, orgId, isMember: false });
   });
 
   it("is single-use — a replay of an already-consumed handle returns null", async () => {

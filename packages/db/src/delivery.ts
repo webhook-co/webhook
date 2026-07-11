@@ -376,10 +376,15 @@ export async function markDeliveryTerminalFailure(
     error: string | null;
   },
 ): Promise<{ readonly consecutiveFailures: number | null }> {
+  // A `blocked` outcome also UN-BILLS the dispatch (0055): the SSRF guard refused to send it, so no
+  // outbound request was ever made and Definition B's "one delivery dispatch" did not happen. `dead` stays
+  // billable — we made every attempt in the schedule, and that IS the work. The `billable` trigger owns the
+  // one case this must not do: a day already finalized in `usage` is immutable, and stays billed.
   const res = await tx`
     update delivery_attempts
        set status = ${input.status}, attempt = ${input.attempt}, status_code = ${input.statusCode},
-           error = ${input.error}, next_retry_at = null
+           error = ${input.error}, next_retry_at = null,
+           billable = case when ${input.status} = 'blocked' then false else billable end
      where id = ${input.id} and status in ('queued', 'pending')`;
   if (res.count === 0) return { consecutiveFailures: null }; // already finalized — don't double-count
   if (input.status !== "dead") return { consecutiveFailures: null }; // blocked: finalize only, no tally bump

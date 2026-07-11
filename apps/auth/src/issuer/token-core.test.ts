@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { GRANTABLE_SCOPES } from "./oauth-config";
 import {
   redeemAuthCode,
   redeemRefresh,
@@ -171,6 +172,24 @@ describe("redeemAuthCode — scope cannot widen on first issuance (MAJOR-C)", ()
     expect(deps.mintScopedKey).not.toHaveBeenCalled();
     expect(deps.revokeProviderGrant).not.toHaveBeenCalled();
   });
+
+  it("mints a consented `profile` scope when allowedScopes = GRANTABLE_SCOPES (identity survives mint)", async () => {
+    // The mint re-intersects props.scopes ∩ allowedScopes (defense in depth). token-deps wires the real
+    // GRANTABLE set; this pins that `profile` (the identity scope) survives that intersect end-to-end — a
+    // revert to CAPABILITY_SCOPES at the deps would drop a consented `profile` at mint and go red here.
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const deps = authCodeDeps({
+      allowedScopes: GRANTABLE_SCOPES,
+      unwrapToken: vi.fn(async () => ({
+        providerGrantId: "pg_1",
+        props: consent({ scopes: ["events:read", "profile"] }),
+      })),
+    });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result.kind).toBe("token");
+    expect(mintMock(deps).mock.calls[0][0].scopes).toContain("profile");
+    if (result.kind === "token") expect(result.body.scope.split(" ")).toContain("profile");
+  });
 });
 
 describe("redeemAuthCode — tenancy bind (MAJOR-5)", () => {
@@ -319,6 +338,8 @@ function refreshDeps(overrides: Partial<RefreshDeps> = {}): RefreshDeps {
     consumeRefresh: vi.fn(async () => ({
       grantId: "g_1",
       orgId: "org_1",
+      userId: "u_1",
+      isMember: true,
       audience: API_RESOURCE,
       newRefresh: FAKE_REFRESH,
     })),
@@ -328,6 +349,7 @@ function refreshDeps(overrides: Partial<RefreshDeps> = {}): RefreshDeps {
       keyId: "k_2",
       expiresAt: new Date(0),
     })),
+    revokeGrant: vi.fn(async () => {}),
     ...overrides,
   };
 }
@@ -342,7 +364,76 @@ const refreshReq = {
   scope: "events:read events:replay",
 };
 
+/** The consume resolves membership atomically; a removed member's handle comes back with isMember false. */
+const consumedAsNonMember = () =>
+  vi.fn(async () => ({
+    grantId: "g_1",
+    orgId: "org_1",
+    userId: "u_1",
+    isMember: false,
+    audience: API_RESOURCE,
+    newRefresh: FAKE_REFRESH,
+  }));
+
 describe("redeemRefresh — silent re-mint", () => {
+  // The membership re-check on refresh. Without it, a refresh handle keeps minting fresh access keys for
+  // the whole grant lifetime (~90d) after its user has been REMOVED from the org — the consumed handle
+  // carries an orgId, and nothing ever asked whether the user still belongs to it. Redemption of an auth
+  // code checks this; refresh must too, or the check is trivially bypassed by waiting for the next refresh.
+  it("refuses to mint when the grant's user is no longer a member of the grant org", async () => {
+    const deps = refreshDeps({ consumeRefresh: consumedAsNonMember() });
+    const result = await redeemRefresh(deps, refreshReq);
+    expect(result).toEqual({
+      kind: "error",
+      error: "access_denied",
+      description: "user is not a member of the grant org",
+    });
+    expect(mintForGrantMock(deps)).not.toHaveBeenCalled();
+  });
+
+  // Membership is resolved by the consume itself, in the same statement that burns the handle — so there is
+  // no post-burn round-trip that a transient DB fault could strand, and no TOCTOU window between the two.
+  it("takes membership from the CONSUMED grant, never from the request", async () => {
+    const deps = refreshDeps();
+    await redeemRefresh(deps, refreshReq);
+    expect(deps.consumeRefresh).toHaveBeenCalledWith(FAKE_REFRESH);
+  });
+
+  // Belt to that braces: a non-member's refresh terminates the GRANT, not just this one exchange. The
+  // consumed handle is already burned, but the grant's live access keys (24h) would otherwise outlive the
+  // denial — and a still-active grant is a standing invitation to retry.
+  it("revokes the grant when the user is no longer a member", async () => {
+    const deps = refreshDeps({ consumeRefresh: consumedAsNonMember() });
+    await redeemRefresh(deps, refreshReq);
+    expect(deps.revokeGrant).toHaveBeenCalledWith("g_1", "org_1");
+  });
+
+  it("does not revoke the grant on a normal refresh", async () => {
+    const deps = refreshDeps();
+    await redeemRefresh(deps, refreshReq);
+    expect(deps.revokeGrant).not.toHaveBeenCalled();
+  });
+
+  // The DENIAL is the security outcome and is unconditional — a revoke that fails must not become a mint.
+  // (It does leave the grant's live 24h keys to age out, so the log carries reapRequired + the cause.)
+  it("still denies — and never mints — when the grant revoke itself throws", async () => {
+    const log = vi.fn();
+    const deps = refreshDeps({
+      consumeRefresh: consumedAsNonMember(),
+      revokeGrant: vi.fn(async () => {
+        throw new Error("transient postgres fault");
+      }),
+      log,
+    });
+    const result = await redeemRefresh(deps, refreshReq);
+    expect(result).toMatchObject({ kind: "error", error: "access_denied" });
+    expect(mintForGrantMock(deps)).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(
+      "issuer.refresh_denied_revoke_failed",
+      expect.objectContaining({ grantId: "g_1", reapRequired: true }),
+    );
+  });
+
   it("re-mints a fresh whk_ on the grant and returns the frozen body with the grant audience", async () => {
     const deps = refreshDeps();
     const result = await redeemRefresh(deps, refreshReq);
@@ -374,6 +465,22 @@ describe("redeemRefresh — silent re-mint", () => {
     expect(result.kind).toBe("token");
     if (result.kind === "token") expect(result.body.scope).toBe("events:read events:replay");
   });
+
+  it("re-mints a consented `profile` scope when allowedScopes = GRANTABLE_SCOPES (refresh keeps identity)", async () => {
+    // Refresh remint is the THIRD mint intersect (requested ∩ consented ∩ allowed) — token-deps wires the
+    // real GRANTABLE set here too. Pin that a grant consented for `profile` re-mints it on refresh; a revert
+    // to CAPABILITY_SCOPES at the refresh deps would silently drop it and go red here.
+    expect(GRANTABLE_SCOPES).toContain("profile");
+    const deps = refreshDeps({
+      allowedScopes: GRANTABLE_SCOPES,
+      listGrantScopes: vi.fn(async () => ["events:read", "profile"]),
+    });
+    const { scope: _drop, ...noScope } = refreshReq;
+    const result = await redeemRefresh(deps, noScope);
+    expect(result.kind).toBe("token");
+    expect(mintForGrantMock(deps).mock.calls[0][0].scopes).toContain("profile");
+    if (result.kind === "token") expect(result.body.scope.split(" ")).toContain("profile");
+  });
 });
 
 describe("redeemRefresh — consume-before-mint / replay (BLOCKER-A)", () => {
@@ -391,7 +498,14 @@ describe("redeemRefresh — consume-before-mint / replay (BLOCKER-A)", () => {
       consumeRefresh: vi.fn(async () => {
         if (consumed) return null;
         consumed = true;
-        return { grantId: "g_1", orgId: "org_1", audience: API_RESOURCE, newRefresh: FAKE_REFRESH };
+        return {
+          grantId: "g_1",
+          orgId: "org_1",
+          userId: "u_1",
+          isMember: true,
+          audience: API_RESOURCE,
+          newRefresh: FAKE_REFRESH,
+        };
       }),
     });
     const first = await redeemRefresh(deps, refreshReq);

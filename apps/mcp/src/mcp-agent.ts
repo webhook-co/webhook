@@ -21,6 +21,7 @@ import type { z } from "zod";
 import { MCP_BOUND_CAPABILITIES } from "./bound-capabilities";
 import { grantPropsToAuthContext } from "./grant";
 import { genericToolError, runCapabilityTool, type McpToolResult } from "./tools";
+import { buildWhoami } from "./whoami";
 import type { McpEnv } from "./env";
 
 // The webhook.co MCP server as a Cloudflare Agent (Durable Object). It registers the read
@@ -56,6 +57,10 @@ const SERVER_VERSION = "0.0.0";
 const SERVER_TITLE = "webhook.co";
 const SERVER_DESCRIPTION =
   "Receive, inspect, replay, and deliver webhooks — manage endpoints, browse events, and wire up agent triggers.";
+// Agent-facing description for the identity tool. Note the profile-scope gate so an agent knows why
+// name/email may be absent.
+const WHOAMI_DESCRIPTION =
+  "Who am I? Returns the authenticated organization, user, and granted scopes. Includes the user's name and email only if the `profile` scope was granted at authorization.";
 
 /** Concise, agent-facing descriptions for the bound read tools (MCP tool discovery). */
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -154,6 +159,38 @@ export class WebhookMcp extends McpAgent<McpEnv> {
         },
       );
     }
+
+    // whoami — identity, NOT a capability (binds no resource), so registered outside the capability loop.
+    // Returns org/user/scopes always; name+email only when the token carries the consented `profile` scope,
+    // resolved on-demand via the auth. RPC (kept off the introspection hot path).
+    this.server.registerTool(
+      "whoami",
+      { description: WHOAMI_DESCRIPTION, inputSchema: {} },
+      async () => {
+        let ctx: AuthContext;
+        try {
+          ctx = grantPropsToAuthContext(this.props);
+        } catch (err) {
+          this.log("mcp.malformed_grant", { error: String(err) });
+          const err0 = genericToolError();
+          return {
+            content: err0.content.map((c) => ({ type: c.type, text: c.text })),
+            isError: true,
+          };
+        }
+        const result = await buildWhoami(ctx, async (userId) => {
+          try {
+            return await this.env.AUTH_ISSUER.resolveProfile(userId);
+          } catch (err) {
+            // Degrade to base identity (buildWhoami reads null as "not found"), but leave a non-PII
+            // breadcrumb — a persistent auth-RPC outage silently dropping name/email must be diagnosable.
+            this.log("mcp.profile_resolve_failed", { error: String(err) });
+            return null;
+          }
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+      },
+    );
   }
 
   /** Resolve the grant, run the capability under a per-call tenant client, map every outcome. */
