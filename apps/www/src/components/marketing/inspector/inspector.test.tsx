@@ -15,7 +15,7 @@ describe("Inspector", () => {
   it("renders as a labeled group with the seed rows and counter at rest (reduced motion → paused)", () => {
     mockMatchMedia(true); // paused: no interval, deterministic seed
     render(<Inspector />);
-    expect(screen.getByRole("group", { name: /live webhook inspector/i })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /demo webhook inspector/i })).toBeInTheDocument();
     // No heading: the hero's h1 is the page's only heading; the inspector is labeled by its group.
     expect(screen.queryByRole("heading")).not.toBeInTheDocument();
     expect(screen.getByText("github")).toBeInTheDocument();

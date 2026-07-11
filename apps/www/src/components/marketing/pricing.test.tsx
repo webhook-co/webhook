@@ -33,6 +33,25 @@ describe("pricing ladder (the sanctioned figures)", () => {
     expect(OVERAGE_PER_MILLION).toBe("€25");
   });
 
+  // The €499 Enterprise tier used to promise "SAML SSO, audit export, and a BAA" — three capabilities
+  // we do not have. The BAA was the worst: our AUP says "we do not sign BAAs" and our Terms say we
+  // "provide no BAA", so the pricing page was selling, for money, a thing the contract promises we
+  // will not do. SSO is a disabled "coming soon" button; there is no audit export at all.
+  //
+  // The lint guard catches these strings anywhere in the tree. This pins the tier itself, because the
+  // guard and the tier can drift apart and the tier is what a customer pays against.
+  it("sells no Enterprise capability we do not have", () => {
+    const byId = Object.fromEntries(TIERS.map((t) => [t.id, t]));
+    expect(byId.enterprise.summary).toBe("Committed volume, and terms we agree up front.");
+
+    for (const tier of TIERS) {
+      const copy = [tier.summary, tier.includedEvents, ...(tier.features ?? [])].join(" ");
+      expect(copy, `tier "${tier.id}" sells a capability we don't have`).not.toMatch(
+        /\b(SAML|SSO|single sign-on|audit (log )?export|BAA)\b/i,
+      );
+    }
+  });
+
   it("a long price qualifier is a separate field, so it can't wrap away from the amount", () => {
     // "From €499" as one string wrapped as "From … /month" with "€499" orphaned on the next line.
     expect(TIERS.find((t) => t.id === "enterprise")?.pricePrefix).toBe("From");

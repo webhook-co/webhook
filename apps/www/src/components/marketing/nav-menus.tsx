@@ -38,8 +38,6 @@ const MENUS: readonly MenuDef[] = [
       { label: "API reference", href: LINKS.apiReference },
       { label: "CLI", href: LINKS.cli },
       { label: "MCP", href: LINKS.mcp },
-      { label: "Standard Webhooks", href: LINKS.standardWebhooks },
-      { label: "Open source", href: LINKS.openSource },
     ],
   },
 ];

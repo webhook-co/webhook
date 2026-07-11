@@ -47,11 +47,16 @@ describe("HomePage", () => {
     }
   });
 
-  it("renders the live inspector inside the hero with its seed counter and accessible summary", () => {
+  // The feed is invented, so every name for it has to say so — including the ones only a screen
+  // reader hears. Renaming the visible chip to "demo" while the accessible name still announced
+  // "Live webhook inspector" would have left the fabricated stream presented as real to precisely
+  // the users who cannot see the chip that corrects it.
+  it("renders the demo inspector inside the hero, disclosed as a demo in its accessible name", () => {
     render(<HomePage />);
-    const inspector = screen.getByRole("group", { name: /live webhook inspector/i });
+    const inspector = screen.getByRole("group", { name: /demo webhook inspector/i });
     expect(within(inspector).getByText(/1,284/)).toBeInTheDocument();
-    expect(within(inspector).getByText(/an illustrative live feed/i)).toBeInTheDocument();
+    expect(within(inspector).getByText(/sample webhook events/i)).toBeInTheDocument();
+    expect(within(inspector).getByText(/not live measurements/i)).toBeInTheDocument();
   });
 
   it("renders the surfaces tablist with MCP selected by default", () => {
@@ -72,12 +77,15 @@ describe("HomePage", () => {
     );
   });
 
-  it("marks the not-yet-GA delivery showcase as 'soon'", () => {
+  // Delivery SHIPPED — the engine, retries, signing and the DLQ are all live. The "soon" badge was
+  // left over from before it did, and a stale "soon" on a feature that already works is worse than no
+  // badge: it tells a visitor to come back later for something they could use right now.
+  it("no longer marks delivery as 'soon' — it shipped", () => {
     render(<HomePage />);
     const delivery = screen.getByRole("region", {
       name: /received once, in order, never silently dropped/i,
     });
-    expect(within(delivery).getByText("soon")).toBeInTheDocument();
+    expect(within(delivery).queryByText(/^soon$/i)).toBeNull();
   });
 
   it("renders the real Standard Webhooks link in the verification showcase", () => {

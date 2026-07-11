@@ -17,15 +17,15 @@
  */
 
 export const APP = "https://app.webhook.co";
-export const AUTH = "https://auth.webhook.co";
 export const DOCS = "https://docs.webhook.co";
 export const GITHUB = "https://github.com/webhook-co";
 export const REPO = `${GITHUB}/webhook`;
 
 export const LINKS = {
   // ── product ──────────────────────────────────────────────────────────────
-  /** Sign-in. Matches what apps/web redirects to (`apps/web/src/server/session.ts`). */
-  signIn: `${AUTH}/login`,
+  // No `signIn`. The nav used to carry BOTH "Sign in" and "Start free", which landed the same visitor
+  // in the same place — `app.webhook.co` bounces a signed-out user to the login screen, and that
+  // screen says "No account yet? Signing in creates one." One door, one label.
   startFree: APP,
   /** Where the paid-tier CTAs land: the usage page, which is where a plan is chosen. */
   usage: `${APP}/usage`,

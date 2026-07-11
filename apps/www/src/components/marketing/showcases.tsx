@@ -8,8 +8,12 @@ import { DeliveryPipeline } from "./visuals/delivery-pipeline";
 import { VerifyCard } from "./visuals/verify-card";
 
 /**
- * The two product showcases, in document order. Ingestion & delivery isn't GA yet, so it carries a
- * "soon" marker; verification ships today (the copy names the providers).
+ * The two product showcases, in document order.
+ *
+ * Ingestion & delivery carried a "soon" badge long after it shipped — while /pricing said "every plan
+ * includes outbound delivery" and the FAQ explained that a delivery IS a billed event. The homepage
+ * was telling people the feature wasn't ready while the pricing page charged them for it. Both
+ * showcases describe things that work today.
  */
 export function Showcases() {
   return (
@@ -22,7 +26,6 @@ export function Showcases() {
             Received once, in order, never <em className="italic">silently</em> dropped
           </>
         }
-        badge={{ label: "soon" }}
         body="The same engine that captures your events runs the pipeline that moves them. Events are deduplicated by id, acknowledged fast, then processed. Each endpoint keeps first-in-first-out ordering and its own isolation. Failed deliveries retry with backoff; what still can't land is held in a dead-letter queue, not dropped."
         link={{ label: "How delivery works", href: LINKS.concepts.delivery }}
         visual={<DeliveryPipeline />}
@@ -36,10 +39,10 @@ export function Showcases() {
         body={
           <>
             Most tooling tells you a signature didn't match and stops there. We verify at the edge
-            and name the actual cause, in plain language, with the fix attached — Stripe &amp;
-            GitHub today, more soon. Verification is{" "}
+            and name the actual cause, in plain language, with the fix attached — across 142
+            providers, from HMAC to Ed25519. Verification is{" "}
             <a
-              href="https://www.standardwebhooks.com/"
+              href={LINKS.standardWebhooks}
               className={cn(
                 focusRing,
                 "rounded-control border-b border-strong font-medium text-fg transition-colors hover:border-fg",
