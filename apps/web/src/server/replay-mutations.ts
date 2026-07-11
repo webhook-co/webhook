@@ -128,8 +128,10 @@ export interface ReplayDeps {
   finalize(input: FinalizeInput): Promise<DeliveryAttempt | null>;
 }
 
-/** Bind the real db helpers + the engine dispatcher over a tenant pool — the default (non-injected) boundary. */
-function boundDeps(app: Sql, dispatcher: DeliveryDispatcherRpc): ReplayDeps {
+/** Bind the real db helpers + the engine dispatcher over a tenant pool — the default (non-injected) boundary.
+ *  Exported so the PRODUCTION claim path (incl. the S4 cap-pause gate) is unit-testable directly, rather than
+ *  only through a mocked `claim` that would let the gate be deleted without failing CI. */
+export function boundDeps(app: Sql, dispatcher: DeliveryDispatcherRpc): ReplayDeps {
   return {
     claim: (input) =>
       withTenant(app, input.orgId, async (tx): Promise<ClaimOutcome> => {

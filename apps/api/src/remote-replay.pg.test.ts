@@ -214,7 +214,21 @@ describe("createRemoteReplayHandler", () => {
       (tx) => tx`insert into ingest_paused (org_id, paused) values (${orgId}, ${true})
                  on conflict (org_id) do update set paused = true`,
     );
+    // The load-bearing metering invariant: the REFUSED replay mints NO new billable delivery_attempts row.
+    // `d.calls === 0` alone would still pass if the gate were moved AFTER claimDeliveryAttempt (a 'pending'
+    // row inserted, dispatch skipped) — this delta proves the gate precedes the claim. Measured as a delta
+    // (not an absolute 0) because prior tests in this file share `orgId` and have already minted rows.
+    const countAttempts = () =>
+      withTenant(
+        app,
+        orgId,
+        (tx) =>
+          tx<
+            { n: number }[]
+          >`select count(*)::int as n from delivery_attempts where org_id = ${orgId}`,
+      ).then(([r]) => r.n);
     try {
+      const before = await countAttempts();
       const d = dispatcherReturning({
         outcome: "delivered",
         status: 200,
@@ -224,6 +238,7 @@ describe("createRemoteReplayHandler", () => {
       const h = createRemoteReplayHandler({ tenant: app, dispatcher: d.rpc });
       await expect(h(ctx(), input())).rejects.toMatchObject({ code: "RATE_LIMITED" });
       expect(d.calls).toHaveLength(0); // never dispatched — refused before the claim
+      expect(await countAttempts()).toBe(before); // no NEW row minted (gate precedes the claim)
     } finally {
       await withTenant(
         app,
