@@ -61,7 +61,7 @@ export default function DpaPage() {
             <strong>GDPR</strong>, and in the UK GDPR where relevant) on your behalf. It is{" "}
             <strong>incorporated automatically</strong> — using the Service is acceptance, and you
             do not need to sign or return a copy. If your procurement process requires a
-            countersignature, email <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            countersignature, email <a href="mailto:legal@webhook.co">legal@webhook.co</a>.
           </p>
           <p>
             Terms defined in the GDPR (controller, processor, personal data, processing, data
@@ -222,7 +222,7 @@ export default function DpaPage() {
           <p>
             <strong>Changes.</strong> Before we add or replace a sub-processor we will update that
             page and give you at least <strong>30 days&apos; notice</strong>. To receive that notice
-            by email, ask us at <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> and
+            by email, ask us at <a href="mailto:legal@webhook.co">legal@webhook.co</a> and
             we&apos;ll add you to the list. If you reasonably object on data-protection grounds
             within that window, tell us and we&apos;ll try to find a way through; if we can&apos;t,
             you may terminate the affected Service and we&apos;ll refund any prepaid, unused fees
@@ -360,7 +360,7 @@ export default function DpaPage() {
           </p>
           <p>
             Questions, or a countersignature request:{" "}
-            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>.
+            <a href="mailto:legal@webhook.co">legal@webhook.co</a>.
           </p>
         </LegalDoc>
       </main>
