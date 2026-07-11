@@ -1,5 +1,6 @@
 import { Button, cn } from "@webhook-co/ui";
 
+import { LINKS } from "@/lib/links";
 import { container, sectionPad } from "@/lib/styles";
 
 export function FinalCta() {
@@ -17,10 +18,10 @@ export function FinalCta() {
       </p>
       <div className="flex flex-wrap justify-center gap-3">
         <Button asChild size="md">
-          <a href="#">Start free</a>
+          <a href={LINKS.startFree}>Start free</a>
         </Button>
         <Button asChild variant="secondary" size="md">
-          <a href="#">Read the docs</a>
+          <a href={LINKS.docs}>Read the docs</a>
         </Button>
       </div>
     </section>

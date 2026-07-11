@@ -4,6 +4,7 @@ import { cn } from "@webhook-co/ui";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { LINKS } from "@/lib/links";
 import { focusRing } from "@/lib/styles";
 
 interface MenuDef {
@@ -12,31 +13,33 @@ interface MenuDef {
   links: { label: string; href: string }[];
 }
 
-// Destinations are `#` placeholders until those surfaces ship — except the real Standard Webhooks
-// spec. The links still render in the SSR HTML (hidden), so they exist without JS.
+// The Product menu has no marketing feature pages behind it — those were never built — so it points
+// at the concepts docs, which say the same thing in more depth. Better an honest destination than a
+// thin page invented to justify a nav item. The links render in the SSR HTML (hidden), so they exist
+// without JS.
 const MENUS: readonly MenuDef[] = [
   {
     id: "product",
     label: "Product",
     links: [
-      { label: "Capture & replay", href: "#" },
-      { label: "Ingestion", href: "#" },
-      { label: "Delivery", href: "#" },
-      { label: "MCP server", href: "#" },
-      { label: "Security", href: "#" },
+      { label: "Capture & replay", href: LINKS.concepts.captureAndReplay },
+      { label: "Ingestion", href: LINKS.concepts.ingestion },
+      { label: "Delivery", href: LINKS.concepts.delivery },
+      { label: "MCP server", href: LINKS.concepts.mcpServer },
+      { label: "Security", href: LINKS.concepts.security },
     ],
   },
   {
     id: "developers",
     label: "Developers",
     links: [
-      { label: "Docs", href: "#" },
-      { label: "Quickstart", href: "#" },
-      { label: "API reference", href: "#" },
-      { label: "CLI", href: "#" },
-      { label: "MCP", href: "#" },
-      { label: "Standard Webhooks", href: "https://www.standardwebhooks.com/" },
-      { label: "Open source", href: "#" },
+      { label: "Docs", href: LINKS.docs },
+      { label: "Quickstart", href: LINKS.quickstart },
+      { label: "API reference", href: LINKS.apiReference },
+      { label: "CLI", href: LINKS.cli },
+      { label: "MCP", href: LINKS.mcp },
+      { label: "Standard Webhooks", href: LINKS.standardWebhooks },
+      { label: "Open source", href: LINKS.openSource },
     ],
   },
 ];

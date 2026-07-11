@@ -6,7 +6,7 @@ import { Faq } from "@/components/marketing/faq";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { Footer } from "@/components/marketing/footer";
 import { Nav } from "@/components/marketing/nav";
-import { PricingDisclosures, PricingHero, PricingTable } from "@/components/marketing/pricing";
+import { PricingHero, PricingTable } from "@/components/marketing/pricing";
 import { Reveal } from "@/components/marketing/reveal";
 import { focusRing } from "@/lib/styles";
 
@@ -36,12 +36,13 @@ export default function PricingPage() {
       <main id="main">
         <PricingHero />
         <PricingTable />
-        <Reveal>
-          <PricingDisclosures />
-        </Reveal>
-        <Reveal>
-          <Faq />
-        </Reveal>
+        {/* NOT wrapped in <Reveal>. The FAQ is now the pricing page's disclosure surface — it carries
+            the MUST-disclose set (a delivery is billed, cancelling pauses you, dedup=off costs more),
+            and `Reveal` paints its children at `opacity: 0` until an IntersectionObserver fires. A
+            disclosure the constitution requires to be "up front" cannot be gated behind a scroll
+            animation: measured effective opacity was literally 0. Prettiness does not get to sit in
+            front of a billing promise. */}
+        <Faq />
         <Reveal>
           <FinalCta />
         </Reveal>

@@ -1,6 +1,8 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
+import { FAQ_ITEMS } from "../src/components/marketing/faq";
+
 // WCAG 2.0/2.1/2.2 A + AA. This is the only layer that sees real layout, so the only one that
 // catches color contrast (1.4.3) — e.g. the dark terminal's dim text and the monochrome gray ramp.
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
@@ -117,28 +119,125 @@ test.describe("legal section anchors", () => {
     const navBox = await page.locator(".site-nav").boundingBox();
     expect(headingBox!.y).toBeGreaterThanOrEqual(navBox!.y + navBox!.height);
   });
+
+  // THE REGRESSION GUARD. Declaring `scroll-behavior: smooth` on the root makes Chrome drop the
+  // load-time fragment scroll entirely — the page just sits at the top, and every pasted contract
+  // link silently stops working. Smooth is therefore gated behind the first interaction, and this
+  // asserts the gate holds: on a cold load the document must ALREADY be scrolled, with no animation
+  // still in flight.
+  test("a cold load jumps instantly — smooth scrolling must not swallow the fragment", async ({
+    page,
+  }) => {
+    await page.goto("/terms#limitation-of-liability");
+
+    const settled = await page.evaluate(() => window.scrollY);
+    expect(settled, "the cold load never scrolled to the fragment").toBeGreaterThan(1000);
+
+    // Nothing may still be gliding: sample twice and require stillness.
+    await page.waitForTimeout(400);
+    expect(await page.evaluate(() => window.scrollY)).toBe(settled);
+
+    // And smooth must be OFF until the reader touches the page.
+    expect(
+      await page.evaluate(() => document.documentElement.classList.contains("smooth-scroll")),
+    ).toBe(false);
+  });
+
+  test("clicking a heading glides, and marks the section you landed on", async ({ page }) => {
+    await page.goto("/terms");
+
+    const link = page.getByRole("link", { name: "9. Limitation of liability" });
+    await link.click();
+
+    // The click itself (capture phase) turns smooth on, so this very navigation animates.
+    expect(
+      await page.evaluate(() => document.documentElement.classList.contains("smooth-scroll")),
+    ).toBe(true);
+    await expect(page).toHaveURL(/#limitation-of-liability$/);
+
+    // :target drives the landing highlight — assert the browser actually matches it.
+    expect(
+      await page.evaluate(() =>
+        document.getElementById("limitation-of-liability")?.matches(":target"),
+      ),
+    ).toBe(true);
+  });
 });
 
 test.describe("pricing page accessibility (real browser)", () => {
-  test("no violations, including the FAQ opened", async ({ page }) => {
+  test("no violations, in both the default and fully-expanded state", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/pricing");
     await expectClean(page);
 
     // A native <details> changes the a11y tree when it opens; scan the expanded state too.
-    await page.getByText("What counts as an event?").click();
+    await page.getByText("Are retries billed?").click();
     await expectClean(page);
   });
 
-  // The founder's actual complaint: this line wrapped to two lines in the Free card.
-  test("the Free plan's overage line sets on one line", async ({ page }) => {
+  // AGENTS.md: pricing must be "disclosed UP FRONT … on the pricing page". The MUST-disclose items
+  // render <details open> precisely so a buyer cannot miss them, and this is the only layer that can
+  // prove a reader actually SEES them — jsdom knows the `open` attribute, a browser knows pixels.
+  //
+  // `toBeVisible()` is NOT enough here and asserting it would be self-deception: Playwright's
+  // visibility check ignores OPACITY, and <Reveal> paints its children at `opacity: 0` until an
+  // IntersectionObserver fires — as does the `faqOpen` keyframe's first frame. A regression that
+  // painted the disclosures invisible would sail straight through. So assert the computed opacity.
+  //
+  // The set is DERIVED from the `discloses` flag rather than hand-listed. A hardcoded list drifts the
+  // moment someone marks a sixth item MUST-disclose — the browser check would silently stop covering
+  // it while still looking thorough. The flag is the contract; this reads the contract.
+  test("every MUST-disclose fact is actually painted, not merely present", async ({ page }) => {
     await page.goto("/pricing");
-    const line = page.getByText("No overage. Capture pauses.", { exact: true });
-    await expect(line).toBeVisible();
+    await page
+      .getByRole("heading", { name: /frequently asked questions/i })
+      .scrollIntoViewIfNeeded();
 
-    const box = await line.boundingBox();
-    // One line at the tier-card font size. Two lines would be ~44px+.
-    expect(box!.height).toBeLessThan(30);
+    const disclosed = FAQ_ITEMS.filter((i) => i.discloses);
+    expect(disclosed.length, "no MUST-disclose items — the flag has been lost").toBeGreaterThan(0);
+
+    for (const item of disclosed) {
+      // The first sentence of the answer is enough to locate the panel, and it is what a scanning
+      // buyer's eye lands on.
+      const opener = item.answer.split(". ").slice(0, 2).join(". ");
+      const el = page.getByText(opener.slice(0, 60), { exact: false }).first();
+      await expect(el, `"${item.question}" is not on the page`).toBeVisible();
+
+      // Walk up the tree: any ancestor at opacity 0 makes this text unreadable, however "visible".
+      const effectiveOpacity = await el.evaluate((node) => {
+        let opacity = 1;
+        for (let n: Element | null = node; n; n = n.parentElement) {
+          opacity *= Number(getComputedStyle(n).opacity);
+        }
+        return opacity;
+      });
+      expect(
+        effectiveOpacity,
+        `"${item.question}" is present but painted invisible`,
+      ).toBeGreaterThan(0.9);
+    }
+  });
+
+  // The carve-outs from migration 0055 (`delivery_attempts.billable`): forwarding to your own machine
+  // and a delivery we refuse to send are both FREE. They live inside a disclosed panel, so they must
+  // be readable without a click too — if we re-bill either leg, the page is lying about the bill.
+  test("the billing carve-outs are readable without a click", async ({ page }) => {
+    await page.goto("/pricing");
+    for (const fact of [/forwarding to your own machine/i, /a delivery we refuse to send/i]) {
+      await expect(page.getByText(fact)).toBeVisible();
+    }
+  });
+
+  // Both tier overage lines must set on one line in the card.
+  test("the tier overage lines set on one line", async ({ page }) => {
+    await page.goto("/pricing");
+
+    for (const copy of ["No overage. Capture pauses.", "€25 per extra million events"]) {
+      const line = page.getByText(copy, { exact: true }).first();
+      await expect(line).toBeVisible();
+      const box = await line.boundingBox();
+      expect(box!.height, `"${copy}" wrapped to two lines`).toBeLessThan(30);
+    }
   });
 });
 

@@ -6,6 +6,8 @@ import { GithubIcon } from "@/components/ui/brand-icons";
 import { Pill } from "@/components/ui/pill";
 import { focusRing } from "@/lib/styles";
 
+import { LINKS } from "@/lib/links";
+
 const trustSignals = [
   { icon: GithubIcon, label: "Open source" },
   { icon: Scale, label: "Apache-2.0" },
@@ -23,7 +25,7 @@ export function Hero() {
         {/* Left: the thesis. Centered while stacked (<940px), left-aligned once it's the left column. */}
         <div className="hero-rise flex flex-col items-center text-center min-[940px]:items-start min-[940px]:text-left">
           <a
-            href="#"
+            href={LINKS.mcp}
             className={cn(
               focusRing,
               "mb-6 inline-flex items-center gap-2 rounded-pill border border-hairline bg-surface py-1 pr-3 pl-1.5 text-sm text-fg-secondary shadow-1 transition-colors hover:text-fg",
@@ -45,10 +47,10 @@ export function Hero() {
 
           <div className="mb-8 flex flex-wrap gap-3">
             <Button asChild size="md">
-              <a href="#">Start free</a>
+              <a href={LINKS.startFree}>Start free</a>
             </Button>
             <Button asChild variant="secondary" size="md">
-              <a href="#">Read the docs</a>
+              <a href={LINKS.docs}>Read the docs</a>
             </Button>
           </div>
 
