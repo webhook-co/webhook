@@ -45,9 +45,14 @@ export function grantPropsToAuthContext(props: unknown): AuthContext {
   if (p.userId !== undefined && typeof p.userId !== "string") {
     throw new MalformedGrantError("grant props.userId must be a string when present");
   }
+  if (p.keyId !== undefined && typeof p.keyId !== "string") {
+    throw new MalformedGrantError("grant props.keyId must be a string when present");
+  }
   return {
     orgId: p.orgId,
     scopes: p.scopes as readonly string[],
     ...(p.userId !== undefined ? { userId: p.userId as string } : {}),
+    // Carried so a mutation made through an MCP tool is attributed to the presenting key, not to NULL.
+    ...(p.keyId !== undefined ? { keyId: p.keyId as string } : {}),
   };
 }

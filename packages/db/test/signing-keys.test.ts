@@ -5,6 +5,7 @@ import {
   isUsableStandardWebhooksSecret,
   LocalKmsProvider,
   SecretStore,
+  userActor,
 } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -76,7 +77,7 @@ describe("createSigningSecret + getActiveSigningSecrets", () => {
     const auditKey = await importAuditKey(new Uint8Array(32).fill(4));
     const created = await createSigningSecret(app, { orgId: orgA, destinationId: destA }, store, {
       auditKey,
-      actor: null,
+      actor: userActor("user_alice"),
     });
     const rows = await withTenant(
       app,
@@ -148,7 +149,7 @@ describe("rotateSigningSecret (zero-downtime overlap)", () => {
     await createSigningSecret(app, { orgId: orgA, destinationId: dest }, store);
     const rotated = await rotateSigningSecret(app, { orgId: orgA, destinationId: dest }, store, {
       auditKey,
-      actor: null,
+      actor: userActor("user_alice"),
     });
     const rows = await withTenant(
       app,

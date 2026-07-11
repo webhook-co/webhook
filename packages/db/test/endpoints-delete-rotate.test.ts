@@ -6,7 +6,7 @@ import {
   DeletedEventSchema,
   type AuthContext,
 } from "@webhook-co/contract";
-import { importAuditKey, verifyAuditChain } from "@webhook-co/shared";
+import { formatAuditActor, importAuditKey, userActor, verifyAuditChain } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readAuditChain } from "../src/audit-append";
@@ -66,7 +66,7 @@ async function makeLiveEndpoint(
 ): Promise<{ id: string; plaintext: string }> {
   const created = await createEndpointWithAudit(
     app,
-    { orgId, name, actor: null, maxEndpoints: 100 },
+    { orgId, name, actor: userActor("user_alice"), maxEndpoints: 100 },
     hasher,
     auditKey,
   );
@@ -108,7 +108,7 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
     const before = await auditLen(orgA);
     const deleted = await deleteEndpointWithAudit(
       app,
-      { orgId: orgA, endpointId: ep.id, actor: "user_alice" },
+      { orgId: orgA, endpointId: ep.id, actor: userActor("user_alice") },
       auditKey,
     );
     expect(deleted.id).toBe(ep.id);
@@ -125,13 +125,17 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
     const last = rows[rows.length - 1]!;
     expect(last.action).toBe("endpoint.deleted");
     expect(last.target).toBe(ep.id);
-    expect(last.actor).toBe("user_alice");
+    expect(last.actor).toBe(formatAuditActor(userActor("user_alice")));
     expect((await verifyAuditChain(auditKey, orgA, rows)).ok).toBe(true);
   });
 
   it("hides the deleted endpoint from endpoints.get and endpoints.list", async () => {
     const ep = await makeLiveEndpoint(orgA, "hide-me");
-    await deleteEndpointWithAudit(app, { orgId: orgA, endpointId: ep.id, actor: null }, auditKey);
+    await deleteEndpointWithAudit(
+      app,
+      { orgId: orgA, endpointId: ep.id, actor: userActor("user_alice") },
+      auditKey,
+    );
     const got = await withTenant(app, orgA, (tx) => getEndpoint(tx, ep.id));
     expect(got).toBeNull();
     const page = await withTenant(app, orgA, (tx) => listEndpoints(tx, { limit: 200 }));
@@ -143,7 +147,11 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
     // deleted endpoint's captured events remain listable + replayable by id (ADR-0076 retention) — while
     // endpoints.get (the default, filtered) 404s. This is the regression the code review caught.
     const ep = await makeLiveEndpoint(orgA, "events-stay-readable");
-    await deleteEndpointWithAudit(app, { orgId: orgA, endpointId: ep.id, actor: null }, auditKey);
+    await deleteEndpointWithAudit(
+      app,
+      { orgId: orgA, endpointId: ep.id, actor: userActor("user_alice") },
+      auditKey,
+    );
     const filtered = await withTenant(app, orgA, (tx) => getEndpoint(tx, ep.id));
     expect(filtered).toBeNull(); // endpoints.get hides it
     const included = await withTenant(app, orgA, (tx) =>
@@ -157,14 +165,14 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
     const ep = await makeLiveEndpoint(orgA, "re-delete");
     const first = await deleteEndpointWithAudit(
       app,
-      { orgId: orgA, endpointId: ep.id, actor: null },
+      { orgId: orgA, endpointId: ep.id, actor: userActor("user_alice") },
       auditKey,
     );
     const afterFirst = await auditLen(orgA);
 
     const second = await deleteEndpointWithAudit(
       app,
-      { orgId: orgA, endpointId: ep.id, actor: null },
+      { orgId: orgA, endpointId: ep.id, actor: userActor("user_alice") },
       auditKey,
     );
     expect(second.wasLive).toBe(false);
@@ -176,7 +184,7 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
     await expect(
       deleteEndpointWithAudit(
         app,
-        { orgId: orgA, endpointId: randomUUID(), actor: null },
+        { orgId: orgA, endpointId: randomUUID(), actor: userActor("user_alice") },
         auditKey,
       ),
     ).rejects.toMatchObject({ name: "CapabilityFault", code: "NOT_FOUND" });
@@ -185,7 +193,11 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
   it("is org-isolated — deleting org B's endpoint under org A is NOT_FOUND (RLS-invisible)", async () => {
     const epB = await makeLiveEndpoint(orgB, "borg-del");
     await expect(
-      deleteEndpointWithAudit(app, { orgId: orgA, endpointId: epB.id, actor: null }, auditKey),
+      deleteEndpointWithAudit(
+        app,
+        { orgId: orgA, endpointId: epB.id, actor: userActor("user_alice") },
+        auditKey,
+      ),
     ).rejects.toMatchObject({ name: "CapabilityFault", code: "NOT_FOUND" });
     // Untouched under its own org.
     const stillThere = await withTenant(app, orgB, (tx) => getEndpoint(tx, epB.id));
@@ -196,13 +208,13 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
     const capOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "CapDel" })).id;
     const a = await createEndpointWithAudit(
       app,
-      { orgId: capOrg, name: "c1", actor: null, maxEndpoints: 2 },
+      { orgId: capOrg, name: "c1", actor: userActor("user_alice"), maxEndpoints: 2 },
       hasher,
       auditKey,
     );
     await createEndpointWithAudit(
       app,
-      { orgId: capOrg, name: "c2", actor: null, maxEndpoints: 2 },
+      { orgId: capOrg, name: "c2", actor: userActor("user_alice"), maxEndpoints: 2 },
       hasher,
       auditKey,
     );
@@ -210,18 +222,22 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
     await expect(
       createEndpointWithAudit(
         app,
-        { orgId: capOrg, name: "c3", actor: null, maxEndpoints: 2 },
+        { orgId: capOrg, name: "c3", actor: userActor("user_alice"), maxEndpoints: 2 },
         hasher,
         auditKey,
       ),
     ).rejects.toMatchObject({ code: "RATE_LIMITED" });
     // Delete one → a slot frees → the create now succeeds (cap counts LIVE rows only).
-    await deleteEndpointWithAudit(app, { orgId: capOrg, endpointId: a.id, actor: null }, auditKey);
+    await deleteEndpointWithAudit(
+      app,
+      { orgId: capOrg, endpointId: a.id, actor: userActor("user_alice") },
+      auditKey,
+    );
     expect(await countLive(capOrg)).toBe(1);
     await expect(
       createEndpointWithAudit(
         app,
-        { orgId: capOrg, name: "c3", actor: null, maxEndpoints: 2 },
+        { orgId: capOrg, name: "c3", actor: userActor("user_alice"), maxEndpoints: 2 },
         hasher,
         auditKey,
       ),
@@ -237,7 +253,7 @@ describe("rotateEndpointWithAudit (hard cutover)", () => {
 
     const rotated = await rotateEndpointWithAudit(
       app,
-      { orgId: orgA, endpointId: ep.id, actor: "user_bob" },
+      { orgId: orgA, endpointId: ep.id, actor: userActor("user_bob") },
       hasher,
       auditKey,
     );
@@ -262,18 +278,22 @@ describe("rotateEndpointWithAudit (hard cutover)", () => {
     await expect(
       rotateEndpointWithAudit(
         app,
-        { orgId: orgA, endpointId: randomUUID(), actor: null },
+        { orgId: orgA, endpointId: randomUUID(), actor: userActor("user_alice") },
         hasher,
         auditKey,
       ),
     ).rejects.toMatchObject({ name: "CapabilityFault", code: "NOT_FOUND" });
 
     const ep = await makeLiveEndpoint(orgA, "rotate-after-delete");
-    await deleteEndpointWithAudit(app, { orgId: orgA, endpointId: ep.id, actor: null }, auditKey);
+    await deleteEndpointWithAudit(
+      app,
+      { orgId: orgA, endpointId: ep.id, actor: userActor("user_alice") },
+      auditKey,
+    );
     await expect(
       rotateEndpointWithAudit(
         app,
-        { orgId: orgA, endpointId: ep.id, actor: null },
+        { orgId: orgA, endpointId: ep.id, actor: userActor("user_alice") },
         hasher,
         auditKey,
       ),
@@ -282,7 +302,8 @@ describe("rotateEndpointWithAudit (hard cutover)", () => {
 });
 
 describe("createWriteHandlers — endpoints.delete + endpoints.rotate", () => {
-  const writeCtx: AuthContext = { orgId: "", scopes: ["endpoints:write"] };
+  // A bearer api key: org + scopes + the key's own id (no userId) — the realistic write principal.
+  const writeCtx: AuthContext = { orgId: "", scopes: ["endpoints:write"], keyId: "key_test" };
   function handlersWithEvictor() {
     const evicted: Buffer[] = [];
     const handlers = createWriteHandlers({
@@ -363,7 +384,13 @@ describe("createWriteHandlers — endpoints.delete + endpoints.rotate", () => {
                  ${"dk-" + eventId}, ${"content_hash"})`,
     );
     const { handlers } = handlersWithEvictor();
-    const eventsWriteCtx: AuthContext = { orgId: orgA, scopes: ["events:delete"] };
+    // A bearer api-key principal carries the id of the key that authenticated it — that is what the audit
+    // row attributes the deletion to (`key:<id>`), instead of the NULL actor this lane removed.
+    const eventsWriteCtx: AuthContext = {
+      orgId: orgA,
+      scopes: ["events:delete"],
+      keyId: "key_test",
+    };
 
     // Wrong scope → FORBIDDEN, and the scope check runs FIRST (the event is untouched).
     await expect(
@@ -410,7 +437,10 @@ describe("createWriteHandlers — endpoints.delete + endpoints.rotate", () => {
     const { handlers } = handlersWithEvictor();
 
     await expect(
-      handlers.get("events.delete")!({ orgId: orgA, scopes: ["events:delete"] }, { eventId }),
+      handlers.get("events.delete")!(
+        { orgId: orgA, scopes: ["events:delete"], keyId: "key_test" },
+        { eventId },
+      ),
     ).rejects.toMatchObject({ code: "NOT_FOUND" });
     // Still readable in orgB — never tombstoned by orgA's call.
     expect((await withTenant(app, orgB, (tx) => getEvent(tx, eventId)))?.id).toBe(eventId);

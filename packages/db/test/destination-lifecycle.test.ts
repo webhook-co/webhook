@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import { importAuditKey, newId } from "@webhook-co/shared";
+import { importAuditKey, newId, userActor } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readAuditChain } from "../src/audit-append";
@@ -104,7 +104,7 @@ describe("softDeleteReplayDestination — cancels the destination's owed deliver
 
     const removed = await softDeleteReplayDestination(app, orgId, dest, {
       auditKey,
-      actor: null,
+      actor: userActor("user_alice"),
     });
     expect(removed).not.toBeNull();
     expect((await statusOf(owed)).status).toBe("cancelled"); // owed delivery terminally resolved
@@ -124,7 +124,10 @@ describe("enableReplayDestination", () => {
         tx`update replay_destinations set disabled_at = now(), consecutive_failures = 9 where id = ${dest}`,
     );
 
-    const rec = await enableReplayDestination(app, orgId, dest, { auditKey, actor: null });
+    const rec = await enableReplayDestination(app, orgId, dest, {
+      auditKey,
+      actor: userActor("user_alice"),
+    });
     expect(rec).not.toBeNull();
     expect(rec!.disabledAt).toBeNull();
     const row = await withTenant(
@@ -155,9 +158,15 @@ describe("setDestinationOrdered", () => {
   it("toggles the strict-FIFO flag and audits, and is NOT_FOUND for a missing destination", async () => {
     const dest = (await createReplayDestination(app, { orgId, url: "https://o.example.com/in" }))
       .id;
-    const on = await setDestinationOrdered(app, orgId, dest, true, { auditKey, actor: null });
+    const on = await setDestinationOrdered(app, orgId, dest, true, {
+      auditKey,
+      actor: userActor("user_alice"),
+    });
     expect(on!.ordered).toBe(true);
-    const off = await setDestinationOrdered(app, orgId, dest, false, { auditKey, actor: null });
+    const off = await setDestinationOrdered(app, orgId, dest, false, {
+      auditKey,
+      actor: userActor("user_alice"),
+    });
     expect(off!.ordered).toBe(false);
     expect(await setDestinationOrdered(app, orgId, newId(), true)).toBeNull();
   });

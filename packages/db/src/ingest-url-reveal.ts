@@ -7,6 +7,7 @@
 // where a named binding from a transpiled-package `export *` barrel resolves to `undefined` at runtime — so
 // `new CapabilityFault` would throw "not a constructor" on the RATE_LIMITED path (see [[turbopack-contract-barrel]]).
 import { CapabilityFault } from "@webhook-co/contract/capability";
+import type { AuditActorInput } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
@@ -59,7 +60,7 @@ export async function appendIngestUrlRevealAudit(
   app: Sql,
   auditKey: CryptoKey,
   orgId: string,
-  actor: string | null,
+  actor: AuditActorInput,
   endpointId: string,
 ): Promise<void> {
   await withTenant(app, orgId, (tx) =>

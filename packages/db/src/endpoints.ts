@@ -15,7 +15,12 @@
 
 import { randomUUID } from "node:crypto";
 
-import { DedupConfigSchema, type DedupConfig, type SecretSealer } from "@webhook-co/shared";
+import {
+  DedupConfigSchema,
+  type DedupConfig,
+  type SecretSealer,
+  type AuditActorInput,
+} from "@webhook-co/shared";
 import type { ReadSealedIngestTokenResult } from "./ingest-token-seal";
 
 // Import CapabilityFault from the LEAF (not the `@webhook-co/contract` barrel): apps/web pulls this module
@@ -89,7 +94,7 @@ export const DEFAULT_MAX_ENDPOINTS_PER_ORG = 100;
 
 export interface CreateEndpointWithAuditInput extends CreateEndpointInput {
   /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
   /** Per-org endpoint soft cap (ADR-0075). Exceeding it throws RATE_LIMITED — an abuse backstop. */
   readonly maxEndpoints: number;
 }
@@ -181,7 +186,7 @@ export interface DeleteEndpointInput {
   readonly orgId: string;
   readonly endpointId: string;
   /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 export interface DeletedEndpointRow {
@@ -246,7 +251,7 @@ export interface RotateEndpointInput {
   readonly orgId: string;
   readonly endpointId: string;
   /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 export interface RotatedEndpointRow {
@@ -344,7 +349,7 @@ export interface UpdateEndpointDedupInput {
   /** The new dedup config; null RESETS to the default (off — log every request). */
   readonly dedupConfig: DedupConfig | null;
   /** Acting principal (Better Auth user_id) for the audit row, or null for an api-key bearer. */
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 export interface UpdatedEndpointRow {

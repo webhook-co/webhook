@@ -42,7 +42,13 @@ export function makeVerifyBearer(resolver: CredentialResolver) {
     }
     // RFC 8707: a credential minted for one resource must not be replayable at another.
     assertAudience(principal.audience, audience);
-    return { orgId: principal.orgId, scopes: principal.scopes };
+    // keyId rides along so an audited mutation can name the credential that performed it. Absent for a
+    // principal that carries none (the ingest resolver), which auditActorFromContext reads as unattributed.
+    return {
+      orgId: principal.orgId,
+      scopes: principal.scopes,
+      ...(principal.keyId !== undefined ? { keyId: principal.keyId } : {}),
+    };
   };
 }
 

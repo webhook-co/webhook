@@ -27,8 +27,10 @@ import {
   type Cursor,
   type EventSummary,
   type PayloadReaderRpc,
+  type AuditActorInput,
 } from "@webhook-co/shared";
 
+import { requireAuditActor } from "./audit-actor-fault";
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 import { tailEventsWithCursors, type ItemWithCursor } from "./reads";
@@ -79,7 +81,7 @@ function toRecord(r: AgentTriggerRow): AgentTriggerRecord {
 /** Optional tamper-evident audit context for a trigger mutation. */
 export interface TriggerAudit {
   readonly auditKey: CryptoKey;
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 export interface CreateAgentTriggerInput {
@@ -266,7 +268,7 @@ export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): Capability
       return await createAgentTrigger(
         deps.tenant,
         { orgId: ctx.orgId, endpointId: parsed.data.endpointId, name: parsed.data.name ?? null },
-        { auditKey: deps.auditKey, actor: ctx.userId ?? null },
+        { auditKey: deps.auditKey, actor: requireAuditActor(ctx) },
       );
     } catch (err) {
       if (err instanceof TriggerEndpointNotFoundError) {
@@ -290,7 +292,7 @@ export function createAgentTriggerHandlers(deps: TriggerHandlerDeps): Capability
     if (!parsed.success) throw new CapabilityFault("VALIDATION_ERROR", "invalid input");
     const revoked = await revokeAgentTrigger(deps.tenant, ctx.orgId, parsed.data.triggerId, {
       auditKey: deps.auditKey,
-      actor: ctx.userId ?? null,
+      actor: requireAuditActor(ctx),
     });
     if (revoked === null) throw new CapabilityFault("NOT_FOUND", "trigger not found");
     return revoked;

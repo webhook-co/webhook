@@ -1,6 +1,8 @@
 "use server";
 
 import { deleteOrgWithAudit, isOrgOwner } from "@webhook-co/db/org-lifecycle";
+import { sessionCookieOptions } from "./session-cookie";
+import { userActor } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { cookies } from "next/headers";
@@ -35,11 +37,17 @@ export async function deleteOrganization(formData: FormData): Promise<void> {
     if (!(await isOrgOwner(app, session.userId, session.orgId))) {
       throw new Error("only an organization owner can delete the organization");
     }
-    await deleteOrgWithAudit(app, { orgId: session.orgId, actor: session.userId }, auditKey);
+    await deleteOrgWithAudit(
+      app,
+      { orgId: session.orgId, actor: userActor(session.userId) },
+      auditKey,
+    );
   } finally {
     await app.end({ timeout: 5 }).catch(() => {});
   }
 
-  (await cookies()).delete({ name: SESSION_COOKIE, path: "/" });
+  // Same attributes as the set — a `__Host-` cookie cleared without `Secure` is rejected by the browser
+  // and the session would survive (RFC 6265bis §4.1.3).
+  (await cookies()).delete({ name: SESSION_COOKIE, ...sessionCookieOptions() });
   redirect(LOGIN_URL);
 }

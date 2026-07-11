@@ -73,6 +73,13 @@ export interface ResolvedPrincipal {
    * always sets it.
    */
   readonly audience?: string;
+  /**
+   * The api key's OWN id — the credential that authenticated the request, and the one an incident
+   * responder must revoke. Carried so an audited mutation can name it (`key:<id>`) instead of writing
+   * `actor = NULL`, which was indistinguishable from a genuine system action. Populated by the api-key
+   * cold lookup only; the ingest resolver leaves it undefined (ingest writes no audit rows).
+   */
+  readonly keyId?: string;
 }
 
 /**

@@ -202,7 +202,7 @@ describe("revokeAgentTrigger", () => {
 });
 
 describe("triggers.* capability handlers", () => {
-  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
+  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes, keyId: "key_test" });
   const h = () => createAgentTriggerHandlers({ tenant: app, auditKey, cursorKey });
   const create = (c: AuthContext, input: unknown) => h().get("triggers.create")!(c, input);
   const list = (c: AuthContext, input: unknown) => h().get("triggers.list")!(c, input);
@@ -364,7 +364,7 @@ describe("projectTriggerPage (pure — failed-drop + vouched + resume cursor)", 
 });
 
 describe("triggers.wait handler (consumption / delivery guarantee)", () => {
-  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
+  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes, keyId: "key_test" });
   const wait = (c: AuthContext, input: unknown) =>
     createAgentTriggerHandlers({ tenant: app, auditKey, cursorKey }).get("triggers.wait")!(
       c,
@@ -488,7 +488,7 @@ describe("triggers.wait handler (consumption / delivery guarantee)", () => {
 });
 
 describe("triggers.wait inline body (C2 — PayloadReader attachment)", () => {
-  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
+  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes, keyId: "key_test" });
   // A fake PayloadReader: returns a canned body for known event ids, found:false otherwise.
   type Body = {
     body: string;

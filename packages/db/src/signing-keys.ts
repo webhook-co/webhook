@@ -16,6 +16,7 @@ import {
   type EncryptionContext,
   type SealedRecord,
   type SecretSealer,
+  type AuditActorInput,
 } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
@@ -34,7 +35,7 @@ export type SigningKeyStatus = "active" | "retiring" | "revoked";
 export interface SigningSecretAudit {
   readonly auditKey: CryptoKey;
   /** Pseudonymous actor (Better Auth user_id), or null for api-key/system actors. */
-  readonly actor: string | null;
+  readonly actor: AuditActorInput;
 }
 
 export interface CreateSigningSecretInput {

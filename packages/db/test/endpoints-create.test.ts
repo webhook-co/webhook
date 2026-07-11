@@ -1,7 +1,14 @@
 import { randomUUID } from "node:crypto";
 
 import { CreatedEndpointSchema, type AuthContext } from "@webhook-co/contract";
-import { importAuditKey, verifyAuditChain } from "@webhook-co/shared";
+import {
+  formatAuditActor,
+  importAuditKey,
+  parseAuditActor,
+  SYSTEM_ACTOR,
+  userActor,
+  verifyAuditChain,
+} from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { readAuditChain } from "../src/audit-append";
@@ -76,7 +83,7 @@ describe("createEndpointWithAudit", () => {
     const before = await auditLen(orgA);
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "stripe-prod", actor: "user_alice", maxEndpoints: 100 },
+      { orgId: orgA, name: "stripe-prod", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
     );
@@ -95,7 +102,7 @@ describe("createEndpointWithAudit", () => {
     const last = rows[rows.length - 1]!;
     expect(last.action).toBe("endpoint.created");
     expect(last.target).toBe(created.id);
-    expect(last.actor).toBe("user_alice");
+    expect(last.actor).toBe(formatAuditActor(userActor("user_alice")));
 
     // The whole chain verifies against the audit key.
     const v = await verifyAuditChain(auditKey, orgA, rows);
@@ -105,7 +112,7 @@ describe("createEndpointWithAudit", () => {
   it("the minted token resolves back to its org+endpoint via the ingest cold lookup", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgA, name: "ingest-roundtrip", actor: null, maxEndpoints: 100 },
+      { orgId: orgA, name: "ingest-roundtrip", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
     );
@@ -119,7 +126,7 @@ describe("createEndpointWithAudit", () => {
   it("is org-isolated under RLS — a create in org B is invisible to org A", async () => {
     const created = await createEndpointWithAudit(
       app,
-      { orgId: orgB, name: "borg-create", actor: null, maxEndpoints: 100 },
+      { orgId: orgB, name: "borg-create", actor: userActor("user_alice"), maxEndpoints: 100 },
       hasher,
       auditKey,
     );
@@ -136,20 +143,20 @@ describe("createEndpointWithAudit", () => {
     const auditBefore = await auditLen(capOrg);
     await createEndpointWithAudit(
       app,
-      { orgId: capOrg, name: "c1", actor: null, maxEndpoints: 2 },
+      { orgId: capOrg, name: "c1", actor: userActor("user_alice"), maxEndpoints: 2 },
       hasher,
       auditKey,
     );
     await createEndpointWithAudit(
       app,
-      { orgId: capOrg, name: "c2", actor: null, maxEndpoints: 2 },
+      { orgId: capOrg, name: "c2", actor: userActor("user_alice"), maxEndpoints: 2 },
       hasher,
       auditKey,
     );
     await expect(
       createEndpointWithAudit(
         app,
-        { orgId: capOrg, name: "c3", actor: null, maxEndpoints: 2 },
+        { orgId: capOrg, name: "c3", actor: userActor("user_alice"), maxEndpoints: 2 },
         hasher,
         auditKey,
       ),
@@ -173,7 +180,7 @@ describe("createEndpointWithAudit", () => {
     await expect(
       createEndpointWithAudit(
         app,
-        { orgId: atomOrg, name: "atom", actor: null, maxEndpoints: 100 },
+        { orgId: atomOrg, name: "atom", actor: userActor("user_alice"), maxEndpoints: 100 },
         hasher,
         bogusKey,
       ),
@@ -192,7 +199,9 @@ describe("createWriteHandlers — endpoints.create handler", () => {
       ingestBaseUrl: "https://wbhk.my",
       maxEndpoints: 100,
     });
-  const writeCtx: AuthContext = { orgId: "", scopes: ["endpoints:write"] };
+  // A bearer api key is the realistic write principal on api/mcp/cli: verifyBearer resolves a keyId and
+  // NO userId. So the ctx carries keyId — which is exactly what the audit row must attribute the write to.
+  const writeCtx: AuthContext = { orgId: "", scopes: ["endpoints:write"], keyId: "key_test" };
 
   it("mints and returns a contract-shaped endpoint with a one-time ingestUrl", async () => {
     const h = handlers().get("endpoints.create")!;
@@ -205,6 +214,37 @@ describe("createWriteHandlers — endpoints.create handler", () => {
     expect(String(out.ingestUrl)).toMatch(/^https:\/\/wbhk\.my\/whep_[A-Za-z0-9_-]{43}$/);
     // The handler output validates against the contract output schema (createdAt Date -> z.coerce.date).
     expect(CreatedEndpointSchema.safeParse(out).success).toBe(true);
+  });
+
+  // THE REGRESSION TEST for the null-actor defect. An api key carries no userId, so the handler used to
+  // write `actor = NULL` — byte-identical to the delivery DO's genuine `system` actions, which made the
+  // compliance chain unable to answer "who did this" or, in an incident, "which credential do I rotate".
+  it("attributes an api-key write to key:<keyId> — not NULL, and not the system actor", async () => {
+    const keyOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "KeyAttr" })).id;
+    const h = handlers().get("endpoints.create")!;
+    // The principal a bearer api key resolves to: an org + scopes + the key's own id. NO userId.
+    const keyCtx: AuthContext = {
+      orgId: keyOrg,
+      scopes: ["endpoints:write"],
+      keyId: "key_attr_1",
+    };
+    const out = (await h(keyCtx, { name: "by-api-key" })) as Record<string, unknown>;
+
+    const rows = await withTenant(app, keyOrg, (tx) => readAuditChain(tx, keyOrg));
+    const last = rows[rows.length - 1]!;
+    expect(last.action).toBe("endpoint.created");
+    expect(last.target).toBe(out.id);
+
+    // Attributed to the CREDENTIAL that authenticated the call — the rotatable one.
+    expect(last.actor).toBe("key:key_attr_1");
+    expect(last.actor).toBe(formatAuditActor({ kind: "key", id: "key_attr_1" }));
+    // And demonstrably not the two things it used to be indistinguishable from.
+    expect(last.actor).not.toBeNull();
+    expect(last.actor).not.toBe(formatAuditActor(SYSTEM_ACTOR));
+    expect(parseAuditActor(last.actor)).toEqual({ kind: "key", id: "key_attr_1" });
+
+    // The attribution is INSIDE the hash canon, so the chain still verifies with it.
+    expect((await verifyAuditChain(auditKey, keyOrg, rows)).ok).toBe(true);
   });
 
   it("rejects a caller without endpoints:write (FORBIDDEN) and mints/audits NOTHING", async () => {

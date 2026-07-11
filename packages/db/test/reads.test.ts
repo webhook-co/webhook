@@ -7,6 +7,7 @@ import {
   newId,
   parseSince,
   type Cursor,
+  userActor,
 } from "@webhook-co/shared";
 import { type AuthContext } from "@webhook-co/contract";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -160,7 +161,7 @@ beforeAll(async () => {
   await withTenant(app, orgA, async (tx) => {
     await appendAuditEntry(tx, auditKey, {
       orgId: orgA,
-      actor: "u1",
+      actor: userActor("u1"),
       action: "org.created",
       target: null,
     });
@@ -168,7 +169,7 @@ beforeAll(async () => {
   await withTenant(app, orgA, async (tx) => {
     await appendAuditEntry(tx, auditKey, {
       orgId: orgA,
-      actor: "u1",
+      actor: userActor("u1"),
       action: "endpoint.created",
       target: epA,
     });

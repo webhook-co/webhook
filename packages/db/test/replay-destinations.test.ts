@@ -6,6 +6,7 @@ import {
   LocalKmsProvider,
   SecretStore,
   type SecretSealer,
+  userActor,
 } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -86,7 +87,7 @@ describe("createReplayDestination + listReplayDestinations", () => {
     await expect(
       createReplayDestinationWithSigningSecret(app, { orgId: orgA, url }, throwingSealer, {
         auditKey,
-        actor: null,
+        actor: userActor("user_alice"),
       }),
     ).rejects.toThrow();
     // the destination insert and the secret mint share one tx — a seal failure must leave NEITHER behind.
@@ -102,7 +103,7 @@ describe("createReplayDestination + listReplayDestinations", () => {
       sealer,
       {
         auditKey,
-        actor: null,
+        actor: userActor("user_alice"),
       },
     );
     expect(first.signingSecret).toBeDefined(); // first registration reveals the secret once
@@ -112,7 +113,7 @@ describe("createReplayDestination + listReplayDestinations", () => {
       sealer,
       {
         auditKey,
-        actor: null,
+        actor: userActor("user_alice"),
       },
     );
     expect(again.signingSecret).toBeUndefined(); // a re-add does NOT re-reveal (anti double-reveal)
@@ -131,7 +132,11 @@ describe("createReplayDestination + listReplayDestinations", () => {
   it("writes an in-tx audit row when an audit key is supplied", async () => {
     const auditKey = await importAuditKey(new Uint8Array(32).fill(7));
     const url = `https://audited.example.com/${randomUUID()}`;
-    const d = await createReplayDestination(app, { orgId: orgA, url }, { auditKey, actor: null });
+    const d = await createReplayDestination(
+      app,
+      { orgId: orgA, url },
+      { auditKey, actor: userActor("user_alice") },
+    );
     const rows = await withTenant(app, orgA, async (tx) => {
       return tx<{ action: string; target: string }[]>`
         select action, target from audit_log
@@ -185,7 +190,7 @@ describe("tenant isolation (RLS)", () => {
 });
 
 describe("createReplayDestinationHandlers (capability handlers)", () => {
-  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes });
+  const ctx = (scopes: string[]): AuthContext => ({ orgId: orgA, scopes, keyId: "key_test" });
 
   it("create canonicalizes the URL before storing (host lowercased, default port stripped)", async () => {
     const auditKey = await importAuditKey(new Uint8Array(32).fill(9));

@@ -1,6 +1,8 @@
 "use server";
 
 import { deleteOrgWithAudit, isOrgOwner, personalOrgId } from "@webhook-co/db/org-lifecycle";
+import { sessionCookieOptions } from "./session-cookie";
+import { userActor } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { cookies } from "next/headers";
@@ -39,7 +41,11 @@ export async function deleteAccount(formData: FormData): Promise<void> {
   try {
     const personalOrg = personalOrgId(session.userId);
     if (await isOrgOwner(app, session.userId, personalOrg)) {
-      await deleteOrgWithAudit(app, { orgId: personalOrg, actor: session.userId }, auditKey);
+      await deleteOrgWithAudit(
+        app,
+        { orgId: personalOrg, actor: userActor(session.userId) },
+        auditKey,
+      );
     }
   } finally {
     await app.end({ timeout: 5 }).catch(() => {});
@@ -53,6 +59,8 @@ export async function deleteAccount(formData: FormData): Promise<void> {
   await deleter.deleteAccount(session.userId);
 
   // 3. The account (and this session's tenancy) no longer exists — clear the cookie, return to login.
-  (await cookies()).delete({ name: SESSION_COOKIE, path: "/" });
+  // Same attributes as the set — a `__Host-` cookie cleared without `Secure` is rejected by the browser
+  // and the session would survive (RFC 6265bis §4.1.3).
+  (await cookies()).delete({ name: SESSION_COOKIE, ...sessionCookieOptions() });
   redirect(LOGIN_URL);
 }

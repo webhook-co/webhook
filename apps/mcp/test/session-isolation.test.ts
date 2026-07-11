@@ -18,13 +18,18 @@ const TOKEN_A = `whk_${TOKEN_A_BODY}${keyChecksum(TOKEN_A_BODY)}`; // org_a
 const TOKEN_B = `whk_${TOKEN_B_BODY}${keyChecksum(TOKEN_B_BODY)}`; // org_b
 
 /** Seed the KV credential-cache hot path so `token` resolves to `orgId` (audience-bound) without Postgres. */
-async function seedKey(token: string, orgId: string): Promise<void> {
+async function seedKey(token: string, orgId: string, keyId: string): Promise<void> {
   const pepper = await readSecretBinding(env.CREDENTIAL_PEPPER as SecretsStoreSecret | string);
   const hasher = createCredentialHasherFromBase64(pepper);
   const keyHash = hasher.candidates(token)[0];
+  // A real cached principal now carries the id of the key that authenticated the request (so an audited
+  // mutation records `key:<id>` rather than a NULL actor). The api-key resolver runs with `requireKeyId`, so
+  // a principal seeded without one is a stale shape and would be re-resolved from a cold path that has no
+  // Postgres here. Each token gets its OWN key id — which is also what this suite is about: two distinct
+  // credentials must never share a session.
   await (env.KV_AUTHZ as KVNamespace).put(
     credentialCacheKey(keyHash),
-    JSON.stringify({ orgId, scopes: ["events:read"], audience: ORIGIN }),
+    JSON.stringify({ orgId, scopes: ["events:read"], audience: ORIGIN, keyId }),
   );
 }
 
@@ -75,8 +80,8 @@ async function initSession(token: string): Promise<string> {
 
 describe("mcp session isolation — a session id is bound to its principal", () => {
   beforeEach(async () => {
-    await seedKey(TOKEN_A, "org_a");
-    await seedKey(TOKEN_B, "org_b");
+    await seedKey(TOKEN_A, "org_a", "key_a");
+    await seedKey(TOKEN_B, "org_b", "key_b");
   });
 
   it("the owning principal can keep using its session id", async () => {

@@ -81,7 +81,7 @@ import { runAnchorCron } from "./anchor-cron";
 import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
-import { runRetentionPruneCron } from "./retention-prune-cron";
+import { isTotalRetentionFailure, runRetentionPruneCron } from "./retention-prune-cron";
 import {
   guardedDeliver,
   makeSignDelivery,
@@ -1429,14 +1429,23 @@ async function runEventPayloadPurgeDrainCron(env: Env): Promise<void> {
 }
 
 // Retention-prune drain budget: how many orgs to service and how much work per org per tick. Bounded so a
-// large backlog never blows the Workers per-invocation subrequest ceiling — the rest resumes next tick, and
-// the scheduled() budget is SHARED with the other crons. Worst case per tick ≈ orgLimit × batchesPerOrg ×
-// (1 list + 1 R2 delete + 1 events delete) = 50 × 4 × 3 = 600 binding ops, under the 1000 ceiling with
-// margin. On first activation (retention was infinite, so every Free org has a large backlog) the drain
-// spans many hourly ticks by design rather than maxing out a single one. PAGE_SIZE is also the R2
-// batch-delete size (<= 1000, R2's per-call ceiling).
+// large backlog never blows the Workers per-invocation subrequest budget — the rest resumes next tick, and
+// the scheduled() budget is SHARED with the other hourly crons. Worst case per tick ≈ orgLimit × batchesPerOrg
+// × (1 list + 1 events delete + 1 R2 delete) = 50 × 40 × 3 = 6,000 binding ops. That is well over the old
+// 1,000-subrequest cap Cloudflare REMOVED on 2026-02-11 (paid default is now 10,000, up to 10M); the engine
+// wrangler.jsonc raises `limits.subrequests` to 50,000 so this drain plus every sibling hourly cron fits with
+// wide margin. `batchesPerOrg` is sized so a SINGLE org drains ≈ 40 × 1,000 × 24 ticks = 960,000 events/day —
+// ~10× a Scale org's ~100,000/day — so no org can out-produce its own prune. The orgs drain through a bounded
+// concurrency pool (RETENTION_ORG_CONCURRENCY) so a fleet-wide backlog finishes inside the 15-minute cron wall
+// time instead of 50 orgs strictly sequential. Concurrency is kept CONSERVATIVE (2): this is a background,
+// irreversible-deletion cron whose DELETEs cascade events→delivery_attempts on the SAME shared Neon compute
+// the ingest (revenue) path writes to — a higher fan-out could pressure that compute and slow ingest INSERTs
+// toward their statement timeout. 2 is real fleet parallelism at a bounded peak; raise it only after watching
+// Neon under a real backlog. On first activation the drain still spans many hourly ticks by design. PAGE_SIZE
+// is also the R2 batch-delete size (<= 1000, R2's per-call ceiling).
 const RETENTION_ORG_LIMIT = 50;
-const RETENTION_BATCHES_PER_ORG = 4;
+const RETENTION_BATCHES_PER_ORG = 40;
+const RETENTION_ORG_CONCURRENCY = 2;
 const RETENTION_PAGE_SIZE = 1000;
 
 /**
@@ -1452,7 +1461,7 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
   if (!env.HYPERDRIVE_RETENTION) return; // dark until the retention role + Hyperdrive are provisioned
   const sql = createClient(env.HYPERDRIVE_RETENTION.connectionString);
   try {
-    await runRetentionPruneCron({
+    const result = await runRetentionPruneCron({
       // No window is passed in: each org's own `orgs.retention_days` drives the claim, the list, and the
       // delete (0054), and the DELETE policy enforces it independently of anything the app sends.
       claimOrgs: (limit) => claimRetentionOrgs(sql, limit),
@@ -1466,10 +1475,18 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
       deleteR2: (keys) => env.R2_PAYLOADS.delete(keys),
       deleteEvents: (orgId, ids) => deleteExpiredEvents(sql, orgId, ids),
       orgLimit: RETENTION_ORG_LIMIT,
+      orgConcurrency: RETENTION_ORG_CONCURRENCY,
       batchesPerOrg: RETENTION_BATCHES_PER_ORG,
       pageSize: RETENTION_PAGE_SIZE,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
+    // Escalate a TOTAL outage (every claimed org threw) by throwing — the scheduled() catch then emits the
+    // standard "retention prune cron failed" error line that alerting keys on. A PARTIAL failure does NOT
+    // throw (the healthy orgs' deletions are valid). Fail direction is safe either way (data is RETAINED,
+    // never wrongly deleted). The decision is the pure, unit-tested `isTotalRetentionFailure`.
+    if (isTotalRetentionFailure(result)) {
+      throw new Error(`retention prune: all ${result.orgs} claimed orgs failed`);
+    }
   } finally {
     await sql.end();
   }

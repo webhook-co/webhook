@@ -10,6 +10,7 @@
 // `new CapabilityFault` would throw "not a constructor" on the RATE_LIMITED / NOT_FOUND path (see
 // [[turbopack-contract-barrel]]).
 import { CapabilityFault } from "@webhook-co/contract/capability";
+import type { AuditActorInput } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
@@ -50,8 +51,8 @@ export async function enforceEventDeleteRateLimit(app: Sql, orgId: string): Prom
 export interface DeleteEventInput {
   readonly orgId: string;
   readonly eventId: string;
-  /** Acting principal for the audit row (null for a system actor). */
-  readonly actor: string | null;
+  /** Acting principal for the audit row — a typed actor, never a bare id (see audit-actor). */
+  readonly actor: AuditActorInput;
 }
 
 export interface DeletedEventRow {

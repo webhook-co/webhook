@@ -1,4 +1,5 @@
 import "server-only";
+import { userActor } from "@webhook-co/shared";
 
 import {
   createAgentTrigger,
@@ -54,9 +55,9 @@ async function defaultDeps(): Promise<{ deps: AgentTriggerDeps; close: () => Pro
   return {
     deps: {
       create: (orgId, endpointId, name, actor) =>
-        createAgentTrigger(app, { orgId, endpointId, name }, { auditKey, actor }),
+        createAgentTrigger(app, { orgId, endpointId, name }, { auditKey, actor: userActor(actor) }),
       revoke: (orgId, triggerId, actor) =>
-        revokeAgentTrigger(app, orgId, triggerId, { auditKey, actor }),
+        revokeAgentTrigger(app, orgId, triggerId, { auditKey, actor: userActor(actor) }),
     },
     close: async () => {
       await app.end({ timeout: 5 }).catch(() => {});
