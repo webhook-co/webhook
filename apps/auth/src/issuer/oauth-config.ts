@@ -45,6 +45,18 @@ export const oauthIssuerConfig = {
   // junk or real — can't outlive this window, and a future library-default change can't silently alter it.
   // DCR clients transparently re-register when their cached client_id is rejected.
   clientRegistrationTTL: 90 * 24 * 60 * 60,
+  // CIMD (Client ID Metadata Documents): accept an https-URL client_id resolved to a self-hosted metadata
+  // doc — the MCP spec's forward path (DCR is deprecated). This lets a client present a DOMAIN-PROVEN
+  // identity (Claude Code → claude.ai, VS Code → vscode.dev, Zed → zed.dev), which the consent screen shows
+  // as "verified". Open to any https client_id (founder decision 2026-07-11); the phishing surface an open
+  // registration would otherwise create is neutralized by (a) the origin-honest consent screen — the
+  // un-spoofable identity domain + redirect host + an "unverified app" warning + Deny-dominant for a remote
+  // unverified client, (b) the same-origin-or-loopback redirect fence (isCimdRedirectAllowed — the provider's
+  // registration callback never runs on the CIMD path, so consent-core is the gate), and (c) the tighter
+  // pre-auth CIMD-fetch throttle. Requires the `global_fetch_strictly_public` compat flag (set in
+  // wrangler.jsonc) for SSRF safety; the provider advertises client_id_metadata_document_supported only when
+  // BOTH are true. Follow-up safety net: connected-apps + one-click revoke.
+  clientIdMetadataDocumentEnabled: true,
   scopesSupported: [...CAPABILITY_SCOPES],
   allowImplicitFlow: false,
   allowPlainPKCE: false,
