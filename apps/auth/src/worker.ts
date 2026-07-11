@@ -21,6 +21,7 @@ import { OAuthProvider } from "@cloudflare/workers-oauth-provider";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 import openNextHandler from "../.open-next/worker.js";
+import { listUserConnectedApps, revokeUserConnectedApp } from "./issuer/connected-apps-handler";
 import { introspect } from "./issuer/introspect-handler";
 import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
 import { nowSeconds } from "./issuer/issuer-constants";
@@ -107,5 +108,19 @@ export class SessionExchange extends WorkerEntrypoint {
 export class AccountDeleter extends WorkerEntrypoint {
   async deleteAccount(userId) {
     return deleteAccountRpc(this.env, userId);
+  }
+}
+
+// ConnectedApps: the web→auth "connected apps" RPC. A user's active OAuth grants (the third-party MCP
+// clients they authorized) live in this Worker's OAUTH_KV — the web dashboard can't read them locally, so it
+// calls this binding. apps/web verifies the session and passes its OWN authenticated userId (never
+// client-supplied), and the provider's revokeGrant is keyed by (grantId, userId), so a user can only ever
+// list/revoke their own grants. Runs in this Worker with OAUTH_KV. Delegates to the type-checked handlers.
+export class ConnectedApps extends WorkerEntrypoint {
+  async list(userId) {
+    return listUserConnectedApps(readIntrospectEnv(this.env), userId);
+  }
+  async revoke(userId, grantId) {
+    return revokeUserConnectedApp(readIntrospectEnv(this.env), userId, grantId);
   }
 }
