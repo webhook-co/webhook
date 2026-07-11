@@ -177,12 +177,12 @@ export default function AcceptableUsePage() {
           <h2>7. Reporting abuse, and reporting vulnerabilities</h2>
           <p>
             If you believe someone is using webhook.co in breach of this policy, email{" "}
-            <a href="mailto:abuse@webhook.co">abuse@webhook.co</a> with as much detail as you can
-            give us — endpoint URLs, timestamps, and what you observed.
+            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> with as much detail as you
+            can give us — endpoint URLs, timestamps, and what you observed.
           </p>
           <p>
             If you&apos;ve found a security vulnerability in the Service, email{" "}
-            <a href="mailto:security@webhook.co">security@webhook.co</a>. Report it to us first and
+            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a>. Report it to us first and
             give us a reasonable chance to fix it, don&apos;t access or alter data that isn&apos;t
             yours while investigating, and we won&apos;t pursue you for good-faith research that
             follows those rules.

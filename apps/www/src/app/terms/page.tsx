@@ -209,7 +209,7 @@ export default function TermsPage() {
           <p>
             If you think you've been charged unfairly,{" "}
             <strong>get in touch and we'll look at it</strong>. Email{" "}
-            <a href="mailto:support@webhook.co">support@webhook.co</a> and we'll review it{" "}
+            <a href="mailto:sourabh@webhook.co">sourabh@webhook.co</a> and we'll review it{" "}
             <strong>case by case</strong> — we'd rather sort out a genuine problem than keep money
             we didn't earn. This is in addition to your statutory rights below, which we never ask
             you to waive.
