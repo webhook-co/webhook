@@ -1,0 +1,69 @@
+---
+title: "How authorization works"
+sidebarTitle: "Authorization"
+description: "How MCP clients authenticate to webhook.co — a whk_ bearer token or the interactive OAuth flow — plus the consent screen, verified apps, the profile scope, and connected apps."
+icon: "shield-check"
+---
+
+Every MCP client reaches the same server at `https://mcp.webhook.co/mcp` and the same tools, no matter how it authenticates. There are two ways in.
+
+## Two ways in
+
+<CardGroup cols={2}>
+  <Card title="whk_ bearer token" icon="key">
+    Paste a personal API key, or send `Authorization: Bearer whk_your_key_here`. Works in **any**
+    MCP client that supports a static token or header — desktop, headless, or CI. The simple,
+    universal path. [Mint a key](/authentication).
+  </Card>
+  <Card title="OAuth (the connect button)" icon="right-to-bracket">
+    Clients with an interactive connector — Claude Desktop, Claude Code, Cursor's cloud agent, VS
+    Code, Zed — run a browser sign-in against auth.webhook.co. You log in, approve a consent screen,
+    and the client stores the tokens. No key to paste.
+  </Card>
+</CardGroup>
+
+At the server, both arrive as a bearer token in the `Authorization` header — the difference is how you get one. A `whk_` key is minted once and pasted; an OAuth flow mints and refreshes tokens for you after you approve them. Pick whichever your client supports; the [connect guide](/mcp/using-from-a-client) has per-client steps.
+
+## Which clients use which
+
+The badge column reflects what you'll see on the consent screen during an OAuth sign-in (see [verified vs unverified](#verified-vs-unverified)).
+
+| Client                                      | `whk_` bearer    | OAuth            | Consent badge         |
+| ------------------------------------------- | ---------------- | ---------------- | --------------------- |
+| Claude Code                                 | ✓                | ✓ (loopback)     | unverified — expected |
+| Claude Desktop                              | via `mcp-remote` | ✓                | verified              |
+| Cursor (desktop)                            | ✓                | —                | —                     |
+| Cursor (cloud agent)                        | ✓                | ✓                | verified              |
+| VS Code (Copilot)                           | ✓                | ✓                | verified              |
+| Zed                                         | ✓                | ✓                | verified              |
+| Codex CLI                                   | ✓                | —                | —                     |
+| Cline · Goose · JetBrains · Warp · Continue | ✓                | client-dependent | —                     |
+
+Cursor desktop uses a private callback scheme that the OAuth flow can't verify, so it connects with a bearer token — that's the supported path there. Cursor's cloud agent, which calls back over the web, can use OAuth.
+
+## Verified vs unverified
+
+When you approve an OAuth connection, the consent screen tells you which app is asking. Some clients prove their identity with a domain we can check — Claude via `claude.ai`, Cursor's cloud agent via `cursor.com`, VS Code via `vscode.dev`, Zed via `zed.dev` — and those show as a **verified** app.
+
+Clients that run on your own machine and register themselves on the fly — **Claude Code** on localhost is the common one — can't present a checkable domain, so they show as **unverified**. That is expected and safe, not an error: the code lands back on your own machine, and the screen leans on the redirect host and identity domain it shows you — which a phisher can't fake — rather than a name the app picks for itself.
+
+<Tip>
+  Before you approve, read the identity domain and redirect host on the consent screen, not just the
+  app's name. A verified badge means the domain is one we recognize; an unverified badge on a local
+  tool you just launched is normal.
+</Tip>
+
+## The profile scope
+
+The MCP `whoami` tool always returns your organization id, user id, and granted scopes. If a client also requests the `profile` scope — shown on the consent screen when you approve — `whoami` additionally returns your name and email. Without `profile`, it returns neither.
+
+API-key connections stay organization-only: a `whk_` key isn't bound to a person, so `whoami` over a bearer key never returns a name or email.
+
+## Connected apps
+
+Every OAuth app you approve is listed in the dashboard under **Settings → Connected apps**. You can revoke any of them with one click — an app's access stops on its next request. This is separate from the API keys you mint yourself, which are managed on the [authentication settings](/authentication) page.
+
+<Info>
+  Revoking a connected app cuts off that client only. Your other connections and your `whk_` keys
+  keep working.
+</Info>

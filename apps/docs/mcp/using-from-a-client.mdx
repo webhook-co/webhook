@@ -1,7 +1,7 @@
 ---
 title: "Connect your MCP client"
 sidebarTitle: "Connect a client"
-description: "Connect any MCP client to webhook.co's remote server at https://mcp.webhook.co/mcp — OAuth or a whk_ bearer token. Per-client configs for coding agents."
+description: "Connect any MCP client to webhook.co's remote server at https://mcp.webhook.co/mcp — paste a whk_ bearer token or use the interactive OAuth sign-in. Per-client configs for coding agents."
 icon: "plug"
 ---
 
@@ -11,10 +11,12 @@ Point your MCP client at webhook.co's remote server and it gains 21 tools — in
   **`https://mcp.webhook.co/mcp`** — a remote, **streamable-HTTP** MCP server. Not stdio.
 </Card>
 
-Two ways to authenticate:
+Two ways to authenticate, and every tool works the same under both:
 
-- **OAuth (interactive).** webhook.co is a standard OAuth resource server. For most clients, adding the server URL triggers a browser sign-in on first connect — no key to paste. This is the recommended path for GUI clients (Claude Desktop, ChatGPT, Cursor one-click).
-- **`whk_` bearer token.** Send `Authorization: Bearer whk_your_key_here`. Best for header-based and headless clients (Claude Code, Codex, CI). [Mint a key](/authentication), store it in an environment variable, and never hardcode it.
+- **`whk_` bearer token — the simple path.** Paste a personal API key, or send `Authorization: Bearer whk_your_key_here`. Works in any MCP client that supports a static token or header — desktop, headless, or CI. [Mint a key](/authentication), store it in an environment variable, and never hardcode it.
+- **OAuth (the "connect" / "sign in" button).** Clients with an interactive connector — Claude Desktop, Claude Code, Cursor's cloud agent, VS Code, Zed — run a browser sign-in (authorization code + PKCE) against auth.webhook.co: you log in, approve a consent screen, and the client stores the tokens. No key to paste.
+
+See [how authorization works](/mcp/authorization) for the two methods side by side, a client × auth-method matrix, the consent screen, and the verified-app badge.
 
 <Info>
   New here? [Mint an API key](/authentication) and browse the full [tool catalog](/mcp/overview) —
@@ -27,7 +29,6 @@ Jump to your client:
 
 - [Claude Code](#claude-code)
 - [Claude Desktop](#claude-desktop)
-- [ChatGPT](#chatgpt)
 - [Codex CLI](#codex-cli)
 - [Cursor](#cursor)
 - [VS Code (Copilot)](#vs-code-copilot)
@@ -111,8 +112,8 @@ Claude Desktop connects from Anthropic's cloud, so the server must be publicly r
   <Step title="Open Connectors">**Settings → Connectors → Add custom connector.**</Step>
   <Step title="Paste the server URL">Enter `https://mcp.webhook.co/mcp` and click **Add**.</Step>
   <Step title="Authenticate">
-    Complete the OAuth sign-in when prompted. The Free plan allows one custom connector; Pro, Max,
-    Team, and Enterprise allow more.
+    Complete the OAuth sign-in when prompted (how many custom connectors you can add depends on your
+    Claude plan).
   </Step>
 </Steps>
 
@@ -150,20 +151,6 @@ Claude Desktop connects from Anthropic's cloud, so the server must be publicly r
 
   </Tab>
 </Tabs>
-
-## ChatGPT
-
-ChatGPT connects from OpenAI's cloud (Developer mode / custom connectors, on paid plans), so the endpoint must be public — `https://mcp.webhook.co/mcp` is. A raw bearer header isn't a first-class field here, so OAuth is the path.
-
-<Steps>
-  <Step title="Enable Developer mode">**Settings → Apps → Advanced → enable Developer mode.**</Step>
-  <Step title="Create the connector">
-    **Create custom connector**, then set the URL to `https://mcp.webhook.co/mcp`.
-  </Step>
-  <Step title="Authenticate">
-    Complete the OAuth sign-in. The connector's tools become available in Developer mode chats.
-  </Step>
-</Steps>
 
 ## Codex CLI
 
@@ -209,7 +196,7 @@ Cursor speaks streamable HTTP natively. Use `~/.cursor/mcp.json` for all project
     }
     ```
 
-    Set `WEBHOOK_API_KEY` in your environment. For OAuth instead, omit `headers` and complete the one-click sign-in Cursor offers on connect.
+    Set `WEBHOOK_API_KEY` in your environment. On Cursor desktop the bearer token is the supported path — it uses a private callback that OAuth can't verify. Cursor's web / cloud agent can instead use OAuth: omit `headers` and complete the sign-in Cursor offers on connect (it shows as a verified app). See [how authorization works](/mcp/authorization).
 
   </Step>
   <Step title="Or use the deeplink">
@@ -345,7 +332,7 @@ Once connected, confirm the tools loaded — you should see the `triggers.*` and
 - **Claude Code / Codex** — run `/mcp` (or `claude mcp list` / `codex mcp list`); `webhook` reports connected.
 - **Cursor / Windsurf** — open the MCP panel; look for a green dot and the tool list.
 - **VS Code** — **MCP: List Servers → Start**, then check the tools.
-- **Claude Desktop / ChatGPT** — the connector shows as active; the tools are offered in a new chat.
+- **Claude Desktop** — the connector shows as active; the tools are offered in a new chat.
 
 A quick smoke test from any client: ask it to list your endpoints. If the `endpoints.*` tools resolve, auth and transport are both working.
 
@@ -374,7 +361,10 @@ A quick smoke test from any client: ask it to list your endpoints. If the `endpo
   <Accordion title="My client only speaks stdio">
     Use the [`mcp-remote` bridge](#the-mcp-remote-bridge) — it presents the remote server to the client as a local stdio server. Remember the space-in-argument gotcha: pass the header value via `env`.
   </Accordion>
-  <Accordion title="Claude Desktop or ChatGPT can't reach my endpoint">
-    Both connect from the vendor's cloud, so they can only reach a **publicly reachable** server. `https://mcp.webhook.co/mcp` is public, so it works — but a `localhost` or private-network MCP server will not connect from these clients. Local-only setups need a local client (Claude Code, Cursor, VS Code) or a public tunnel.
+  <Accordion title="A cloud client can't reach my endpoint">
+    Some clients connect from the vendor's cloud (Claude Desktop is one), so they can only reach a **publicly reachable** server. `https://mcp.webhook.co/mcp` is public, so it works — but a `localhost` or private-network MCP server will not connect from a cloud client. Local-only setups need a local client (Claude Code, Cursor, VS Code) or a public tunnel.
+  </Accordion>
+  <Accordion title="A cloud chat client won't connect at all">
+    Some hosted chat clients only accept an OAuth connector whose callback we can't verify, and expose no field for a bearer header — so neither auth path completes. Use a client with a header field or a native connect button: Claude, Cursor, VS Code, or Zed.
   </Accordion>
 </AccordionGroup>

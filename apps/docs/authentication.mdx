@@ -63,6 +63,8 @@ Every key carries an explicit set of scopes, and a key should be granted only th
 | `audit:read`      | Read and verify the tamper-evident audit log.                                     |
 | `billing:read`    | Read [usage and metering](/events-and-usage).                                     |
 
+There's one more scope you won't find in this table: `profile`. It isn't a capability or a blast-radius scope, and you can't mint an API key with it — it's an identity scope granted only through OAuth consent, and it lets the MCP `whoami` tool return your name and email. See [how authorization works](/mcp/authorization#the-profile-scope).
+
 **Least privilege in practice:** mint one key per consumer, scoped to what that consumer does. A CI job that only lists events gets `events:read`; a provisioning script that creates endpoints gets `endpoints:write`; a metering dashboard gets `billing:read`. Don't over-provision one key and hand every service the keys to the kingdom — the point of narrow scopes is that a leak from one consumer doesn't compromise the others.
 
 ### When a scope is missing
@@ -90,6 +92,8 @@ Create, rotate, and revoke API keys from **Settings → Credentials** in the [da
 - **Rotate without downtime.** Create the replacement first, roll it out to your consumers, and revoke the old key once traffic has moved. Both keys are live during the overlap, so nothing drops. The full playbook, including how to shrink the blast radius before a leak, is in [recovering a leaked key](/leaked-api-key#rotate-without-downtime).
 - **Revocation is immediate.** A revoked key stops working on the very next request — it's the only remedy for a leak, and it takes effect at once.
 
+OAuth apps you've approved — as opposed to keys you minted — are managed separately, under **Settings → Connected apps**, where one-click revoke cuts an app's access immediately. See [how authorization works](/mcp/authorization#connected-apps).
+
 ## Signing in from the CLI
 
 You don't have to paste a key into the CLI. `wbhk login` runs a browser-based OAuth flow (PKCE) and stores a short-lived, scoped key in your OS keychain; it refreshes silently in the background, and `wbhk logout` revokes it server-side.
@@ -110,7 +114,7 @@ The same `whk_` bearer authenticates every surface — it's one credential model
 - **API** — the `Authorization: Bearer` header on every request to `api.webhook.co`.
 - **CLI** — `wbhk login` mints and stores a short-lived scoped key for you; or set `WEBHOOK_API_KEY` for a key you manage yourself.
 - **SDKs** — pass the key at construction; the client attaches it and redacts it.
-- **MCP** — `mcp.webhook.co/mcp` is a pure OAuth resource server: **bearer only**, either a `whk_` key or an OAuth access token in the `Authorization` header, no cookies or login form. Scopes are enforced by the same shared handler as the API. See [connect from a client](/mcp/using-from-a-client).
+- **MCP** — `mcp.webhook.co/mcp` accepts a bearer token in the `Authorization` header, and there are two ways to get one: paste a `whk_` key, or run the interactive OAuth flow (a browser sign-in and consent at auth.webhook.co) that your client offers. Either way the same shared handler enforces scopes, just like the API. See [connect from a client](/mcp/using-from-a-client) and [how authorization works](/mcp/authorization).
 
 ## Environments and base URL
 

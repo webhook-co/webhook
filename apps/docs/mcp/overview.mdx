@@ -15,7 +15,7 @@ The server is a streamable-HTTP endpoint:
 https://mcp.webhook.co/mcp
 ```
 
-It's a pure OAuth resource server: **bearer auth only** — a `whk_` API key or an OAuth access token in the `Authorization` header. No cookies, no CORS, no login form. See [connect from a client](/mcp/using-from-a-client) for a ready-to-paste config, and [authentication](/authentication) for how to mint a key.
+At the server it's bearer auth only — a `whk_` API key or an OAuth access token in the `Authorization` header. No cookies, no CORS, no login form. Connect two ways: paste a `whk_` key, or run the interactive OAuth sign-in from your client. See [how authorization works](/mcp/authorization) for the two methods and the consent screen, [connect from a client](/mcp/using-from-a-client) for a ready-to-paste config, and [authentication](/authentication) for how to mint a key.
 
 Every session id is HMAC-bound to the principal that initialized it. Replaying a captured session id under a different principal is rejected before any tool runs — a stolen session is not a usable session.
 
@@ -50,6 +50,8 @@ The catalog is _derived_ from the same capability contract the API, CLI, and das
 </CardGroup>
 
 The write tools (`endpoints.create/update/delete/rotate`, the reveal and provider-secret tools, `triggers.create/revoke`) require a write scope; the rest need only the matching read scope. A read-only key can browse and wait, but can't mutate anything.
+
+There's also an identity tool, `whoami`, that returns your organization, user, and granted scopes — plus your name and email when the OAuth `profile` scope was granted (see [how authorization works](/mcp/authorization)). It's identity, not a scope-gated capability, so it isn't counted among the 21.
 
 ## What's deliberately _not_ here
 
