@@ -49,6 +49,13 @@ import type { McpEnv } from "./env";
 
 const SERVER_NAME = "webhook.co";
 const SERVER_VERSION = "0.0.0";
+// Human-facing display name + description surfaced via the initialize serverInfo (SDK Implementation.title/
+// description). Clients that render a server title/description prefer these over the programmatic `name`.
+// (The connector-list ICON is client-drawn from its own registry and ignores serverInfo — a marketplace
+// listing, not something we can set here.)
+const SERVER_TITLE = "webhook.co";
+const SERVER_DESCRIPTION =
+  "Receive, inspect, replay, and deliver webhooks — manage endpoints, browse events, and wire up agent triggers.";
 
 /** Concise, agent-facing descriptions for the bound read tools (MCP tool discovery). */
 const TOOL_DESCRIPTIONS: Record<string, string> = {
@@ -101,7 +108,12 @@ function inputShape(cap: AnyCapability): z.ZodRawShape {
 }
 
 export class WebhookMcp extends McpAgent<McpEnv> {
-  server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
+  server = new McpServer({
+    name: SERVER_NAME,
+    version: SERVER_VERSION,
+    title: SERVER_TITLE,
+    description: SERVER_DESCRIPTION,
+  });
 
   // Imported once per DO start in init() (before any tool call runs), so the per-call path opens
   // only a tenant DB client. Definite-assignment: init() always sets these before tools dispatch.
