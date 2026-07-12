@@ -353,6 +353,34 @@ function CopyButton({
   );
 }
 
+/**
+ * The colour for an HTTP method badge, from the design system's semantic token triplets
+ * (`ok` / `warn` / `danger` / `info`, each a matched text+bg+border set).
+ *
+ * The mapping is the conventional REST reading of the verb: read (info), create (ok), update (warn),
+ * remove (danger). OPTIONS/HEAD are metadata, so they stay neutral rather than borrowing a meaning.
+ *
+ * TINTED text on a pale background, never a saturated fill: a solid brand-colour chip cannot hold
+ * 4.5:1 against its own label at this glyph size — an earlier lane learned that the hard way. Each
+ * triplet is designed to pass together, and the axe pass in the tests keeps it honest.
+ *
+ * Colour is REINFORCEMENT, never the signal (WCAG 1.4.1): the verb is spelled out in the badge, so a
+ * reader who can't distinguish the hues loses nothing.
+ */
+const VERB_STYLES: Record<string, string> = {
+  GET: "bg-info-bg text-info border-info-border",
+  POST: "bg-ok-bg text-ok border-ok-border",
+  PUT: "bg-warn-bg text-warn border-warn-border",
+  PATCH: "bg-warn-bg text-warn border-warn-border",
+  DELETE: "bg-danger-bg text-danger border-danger-border",
+};
+/** Anything else (OPTIONS, HEAD, and any verb a caller invents) — neutral, and still legible. */
+const VERB_NEUTRAL = "bg-surface-sunken text-fg-secondary border-hairline";
+
+export function verbStyle(method: string): string {
+  return VERB_STYLES[method.toUpperCase()] ?? VERB_NEUTRAL;
+}
+
 // Renders a single captured request. EVERY attacker-controlled field (method, header names/values,
 // body) is a React text child — React escapes it, so a `<script>` or `<img onerror>` in the payload
 // is shown as literal text and NEVER executed or parsed as HTML. This is the render half of the XSS
@@ -361,7 +389,12 @@ export function CaptureRow({ capture }: { capture: Capture }) {
   return (
     <li className="overflow-hidden rounded-card border border-hairline bg-surface">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-hairline px-4 py-2 font-mono text-xs">
-        <span className="rounded-control bg-surface-sunken px-1.5 py-0.5 font-semibold text-fg">
+        <span
+          className={cn(
+            "rounded-control border px-1.5 py-0.5 font-semibold",
+            verbStyle(capture.method),
+          )}
+        >
           {capture.method}
         </span>
         <span className="text-fg-muted">{capture.contentType ?? "no content-type"}</span>
