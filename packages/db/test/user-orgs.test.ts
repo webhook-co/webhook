@@ -128,6 +128,36 @@ describe("the user-scoped policies are DENY-BY-DEFAULT", () => {
     expect(rows.some((r) => r.org_id === ginasOrg)).toBe(false);
   });
 
+  it("the DIRECTORY ITSELF is deny-by-default: no user GUC (or a blank one) → no rows", async () => {
+    // The load-bearing claim of the whole design: user_org_directory() takes NO argument, so it cannot be
+    // pointed at another user — it reads current_app_user(). If an unset GUC returned rows, that function
+    // would be a cross-org read available to webhook_app for the asking. Assert the function, not just the
+    // tables around it.
+    const ivan = `u_i_${randomUUID().slice(0, 8)}`;
+    await seedUser(ivan);
+    await seedOrg("Ivan Org", ivan);
+
+    // No withUser at all → current_app_user() is NULL.
+    expect(await app<{ org_id: string }[]>`select org_id from user_org_directory()`).toEqual([]);
+
+    // …and a BLANK GUC is NULL too (the nullif in current_app_user), not an empty-string match.
+    const blank = await app.begin(async (tx) => {
+      await tx`select set_config('app.current_user', '', true)`;
+      return tx<{ org_id: string }[]>`select org_id from user_org_directory()`;
+    });
+    expect(blank).toEqual([]);
+  });
+
+  it("orders the directory oldest-first, so the personal org leads and the order is stable", async () => {
+    const jo = `u_j_${randomUUID().slice(0, 8)}`;
+    await seedUser(jo);
+    const first = await seedOrg("Jo First", jo);
+    const second = await seedOrg("Jo Second", jo);
+
+    // Not sorted by the test — the ORDER is the assertion (the switcher shows them in this order).
+    expect((await listUserOrgs(app, jo)).map((o) => o.orgId)).toEqual([first, second]);
+  });
+
   it("webhook_app CANNOT read across orgs directly, even inside withUser — only the directory can", async () => {
     // The heart of the design. A permissive `user_id = current_app_user()` policy on webhook_app would make
     // this bare read return BOTH orgs — and would thereby make every unqualified membership read in the
