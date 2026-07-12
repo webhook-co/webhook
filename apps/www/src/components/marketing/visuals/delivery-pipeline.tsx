@@ -1,4 +1,6 @@
 import { cn } from "@webhook-co/ui";
+
+import { focusRing } from "@/lib/styles";
 import type { ReactNode } from "react";
 
 /**
@@ -68,7 +70,27 @@ function Lane({
         />
         {tag}
       </span>
-      <div className="relative flex items-center justify-between gap-1.5 overflow-x-auto py-1">
+      {/* The lane scrolls sideways on a narrow card — which makes it a SCROLLABLE REGION, and a
+          scrollable region a keyboard user cannot reach is a WCAG failure (axe:
+          scrollable-region-focusable). The desktop axe scan never saw this, because at 1120px the lane
+          doesn't overflow and so isn't scrollable at all; the mobile scan found it immediately. Same
+          treatment the terminal already has: a named, focusable region.
+          `justify-start` (not `justify-between`) so the first node stays at the left edge when the
+          content overflows, rather than being pushed out of view. */}
+      {/* jsx-a11y forbids tabIndex on a non-interactive element, but axe REQUIRES a scrollable region
+      to be keyboard-reachable (scrollable-region-focusable) — the two rules genuinely conflict here,
+      and axe is the one describing a real user being unable to reach the content. Same resolution
+      as ui/terminal.tsx. */}
+      {/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- see above: axe requires it */}
+      <div
+        role="region"
+        aria-label={`${tag} pipeline`}
+        tabIndex={0}
+        className={cn(
+          focusRing,
+          "relative flex items-center justify-start gap-1.5 overflow-x-auto py-1 min-[560px]:justify-between",
+        )}
+      >
         {children}
       </div>
     </div>

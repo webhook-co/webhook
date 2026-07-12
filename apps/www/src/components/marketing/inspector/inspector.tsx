@@ -138,7 +138,11 @@ function InspectorRow({
   return (
     <li
       data-enter={isNewest && appended ? "" : undefined}
-      className="inspector-row relative flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-hairline px-4 py-2.5 first:border-t-0"
+      // STACKS on a narrow card instead of wrapping. `flex-wrap` let the pieces reflow individually,
+      // so at phone width the event name collapsed to an ellipsis and a long failure reason shoved
+      // "Replay" onto a line of its own — every row a different height, nothing lining up. Two tidy
+      // rows (identity, then status) beat one ragged one.
+      className="inspector-row relative flex flex-col gap-y-1.5 border-t border-hairline px-4 py-2.5 first:border-t-0 sm:flex-row sm:items-center sm:gap-x-3"
     >
       {/* A faint tint sweeps the row on each replay. Keyed by count so it re-fires per click, and a
           separate layer so it never clobbers the newest row's entrance animation. */}
@@ -149,40 +153,48 @@ function InspectorRow({
           className="replay-flash pointer-events-none absolute inset-0"
         />
       )}
-      <span
-        aria-hidden="true"
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-control bg-surface-sunken font-mono text-[0.625rem] font-semibold text-fg-secondary"
-      >
-        {row.badge}
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
-        <span className="text-fg-secondary">{row.provider}</span>
-        <span aria-hidden="true" className="text-fg-faint">
-          {" · "}
-        </span>
-        {row.event}
-      </span>
-      <Sig status={row.status} />
-      <span className="shrink-0 font-mono text-xs tabular-nums text-fg-muted">
-        {row.latencyMs}ms
-      </span>
-      <span className="flex shrink-0 items-center gap-2">
-        <button
-          type="button"
-          onClick={onReplay}
-          aria-label={`Replay ${row.provider} ${row.event}`}
-          className={cn(
-            focusRing,
-            "rounded-control border border-hairline px-2 py-0.5 font-mono text-[0.6875rem] text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
-          )}
+      {/* Line 1 on a phone: who sent what. */}
+      <span className="flex min-w-0 flex-1 items-center gap-3">
+        <span
+          aria-hidden="true"
+          className="inline-flex size-6 shrink-0 items-center justify-center rounded-control bg-surface-sunken font-mono text-[0.625rem] font-semibold text-fg-secondary"
         >
-          Replay
-        </button>
-        {replayCount > 0 && (
-          <span className="font-mono text-[0.6875rem] text-info">
-            replayed {replayCount}&times;
+          {row.badge}
+        </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-sm text-fg">
+          <span className="text-fg-secondary">{row.provider}</span>
+          <span aria-hidden="true" className="text-fg-faint">
+            {" · "}
           </span>
-        )}
+          {row.event}
+        </span>
+      </span>
+
+      {/* Line 2 on a phone: what happened to it. Indented to the event name so the two lines read as
+          one record rather than two. */}
+      <span className="flex min-w-0 items-center gap-3 pl-9 sm:shrink-0 sm:pl-0">
+        <Sig status={row.status} />
+        <span className="shrink-0 font-mono text-xs tabular-nums text-fg-muted">
+          {row.latencyMs}ms
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            onClick={onReplay}
+            aria-label={`Replay ${row.provider} ${row.event}`}
+            className={cn(
+              focusRing,
+              "rounded-control border border-hairline px-2 py-0.5 font-mono text-[0.6875rem] text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg",
+            )}
+          >
+            Replay
+          </button>
+          {replayCount > 0 && (
+            <span className="font-mono text-[0.6875rem] text-info">
+              replayed {replayCount}&times;
+            </span>
+          )}
+        </span>
       </span>
     </li>
   );
@@ -197,9 +209,13 @@ function Sig({ status }: { status: SigStatus }) {
     );
   }
   return (
-    <span className="inline-flex shrink-0 items-center gap-1 font-mono text-xs text-danger">
+    // NOT `shrink-0`: the failure reason is the longest thing in the row, and on a phone it was
+    // refusing to yield — shoving the Replay button off the edge of the card ("Repla"). It truncates
+    // instead. The full reason is still the accessible text, and it fits in one line the moment there
+    // is room; a clipped BUTTON is a broken control, a clipped sentence is just an ellipsis.
+    <span className="inline-flex min-w-0 items-center gap-1 font-mono text-xs text-danger">
       <span aria-hidden="true">✕</span>
-      <span>failed — {FAIL_REASON_LABEL[status.reason]}</span>
+      <span className="truncate">failed — {FAIL_REASON_LABEL[status.reason]}</span>
     </span>
   );
 }

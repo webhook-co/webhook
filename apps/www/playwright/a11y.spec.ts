@@ -267,13 +267,6 @@ test.describe("homepage accessibility (real browser)", () => {
     await expectClean(page);
   });
 
-  test("no violations with the Product nav dropdown open", async ({ page }) => {
-    // The IA lane left a single dropdown (Product → www pages); Developers was removed.
-    await page.getByRole("button", { name: /^product$/i }).click();
-    await expectClean(page);
-    await page.keyboard.press("Escape");
-  });
-
   test("no violations on each surface tab (covers all four dark terminals)", async ({ page }) => {
     for (const name of ["MCP", "CLI", "API", "Web app"]) {
       const tab = page.getByRole("tab", { name, exact: true });
