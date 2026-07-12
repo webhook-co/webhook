@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const requireOrgAccess = vi.fn();
 vi.mock("./org-access", () => ({ requireOrgAccess: () => requireOrgAccess() }));
 
-const readOrgMembershipCensus = vi.fn();
-vi.mock("@webhook-co/db/org-lifecycle", () => ({
-  readOrgMembershipCensus: (...a: unknown[]) => readOrgMembershipCensus(...a),
+const listOrgMembers = vi.fn();
+vi.mock("@webhook-co/db/members", () => ({
+  listOrgMembers: (...a: unknown[]) => listOrgMembers(...a),
 }));
 
 const listPendingInvites = vi.fn();
@@ -18,9 +18,17 @@ vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({})
 
 import { loadTeam } from "./team";
 
+const MEMBER = {
+  userId: "u_bob",
+  name: "Bob",
+  email: "bob@acme.test",
+  role: "member" as const,
+  joinedAt: "2026-07-01T00:00:00.000Z",
+};
+
 const INVITE = {
   id: "inv_1",
-  invitedEmail: "bob@acme.test",
+  invitedEmail: "carol@acme.test",
   role: "member" as const,
   start: "whinv_ab",
   expiresAt: "2026-07-19T00:00:00.000Z",
@@ -35,22 +43,22 @@ beforeEach(() => {
     role: "owner",
     user: { name: "O", email: "o@acme.test", image: null },
   });
-  readOrgMembershipCensus.mockResolvedValue({ owners: 1, total: 3 });
+  listOrgMembers.mockResolvedValue([MEMBER]);
   listPendingInvites.mockResolvedValue([INVITE]);
 });
 
 describe("loadTeam", () => {
-  it("returns the caller's role, the member census, and the pending invites", async () => {
+  it("returns the caller's role + id, the members, and the pending invites", async () => {
     const result = await loadTeam();
     expect(result).toEqual({
       status: "ok",
       role: "owner",
-      memberCount: 3,
-      ownerCount: 1,
+      userId: "u_owner",
+      members: [MEMBER],
       invites: [INVITE],
     });
-    // The reads are scoped to the caller's org.
-    expect(readOrgMembershipCensus).toHaveBeenCalledWith(expect.anything(), "org_1");
+    // Both reads are scoped to the caller's org.
+    expect(listOrgMembers).toHaveBeenCalledWith(expect.anything(), "org_1");
     expect(listPendingInvites).toHaveBeenCalledWith(expect.anything(), "org_1");
   });
 
@@ -61,13 +69,11 @@ describe("loadTeam", () => {
       role: "member",
       user: { name: "M", email: "m@acme.test", image: null },
     });
-    const result = await loadTeam();
-    expect(result).toMatchObject({ status: "ok", role: "member" });
+    expect(await loadTeam()).toMatchObject({ status: "ok", role: "member", userId: "u_m" });
   });
 
   it("surfaces a read failure as an error result (never throws to the page)", async () => {
-    listPendingInvites.mockRejectedValueOnce(new Error("db down"));
-    const result = await loadTeam();
-    expect(result).toEqual({ status: "error" });
+    listOrgMembers.mockRejectedValueOnce(new Error("db down"));
+    expect(await loadTeam()).toEqual({ status: "error" });
   });
 });
