@@ -33,6 +33,18 @@ export interface DateRangeFilterProps {
    * sends `{ from, to, range: "" }` — the two date modes are mutually exclusive, so each clears the other.
    */
   readonly onApply: (patch: Record<string, string>) => void;
+  /**
+   * What the control filters by, for the trigger's aria-label ("Filter by <subject>: …"). Defaults to
+   * "received date" (the events list). The dashboard passes "delivery date" — it scopes delivery outcomes,
+   * not received-at — so screen readers announce the right thing.
+   */
+  readonly subject?: string;
+  /**
+   * Which edge the popover aligns to. Defaults to "start" (opens rightward — right for a left-aligned
+   * trigger, e.g. the events filter bar). A right-aligned trigger (the dashboard header) passes "end" so
+   * the popover opens leftward and its right edge stays inside the content, not off the max-width.
+   */
+  readonly align?: "start" | "end";
 }
 
 // The wire `?to=` is an EXCLUSIVE upper bound (received_at < to), shared with `--before` on the CLI for
@@ -51,7 +63,12 @@ function shiftUtcDay(ymd: string, delta: number): string | undefined {
 // a graphical range calendar — no separate row. A Popover (not a DropdownMenu) hosts them so the calendar
 // keeps normal keyboard behavior (a menu would hijack arrow keys). A valid preset OWNS the range (mirrors
 // the parser, which ignores from/to under a preset); selecting calendar days clears the preset.
-export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
+export function DateRangeFilter({
+  value,
+  onApply,
+  subject = "received date",
+  align = "start",
+}: DateRangeFilterProps) {
   const active = hasDateRange(value);
 
   function pickPreset(id: string) {
@@ -84,7 +101,7 @@ export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={`Filter by received date: ${activeDateLabel(value)}`}
+          aria-label={`Filter by ${subject}: ${activeDateLabel(value)}`}
           className={[
             "inline-flex h-[2.625rem] items-center gap-2 rounded-control border bg-surface px-3 text-base",
             "font-sans transition-[box-shadow,border-color] duration-[var(--wh-dur-fast)] ease-[var(--wh-ease-swift)]",
@@ -97,7 +114,7 @@ export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
           <ChevronDown className="size-4 shrink-0 text-fg-muted" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="flex w-auto gap-0 p-0">
+      <PopoverContent align={align} className="flex w-auto gap-0 p-0">
         <div className="flex w-40 flex-col gap-0.5 border-r border-hairline p-1.5">
           {DATE_PRESETS.map((preset) => (
             <button

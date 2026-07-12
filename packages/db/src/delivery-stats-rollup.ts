@@ -109,11 +109,15 @@ export interface DeliveryStatsDay {
 export async function readDeliveryStatsSeries(
   tx: TenantTx,
   days: number,
-  nowMs: number = Date.now(),
+  endMs: number = Date.now(),
 ): Promise<DeliveryStatsDay[]> {
-  // Compute the UTC-midnight cutoff in JS (not in SQL) so it can't misalign against the session's default
-  // TimeZone — window_start is stored at UTC midnight (the rollup pins UTC), so the boundary must be too.
-  const t = new Date(nowMs);
+  // Compute the UTC-midnight window bounds in JS (not in SQL) so they can't misalign against the session's
+  // default TimeZone — window_start is stored at UTC midnight (the rollup pins UTC), so the boundaries must
+  // be too. `endMs` is the window's last day (now by default; a past day under a custom date-range filter).
+  // BOTH bounds are needed: an upper bound keeps the read ≤ days rows even for a PAST window (without it a
+  // past custom range would scan every row from `cutoff` through today — O(days-since-then), not O(days)).
+  const t = new Date(endMs);
+  const endDay = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()));
   const cutoff = new Date(
     Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() - (days - 1)),
   );
@@ -128,7 +132,7 @@ export async function readDeliveryStatsSeries(
   >`
     select window_start, delivered_count, dead_count, blocked_count, p95_duration_ms
     from delivery_stats
-    where window_start >= ${cutoff}
+    where window_start >= ${cutoff} and window_start <= ${endDay}
     order by window_start`;
   return rows.map((r) => ({
     windowStart: r.window_start.toISOString(),
