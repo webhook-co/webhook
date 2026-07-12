@@ -55,6 +55,7 @@ const created: CreateInviteResult = {
   acceptPath: "/invite/accept?org=org_1&token=whinv_secret",
   invitedEmail: "carol@acme.test",
   role: "member",
+  emailed: true,
 };
 
 function renderManager(
@@ -206,6 +207,35 @@ describe("TeamManager — invites", () => {
     expect(
       await screen.findByText(/\/invite\/accept\?org=org_1&token=whinv_secret/),
     ).toBeInTheDocument();
+  });
+
+  it("says the invite was EMAILED when it was, and still offers the link", async () => {
+    const user = userEvent.setup();
+    renderManager(okResult({ invites: [] }), { createInvite: vi.fn(async () => created) });
+
+    await user.click(screen.getByRole("button", { name: /invite/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/email/i), "carol@acme.test");
+    await user.click(within(dialog).getByRole("button", { name: /send invite/i }));
+
+    expect(
+      await screen.findByText(/we emailed the invite to carol@acme.test/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/\/invite\/accept\?org=org_1&token=whinv_secret/)).toBeInTheDocument();
+  });
+
+  it("does NOT claim an email was sent when it wasn't — it tells you to copy the link", async () => {
+    const user = userEvent.setup();
+    const createInvite = vi.fn(async () => ({ ...created, emailed: false }));
+    renderManager(okResult({ invites: [] }), { createInvite });
+
+    await user.click(screen.getByRole("button", { name: /invite/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText(/email/i), "carol@acme.test");
+    await user.click(within(dialog).getByRole("button", { name: /send invite/i }));
+
+    expect(await screen.findByText(/couldn't email it/i)).toBeInTheDocument();
+    expect(screen.queryByText(/we emailed the invite/i)).not.toBeInTheDocument();
   });
 
   it("surfaces a server rejection as an error, without a link", async () => {

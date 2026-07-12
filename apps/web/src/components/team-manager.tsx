@@ -101,7 +101,11 @@ export function TeamManager({
   const [inviteRole, setInviteRole] = React.useState<string>(grantableRoles[0] ?? "member");
   const [pending, setPending] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
-  const [shareLink, setShareLink] = React.useState<{ email: string; url: string } | null>(null);
+  const [shareLink, setShareLink] = React.useState<{
+    email: string;
+    url: string;
+    emailed: boolean;
+  } | null>(null);
 
   const [revokingInvite, setRevokingInvite] = React.useState<PendingInvite | null>(null);
   const [removingMember, setRemovingMember] = React.useState<OrgMember | null>(null);
@@ -156,7 +160,11 @@ export function TeamManager({
       }
       setInviteOpen(false);
       resetInviteForm();
-      setShareLink({ email: res.invitedEmail, url: acceptUrl(res.acceptPath) });
+      setShareLink({
+        email: res.invitedEmail,
+        url: acceptUrl(res.acceptPath),
+        emailed: res.emailed,
+      });
     } catch {
       setFormError("We couldn't create the invite. Please try again.");
     } finally {
@@ -520,13 +528,22 @@ export function TeamManager({
       <Dialog open={shareLink !== null} onOpenChange={(open) => !open && setShareLink(null)}>
         <DialogContent hideCloseButton>
           <DialogHeader>
-            <DialogTitle>Share the invite link</DialogTitle>
+            <DialogTitle>
+              {shareLink?.emailed ? "Invite sent" : "Share the invite link"}
+            </DialogTitle>
             <DialogDescription>
-              {shareLink ? `Send this link to ${shareLink.email} so they can join.` : null}
+              {shareLink
+                ? shareLink.emailed
+                  ? `We emailed the invite to ${shareLink.email}.`
+                  : `Send this link to ${shareLink.email} so they can join.`
+                : null}
             </DialogDescription>
           </DialogHeader>
+          {/* Say only what actually happened: if the email didn't go out, don't imply it did. */}
           <Banner tone="info">
-            Copy it now — for their security, the link isn&apos;t shown again here.
+            {shareLink?.emailed
+              ? "You can also share this link directly — it isn't shown again here."
+              : "We couldn't email it, so copy the link now — it isn't shown again here."}
           </Banner>
           {shareLink ? (
             <div className="flex items-center gap-2 rounded-control border border-hairline bg-surface-sunken p-3">
