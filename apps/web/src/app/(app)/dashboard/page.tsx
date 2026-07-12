@@ -62,9 +62,11 @@ export default async function DashboardPage({
     range?: string | string[];
     from?: string | string[];
     to?: string | string[];
+    invite?: string | string[];
   }>;
 }) {
   const [session, sp] = await Promise.all([verifySession(), searchParams]);
+  const inviteOutcome = first(sp.invite);
   const window = resolveDashboardWindow(
     { range: first(sp.range), from: first(sp.from), to: first(sp.to) },
     Date.now(),
@@ -81,6 +83,19 @@ export default async function DashboardPage({
   return (
     <PageContainer>
       <PageHeader title="Overview" actions={<DashboardDateFilter />} />
+
+      {inviteOutcome === "accepted" ? (
+        <Banner tone="ok">You&apos;ve joined the organization.</Banner>
+      ) : inviteOutcome === "invalid" ? (
+        <Banner tone="danger">
+          That invite couldn&apos;t be accepted — it may have expired, been revoked, or been sent to
+          a different email. Ask for a fresh link.
+        </Banner>
+      ) : inviteOutcome === "error" ? (
+        <Banner tone="danger">
+          Something went wrong accepting that invite. Open the link again to retry.
+        </Banner>
+      ) : null}
 
       {attention.length > 0 ? <NeedsAttention items={attention} /> : null}
 
