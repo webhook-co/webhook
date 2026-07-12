@@ -46,6 +46,8 @@ const TENANT_TABLES = [
   { table: "auth_audit_event", col: "org_id" },
   { table: "notification_intents", col: "org_id" },
   { table: "agent_triggers", col: "org_id" },
+  // Pending org invitations (migration 0064). Full org-scoped CRUD under RLS — create/accept/revoke/list.
+  { table: "org_invites", col: "org_id" },
   // Durable R2-purge job written at org-delete time (migration 0051). webhook_app inserts +
   // reads only its own org's job (the insert `with check` blocks forging another org's purge);
   // it holds no UPDATE/DELETE (see NO_UPDATE below). The cross-org drain is webhook_purge's.
