@@ -82,6 +82,10 @@ export interface StripeSubscription {
   readonly items: readonly SubscriptionItemRef[];
   /** The subscription schedule attached to it, if any — how a PENDING DOWNGRADE is discovered. Null = none. */
   readonly scheduleId: string | null;
+  /** Whether the sub is set to cancel at the end of the current period. Load-bearing for the plan switch:
+   *  an UPGRADE must clear this (S6c) so the customer isn't charged proration for headroom they'd lose at
+   *  renewal. Dropping it here is exactly what let that bug hide. */
+  readonly cancelAtPeriodEnd: boolean;
 }
 
 /** One item of a subscription-schedule phase. A METERED price carries no quantity (Stripe rejects it). */
@@ -188,6 +192,9 @@ export interface StripeClient {
     subscriptionId: string;
     items: readonly SubscriptionItemRef[];
     prorationBehavior: "create_prorations" | "none" | "always_invoice";
+    /** Set `cancel_at_period_end` on the sub. Omit to leave it as-is; the plan switch passes `false` to
+     *  UN-CANCEL a canceling sub on upgrade (S6c). */
+    cancelAtPeriodEnd?: boolean;
     idempotencyKey?: string;
   }): Promise<StripeSubscription>;
   /**
@@ -401,6 +408,7 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         status: string;
         items?: { data?: Array<{ id: string; price?: { id?: string } }> };
         schedule?: string | { id?: string } | null;
+        cancel_at_period_end?: boolean;
       }>(`/subscriptions/${subscriptionId}`);
       // `schedule` is an id by default; tolerate an expanded object.
       const sch = raw.schedule;
@@ -409,19 +417,29 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         status: raw.status,
         items: (raw.items?.data ?? []).map((it) => ({ id: it.id, price: it.price?.id ?? "" })),
         scheduleId: typeof sch === "string" ? sch : (sch?.id ?? null),
+        cancelAtPeriodEnd: raw.cancel_at_period_end === true,
       };
     },
-    async updateSubscription({ subscriptionId, items, prorationBehavior, idempotencyKey }) {
+    async updateSubscription({
+      subscriptionId,
+      items,
+      prorationBehavior,
+      cancelAtPeriodEnd,
+      idempotencyKey,
+    }) {
       const raw = await request<{
         id: string;
         status: string;
         items?: { data?: Array<{ id: string; price?: { id?: string } }> };
         schedule?: string | { id?: string } | null;
+        cancel_at_period_end?: boolean;
       }>(
         `/subscriptions/${subscriptionId}`,
         {
           items: items.map((i) => ({ id: i.id, price: i.price })),
           proration_behavior: prorationBehavior,
+          // Only include the flag when the caller set it, so a normal update never touches it.
+          ...(cancelAtPeriodEnd === undefined ? {} : { cancel_at_period_end: cancelAtPeriodEnd }),
         },
         idempotencyKey,
       );
@@ -431,6 +449,7 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         status: raw.status,
         items: (raw.items?.data ?? []).map((it) => ({ id: it.id, price: it.price?.id ?? "" })),
         scheduleId: typeof sch === "string" ? sch : (sch?.id ?? null),
+        cancelAtPeriodEnd: raw.cancel_at_period_end === true,
       };
     },
     async createSubscriptionSchedule({ fromSubscription, idempotencyKey }) {

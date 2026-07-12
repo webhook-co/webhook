@@ -525,7 +525,22 @@ describe("makeStripeClient.retrieveSubscription", () => {
         { id: "si_over", price: "price_pro_over" },
       ],
       scheduleId: null, // no pending plan change in this fixture
+      cancelAtPeriodEnd: false, // absent in this fixture → false
     });
+  });
+
+  it("surfaces cancel_at_period_end so the plan switch can un-cancel on upgrade (S6c)", async () => {
+    const { impl } = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", items: { data: [] }, cancel_at_period_end: true },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    expect((await client.retrieveSubscription("sub_1")).cancelAtPeriodEnd).toBe(true);
   });
 });
 
@@ -560,6 +575,28 @@ describe("makeStripeClient.updateSubscription", () => {
     expect(p.get("items[1][id]")).toBe("si_over");
     expect(p.get("items[1][price]")).toBe("price_scale_over");
     expect(p.get("proration_behavior")).toBe("create_prorations");
+    expect(p.has("cancel_at_period_end")).toBe(false); // not sent unless the caller sets it
+  });
+
+  it("sends cancel_at_period_end ONLY when the caller sets it (the S6c un-cancel-on-upgrade)", async () => {
+    const { impl, calls } = fakeFetch({
+      status: 200,
+      body: { id: "sub_1", status: "active", items: { data: [] }, cancel_at_period_end: false },
+    });
+    const client = makeStripeClient({
+      mode: "test",
+      secretKey: SECRET,
+      apiBase: "https://stripe.test",
+      fetchImpl: impl,
+    });
+    await client.updateSubscription({
+      subscriptionId: "sub_1",
+      items: [{ id: "si_base", price: "price_scale_base" }],
+      prorationBehavior: "create_prorations",
+      cancelAtPeriodEnd: false,
+    });
+    const p = new URLSearchParams(calls[0].init.body as string);
+    expect(p.get("cancel_at_period_end")).toBe("false"); // explicitly clears the cancel
   });
 });
 

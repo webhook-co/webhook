@@ -48,6 +48,7 @@ function enable(opts: {
   liveStatus?: string;
   liveItems?: Array<{ id: string; price: string }>;
   scheduleId?: string | null;
+  cancelAtPeriodEnd?: boolean; // the LIVE sub is set to cancel at period end
 }) {
   env.getBillingMode.mockReturnValue("test");
   env.getStripePlans.mockReturnValue(PLANS);
@@ -76,6 +77,7 @@ function enable(opts: {
       items: opts.liveItems ?? PRO_ITEMS,
       // A schedule already attached = a downgrade already booked for the end of the period.
       scheduleId: opts.scheduleId ?? null,
+      cancelAtPeriodEnd: opts.cancelAtPeriodEnd ?? false,
     }),
     retrieveSubscriptionSchedule: vi.fn().mockResolvedValue({
       id: "sub_sched_1",
@@ -138,6 +140,23 @@ describe("switchPlan", () => {
     const client = enable({});
     await switchPlan("org-1", "user-1", "scale", "nonce-1");
     expect(client.updateSubscription.mock.calls[0][0].idempotencyKey).toBe("nonce-1");
+  });
+
+  it("CLEARS cancel_at_period_end when upgrading a subscription that was set to cancel (S6c)", async () => {
+    // The money bug: upgrading a CANCELING sub used to charge proration now AND still cancel at period end —
+    // the customer pays for headroom they lose at renewal. An upgrade is an affirmative "I'm staying", so we
+    // un-cancel it as part of the same Stripe write (founder decision: clear it on upgrade).
+    const client = enable({ cancelAtPeriodEnd: true });
+    const res = await switchPlan("org-1", "user-1", "scale");
+    expect(res).toEqual({ status: "ok", plan: "scale" });
+    expect(client.updateSubscription.mock.calls[0][0].cancelAtPeriodEnd).toBe(false);
+  });
+
+  it("does NOT touch cancel_at_period_end when upgrading a normal (non-canceling) sub", async () => {
+    // Don't send the field unnecessarily — a non-canceling sub's upgrade leaves the flag untouched.
+    const client = enable({ cancelAtPeriodEnd: false });
+    await switchPlan("org-1", "user-1", "scale");
+    expect(client.updateSubscription.mock.calls[0][0].cancelAtPeriodEnd).toBeUndefined();
   });
 
   it("is disabled when BILLING_MODE is off (no read, no Stripe)", async () => {
@@ -287,6 +306,19 @@ describe("switchPlan — downgrade", () => {
     await switchPlan("org-1", "user-1", "pro");
     expect(client.updateSubscription).not.toHaveBeenCalled();
   });
+
+  it("downgrading a CANCELING sub goes through the schedule (its end_behavior:release clears the cancel), not updateSubscription", async () => {
+    // A canceling sub that is DOWNgraded doesn't use updateSubscription's cancelAtPeriodEnd param — the
+    // schedule is the mechanism. updateSubscriptionSchedule sends `end_behavior: "release"` (verified in the
+    // stripe-client), which hands the sub back to normal renewal and clears the pending cancel when phase 1
+    // lands. So the cancel is neutralised by the schedule path, not left dangling — the downgrade counterpart
+    // of the upgrade's explicit un-cancel.
+    const client = enable({ liveItems: SCALE_ITEMS, cancelAtPeriodEnd: true });
+    const res = await switchPlan("org-1", "user-1", "pro"); // Scale → Pro downgrade
+    expect(res).toEqual({ status: "scheduled", plan: "pro" });
+    expect(client.updateSubscription).not.toHaveBeenCalled(); // not the update-in-place path
+    expect(client.updateSubscriptionSchedule).toHaveBeenCalled(); // the schedule (end_behavior:release) owns it
+  });
 });
 
 describe("switchPlan — downgrade failure paths", () => {
@@ -357,6 +389,7 @@ describe("switchPlan — when a downgrade is ALREADY booked", () => {
       status: "active",
       items: PRO_ITEMS,
       scheduleId: "sub_sched_1",
+      cancelAtPeriodEnd: false,
     });
 
     const res = await switchPlan("org-1", "user-1", "scale");
@@ -369,6 +402,23 @@ describe("switchPlan — when a downgrade is ALREADY booked", () => {
     const releaseOrder = client.releaseSubscriptionSchedule.mock.invocationCallOrder[0];
     const updateOrder = client.updateSubscription.mock.invocationCallOrder[0];
     expect(releaseOrder).toBeLessThan(updateOrder);
+  });
+
+  it("an upgrade of a sub that is BOTH canceling AND has a booked downgrade releases the schedule AND clears the cancel", async () => {
+    // The worst-case combined path: a canceling sub with a pending downgrade, upgraded. Both hazards must be
+    // neutralised in one switch — release the schedule (no renewal demotion) AND un-cancel (no lost headroom).
+    const client = enable({ liveItems: SCALE_ITEMS, scheduleId: "sub_sched_1" });
+    client.retrieveSubscription.mockResolvedValue({
+      id: "sub_1",
+      status: "active",
+      items: PRO_ITEMS,
+      scheduleId: "sub_sched_1",
+      cancelAtPeriodEnd: true,
+    });
+    const res = await switchPlan("org-1", "user-1", "scale");
+    expect(res).toEqual({ status: "ok", plan: "scale" });
+    expect(client.releaseSubscriptionSchedule).toHaveBeenCalled();
+    expect(client.updateSubscription.mock.calls[0][0].cancelAtPeriodEnd).toBe(false);
   });
 
   it("a repeat DOWNGRADE updates the EXISTING schedule instead of creating a second one (Stripe would reject)", async () => {
