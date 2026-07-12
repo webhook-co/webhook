@@ -13,16 +13,17 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
-const verifySession = vi.fn(async () => ({ userId: "usr_1", orgId: "org_1" }));
-vi.mock("./session", async () => {
-  const actual = await vi.importActual<typeof import("./session")>("./session");
-  return { ...actual, verifySession: () => verifySession() };
-});
+// deleteOrganization now gates through requireOrgAccess (membership + role), not verifySession + isOrgOwner.
+const requireOrgAccess = vi.fn(async () => ({
+  userId: "usr_1",
+  orgId: "org_1",
+  role: "owner" as const,
+  user: { name: "Dana", email: "dana@e.test", image: null },
+}));
+vi.mock("./org-access", () => ({ requireOrgAccess: () => requireOrgAccess() }));
 
-const isOrgOwner = vi.fn(async () => true);
 const deleteOrgWithAudit = vi.fn(async () => ({ orgId: "org_1", deletedAt: "now" }));
 vi.mock("@webhook-co/db/org-lifecycle", () => ({
-  isOrgOwner: (...a: unknown[]) => isOrgOwner(...a),
   deleteOrgWithAudit: (...a: unknown[]) => deleteOrgWithAudit(...a),
 }));
 vi.mock("./db", () => ({ getTenantDb: async () => ({ end: async () => {} }) }));
@@ -67,8 +68,13 @@ describe("deleteOrganization", () => {
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });
 
-  it("refuses a non-owner and does not delete or sign out", async () => {
-    isOrgOwner.mockResolvedValueOnce(false);
+  it("refuses a non-owner (role from requireOrgAccess) and does not delete or sign out", async () => {
+    requireOrgAccess.mockResolvedValueOnce({
+      userId: "usr_1",
+      orgId: "org_1",
+      role: "member" as const,
+      user: { name: "Dana", email: "dana@e.test", image: null },
+    });
     await expect(deleteOrganization(form("DELETE"))).rejects.toThrow(/only an organization owner/);
     expect(deleteOrgWithAudit).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();

@@ -32,9 +32,11 @@ const APP_DIR = "apps/web/src/app/";
 const GATED_GROUP = "apps/web/src/app/(app)/";
 const RENDER_GATE = "apps/web/src/app/(app)/layout.tsx";
 
-// Match an actual CALL (`verifySession(`), after stripping comments — so a disabled/commented
-// call or a `{@link …}` mention doesn't count as gating the path.
-const GATE_CALL = /\bverifySession\s*\(/;
+// Match an actual CALL to a DAL gate, after stripping comments — so a disabled/commented call or a
+// `{@link …}` mention doesn't count as gating the path. Two gates count: verifySession (identity), and
+// requireOrgAccess (Lane 2.2), which is strictly STRONGER — it calls verifySession, then additionally
+// proves the caller is a current member of the session's org. An action gated by either is gated.
+const GATE_CALL = /\b(?:verifySession|requireOrgAccess)\s*\(/;
 const ALLOW_MARKER = /\/\/\s*dal-gate-allow:/;
 
 const ROUTE_FILE = /(?:^|\/)route\.[cm]?[jt]sx?$/;
