@@ -5,7 +5,7 @@
 import {
   createClient,
   createCredentialHasherFromBase64,
-  getConsentOrg,
+  listConsentOrgs,
   mintSessionExchange,
 } from "@webhook-co/db";
 import { readSecretBinding } from "@webhook-co/shared";
@@ -46,7 +46,9 @@ export async function makeSessionHandoffDeps(
   const deps: SessionHandoffRouteDeps = {
     getSessionUserId: async (request) =>
       (await (await getAuth()).getSession(request))?.userId ?? null,
-    resolveOrg: (userId) => getConsentOrg(getApp(), userId),
+    // The web session lands in the user's DEFAULT org (their personal one, first in the list). Picking a
+    // different org in the dashboard is the org-switcher slice; the issuer's picker covers CLI/MCP.
+    resolveOrg: async (userId) => (await listConsentOrgs(getApp(), userId))[0] ?? null,
     mint: async (orgId, userId) => {
       const minted = await mintSessionExchange(
         getApp(),

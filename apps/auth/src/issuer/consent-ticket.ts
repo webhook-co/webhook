@@ -47,9 +47,15 @@ interface ConsentTicketBase {
   /** The server-authenticated consenting user. Re-checked against the live session at the decision; the
    * page never supplies it. */
   userId: string;
-  /** The resolved consent org (id + display name). */
+  /** The DEFAULT consent org (id + display name) — what's used if the screen offers no choice. */
   orgId: string;
   orgName: string;
+  /**
+   * Every org the user may authorize this app for, SEALED at /authorize time from their live memberships
+   * (Lane 2.4). This is the allowlist the decision endpoint validates a form-supplied `orgId` against — the
+   * page can pick FROM it, never ADD to it. Always contains `orgId`.
+   */
+  orgs?: { id: string; name: string }[];
   /** The granted (already intersected) scopes — what the key will be minted with. */
   scopes: string[];
   /** The validated audience/resource the resulting token is bound to. */
@@ -195,6 +201,7 @@ export function consentRequestFromTicket(
     redirect: { host: payload.redirectHost, isLoopback: payload.redirectIsLoopback },
     ...(payload.device ? { device: payload.device } : {}),
     org: { id: payload.orgId, name: payload.orgName },
+    orgOptions: payload.orgs ?? [{ id: payload.orgId, name: payload.orgName }],
     origin: payload.origin,
     scopes: payload.scopes,
     audience: payload.audience,

@@ -7,7 +7,7 @@
 // `cloudflare:workers`), so it's imported only by issuer-handler/worker.ts, never by `next build`.
 
 import { getOAuthApi } from "@cloudflare/workers-oauth-provider";
-import { API_RESOURCE, MCP_RESOURCE, createClient, getConsentOrg } from "@webhook-co/db";
+import { API_RESOURCE, MCP_RESOURCE, createClient, listConsentOrgs } from "@webhook-co/db";
 import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
 
 import { makeCompletionBounce } from "./completion-ticket";
@@ -89,7 +89,7 @@ export async function makeAuthorizeDeps(
           consentPath: CONSENT_PATH,
           lookupClientName: async (clientId) =>
             (await helpers.lookupClient(clientId))?.clientName ?? null,
-          getConsentOrg: (uid) => getConsentOrg(getApp(), uid),
+          listConsentOrgs: (uid) => listConsentOrgs(getApp(), uid),
           signTicket: (payload) => signConsentTicket(payload, ticketKey),
           newCsrf: () => crypto.randomUUID(),
           nowSeconds,

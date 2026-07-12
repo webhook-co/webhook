@@ -41,7 +41,7 @@ export function makeConsentActions(
   const doFetch = deps.fetch ?? fetch;
   const navigate = deps.navigate ?? browserNavigate;
   return {
-    async decide(decision) {
+    async decide(decision, orgId) {
       const response = await doFetch("/consent/decision", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -49,6 +49,8 @@ export function makeConsentActions(
           requestId: request.requestId,
           csrfToken: request.csrfToken,
           decision,
+          // The picked org. Untrusted by the server, which checks it against the ticket's sealed list.
+          ...(orgId ? { orgId } : {}),
         }),
       });
       // Expected dead-ends get a friendly terminal instead of the retryable error banner: 409 = already

@@ -9,7 +9,7 @@ import {
   bootstrapPersonalOrg,
   createMembership,
   createOrgWithOwner,
-  getConsentOrg,
+  listConsentOrgs,
   isOrgMember,
   personalOrgId,
   readMembershipRole,
@@ -294,7 +294,7 @@ describe("isOrgMember (the /token tenancy bind)", () => {
   });
 });
 
-describe("getConsentOrg + personalOrgId (the /authorize consent-org resolution)", () => {
+describe("listConsentOrgs + personalOrgId (the /authorize consent-org resolution)", () => {
   it("resolves the bootstrapped personal org id + display name", async () => {
     const userId = `user_${randomUUID()}`;
     await seedUser(userId);
@@ -306,14 +306,76 @@ describe("getConsentOrg + personalOrgId (the /authorize consent-org resolution)"
     // personalOrgId derives the SAME id bootstrap used — no DB read, no cross-org query.
     expect(personalOrgId(userId)).toBe(orgId);
 
-    const resolved = await getConsentOrg(app, userId);
-    expect(resolved).toEqual({ orgId, name: "Dana's projects" });
+    const resolved = await listConsentOrgs(app, userId);
+    expect(resolved).toEqual([{ orgId, name: "Dana's projects" }]);
   });
 
-  it("returns null for a user with no personal org", async () => {
+  it("lists an INVITED org too — the whole point: a teammate's CLI can land in the team org", async () => {
+    // The old getConsentOrg DERIVED the personal org, so an invited org was invisible and the CLI landed in
+    // the user's empty personal org. Now both are offered, personal first (the default).
     const userId = `user_${randomUUID()}`;
     await seedUser(userId);
-    expect(await getConsentOrg(app, userId)).toBeNull();
+    const { orgId: personal } = await bootstrapPersonalOrg(
+      app,
+      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Dana's projects" },
+      hasher,
+    );
+    const teamOwner = `user_${randomUUID()}`;
+    await seedUser(teamOwner);
+    const { id: team } = await createOrgWithOwner(app, {
+      slug: `t-${randomUUID().slice(0, 8)}`,
+      name: "Acme Team",
+      ownerUserId: teamOwner,
+    });
+    await withTenant(
+      app,
+      team,
+      (tx) =>
+        tx`insert into memberships (org_id, user_id, role) values (${team}, ${userId}, 'member')`,
+    );
+
+    expect(await listConsentOrgs(app, userId)).toEqual([
+      { orgId: personal, name: "Dana's projects" }, // default: personal org leads
+      { orgId: team, name: "Acme Team" },
+    ]);
+  });
+
+  it("pins the PERSONAL org first even when a team membership is OLDER", async () => {
+    // The directory orders by created_at, and bootstrap self-heals on a LATER session-create — so a user
+    // whose signup bootstrap failed and who then accepted an invite has the TEAM membership as their oldest.
+    // Trusting that order would silently DEFAULT their consent (and web session) to someone else's org.
+    const userId = `user_${randomUUID()}`;
+    await seedUser(userId);
+    const teamOwner = `user_${randomUUID()}`;
+    await seedUser(teamOwner);
+    const { id: team } = await createOrgWithOwner(app, {
+      slug: `t-${randomUUID().slice(0, 8)}`,
+      name: "Acme Team",
+      ownerUserId: teamOwner,
+    });
+    // The team membership lands FIRST…
+    await withTenant(
+      app,
+      team,
+      (tx) =>
+        tx`insert into memberships (org_id, user_id, role) values (${team}, ${userId}, 'member')`,
+    );
+    // …and only then does the personal org get bootstrapped (the self-heal path).
+    const { orgId: personal } = await bootstrapPersonalOrg(
+      app,
+      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Dana's projects" },
+      hasher,
+    );
+
+    const orgs = await listConsentOrgs(app, userId);
+    expect(orgs[0]).toEqual({ orgId: personal, name: "Dana's projects" }); // the DEFAULT is still theirs
+    expect(orgs.map((o) => o.orgId)).toContain(team);
+  });
+
+  it("returns nothing for a user with no org", async () => {
+    const userId = `user_${randomUUID()}`;
+    await seedUser(userId);
+    expect(await listConsentOrgs(app, userId)).toEqual([]);
   });
 
   it("is membership-gated: returns null when the org exists but the user is not a member", async () => {
@@ -330,7 +392,7 @@ describe("getConsentOrg + personalOrgId (the /authorize consent-org resolution)"
       orgId,
       (tx) => tx`delete from memberships where org_id = ${orgId} and user_id = ${userId}`,
     );
-    expect(await getConsentOrg(app, userId)).toBeNull();
+    expect(await listConsentOrgs(app, userId)).toEqual([]);
   });
 });
 

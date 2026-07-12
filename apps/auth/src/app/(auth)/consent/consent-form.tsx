@@ -15,8 +15,12 @@ export type { ConsentRequest };
  * the decision (with the request id + CSRF token) and redirects back to the client; the mock resolves.
  */
 export interface ConsentActions {
-  /** Record the user's decision for this authorization request. */
-  decide(decision: "approve" | "deny"): Promise<void>;
+  /**
+   * Record the user's decision. `orgId` is the org they chose to authorize the app for, when the screen
+   * offered a choice. The server validates it against the orgs sealed in the ticket — the page can pick
+   * FROM that list, never add to it.
+   */
+  decide(decision: "approve" | "deny", orgId?: string): Promise<void>;
 }
 
 /**
@@ -53,6 +57,7 @@ export const mockConsentRequest: ConsentRequest = {
   redirect: { host: null, isLoopback: false },
   device: { name: "Dana's MacBook Pro" },
   org: { id: "org_personal", name: "Dana's projects" },
+  orgOptions: [{ id: "org_personal", name: "Dana's projects" }],
   origin: {
     ip: "203.0.113.7",
     location: "US",
@@ -124,6 +129,9 @@ export function ConsentForm({
   request: ConsentRequest;
   actions?: ConsentActions;
 }) {
+  // The org this app is being authorized for. Defaults to the ticket's default (the user's personal org);
+  // only meaningful when they belong to more than one.
+  const [orgId, setOrgId] = React.useState(request.org.id);
   const [pending, setPending] = React.useState<null | "approve" | "deny">(null);
   const [outcome, setOutcome] = React.useState<null | "approve" | "deny" | ConsentDecisionFailure>(
     null,
@@ -136,7 +144,7 @@ export function ConsentForm({
     setError(null);
     setPending(decision);
     try {
-      await actions.decide(decision);
+      await actions.decide(decision, orgId);
       setOutcome(decision);
     } catch (err) {
       // 409/400 → a definitive terminal (re-submitting won't help); anything else is retryable.
@@ -262,7 +270,37 @@ export function ConsentForm({
             </div>
           </SummaryRow>
         ) : null}
-        <SummaryRow label="Organization">{request.org.name}</SummaryRow>
+        <SummaryRow label="Organization">
+          {request.orgOptions.length > 1 ? (
+            <div className="flex flex-col gap-1">
+              {/* The app gets access to THIS org's data, so the choice belongs on the consent screen — not
+                  buried in a setting the user never sees. One org ⇒ nothing to choose, so it stays plain
+                  text. The server re-validates the pick against the ticket's sealed list. */}
+              <label htmlFor="consent-org" className="sr-only">
+                Organization to authorize
+              </label>
+              <select
+                id="consent-org"
+                name="orgId"
+                value={orgId}
+                disabled={busy}
+                onChange={(e) => setOrgId(e.target.value)}
+                className="rounded-control border border-hairline bg-surface px-2 py-1 text-sm text-fg"
+              >
+                {request.orgOptions.map((o) => (
+                  <option key={o.id} value={o.id}>
+                    {o.name}
+                  </option>
+                ))}
+              </select>
+              <span className="text-xs text-fg-faint">
+                The app will only see data in this organization.
+              </span>
+            </div>
+          ) : (
+            request.org.name
+          )}
+        </SummaryRow>
         <SummaryRow label="Requesting from">
           <div className="flex flex-col gap-0.5">
             {placeLabel ? (

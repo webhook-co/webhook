@@ -7,9 +7,10 @@
 // slow_down / expired_token / access_denied).
 //
 // Tenancy: the approved record's props (org/user/scopes/audience) were stamped by the consent approval
-// (A4c's setDeviceDecision), whose org is resolved membership-gated via getConsentOrg(sessionUserId) — so
-// props.orgId is always the approver's own org and membership is guaranteed by construction; this core adds
-// audience/scope defense-in-depth (never widen past capability, never mint blank) but needs no DB.
+// (A4c's setDeviceDecision). Since Lane 2.4b the org is PICKED on the consent screen (validated there
+// against the orgs sealed in the ticket) rather than DERIVED from the approver — so membership is no longer
+// true "by construction", and this core re-asserts it at the mint (isOrgMember), exactly like the auth-code
+// path. It also keeps the audience/scope defense-in-depth (never widen past capability, never mint blank).
 
 import type { PollResult } from "./device-store";
 import type { MintInput, MintResult, OAuthErrorCode, RedeemResult } from "./token-core";
@@ -28,6 +29,11 @@ type LogFn = (event: string, fields?: Record<string, unknown>) => void;
 export interface DeviceTokenDeps {
   allowedAudiences: readonly string[];
   allowedScopes: readonly string[];
+  /**
+   * The tenancy bind: is the approver STILL a member of the org the consent recorded? Mirrors the auth-code
+   * path (token-core). Required since Lane 2.4b — see the header note.
+   */
+  isOrgMember: (userId: string, orgId: string) => Promise<boolean>;
   keyTtlSeconds: number;
   /** Poll + consume the device-code store (A4a pollDeviceCode). */
   poll: (deviceCode: string) => Promise<PollResult>;
@@ -88,6 +94,17 @@ export async function redeemDeviceCode(
   const scopes = intersect(props.scopes, deps.allowedScopes);
   if (scopes.length === 0) {
     return err("invalid_scope", "no permitted scope to mint");
+  }
+
+  // TENANCY BIND. Consent recorded an org; re-assert membership at the MINT, because the two are separated
+  // in time — a user can be removed from the org between approving on their phone and the device polling.
+  // Mirrors token-core's auth-code check. Before Lane 2.4b this path relied on the org being DERIVED from
+  // the approver (so membership was true by construction); now the org is PICKED, so that argument is gone
+  // and the check has to be real. (A removed member is also stopped by the mint ceiling collapsing to zero
+  // scopes — but that is a scope mechanism two packages away, load-bearing by accident. This is the gate.)
+  if (!(await deps.isOrgMember(props.userId, props.orgId))) {
+    deps.log?.("issuer.device.not_org_member", { grant_type: "device_code" });
+    return err("access_denied", "user is not a member of the grant org");
   }
 
   // The mint ceiling normally narrows; it throws only when the user's role can grant NOTHING that was asked

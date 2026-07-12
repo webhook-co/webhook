@@ -53,7 +53,7 @@ function buildDeps(over: Partial<BuildConsentDeps> = {}): {
     ticketTtlSeconds: TICKET_TTL,
     consentPath: "/consent",
     lookupClientName: async () => "webhook CLI",
-    getConsentOrg: async () => ({ orgId: "org_dana", name: "Dana's projects" }),
+    listConsentOrgs: async () => [{ orgId: "org_dana", name: "Dana's projects" }],
     signTicket: async (payload) => {
       signed.payload = payload;
       return "TICKET";
@@ -287,7 +287,7 @@ describe("buildConsent", () => {
   });
 
   it("redirects server_error when the user has no consent org", async () => {
-    const { deps } = buildDeps({ getConsentOrg: async () => null });
+    const { deps } = buildDeps({ listConsentOrgs: async () => [] });
     const result = await buildConsent(deps, authRequest(), "user_dana", ORIGIN);
     expect(result.kind).toBe("redirect");
     expect((result as { location: string }).location).toContain("error=server_error");
@@ -401,6 +401,109 @@ describe("decideConsent", () => {
       sessionUserId: "user_dana",
     });
     expect(result).toEqual(expect.objectContaining({ kind: "error", status: 403 }));
+  });
+
+  // ---- org selection (Lane 2.4b) -------------------------------------------------------------------
+  // The ticket seals the orgs the user actually belongs to. The screen may pick FROM that list; the page can
+  // never ADD to it. Without this, a tampered form field would authorize an app into an arbitrary org.
+
+  /** A ticket sealing TWO orgs: the personal default plus a team the user was invited to. */
+  const twoOrgTicket = () => ({
+    ...ticketPayload(),
+    orgId: "org_dana",
+    orgName: "Dana's projects",
+    orgs: [
+      { id: "org_dana", name: "Dana's projects" },
+      { id: "org_acme", name: "Acme Team" },
+    ],
+  });
+
+  it("authorizes the app for the org the user PICKED, when it is one the ticket sealed", async () => {
+    const complete = vi.fn(async () => ({ redirectTo: "http://127.0.0.1:51763/callback?code=AC" }));
+    const result = await decideConsent(
+      decideDeps({ verifyTicket: async () => twoOrgTicket(), completeAuthorization: complete }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        orgId: "org_acme", // the INVITED org — the whole point of the lane
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(result).toEqual(expect.objectContaining({ kind: "ok" }));
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        props: expect.objectContaining({ orgId: "org_acme", userId: "user_dana" }),
+      }),
+    );
+  });
+
+  it("REFUSES an org the ticket did not seal — a tampered form cannot authorize into another org", async () => {
+    const complete = vi.fn();
+    const result = await decideConsent(
+      decideDeps({ verifyTicket: async () => twoOrgTicket(), completeAuthorization: complete }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        orgId: "org_someone_elses",
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(result).toEqual(
+      expect.objectContaining({ kind: "error", status: 403, error: "access_denied" }),
+    );
+    expect(complete).not.toHaveBeenCalled(); // nothing minted
+  });
+
+  it("falls back to the ticket's default org when the screen offered no choice", async () => {
+    const complete = vi.fn(async () => ({ redirectTo: "http://127.0.0.1:51763/callback?code=AC" }));
+    await decideConsent(
+      decideDeps({ verifyTicket: async () => twoOrgTicket(), completeAuthorization: complete }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({ props: expect.objectContaining({ orgId: "org_dana" }) }),
+    );
+  });
+
+  it("a LEGACY ticket (signed before orgs was sealed) still approves — into its own org, and only that", async () => {
+    // Rolling deploys: tickets already on a user's screen carry orgId/orgName but no `orgs`. They must not
+    // 500 — and they must not become a way to pick an arbitrary org either.
+    const legacy = { ...ticketPayload(), orgId: "org_dana", orgName: "Dana's projects" };
+    delete (legacy as { orgs?: unknown }).orgs;
+    const complete = vi.fn(async () => ({ redirectTo: "http://127.0.0.1:51763/callback?code=AC" }));
+
+    const ok = await decideConsent(
+      decideDeps({ verifyTicket: async () => legacy, completeAuthorization: complete }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(ok).toEqual(expect.objectContaining({ kind: "ok" }));
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({ props: expect.objectContaining({ orgId: "org_dana" }) }),
+    );
+
+    const refused = await decideConsent(
+      decideDeps({ verifyTicket: async () => legacy, completeAuthorization: vi.fn() }),
+      {
+        requestId: "TICKET",
+        csrfToken: "csrf_fixed",
+        decision: "approve",
+        orgId: "org_acme",
+        sessionUserId: "user_dana",
+      },
+    );
+    expect(refused).toEqual(expect.objectContaining({ kind: "error", status: 403 }));
   });
 
   it("approves: completes the authorization with consent props and the same userId (G1 invariant)", async () => {
@@ -633,7 +736,7 @@ function deviceConsentDeps(over: Partial<BuildDeviceConsentDeps> = {}): {
     ticketTtlSeconds: TICKET_TTL,
     consentPath: "/consent",
     lookupClientName: async () => "webhook CLI",
-    getConsentOrg: async () => ({ orgId: "org_dana", name: "Dana's projects" }),
+    listConsentOrgs: async () => [{ orgId: "org_dana", name: "Dana's projects" }],
     signTicket: async (payload) => {
       signed.payload = payload;
       return "TICKET";
@@ -736,7 +839,7 @@ describe("buildDeviceConsent", () => {
     expect(noScope).toEqual(expect.objectContaining({ kind: "error", error: "invalid_scope" }));
 
     const noOrg = await buildDeviceConsent(
-      deviceConsentDeps({ getConsentOrg: async () => null }).deps,
+      deviceConsentDeps({ listConsentOrgs: async () => [] }).deps,
       DEVICE_RECORD,
       "user_dana",
       ORIGIN,

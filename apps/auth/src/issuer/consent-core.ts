@@ -68,8 +68,12 @@ export interface BuildConsentDeps {
   consentPath: string;
   /** Resolve the requesting client's display name (provider lookupClient → clientName), or null. */
   lookupClientName: (clientId: string) => Promise<string | null>;
-  /** Resolve the consenting user's consent org (id + name), or null if they have none (not bootstrapped). */
-  getConsentOrg: (userId: string) => Promise<{ orgId: string; name: string } | null>;
+  /**
+   * Every org the user belongs to, ordered (their personal org first). The FIRST is the default; the whole
+   * list is sealed into the ticket as the allowlist the decision validates a picked org against. Empty ⇒ the
+   * user has no org, which is a server error (bootstrap should have made one).
+   */
+  listConsentOrgs: (userId: string) => Promise<{ orgId: string; name: string }[]>;
   /** Seal the authorization state + display fields into a signed, expiring ticket. */
   signTicket: (payload: ConsentTicketPayload) => Promise<string>;
   /** A fresh anti-CSRF nonce for this request. */
@@ -148,7 +152,8 @@ export async function buildConsent(
     };
   }
 
-  const org = await deps.getConsentOrg(userId);
+  const orgs = await deps.listConsentOrgs(userId);
+  const org = orgs[0];
   if (!org) {
     deps.log?.("consent.no_org", { userId });
     return {
@@ -176,6 +181,7 @@ export async function buildConsent(
     userId,
     orgId: org.orgId,
     orgName: org.name,
+    orgs: orgs.map((o) => ({ id: o.orgId, name: o.name })),
     scopes,
     audience: resource,
     clientId: request.clientId,
@@ -208,7 +214,12 @@ export interface BuildDeviceConsentDeps {
   ticketTtlSeconds: number;
   consentPath: string;
   lookupClientName: (clientId: string) => Promise<string | null>;
-  getConsentOrg: (userId: string) => Promise<{ orgId: string; name: string } | null>;
+  /**
+   * Every org the user belongs to, ordered (their personal org first). The FIRST is the default; the whole
+   * list is sealed into the ticket as the allowlist the decision validates a picked org against. Empty ⇒ the
+   * user has no org, which is a server error (bootstrap should have made one).
+   */
+  listConsentOrgs: (userId: string) => Promise<{ orgId: string; name: string }[]>;
   signTicket: (payload: ConsentTicketPayload) => Promise<string>;
   newCsrf: () => string;
   nowSeconds: () => number;
@@ -258,7 +269,8 @@ export async function buildDeviceConsent(
     };
   }
 
-  const org = await deps.getConsentOrg(userId);
+  const orgs = await deps.listConsentOrgs(userId);
+  const org = orgs[0];
   if (!org) {
     deps.log?.("consent.device.no_org", { userId });
     return { kind: "error", status: 500, error: "server_error", description: "no consent org" };
@@ -278,6 +290,7 @@ export async function buildDeviceConsent(
     userId,
     orgId: org.orgId,
     orgName: org.name,
+    orgs: orgs.map((o) => ({ id: o.orgId, name: o.name })),
     scopes,
     audience: record.audience,
     clientId: record.clientId,
@@ -330,6 +343,12 @@ export interface DecideConsentInput {
   /** The double-submit CSRF token from the form body. */
   csrfToken: string;
   decision: "approve" | "deny";
+  /**
+   * The org the user picked on the screen, when it offered a choice. UNTRUSTED page input: it is validated
+   * against the candidate list SEALED in the ticket, so the page may only pick FROM the orgs the user
+   * actually belongs to — never add one. Absent ⇒ the ticket's default org.
+   */
+  orgId?: string;
   /** The LIVE session user resolved by the mount (null = not signed in). */
   sessionUserId: string | null;
 }
@@ -377,8 +396,26 @@ export async function decideConsent(
     return { kind: "error", status: 403, error: "access_denied", description: "csrf mismatch" };
   }
 
+  // The picked org must be one the ticket sealed. The sealed list came from the user's LIVE memberships at
+  // /authorize time, so this bounds the choice to orgs they actually belong to — a tampered form cannot
+  // authorize an app into someone else's org. (token-core re-asserts isOrgMember at the mint, so this is the
+  // outer of two independent gates, not the only one.)
+  //
+  // `orgs` is ADDITIVE: a ticket signed by the PREVIOUS deploy carries only orgId/orgName. During a rolling
+  // deploy those tickets are still in flight, so treat a missing list as "the sealed default, and only that"
+  // — the old ticket offered no choice, so it may authorize nothing else. Failing to do this would 500 every
+  // consent already on a user's screen at deploy time.
+  const candidateOrgs = payload.orgs ?? [{ id: payload.orgId, name: payload.orgName }];
+  const chosenOrgId = input.orgId ?? payload.orgId;
+  // Only an APPROVE binds an org. A deny grants nothing, so refusing it over a bogus org would just fail to
+  // record the user's "no" — the safest outcome must never be the one we drop.
+  if (input.decision === "approve" && !candidateOrgs.some((o) => o.id === chosenOrgId)) {
+    deps.log?.("consent.org_not_permitted", {});
+    return { kind: "error", status: 403, error: "access_denied", description: "org not permitted" };
+  }
+
   const props: ConsentProps = {
-    orgId: payload.orgId,
+    orgId: chosenOrgId,
     userId: payload.userId,
     scopes: payload.scopes,
     audience: payload.audience,
@@ -419,7 +456,7 @@ export async function decideConsent(
     }
     deps.log?.("consent.device.decided", {
       userId: payload.userId,
-      orgId: payload.orgId,
+      orgId: chosenOrgId, // the org actually authorized — not the ticket's default
       decision: input.decision,
     });
     // The device polls for its token — the browser just returns to the device page with the outcome.
@@ -466,7 +503,7 @@ export async function decideConsent(
 
   deps.log?.("consent.approved", {
     userId: payload.userId,
-    orgId: payload.orgId,
+    orgId: chosenOrgId, // the org actually authorized — not the ticket's default
     scopeCount: payload.scopes.length,
   });
   // RFC 9207: stamp the issuer onto the success response so the client can detect a mix-up attack (the

@@ -200,35 +200,32 @@ export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]>
 }
 
 /**
- * Resolve the org an interactive consent grant is for (Lane C A3 `/authorize`): the user's personal org
- * (v1 — single membership), as `{ orgId, name }`, or null if they have none yet / aren't a member. One
- * org-scoped read (RLS pinned to the derived org) that JOINs memberships, so it fails closed when the user
- * isn't a member (e.g. a deleted membership) rather than leaking an org name. No cross-org query.
+ * The orgs an interactive consent grant may be for (Lane 2.4) — the user's own memberships, personal org
+ * first. Replaces the old `getConsentOrg`, which DERIVED the personal org and so could only ever hand back
+ * one: that is why an invited teammate's CLI/MCP landed in their own empty org instead of the org they were
+ * invited to.
  *
- * NOTE (Lane 2.4): this is the SINGLE org-selection point in the whole issuer — /authorize, the device
- * flow, and the web session handoff all funnel through it, and everything downstream (the consent ticket,
- * auth_grant.org_id, the rtk_ handle, the app. cookie) merely CARRIES what it returns. Because it derives
- * the personal org, an invited teammate's CLI/MCP lands in their own empty org. {@link listUserOrgs} is the
- * primitive that unblocks replacing this with a real choice; the picker itself is the next slice.
+ * The FIRST entry is the default selection; the whole list is sealed into the consent ticket as the
+ * allowlist the decision endpoint validates the user's pick against. Empty ⇒ the user has no org at all
+ * (bootstrap should have made one), which the issuer treats as a server error rather than guessing.
  */
-export async function getConsentOrg(
+export async function listConsentOrgs(
   app: Sql,
   userId: string,
-): Promise<{ orgId: string; name: string } | null> {
-  const orgId = personalOrgId(userId);
-  const rows = await withTenant(
-    app,
-    orgId,
-    (tx) =>
-      tx<{ name: string }[]>`
-        select o.name
-        from orgs o
-        join memberships m on m.org_id = o.id and m.user_id = ${userId}
-        where o.id = ${orgId}
-        limit 1`,
-  );
-  const row = rows[0];
-  return row ? { orgId, name: row.name } : null;
+): Promise<{ orgId: string; name: string }[]> {
+  const orgs = await listUserOrgs(app, userId);
+  // Pin the PERSONAL org first, rather than trusting the directory's created_at order to put it there.
+  // That order is an assumption, not an invariant: bootstrap self-heals on a LATER session-create, so a user
+  // whose signup bootstrap failed and who then accepted an invite has the TEAM membership as their oldest —
+  // and would silently DEFAULT to authorizing apps into someone else's org. Not an escalation (they are a
+  // member), but a surprising default in exactly the direction nobody wants. personalOrgId is derivable
+  // without a read, so pinning it costs nothing.
+  const personal = personalOrgId(userId);
+  const ordered = [
+    ...orgs.filter((o) => o.orgId === personal),
+    ...orgs.filter((o) => o.orgId !== personal),
+  ];
+  return ordered.map((o) => ({ orgId: o.orgId, name: o.name }));
 }
 
 export interface BootstrapPersonalOrgInput {

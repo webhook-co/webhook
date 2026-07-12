@@ -153,6 +153,9 @@ export async function handleConsentDecision(
     requestId: parsed.data.requestId,
     csrfToken: parsed.data.csrfToken,
     decision: parsed.data.decision,
+    // The org the screen picked. Untrusted: decideConsent validates it against the list sealed in the
+    // ticket, so the body can select FROM the user's orgs but never introduce one.
+    ...(parsed.data.orgId ? { orgId: parsed.data.orgId } : {}),
     sessionUserId,
   });
 
