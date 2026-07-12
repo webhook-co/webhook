@@ -29,10 +29,28 @@ export const KEY_STATUSES = ["active", "retiring", "revoked"] as const;
 export const KeyStatusSchema = z.enum(KEY_STATUSES);
 export type KeyStatus = z.infer<typeof KeyStatusSchema>;
 
-/** Org membership roles (drives RBAC). */
+/** Org membership roles (drives RBAC). Ordered MOST → least privileged; the index is the rank. */
 export const MEMBERSHIP_ROLES = ["owner", "admin", "member"] as const;
 export const MembershipRoleSchema = z.enum(MEMBERSHIP_ROLES);
 export type MembershipRole = z.infer<typeof MembershipRoleSchema>;
+
+/** Privilege rank of a role: 0 = owner (most), higher = less. Unknown → Infinity (least, fails safe). */
+export function roleRank(role: string): number {
+  const i = (MEMBERSHIP_ROLES as readonly string[]).indexOf(role);
+  return i === -1 ? Number.POSITIVE_INFINITY : i;
+}
+
+/**
+ * May `actorRole` grant/assign `targetRole`? Yes iff the target is at or below the actor's own privilege —
+ * an admin can invite/promote to admin or member, never to owner; a member can grant nothing above member.
+ * The invariant behind invites and role changes: you cannot hand out more than you hold. Unknown roles fail
+ * closed (an unknown actor grants nothing; an unknown target is never grantable).
+ */
+export function canGrantRole(actorRole: string, targetRole: string): boolean {
+  const a = roleRank(actorRole);
+  const t = roleRank(targetRole);
+  return Number.isFinite(a) && Number.isFinite(t) && t >= a;
+}
 
 /** Soft-cap pause policy (org_limits). No prices/tiers — just the behavior. */
 export const PAUSE_POLICIES = ["pause", "allow"] as const;
