@@ -84,7 +84,7 @@ export default async function DashboardPage() {
               hint="retries exhausted or blocked"
             />
             <StatTile
-              label="p95 latency"
+              label="p95 delivery time"
               value={formatLatency(chart.latestP95Ms)}
               hint="most recent day measured"
             />
