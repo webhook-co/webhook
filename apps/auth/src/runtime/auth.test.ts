@@ -204,9 +204,26 @@ describe("buildAuthConfig", () => {
     expect(buildAuthConfig(input(), cfgDeps()).emailAndPassword?.enabled).not.toBe(true);
   });
 
-  it("wires the provided databaseHooks (the signup→bootstrap path)", () => {
-    const databaseHooks = { user: { create: { after: vi.fn() } } } as never;
-    expect(buildAuthConfig(input(), cfgDeps({ databaseHooks })).databaseHooks).toBe(databaseHooks);
+  it("preserves the provided databaseHooks (the signup→bootstrap path) AND composes in account-token stripping", async () => {
+    const userAfter = vi.fn();
+    const databaseHooks = { user: { create: { after: userAfter } } } as never;
+    const hooks = buildAuthConfig(input(), cfgDeps({ databaseHooks })).databaseHooks;
+    // signup→bootstrap hook passes through untouched…
+    expect(hooks?.user?.create?.after).toBe(userAfter);
+    // …and every auth instance strips the unused provider OAuth tokens on account write (data minimization).
+    const stripped = await hooks?.account?.create?.before?.({
+      accessToken: "x",
+      providerId: "google",
+    });
+    expect(stripped).toEqual({ data: { accessToken: null, refreshToken: null, idToken: null } });
+  });
+
+  it("does NOT enable storeAccountCookie (it would seed a cookie from in-memory tokens, bypassing the DB strip)", () => {
+    // The stripping hook nulls tokens on DB write; storeAccountCookie would put the fresh in-memory provider
+    // tokens into a cookie on re-auth — an exposure the DB strip can't reach. Keep it off.
+    const account = buildAuthConfig(input(), cfgDeps()).account as
+      { storeAccountCookie?: boolean } | undefined;
+    expect(account?.storeAccountCookie).not.toBe(true);
   });
 
   it("sets the secret + base URL and trusts the app origin", () => {
