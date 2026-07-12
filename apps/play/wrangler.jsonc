@@ -1,0 +1,70 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "webhook-play",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-15",
+  "observability": { "enabled": true },
+
+  // ── THE ISOLATION INVARIANT ────────────────────────────────────────────────────────────────────
+  // This worker has NO Hyperdrive/Neon, NO R2, NO KMS, NO Stripe, NO Analytics-Engine binding and
+  // makes NO outbound fetch. It is therefore STRUCTURALLY incapable of touching a real org, billing
+  // anything, leaking tenant data, or relaying a request (SSRF). /play captures live only in an
+  // ephemeral per-token Durable Object that self-destructs on an absolute timer. Adding any
+  // data-plane binding or an outbound fetch here would break the security model — see the play ADR.
+  //
+  // Non-secret runtime vars. TURNSTILE_MODE=off (deploy overrides to "on") lets `wrangler dev` and the
+  // workerd tests mint without a real challenge; PLAY_TTL_MS / PLAY_MAX_ACTIVE are tunable caps.
+  "vars": {
+    "TURNSTILE_MODE": "off",
+    "PLAY_TTL_MS": "900000",
+    "PLAY_MAX_ACTIVE": "5000",
+    "PLAY_MAX_PER_IP": "5",
+  },
+
+  "durable_objects": {
+    "bindings": [
+      // One per ingest token: stores captures in its own SQLite, fans them out over SSE to the
+      // session-bound viewer, and hard-deletes everything on its absolute-TTL alarm.
+      { "name": "PLAY_SESSION", "class_name": "PlaySession" },
+      // A single global instance (idFromName("global")): the mint circuit-breaker. Tracks the
+      // platform-wide active-token count and a per-IP count so unauthenticated minting can't be
+      // scaled into a cost/availability DoS.
+      { "name": "PLAY_COORDINATOR", "class_name": "PlayCoordinator" },
+    ],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlaySession", "PlayCoordinator"] }],
+
+  "workers_dev": false,
+  "preview_urls": true,
+
+  // Production overlay: `wrangler deploy --env production` (see .github/workflows/deploy-play.yml).
+  // Deliberately its OWN subdomain (play.wbhk.my) so a bug or abuse spike degrades only /play — never
+  // real ingest (wbhk.my), the DB, or R2. TURNSTILE_MODE flips to "on" so mint enforces the challenge.
+  //
+  // ⚠️ FOUNDER INFRA PREREQUISITES before the first prod deploy (human-gated, one-time at the zone):
+  //   1. Bind the `play.wbhk.my` custom domain to this Worker (Cloudflare zone).
+  //   2. Create a Turnstile widget for play (action "play-mint") and `wrangler secret put
+  //      TURNSTILE_SECRET_KEY --env production` (never committed — no-secrets). The sitekey goes in
+  //      apps/www's /play page.
+  //   3. (Recommended, defence-in-depth) add a Cloudflare Rate-Limiting rule on play.wbhk.my for
+  //      /api/mint and ingest, IP + IPv6-/64 keyed — the DO circuit-breaker is the in-app backstop.
+  "env": {
+    "production": {
+      "vars": {
+        "TURNSTILE_MODE": "on",
+        "PLAY_TTL_MS": "900000",
+        "PLAY_MAX_ACTIVE": "5000",
+        "PLAY_MAX_PER_IP": "5",
+      },
+      // Named envs do NOT inherit durable_objects / migrations — repeat them here.
+      "durable_objects": {
+        "bindings": [
+          { "name": "PLAY_SESSION", "class_name": "PlaySession" },
+          { "name": "PLAY_COORDINATOR", "class_name": "PlayCoordinator" },
+        ],
+      },
+      "migrations": [{ "tag": "v1", "new_sqlite_classes": ["PlaySession", "PlayCoordinator"] }],
+      "routes": [{ "pattern": "play.wbhk.my", "custom_domain": true }],
+    },
+  },
+}

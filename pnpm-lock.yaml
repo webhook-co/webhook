@@ -229,6 +229,15 @@ importers:
         specifier: ^5.20260708.1
         version: 5.20260708.1
 
+  apps/play:
+    devDependencies:
+      '@cloudflare/vitest-pool-workers':
+        specifier: ^0.18.2
+        version: 0.18.2(@cloudflare/workers-types@5.20260708.1)(@vitest/runner@4.1.10)(@vitest/snapshot@4.1.10)(vitest@4.1.10)
+      '@cloudflare/workers-types':
+        specifier: ^5.20260708.1
+        version: 5.20260708.1
+
   apps/telemetry:
     devDependencies:
       '@cloudflare/workers-types':
