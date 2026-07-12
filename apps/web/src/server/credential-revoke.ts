@@ -63,12 +63,12 @@ async function defaultDeps(): Promise<{ deps: RevokeDeps; close: () => Promise<v
  * so the stale entry could never be re-evicted). `allSettled` so one flaky delete never abandons the rest.
  */
 async function evictBestEffort(
-  deps: RevokeDeps,
+  evict: (keyHash: Buffer) => Promise<void>,
   hashes: readonly Buffer[],
-  ctx: { kind: "key" | "grant"; id: string },
+  ctx: { kind: "key" | "grant" | "member"; id: string },
 ): Promise<void> {
   if (hashes.length === 0) return;
-  const settled = await Promise.allSettled(hashes.map((hash) => deps.evict(hash)));
+  const settled = await Promise.allSettled(hashes.map((hash) => evict(hash)));
   const failed = settled.filter((r) => r.status === "rejected").length;
   if (failed > 0) {
     console.warn(
@@ -93,7 +93,7 @@ export async function revokeKeyById(
     : await defaultDeps();
   try {
     const { keyHash } = await deps.revokeKey(input.orgId, input.keyId, input.userId);
-    if (keyHash) await evictBestEffort(deps, [keyHash], { kind: "key", id: input.keyId });
+    if (keyHash) await evictBestEffort(deps.evict, [keyHash], { kind: "key", id: input.keyId });
   } finally {
     await close();
   }
@@ -109,8 +109,27 @@ export async function revokeGrantById(
     : await defaultDeps();
   try {
     const { revokedKeyHashes } = await deps.revokeGrant(input.orgId, input.grantId, input.userId);
-    await evictBestEffort(deps, revokedKeyHashes, { kind: "grant", id: input.grantId });
+    await evictBestEffort(deps.evict, revokedKeyHashes, { kind: "grant", id: input.grantId });
   } finally {
     await close();
   }
+}
+
+/**
+ * Evict a set of already-revoked key hashes from KV_AUTHZ. The member-management path (Lane 2.6) revokes a
+ * removed/demoted member's grants + keys **inside one DB transaction** and hands the hashes back; this is the
+ * second half of that revoke — without it the shared read-through cache would keep authenticating those keys
+ * for its TTL. Same best-effort semantics as every other revoke here: the DB stamp is what makes the revoke
+ * durable, so an eviction fault is logged (scrubbed) and swallowed rather than failing a committed removal.
+ */
+export async function evictRevokedKeyHashes(
+  hashes: readonly Buffer[],
+  ctx: { kind: "member"; id: string },
+): Promise<void> {
+  if (hashes.length === 0) return;
+  const { env } = await getCloudflareContext({ async: true });
+  const cache = kvCredentialCache(
+    (env as Record<string, unknown>).KV_AUTHZ as Parameters<typeof kvCredentialCache>[0],
+  );
+  await evictBestEffort((hash) => cache.delete(credentialCacheKey(hash)), hashes, ctx);
 }

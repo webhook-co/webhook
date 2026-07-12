@@ -14,6 +14,7 @@ export * from "./env";
 export * from "./client";
 export * from "./orgs";
 export * from "./invites";
+export * from "./members";
 export * from "./endpoints";
 export * from "./ingest-token-seal";
 export * from "./ingest-url-reveal";
