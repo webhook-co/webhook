@@ -27,6 +27,8 @@ import type { SessionExchangeBinding } from "./session-exchange";
 
 const PROD_AUTH_BASE_URL = "https://auth.webhook.co";
 const DEV_AUTH_BASE_URL = "http://localhost:3001";
+const PROD_APP_BASE_URL = "https://app.webhook.co";
+const DEV_APP_BASE_URL = "http://localhost:3000";
 // Dev-only signing key — sessions minted with it are worthless in prod (which fails closed below).
 const DEV_SESSION_SECRET = "dev-only-insecure-session-secret-not-for-production-use";
 
@@ -333,6 +335,33 @@ export function getStripePortalConfigId(): string | null {
       ? process.env.STRIPE_PORTAL_CONFIGURATION_ID
       : null);
   return raw;
+}
+
+/**
+ * The Resend API key for transactional mail (currently: the invite email). A Secrets Store binding in prod,
+ * process.env in dev. NULL when unset — the caller treats that as "email not configured" and falls back to
+ * the copy-link, so an unbound secret degrades the invite flow rather than breaking it. NEVER logged.
+ */
+export function getResendApiKey(): Promise<string | null> {
+  return readSecret((workerEnv() as Record<string, unknown>).RESEND_API_KEY).then(
+    (fromBinding) =>
+      fromBinding ??
+      (process.env.RESEND_API_KEY && process.env.RESEND_API_KEY.length > 0
+        ? process.env.RESEND_API_KEY
+        : null),
+  );
+}
+
+/** This app's own origin — used to turn a relative accept path into the absolute link an email must carry. */
+export function getAppBaseUrl(): string {
+  const fromBinding = workerEnv().APP_BASE_URL;
+  const url =
+    (typeof fromBinding === "string" && fromBinding.length > 0 ? fromBinding : null) ??
+    (process.env.APP_BASE_URL && process.env.APP_BASE_URL.length > 0
+      ? process.env.APP_BASE_URL
+      : null);
+  if (url) return url;
+  return isProduction() ? PROD_APP_BASE_URL : DEV_APP_BASE_URL;
 }
 
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */

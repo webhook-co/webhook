@@ -9,15 +9,17 @@ import { redirect } from "next/navigation";
 
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
-import { getAuditChainKey, getCredentialPepper } from "./env";
+import { getAppBaseUrl, getAuditChainKey, getCredentialPepper, getResendApiKey } from "./env";
+import { sendInviteEmail } from "./invite-email";
 import { requireOrgAccess } from "./org-access";
 import { verifySession } from "./session";
 
 // Invite server actions (Lane 2.5). createInvite/revoke gate on requireOrgAccess (owner/admin only) and
 // pass the SERVER-derived role as the ceiling — the client can't lift it. accept gates on verifySession
-// only (the accepting user is joining, not yet a member) and matches against the session's own email. The
-// invite token is a secret: v1 returns the accept link to the INVITER (to share) — email delivery is a
-// follow-up; it is never listed or exposed elsewhere.
+// only (the accepting user is joining, not yet a member) and matches against the session's own email.
+//
+// The invite token is a BEARER secret. It goes to exactly two places: the invitee's inbox (emailed) and the
+// inviter's screen (to share when mail is unavailable). It is never listed, logged, or re-shown.
 
 /** Only owner/admin manage members; a plain member is operational-only. */
 function canManageMembers(role: string): boolean {
@@ -45,15 +47,52 @@ export type CreateInviteResult =
       readonly acceptPath: string;
       readonly invitedEmail: string;
       readonly role: string;
+      /**
+       * Did we actually email the link? False when mail isn't configured OR the send failed — the invite
+       * still EXISTS either way, so the UI falls back to "copy this link and send it yourself". Never claim
+       * we sent an email we didn't.
+       */
+      readonly emailed: boolean;
     }
   | { readonly status: "forbidden" }
   | { readonly status: "invalid"; readonly message: string }
   | { readonly status: "error" };
 
+/** The verified sender for invite mail (mirrors auth.'s login@mail.webhook.co). */
+const INVITE_FROM = "invites@mail.webhook.co";
+
+/**
+ * Email the invite link — BEST EFFORT. The invite is already committed by the time we get here, and the
+ * inviter still holds the copy-link, so a mail outage must degrade the flow, not lose the invite. Returns
+ * whether it actually sent. Failures are logged (scrubbed) and swallowed.
+ */
+async function tryEmailInvite(input: {
+  to: string;
+  acceptPath: string;
+  invitedBy: string;
+}): Promise<boolean> {
+  try {
+    const apiKey = await getResendApiKey();
+    if (!apiKey) return false; // mail not configured (dev, or the binding isn't provisioned yet)
+    await sendInviteEmail(
+      { apiKey, from: INVITE_FROM },
+      {
+        to: input.to,
+        url: `${getAppBaseUrl()}${input.acceptPath}`,
+        invitedBy: input.invitedBy,
+      },
+    );
+    return true;
+  } catch (error) {
+    logActionError("invite.email_failed", error);
+    return false;
+  }
+}
+
 /** Create a pending invite for the current org. Owner/admin only; the invited role can't exceed the
  *  inviter's (server-derived). Returns the accept link for the inviter to share. */
 export async function createInviteAction(formData: FormData): Promise<CreateInviteResult> {
-  const { orgId, userId, role } = await requireOrgAccess();
+  const { orgId, userId, role, user } = await requireOrgAccess();
   if (!canManageMembers(role)) return { status: "forbidden" };
 
   const email = String(formData.get("email") ?? "").trim();
@@ -76,12 +115,19 @@ export async function createInviteAction(formData: FormData): Promise<CreateInvi
         auditKey,
       }),
     );
-    // The token goes ONLY to its creator here (to share), never into a listing. `token` is url-safe.
+    // The token goes ONLY to the invitee (by email) and to its creator (to share). Never into a listing.
+    const acceptPath = `/invite/accept?org=${orgId}&token=${encodeURIComponent(invite.token)}`;
+    const emailed = await tryEmailInvite({
+      to: invite.invitedEmail,
+      acceptPath,
+      invitedBy: user.email, // the inviter's own authenticated email — named so the invitee can recognise them
+    });
     return {
       status: "ok",
-      acceptPath: `/invite/accept?org=${orgId}&token=${encodeURIComponent(invite.token)}`,
+      acceptPath,
       invitedEmail: invite.invitedEmail,
       role: invite.role,
+      emailed,
     };
   } catch (error) {
     logActionError("invite.create_failed", error);

@@ -32,9 +32,19 @@ vi.mock("@webhook-co/db/invites", () => ({
 vi.mock("@webhook-co/db/credential", () => ({ createCredentialHasherFromBase64: () => ({}) }));
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: async () => ({}) as CryptoKey }));
 vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: () => new Uint8Array(32) }));
+// vi.mock factories are hoisted above module scope, so anything they close over must come from vi.hoisted.
+const { resendKey, sendInviteEmail } = vi.hoisted(() => ({
+  resendKey: vi.fn((): string | null => "re_key"),
+  sendInviteEmail: vi.fn(async () => {}),
+}));
 vi.mock("./env", () => ({
   getCredentialPepper: async () => "AA".repeat(16),
   getAuditChainKey: async () => "BB".repeat(32),
+  getResendApiKey: async () => resendKey(),
+  getAppBaseUrl: () => "https://app.webhook.co",
+}));
+vi.mock("./invite-email", () => ({
+  sendInviteEmail: (...a: unknown[]) => sendInviteEmail(...a),
 }));
 // withTenantDb(fn) → fn(app); the db invite fns are mocked, so app is a stub.
 vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({}) }));
@@ -103,6 +113,33 @@ describe("createInviteAction", () => {
       status: "forbidden",
     });
     expect(createInvite).not.toHaveBeenCalled();
+  });
+
+  it("EMAILS the invite link and reports emailed:true", async () => {
+    const res = await createInviteAction(form({ email: "bob@acme.test", role: "member" }));
+    expect(res).toMatchObject({ status: "ok", emailed: true });
+    expect(sendInviteEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ apiKey: "re_key" }),
+      expect.objectContaining({
+        to: "bob@acme.test",
+        url: "https://app.webhook.co/invite/accept?org=org_1&token=whinv_secret",
+        invitedBy: "o@acme.test", // the INVITER's own authenticated email
+      }),
+    );
+  });
+
+  it("still succeeds (emailed:false) when mail isn't configured — the invite is not lost", async () => {
+    resendKey.mockReturnValueOnce(null);
+    const res = await createInviteAction(form({ email: "bob@acme.test", role: "member" }));
+    expect(res).toMatchObject({ status: "ok", emailed: false });
+    expect(sendInviteEmail).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds (emailed:false) when the SEND FAILS — never lose a committed invite to a mail outage", async () => {
+    sendInviteEmail.mockRejectedValueOnce(new Error("resend 500"));
+    const res = await createInviteAction(form({ email: "bob@acme.test", role: "member" }));
+    expect(res).toMatchObject({ status: "ok", emailed: false });
+    if (res.status === "ok") expect(res.acceptPath).toContain("token=whinv_secret");
   });
 
   it("rejects a malformed email/role", async () => {

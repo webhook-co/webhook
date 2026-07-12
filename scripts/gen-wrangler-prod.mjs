@@ -263,6 +263,11 @@ const APPS = {
       "AUDIT_CHAIN_HMAC_KEY",
       "SESSION_TOKEN_SECRET",
       "LISTEN_TICKET_KEY",
+      // RESEND_API_KEY — the invite email (Lane 2.5). The SAME store secret auth. already binds for the
+      // magic link, so it is provisioned; binding it here cannot fail on a missing secret. If it were ever
+      // absent, getResendApiKey() returns null and the invite falls back to the copy-link rather than
+      // breaking.
+      "RESEND_API_KEY",
       // STRIPE_SECRET_KEY (S4.4b) — the dashboard Checkout/Portal Stripe key. Bound only when billing is on.
       ...whenBilling(["STRIPE_SECRET_KEY"]),
     ],
