@@ -176,22 +176,47 @@ describe("runDeliveryStatsRollup", () => {
     await run();
     expect(await statsAt(orgId, dayIso(1))).toMatchObject({ delivered: 2, p95: 290 });
   });
+});
 
-  it("isolates a failing org — one bad org is counted, the rest still roll", async () => {
-    const ok = await seedOrg("ds-ok");
-    await seedDelivery(ok.orgId, ok.eventId, "delivered", 0, 150);
-    // A phantom org id: it has no delivery rows, so it is never enumerated — the pass simply rolls `ok`.
-    const res = await runDeliveryStatsRollup({
-      meter,
-      app,
+describe("runDeliveryStatsRollup per-org isolation (unit, fakes)", () => {
+  // One org's failure must not skip the rest of the pass. Deterministic fakes so the control flow is
+  // actually exercised — a real DB error mid-rollup is hard to force, and asserting on a phantom org that
+  // never fails would leave the try/catch untested. Mirrors usage-rollup's isolation test.
+  it("isolates a failing org: logs it, counts it, and still processes the rest", async () => {
+    const enumerated = [{ org_id: "ok-1" }, { org_id: "fail-1" }, { org_id: "ok-2" }];
+    const fakeMeter = (() => Promise.resolve(enumerated)) as unknown as Sql;
+    // withTenant(app, orgId, cb) → app.begin → tx`select set_config(guc, orgId, true)` then cb(tx).
+    // Reject inside the begin for fail-1 (as its set_config runs) so THAT org throws and no other does.
+    const fakeApp = {
+      begin: async (cb: (tx: unknown) => Promise<unknown>) => {
+        const tx = (strings: TemplateStringsArray, ...values: unknown[]) => {
+          const text = strings.join("?");
+          if (text.includes("set_config") && values.includes("fail-1")) {
+            return Promise.reject(new Error("boom"));
+          }
+          return Promise.resolve([]);
+        };
+        return cb(tx);
+      },
+    } as unknown as Sql;
+
+    const failedOrgs: string[] = [];
+    const result = await runDeliveryStatsRollup({
+      meter: fakeMeter,
+      app: fakeApp,
       now: NOW,
-      settleDays: SETTLE_DAYS,
+      settleDays: 1,
       limit: 1000,
+      log: (_message, fields) => {
+        if (fields?.orgId) failedOrgs.push(String(fields.orgId));
+      },
     });
 
-    expect(res.orgsFailed).toBe(0);
-    expect(res.orgsSucceeded).toBeGreaterThanOrEqual(1);
-    expect(await statsAt(ok.orgId, dayIso(0))).toMatchObject({ delivered: 1 });
+    expect(result.orgsProcessed).toBe(3);
+    expect(result.orgsSucceeded).toBe(2);
+    expect(result.orgsFailed).toBe(1);
+    expect(result.capped).toBe(false);
+    expect(failedOrgs).toEqual(["fail-1"]);
   });
 });
 
