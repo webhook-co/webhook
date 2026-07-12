@@ -130,10 +130,13 @@ describe("product pages", () => {
         }
       });
 
+      // axe walks the full page DOM — and /product/verification now renders the 142-provider registry.
+      // ~0.7s locally, ~13s on CI's slower runner, which blew vitest's 5s default. This raises the TIME
+      // LIMIT only: the scan still runs and must still find zero violations.
       it("has no accessibility violations", async () => {
         const { container } = render(<Page />);
         expect(await axeComponent(container)).toHaveNoViolations();
-      });
+      }, 30000);
     });
   }
 });

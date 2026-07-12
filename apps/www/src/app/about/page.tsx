@@ -20,7 +20,7 @@ export const metadata = pageMetadata({
 
 // One heading treatment for the section h2s, so they can't drift out of sync (only the bottom
 // margin varies per section).
-const sectionH2 = "text-2xl font-semibold tracking-heading text-fg sm:text-[28px]";
+const sectionH2 = "text-2xl font-semibold tracking-heading text-fg sm:text-[1.75rem]";
 
 const PRINCIPLES = [
   {

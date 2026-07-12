@@ -100,5 +100,5 @@ describe("/security", () => {
   it("has no accessibility violations", async () => {
     const { container } = render(<SecurityPage />);
     expect(await axeComponent(container)).toHaveNoViolations();
-  });
+  }, 30000); // CI's runner is far slower than local; a time limit, not a weaker assertion.
 });

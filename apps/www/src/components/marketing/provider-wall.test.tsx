@@ -112,5 +112,5 @@ describe("ProviderWall", () => {
   it("has no accessibility violations", async () => {
     const { container } = render(<ProviderWall />);
     expect(await axeComponent(container)).toHaveNoViolations();
-  });
+  }, 30000); // 142 pills is a big DOM for axe; slow on CI. A time limit, not a weaker assertion.
 });

@@ -45,6 +45,7 @@ jobs:
       - name: Deploy production (play.wbhk.my)
         if: github.event_name == 'workflow_dispatch'
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Empty on a PR: a fork/PR-triggered run must never hold the prod deploy token.
+          CLOUDFLARE_API_TOKEN: ${{ github.event_name != 'pull_request' && secrets.CLOUDFLARE_API_TOKEN || '' }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: pnpm --filter @webhook-co/play exec wrangler deploy --env production
