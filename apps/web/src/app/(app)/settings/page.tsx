@@ -38,20 +38,6 @@ export default async function SettingsPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>API keys &amp; devices</CardTitle>
-          <CardDescription>
-            Manage the keys and devices authorized for your organization.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button asChild variant="secondary">
-            <a href="/settings/credentials">Manage credentials</a>
-          </Button>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
           <CardTitle>Connected apps</CardTitle>
           <CardDescription>
             Apps you&apos;ve authorized (like Claude or Cursor) to access your account over OAuth.
