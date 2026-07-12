@@ -4,7 +4,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 
 import { EventDetail } from "@/components/event-detail";
-import { loadEventPayloadAction, revealHeaderAction } from "@/server/event-actions";
+import {
+  deleteEventAction,
+  loadEventPayloadAction,
+  revealHeaderAction,
+} from "@/server/event-actions";
 import { loadEvent } from "@/server/events";
 import { replayToDestinationAction } from "@/server/replay-actions";
 import { loadDestinations } from "@/server/replay-destinations";
@@ -52,6 +56,7 @@ export default async function EventDetailPage({
           destinations={destResult.status === "ok" ? destResult.items : []}
           destinationsError={destResult.status === "error"}
           replay={replayToDestinationAction}
+          deleteEvent={deleteEventAction}
         />
       )}
     </div>

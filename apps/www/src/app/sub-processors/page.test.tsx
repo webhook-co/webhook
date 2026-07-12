@@ -34,7 +34,16 @@ describe("SubProcessorsPage", () => {
     for (const header of [/sub-processor/i, /what it does/i, /data it may process/i, /location/i]) {
       expect(within(table).getByRole("columnheader", { name: header })).toBeInTheDocument();
     }
-    for (const provider of [/Cloudflare/i, /Neon/i, /Amazon Web Services/i, /Stripe/i, /Resend/i]) {
+    for (const provider of [
+      /Cloudflare/i,
+      /Neon/i,
+      /Amazon Web Services/i,
+      /Stripe/i,
+      /Resend/i,
+      /Google/i,
+      /GitHub/i,
+      /Mintlify/i,
+    ]) {
       expect(within(table).getByRole("rowheader", { name: provider })).toBeInTheDocument();
     }
   });

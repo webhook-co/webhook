@@ -14,6 +14,10 @@
   // fail-safe default). The literal placeholder is what `wrangler dev` sees locally (parses to uncapped).
   "vars": {
     "FREE_EVENT_CAP": "<FREE_EVENT_CAP>",
+    // ORPHAN_SWEEP_DELETE (S6c-iii): "true" lets the orphan-sweep cron actually delete identified orphans;
+    // anything else (incl. unset → "") = COUNT-ONLY (finds + logs orphans, deletes nothing). Fail-safe: an
+    // irreversible cross-org R2 delete stays off until this is deliberately set.
+    "ORPHAN_SWEEP_DELETE": "<ORPHAN_SWEEP_DELETE>",
     // Billing (S4.4/S4.5) — all DEPLOY-INJECTED by the overlay from optional GH vars; unset → "" → dark.
     // BILLING_MODE off/"" → the meter-reporter cron no-ops (parseBillingMode fail-safes to off).
     // STRIPE_METER_EVENT_NAME → which Stripe Billing Meter the outbound usage reports count against.

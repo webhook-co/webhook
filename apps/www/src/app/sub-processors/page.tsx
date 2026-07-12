@@ -33,7 +33,7 @@ export default function SubProcessorsPage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Sub-processors" updated="11 July 2026">
+        <LegalDoc title="Sub-processors" updated="12 July 2026">
           <blockquote>
             <strong>In short:</strong> these are the third-party infrastructure providers we rely on
             to run the hosted webhook.co service, what each one does, and the data it may handle. We
@@ -103,6 +103,38 @@ export default function SubProcessorsPage() {
                   <th scope="row">Resend</th>
                   <td>Transactional email — magic-link sign-in and service notifications.</td>
                   <td>Recipient email address and the content of those messages.</td>
+                  <td>United States</td>
+                </tr>
+                <tr>
+                  <th scope="row">Google LLC</th>
+                  <td>"Sign in with Google" (OAuth) — only if you choose Google to sign in.</td>
+                  <td>
+                    Your Google account email and basic profile, shared when you sign in with
+                    Google.
+                  </td>
+                  <td>United States</td>
+                </tr>
+                <tr>
+                  <th scope="row">GitHub, Inc.</th>
+                  <td>
+                    "Sign in with GitHub" (OAuth); distribution of the CLI and its installer (GitHub
+                    Releases); and, as a GitHub secret-scanning partner, notifications when a
+                    webhook.co API key is found in a public repository.
+                  </td>
+                  <td>
+                    Your GitHub account email and basic profile if you sign in with GitHub; when
+                    GitHub reports a leaked key, the matching key and the repository it was found
+                    in.
+                  </td>
+                  <td>United States</td>
+                </tr>
+                <tr>
+                  <th scope="row">Mintlify, Inc.</th>
+                  <td>Hosting for our documentation site (docs.webhook.co).</td>
+                  <td>
+                    Standard web-server logs for documentation visitors (IP address, user-agent). No
+                    account data or webhook payloads.
+                  </td>
                   <td>United States</td>
                 </tr>
               </tbody>
