@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockMatchMedia } from "@/lib/test-utils";
 import { axeComponent } from "@/test/axe";
 
-import { CaptureRow, PlayTester, type Capture } from "./play-tester";
+import { CaptureRow, PLAY_SESSION_KEY, PlayTester, type Capture } from "./play-tester";
 
 // The render half of the /play XSS control: captured request content is attacker-controlled, so it
 // must render as INERT text — never as HTML/DOM. React text nodes give this for free; these tests pin
@@ -90,10 +90,14 @@ describe("PlayTester lifecycle", () => {
     mockMatchMedia(true);
     FakeEventSource.instances = [];
     global.EventSource = FakeEventSource as unknown as typeof EventSource;
+    // A mint now persists the session, so it must not leak into the next test (the component would
+    // restore it and never show the mint button).
+    sessionStorage.clear();
   });
   afterEach(() => {
     global.fetch = realFetch;
     global.EventSource = realES;
+    sessionStorage.clear();
     vi.restoreAllMocks();
   });
 
@@ -149,5 +153,129 @@ describe("PlayTester lifecycle", () => {
     render(<PlayTester />);
     await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
     expect(await screen.findByText(/too many sandboxes/i)).toBeInTheDocument();
+  });
+});
+
+// Reload used to LOSE the sandbox: the token lived only in React state. The sandbox itself survived
+// (the DO runs its full TTL and the coordinator only prunes by expiry — there is no release path), so
+// with a per-IP cap of 5, five reloads silently 429'd the user for fifteen minutes while five
+// invisible sandboxes ticked away. We now persist the NON-SECRET session in sessionStorage and
+// re-attach on mount; the viewer secret stays where it always was — in the HttpOnly cookie.
+describe("PlayTester — surviving a reload", () => {
+  const realFetch = global.fetch;
+  const realES = global.EventSource;
+  const token = "b".repeat(32);
+  const stored = (expiresAt: number) =>
+    JSON.stringify({ token, ingestUrl: `https://play.wbhk.my/${token}`, expiresAt });
+
+  beforeEach(() => {
+    mockMatchMedia(true);
+    FakeEventSource.instances = [];
+    global.EventSource = FakeEventSource as unknown as typeof EventSource;
+    sessionStorage.clear();
+    global.fetch = vi.fn(() => {
+      throw new Error("a restored session must NOT re-mint — that's what burns the per-IP budget");
+    }) as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    global.fetch = realFetch;
+    global.EventSource = realES;
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("restores a still-valid sandbox on mount and re-attaches the stream WITHOUT re-minting", async () => {
+    sessionStorage.setItem(PLAY_SESSION_KEY, stored(Date.now() + 600_000));
+    render(<PlayTester />);
+
+    // The URL is back on screen, and no mint was issued (fetch would have thrown).
+    expect((await screen.findAllByText(new RegExp(token))).length).toBeGreaterThan(0);
+    // The stream was re-opened — the DO replays its capture backlog, so the captures come back too.
+    const es = FakeEventSource.instances[0];
+    expect(es.url).toContain(`/${token}/stream`);
+    expect(es.init?.withCredentials).toBe(true);
+  });
+
+  it("never persists the viewer secret — only the token, url and expiry", async () => {
+    sessionStorage.setItem(PLAY_SESSION_KEY, stored(Date.now() + 600_000));
+    render(<PlayTester />);
+    await screen.findAllByText(new RegExp(token));
+    const raw = sessionStorage.getItem(PLAY_SESSION_KEY) ?? "";
+    expect(Object.keys(JSON.parse(raw)).sort()).toEqual(["expiresAt", "ingestUrl", "token"]);
+    expect(raw).not.toMatch(/secret|viewer|pv_/i);
+  });
+
+  it("ignores an expired stored sandbox (offers a fresh one instead of a dead URL)", async () => {
+    sessionStorage.setItem(PLAY_SESSION_KEY, stored(Date.now() - 1));
+    render(<PlayTester />);
+    expect(await screen.findByRole("button", { name: /create a test url/i })).toBeInTheDocument();
+    expect(FakeEventSource.instances).toHaveLength(0);
+    expect(sessionStorage.getItem(PLAY_SESSION_KEY)).toBeNull(); // and it's swept
+  });
+
+  it("ignores a corrupt stored value rather than crashing the page", async () => {
+    sessionStorage.setItem(PLAY_SESSION_KEY, "{not json");
+    render(<PlayTester />);
+    expect(await screen.findByRole("button", { name: /create a test url/i })).toBeInTheDocument();
+  });
+});
+
+// A sandbox URL you have to hand-select out of a <code> block is a papercut on the one page whose
+// entire job is "send this thing a request in under ten seconds".
+describe("PlayTester — copying the URL and the curl", () => {
+  const realFetch = global.fetch;
+  const realES = global.EventSource;
+  const token = "c".repeat(32);
+
+  beforeEach(() => {
+    mockMatchMedia(true);
+    FakeEventSource.instances = [];
+    global.EventSource = FakeEventSource as unknown as typeof EventSource;
+    sessionStorage.clear();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        token,
+        ingestUrl: `https://play.wbhk.my/${token}`,
+        expiresAt: Date.now() + 900_000,
+        curl: `curl -X POST https://play.wbhk.my/${token}`,
+      }),
+    }) as unknown as typeof fetch;
+  });
+  afterEach(() => {
+    global.fetch = realFetch;
+    global.EventSource = realES;
+    sessionStorage.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("copies the sandbox url to the clipboard from a real, labelled button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    render(<PlayTester />);
+    await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
+
+    await userEvent.click(await screen.findByRole("button", { name: /copy sandbox url/i }));
+    expect(writeText).toHaveBeenCalledWith(`https://play.wbhk.my/${token}`);
+    // Confirmation is announced, not just painted (screen-reader users get it too).
+    expect(await screen.findByRole("status")).toHaveTextContent(/copied/i);
+  });
+
+  it("copies the curl command from its own labelled button", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    render(<PlayTester />);
+    await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
+    await userEvent.click(await screen.findByRole("button", { name: /copy curl command/i }));
+    expect(writeText).toHaveBeenCalledWith(`curl -X POST https://play.wbhk.my/${token}`);
+  });
+
+  it("tells the user any verb works, including a plain browser GET", async () => {
+    render(<PlayTester />);
+    await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
+    expect(await screen.findByText(/any method/i)).toBeInTheDocument();
   });
 });

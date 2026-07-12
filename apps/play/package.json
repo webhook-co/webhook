@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node scripts/check-no-body-cancel.mjs && vitest run",
     "deploy": "wrangler deploy",
     "deploy:dry": "wrangler deploy --dry-run"
   },

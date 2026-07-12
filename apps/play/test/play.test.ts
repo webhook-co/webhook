@@ -31,7 +31,8 @@ async function readReplay(token: string, cookie: string): Promise<string> {
   let out = "";
   const timeout = <T>(p: Promise<T>) =>
     Promise.race([p, new Promise<{ done: true }>((r) => setTimeout(() => r({ done: true }), 500))]);
-  for (let i = 0; i < 6; i++) {
+  // Enough reads to drain a multi-record replay (the all-verbs test alone replays seven records).
+  for (let i = 0; i < 24; i++) {
     const chunk = (await timeout(reader.read())) as { value?: Uint8Array; done: boolean };
     if (chunk.done) break;
     if (chunk.value) out += dec.decode(chunk.value);
@@ -146,5 +147,159 @@ describe("/play worker", () => {
     const root = await SELF.fetch(`${HOST}/`, { redirect: "manual" });
     expect(root.status).toBe(302);
     expect(root.headers.get("location")).toBe("https://www.webhook.co/play");
+  });
+});
+
+// An oversized body — which anyone who knows a sandbox URL can send, unauthenticated — used to leave
+// that session's SSE stream permanently dead and its ingest 503ing: `readCapped` called
+// `reader.cancel()` on the in-flight request body, workerd raised an uncaught "Network connection
+// lost", and the Durable Object was torn down. Captures kept landing; the owner could no longer watch.
+//
+// ⚠️ HONESTY ABOUT THESE TESTS: they pin the OBSERVABLE contract (413 on both the declared and the
+// streamed path; ingest and stream both survive it) — but they do NOT reproduce the wedge itself.
+// Mutation-checked: they pass against the buggy `reader.cancel()` code too, because `SELF.fetch` has
+// no real socket to reset. The invariant is genuinely guarded in two other places, both of which DO
+// fail on the old code: `scripts/check-no-body-cancel.mjs` (static, runs in the gate) and
+// `scripts/drive-local.sh` (real HTTP against `wrangler dev`). Do not mistake this block for the guard.
+describe("/play — an oversized request must not blind the viewer", () => {
+  it("keeps the stream alive and replaying after a 413", async () => {
+    const res = await mint("203.0.113.30");
+    const { token } = (await res.json()) as { token: string };
+    const cookie = cookieFor(res, token);
+
+    await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: "before" });
+    const tooBig = await SELF.fetch(`${HOST}/${token}`, {
+      method: "POST",
+      body: "A".repeat(70_000),
+    });
+    expect(tooBig.status).toBe(413);
+
+    // The sandbox still accepts traffic…
+    const after = await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: "after" });
+    expect(after.status).toBe(200);
+    // …and the owner can still SEE it — both the capture from before the 413 and the one after.
+    const replay = await readReplay(token, cookie);
+    expect(replay).toContain("before");
+    expect(replay).toContain("after");
+  });
+
+  it("survives a STREAMED over-cap body that lies about its length (no content-length fast path)", async () => {
+    const res = await mint("203.0.113.31");
+    const { token } = (await res.json()) as { token: string };
+    const cookie = cookieFor(res, token);
+    await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: "before" });
+
+    // A chunked body drip-fed from a stream: no Content-Length, so the cap can only be discovered
+    // mid-read — the exact path where the old code called reader.cancel() and killed the DO.
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < 10; i++)
+          controller.enqueue(new TextEncoder().encode("A".repeat(10_000)));
+        controller.close();
+      },
+    });
+    const tooBig = await SELF.fetch(`${HOST}/${token}`, {
+      method: "POST",
+      body,
+      duplex: "half",
+    } as RequestInit & { duplex: "half" });
+    expect(tooBig.status).toBe(413);
+
+    const after = await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: "after" });
+    expect(after.status).toBe(200);
+    const replay = await readReplay(token, cookie);
+    expect(replay).toContain("before");
+    expect(replay).toContain("after");
+  });
+
+  it("refuses an over-cap Content-Length without reading the body at all", async () => {
+    const res = await mint("203.0.113.32");
+    const { token } = (await res.json()) as { token: string };
+    // The declared length alone is disqualifying — we never touch the stream, so there is nothing to
+    // cancel and no connection to reset.
+    const tooBig = await SELF.fetch(`${HOST}/${token}`, {
+      method: "POST",
+      headers: { "content-length": "70000" },
+      body: "A".repeat(70_000),
+    });
+    expect(tooBig.status).toBe(413);
+    expect((await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: "x" })).status).toBe(200);
+  });
+});
+
+// The URL we hand the user has to be one they can actually call. It was hardcoded to `https://`, which
+// is right in prod but hands a `wrangler dev` user an https://localhost URL that dies with
+// ERR_SSL_PROTOCOL_ERROR. Scheme now follows the host — but ONLY loopback may relax to http, so prod
+// can never advertise a plaintext ingest URL even if a plaintext request somehow reaches the worker.
+describe("/play — the advertised ingest URL is callable", () => {
+  async function mintAt(host: string) {
+    const res = await SELF.fetch(`${host}/api/mint`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.9" },
+      body: JSON.stringify({}),
+    });
+    return (await res.json()) as { token: string; ingestUrl: string; curl: string };
+  }
+
+  it("advertises https for a real host", async () => {
+    const body = await mintAt(HOST);
+    expect(body.ingestUrl).toBe(`https://play.wbhk.my/${body.token}`);
+    expect(body.curl).toContain(`https://play.wbhk.my/${body.token}`);
+  });
+
+  it("advertises http for loopback so a local wrangler dev URL is actually reachable", async () => {
+    for (const host of ["http://localhost:8799", "http://127.0.0.1:8799"]) {
+      const body = await mintAt(host);
+      expect(body.ingestUrl.startsWith(`${host}/`)).toBe(true);
+      expect(body.ingestUrl).not.toContain("https://localhost");
+      expect(body.ingestUrl).not.toContain("https://127.0.0.1");
+    }
+  });
+
+  it("NEVER advertises plaintext for a non-loopback host, even on a plaintext request", async () => {
+    const body = await mintAt("http://play.wbhk.my");
+    expect(body.ingestUrl).toBe(`https://play.wbhk.my/${body.token}`);
+  });
+});
+
+// Live ingest (wbhk.my) accepts every verb — /play must match, or the sandbox teaches a behaviour the
+// product doesn't have. OPTIONS was the one gap: the global CORS-preflight branch swallowed it before
+// it could reach ingest. Preflight is now scoped to the two endpoints a BROWSER actually calls.
+describe("/play — accepts all verbs, like live ingest", () => {
+  it("captures every verb, including OPTIONS, on a bare token path", async () => {
+    const res = await mint("203.0.113.20");
+    const { token } = (await res.json()) as { token: string };
+    const cookie = cookieFor(res, token);
+
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]) {
+      const r = await SELF.fetch(`${HOST}/${token}`, {
+        method,
+        ...(method === "GET" || method === "HEAD" ? {} : { body: `via-${method}` }),
+      });
+      expect(r.status, `${method} should be captured`).toBe(200);
+    }
+
+    // …and every one of them actually landed in the session, not just returned 200.
+    const replay = await readReplay(token, cookie);
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]) {
+      expect(replay, `${method} should appear in the stream`).toContain(`"${method}"`);
+    }
+  });
+
+  it("still answers a real CORS preflight on /api/mint (the browser needs it)", async () => {
+    const res = await SELF.fetch(`${HOST}/api/mint`, {
+      method: "OPTIONS",
+      headers: { origin: "https://www.webhook.co" },
+    });
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+
+  it("still answers a real CORS preflight on the stream path", async () => {
+    const res = await SELF.fetch(`${HOST}/${"a".repeat(32)}/stream`, {
+      method: "OPTIONS",
+      headers: { origin: "https://www.webhook.co" },
+    });
+    expect(res.status).toBe(204);
   });
 });

@@ -89,22 +89,38 @@ function ipBucket(ip: string): string {
     .join(":")}::/64`;
 }
 
-/** Read the request body, streaming, aborting the moment it exceeds `cap`. Returns null if too large. */
+/**
+ * Read the request body with a hard cap. Returns null when it's too large (→ 413).
+ *
+ * DO NOT reintroduce `reader.cancel()` here. Cancelling an INCOMING request body while the client is
+ * still sending resets the connection, and workerd surfaces that as an uncaught "Network connection
+ * lost" that tears down the Durable Object — so one oversized request (which anyone who knows a
+ * sandbox URL can send, unauthenticated) permanently killed that session's live stream and started
+ * 503ing its ingest. Instead: reject a declared over-cap length before touching the body at all, and
+ * otherwise stop accumulating and let the runtime tear the stream down with the response.
+ */
 async function readCapped(request: Request, cap: number): Promise<Uint8Array | null> {
+  // Fast path: an honest Content-Length over the cap is refused without reading a single byte.
+  const declared = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > cap) return null;
   if (!request.body) return new Uint8Array(0);
+
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > cap) {
-      await reader.cancel();
-      return null;
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > cap) return null; // chunked/undeclared body that lied about its size
+      chunks.push(value);
     }
-    chunks.push(value);
+  } catch {
+    // A client that hangs up mid-body is not our problem — and must never become the DO's problem.
+    return null;
   }
+
   const out = new Uint8Array(total);
   let off = 0;
   for (const c of chunks) {
@@ -129,6 +145,27 @@ async function verifyTurnstile(env: Env, token: string | undefined, ip: string):
   } catch {
     return false;
   }
+}
+
+/**
+ * The origin we ADVERTISE in the ingest URL and curl snippet — it must be a URL the user can actually
+ * call. Hardcoding `https` handed a `wrangler dev` user `https://localhost:8799/...`, which dies with
+ * ERR_SSL_PROTOCOL_ERROR. Only LOOPBACK may follow the request's real scheme; every other host is
+ * forced to https, so a plaintext request to prod can never make us advertise a plaintext ingest URL.
+ */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+function advertisedOrigin(url: URL): string {
+  const scheme = LOOPBACK_HOSTS.has(url.hostname) ? url.protocol.replace(":", "") : "https";
+  return `${scheme}://${url.host}`;
+}
+
+/**
+ * The two endpoints a BROWSER calls cross-origin, and therefore the only paths where an OPTIONS is a
+ * CORS preflight. Everywhere else OPTIONS is just another verb to capture — live ingest (wbhk.my)
+ * accepts every verb, and the sandbox must not teach a behaviour the product doesn't have.
+ */
+function isBrowserEndpoint(path: string): boolean {
+  return path === "/api/mint" || /^\/[0-9a-f]{32}\/stream$/.test(path);
 }
 
 /** Read the per-token viewer-secret cookie (`pv_<token>`) from the request. */
@@ -177,7 +214,7 @@ async function handleMint(request: Request, env: Env, url: URL, origin: string):
   const session = env.PLAY_SESSION.get(env.PLAY_SESSION.idFromName(token));
   await session.init({ viewerSecret, mintedAt: now, ttlMs });
 
-  const ingestUrl = `https://${url.host}/${token}`;
+  const ingestUrl = `${advertisedOrigin(url)}/${token}`;
   // The viewer secret rides in an HttpOnly cookie scoped to this token's stream path — NOT in the
   // response body and NOT in any URL, so it never lands in a request log or in page JS. The browser
   // sends it automatically on the EventSource (withCredentials). SameSite=None+Secure because the www
@@ -189,6 +226,9 @@ async function handleMint(request: Request, env: Env, url: URL, origin: string):
       ingestUrl,
       expiresAt,
       curl: `curl -X POST ${ingestUrl} -H 'content-type: application/json' -d '{"hello":"webhook.co"}'`,
+      // Every verb is captured (same posture as live ingest), so a plain browser GET works too — the
+      // easiest possible first request for someone who doesn't want to open a terminal.
+      browseUrl: ingestUrl,
     },
     200,
     { ...corsHeaders(origin), "set-cookie": cookie },
@@ -240,7 +280,9 @@ export default {
     const path = url.pathname;
     const origin = allowedOrigin(env, request);
 
-    if (request.method === "OPTIONS") {
+    // Only a preflight on the two browser-called endpoints. An OPTIONS to a bare token path is a
+    // captured request like any other verb — see isBrowserEndpoint.
+    if (request.method === "OPTIONS" && isBrowserEndpoint(path)) {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
     if (path === "/healthz") return text("ok", 200);

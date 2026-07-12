@@ -27,10 +27,29 @@ interface Session {
   token: string;
   ingestUrl: string;
   expiresAt: number;
-  curl: string;
+  /** The worker-issued example command. Absent on a restored session — derived by `curlFor` instead. */
+  curl?: string;
 }
 
 type Status = "idle" | "minting" | "live" | "error" | "expired";
+
+/**
+ * Where a live sandbox is remembered across a reload. WHY THIS EXISTS: the sandbox outlives the page.
+ * The Durable Object runs its full 15-minute TTL and the mint coordinator only prunes by expiry — it
+ * has no release path — so a reload used to strand a live sandbox that still counted against the
+ * per-IP mint budget (5). Five reloads and you were rate-limited for fifteen minutes by sandboxes you
+ * could no longer see. Remembering the session makes the reload free instead of expensive.
+ *
+ * WHAT IS STORED: the token, its URL, and its expiry — all of which the worker already hands the page
+ * in the clear. The viewer SECRET is deliberately NOT here: it stays in the HttpOnly cookie, where
+ * page JavaScript cannot read it. sessionStorage (not localStorage) so it dies with the tab.
+ */
+export const PLAY_SESSION_KEY = "wbhk.play.session";
+
+/** Rebuild the example command for a restored session (the worker only sends it at mint time). */
+function curlFor(ingestUrl: string): string {
+  return `curl -X POST ${ingestUrl} -H 'content-type: application/json' -d '{"hello":"webhook.co"}'`;
+}
 
 export function PlayTester() {
   const [status, setStatus] = useState<Status>("idle");
@@ -38,6 +57,7 @@ export function PlayTester() {
   const [captures, setCaptures] = useState<Capture[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [remaining, setRemaining] = useState<number>(0);
+  const [copied, setCopied] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
 
   const teardown = useCallback(() => {
@@ -46,6 +66,64 @@ export function PlayTester() {
   }, []);
 
   useEffect(() => teardown, [teardown]);
+
+  /**
+   * Open the live stream for a session and show it. Used both by a fresh mint and by a reload-restore
+   * — the reconnecting stream is authenticated by the HttpOnly cookie (which survives the reload), and
+   * the Durable Object replays its capture backlog, so the requests you already sent come back too.
+   */
+  const attach = useCallback(
+    (s: Session) => {
+      teardown();
+      setSession(s);
+      setCaptures([]);
+      setStatus("live");
+
+      // No secret in the URL — the HttpOnly cookie authenticates the stream (withCredentials).
+      const es = new EventSource(`${PLAY_ORIGIN}/${s.token}/stream`, { withCredentials: true });
+      esRef.current = es;
+      let opened = false;
+      es.onopen = () => {
+        opened = true;
+      };
+      es.onmessage = (evt) => {
+        try {
+          const record = JSON.parse(evt.data) as Capture;
+          setCaptures((prev) => [record, ...prev].slice(0, 100));
+        } catch {
+          /* keepalive / non-JSON comment */
+        }
+      };
+      es.onerror = () => {
+        // Once connected, EventSource auto-reconnects on a transient drop — leave it. But if it never
+        // opened (e.g. third-party cookies blocked → the stream 403s), surface a clear error.
+        if (esRef.current === es && !opened && es.readyState === EventSource.CLOSED) {
+          setError(
+            "Couldn't open the live stream — check that third-party cookies aren't blocked.",
+          );
+          setStatus("error");
+        }
+      };
+    },
+    [teardown],
+  );
+
+  // Re-attach a sandbox that survived a reload. Anything expired or unparseable is swept rather than
+  // shown — handing someone a dead URL is worse than handing them a button.
+  useEffect(() => {
+    const raw = sessionStorage.getItem(PLAY_SESSION_KEY);
+    if (!raw) return;
+    try {
+      const s = JSON.parse(raw) as Session;
+      if (!s?.token || typeof s.expiresAt !== "number" || s.expiresAt <= Date.now()) {
+        sessionStorage.removeItem(PLAY_SESSION_KEY);
+        return;
+      }
+      attach(s);
+    } catch {
+      sessionStorage.removeItem(PLAY_SESSION_KEY);
+    }
+  }, [attach]);
 
   // Countdown to expiry; when it hits zero, mark expired and STOP the interval (else it fires forever).
   useEffect(() => {
@@ -58,6 +136,8 @@ export function PlayTester() {
       if (left === 0) {
         setStatus("expired");
         teardown();
+        // The sandbox is gone server-side; don't let a reload resurrect a dead URL.
+        sessionStorage.removeItem(PLAY_SESSION_KEY);
         clearInterval(t);
       }
     }, 1000);
@@ -86,39 +166,29 @@ export function PlayTester() {
             : `mint failed (${res.status})`,
         );
       const s = (await res.json()) as Session;
-      setSession(s);
-      setStatus("live");
-
-      // No secret in the URL — the HttpOnly cookie authenticates the stream (withCredentials).
-      const es = new EventSource(`${PLAY_ORIGIN}/${s.token}/stream`, { withCredentials: true });
-      esRef.current = es;
-      let opened = false;
-      es.onopen = () => {
-        opened = true;
-      };
-      es.onmessage = (evt) => {
-        try {
-          const record = JSON.parse(evt.data) as Capture;
-          setCaptures((prev) => [record, ...prev].slice(0, 100));
-        } catch {
-          /* keepalive / non-JSON comment */
-        }
-      };
-      es.onerror = () => {
-        // Once connected, EventSource auto-reconnects on a transient drop — leave it. But if it never
-        // opened (e.g. third-party cookies blocked → the stream 403s), surface a clear error.
-        if (esRef.current === es && !opened && es.readyState === EventSource.CLOSED) {
-          setError(
-            "Couldn't open the live stream — check that third-party cookies aren't blocked.",
-          );
-          setStatus("error");
-        }
-      };
+      // Remember it BEFORE attaching, so even an immediate reload finds the sandbox we just paid for.
+      // Token/url/expiry only — never the viewer secret, which lives in the HttpOnly cookie.
+      sessionStorage.setItem(
+        PLAY_SESSION_KEY,
+        JSON.stringify({ token: s.token, ingestUrl: s.ingestUrl, expiresAt: s.expiresAt }),
+      );
+      attach(s);
     } catch (e) {
       setError(e instanceof Error ? e.message : "something went wrong");
       setStatus("error");
     }
-  }, [teardown]);
+  }, [teardown, attach]);
+
+  /** Copy a worker-issued string (our own, never user input) and announce it to assistive tech. */
+  const copy = useCallback(async (what: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(what);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      /* clipboard denied (insecure context / permissions) — the text is selectable either way */
+    }
+  }, []);
 
   return (
     <div className="mx-auto max-w-[62ch]">
@@ -160,13 +230,35 @@ export function PlayTester() {
               </span>
             </div>
             {/* The URL and curl are our own strings (worker-issued) — safe. */}
-            <code className="block overflow-x-auto rounded-control bg-surface-sunken px-3 py-2 font-mono text-sm break-all text-fg">
-              {session.ingestUrl}
-            </code>
+            <div className="flex items-stretch gap-2">
+              <code className="block flex-1 overflow-x-auto rounded-control bg-surface-sunken px-3 py-2 font-mono text-sm break-all text-fg">
+                {session.ingestUrl}
+              </code>
+              <CopyButton
+                label="Copy sandbox url"
+                onCopy={() => copy("url", session.ingestUrl)}
+                copied={copied === "url"}
+              />
+            </div>
             <p className="mt-3 mb-1 font-mono text-xs text-fg-muted">try it:</p>
-            <code className="block overflow-x-auto rounded-control bg-surface-sunken px-3 py-2 font-mono text-xs whitespace-pre text-fg-secondary">
-              {session.curl}
-            </code>
+            <div className="flex items-stretch gap-2">
+              <code className="block flex-1 overflow-x-auto rounded-control bg-surface-sunken px-3 py-2 font-mono text-xs whitespace-pre text-fg-secondary">
+                {session.curl ?? curlFor(session.ingestUrl)}
+              </code>
+              <CopyButton
+                label="Copy curl command"
+                onCopy={() => copy("curl", session.curl ?? curlFor(session.ingestUrl))}
+                copied={copied === "curl"}
+              />
+            </div>
+            <p className="mt-3 text-xs text-fg-muted">
+              Any method works — POST, PUT, DELETE, even a plain GET you can paste straight into
+              your browser. Same as a real endpoint.
+            </p>
+            {/* Announced, not just painted: screen-reader users get the copy confirmation too. */}
+            <p role="status" aria-live="polite" className="sr-only">
+              {copied ? "copied" : ""}
+            </p>
             {status === "expired" ? (
               <div className="mt-4 text-center">
                 <Button size="sm" variant="secondary" onClick={start}>
@@ -191,6 +283,28 @@ export function PlayTester() {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/** A real <button> (not a click-handling div) so it's keyboard-reachable and named for assistive tech. */
+function CopyButton({
+  label,
+  onCopy,
+  copied,
+}: {
+  label: string;
+  onCopy: () => void;
+  copied: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onCopy}
+      className="shrink-0 rounded-control border border-hairline bg-surface px-3 font-mono text-xs text-fg-secondary transition-colors hover:bg-surface-sunken hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    >
+      {copied ? "copied" : "copy"}
+    </button>
   );
 }
 
