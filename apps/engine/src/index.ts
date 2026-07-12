@@ -81,7 +81,7 @@ import { existingPayloadKeys } from "@webhook-co/db/orphan-sweep";
 
 import { runAnchorCron } from "./anchor-cron";
 import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
-import { runOrphanSweep } from "./orphan-sweep-cron";
+import { parseOrphanSweepDelete, runOrphanSweep } from "./orphan-sweep-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
 import { isTotalRetentionFailure, runRetentionPruneCron } from "./retention-prune-cron";
@@ -1562,8 +1562,9 @@ async function runOrphanSweepDrainCron(env: Env): Promise<void> {
       existingKeys: (keys) => existingPayloadKeys(sql, keys),
       deleteR2: (keys) => env.R2_PAYLOADS.delete(keys),
       // COUNT-ONLY by default — an irreversible cross-org R2 delete only runs once ORPHAN_SWEEP_DELETE=true
-      // is set, after the count-only passes have been eyeballed. Anything but "true" ⇒ count-only.
-      deleteEnabled: (env.ORPHAN_SWEEP_DELETE ?? "").trim().toLowerCase() === "true",
+      // is set, after the count-only passes have been eyeballed. The pure, unit-tested parse fail-safes to
+      // count-only for anything but "true".
+      deleteEnabled: parseOrphanSweepDelete(env.ORPHAN_SWEEP_DELETE),
       writeCursor: (cursor) =>
         cursor === null
           ? env.KV_CONFIG.delete(ORPHAN_SWEEP_CURSOR_KEY)

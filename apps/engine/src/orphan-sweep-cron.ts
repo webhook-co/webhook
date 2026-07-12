@@ -18,6 +18,16 @@
 //      tombstoned-or-not — a tombstone keeps its row + key; its body is the event-payload-purge cron's job).
 // Bounded per tick (one R2 list page) + cursor-resumed across ticks, so a huge bucket drains over many ticks.
 
+/**
+ * Parse the ORPHAN_SWEEP_DELETE deploy var into the delete-enable flag. FAIL-SAFE: only the exact
+ * (trimmed, lowercased) string `"true"` arms the irreversible delete; unset / `""` / `"false"` / `"1"` /
+ * anything else stays COUNT-ONLY. Isolated + tested so the one line that gates a cross-org R2 delete can't
+ * silently drift (e.g. treating `"1"` or any non-empty value as enabled).
+ */
+export function parseOrphanSweepDelete(raw: string | undefined): boolean {
+  return (raw ?? "").trim().toLowerCase() === "true";
+}
+
 /** One R2 object considered for sweeping: its key + when it was uploaded (ms since epoch). */
 export interface OrphanCandidate {
   readonly key: string;

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  parseOrphanSweepDelete,
   runOrphanSweep,
   type OrphanCandidate,
   type OrphanSweepDeps,
@@ -150,6 +151,17 @@ describe("runOrphanSweep", () => {
     expect(r.orphans).toBe(2); // identified…
     expect(r.deleted).toBe(0); // …but not deleted
     expect(deleteR2).not.toHaveBeenCalled();
+  });
+
+  it("arms deletion ONLY for the exact string 'true' — everything else stays count-only (the enable-gate)", () => {
+    // The one line that arms an irreversible cross-org R2 delete. Fail-safe: nothing but a trimmed,
+    // lowercased "true" enables it.
+    expect(parseOrphanSweepDelete("true")).toBe(true);
+    expect(parseOrphanSweepDelete("TRUE")).toBe(true);
+    expect(parseOrphanSweepDelete("  true  ")).toBe(true);
+    for (const off of [undefined, "", "false", "1", "yes", "on", "TRUE ish", "t"]) {
+      expect(parseOrphanSweepDelete(off), `"${off}" must NOT arm deletion`).toBe(false);
+    }
   });
 
   it("treats an object EXACTLY at the safety window as old enough (strict-less-than young check)", async () => {
