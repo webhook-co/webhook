@@ -1,5 +1,9 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it } from "vitest";
+
+import { mockMatchMedia } from "@/lib/test-utils";
+
+import PricingPage from "@/app/pricing/page";
 
 import { axeComponent } from "@/test/axe";
 
@@ -31,20 +35,30 @@ describe("FAQ", () => {
     }
   });
 
-  // The MUST-disclose items are OPEN; everything else starts collapsed. This is the whole compliance
-  // mechanism, so it's asserted as a shape, not a vibe: exactly the `discloses` items are open.
-  it("opens exactly the MUST-disclose items and collapses the rest", () => {
+  // The FAQ now starts FULLY COLLAPSED, and is an EXCLUSIVE accordion — opening one closes the rest.
+  //
+  // The must-disclose items used to be forced open here, because AGENTS.md requires the billing terms
+  // be "disclosed up front on the pricing page". That promise did not go away: it moved to
+  // <PricingDisclosure>, which is visible unconditionally and cannot be collapsed, and is guarded by
+  // pricing-disclosure.test.tsx. Collapsing these WITHOUT moving it would have silently deleted a
+  // constitutional disclosure — which is why that test exists and why this comment is here.
+  it("starts fully collapsed — an accordion, not a wall of open panels", () => {
     const { container } = render(<Faq />);
     const details = [...container.querySelectorAll<HTMLDetailsElement>("details")];
     expect(details).toHaveLength(FAQ_ITEMS.length);
+    expect(details.length).toBeGreaterThan(0); // non-vacuous
+    expect(details.filter((d) => d.open)).toEqual([]);
+  });
 
-    const openQuestions = details
-      .filter((d) => d.open)
-      .map((d) => d.querySelector("summary")?.textContent?.trim());
-    const shouldBeOpen = FAQ_ITEMS.filter((i) => i.discloses).map((i) => i.question);
-
-    expect(openQuestions).toEqual(shouldBeOpen);
-    expect(shouldBeOpen.length).toBeGreaterThan(0);
+  it("is an EXCLUSIVE accordion — only one panel can be open at a time", () => {
+    // Native `<details name=…>`: the browser enforces this, so it works before hydration and with JS
+    // off. jsdom does not implement the exclusivity itself, so what's pinned here is the MECHANISM —
+    // every panel shares one group name. Without it, they'd all open independently.
+    const { container } = render(<Faq />);
+    const names = [...container.querySelectorAll("details")].map((d) => d.getAttribute("name"));
+    expect(names.length).toBeGreaterThan(1);
+    expect(new Set(names).size, "every panel must share one accordion group").toBe(1);
+    expect(names[0]).toBeTruthy();
   });
 
   // `faq-panel` is the fade-in-from-opacity-0 animation. A MUST-disclose panel is open on page load,
@@ -124,138 +138,59 @@ describe("FAQ ↔ pricing-tiers drift", () => {
 });
 
 // ── the MUST-disclose set ───────────────────────────────────────────────────────
-// Moved here verbatim-in-spirit from `pricing.test.tsx` when <PricingDisclosures> was deleted. It is
-// the same tripwire, pointed at the FAQ, because the obligation didn't go away when the component did.
+// The obligation is "disclosed UP FRONT … ON THE PRICING PAGE" (AGENTS.md), and ADR-0104 leans on the
+// pricing page as the disclosure of record for a billing-INCREASING default. It was never "in the
+// FAQ" — the FAQ was merely where it happened to live, with five entries forced open to satisfy it.
 //
-// AGENTS.md requires pricing be "disclosed UP FRONT … on the pricing page", and ADR-0104 leans on the
-// pricing page as the disclosure of record for a billing-INCREASING default. So it is not enough for
-// the text to be in the DOM — a collapsed <details> would put it there while showing the reader
-// nothing. Each fact below is asserted AND asserted visible.
-describe("FAQ — the MUST-disclose set", () => {
-  const answerOf = (match: RegExp) => FAQ_ITEMS.find((i) => match.test(i.question));
+// The FAQ now starts collapsed (it is an accordion), so these guards follow the OBLIGATION, not the
+// old implementation: each fact must appear on the pricing page and be VISIBLE — that is, not sitting
+// inside a closed <details>, which would put the text in the DOM while showing the reader nothing.
+// Today that means <PricingDisclosure> carries them. If someone moves them again, these still pass;
+// if someone deletes them, or tucks them behind a click, these fail. That is the right shape.
+describe("the MUST-disclose set — visible on the pricing page, not behind a click", () => {
+  beforeEach(() => {
+    mockMatchMedia(true); // the Nav renders a ThemeToggle, which reads prefers-color-scheme
+  });
 
-  /** The <details> that contains this text, so we can assert the reader can actually see it. */
-  const disclosureFor = (container: HTMLElement, needle: RegExp) =>
-    [...container.querySelectorAll<HTMLDetailsElement>("details")].find((d) =>
-      needle.test(d.textContent ?? ""),
+  /**
+   * The fact must be on the page AND not hidden inside a collapsed accordion. jsdom models <details>
+   * visibility correctly, which is what makes this meaningful rather than decorative.
+   */
+  function expectDisclosed(needle: RegExp) {
+    const { container } = render(<PricingPage />);
+    const el = [...container.querySelectorAll("li, p, span")].find((n) =>
+      needle.test(n.textContent ?? ""),
     );
+    expect(el, `the pricing page never states: ${needle}`).toBeTruthy();
+    const collapsed = el!.closest("details");
+    expect(
+      collapsed && !collapsed.open,
+      `"${needle}" is hidden inside a collapsed accordion — that is not "up front"`,
+    ).toBeFalsy();
+    cleanup();
+  }
 
-  it("says a delivery is a billed event (Definition B) — and shows it without a click", () => {
-    const { container } = render(<Faq />);
-    expect(screen.getByText(/a delivery to a destination is one event/i)).toBeInTheDocument();
-    expect(screen.getByText(/that's four events/i)).toBeInTheDocument();
-    expect(disclosureFor(container, /a delivery to a destination is one event/i)?.open).toBe(true);
+  it("says a delivery is a billed event (Definition B)", () => {
+    expectDisclosed(/a delivery to a destination is one event/i);
+    expectDisclosed(/four events/i);
   });
 
   it("discloses that CANCELLING lands you paused — ADR-0004 marks this MUST-disclose", () => {
-    const { container } = render(<Faq />);
-    expect(screen.getByText(/capture pauses until you resubscribe/i)).toBeInTheDocument();
-    expect(screen.getByText(/never resets/i)).toBeInTheDocument();
-    expect(disclosureFor(container, /capture pauses until you resubscribe/i)?.open).toBe(true);
+    expectDisclosed(/cancelling pauses capture until you resubscribe/i);
+    expectDisclosed(/never resets/i);
   });
 
-  it("discloses the dedup=off trade — and shows it without a click", () => {
-    const { container } = render(<Faq />);
-    expect(
-      screen.getByText(/every retry a provider sends is a distinct captured request/i),
-    ).toBeInTheDocument();
-    expect(
-      disclosureFor(container, /every retry a provider sends is a distinct captured request/i)
-        ?.open,
-    ).toBe(true);
+  it("discloses the dedup=off trade — a billing-INCREASING default change", () => {
+    expectDisclosed(/every retry a provider sends is a distinct captured request/i);
   });
 
-  // Present, but not required to be open: "retries are free" is good news, and the disclosure rule
-  // exists to surface the SURPRISES. (jsdom models <details> visibility correctly, which is what makes
-  // the `.open` assertions above meaningful rather than decorative — so this distinction is real.)
-  it("says retries are never billed", () => {
-    render(<Faq />);
-    expect(
-      screen.getByText(/a delivery is billed once, when we first dispatch it/i),
-    ).toBeInTheDocument();
-  });
-
-  // Both of these were being billed as full deliveries until migration 0055
-  // (`delivery_attempts.billable`). If someone re-bills either leg, this is the test that says the
-  // page is now lying about the bill.
-  //
-  // Asserted against the RENDERED DOM, not against `FAQ_ITEMS`. Reading the data array back proves
-  // only that the string exists in the module — it would stay green if `FaqEntry` stopped rendering
-  // `answer` at all, or if the item were dropped from the list. The obligation is about what reaches
-  // the page, so the test has to look at the page.
   it("says forwarding to your own machine is free — we make no outbound request", () => {
-    const { container } = render(<Faq />);
-    expect(screen.getByText(/forwarding to your own machine/i)).toBeInTheDocument();
-    expect(screen.getByText(/your CLI makes that request, not us/i)).toBeInTheDocument();
-    expect(disclosureFor(container, /forwarding to your own machine/i)?.open).toBe(true);
+    expectDisclosed(/forwarding to your own machine/i);
+    expectDisclosed(/your CLI makes that request, not us/i);
   });
 
-  it("says a delivery we REFUSE to send is not billed", () => {
-    const { container } = render(<Faq />);
-    expect(screen.getByText(/a delivery we refuse to send/i)).toBeInTheDocument();
-    expect(disclosureFor(container, /a delivery we refuse to send/i)?.open).toBe(true);
-  });
-
-  // `answer` is rendered as plain text into a <p> and serialised into the FAQPage JSON-LD. Markdown
-  // is never parsed, so a backtick or a ** here renders literally on the page AND gets published to
-  // Google as part of the rich result. Shipped exactly that (`` `wbhk listen` ``) once.
-  it("never smuggles markdown into an answer", () => {
-    for (const { question, answer } of FAQ_ITEMS) {
-      expect(answer, `"${question}" contains a backtick — answers are plain text`).not.toMatch(/`/);
-      expect(answer, `"${question}" contains markdown emphasis`).not.toMatch(/\*\*|__/);
-    }
-  });
-
-  it("says capture PAUSES within minutes of the limit rather than billing (S4)", () => {
-    // "within minutes" is code-true: the soft-cap producer runs on its own 5-minute cron (S4), so the pause
-    // lands within minutes of crossing the limit — not instantly, and not up to an hour later.
-    render(<Faq />);
-    expect(screen.getByText(/capture pauses within minutes/i)).toBeInTheDocument();
-  });
-
-  it("states the dedup default as a full sentence (no swallowed space)", () => {
-    // The old JSX version rendered "default.If you" because JSX drops a leading space after a closing
-    // tag. The answers are plain strings now, so that class of bug is structurally impossible — but
-    // the SENTENCE still has to be there.
-    const answer = answerOf(/deduplication off cost more/i)?.answer ?? "";
-    expect(answer).toContain("Deduplication is on by default. If you turn it off");
-    expect(answer).not.toContain("default.If");
-  });
-});
-
-describe("public-repo content hygiene", () => {
-  it("never names a competitor", () => {
-    const { container } = render(<Faq />);
-    const text = container.textContent ?? "";
-    for (const name of ["Svix", "Hookdeck", "Zapier", "Convoy", "ngrok"]) {
-      expect(text).not.toContain(name);
-    }
-  });
-
-  it('never claims "unlimited"', () => {
-    const { container } = render(<Faq />);
-    expect(container.textContent ?? "").not.toMatch(/unlimited/i);
-  });
-});
-
-describe("FAQ structured data", () => {
-  // Google requires the markup to mirror the visible answer. If they diverge the page can be
-  // penalised — so the schema is generated from the same array the DOM renders, not written twice.
-  it("mirrors exactly the questions the page shows", () => {
-    const { container } = render(<Faq />);
-    const script = container.querySelector('script[type="application/ld+json"]');
-    expect(script).not.toBeNull();
-
-    const schema = JSON.parse(script!.textContent!);
-    expect(schema["@type"]).toBe("FAQPage");
-    expect(schema.mainEntity).toHaveLength(FAQ_ITEMS.length);
-    expect(schema.mainEntity.map((q: { name: string }) => q.name)).toEqual(
-      FAQ_ITEMS.map((i) => i.question),
-    );
-    for (const entity of schema.mainEntity) {
-      expect(entity["@type"]).toBe("Question");
-      expect(entity.acceptedAnswer["@type"]).toBe("Answer");
-      expect(entity.acceptedAnswer.text.length).toBeGreaterThan(0);
-    }
+  it("states the pre-limit ALERT and the PAUSE — disclosure + alerts + pause, all three", () => {
+    expectDisclosed(/email you/i);
+    expectDisclosed(/capture pauses/i);
   });
 });

@@ -77,7 +77,7 @@ export const LINKS = {
   // ── external ─────────────────────────────────────────────────────────────
   openSource: REPO,
   standardWebhooks: "https://www.standardwebhooks.com/",
-  contact: "mailto:sourabh@webhook.co",
+  contact: "mailto:hello@webhook.co",
 } as const;
 
 /** Enterprise is contact-sales, and it routes to a different inbox than the general contact link. */

@@ -23,10 +23,13 @@ export const PRODUCT_LINKS: readonly NavLink[] = [
 /**
  * The top-level links. "Docs" is LAST because it is the only item that hands you off to another
  * domain — everything before it keeps you on this site.
+ *
+ * "About" is deliberately NOT here. It is still a page, still in the footer's Company column, and
+ * still the canonical anchor for the Person/Organization JSON-LD — so it stays reachable, linkable
+ * and indexable. It just doesn't need a slot in the primary nav, which is for what the product does.
  */
 export const NAV_LINKS: readonly NavLink[] = [
   { label: "Pricing", href: LINKS.pricing },
-  { label: "About", href: LINKS.about },
   { label: "Docs", href: LINKS.docs },
 ];
 

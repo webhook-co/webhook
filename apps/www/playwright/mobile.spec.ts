@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 
+import { ALL_NAV_DESTINATIONS } from "../src/components/marketing/nav-links";
 import { a11yRoutes } from "../src/lib/routes";
 
 /**
@@ -25,16 +26,11 @@ test.describe("mobile navigation", () => {
     await expect(burger).toBeVisible();
     await burger.click();
 
+    // Derived from the same source the menu renders from — a hand-typed list here would drift the
+    // moment someone changes the nav, which is the exact failure this whole spec exists to catch.
     const nav = page.getByRole("navigation", { name: "Main" }).last();
-    for (const label of [
-      "Capture & replay",
-      "Verification",
-      "Delivery",
-      "Agent triggers",
-      "Pricing",
-      "About",
-      "Docs",
-    ]) {
+    expect(ALL_NAV_DESTINATIONS.length).toBeGreaterThan(3); // non-vacuous
+    for (const { label } of ALL_NAV_DESTINATIONS) {
       await expect(nav.getByRole("link", { name: label })).toBeVisible();
     }
   });

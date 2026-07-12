@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-import { FAQ_ITEMS } from "../src/components/marketing/faq";
+import { MUST_DISCLOSE_FACTS } from "../src/components/marketing/pricing-disclosure";
 import { a11yRoutes } from "../src/lib/routes";
 
 // WCAG 2.0/2.1/2.2 A + AA. This is the only layer that sees real layout, so the only one that
@@ -204,21 +204,25 @@ test.describe("pricing page accessibility (real browser)", () => {
   // The set is DERIVED from the `discloses` flag rather than hand-listed. A hardcoded list drifts the
   // moment someone marks a sixth item MUST-disclose — the browser check would silently stop covering
   // it while still looking thorough. The flag is the contract; this reads the contract.
+  // The FAQ used to carry the disclosure with five entries forced open; it is now a collapsed
+  // accordion, and the obligation lives in <PricingDisclosure>. These guards follow the OBLIGATION,
+  // not that old implementation: every required fact must be READABLE on /pricing.
+  //
+  // Playwright's visibility check ignores OPACITY, and <Reveal> paints its children at `opacity: 0`
+  // until an IntersectionObserver fires — a regression that painted the disclosure invisible would
+  // sail straight through `toBeVisible()`. So the computed opacity is asserted up the whole ancestor
+  // chain. The set is DERIVED from MUST_DISCLOSE_FACTS, never hand-listed here: a hardcoded copy would
+  // stop covering a sixth obligation the day someone adds one, while still looking thorough.
   test("every MUST-disclose fact is actually painted, not merely present", async ({ page }) => {
     await page.goto("/pricing");
-    await page
-      .getByRole("heading", { name: /frequently asked questions/i })
-      .scrollIntoViewIfNeeded();
+    expect(
+      MUST_DISCLOSE_FACTS.length,
+      "the must-disclose contract is empty — the obligation has been lost",
+    ).toBeGreaterThan(0);
 
-    const disclosed = FAQ_ITEMS.filter((i) => i.discloses);
-    expect(disclosed.length, "no MUST-disclose items — the flag has been lost").toBeGreaterThan(0);
-
-    for (const item of disclosed) {
-      // The first sentence of the answer is enough to locate the panel, and it is what a scanning
-      // buyer's eye lands on.
-      const opener = item.answer.split(". ").slice(0, 2).join(". ");
-      const el = page.getByText(opener.slice(0, 60), { exact: false }).first();
-      await expect(el, `"${item.question}" is not on the page`).toBeVisible();
+    for (const { what, needle } of MUST_DISCLOSE_FACTS) {
+      const el = page.getByText(needle).first();
+      await expect(el, `the pricing page never states: ${what}`).toBeVisible();
 
       // Walk up the tree: any ancestor at opacity 0 makes this text unreadable, however "visible".
       const effectiveOpacity = await el.evaluate((node) => {
@@ -228,20 +232,23 @@ test.describe("pricing page accessibility (real browser)", () => {
         }
         return opacity;
       });
-      expect(
-        effectiveOpacity,
-        `"${item.question}" is present but painted invisible`,
-      ).toBeGreaterThan(0.9);
+      expect(effectiveOpacity, `"${what}" is present but painted invisible`).toBeGreaterThan(0.9);
     }
   });
 
-  // The carve-outs from migration 0055 (`delivery_attempts.billable`): forwarding to your own machine
-  // and a delivery we refuse to send are both FREE. They live inside a disclosed panel, so they must
-  // be readable without a click too — if we re-bill either leg, the page is lying about the bill.
-  test("the billing carve-outs are readable without a click", async ({ page }) => {
+  // …and none of it may sit behind a click. A collapsed <details> puts the text in the DOM while
+  // showing the reader nothing, which is exactly what "disclosed up front" forbids.
+  test("no MUST-disclose fact is hidden behind a click", async ({ page }) => {
     await page.goto("/pricing");
-    for (const fact of [/forwarding to your own machine/i, /a delivery we refuse to send/i]) {
-      await expect(page.getByText(fact)).toBeVisible();
+    for (const { what, needle } of MUST_DISCLOSE_FACTS) {
+      const inClosedAccordion = await page
+        .getByText(needle)
+        .first()
+        .evaluate((node) => {
+          const d = (node as Element).closest("details");
+          return d ? !d.open : false;
+        });
+      expect(inClosedAccordion, `"${what}" is hidden inside a collapsed accordion`).toBe(false);
     }
   });
 

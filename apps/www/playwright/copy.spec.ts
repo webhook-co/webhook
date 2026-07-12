@@ -41,3 +41,35 @@ test.describe("rendered copy", () => {
     await expect(page.locator("#providers")).toBeInViewport();
   });
 });
+
+/**
+ * The surfaces terminal must show its content WITHOUT scrolling at desktop width.
+ *
+ * It was capped at 600px while the MCP panel needed 776px of line width (the event uuid) — so a third
+ * of the widest line was simply hidden behind a scrollbar, on the section whose whole job is "here is
+ * the same event, seen from each surface". The card is now sized to the widest panel.
+ *
+ * Pinned here rather than eyeballed: the panels are REAL product output (pinned to the CLI renderer,
+ * the API schema and the capability registry), so a truthful change to any of them can lengthen a line
+ * and quietly reintroduce the scrollbar. This fails when that happens.
+ */
+test.describe("the surfaces terminal fits its content", () => {
+  for (const tab of ["MCP", "CLI", "API", "Web app"]) {
+    test(`${tab} panel does not scroll horizontally at desktop width`, async ({ page }) => {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await page.goto("/");
+      await page.getByRole("heading", { level: 1 }).waitFor();
+      await page.getByRole("tab", { name: tab }).click();
+
+      const region = page.locator('[role="tabpanel"]:not([hidden]) [role="region"]');
+      const overflow = await region.evaluate(
+        (el) => (el as HTMLElement).scrollWidth - (el as HTMLElement).clientWidth,
+      );
+      expect(
+        overflow,
+        `the ${tab} panel hides ${overflow}px of its widest line behind a scrollbar`,
+      ).toBeLessThanOrEqual(1);
+    });
+  }
+});
