@@ -30,9 +30,20 @@ import { focusRing, proseLink } from "@/lib/styles";
  * is checked at TOGGLE time, not once at mount, so someone who changes the OS setting mid-session
  * gets what they asked for without a reload.
  */
-export function FaqList({ items, group }: { items: readonly FaqItem[]; group: string }) {
-  // Exclusive: at most one open. `null` = all closed, which is how the page loads.
-  const [openQuestion, setOpenQuestion] = useState<string | null>(null);
+export function FaqList({
+  items,
+  group,
+  openFirst = false,
+}: {
+  items: readonly FaqItem[];
+  group: string;
+  openFirst?: boolean;
+}) {
+  // Exclusive: at most one open. On /pricing the first panel starts open — it is the billable unit,
+  // which the constitution requires be readable without a click. Everywhere else: all closed.
+  const [openQuestion, setOpenQuestion] = useState<string | null>(
+    openFirst ? (items[0]?.question ?? null) : null,
+  );
 
   const toggle = useCallback((question: string) => {
     setOpenQuestion((current) => (current === question ? null : question));
@@ -40,11 +51,17 @@ export function FaqList({ items, group }: { items: readonly FaqItem[]; group: st
 
   return (
     <div className="mx-auto max-w-[820px]">
-      {items.map((item) => (
+      {items.map((item, index) => (
         <FaqEntry
           key={item.question}
           item={item}
           group={group}
+          // Rendered into the STATIC HTML, so the panel is open for a crawler and for a reader with no
+          // JavaScript — `open` is otherwise only ever set imperatively by the effect below, which
+          // means the served markup would ship it CLOSED and the billable unit would sit behind a
+          // click for exactly the readers who can't click. It never changes after the first render, so
+          // React and the imperative handle can't fight over it.
+          defaultOpen={openFirst && index === 0}
           isOpen={openQuestion === item.question}
           onToggle={() => toggle(item.question)}
         />
@@ -64,11 +81,14 @@ function prefersReducedMotion(): boolean {
 function FaqEntry({
   item,
   group,
+  defaultOpen,
   isOpen,
   onToggle,
 }: {
   item: FaqItem;
   group: string;
+  /** Rendered into the static markup — the pre-hydration / no-JS state. Never changes. */
+  defaultOpen: boolean;
   isOpen: boolean;
   onToggle: () => void;
 }) {
@@ -129,7 +149,17 @@ function FaqEntry({
   }, [isOpen]);
 
   return (
-    <details ref={detailsRef} name={group} className="group border-b border-hairline last:border-0">
+    <details
+      ref={detailsRef}
+      name={group}
+      // Rendered into the STATIC markup, so the panel is open for a crawler and for a reader with no
+      // JavaScript. `open` is otherwise only ever set imperatively by the effect above — which would
+      // ship the served HTML with everything CLOSED, putting the billable unit behind a click for
+      // exactly the readers who cannot click. Constant after first render, so React and the imperative
+      // handle never fight over it.
+      open={defaultOpen}
+      className="group border-b border-hairline last:border-0"
+    >
       <summary
         // The browser's own toggle is prevented so the close can be animated (see the file comment).
         // Without JS this handler never runs and the native toggle takes over — which is the point.

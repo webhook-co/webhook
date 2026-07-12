@@ -45,6 +45,36 @@ export interface FaqItem {
   readonly discloses?: true;
 }
 
+/**
+ * THE BILLABLE UNIT. AGENTS.md names exactly one thing that must be disclosed UP FRONT on the pricing
+ * page: "the billable unit — every captured request to an endpoint". It is the FIRST question, and the
+ * first panel is OPEN on load, so it is readable without a click. `faq.test.tsx` and `a11y.spec.ts`
+ * both pin that; if someone reorders the list or closes the first panel, they go red.
+ */
+export const BILLABLE_UNIT = /a delivery to a destination is one event/i;
+
+/**
+ * The rest of the billing terms. These are STATED on the pricing page and carried in the FAQPage
+ * structured data — but, unlike the billable unit, they sit one click away in the accordion. That is a
+ * deliberate founder decision (2026-07-12), taken over an earlier implementation that forced five
+ * panels open; the guards below assert PRESENCE, not that they are open. If the posture changes back,
+ * this is the list to re-tighten.
+ */
+export const BILLING_TERMS: readonly { readonly what: string; readonly needle: RegExp }[] = [
+  { what: "retries do not double-bill", needle: /a delivery is billed once/i },
+  { what: "the cap pauses rather than bills", needle: /capture pauses/i },
+  { what: "we alert before the limit", needle: /we email you/i },
+  {
+    what: "dedup=off costs more",
+    needle: /every retry a provider sends is a distinct captured request/i,
+  },
+  {
+    what: "cancelling pauses, it does not delete",
+    needle: /capture pauses until you resubscribe/i,
+  },
+  { what: "forwarding to your own machine is free", needle: /forwarding to your own machine/i },
+];
+
 export const FAQ_ITEMS: readonly FaqItem[] = [
   {
     question: "What counts as an event?",
@@ -137,6 +167,7 @@ function buildFaqSchema(items: readonly FaqItem[]) {
 export function Faq({
   items = FAQ_ITEMS,
   heading = "Frequently asked questions",
+  openFirst = false,
 }: {
   /**
    * Which questions to answer. Each PAGE passes its own set: two pages emitting the SAME FAQPage
@@ -145,6 +176,11 @@ export function Faq({
    */
   items?: readonly FaqItem[];
   heading?: string;
+  /**
+   * Open the first panel on load. /pricing does: its first question IS the billable unit, which the
+   * constitution requires be readable without a click. The homepage FAQ leaves everything closed.
+   */
+  openFirst?: boolean;
 } = {}) {
   const faqSchema = buildFaqSchema(items);
   // One accordion group per FAQ instance, so the homepage's set and the pricing set never fight each
@@ -169,7 +205,7 @@ export function Faq({
       {/* Only the LIST is a client island. The section, the heading and the FAQPage JSON-LD above stay
           server-rendered: the structured data is what an answer engine reads, and it has no business
           depending on hydration. */}
-      <FaqList items={items} group={groupName} />
+      <FaqList items={items} group={groupName} openFirst={openFirst} />
     </section>
   );
 }

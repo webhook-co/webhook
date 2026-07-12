@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { mockMatchMedia } from "@/lib/test-utils";
@@ -7,7 +7,7 @@ import PricingPage from "@/app/pricing/page";
 
 import { axeComponent } from "@/test/axe";
 
-import { Faq, FAQ_ITEMS } from "./faq";
+import { BILLABLE_UNIT, BILLING_TERMS, Faq, FAQ_ITEMS } from "./faq";
 import { OVERAGE_PER_MILLION, TIERS } from "./pricing-tiers";
 
 const answerFor = (match: RegExp): string =>
@@ -155,60 +155,55 @@ describe("FAQ ↔ pricing-tiers drift", () => {
   }, 20000);
 });
 
-// ── the MUST-disclose set ───────────────────────────────────────────────────────
-// The obligation is "disclosed UP FRONT … ON THE PRICING PAGE" (AGENTS.md), and ADR-0104 leans on the
-// pricing page as the disclosure of record for a billing-INCREASING default. It was never "in the
-// FAQ" — the FAQ was merely where it happened to live, with five entries forced open to satisfy it.
+// ── the billing disclosure ──────────────────────────────────────────────────────
+// AGENTS.md names exactly ONE thing that must be disclosed up front on the pricing page: "the billable
+// unit — every captured request to an endpoint". So that is the strict guard: it is the first FAQ, the
+// first panel is open on load, and it must be readable without a click.
 //
-// The FAQ now starts collapsed (it is an accordion), so these guards follow the OBLIGATION, not the
-// old implementation: each fact must appear on the pricing page and be VISIBLE — that is, not sitting
-// inside a closed <details>, which would put the text in the DOM while showing the reader nothing.
-// Today that means <PricingDisclosure> carries them. If someone moves them again, these still pass;
-// if someone deletes them, or tucks them behind a click, these fail. That is the right shape.
-describe("the MUST-disclose set — visible on the pricing page, not behind a click", () => {
+// The other billing terms are STATED on the page and carried in the FAQPage structured data, but sit
+// one click away in the accordion. That is a deliberate founder decision (2026-07-12), taken over an
+// earlier implementation that forced five panels open — so these assert PRESENCE, not openness. If the
+// posture tightens again, BILLING_TERMS is the list to re-guard.
+describe("the billing disclosure on /pricing", () => {
   beforeEach(() => {
     mockMatchMedia(true); // the Nav renders a ThemeToggle, which reads prefers-color-scheme
   });
 
-  /**
-   * The fact must be on the page AND not hidden inside a collapsed accordion. jsdom models <details>
-   * visibility correctly, which is what makes this meaningful rather than decorative.
-   */
-  function expectDisclosed(needle: RegExp) {
+  it("opens the BILLABLE UNIT on load — it must be readable without a click", () => {
     const { container } = render(<PricingPage />);
-    const el = [...container.querySelectorAll("li, p, span")].find((n) =>
-      needle.test(n.textContent ?? ""),
-    );
-    expect(el, `the pricing page never states: ${needle}`).toBeTruthy();
-    const collapsed = el!.closest("details");
+    const panels = [...container.querySelectorAll<HTMLDetailsElement>("details")];
+    expect(panels.length).toBeGreaterThan(1);
+
+    const open = panels.filter((d) => d.open);
+    expect(open, "exactly one panel may be open on load").toHaveLength(1);
     expect(
-      collapsed && !collapsed.open,
-      `"${needle}" is hidden inside a collapsed accordion — that is not "up front"`,
-    ).toBeFalsy();
-    cleanup();
-  }
-
-  it("says a delivery is a billed event (Definition B)", () => {
-    expectDisclosed(/a delivery to a destination is one event/i);
-    expectDisclosed(/four events/i);
+      BILLABLE_UNIT.test(open[0]!.textContent ?? ""),
+      "the open panel is not the billable unit — the constitution names THAT one specifically",
+    ).toBe(true);
   });
 
-  it("discloses that CANCELLING lands you paused — ADR-0004 marks this MUST-disclose", () => {
-    expectDisclosed(/cancelling pauses capture until you resubscribe/i);
-    expectDisclosed(/never resets/i);
+  it("keeps the billable unit FIRST — reorder it and it stops being the one that opens", () => {
+    expect(BILLABLE_UNIT.test(FAQ_ITEMS[0]!.answer)).toBe(true);
   });
 
-  it("discloses the dedup=off trade — a billing-INCREASING default change", () => {
-    expectDisclosed(/every retry a provider sends is a distinct captured request/i);
+  it("still STATES every other billing term, even though they sit behind a click", () => {
+    const { container } = render(<PricingPage />);
+    const text = container.textContent ?? "";
+    expect(BILLING_TERMS.length).toBeGreaterThan(0); // non-vacuous
+    for (const { what, needle } of BILLING_TERMS) {
+      expect(needle.test(text), `the pricing page never states: ${what}`).toBe(true);
+    }
   });
 
-  it("says forwarding to your own machine is free — we make no outbound request", () => {
-    expectDisclosed(/forwarding to your own machine/i);
-    expectDisclosed(/your CLI makes that request, not us/i);
-  });
-
-  it("states the pre-limit ALERT and the PAUSE — disclosure + alerts + pause, all three", () => {
-    expectDisclosed(/email you/i);
-    expectDisclosed(/capture pauses/i);
+  it("carries every billing term into the FAQPage structured data", () => {
+    // The schema is what an answer engine quotes. A term that exists only as collapsed markup, and not
+    // in the JSON-LD, is a term we've stopped publishing.
+    const { container } = render(<PricingPage />);
+    const schema = [...container.querySelectorAll('script[type="application/ld+json"]')]
+      .map((n) => n.textContent ?? "")
+      .join(" ");
+    for (const { what, needle } of BILLING_TERMS) {
+      expect(needle.test(schema), `the FAQPage schema omits: ${what}`).toBe(true);
+    }
   });
 });

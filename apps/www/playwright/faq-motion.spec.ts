@@ -10,6 +10,10 @@ import { expect, test } from "@playwright/test";
  * snap SHUT. These tests are what stop someone "simplifying" that back to CSS and silently losing half
  * the animation — and, more importantly, what stop the JS takeover from breaking the accordion for a
  * reader who has JavaScript off or hasn't hydrated yet.
+ *
+ * These drive the SECOND panel, not the first: on /pricing the first panel is open on load (it carries
+ * the billable unit, which must be readable without a click), so clicking it would test the close path
+ * when we mean to test the open one.
  */
 
 test.describe("FAQ accordion motion", () => {
@@ -17,15 +21,17 @@ test.describe("FAQ accordion motion", () => {
     page,
   }) => {
     await page.goto("/pricing");
-    const first = page.locator("details").first();
+    const first = page.locator("details").nth(1);
     const panel = first.locator("> div");
     await expect(first).not.toHaveAttribute("open", /.*/);
 
     await first.locator("summary").click();
 
-    // Sample INSIDE the 280ms open animation — not on the same tick as the click, which would measure
-    // the layout before React's effect has even run and would pass whether or not anything animates.
-    await page.waitForTimeout(120);
+    // Sample EARLY inside the 280ms open — not on the same tick as the click (that would measure the
+    // layout before React's effect had even run, and would pass whether or not anything animated), and
+    // not late either: the easing is fast-out, so by 120ms the panel is already ~93% open and the
+    // assertion has no margin left. 60ms is comfortably mid-reveal.
+    await page.waitForTimeout(60);
     const mid = await panel.evaluate((el) => el.getBoundingClientRect().height);
 
     await page.waitForTimeout(500);
@@ -33,14 +39,14 @@ test.describe("FAQ accordion motion", () => {
 
     expect(settled, "the panel never opened").toBeGreaterThan(20);
     expect(mid, "the panel snapped straight to full height — it is not animating").toBeLessThan(
-      settled * 0.95,
+      settled * 0.9,
     );
     expect(mid, "the panel had not started opening at all").toBeGreaterThan(0);
   });
 
   test("closes smoothly: mid-close the panel is SHRINKING, not already gone", async ({ page }) => {
     await page.goto("/pricing");
-    const first = page.locator("details").first();
+    const first = page.locator("details").nth(1);
     const panel = first.locator("> div");
 
     await first.locator("summary").click();
@@ -64,21 +70,25 @@ test.describe("FAQ accordion motion", () => {
   test("stays EXCLUSIVE — opening one closes the other", async ({ page }) => {
     await page.goto("/pricing");
     const items = page.locator("details");
-    await items.nth(0).locator("summary").click();
-    await page.waitForTimeout(350);
+    // The first panel is already open on load (the billable unit). Opening the second must close it.
     await expect(items.nth(0)).toHaveAttribute("open", /.*/);
 
     await items.nth(1).locator("summary").click();
     await page.waitForTimeout(500);
     await expect(items.nth(1)).toHaveAttribute("open", /.*/);
     await expect(items.nth(0), "two panels were open at once").not.toHaveAttribute("open", /.*/);
+
+    await items.nth(2).locator("summary").click();
+    await page.waitForTimeout(500);
+    await expect(items.nth(2)).toHaveAttribute("open", /.*/);
+    await expect(items.nth(1), "two panels were open at once").not.toHaveAttribute("open", /.*/);
   });
 
   test("honours prefers-reduced-motion: NO animation is started at all", async ({ page }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/pricing");
 
-    const first = page.locator("details").first();
+    const first = page.locator("details").nth(1);
     const panel = first.locator("> div");
     await first.locator("summary").click();
 
@@ -109,8 +119,8 @@ test.describe("FAQ accordion motion", () => {
     const html = await (await request.get("/pricing")).text();
     expect(html).toContain("A request we capture is one event");
     expect(html).toMatch(/<details name="[^"]+"/);
-    expect(html, "a panel is open on load — the FAQ must start collapsed").not.toContain(
-      "<details open",
-    );
+    // Exactly ONE panel is open in the static markup: the billable unit. Not zero (the constitution
+    // requires it readable without a click), and not several (it is an accordion).
+    expect((html.match(/<details[^>]*\sopen/g) ?? []).length).toBe(1);
   });
 });
