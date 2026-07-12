@@ -7,7 +7,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { FREE_RETENTION_DAYS } from "@webhook-co/shared";
 
-import { withTenant, type Sql, type TenantTx } from "./client";
+import { withTenant, type Sql, type TenantTx, withUser } from "./client";
 import { mintCredential, type CredentialHasher } from "./credential";
 import { INGEST_TOKEN_PREFIX } from "./endpoints";
 
@@ -166,11 +166,56 @@ export function personalOrgId(userId: string): string {
   return deterministicUuid(`webhook:personal-org:${userId}`);
 }
 
+export interface UserOrg {
+  readonly orgId: string;
+  readonly name: string;
+  /** The caller's role in that org. */
+  readonly role: MembershipRole;
+}
+
+/**
+ * Every org the user belongs to — the read multi-org needs, and the one the ORG-scoped RLS policies
+ * structurally cannot answer (they can only confirm an org you already name, which is exactly why
+ * `personalOrgId` DERIVES an id instead of querying for one).
+ *
+ * It runs under {@link withUser} — the user-scoped RLS context added in migration 0067 — and deliberately
+ * sets NO tenant context: the caller is *choosing* an org, so it cannot already have one. Every row it can
+ * see is gated on `user_id = current_app_user()`, so it can only ever return the caller's own memberships;
+ * an unset GUC returns nothing. `userId` MUST come from the verified session — it is the entire
+ * authorization boundary here.
+ *
+ * Ordered oldest-first, so a user's personal org (created at signup) leads and the ordering is stable.
+ */
+export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]> {
+  const rows = await withUser(
+    app,
+    userId,
+    // rls-scope: user — the ONE deliberately cross-org membership read in the codebase, and the reason the
+    // user-scoped policy exists. It is safe precisely because it is bounded by `user_id = current_app_user()`
+    // (set by withUser from the verified session), so it can only ever return the CALLER's own rows.
+    // Everything else must stay org-qualified; scripts/memberships-org-scope-guard.mjs enforces that.
+    (tx) =>
+      tx<{ org_id: string; name: string; role: MembershipRole }[]>`
+        select m.org_id, o.name, m.role
+          from memberships m
+          join orgs o on o.id = m.org_id
+         where m.user_id = ${userId}
+         order by m.created_at asc`,
+  );
+  return rows.map((r) => ({ orgId: r.org_id, name: r.name, role: r.role }));
+}
+
 /**
  * Resolve the org an interactive consent grant is for (Lane C A3 `/authorize`): the user's personal org
  * (v1 — single membership), as `{ orgId, name }`, or null if they have none yet / aren't a member. One
  * org-scoped read (RLS pinned to the derived org) that JOINs memberships, so it fails closed when the user
  * isn't a member (e.g. a deleted membership) rather than leaking an org name. No cross-org query.
+ *
+ * NOTE (Lane 2.4): this is the SINGLE org-selection point in the whole issuer — /authorize, the device
+ * flow, and the web session handoff all funnel through it, and everything downstream (the consent ticket,
+ * auth_grant.org_id, the rtk_ handle, the app. cookie) merely CARRIES what it returns. Because it derives
+ * the personal org, an invited teammate's CLI/MCP lands in their own empty org. {@link listUserOrgs} is the
+ * primitive that unblocks replacing this with a real choice; the picker itself is the next slice.
  */
 export async function getConsentOrg(
   app: Sql,

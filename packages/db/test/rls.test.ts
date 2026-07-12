@@ -1311,6 +1311,34 @@ describe("webhook_reconciler cross-org delivery read", () => {
   });
 });
 
+describe("the user-scoped policies (0067) are confined to webhook_app", () => {
+  it("memberships_self_select and orgs_member_select apply to webhook_app ONLY", async () => {
+    // Load-bearing, and it bit us once already. A policy's expression is evaluated AS THE CALLING ROLE, and
+    // orgs_member_select reads `memberships` — so if these policies applied to every role, then EVERY role
+    // that merely touches `orgs` (billing, meter, sweeper, reconciler, notifier) would need a SELECT grant
+    // on `memberships` or fail with "permission denied". Un-scoping them breaks the billing writer.
+    const rows = await owner<{ policyname: string; role: string; role_count: number }[]>`
+      select
+        pol.polname as policyname,
+        (select rolname from pg_roles where oid = pol.polroles[1]) as role,
+        coalesce(array_length(pol.polroles, 1), 0) as role_count
+      from pg_policy pol
+      where pol.polname in ('memberships_self_select', 'orgs_member_select')
+      order by pol.polname`;
+
+    expect(rows.map((r) => r.policyname)).toEqual([
+      "memberships_self_select",
+      "orgs_member_select",
+    ]);
+    for (const row of rows) {
+      // Exactly one role, and it is webhook_app. `polroles = {0}` (PUBLIC / all roles) would come back as
+      // role_count 1 with a null rolname — hence asserting the NAME, not just the count.
+      expect(Number(row.role_count)).toBe(1);
+      expect(row.role).toBe("webhook_app");
+    }
+  });
+});
+
 describe("no unexpected SECURITY DEFINER functions", () => {
   /**
    * The ALLOWLIST. The schema ships INVOKER helpers by default so RLS is never silently bypassed; each

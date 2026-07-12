@@ -1,6 +1,6 @@
 import postgres from "postgres";
 
-import { TENANT_GUC } from "./constants";
+import { TENANT_GUC, USER_GUC } from "./constants";
 
 export interface ClientOptions {
   /** Pool size. Keep small in Workers; Hyperdrive pools upstream. */
@@ -54,6 +54,28 @@ export async function withTenant<T>(
 ): Promise<T> {
   const result = await sql.begin(async (tx) => {
     await tx`select set_config(${TENANT_GUC}, ${orgId}, true)`;
+    return fn(tx);
+  });
+  return result as T;
+}
+
+/**
+ * Run `fn` with the USER RLS context set (`app.current_user`, is_local — same discipline as withTenant).
+ * This is the context for the one question the tenant-scoped policies structurally cannot answer: "which
+ * orgs do I belong to?" (migration 0067). It sets NO tenant GUC, deliberately — the caller is choosing an
+ * org, so it cannot already have one.
+ *
+ * Everything reachable from here is gated on `user_id = current_app_user()`, so it can only ever see the
+ * caller's OWN memberships and the orgs those point at. `userId` MUST come from the verified session,
+ * never from client input — it is the whole authorization boundary of this context.
+ */
+export async function withUser<T>(
+  sql: Sql,
+  userId: string,
+  fn: (tx: TenantTx) => Promise<T>,
+): Promise<T> {
+  const result = await sql.begin(async (tx) => {
+    await tx`select set_config(${USER_GUC}, ${userId}, true)`;
     return fn(tx);
   });
   return result as T;
