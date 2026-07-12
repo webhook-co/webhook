@@ -24,6 +24,7 @@ import { captcha } from "better-auth/plugins";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
 
+import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
 import {
   APP_BASE_URL,
@@ -147,7 +148,9 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     },
     // Captcha first (its onRequest gate runs before the magic-link send handler), then magic-link.
     plugins: [...captchaPlugins(baseURL, secrets), magicLink(magicLinkOptions(deps))],
-    databaseHooks: deps.databaseHooks,
+    // Compose the account OAuth-token stripping (data minimization — see account-token-hooks.ts) into the
+    // signup→bootstrap hooks here, so EVERY auth instance persists no provider tokens regardless of caller.
+    databaseHooks: withAccountTokenStripping(deps.databaseHooks),
     advanced: {
       // On Workers the TCP peer is Cloudflare's edge, not the client, so Better Auth's rate limiter must
       // read the trusted client-IP header or it falls back to ONE shared per-path bucket (every caller
