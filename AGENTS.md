@@ -37,8 +37,10 @@ These are durable and rarely change. They are not bolt-ons — design for them f
   endpoint — is stated at endpoint creation and on the pricing page), with a **soft-cap that pauses
   rather than surprises**. No *surprise* billing: predictability comes from disclosure + alerts + pause,
   not hidden counters. This shapes engineering: keep event metering accurate and single-dimension;
-  never build hidden per-step counters. (Specific prices, tiers, and cost figures are intentionally
-  **not** in this public repo.)
+  never build hidden per-step counters. The **public** pricing ladder (tier names, prices, included
+  volumes, retention) lives in the repo as one canonical catalog — `@webhook-co/shared/plans` — because it
+  is what customers see and what Stripe charges; a drift test keeps every surface agreeing with it. Only the
+  **private** figures stay out: Stripe price IDs, and the unit-economics / cost research behind the ladder.
 
 ## Engineering guardrails (non-negotiable, for humans and agents)
 
