@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -93,11 +93,15 @@ describe("PlayTester lifecycle", () => {
     // A mint now persists the session, so it must not leak into the next test (the component would
     // restore it and never show the mint button).
     sessionStorage.clear();
+    // No challenge in these suites — they exercise the mint/stream flow. Same posture as a local
+    // `wrangler dev`, which runs TURNSTILE_MODE=off. The challenge has its own suite at the bottom.
+    vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITEKEY", "");
   });
   afterEach(() => {
     global.fetch = realFetch;
     global.EventSource = realES;
     sessionStorage.clear();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -173,6 +177,7 @@ describe("PlayTester — surviving a reload", () => {
     FakeEventSource.instances = [];
     global.EventSource = FakeEventSource as unknown as typeof EventSource;
     sessionStorage.clear();
+    vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITEKEY", "");
     global.fetch = vi.fn(() => {
       throw new Error("a restored session must NOT re-mint — that's what burns the per-IP budget");
     }) as unknown as typeof fetch;
@@ -181,6 +186,7 @@ describe("PlayTester — surviving a reload", () => {
     global.fetch = realFetch;
     global.EventSource = realES;
     sessionStorage.clear();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -251,6 +257,7 @@ describe("PlayTester — copying the URL and the curl", () => {
     FakeEventSource.instances = [];
     global.EventSource = FakeEventSource as unknown as typeof EventSource;
     sessionStorage.clear();
+    vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITEKEY", "");
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -266,6 +273,7 @@ describe("PlayTester — copying the URL and the curl", () => {
     global.fetch = realFetch;
     global.EventSource = realES;
     sessionStorage.clear();
+    vi.unstubAllEnvs();
     vi.restoreAllMocks();
   });
 
@@ -322,5 +330,109 @@ describe("PlayTester — copying the URL and the curl", () => {
     render(<PlayTester />);
     await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
     expect(await screen.findByText(/any method/i)).toBeInTheDocument();
+  });
+});
+
+// The challenge is what makes the mint work AT ALL in prod: the worker runs TURNSTILE_MODE=on and
+// answers 403 challenge_failed without a valid token. It is also the only thing standing between an
+// unauthenticated Durable-Object factory and a script. So: the token must reach the worker, the button
+// must not fire a request we know will be refused, and a spent token must never be replayed.
+describe("PlayTester — the Turnstile challenge (prod posture)", () => {
+  const realFetch = global.fetch;
+  const realES = global.EventSource;
+  const token = "d".repeat(32);
+  let solve: ((t: string) => void) | undefined;
+  let removed: string[] = [];
+
+  beforeEach(() => {
+    mockMatchMedia(true);
+    FakeEventSource.instances = [];
+    global.EventSource = FakeEventSource as unknown as typeof EventSource;
+    sessionStorage.clear();
+    vi.stubEnv("NEXT_PUBLIC_TURNSTILE_SITEKEY", "0xTEST_SITEKEY");
+    removed = [];
+
+    // Stand in for Cloudflare's script: capture the callback so the test decides when it solves.
+    let n = 0;
+    window.turnstile = {
+      render: (_el, opts) => {
+        solve = opts.callback;
+        return `widget-${n++}`;
+      },
+      remove: (id) => void removed.push(id),
+    };
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        token,
+        ingestUrl: `https://play.wbhk.my/${token}`,
+        expiresAt: Date.now() + 900_000,
+      }),
+    }) as unknown as typeof fetch;
+  });
+
+  afterEach(() => {
+    delete window.turnstile;
+    solve = undefined;
+    global.fetch = realFetch;
+    global.EventSource = realES;
+    sessionStorage.clear();
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("will not mint until the challenge is solved", async () => {
+    render(<PlayTester />);
+    const button = await screen.findByRole("button", { name: /create a test url/i });
+    expect(button).toBeDisabled();
+
+    await userEvent.click(button);
+    expect(
+      global.fetch,
+      "a mint must not fire before the challenge is solved",
+    ).not.toHaveBeenCalled();
+
+    await act(async () => solve!("solved-token-1"));
+    expect(await screen.findByRole("button", { name: /create a test url/i })).toBeEnabled();
+  });
+
+  /** The widget renders after the script-load promise resolves, so wait for the callback to be wired. */
+  async function mountAndAwaitWidget() {
+    render(<PlayTester />);
+    await waitFor(() => expect(solve).toBeDefined());
+  }
+
+  it("sends the solved token to the worker — without it, prod answers 403", async () => {
+    await mountAndAwaitWidget();
+    await act(async () => solve!("solved-token-1"));
+    await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
+
+    const body = JSON.parse(
+      (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][1].body as string,
+    );
+    expect(body).toEqual({ turnstileToken: "solved-token-1" });
+  });
+
+  it("never replays a spent token — the widget is remounted for a fresh one after each mint", async () => {
+    await mountAndAwaitWidget();
+    await act(async () => solve!("solved-token-1"));
+    await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
+
+    // The token is single-use. After the mint the old widget is torn down and a new one rendered,
+    // so the next mint cannot re-send "solved-token-1" (which the worker would refuse).
+    await screen.findAllByText(new RegExp(token));
+    expect(removed.length).toBeGreaterThan(0);
+  });
+
+  it("re-gates the button when the challenge expires", async () => {
+    await mountAndAwaitWidget();
+    await act(async () => solve!("solved-token-1"));
+    expect(screen.getByRole("button", { name: /create a test url/i })).toBeEnabled();
+
+    // Turnstile calls expired-callback → onToken(null). The gate must close again, not stay open.
+    await act(async () => solve!(null as unknown as string));
+    expect(screen.getByRole("button", { name: /create a test url/i })).toBeDisabled();
   });
 });

@@ -3,6 +3,8 @@
 import { Button, cn } from "@webhook-co/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { playSitekey, Turnstile } from "@/components/marketing/play/turnstile";
+
 // The client for the /play sandbox. It mints an ephemeral capture URL from the play worker
 // (play.wbhk.my), shows the URL + a curl command, and streams captured requests over SSE — rendering
 // every captured field as an INERT React text node (never HTML), which is the render half of the XSS
@@ -59,6 +61,12 @@ export function PlayTester() {
   const [error, setError] = useState<string | null>(null);
   const [remaining, setRemaining] = useState<number>(0);
   const [copied, setCopied] = useState<string | null>(null);
+  // The Turnstile token is SINGLE-USE. `challengeNonce` remounts the widget after each mint so the next
+  // one gets a fresh token instead of replaying a spent one (which the worker would refuse).
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [challengeNonce, setChallengeNonce] = useState(0);
+  const sitekey = playSitekey();
+  const challengeRequired = sitekey !== "";
   const esRef = useRef<EventSource | null>(null);
 
   const teardown = useCallback(() => {
@@ -157,9 +165,13 @@ export function PlayTester() {
       const res = await fetch(`${PLAY_ORIGIN}/api/mint`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
+        // In prod the worker runs TURNSTILE_MODE=on and refuses a mint without a valid token (403).
+        body: JSON.stringify(turnstileToken ? { turnstileToken } : {}),
         credentials: "include",
       });
+      // Spend the token: a fresh challenge for the next mint, whatever happens below.
+      setTurnstileToken(null);
+      setChallengeNonce((n) => n + 1);
       if (!res.ok)
         throw new Error(
           res.status === 429
@@ -178,7 +190,7 @@ export function PlayTester() {
       setError(e instanceof Error ? e.message : "something went wrong");
       setStatus("error");
     }
-  }, [teardown, attach]);
+  }, [teardown, attach, turnstileToken]);
 
   /**
    * Copy a worker-issued string (our own, never user input) and announce it to assistive tech.
@@ -211,9 +223,23 @@ export function PlayTester() {
             Generate a throwaway URL, send it a request, and watch it land here — no account,
             nothing saved. The sandbox auto-deletes in 15 minutes.
           </p>
-          <Button size="md" onClick={start}>
+
+          {/* Minting is unauthenticated and costs a Durable Object, so it sits behind a challenge —
+              in prod the worker refuses a mint without a valid token. The button is gated on the
+              solved token rather than firing a request we know will be refused. The widget is keyed
+              by `challengeNonce`: a token is single-use, so each mint remounts it for a fresh one. */}
+          {challengeRequired ? (
+            <div className="mb-5">
+              <Turnstile key={challengeNonce} onToken={setTurnstileToken} />
+            </div>
+          ) : null}
+
+          <Button size="md" onClick={start} disabled={challengeRequired && turnstileToken === null}>
             Create a test URL
           </Button>
+          {challengeRequired && turnstileToken === null ? (
+            <p className="mt-3 text-sm text-fg-muted">Just checking you&rsquo;re human first…</p>
+          ) : null}
           {error ? <p className="mt-4 text-sm text-danger">{error}</p> : null}
         </div>
       ) : null}
