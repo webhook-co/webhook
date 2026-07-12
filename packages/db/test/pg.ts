@@ -37,7 +37,7 @@ export interface EphemeralPostgres {
    */
   auth: "trust" | "password";
   /** Provider/superuser connection (authed) — bootstraps the owner + the test DB. */
-  ownerUrl: string;
+  providerUrl: string;
   /** A fully-authed connection URL (password + sslmode) for a known role. */
   urlFor: (opts: RoleUrl) => string;
   /** The per-run password for a created role (password mode), else undefined. */
@@ -160,7 +160,7 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
       database,
       auth,
       passwordFor,
-      ownerUrl: urlFor({ role: superRole }),
+      providerUrl: urlFor({ role: superRole }),
       urlFor,
       stop: async () => {
         const adm = postgres(
@@ -243,7 +243,7 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     database: DEFAULT_DB,
     auth: "trust",
     passwordFor: () => undefined,
-    ownerUrl: buildUrl(host, port, SUPERUSER, undefined, DEFAULT_DB, "disable"),
+    providerUrl: buildUrl(host, port, SUPERUSER, undefined, DEFAULT_DB, "disable"),
     urlFor: ({ role, database = DEFAULT_DB }) =>
       buildUrl(host, port, role, undefined, database, "disable"),
     stop,

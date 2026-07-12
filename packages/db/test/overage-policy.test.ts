@@ -79,7 +79,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
-  admin = createClient(pg.ownerUrl);
+  admin = createClient(pg.providerUrl);
   key = await importAuditKey(Buffer.alloc(32, 0x5c));
 }, setupHookTimeoutMs());
 

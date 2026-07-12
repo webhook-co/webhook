@@ -81,7 +81,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   billing = createClient(pg.urlFor({ role: DB_ROLES.billing }));
-  admin = createClient(pg.ownerUrl);
+  admin = createClient(pg.providerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {

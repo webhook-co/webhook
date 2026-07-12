@@ -17,7 +17,7 @@ describe("ephemeral postgres harness", () => {
   });
 
   it("starts a real postgres and answers queries through the client", async () => {
-    const sql: Sql = createClient(pg.ownerUrl);
+    const sql: Sql = createClient(pg.providerUrl);
     try {
       const [one] = await sql<{ n: number }[]>`select 1 as n`;
       expect(one?.n).toBe(1);

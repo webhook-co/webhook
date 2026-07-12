@@ -4,7 +4,7 @@ import { CapabilityFault } from "@webhook-co/contract";
 import { importAuditKey, userActor } from "@webhook-co/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
-import { appendAuditEntry, readAuditChain } from "../src/audit-append";
+import { readAuditChain } from "../src/audit-append";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { listDueDeliveries } from "../src/delivery";
@@ -16,6 +16,7 @@ import {
 import { reconcileMeteringUsage } from "../src/meter-reconcile";
 import { sumPeriodEventUsage } from "../src/period-usage";
 import { getEvent, listEvents, tailEvents } from "../src/reads";
+import { seedAuditChain } from "./audit-seed";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -33,7 +34,8 @@ const DAY_MS = 86_400_000;
 let pg: EphemeralPostgres;
 let app: Sql;
 let audit: Sql; // webhook_meter_audit — the F6 recount role
-let admin: Sql;
+let provider: Sql; // BYPASSRLS — cross-org reads that must see rows no tenant GUC is set for
+let owner: Sql; // the schema owner — the only role that may TRUNCATE (see beforeAll)
 let auditKey: CryptoKey;
 
 function dayIso(daysAgo: number): string {
@@ -99,14 +101,21 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   audit = createClient(pg.urlFor({ role: DB_ROLES.meterAudit }));
-  admin = createClient(pg.ownerUrl);
+  provider = createClient(pg.providerUrl);
+  // TRUNCATE requires OWNERSHIP, which the provider connection does not have on the nightly's Neon
+  // branch: there it is `neondb_owner`, a non-superuser holding webhook_owner membership with
+  // inherit_option = f, so it carries BYPASSRLS + DML but none of the owner's rights → 42501. RLS
+  // never filters TRUNCATE, so the schema owner's FORCE RLS is not in the way. Locally the provider
+  // IS the postgres superuser and bypasses the check — which is why truncating on it passed every
+  // local run and only broke against Neon (issue #383).
+  owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 5) % 256)),
   );
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
-  await Promise.all([app?.end(), audit?.end(), admin?.end()]);
+  await Promise.all([app?.end(), audit?.end(), provider?.end(), owner?.end()]);
   await pg?.stop();
 });
 
@@ -114,7 +123,7 @@ afterEach(async () => {
   // audit_log is append-only WORM (a trigger blocks DELETE/TRUNCATE), and it's org-FK-decoupled (0051), so
   // it isn't cascade-cleaned — rows just accumulate. Each test uses a fresh random orgId, so per-org audit
   // chains never collide. Everything else truncates.
-  await admin`truncate event_payload_purge, delivery_attempts, events, endpoints, usage, orgs cascade`;
+  await owner`truncate event_payload_purge, delivery_attempts, events, endpoints, usage, orgs cascade`;
 });
 
 describe("the money-integrity invariants (non-negotiable)", () => {
@@ -211,7 +220,7 @@ describe("in-tx PII redaction + R2 purge enqueue", () => {
     const { eventId } = await seedEvent(orgId, endpointId);
     await del(orgId, eventId);
 
-    const [row] = await admin<
+    const [row] = await provider<
       {
         headers: unknown;
         verification: unknown;
@@ -233,7 +242,9 @@ describe("in-tx PII redaction + R2 purge enqueue", () => {
     expect(row.dedup_key).not.toBeNull(); // KEPT — anti-re-bill
     expect(row.payload_r2_key).not.toBeNull(); // KEPT — needed to enqueue the purge
 
-    const [purge] = await admin<{ payload_r2_key: string; status: string; endpoint_id: string }[]>`
+    const [purge] = await provider<
+      { payload_r2_key: string; status: string; endpoint_id: string }[]
+    >`
       select payload_r2_key, status, endpoint_id from event_payload_purge where event_id = ${eventId}`;
     expect(purge.status).toBe("purging");
     expect(purge.endpoint_id).toBe(endpointId);
@@ -280,7 +291,7 @@ describe("audit + idempotency + not-found", () => {
 
     const chain = await withTenant(app, orgId, (tx) => readAuditChain(tx, orgId));
     expect(chain.filter((r) => r.action === "event.deleted")).toHaveLength(1); // audited once
-    const [purgeCount] = await admin<{ n: number }[]>`
+    const [purgeCount] = await provider<{ n: number }[]>`
       select count(*)::int as n from event_payload_purge where event_id = ${eventId}`;
     expect(purgeCount.n).toBe(1); // no duplicate purge job
   });
@@ -297,17 +308,20 @@ describe("enforceEventDeleteRateLimit (the destructive-op mitigation)", () => {
     // No deletes yet → passes.
     await expect(enforceEventDeleteRateLimit(app, orgId)).resolves.toBeUndefined();
 
-    // Seed exactly the cap's worth of `event.deleted` audit rows in this org's window.
-    await withTenant(app, orgId, async (tx) => {
-      for (let i = 0; i < EVENT_DELETE_MAX_PER_WINDOW; i++) {
-        await appendAuditEntry(tx, auditKey, {
-          orgId,
-          actor: userActor(`u_${i}`),
-          action: "event.deleted",
-          target: randomUUID(),
-        });
-      }
-    });
+    // Seed exactly the cap's worth of `event.deleted` audit rows in this org's window, in ONE
+    // insert. Looping appendAuditEntry cap-many times instead would cost 3 round-trips per row and
+    // outlast the limiter's own 60s window on a remote DB — the rows would be stamped with a
+    // transaction now() already older than the window, the limiter would count zero, and this test
+    // would FALSE-PASS (see test/audit-seed.ts). The limiter counts on (org_id, action, created_at),
+    // so a fixed actor/target seeds exactly what it reads.
+    await withTenant(app, orgId, (tx) =>
+      seedAuditChain(
+        tx,
+        auditKey,
+        { orgId, actor: userActor("u_1"), action: "event.deleted", target: randomUUID() },
+        EVENT_DELETE_MAX_PER_WINDOW,
+      ),
+    );
     await expect(enforceEventDeleteRateLimit(app, orgId)).rejects.toThrow(
       /too many event deletes/i,
     );
@@ -316,16 +330,14 @@ describe("enforceEventDeleteRateLimit (the destructive-op mitigation)", () => {
   it("is per-org — one org's deletes never throttle another", async () => {
     const { orgId: busy } = await seedOrgWithEndpoint();
     const { orgId: quiet } = await seedOrgWithEndpoint();
-    await withTenant(app, busy, async (tx) => {
-      for (let i = 0; i < EVENT_DELETE_MAX_PER_WINDOW; i++) {
-        await appendAuditEntry(tx, auditKey, {
-          orgId: busy,
-          actor: userActor(`u_${i}`),
-          action: "event.deleted",
-          target: randomUUID(),
-        });
-      }
-    });
+    await withTenant(app, busy, (tx) =>
+      seedAuditChain(
+        tx,
+        auditKey,
+        { orgId: busy, actor: userActor("u_1"), action: "event.deleted", target: randomUUID() },
+        EVENT_DELETE_MAX_PER_WINDOW,
+      ),
+    );
     await expect(enforceEventDeleteRateLimit(app, busy)).rejects.toThrow();
     await expect(enforceEventDeleteRateLimit(app, quiet)).resolves.toBeUndefined();
   });
@@ -345,7 +357,7 @@ describe("event_payload_purge RLS boundary (the anti-forgery gate — it drives 
                    values (${randomUUID()}, ${orgB}, ${epB}, ${"org/" + orgB + "/ep/" + epB + "/k"})`,
       ),
     ).rejects.toThrow();
-    const [row] = await admin<{ n: number }[]>`
+    const [row] = await provider<{ n: number }[]>`
       select count(*)::int as n from event_payload_purge where org_id = ${orgB}`;
     expect(row.n).toBe(0);
   });
@@ -369,7 +381,7 @@ describe("event_payload_purge RLS boundary (the anti-forgery gate — it drives 
   });
 
   it("webhook_app can INSERT+SELECT the job but never UPDATE or DELETE it (drain-only)", async () => {
-    const [g] = await admin<{ ins: boolean; sel: boolean; upd: boolean; del: boolean }[]>`
+    const [g] = await provider<{ ins: boolean; sel: boolean; upd: boolean; del: boolean }[]>`
       select
         has_table_privilege(${DB_ROLES.app}, 'event_payload_purge', 'INSERT') as ins,
         has_table_privilege(${DB_ROLES.app}, 'event_payload_purge', 'SELECT') as sel,
