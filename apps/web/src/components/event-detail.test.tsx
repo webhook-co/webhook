@@ -1,13 +1,21 @@
 import type { VerificationResult } from "@webhook-co/webhooks-spec";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { DeleteEventResult } from "@/server/event-actions";
 import type { EventDetailItem, RevealHeaderResult } from "@/server/events";
 import type { PayloadResult } from "@/server/payloads";
 import type { ReplayResult } from "@/server/replay-actions";
 
 import { EventDetail } from "./event-detail";
+
+const { push } = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push, refresh: vi.fn() }) }));
+
+// `push` (and the default action mocks) are module-level, so reset call history between tests — otherwise a
+// prior test's navigation leaks into the next's "did NOT navigate" assertion.
+afterEach(() => vi.clearAllMocks());
 
 const ENDPOINT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const EVENT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
@@ -38,6 +46,8 @@ const noReveal = vi.fn(async (): Promise<RevealHeaderResult> => ({ ok: false }))
 const noLoadPayload = vi.fn(() => new Promise<PayloadResult>(() => {}));
 // Default replay action: never called in these tests (the replay dialog has its own test).
 const noReplay = vi.fn(async (): Promise<ReplayResult> => ({ ok: false, error: "not used" }));
+// Default delete action: resolves ok; specific tests pass their own to assert failure / call args.
+const okDelete = vi.fn(async (): Promise<DeleteEventResult> => ({ ok: true }));
 
 function renderDetail(
   event: EventDetailItem,
@@ -46,6 +56,7 @@ function renderDetail(
     eventId: string;
     index: number;
   }) => Promise<RevealHeaderResult> = noReveal,
+  deleteEvent: (input: { eventId: string }) => Promise<DeleteEventResult> = okDelete,
 ) {
   return render(
     <EventDetail
@@ -55,6 +66,7 @@ function renderDetail(
       loadPayload={noLoadPayload}
       destinations={[]}
       replay={noReplay}
+      deleteEvent={deleteEvent}
     />,
   );
 }
@@ -199,5 +211,34 @@ describe("EventDetail", () => {
     expect(screen.getByRole("button", { name: /replay to a destination/i })).toBeDisabled();
     // The button pre-explains why (rather than letting the user click through to an error toast).
     expect(screen.getByText(/rejected signature can't be replayed/i)).toBeInTheDocument();
+  });
+
+  describe("delete (S3 UI)", () => {
+    it("requires a confirm dialog — the header Delete never deletes on its own", async () => {
+      const del = vi.fn(async (): Promise<DeleteEventResult> => ({ ok: true }));
+      renderDetail(detail(), noReveal, del);
+      // The destructive action isn't the header button; it only OPENS the confirmation.
+      await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+      expect(del).not.toHaveBeenCalled();
+      expect(screen.getByRole("dialog")).toHaveTextContent(/delete this event\?/i);
+    });
+
+    it("deletes on confirm and navigates back to the events list", async () => {
+      const del = vi.fn(async (): Promise<DeleteEventResult> => ({ ok: true }));
+      renderDetail(detail(), noReveal, del);
+      await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+      await userEvent.click(screen.getByRole("button", { name: /delete event/i }));
+      expect(del).toHaveBeenCalledWith({ eventId: EVENT_ID });
+      await waitFor(() => expect(push).toHaveBeenCalledWith(`/endpoints/${ENDPOINT_ID}/events`));
+    });
+
+    it("shows an error and does NOT navigate when the delete fails", async () => {
+      const del = vi.fn(async (): Promise<DeleteEventResult> => ({ ok: false }));
+      renderDetail(detail(), noReveal, del);
+      await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+      await userEvent.click(screen.getByRole("button", { name: /delete event/i }));
+      expect(await screen.findByText(/couldn't delete this event/i)).toBeInTheDocument();
+      expect(push).not.toHaveBeenCalled();
+    });
   });
 });
