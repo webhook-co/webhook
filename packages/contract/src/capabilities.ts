@@ -727,10 +727,11 @@ export const deliveriesList = defineCapability({
   surfaceExempt: { web: WEB_DEFERRED },
 });
 
-// triggers.wait is an agent long-poll consumption primitive; the dashboard consumes live events via its
-// own WebSocket (LISTEN_SESSION), so there is no web binding for the wait tool.
+// triggers.wait is an agent short-poll consumption primitive (one fast scan per call, caller-driven
+// cadence — see packages/db agent-triggers.ts); the dashboard consumes live events via its own
+// WebSocket (LISTEN_SESSION), so there is no web binding for the wait tool.
 const TRIGGERS_WAIT_WEB_EXEMPT =
-  "agent long-poll consumption; the dashboard streams live events over its own WebSocket, not this tool";
+  "agent short-poll consumption; the dashboard streams live events over its own WebSocket, not this tool";
 
 // ── triggers.* (S5): webhook→agent trigger subscriptions ──────────────────────────────────────────
 // Unlike the egress subscriptions.* above (mcp-EXEMPT for confused-deputy reasons), triggers.* are

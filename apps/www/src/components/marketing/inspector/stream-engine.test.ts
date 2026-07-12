@@ -68,7 +68,7 @@ describe("stream-engine", () => {
       const top = s.rows[0];
       if (!top.status.ok) failures.push({ provider: top.provider, reason: top.status.reason });
     }
-    expect(failures).toEqual([{ provider: "stripe", reason: "raw_body_modified" }]);
+    expect(failures).toEqual([{ provider: "stripe", reason: "RAW_BODY_MODIFIED" }]);
   });
 
   it("wraps the pool cursor without drift", () => {

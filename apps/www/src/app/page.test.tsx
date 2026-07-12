@@ -38,7 +38,7 @@ describe("HomePage", () => {
     const titles = [
       /the same event, wherever you work/i,
       /received once, in order, never silently dropped/i,
-      /when a signature fails/i,
+      /every provider you add is a new way to fail silently/i,
       /private by default, open at the core/i,
       /point a webhook at it/i,
     ];
@@ -65,16 +65,15 @@ describe("HomePage", () => {
     expect(screen.getByRole("tab", { name: "CLI" })).toHaveAttribute("aria-selected", "false");
   });
 
-  it("renders the Product and Developers nav dropdowns, collapsed by default", () => {
+  it("renders the Product nav dropdown collapsed by default (Developers was removed in the IA lane)", () => {
     render(<HomePage />);
     expect(screen.getByRole("button", { name: /^product$/i })).toHaveAttribute(
       "aria-expanded",
       "false",
     );
-    expect(screen.getByRole("button", { name: /^developers$/i })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
+    // The Developers dropdown is gone — its docs deep-links live in the footer; the top nav carries a
+    // single "Docs" link instead.
+    expect(screen.queryByRole("button", { name: /^developers$/i })).toBeNull();
   });
 
   // Delivery SHIPPED — the engine, retries, signing and the DLQ are all live. The "soon" badge was
@@ -90,12 +89,48 @@ describe("HomePage", () => {
 
   it("renders the real Standard Webhooks link in the verification showcase", () => {
     render(<HomePage />);
-    // Scoped to the verification section — the footer and nav also link "Standard Webhooks".
-    const verification = screen.getByRole("region", { name: /when a signature fails/i });
+    // Scoped to the verification ("provider tax") section — the footer and nav also link "Standard Webhooks".
+    const verification = screen.getByRole("region", {
+      name: /every provider you add is a new way to fail silently/i,
+    });
     expect(within(verification).getByRole("link", { name: "Standard Webhooks" })).toHaveAttribute(
       "href",
       "https://www.standardwebhooks.com/",
     );
+  });
+
+  it("leads the hero with the sandbox — the one thing a stranger can do without an account", () => {
+    // /play started life as a small text link under the CTAs: the least prominent element in the hero,
+    // for the only thing on the page that needs no account. It now takes the hero's PRIMARY slot.
+    // This pins prominence and ORDER, not just presence — a regression that demotes it back to prose,
+    // or drops it behind the docs button, sails through a naive "is there a link to /play" check and
+    // fails this one.
+    render(<HomePage />);
+    const cta = screen.getByRole("link", { name: /^open playground$/i });
+    expect(cta).toHaveAttribute("href", "/play");
+    // The design system's Button renders its own class; a plain prose link does not.
+    expect(cta.className, "the sandbox CTA must be a button, not a text link").toMatch(/rounded/);
+
+    // `Button asChild` renders the <a> itself, so its parent IS the CTA row.
+    const row = cta.parentElement!;
+    const buttons = [...row.querySelectorAll("a")].map((a) => a.textContent?.trim());
+    expect(buttons).toEqual(["Open playground", "Read the docs"]);
+
+    // No "Start free" in the hero: the nav's "Get started" is the same door on the same screen, and
+    // two buttons to one destination is a decision the reader has to make for nothing.
+    expect(buttons).not.toContain("Start free");
+
+    // "Try it" read as an invitation to trial the whole platform — a promise the Free tier doesn't
+    // make. The sandbox is named for what it is.
+    expect(document.body.textContent ?? "").not.toMatch(/try it\s*—\s*no signup/i);
+  });
+
+  it("still closes the page with the sign-up CTA (dropping it from the hero must not lose it)", () => {
+    render(<HomePage />);
+    // The hero gave up "Start free"; the page must not have given up the conversion. The final CTA
+    // and the nav both still carry a way in.
+    expect(screen.getAllByRole("link", { name: /start free/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /get started/i }).length).toBeGreaterThan(0);
   });
 
   it("renders the closing call to action", () => {

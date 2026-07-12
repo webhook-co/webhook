@@ -1,32 +1,23 @@
-import { cn } from "@webhook-co/ui";
-import type { Metadata } from "next";
-
+import { pageMetadata } from "@/app/metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
 import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
 import { Nav } from "@/components/marketing/nav";
 import { PRIVACY_ANCHORS } from "@/app/legal-anchors";
-import { focusRing } from "@/lib/styles";
+import { SkipLink } from "@/components/marketing/skip-link";
 
-export const metadata: Metadata = {
-  // The root layout's title template already appends " — webhook.co".
+// pageMetadata sets this page's own canonical + og:url (root inherits canonical:"/" otherwise).
+export const metadata = pageMetadata({
+  path: "/privacy",
   title: "Privacy Policy",
   description: "How the hosted webhook.co service handles your personal data.",
-};
+});
 
 export default function PrivacyPage() {
   return (
     <>
-      <a
-        href="#main"
-        className={cn(
-          focusRing,
-          "sr-only rounded-control bg-surface px-4 py-2 text-sm text-fg shadow-2 focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100]",
-        )}
-      >
-        Skip to content
-      </a>
+      <SkipLink />
       <header>
         <AnnounceBar />
         <Nav />
@@ -142,6 +133,15 @@ export default function PrivacyPage() {
             using the CLI, whether or not they're a paying customer.
           </p>
           <p>
+            <strong>Website analytics (aggregate, cookieless):</strong> to see which pages people
+            find useful, this marketing site records a single anonymous measurement per page view —
+            the page path, the referring site's domain, a country-level location, and any campaign
+            (UTM) tags in the link you followed. It's measured on our servers via Cloudflare
+            Analytics Engine and <strong>sets no cookie</strong>. We <strong>don't</strong> store
+            your IP address, and there's no identifier that could link one page view to another or
+            follow you across sites — so it can't be tied back to you.
+          </p>
+          <p>
             <strong>Support communications:</strong> if you email us, we keep the correspondence to
             help you.
           </p>
@@ -166,7 +166,8 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>To understand and improve the Service</strong> (anonymous CLI telemetry,
-              aggregate usage) — <em>legitimate interests</em>; you can opt out of CLI telemetry.
+              aggregate cookieless website analytics) — <em>legitimate interests</em>; you can opt
+              out of CLI telemetry.
             </li>
             <li>
               <strong>To respond to support requests</strong> — <em>legitimate interests</em> /{" "}

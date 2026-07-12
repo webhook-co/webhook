@@ -4,22 +4,21 @@ import { GithubIcon, LinkedinIcon, XIcon } from "@/components/ui/brand-icons";
 import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
-// A footer link is either a bare label — which still renders as an inert `#` — or a {label, href}
-// pair. Every destination that EXISTS is now wired (see `@/lib/links`). The handful that remain bare
-// are the surfaces we genuinely don't have: About, Blog, and the socials. They're left inert on
-// purpose rather than pointed somewhere approximate, because a link whose label lies is worse than a
-// link that doesn't go anywhere.
-type FooterLink = string | { label: string; href: string };
+// Every column link now has a real destination (see `@/lib/links`) — About became a page and Blog
+// was renamed to Guides (docs), so no column carries a bare label anymore. The inert-until-real
+// mechanism lives only on the socials row below (an optional `href`), where X and LinkedIn still have
+// no account. If a future column surface genuinely doesn't exist yet, render its label as TEXT rather
+// than as an `href="#"` that goes nowhere.
+type FooterLink = { label: string; href: string };
 
 const columns: { title: string; links: FooterLink[] }[] = [
   {
     title: "Product",
     links: [
-      { label: "Overview", href: LINKS.home },
-      { label: "Capture & replay", href: LINKS.concepts.captureAndReplay },
-      { label: "Ingestion", href: LINKS.concepts.ingestion },
-      { label: "Delivery", href: LINKS.concepts.delivery },
-      { label: "MCP server", href: LINKS.concepts.mcpServer },
+      { label: "Capture & replay", href: LINKS.product.captureReplay },
+      { label: "Verification", href: LINKS.product.verification },
+      { label: "Delivery", href: LINKS.product.delivery },
+      { label: "Agent triggers", href: LINKS.product.agentTriggers },
       { label: "Pricing", href: LINKS.pricing },
     ],
   },
@@ -36,10 +35,12 @@ const columns: { title: string; links: FooterLink[] }[] = [
   {
     title: "Company",
     links: [
-      "About", // no page yet
-      "Blog", // no blog yet
+      { label: "About", href: LINKS.about },
+      // "Blog" was renamed to "Guides" and points at the existing docs guides estate — we don't run
+      // a separate blog. (Founder decision, 2026-07-11.)
+      { label: "Guides", href: LINKS.guides },
       { label: "Changelog", href: LINKS.changelog },
-      { label: "Security", href: LINKS.security },
+      { label: "Security", href: LINKS.securityPage },
       { label: "Contact", href: LINKS.contact },
     ],
   },
@@ -110,34 +111,19 @@ export function Footer() {
             <nav key={column.title} aria-label={column.title}>
               <p className="text-sm font-semibold tracking-tight text-fg">{column.title}</p>
               <ul className="mt-4 flex flex-col gap-3">
-                {column.links.map((link) => {
-                  const label = typeof link === "string" ? link : link.label;
-                  // A bare label has no destination (About, Blog). It renders as TEXT, not as a link
-                  // to nowhere: an `href="#"` is focusable, announces as a link, and — now that an
-                  // in-page click enables smooth scrolling — would glide the reader all the way back
-                  // to the hero. Saying "this exists but isn't a page yet" quietly is the honest
-                  // version of that.
-                  if (typeof link === "string") {
-                    return (
-                      <li key={label} className="text-sm text-fg-muted">
-                        {label}
-                      </li>
-                    );
-                  }
-                  return (
-                    <li key={label}>
-                      <a
-                        href={link.href}
-                        className={cn(
-                          focusRing,
-                          "rounded-control text-sm text-fg-muted transition-colors hover:text-fg",
-                        )}
-                      >
-                        {label}
-                      </a>
-                    </li>
-                  );
-                })}
+                {column.links.map((link) => (
+                  <li key={link.label}>
+                    <a
+                      href={link.href}
+                      className={cn(
+                        focusRing,
+                        "rounded-control text-sm text-fg-muted transition-colors hover:text-fg",
+                      )}
+                    >
+                      {link.label}
+                    </a>
+                  </li>
+                ))}
               </ul>
             </nav>
           ))}

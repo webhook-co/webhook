@@ -26,21 +26,23 @@ export function Showcases() {
             Received once, in order, never <em className="italic">silently</em> dropped
           </>
         }
-        body="The same engine that captures your events runs the pipeline that moves them. Events are deduplicated by id, acknowledged fast, then processed. Each endpoint keeps first-in-first-out ordering and its own isolation. Failed deliveries retry with backoff; what still can't land is held in a dead-letter queue, not dropped."
+        body="The same engine that captures your events runs the pipeline that moves them. Events are acknowledged fast, then processed in first-in-first-out order per endpoint, each isolated from the rest. Failed deliveries retry with backoff; what still can't land is held in a dead-letter queue, not dropped. Turn on dedup by id when a provider resends."
         link={{ label: "How delivery works", href: LINKS.concepts.delivery }}
         visual={<DeliveryPipeline />}
       />
 
       <Showcase
         id="verification"
-        eyebrow="verification"
-        title="When a signature fails, you'll know why"
+        eyebrow="the provider tax"
+        title="Every provider you add is a new way to fail silently"
         flip
         body={
           <>
-            Most tooling tells you a signature didn't match and stops there. We verify at the edge
-            and name the actual cause, in plain language, with the fix attached — across 142
-            providers, from HMAC to Ed25519. Verification is{" "}
+            New scheme, new secret, new encoding, new way to fail. We check every event at the edge
+            across 142 providers, sort it into one of four states, and when a signature
+            doesn&rsquo;t match we name the likely cause &mdash; wrong secret, mutated body, stale
+            timestamp &mdash; with the fix, instead of the bare &ldquo;no signatures found&rdquo;
+            most tooling stops at. It&rsquo;s{" "}
             <a
               href={LINKS.standardWebhooks}
               className={cn(

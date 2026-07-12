@@ -3,16 +3,41 @@
 // BEFORE it ships, not after. The a11y/Lighthouse jobs serve out/ without applying _headers, so the
 // header behaviours below are invisible to them — this is the one place we check them in CI.
 //
+// It is ROUTE-AWARE: the fixed infra files below are joined with the per-page HTML derived from the
+// emitted out/sitemap.xml (itself built from the route manifest). So a route added to the manifest
+// that fails to emit its page is caught here, not discovered live.
+//
 // Runnable locally via `pnpm --filter @webhook-co/www check:export`; wired into the deploy workflow.
 import { access, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
+import { extractSitemapLocs, pageFileForUrl } from "./check-seo-html.mjs";
+
 const outDir = fileURLToPath(new URL("../out/", import.meta.url));
 const failures = [];
 
-// Files the host needs: the homepage, the custom 404 (not_found_handling: "404-page"), the headers
-// file, the SEO routes, and the social card.
-const required = ["index.html", "404.html", "_headers", "sitemap.xml", "robots.txt", "og.png"];
+// Infra files the host needs regardless of page count: the homepage, the custom 404
+// (not_found_handling: "404-page"), the headers file, the SEO routes, and the social card.
+// index.html is listed UNCONDITIONALLY (not only when "/" appears in the sitemap) — a homepage that
+// opted out of the sitemap would still have to exist, and "/" 404ing is the worst failure to miss.
+const infra = ["index.html", "404.html", "_headers", "sitemap.xml", "robots.txt", "og.png"];
+
+// Every page the sitemap advertises must have actually been emitted.
+let pageFiles = [];
+try {
+  const sitemap = await readFile(outDir + "sitemap.xml", "utf8");
+  const locs = extractSitemapLocs(sitemap);
+  if (locs.length === 0) failures.push("out/sitemap.xml lists no <loc> — export emitted no pages");
+  // Not `locs.map(pageFileForUrl)` — map passes (element, index), and the index would land in
+  // pageFileForUrl's `host` param, defeating the host-strip. Call it with the URL only.
+  pageFiles = locs.map((loc) => pageFileForUrl(loc));
+} catch {
+  failures.push("could not read out/sitemap.xml to derive the required page list");
+}
+
+// Dedupe: index.html is in `infra` unconditionally AND is the "/" route's derived pageFile, so it
+// would otherwise be checked twice.
+const required = [...new Set([...infra, ...pageFiles])];
 for (const rel of required) {
   try {
     await access(outDir + rel);

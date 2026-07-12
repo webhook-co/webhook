@@ -1,0 +1,51 @@
+name: deploy-play
+
+# Deploys the /play sandbox Worker (apps/play → `webhook-play`) on play.wbhk.my.
+#
+# MANUAL deploy only (workflow_dispatch): /play is a public unauthenticated surface with one-time,
+# human-gated infra prerequisites — the play.wbhk.my custom domain must be bound at the Cloudflare
+# zone and `wrangler secret put TURNSTILE_SECRET_KEY --env production` must be set — so it must NOT
+# auto-deploy on a branch merge (that would fail, or ship before the Turnstile challenge is wired).
+# The founder binds the infra, then triggers this workflow. PRs get a dry-run only (no deploy).
+#
+# Mirrors deploy-telemetry (org blocks 3rd-party Marketplace actions → call wrangler via pnpm; only
+# SHA-pinned actions/*), but scopes the Cloudflare token to the deploy STEP, not the whole job.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/play/**"
+      - ".github/workflows/deploy-play.yml"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-play-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: deploy-play
+    runs-on: ubuntu-latest
+    # Same-repo only: fork PRs don't receive secrets.
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+      # Dry-run needs no credentials — it validates config locally.
+      - name: Validate deploy (dry-run)
+        if: github.event_name == 'pull_request'
+        run: pnpm --filter @webhook-co/play exec wrangler deploy --dry-run --env production
+      # The Cloudflare token is scoped to THIS step only (not job-level env), so it is never present
+      # while building or running untrusted PR code.
+      - name: Deploy production (play.wbhk.my)
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          # Empty on a PR: a fork/PR-triggered run must never hold the prod deploy token.
+          CLOUDFLARE_API_TOKEN: ${{ github.event_name != 'pull_request' && secrets.CLOUDFLARE_API_TOKEN || '' }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: pnpm --filter @webhook-co/play exec wrangler deploy --env production

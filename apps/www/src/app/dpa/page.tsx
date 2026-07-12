@@ -1,20 +1,19 @@
-import { cn } from "@webhook-co/ui";
-import type { Metadata } from "next";
-
+import { pageMetadata } from "@/app/metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
 import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
 import { Nav } from "@/components/marketing/nav";
 import { DPA_ANCHORS } from "@/app/legal-anchors";
-import { focusRing } from "@/lib/styles";
+import { SkipLink } from "@/components/marketing/skip-link";
 
-export const metadata: Metadata = {
-  // The root layout's title template already appends " — webhook.co".
+// pageMetadata sets this page's own canonical + og:url (root inherits canonical:"/" otherwise).
+export const metadata = pageMetadata({
+  path: "/dpa",
   title: "Data Processing Agreement",
   description:
-    "The GDPR Article 28 terms under which webhook.co processes the personal data contained in the webhooks you capture — including the security measures, sub-processors, and SCCs.",
-};
+    "The GDPR Article 28 terms under which webhook.co processes the personal data in the webhooks you capture — security measures, sub-processors, and SCCs.",
+});
 
 // The DPA (GDPR Art 28). EVERY security claim below has to match what the code actually does — an
 // enterprise buyer will read this line by line, and a promise we don't keep is worse than an absent one.
@@ -25,15 +24,7 @@ export const metadata: Metadata = {
 export default function DpaPage() {
   return (
     <>
-      <a
-        href="#main"
-        className={cn(
-          focusRing,
-          "sr-only rounded-control bg-surface px-4 py-2 text-sm text-fg shadow-2 focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100]",
-        )}
-      >
-        Skip to content
-      </a>
+      <SkipLink />
       <header>
         <AnnounceBar />
         <Nav />

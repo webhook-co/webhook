@@ -41,13 +41,19 @@ export function Hero() {
           </h1>
 
           <p className="mb-8 max-w-[52ch] text-[clamp(17px,2.1vw,20px)] leading-snug tracking-tight text-pretty text-fg-secondary">
-            Capture any webhook, inspect every request, and replay it to localhost. Then hand your
-            agents an event they can act on.
+            Capture the webhooks other services send you — inspect every request, verify it, replay
+            it to localhost. Then hand your agents an event they can act on.
           </p>
 
+          {/* No "Start free" here: the nav's "Get started" button is the same door, in view on the
+              same screen, and two buttons to one destination is a choice the reader has to make for
+              nothing. That frees the hero's primary slot for the one thing a stranger can do WITHOUT
+              an account — the sandbox. ("Try it" was rejected as a name: it promised a trial of the
+              whole platform, which the Free tier doesn't offer. "Open playground" says what it is.)
+              Sign-up still closes the page: the final CTA carries "Start free". */}
           <div className="mb-8 flex flex-wrap gap-3">
             <Button asChild size="md">
-              <a href={LINKS.startFree}>Start free</a>
+              <a href={LINKS.play}>Open playground</a>
             </Button>
             <Button asChild variant="secondary" size="md">
               <a href={LINKS.docs}>Read the docs</a>
