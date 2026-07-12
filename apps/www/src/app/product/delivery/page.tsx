@@ -1,5 +1,9 @@
 import { pageMetadata } from "@/app/metadata";
-import { ProductFeature, ProductShell } from "@/components/marketing/product-shell";
+import {
+  ProductFeature,
+  ProductFeatures,
+  ProductShell,
+} from "@/components/marketing/product-shell";
 import { DeliveryPipeline } from "@/components/marketing/visuals/delivery-pipeline";
 import { LINKS } from "@/lib/links";
 
@@ -22,31 +26,35 @@ export default function DeliveryPage() {
       docsHref={LINKS.concepts.delivery}
       docsLabel="How delivery works"
     >
-      <ProductFeature id="fifo" heading="First-in-first-out, per endpoint">
-        <p>
-          Each endpoint gets its own Durable Object, which preserves the order events arrived in and
-          isolates one endpoint&rsquo;s backlog from another&rsquo;s. A slow or failing destination
-          slows only itself.
-        </p>
-      </ProductFeature>
+      <ProductFeatures>
+        <ProductFeature id="fifo" heading="First-in-first-out, per endpoint">
+          <p>
+            Each endpoint gets its own Durable Object, which preserves the order events arrived in
+            and isolates one endpoint&rsquo;s backlog from another&rsquo;s. A slow or failing
+            destination slows only itself.
+          </p>
+        </ProductFeature>
 
-      <ProductFeature id="retries" heading="Retries with backoff, then a dead letter">
-        <p>
-          A delivery is attempted up to eight times over roughly 28 hours &mdash; the first try,
-          then seven retries with growing gaps: 5 seconds, 5 minutes, 30 minutes, on out to ten-hour
-          waits. What still can&rsquo;t land is held in a dead-letter queue, not dropped, so you can
-          fix the destination and replay. An endpoint that fails 20 times in a row is auto-disabled,
-          so we stop hammering a target that&rsquo;s clearly down &mdash; and tell you.
-        </p>
-      </ProductFeature>
+        <ProductFeature id="retries" heading="Retries with backoff, then a dead letter">
+          <p>
+            A delivery is attempted up to eight times over roughly 28 hours &mdash; the first try,
+            then seven retries with growing gaps: 5 seconds, 5 minutes, 30 minutes, on out to
+            ten-hour waits. What still can&rsquo;t land is held in a dead-letter queue, not dropped,
+            so you can fix the destination and replay. An endpoint that fails 20 times in a row is
+            auto-disabled, so we stop hammering a target that&rsquo;s clearly down &mdash; and tell
+            you.
+          </p>
+        </ProductFeature>
 
-      <ProductFeature id="dedup" heading="Deduplicate by id, when you want it">
-        <p>
-          Providers resend. Turn on idempotency-key deduplication per endpoint and a repeated event
-          is recognised and dropped before it reaches your handler twice. It&rsquo;s off by default
-          &mdash; opt in per endpoint, because what counts as a duplicate is your call, not ours.
-        </p>
-      </ProductFeature>
+        <ProductFeature id="dedup" heading="Deduplicate by id, when you want it">
+          <p>
+            Providers resend. Turn on idempotency-key deduplication per endpoint and a repeated
+            event is recognised and dropped before it reaches your handler twice. It&rsquo;s off by
+            default &mdash; opt in per endpoint, because what counts as a duplicate is your call,
+            not ours.
+          </p>
+        </ProductFeature>
+      </ProductFeatures>
     </ProductShell>
   );
 }

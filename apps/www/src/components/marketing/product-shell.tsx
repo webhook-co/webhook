@@ -91,9 +91,28 @@ export function ProductShell({
 }
 
 /**
- * One feature section on a product page: an h2 wired to `aria-labelledby`, then its prose. Prose is
- * capped at a readable measure by its own column rather than by squeezing the whole page — the page
- * keeps the homepage's full-width container, and the hero's visual lives on {@link ProductShell}.
+ * The features of a product page, as ONE row of cards rather than a stack of full-width rows — three
+ * long prose bands down a wide page made every product page read the same and scroll forever.
+ *
+ * The grid WRAPS rather than hardcoding three across: the pages carry 3, 4 (verification) and 5
+ * (/security) features, so a fixed `grid-cols-3` would strand the 4th and 5th. Three-up on a wide
+ * screen, two-up on a tablet, one-up on a phone.
+ *
+ * `items-start` matters: without it the grid stretches every card to the tallest one's height, which
+ * looks fine at 3 equal cards and ragged the moment one has a longer paragraph.
+ */
+export function ProductFeatures({ children }: { children: ReactNode }) {
+  return (
+    <section className={cn(container, sectionPad, "border-t border-hairline")}>
+      <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * One feature, as a card. Still an h2 wired to `aria-labelledby` on its own landmark — turning these
+ * into cards is a LAYOUT change, so the heading outline and the a11y semantics stay exactly as they
+ * were. Must be rendered inside {@link ProductFeatures}.
  */
 export function ProductFeature({
   id,
@@ -105,16 +124,17 @@ export function ProductFeature({
   children: ReactNode;
 }) {
   return (
-    <section aria-labelledby={id} className={cn(container, sectionPad, "border-t border-hairline")}>
-      <div className="max-w-[62ch]">
-        <h2
-          id={id}
-          className="mb-4 text-2xl font-semibold tracking-heading text-balance text-fg sm:text-[28px]"
-        >
-          {heading}
-        </h2>
-        <div className="flex flex-col gap-4 text-md text-pretty text-fg-secondary">{children}</div>
-      </div>
-    </section>
+    <article
+      aria-labelledby={id}
+      className="h-full rounded-card border border-hairline bg-surface p-5 sm:p-6"
+    >
+      <h2
+        id={id}
+        className="mb-3 text-lg font-semibold tracking-heading text-balance text-fg sm:text-xl"
+      >
+        {heading}
+      </h2>
+      <div className="flex flex-col gap-3 text-sm text-pretty text-fg-secondary">{children}</div>
+    </article>
   );
 }

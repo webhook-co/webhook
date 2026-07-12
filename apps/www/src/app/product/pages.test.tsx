@@ -77,6 +77,29 @@ describe("product pages", () => {
         expect(screen.getAllByRole("heading", { level: 2 }).length).toBeGreaterThanOrEqual(2);
       });
 
+      it("lays the features out as CARDS in one row — each still its own labelled landmark", () => {
+        const { container } = render(<Page />);
+        // The features became cards: that is a LAYOUT change, so the a11y semantics must be unchanged.
+        // Each card is still an <article> named by its own h2. If someone flattens these into plain
+        // divs while chasing a layout, the heading↔landmark association silently disappears — and a
+        // screen-reader user loses the ability to jump between features. This catches that.
+        const cards = [...container.querySelectorAll("article[aria-labelledby]")];
+        expect(cards.length).toBeGreaterThanOrEqual(3);
+        for (const card of cards) {
+          const id = card.getAttribute("aria-labelledby")!;
+          expect(
+            card.querySelector(`h2#${CSS.escape(id)}`),
+            `card "${id}" has no matching h2`,
+          ).not.toBeNull();
+        }
+        // …and they live in ONE grid container, not three stacked full-width bands.
+        const grids = [...container.querySelectorAll("div.grid")].filter((g) =>
+          [...g.children].some((c) => c.tagName === "ARTICLE"),
+        );
+        expect(grids).toHaveLength(1);
+        expect(grids[0]!.children.length).toBe(cards.length);
+      });
+
       it("leads with one primary CTA (Get started)", () => {
         render(<Page />);
         expect(screen.getAllByRole("link", { name: /get started/i }).length).toBeGreaterThanOrEqual(
