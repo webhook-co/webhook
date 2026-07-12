@@ -1,6 +1,8 @@
 import { cn } from "@webhook-co/ui";
 
-import { container, focusRing, sectionPad } from "@/lib/styles";
+import { FaqList } from "@/components/marketing/faq-list";
+
+import { container, sectionPad } from "@/lib/styles";
 
 import { OVERAGE_PER_MILLION } from "./pricing-tiers";
 
@@ -127,65 +129,6 @@ function buildFaqSchema(items: readonly FaqItem[]) {
   };
 }
 
-function FaqEntry({ item, group }: { item: FaqItem; group: string }) {
-  return (
-    // `name` makes this a NATIVE exclusive accordion: opening one closes the others, with no
-    // JavaScript, no state, and no client component — the browser does it, so it still works before
-    // hydration and with JS off. (Baseline since 2024.)
-    //
-    // Nothing is `open` by default any more. The MUST-DISCLOSE items used to be forced open here,
-    // because AGENTS.md requires the billing terms be "disclosed up front on the pricing page". That
-    // promise is NOT dropped — it moved to <PricingDisclosure>, where it is visible unconditionally
-    // and cannot be collapsed at all. Collapsing these without moving it would have silently deleted
-    // a constitutional disclosure; `pricing-disclosure.test.tsx` is what keeps that honest.
-    <details name={group} className="group border-b border-hairline last:border-0">
-      <summary
-        className={cn(
-          focusRing,
-          "flex cursor-pointer list-none items-center justify-between gap-4 rounded-control py-5 font-medium text-fg",
-          // Safari draws its own disclosure triangle unless this is cleared.
-          "[&::-webkit-details-marker]:hidden",
-        )}
-      >
-        {item.question}
-        <svg
-          aria-hidden="true"
-          viewBox="0 0 16 16"
-          className="size-4 shrink-0 text-fg-muted transition-transform group-open:rotate-180"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M4 6l4 4 4-4" />
-        </svg>
-      </summary>
-      {/* `faq-panel` animates the open transition in CSS (see marketing.css). Native <details> gives
-          us the state machine for free; all we add is the motion.
-
-          The MUST-disclose panels are deliberately NOT animated. They are open on load, so the
-          keyframe would fade them in from `opacity: 0` — and a disclosure the constitution requires
-          to be "up front" has no business being transparent, even for 280ms. Motion is for the panels
-          a reader chooses to open. */}
-      <div className={cn("pb-5", !item.discloses && "faq-panel")}>
-        <p className="max-w-[68ch] leading-relaxed text-fg-secondary">{item.answer}</p>
-        {item.link ? (
-          <a
-            href={item.link.href}
-            className={cn(
-              focusRing,
-              "mt-3 inline-block rounded-control font-medium text-fg underline underline-offset-2 hover:text-fg-secondary",
-            )}
-          >
-            {item.link.label}
-          </a>
-        ) : null}
-      </div>
-    </details>
-  );
-}
-
 /**
  * A no-JavaScript accordion. `<details>`/`<summary>` gives keyboard operation, the expanded state,
  * and screen-reader semantics for free — so the page stays a server component with zero client
@@ -223,11 +166,10 @@ export function Faq({
       >
         {heading}
       </h2>
-      <div className="mx-auto max-w-[820px]">
-        {items.map((item) => (
-          <FaqEntry key={item.question} item={item} group={groupName} />
-        ))}
-      </div>
+      {/* Only the LIST is a client island. The section, the heading and the FAQPage JSON-LD above stay
+          server-rendered: the structured data is what an answer engine reads, and it has no business
+          depending on hydration. */}
+      <FaqList items={items} group={groupName} />
     </section>
   );
 }

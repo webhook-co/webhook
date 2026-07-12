@@ -61,23 +61,41 @@ describe("FAQ", () => {
     expect(names[0]).toBeTruthy();
   });
 
-  // `faq-panel` is the fade-in-from-opacity-0 animation. A MUST-disclose panel is open on page load,
-  // so carrying that class would mean the disclosure starts TRANSPARENT — which is exactly the bug
-  // this whole model exists to avoid. Motion belongs only on panels a reader chooses to open.
-  it("never animates a MUST-disclose panel in from transparent", () => {
+  // The old CSS `faq-panel` keyframe only ever animated the panel OPEN — a native <details> hides its
+  // children the instant `open` goes false, so a CSS accordion can fade in and can only snap shut.
+  // motion now drives BOTH directions, which means JS owns `open` while the close plays out.
+  //
+  // Two things must survive that, and they are what these pin:
+  //   1. the ANSWER TEXT is still server-rendered inside the <details>. It is FAQPage structured data
+  //      and it is what a crawler (and a no-JS reader) sees. If the panels only mounted their content
+  //      on open, the answers would vanish from the static export and the schema would describe a page
+  //      that doesn't exist.
+  //   2. the markup stays <details>/<summary> with a shared `name`, so before hydration — and with JS
+  //      off — the accordion still opens, closes, and stays one-at-a-time. The animation is the
+  //      enhancement; the behaviour is not.
+  it("server-renders every answer inside its panel — crawlers and no-JS readers see them", () => {
     const { container } = render(<Faq />);
-    for (const details of container.querySelectorAll<HTMLDetailsElement>("details")) {
-      const panel = details.querySelector("div");
-      const question = details.querySelector("summary")?.textContent?.trim();
-      const disclosed = FAQ_ITEMS.find((i) => i.question === question)?.discloses;
+    const details = [...container.querySelectorAll<HTMLDetailsElement>("details")];
+    expect(details.length).toBe(FAQ_ITEMS.length);
 
-      if (disclosed) {
-        expect(panel?.className, `"${question}" would fade in from opacity 0`).not.toContain(
-          "faq-panel",
-        );
-      } else {
-        expect(panel?.className, `"${question}" lost its open animation`).toContain("faq-panel");
-      }
+    for (const item of FAQ_ITEMS) {
+      const panel = details.find((d) =>
+        d.querySelector("summary")?.textContent?.includes(item.question),
+      );
+      expect(panel, `"${item.question}" is missing`).toBeTruthy();
+      // Present in the DOM even though the panel is CLOSED — not mounted on demand.
+      expect(panel!.textContent, `"${item.question}" does not render its answer`).toContain(
+        item.answer.slice(0, 40),
+      );
+    }
+  });
+
+  it("keeps the native <details>/<summary> mechanics, so it works before hydration", () => {
+    const { container } = render(<Faq />);
+    for (const details of container.querySelectorAll("details")) {
+      expect(details.querySelector("summary"), "a panel lost its <summary>").toBeTruthy();
+      expect(details.getAttribute("name"), "a panel left the accordion group").toBeTruthy();
+      expect(details.open, "no panel may be open on load").toBe(false);
     }
   });
 
