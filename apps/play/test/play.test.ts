@@ -1,59 +1,70 @@
 import { env, runDurableObjectAlarm, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 
-// End-to-end through the real Workers runtime (workerd): mint → capture → session-bound stream →
-// caps → absolute-TTL self-destruct → per-IP mint budget. These are the security controls, so they
-// are exercised against the actual DO/alarm behaviour, not a mock.
+// End-to-end through the real Workers runtime (workerd): mint → capture → session-bound stream (via
+// the HttpOnly viewer cookie) → caps → absolute-TTL self-destruct → per-IP (/64) mint budget → body
+// cap. These are the security controls, exercised against the actual DO/alarm behaviour, not a mock.
 
 const HOST = "https://play.wbhk.my";
 
 async function mint(ip = "203.0.113.1") {
-  const res = await SELF.fetch(`${HOST}/api/mint`, {
+  return SELF.fetch(`${HOST}/api/mint`, {
     method: "POST",
     headers: { "content-type": "application/json", "cf-connecting-ip": ip },
     body: JSON.stringify({}),
   });
-  return res;
 }
 
-/** Read one SSE stream's currently-available frames (replay), then cancel. Never blocks the test. */
-async function readReplay(streamUrl: string): Promise<string> {
-  const res = await SELF.fetch(streamUrl);
+/** Extract the per-token viewer cookie (pv_<token>=<secret>) from a mint response's Set-Cookie. */
+function cookieFor(res: Response, token: string): string {
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  const m = setCookie.match(new RegExp(`pv_${token}=([0-9a-f]+)`));
+  return m ? `pv_${token}=${m[1]}` : "";
+}
+
+/** Read one SSE stream's replay (with the viewer cookie), then cancel. Never blocks the test. */
+async function readReplay(token: string, cookie: string): Promise<string> {
+  const res = await SELF.fetch(`${HOST}/${token}/stream`, { headers: { cookie } });
   if (res.status !== 200 || !res.body) return `status:${res.status}`;
   const reader = res.body.getReader();
   const dec = new TextDecoder();
   let out = "";
-  // The DO writes replayed captures + a keepalive comment (": expires …") on connect, then idles.
-  // Read until the keepalive arrives, but never block the test: race each read against a short timer.
   const timeout = <T>(p: Promise<T>) =>
-    Promise.race([p, new Promise<{ done: true }>((r) => setTimeout(() => r({ done: true }), 750))]);
-  for (let i = 0; i < 8; i++) {
+    Promise.race([p, new Promise<{ done: true }>((r) => setTimeout(() => r({ done: true }), 500))]);
+  for (let i = 0; i < 6; i++) {
     const chunk = (await timeout(reader.read())) as { value?: Uint8Array; done: boolean };
     if (chunk.done) break;
     if (chunk.value) out += dec.decode(chunk.value);
-    if (out.includes(": expires")) break; // keepalive marks the end of replay
+    if (out.includes(": expires")) break;
   }
   await reader.cancel().catch(() => {});
   return out;
 }
 
 describe("/play worker", () => {
-  it("mints a token, viewer secret, ingest URL and expiry", async () => {
+  it("mints a token + ingest URL + expiry, and sets the viewer secret in an HttpOnly cookie (not the body)", async () => {
     const res = await mint();
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.token).toMatch(/^[0-9a-f]{32}$/);
-    expect(body.viewerSecret).toMatch(/^[0-9a-f]{32}$/);
     expect(body.ingestUrl).toBe(`${HOST}/${body.token}`);
     expect(typeof body.expiresAt).toBe("number");
+    // The secret is NOT in the response body — it rides in an HttpOnly, Secure cookie.
+    expect(body.viewerSecret).toBeUndefined();
+    const setCookie = res.headers.get("set-cookie") ?? "";
+    expect(setCookie).toContain(`pv_${body.token}=`);
+    expect(setCookie).toContain("HttpOnly");
+    expect(setCookie).toContain("Secure");
+    expect(setCookie).toContain("SameSite=None");
     expect(res.headers.get("access-control-allow-origin")).toBe("https://www.webhook.co");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });
 
-  it("captures a request and streams it ONLY to a holder of the viewer secret", async () => {
-    const { token, viewerSecret } = (await (await mint()).json()) as {
-      token: string;
-      viewerSecret: string;
-    };
+  it("captures a request and streams it ONLY to a holder of the viewer cookie", async () => {
+    const res = await mint();
+    const { token } = (await res.json()) as { token: string };
+    const cookie = cookieFor(res, token);
+    expect(cookie).toContain(`pv_${token}=`);
 
     const ingest = await SELF.fetch(`${HOST}/${token}`, {
       method: "POST",
@@ -62,13 +73,18 @@ describe("/play worker", () => {
     });
     expect(ingest.status).toBe(200);
 
-    // Wrong / missing secret → 403 (a bare shared URL cannot read the stream).
+    // No cookie / wrong cookie → 403 (a bare token URL cannot read the stream).
     expect((await SELF.fetch(`${HOST}/${token}/stream`)).status).toBe(403);
-    expect((await SELF.fetch(`${HOST}/${token}/stream?v=deadbeef`)).status).toBe(403);
+    expect(
+      (
+        await SELF.fetch(`${HOST}/${token}/stream`, {
+          headers: { cookie: `pv_${token}=${"0".repeat(32)}` },
+        })
+      ).status,
+    ).toBe(403);
 
-    // Correct secret → the capture replays. The body is a JSON string value in the frame, so its
-    // quotes are escaped — assert the parsed record rather than a brittle substring.
-    const replay = await readReplay(`${HOST}/${token}/stream?v=${viewerSecret}`);
+    // Correct cookie → the capture replays.
+    const replay = await readReplay(token, cookie);
     expect(replay).toContain("data: ");
     const frame = replay.split("\n").find((l) => l.startsWith("data: "))!;
     const record = JSON.parse(frame.slice("data: ".length));
@@ -76,43 +92,53 @@ describe("/play worker", () => {
     expect(record.body).toBe('{"hello":"world"}');
   });
 
-  // NOTE: the SSE-framing XSS-safety (an attacker body survives only as escaped JSON on one data
-  // line, never a second frame) is asserted directly and deterministically in src/core.test.ts
-  // ("sseFrame — XSS/stream-spoof safety"); the no-EXECUTION property belongs at the render layer and
-  // is covered by a Playwright test on the /play page (inert React text nodes).
-
-  it("enforces the per-token capture cap", async () => {
+  it("enforces the per-token capture cap (and accepts the ones under it — non-vacuous)", async () => {
     const { token } = (await (await mint()).json()) as { token: string };
+    const first = await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: "0" });
+    expect(first.status).toBe(200); // proves the cap isn't just rejecting everything
     let last = 0;
-    for (let i = 0; i < 101; i++) {
+    for (let i = 1; i <= 100; i++) {
       last = (await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: `${i}` })).status;
     }
     expect(last).toBe(429); // the 101st is refused
   });
 
-  it("self-destructs on the absolute-TTL alarm: captures gone, further posts 410", async () => {
-    const { token, viewerSecret } = (await (await mint()).json()) as {
-      token: string;
-      viewerSecret: string;
-    };
+  it("413s a body over the cap without buffering it whole (streamed guard)", async () => {
+    const { token } = (await (await mint()).json()) as { token: string };
+    const big = "x".repeat(64 * 1024 + 1024); // > 64KB cap
+    const res = await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: big });
+    expect(res.status).toBe(413);
+  });
+
+  it("self-destructs on the absolute-TTL alarm: captures gone, further posts 410, stream 403", async () => {
+    const res = await mint();
+    const { token } = (await res.json()) as { token: string };
+    const cookie = cookieFor(res, token);
     await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: "before" });
 
-    // Fire the DO's self-destruct alarm directly (simulates the absolute TTL elapsing).
     const stub = env.PLAY_SESSION.get(env.PLAY_SESSION.idFromName(token));
     await runDurableObjectAlarm(stub);
 
-    // Everything is gone: the session no longer exists → posting is 410 (expired) or 404, and the
-    // stream no longer authenticates.
     const post = await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: "after" });
     expect([404, 410]).toContain(post.status);
-    expect((await SELF.fetch(`${HOST}/${token}/stream?v=${viewerSecret}`)).status).toBe(403);
+    expect((await SELF.fetch(`${HOST}/${token}/stream`, { headers: { cookie } })).status).toBe(403);
   });
 
-  it("caps concurrent tokens per IP (mint circuit-breaker)", async () => {
-    const ip = "198.51.100.7";
+  it("caps concurrent tokens per IP, and per IPv6 /64 (a single /64 can't evade it)", async () => {
+    // 6th mint from one IPv4 is refused (first succeeds — non-vacuous).
+    const ip4 = "198.51.100.7";
+    expect((await mint(ip4)).status).toBe(200);
     let last = 0;
-    for (let i = 0; i < 6; i++) last = (await mint(ip)).status;
-    expect(last).toBe(429); // 6th mint from one IP is rate-limited (PLAY_MAX_PER_IP=5)
+    for (let i = 0; i < 5; i++) last = (await mint(ip4)).status;
+    expect(last).toBe(429);
+
+    // Two different addresses in the SAME /64 share the budget → the 6th across them is refused.
+    let last6 = 0;
+    for (let i = 0; i < 6; i++) {
+      const addr = i % 2 === 0 ? "2001:db8:1:1::1" : "2001:db8:1:1::2"; // same /64
+      last6 = (await mint(addr)).status;
+    }
+    expect(last6).toBe(429);
   });
 
   it("404s a non-token path and redirects root to the marketing /play", async () => {

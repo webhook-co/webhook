@@ -53,6 +53,17 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     a11y: true,
     sitemap: true,
   },
+  // The /play sandbox: NOINDEX (sitemap:false + a robots noindex on the page) because it renders
+  // ephemeral user-generated capture content that must never be indexed under the brand. Still a11y-
+  // scanned. Not in the sitemap → the built-HTML SEO gate (which walks the sitemap) skips it, so its
+  // noindex doesn't trip the "never noindex in production" rule.
+  {
+    path: "/play",
+    changeFrequency: "monthly",
+    priority: 0.5,
+    a11y: true,
+    sitemap: false,
+  },
   // Product pages — the www surfaces the Product nav menu points at (so only "Docs" leaves for the
   // docs subdomain). priority just under the homepage: these are the pages we most want indexed.
   {

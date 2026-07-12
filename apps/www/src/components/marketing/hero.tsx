@@ -45,7 +45,7 @@ export function Hero() {
             it to localhost. Then hand your agents an event they can act on.
           </p>
 
-          <div className="mb-8 flex flex-wrap gap-3">
+          <div className="mb-4 flex flex-wrap gap-3">
             <Button asChild size="md">
               <a href={LINKS.startFree}>Start free</a>
             </Button>
@@ -53,6 +53,17 @@ export function Hero() {
               <a href={LINKS.docs}>Read the docs</a>
             </Button>
           </div>
+
+          <a
+            href={LINKS.play}
+            className={cn(
+              focusRing,
+              "mb-8 inline-flex items-center gap-1.5 rounded-control text-sm text-fg-secondary transition-colors hover:text-fg",
+            )}
+          >
+            or try it now — send a webhook, no signup
+            <span aria-hidden="true">→</span>
+          </a>
 
           <ul className="flex flex-wrap gap-x-5 gap-y-2 font-mono text-xs text-fg-muted">
             {trustSignals.map(({ icon: Icon, label }) => (

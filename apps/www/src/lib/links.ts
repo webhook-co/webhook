@@ -64,6 +64,8 @@ export const LINKS = {
   home: "/",
   pricing: "/pricing",
   about: "/about",
+  /** The no-signup sandbox. NOINDEX (robots) — a link to it is fine; the page's noindex keeps it out. */
+  play: "/play",
 
   // ── external ─────────────────────────────────────────────────────────────
   openSource: REPO,

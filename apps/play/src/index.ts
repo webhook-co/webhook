@@ -26,24 +26,92 @@ const WWW_ORIGIN = "https://www.webhook.co";
 // The ONLY host this worker ever fetches — a fixed constant, so verifying Turnstile is not SSRF.
 const TURNSTILE_SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TOKEN_RE = /^[0-9a-f]{32}$/;
-/** Hard request-size guard before we read the body into memory (storage is capped smaller still). */
-const INGEST_MAX_BYTES = 256 * 1024;
+/** Hard request-size cap: the body read aborts the moment it exceeds this (never fully buffered). */
+const INGEST_MAX_BYTES = 64 * 1024;
+/** Defence-in-depth headers on every response (this worker's own origin, not covered by www's _headers). */
+const SECURITY_HEADERS: Record<string, string> = {
+  "x-content-type-options": "nosniff",
+  "x-robots-tag": "noindex",
+};
 
-function corsHeaders(): Record<string, string> {
+/**
+ * The browser origin allowed to read /play (with credentials, for the viewer-secret cookie). In prod
+ * it's hard-pinned to www; in dev (Turnstile off) the caller's Origin is reflected so a localhost www
+ * dev server can reach a local play worker. Never a wildcard.
+ */
+function allowedOrigin(env: Env, request: Request): string {
+  if (env.TURNSTILE_MODE === "on") return WWW_ORIGIN;
+  return request.headers.get("origin") ?? WWW_ORIGIN;
+}
+
+function corsHeaders(origin: string): Record<string, string> {
   return {
-    "access-control-allow-origin": WWW_ORIGIN,
+    "access-control-allow-origin": origin,
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": "content-type",
+    // Credentials are on for the HttpOnly viewer-secret cookie; origin is exact (never wildcard),
+    // so only the pinned www origin can read a stream with credentials.
+    "access-control-allow-credentials": "true",
     "access-control-max-age": "600",
     vary: "origin",
   };
 }
 
-function json(body: unknown, status = 200, extra: Record<string, string> = {}): Response {
+function json(body: unknown, status: number, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json", "x-robots-tag": "noindex", ...extra },
+    headers: { "content-type": "application/json", ...SECURITY_HEADERS, ...extra },
   });
+}
+
+function text(body: string, status: number, extra: Record<string, string> = {}): Response {
+  return new Response(body, {
+    status,
+    headers: { "content-type": "text/plain; charset=utf-8", ...SECURITY_HEADERS, ...extra },
+  });
+}
+
+/**
+ * The rate-limit bucket for an IP. IPv4 → the full address; IPv6 → the /64 prefix, because a single
+ * attacker routinely controls a whole /64 (2^64 addresses) and a per-exact-IP cap would be
+ * meaningless. cf-connecting-ip is set by Cloudflare and cannot be spoofed.
+ */
+function ipBucket(ip: string): string {
+  if (!ip.includes(":")) return ip; // IPv4 → /32
+  const [head, tail = ""] = ip.split("::");
+  const headGroups = head ? head.split(":") : [];
+  const tailGroups = tail ? tail.split(":") : [];
+  const missing = Math.max(0, 8 - headGroups.length - tailGroups.length);
+  const full = [...headGroups, ...Array(missing).fill("0"), ...tailGroups];
+  return `${full
+    .slice(0, 4)
+    .map((g) => g || "0")
+    .join(":")}::/64`;
+}
+
+/** Read the request body, streaming, aborting the moment it exceeds `cap`. Returns null if too large. */
+async function readCapped(request: Request, cap: number): Promise<Uint8Array | null> {
+  if (!request.body) return new Uint8Array(0);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
 }
 
 /** Verify a Turnstile token. Off in dev/tests. The only outbound fetch, to a fixed URL. */
@@ -63,7 +131,18 @@ async function verifyTurnstile(env: Env, token: string | undefined, ip: string):
   }
 }
 
-async function handleMint(request: Request, env: Env, url: URL): Promise<Response> {
+/** Read the per-token viewer-secret cookie (`pv_<token>`) from the request. */
+function viewerCookie(request: Request, token: string): string | null {
+  const cookie = request.headers.get("cookie");
+  if (!cookie) return null;
+  for (const part of cookie.split(";")) {
+    const [k, ...v] = part.trim().split("=");
+    if (k === `pv_${token}`) return v.join("=");
+  }
+  return null;
+}
+
+async function handleMint(request: Request, env: Env, url: URL, origin: string): Promise<Response> {
   const ip = request.headers.get("cf-connecting-ip") ?? "0.0.0.0";
   let turnstileToken: string | undefined;
   try {
@@ -73,7 +152,7 @@ async function handleMint(request: Request, env: Env, url: URL): Promise<Respons
     /* empty/invalid body is fine when Turnstile is off */
   }
   if (!(await verifyTurnstile(env, turnstileToken, ip))) {
-    return json({ error: "challenge_failed" }, 403, corsHeaders());
+    return json({ error: "challenge_failed" }, 403, corsHeaders(origin));
   }
 
   const token = newIngestToken();
@@ -85,48 +164,41 @@ async function handleMint(request: Request, env: Env, url: URL): Promise<Respons
   const coordinator = env.PLAY_COORDINATOR.get(env.PLAY_COORDINATOR.idFromName("global"));
   const reserved = await coordinator.reserve({
     token,
-    ip,
+    ipBucket: ipBucket(ip),
     expiresAt,
     now,
     maxActive: Number(env.PLAY_MAX_ACTIVE) || 5000,
     maxPerIp: Number(env.PLAY_MAX_PER_IP) || 5,
   });
   if (!reserved.ok) {
-    return json({ error: "rate_limited", reason: reserved.reason }, 429, corsHeaders());
+    return json({ error: "rate_limited", reason: reserved.reason }, 429, corsHeaders(origin));
   }
 
   const session = env.PLAY_SESSION.get(env.PLAY_SESSION.idFromName(token));
-  await session.init({ viewerSecret, ip, mintedAt: now, ttlMs });
+  await session.init({ viewerSecret, mintedAt: now, ttlMs });
 
   const ingestUrl = `https://${url.host}/${token}`;
+  // The viewer secret rides in an HttpOnly cookie scoped to this token's stream path — NOT in the
+  // response body and NOT in any URL, so it never lands in a request log or in page JS. The browser
+  // sends it automatically on the EventSource (withCredentials). SameSite=None+Secure because the www
+  // page and the play worker are different registrable sites.
+  const cookie = `pv_${token}=${viewerSecret}; HttpOnly; Secure; SameSite=None; Path=/${token}/stream; Max-Age=${Math.ceil(ttlMs / 1000)}`;
   return json(
     {
       token,
-      viewerSecret, // held by the minting browser only; required to open the stream
       ingestUrl,
       expiresAt,
       curl: `curl -X POST ${ingestUrl} -H 'content-type: application/json' -d '{"hello":"webhook.co"}'`,
     },
     200,
-    corsHeaders(),
+    { ...corsHeaders(origin), "set-cookie": cookie },
   );
 }
 
 async function handleIngest(request: Request, env: Env, token: string): Promise<Response> {
-  const lenHeader = request.headers.get("content-length");
-  if (lenHeader && Number(lenHeader) > INGEST_MAX_BYTES) {
-    return new Response("payload too large", {
-      status: 413,
-      headers: { "x-robots-tag": "noindex" },
-    });
-  }
-  const raw = new Uint8Array(await request.arrayBuffer());
-  if (raw.length > INGEST_MAX_BYTES) {
-    return new Response("payload too large", {
-      status: 413,
-      headers: { "x-robots-tag": "noindex" },
-    });
-  }
+  const raw = await readCapped(request, INGEST_MAX_BYTES);
+  if (raw === null) return text("payload too large", 413);
+
   const session = env.PLAY_SESSION.get(env.PLAY_SESSION.idFromName(token));
   const result = await session.capture({
     method: request.method,
@@ -134,24 +206,31 @@ async function handleIngest(request: Request, env: Env, token: string): Promise<
     bodyBytes: raw,
     now: Date.now(),
   });
-  const noindex = { "x-robots-tag": "noindex", "content-type": "text/plain" };
-  if (result.reason === "uninitialized")
-    return new Response("not found", { status: 404, headers: noindex });
-  if (result.reason === "expired")
-    return new Response("this sandbox url has expired", { status: 410, headers: noindex });
-  if (result.reason === "cap")
-    return new Response("capture limit reached", { status: 429, headers: noindex });
-  return new Response("captured — watch it in the browser tab that made this url\n", {
-    status: 200,
-    headers: noindex,
-  });
+  if (result.reason === "uninitialized") return text("not found", 404);
+  if (result.reason === "expired") return text("this sandbox url has expired", 410);
+  if (result.reason === "cap") return text("capture limit reached", 429);
+  return text("captured — watch it in the browser tab that made this url\n", 200);
 }
 
-async function handleStream(request: Request, env: Env, token: string): Promise<Response> {
+async function handleStream(
+  request: Request,
+  env: Env,
+  token: string,
+  origin: string,
+): Promise<Response> {
+  // Session-bound: the viewer secret comes from the HttpOnly cookie, never the URL. Pass it to the DO
+  // via an internal header so it stays out of any request-URL log.
+  const secret = viewerCookie(request, token);
   const session = env.PLAY_SESSION.get(env.PLAY_SESSION.idFromName(token));
-  const res = await session.fetch(request); // DO validates the ?v= viewer secret (session-bound)
+  const doReq = new Request(request.url, {
+    headers: { "x-play-viewer": secret ?? "", accept: "text/event-stream" },
+    signal: request.signal,
+  });
+  const res = await session.fetch(doReq);
   const headers = new Headers(res.headers);
-  for (const [k, v] of Object.entries(corsHeaders())) headers.set(k, v);
+  for (const [k, v] of Object.entries({ ...corsHeaders(origin), ...SECURITY_HEADERS })) {
+    headers.set(k, v);
+  }
   return new Response(res.body, { status: res.status, headers });
 }
 
@@ -159,21 +238,24 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;
+    const origin = allowedOrigin(env, request);
 
-    if (request.method === "OPTIONS")
-      return new Response(null, { status: 204, headers: corsHeaders() });
-    if (path === "/healthz") return new Response("ok", { status: 200 });
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders(origin) });
+    }
+    if (path === "/healthz") return text("ok", 200);
     if (path === "/") return Response.redirect(`${WWW_ORIGIN}/play`, 302);
-    if (path === "/api/mint" && request.method === "POST") return handleMint(request, env, url);
+    if (path === "/api/mint" && request.method === "POST") {
+      return handleMint(request, env, url, origin);
+    }
 
     const segments = path.replace(/^\/+/, "").split("/");
     const token = segments[0] ?? "";
-    if (!TOKEN_RE.test(token)) {
-      return new Response("not found", { status: 404, headers: { "x-robots-tag": "noindex" } });
+    if (!TOKEN_RE.test(token)) return text("not found", 404);
+    if (segments[1] === "stream" && request.method === "GET") {
+      return handleStream(request, env, token, origin);
     }
-    if (segments[1] === "stream" && request.method === "GET")
-      return handleStream(request, env, token);
     if (segments.length === 1) return handleIngest(request, env, token);
-    return new Response("not found", { status: 404, headers: { "x-robots-tag": "noindex" } });
+    return text("not found", 404);
   },
 } satisfies ExportedHandler<Env>;

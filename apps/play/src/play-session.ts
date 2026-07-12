@@ -26,7 +26,7 @@ export class PlaySession extends DurableObject<Env> {
     super(ctx, env);
     this.ctx.storage.sql.exec(
       `create table if not exists meta (
-         k text primary key, minted_at integer, viewer_secret text, ip text, count integer, expires_at integer
+         k text primary key, minted_at integer, viewer_secret text, count integer, expires_at integer
        );
        create table if not exists captures (
          seq integer primary key autoincrement, id text, method text, headers text,
@@ -38,18 +38,16 @@ export class PlaySession extends DurableObject<Env> {
   /** Called once by the worker at mint. Records the session and arms the ABSOLUTE self-destruct alarm. */
   async init(input: {
     viewerSecret: string;
-    ip: string;
     mintedAt: number;
     ttlMs: number;
   }): Promise<{ expiresAt: number }> {
     const expiresAt = input.mintedAt + input.ttlMs;
     this.ctx.storage.sql.exec(
-      `insert into meta (k, minted_at, viewer_secret, ip, count, expires_at)
-       values ('m', ?, ?, ?, 0, ?)
+      `insert into meta (k, minted_at, viewer_secret, count, expires_at)
+       values ('m', ?, ?, 0, ?)
        on conflict(k) do nothing`,
       input.mintedAt,
       input.viewerSecret,
-      input.ip,
       expiresAt,
     );
     // Absolute deadline — set ONCE, never refreshed by activity. This is the control that makes the
@@ -61,18 +59,16 @@ export class PlaySession extends DurableObject<Env> {
   private meta(): {
     mintedAt: number;
     viewerSecret: string;
-    ip: string;
     count: number;
     expiresAt: number;
   } | null {
     const row = this.ctx.storage.sql
-      .exec("select minted_at, viewer_secret, ip, count, expires_at from meta where k='m'")
+      .exec("select minted_at, viewer_secret, count, expires_at from meta where k='m'")
       .toArray()[0];
     if (!row) return null;
     return {
       mintedAt: Number(row.minted_at),
       viewerSecret: String(row.viewer_secret),
-      ip: String(row.ip),
       count: Number(row.count),
       expiresAt: Number(row.expires_at),
     };
@@ -114,19 +110,25 @@ export class PlaySession extends DurableObject<Env> {
     );
     const count = m.count + 1;
     this.ctx.storage.sql.exec("update meta set count=? where k='m'", count);
-    await this.fanOut(record);
+    // Fire-and-forget: the capture is already durable in SQLite, so we must NOT block the ingesting
+    // request (the caller's curl) on a slow or stalled viewer's backpressure. A viewer that falls
+    // behind recovers via replay on reconnect.
+    void this.fanOut(record);
     return { accepted: true, count };
   }
 
   private async fanOut(record: CaptureRecord): Promise<void> {
     const frame = new TextEncoder().encode(sseFrame(record));
-    for (const w of [...this.writers]) {
-      try {
-        await w.write(frame);
-      } catch {
-        this.writers.delete(w);
-      }
-    }
+    // Concurrent, not sequential — one stalled writer must not delay the others.
+    await Promise.allSettled(
+      [...this.writers].map(async (w) => {
+        try {
+          await w.write(frame);
+        } catch {
+          this.writers.delete(w);
+        }
+      }),
+    );
   }
 
   private replay(): CaptureRecord[] {
@@ -152,14 +154,19 @@ export class PlaySession extends DurableObject<Env> {
    * captures until the token expires.
    */
   override async fetch(request: Request): Promise<Response> {
-    const url = new URL(request.url);
-    const presented = url.searchParams.get("v") ?? "";
+    // The viewer secret arrives via an internal header the worker sets from the HttpOnly cookie — NOT
+    // from the URL, so it never lands in a request-URL log (defeating log-based session hijack).
+    const presented = request.headers.get("x-play-viewer") ?? "";
     const m = this.meta();
     if (!m || !timingSafeEqual(presented, m.viewerSecret)) {
       // Same response whether the token is unknown or the secret is wrong — no oracle.
       return new Response("forbidden", { status: 403 });
     }
 
+    // Snapshot the replay BEFORE joining the fan-out set (both are synchronous, no await between, so
+    // no capture can interleave): a capture then lands EITHER in the snapshot (writer not yet live)
+    // OR via fan-out (after we join) — never both, so the viewer never sees a duplicate.
+    const snapshot = this.replay();
     const stream = new TransformStream<Uint8Array, Uint8Array>();
     const writer = stream.writable.getWriter();
     this.writers.add(writer);
@@ -171,7 +178,7 @@ export class PlaySession extends DurableObject<Env> {
     // it as it connects.
     void (async () => {
       try {
-        for (const rec of this.replay()) await writer.write(enc.encode(sseFrame(rec)));
+        for (const rec of snapshot) await writer.write(enc.encode(sseFrame(rec)));
         await writer.write(enc.encode(sseComment(`expires ${m.expiresAt}`)));
       } catch {
         this.writers.delete(writer);

@@ -13,16 +13,19 @@ export class PlayCoordinator extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.storage.sql.exec(
-      `create table if not exists active (token text primary key, ip text, expires_at integer);
-       create index if not exists active_ip on active (ip);
+      `create table if not exists active (token text primary key, ip_bucket text, expires_at integer);
+       create index if not exists active_ip on active (ip_bucket);
        create index if not exists active_exp on active (expires_at);`,
     );
   }
 
-  /** Reserve a slot for a new token. Returns whether the mint may proceed. */
+  /**
+   * Reserve a slot for a new token. Returns whether the mint may proceed. `ipBucket` is the rate-limit
+   * key (IPv4 /32 or IPv6 /64 — computed by the worker) so a single /64 can't mint an unbounded number.
+   */
   reserve(input: {
     token: string;
-    ip: string;
+    ipBucket: string;
     expiresAt: number;
     now: number;
     maxActive: number;
@@ -36,14 +39,15 @@ export class PlayCoordinator extends DurableObject<Env> {
     if (total >= input.maxActive) return { ok: false, reason: "global" };
 
     const perIp = Number(
-      sql.exec("select count(*) as n from active where ip = ?", input.ip).toArray()[0]?.n ?? 0,
+      sql.exec("select count(*) as n from active where ip_bucket = ?", input.ipBucket).toArray()[0]
+        ?.n ?? 0,
     );
     if (perIp >= input.maxPerIp) return { ok: false, reason: "ip" };
 
     sql.exec(
-      "insert into active (token, ip, expires_at) values (?, ?, ?) on conflict(token) do nothing",
+      "insert into active (token, ip_bucket, expires_at) values (?, ?, ?) on conflict(token) do nothing",
       input.token,
-      input.ip,
+      input.ipBucket,
       input.expiresAt,
     );
     return { ok: true };
