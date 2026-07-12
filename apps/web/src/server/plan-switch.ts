@@ -164,10 +164,17 @@ export async function switchPlan(
     // The upgrade applies IMMEDIATELY: a customer who has hit their cap needs the headroom now, and the
     // prorated difference lands on their next invoice. idempotencyKey = the form-render nonce, so a
     // double-submit of the same button collapses to one charge.
+    //
+    // UN-CANCEL a sub that was set to cancel at period end (S6c). Without this, upgrading a canceling sub
+    // charged the prorated difference NOW but left `cancel_at_period_end` set — so the customer paid for
+    // headroom they'd lose at renewal. An upgrade is an affirmative "I'm staying", so we clear the flag in
+    // the SAME write (idempotent, atomic with the plan change). Only sent when actually set, so a normal
+    // upgrade doesn't carry the field.
     await client.updateSubscription({
       subscriptionId: sub.subscriptionId,
       items,
       prorationBehavior: "create_prorations",
+      ...(stripeSub.cancelAtPeriodEnd ? { cancelAtPeriodEnd: false } : {}),
       idempotencyKey,
     });
 
