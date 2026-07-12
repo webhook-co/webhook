@@ -1,4 +1,5 @@
 import { CAPABILITY_SCOPES } from "@webhook-co/contract/capability";
+import { PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { CredentialsManager } from "@/components/credentials-manager";
@@ -15,7 +16,7 @@ export default async function CredentialsPage() {
   const result = await loadCredentials(session.orgId);
 
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+    <PageContainer>
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-heading text-fg">API keys &amp; devices</h1>
         <p className="leading-snug text-fg-secondary">
@@ -30,6 +31,6 @@ export default async function CredentialsPage() {
         revokeGrant={revokeGrant}
         scopes={CAPABILITY_SCOPES}
       />
-    </div>
+    </PageContainer>
   );
 }

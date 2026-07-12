@@ -1,4 +1,4 @@
-import { Banner } from "@webhook-co/ui";
+import { Banner, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { DeliveriesFilterBar, DeliveriesList } from "@/components/deliveries-list";
@@ -34,7 +34,7 @@ export default async function DeliveriesPage({
     : (rawParams.status ?? "");
 
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+    <PageContainer>
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-heading text-fg">Deliveries</h1>
         <p className="leading-snug text-fg-secondary">
@@ -60,6 +60,6 @@ export default async function DeliveriesPage({
           />
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

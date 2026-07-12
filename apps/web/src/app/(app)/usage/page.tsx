@@ -1,4 +1,4 @@
-import { Banner } from "@webhook-co/ui";
+import { Banner, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { loadUsage } from "@/server/usage";
@@ -26,7 +26,7 @@ export default async function UsagePage() {
   const result = await loadUsage(session.orgId);
 
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+    <PageContainer>
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-heading text-fg">Usage</h1>
         {/* Disclosure (constitution: the billable unit is stated up front). Single-dimension, no
@@ -43,7 +43,7 @@ export default async function UsagePage() {
       ) : (
         <UsageCard usage={result.usage} />
       )}
-    </div>
+    </PageContainer>
   );
 }
 

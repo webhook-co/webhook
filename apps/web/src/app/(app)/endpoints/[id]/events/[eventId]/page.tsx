@@ -1,4 +1,4 @@
-import { Banner } from "@webhook-co/ui";
+import { Banner, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -34,7 +34,7 @@ export default async function EventDetailPage({
   if (result.status === "not_found") notFound();
 
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+    <PageContainer>
       <div className="flex flex-col gap-1.5">
         <Link
           href={`/endpoints/${id}/events`}
@@ -59,6 +59,6 @@ export default async function EventDetailPage({
           deleteEvent={deleteEventAction}
         />
       )}
-    </div>
+    </PageContainer>
   );
 }

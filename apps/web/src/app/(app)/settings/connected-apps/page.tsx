@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PageContainer } from "@webhook-co/ui";
 
 import { ConnectedAppsManager } from "@/components/connected-apps-manager";
 import { revokeConnectedApp } from "@/server/connected-apps-actions";
@@ -12,7 +13,7 @@ export default async function ConnectedAppsPage() {
   const result = await loadConnectedApps();
 
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+    <PageContainer>
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-heading text-fg">Connected apps</h1>
         <p className="leading-snug text-fg-secondary">
@@ -28,6 +29,6 @@ export default async function ConnectedAppsPage() {
       ) : (
         <ConnectedAppsManager initialApps={result.apps} revoke={revokeConnectedApp} />
       )}
-    </div>
+    </PageContainer>
   );
 }
