@@ -17,12 +17,45 @@
 //
 // The ONE legitimate (b) today is listUserOrgs — the read the whole multi-org lane is built on.
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SRC_DIRS = [join(ROOT, "packages/db/src")];
+
+// Scan the WHOLE workspace, not just packages/db. Today every app funnels membership reads through
+// packages/db's readMembershipRole (which is org-qualified), so db/src is where the risk lives — but nothing
+// stops a future app from writing raw membership SQL against webhook_app, which is exactly the role the new
+// policy targets. Guarding only the current blast radius would be guarding yesterday's bug.
+const SCAN_ROOTS = [join(ROOT, "packages"), join(ROOT, "apps"), join(ROOT, "ee")];
+const SKIP_DIR = /(^|\/)(node_modules|dist|\.next|\.open-next|out|build|coverage)(\/|$)/;
+
+/** Every .ts/.tsx file under `dir`, recursively, excluding tests and build output. */
+function sourceFiles(dir) {
+  const out = [];
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    const full = join(dir, entry);
+    if (SKIP_DIR.test(full)) continue;
+    let st;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      out.push(...sourceFiles(full));
+    } else if (/\.(ts|tsx)$/.test(entry) && !/\.test\.|\.spec\./.test(entry)) {
+      out.push(full);
+    }
+  }
+  return out;
+}
 
 /** A deliberate user-scoped read must carry this marker within a few lines above the statement. */
 const USER_SCOPE_MARKER = "rls-scope: user";
@@ -73,9 +106,8 @@ function templates(text) {
 
 const failures = [];
 
-for (const dir of SRC_DIRS) {
-  for (const file of readdirSync(dir).filter((f) => f.endsWith(".ts"))) {
-    const path = join(dir, file);
+for (const root of SCAN_ROOTS) {
+  for (const path of sourceFiles(root)) {
     const raw = readFileSync(path, "utf8");
     if (!raw.includes("memberships")) continue;
     const text = stripComments(raw);
