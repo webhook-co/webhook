@@ -53,7 +53,7 @@ describe("loadDashboard", () => {
       items: [{ disabledAt: new Date() }, { disabledAt: null }], // one disabled, one healthy
     });
 
-    const data = await loadDashboard("org_1");
+    const data = await loadDashboard("org_1", { days: 14, endMs: Date.now() });
     expect(data).toMatchObject({
       seriesOk: true,
       paused: true,
@@ -69,7 +69,7 @@ describe("loadDashboard", () => {
     loadUsage.mockResolvedValue({ status: "ok", usage: { paused: true } });
     loadDestinations.mockResolvedValue({ status: "ok", items: [] });
 
-    const data = await loadDashboard("org_1");
+    const data = await loadDashboard("org_1", { days: 14, endMs: Date.now() });
     expect(data.seriesOk).toBe(false);
     expect(data.series).toEqual([]);
     // The OTHER signals still come through — a series blip doesn't blank the page.
@@ -82,7 +82,7 @@ describe("loadDashboard", () => {
     loadUsage.mockResolvedValue({ status: "error" }); // usage read faulted
     loadDestinations.mockResolvedValue({ status: "error" }); // destinations read faulted
 
-    const data = await loadDashboard("org_1");
+    const data = await loadDashboard("org_1", { days: 14, endMs: Date.now() });
     expect(data).toMatchObject({
       seriesOk: true,
       paused: false, // usage error → not paused

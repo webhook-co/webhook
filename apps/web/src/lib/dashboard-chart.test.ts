@@ -72,6 +72,21 @@ describe("buildDashboardChart", () => {
     expect(m.latestP95Ms).toBe(240); // freshest non-null, not today's null nor the older 900
   });
 
+  it("windows to [end-(days-1) .. end] and ignores rows outside it (past endMs)", () => {
+    // endMs is a PAST day (Jul 5). A newer row (Jul 7) sits in the input but is outside the window — it
+    // must NOT appear as a bar nor inflate the totals. This is what makes the read's returning extra rows
+    // (for a past custom range) harmless.
+    const endMs = Date.UTC(2026, 6, 5, 12);
+    const series = [
+      day(0, { delivered: 999 }), // Jul 7 — after the window end
+      day(2, { delivered: 10 }), // Jul 5 — the window end
+      day(3, { delivered: 5 }), // Jul 4 — inside
+    ];
+    const m = buildDashboardChart(series, 3, endMs); // window Jul 3..Jul 5
+    expect(m.bars.map((b) => b.date)).toEqual(["2026-07-03", "2026-07-04", "2026-07-05"]);
+    expect(m.totalDelivered).toBe(15); // 10 + 5 only — the out-of-window 999 is excluded
+  });
+
   it("reports no p95 and no delivery for a truly empty window", () => {
     const m = buildDashboardChart([], 14, NOW);
     expect(m.latestP95Ms).toBeNull();

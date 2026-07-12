@@ -42,24 +42,25 @@ function utcDateKey(ms: number): string {
 }
 
 /**
- * Build the chart model for the last `days` UTC days ending on `nowMs`'s day (inclusive), oldest→newest.
- * Missing days are zero-filled so the axis is continuous. `latestP95Ms` walks newest→oldest and takes the
- * first measured value (a p95 is per-day and not averageable across days, so we surface the freshest one).
+ * Build the chart model for the `days` UTC days ending on `endMs`'s day (inclusive), oldest→newest. `endMs`
+ * is usually now, but a custom date-range filter ends the window on a past day. Missing days are zero-filled
+ * so the axis is continuous. `latestP95Ms` walks newest→oldest and takes the first measured value (a p95 is
+ * per-day and not averageable across days, so we surface the freshest one).
  */
 export function buildDashboardChart(
   series: readonly DeliveryStatsDay[],
   days: number,
-  nowMs: number,
+  endMs: number,
 ): DashboardChartModel {
   const DAY_MS = 86_400_000;
   // Key stored rows by their UTC date. windowStart is a UTC-midnight ISO string from the rollup.
   const byDate = new Map<string, DeliveryStatsDay>();
   for (const row of series) byDate.set(utcDateKey(Date.parse(row.windowStart)), row);
 
-  const todayStart = Date.UTC(
-    new Date(nowMs).getUTCFullYear(),
-    new Date(nowMs).getUTCMonth(),
-    new Date(nowMs).getUTCDate(),
+  const endStart = Date.UTC(
+    new Date(endMs).getUTCFullYear(),
+    new Date(endMs).getUTCMonth(),
+    new Date(endMs).getUTCDate(),
   );
 
   const bars: DashboardChartBar[] = [];
@@ -67,7 +68,7 @@ export function buildDashboardChart(
   let totalDead = 0;
   let totalBlocked = 0;
   for (let i = days - 1; i >= 0; i--) {
-    const dayMs = todayStart - i * DAY_MS;
+    const dayMs = endStart - i * DAY_MS;
     const key = utcDateKey(dayMs);
     const row = byDate.get(key);
     const delivered = row?.delivered ?? 0;

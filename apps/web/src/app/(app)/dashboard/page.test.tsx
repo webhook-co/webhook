@@ -14,8 +14,15 @@ vi.mock("@/server/session", () => ({
 const loadDashboard = vi.fn<() => Promise<DashboardData>>();
 vi.mock("@/server/dashboard", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/server/dashboard")>();
-  return { ...actual, loadDashboard: (orgId: string) => loadDashboard(orgId) };
+  return { ...actual, loadDashboard: () => loadDashboard() };
 });
+
+// The date-range filter (rendered in the header) is a client component that reads the router/query.
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  usePathname: () => "/dashboard",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 import DashboardPage from "./page";
 
@@ -42,7 +49,7 @@ beforeEach(() => {
 });
 
 async function renderPage() {
-  render(await DashboardPage());
+  render(await DashboardPage({ searchParams: Promise.resolve({}) }));
 }
 
 describe("DashboardPage", () => {
