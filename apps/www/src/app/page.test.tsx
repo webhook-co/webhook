@@ -99,24 +99,25 @@ describe("HomePage", () => {
     );
   });
 
-  it("offers the sandbox as a real BUTTON on the demo — and never as a 'try the platform' promise", () => {
+  it("puts the sandbox in the hero's CTA row as a real button, alongside the other two", () => {
     // /play is the only thing on this page a stranger can do without an account, and it started life
-    // as a small text link — the least prominent element in the hero. It is now a button attached to
-    // the demo it belongs to. This pins PROMINENCE, not just presence: a regression that demotes it
-    // back to prose passes a naive "is there a link to /play" check, and fails this one.
+    // as a small text link under the CTAs — the least prominent element in the hero. It now sits in
+    // the CTA row itself. This pins PROMINENCE, not just presence: a regression that demotes it back
+    // to prose sails through a naive "is there a link to /play" check, and fails this one.
     render(<HomePage />);
-    const cta = screen.getByRole("link", { name: /playground/i });
+    const cta = screen.getByRole("link", { name: /^open playground$/i });
     expect(cta).toHaveAttribute("href", "/play");
     // The design system's Button renders its own class; a plain prose link does not.
     expect(cta.className, "the sandbox CTA must be a button, not a text link").toMatch(/rounded/);
-    // It must NOT wrap the Inspector: that card has pause/replay buttons, and nesting interactive
-    // controls inside an anchor is invalid and keyboard-hostile.
-    expect(cta.querySelector("button")).toBeNull();
+
+    // …and it shares the row with Start free + Read the docs, rather than floating elsewhere.
+    const row = cta.parentElement!;
+    const siblings = [...row.querySelectorAll("a")].map((a) => a.textContent?.trim());
+    expect(siblings).toEqual(["Start free", "Read the docs", "Open playground"]);
 
     // "Try it" read as an invitation to trial the whole platform — a promise the Free tier doesn't
     // make. The sandbox is named for what it is.
-    const text = document.body.textContent ?? "";
-    expect(text).not.toMatch(/try it\s*—\s*no signup/i);
+    expect(document.body.textContent ?? "").not.toMatch(/try it\s*—\s*no signup/i);
   });
 
   it("renders the closing call to action", () => {
