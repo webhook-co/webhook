@@ -19,6 +19,7 @@
     "deploy:dry": "wrangler deploy --dry-run"
   },
   "dependencies": {
+    "@webhook-co/shared": "workspace:*",
     "@webhook-co/ui": "workspace:*",
     "geist": "^1.7.2",
     "lucide-react": "^1.23.0",

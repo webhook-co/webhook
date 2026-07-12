@@ -307,6 +307,9 @@ importers:
 
   apps/www:
     dependencies:
+      '@webhook-co/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@webhook-co/ui':
         specifier: workspace:*
         version: link:../../packages/ui
