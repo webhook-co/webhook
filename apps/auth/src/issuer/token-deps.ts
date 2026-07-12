@@ -194,8 +194,9 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
 
   // A4b — the device-code grant. The provider has no device grant, so this mints directly (like refresh):
   // poll the DEVICE_KV store (single-use delete-on-read), then mintScopedKey (authMethod "device_code") +
-  // a refresh handle on the same webhook_app pool. Tenancy is enforced at approval (A4c's getConsentOrg),
-  // so this path needs no membership re-check — only the audience/scope defense-in-depth in the core.
+  // a refresh handle on the same webhook_app pool. Tenancy is re-asserted at the MINT (isOrgMember), like
+  // the auth-code path: since Lane 2.4b the consent org is PICKED rather than derived from the approver, so
+  // membership is no longer true "by construction", and approval and mint are separated in time anyway.
   const deviceStore = makeDeviceStoreDeps(env.DEVICE_KV);
   const device: DeviceTokenDeps = {
     allowedAudiences: [API_RESOURCE, MCP_RESOURCE],
@@ -203,6 +204,7 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
     keyTtlSeconds: KEY_TTL_SECONDS,
     defaultPendingInterval: DEFAULT_PENDING_INTERVAL,
     poll: (deviceCode) => pollDeviceCode(deviceStore, deviceCode),
+    isOrgMember: (userId, orgId) => isOrgMember(app, userId, orgId),
     mintScopedKey: (input) =>
       mintScopedKey(
         app,

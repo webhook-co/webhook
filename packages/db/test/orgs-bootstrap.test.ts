@@ -340,6 +340,38 @@ describe("listConsentOrgs + personalOrgId (the /authorize consent-org resolution
     ]);
   });
 
+  it("pins the PERSONAL org first even when a team membership is OLDER", async () => {
+    // The directory orders by created_at, and bootstrap self-heals on a LATER session-create — so a user
+    // whose signup bootstrap failed and who then accepted an invite has the TEAM membership as their oldest.
+    // Trusting that order would silently DEFAULT their consent (and web session) to someone else's org.
+    const userId = `user_${randomUUID()}`;
+    await seedUser(userId);
+    const teamOwner = `user_${randomUUID()}`;
+    await seedUser(teamOwner);
+    const { id: team } = await createOrgWithOwner(app, {
+      slug: `t-${randomUUID().slice(0, 8)}`,
+      name: "Acme Team",
+      ownerUserId: teamOwner,
+    });
+    // The team membership lands FIRST…
+    await withTenant(
+      app,
+      team,
+      (tx) =>
+        tx`insert into memberships (org_id, user_id, role) values (${team}, ${userId}, 'member')`,
+    );
+    // …and only then does the personal org get bootstrapped (the self-heal path).
+    const { orgId: personal } = await bootstrapPersonalOrg(
+      app,
+      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Dana's projects" },
+      hasher,
+    );
+
+    const orgs = await listConsentOrgs(app, userId);
+    expect(orgs[0]).toEqual({ orgId: personal, name: "Dana's projects" }); // the DEFAULT is still theirs
+    expect(orgs.map((o) => o.orgId)).toContain(team);
+  });
+
   it("returns nothing for a user with no org", async () => {
     const userId = `user_${randomUUID()}`;
     await seedUser(userId);

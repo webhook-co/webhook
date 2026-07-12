@@ -407,7 +407,9 @@ export async function decideConsent(
   // consent already on a user's screen at deploy time.
   const candidateOrgs = payload.orgs ?? [{ id: payload.orgId, name: payload.orgName }];
   const chosenOrgId = input.orgId ?? payload.orgId;
-  if (!candidateOrgs.some((o) => o.id === chosenOrgId)) {
+  // Only an APPROVE binds an org. A deny grants nothing, so refusing it over a bogus org would just fail to
+  // record the user's "no" — the safest outcome must never be the one we drop.
+  if (input.decision === "approve" && !candidateOrgs.some((o) => o.id === chosenOrgId)) {
     deps.log?.("consent.org_not_permitted", {});
     return { kind: "error", status: 403, error: "access_denied", description: "org not permitted" };
   }
@@ -454,7 +456,7 @@ export async function decideConsent(
     }
     deps.log?.("consent.device.decided", {
       userId: payload.userId,
-      orgId: payload.orgId,
+      orgId: chosenOrgId, // the org actually authorized — not the ticket's default
       decision: input.decision,
     });
     // The device polls for its token — the browser just returns to the device page with the outcome.

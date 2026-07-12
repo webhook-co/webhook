@@ -22,6 +22,7 @@ function deps(over: Partial<DeviceTokenDeps> = {}): DeviceTokenDeps {
   return {
     allowedAudiences: [API, MCP],
     allowedScopes: CAPABILITY,
+    isOrgMember: async () => true,
     keyTtlSeconds: 86_400,
     defaultPendingInterval: 5,
     poll: async () => ({ kind: "approved", props: APPROVED_PROPS }),
@@ -180,5 +181,21 @@ describe("redeemDeviceCode — approved", () => {
     );
     expect((r as { error: string }).error).toBe("server_error");
     expect(rollback).toHaveBeenCalledWith("grant_1", "org_1");
+  });
+});
+
+// Tenancy at the MINT (Lane 2.4b). Before the org was PICKED on the consent screen it was DERIVED from the
+// approver, so membership held "by construction" and this path carried no membership check. That argument is
+// gone — and approval and mint are separated in time anyway (approve on your phone, the device polls later),
+// so a user can be removed from the org in between. The auth-code path always had this gate; now so does this.
+describe("redeemDeviceCode — tenancy", () => {
+  it("REFUSES to mint when the approver is no longer a member of the org, and mints nothing", async () => {
+    const mintScopedKey = vi.fn();
+    const result = await redeemDeviceCode(
+      deps({ isOrgMember: async () => false, mintScopedKey }),
+      REQ,
+    );
+    expect(result).toEqual(expect.objectContaining({ kind: "error", error: "access_denied" }));
+    expect(mintScopedKey).not.toHaveBeenCalled();
   });
 });

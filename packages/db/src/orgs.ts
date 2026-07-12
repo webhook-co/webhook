@@ -214,7 +214,18 @@ export async function listConsentOrgs(
   userId: string,
 ): Promise<{ orgId: string; name: string }[]> {
   const orgs = await listUserOrgs(app, userId);
-  return orgs.map((o) => ({ orgId: o.orgId, name: o.name }));
+  // Pin the PERSONAL org first, rather than trusting the directory's created_at order to put it there.
+  // That order is an assumption, not an invariant: bootstrap self-heals on a LATER session-create, so a user
+  // whose signup bootstrap failed and who then accepted an invite has the TEAM membership as their oldest —
+  // and would silently DEFAULT to authorizing apps into someone else's org. Not an escalation (they are a
+  // member), but a surprising default in exactly the direction nobody wants. personalOrgId is derivable
+  // without a read, so pinning it costs nothing.
+  const personal = personalOrgId(userId);
+  const ordered = [
+    ...orgs.filter((o) => o.orgId === personal),
+    ...orgs.filter((o) => o.orgId !== personal),
+  ];
+  return ordered.map((o) => ({ orgId: o.orgId, name: o.name }));
 }
 
 export interface BootstrapPersonalOrgInput {
