@@ -70,4 +70,40 @@ describe("ThemeToggle", () => {
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
     expect(window.localStorage.getItem("wh-theme")).toBe("light");
   });
+  /**
+   * REGRESSION. The pre-paint script stamps `data-theme` on <html> before React exists; React then
+   * hydrates that same element and can drop an attribute it never rendered. When that happened, this
+   * component still knew the right theme — it just never wrote it back, so the page silently fell back
+   * to light while the button said "dark". State was right, the DOM was not.
+   *
+   * The absent attribute here is what hydration leaves behind. Mounting must RE-APPLY it, not merely
+   * remember it. In a browser that race is timing-sensitive (it hid on a fast machine and only failed
+   * on slow CI); asserting the mount contract directly is what makes it deterministic.
+   */
+  it("re-applies data-theme on mount when the attribute is missing (post-hydration)", async () => {
+    mockMatchMedia(false);
+    window.localStorage.setItem("wh-theme", "dark");
+    document.documentElement.removeAttribute("data-theme");
+
+    render(<ThemeToggle />);
+
+    // Not just the label — the DOM attribute the whole stylesheet keys off.
+    expect(
+      await screen.findByRole("button", { name: /switch to light theme/i }),
+    ).toBeInTheDocument();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
+
+  it("re-applies the SYSTEM theme on mount when nothing is stored", async () => {
+    mockMatchMedia(true); // OS says dark
+    window.localStorage.removeItem("wh-theme");
+    document.documentElement.removeAttribute("data-theme");
+
+    render(<ThemeToggle />);
+
+    expect(
+      await screen.findByRole("button", { name: /switch to light theme/i }),
+    ).toBeInTheDocument();
+    expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
+  });
 });

@@ -1,7 +1,6 @@
 import { pageMetadata } from "../metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Faq } from "@/components/marketing/faq";
-import { PricingDisclosure } from "@/components/marketing/pricing-disclosure";
 import { FinalCta } from "@/components/marketing/final-cta";
 import { Footer } from "@/components/marketing/footer";
 import { Nav } from "@/components/marketing/nav";
@@ -29,17 +28,11 @@ export default function PricingPage() {
       <main id="main">
         <PricingHero />
         <PricingTable />
-        {/* The billing disclosure, in plain view. Neither of these is wrapped in <Reveal>: it paints
-            its children at `opacity: 0` until an IntersectionObserver fires, and a disclosure the
-            constitution requires to be "up front" cannot be gated behind a scroll animation — the
-            measured effective opacity was literally 0. Prettiness does not get to sit in front of a
-            billing promise.
-
-            The FAQ used to BE this disclosure (its must-disclose entries were forced open). It now
-            starts fully collapsed, like an accordion should, and the promise lives here instead —
-            visible, unconditional, uncollapsible. */}
-        <PricingDisclosure />
-        <Faq />
+        {/* NOT wrapped in <Reveal>: it paints its children at `opacity: 0` until an IntersectionObserver
+            fires, and the first panel carries the BILLABLE UNIT, which AGENTS.md requires be disclosed
+            "up front". A disclosure gated behind a scroll animation is not up front — the measured
+            effective opacity was literally 0. `openFirst` is what keeps it readable without a click. */}
+        <Faq openFirst />
         <Reveal>
           <FinalCta />
         </Reveal>

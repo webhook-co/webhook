@@ -27,8 +27,15 @@ export function ThemeToggle() {
   const [theme, setTheme] = React.useState<Theme>("light");
 
   React.useEffect(() => {
-    const stored = window.localStorage.getItem(STORAGE_KEY) as Theme | null;
-    setTheme(stored ?? systemTheme());
+    const resolved = (window.localStorage.getItem(STORAGE_KEY) as Theme | null) ?? systemTheme();
+    setTheme(resolved);
+    // RE-APPLY, don't just remember. The pre-paint script stamps `data-theme` on <html> before React
+    // exists; React then hydrates the <html> element and can drop an attribute it never rendered. When
+    // that happened the page fell back to light while this button still said "dark" — the state was
+    // right and the DOM was not. Writing it again on mount makes the theme self-healing, and is a
+    // no-op when the attribute survived. (It surfaced as a CI-only failure: the race is timing
+    // -sensitive, so it hid on a fast machine and showed up on a slow one.)
+    applyTheme(resolved);
   }, []);
 
   function toggle() {

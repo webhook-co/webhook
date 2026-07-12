@@ -12,13 +12,27 @@ import { expect, test } from "@playwright/test";
  */
 
 test.describe("theme toggle", () => {
+  /**
+   * Wait for hydration to SETTLE before asserting. The bug this exists for: the pre-paint script
+   * stamps `data-theme` on <html>, React then hydrates that element and can drop an attribute it never
+   * rendered — so the page silently falls back to light while the toggle still reports dark. Asserting
+   * too early passes against that, because the attribute is briefly there. The toggle only becomes
+   * interactive after hydration, so waiting for it is waiting for the thing that breaks it.
+   */
+  async function afterHydration(page: import("@playwright/test").Page) {
+    await page.getByRole("button", { name: /switch to (light|dark) theme/i }).waitFor();
+    await page.waitForTimeout(250);
+  }
+
   test("follows the OS preference on a first visit, with no stored choice", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto("/");
+    await afterHydration(page);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto("/");
+    await afterHydration(page);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   });
 
@@ -32,6 +46,7 @@ test.describe("theme toggle", () => {
 
     // The whole point: it must still be dark on the next page, applied before paint.
     await page.goto("/pricing");
+    await afterHydration(page);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await expect(page.getByRole("button", { name: /switch to light theme/i })).toBeVisible();
   });
@@ -44,6 +59,7 @@ test.describe("theme toggle", () => {
 
     // Reload with the OS still saying dark: the stored choice must win, or the toggle doesn't hold.
     await page.reload();
+    await afterHydration(page);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
   });
 
