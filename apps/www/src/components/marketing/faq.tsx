@@ -31,18 +31,6 @@ export interface FaqItem {
   readonly question: string;
   readonly answer: string;
   readonly link?: { readonly href: string; readonly label: string };
-  /**
-   * Rendered `<details open>` — visible without a click.
-   *
-   * This is the MUST-DISCLOSE flag, not a styling preference. AGENTS.md requires pricing be
-   * "disclosed **up front** … on the pricing page", and this page's job is to surprise nobody. Three
-   * facts qualify, and they are exactly the ones a buyer would never think to click on *before*
-   * paying: a delivery is a billed event; cancelling lands you paused; and dedup=off multiplies your
-   * bill. Collapsed, they'd be a footnote — which is precisely what the disclosure rule forbids.
-   *
-   * `faq.test.tsx` pins which items carry this. Turning one off is a compliance change.
-   */
-  readonly discloses?: true;
 }
 
 /**
@@ -50,8 +38,14 @@ export interface FaqItem {
  * page: "the billable unit — every captured request to an endpoint". It is the FIRST question, and the
  * first panel is OPEN on load, so it is readable without a click. `faq.test.tsx` and `a11y.spec.ts`
  * both pin that; if someone reorders the list or closes the first panel, they go red.
+ *
+ * It matches BOTH halves deliberately. The constitution names the CAPTURE side ("every captured
+ * request"), so a needle that only matched "a delivery … is one event" would let someone reword or
+ * drop the capture clause with every test still green — the guard would be pinning the half we were
+ * never asked to guarantee.
  */
-export const BILLABLE_UNIT = /a delivery to a destination is one event/i;
+export const BILLABLE_UNIT =
+  /a request we capture is one event, and a delivery to a destination is one event/i;
 
 /**
  * The rest of the billing terms. These are STATED on the pricing page and carried in the FAQPage
@@ -78,13 +72,11 @@ export const BILLING_TERMS: readonly { readonly what: string; readonly needle: R
 export const FAQ_ITEMS: readonly FaqItem[] = [
   {
     question: "What counts as an event?",
-    discloses: true,
     answer:
       "A request we capture is one event, and a delivery to a destination is one event. Forward an incoming webhook to three destinations and that's four events — one capture, three deliveries. We meter delivery because it costs us real money, and we'd rather charge for it honestly than lock it behind a paid tier.",
   },
   {
     question: "Are retries billed?",
-    discloses: true,
     // The carve-outs are not marketing garnish — they're what the code actually does (migration 0055,
     // `delivery_attempts.billable`). Both used to be billed as full deliveries: `wbhk listen --forward`
     // billed every webhook twice, and a delivery the SSRF guard refused to send billed the same as a
@@ -98,9 +90,6 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
   },
   {
     question: "What happens when I hit my limit?",
-    // AGENTS.md's promise is "disclosure + ALERTS + pause" — the pre-limit email is a load-bearing
-    // third of it, so it can't sit behind a click either.
-    discloses: true,
     answer:
       "Capture pauses within minutes of your limit. We email you before you reach your included volume — not after — and then stop capturing rather than silently run up a bill. Nothing is deleted, and nothing is charged that you didn't agree to.",
   },
@@ -115,7 +104,6 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
   },
   {
     question: "What happens if I cancel a paid plan?",
-    discloses: true,
     answer:
       "You return to the free plan with that one-time allowance already spent — and because the free allowance never resets, capture pauses until you resubscribe. Your data stays exactly where it is, and resubscribing resumes capture immediately. This is the thing people are most often surprised by, so we say it before you pay rather than after.",
   },
@@ -131,7 +119,6 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
   },
   {
     question: "Why does turning deduplication off cost more?",
-    discloses: true,
     answer:
       "Deduplication is on by default. If you turn it off for an endpoint, every retry a provider sends is a distinct captured request, and each one counts as an event. Providers retry a lot, so this can multiply your volume — that's the trade you're making when you disable it.",
   },
