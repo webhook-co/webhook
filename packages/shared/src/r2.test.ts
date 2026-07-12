@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { endpointPrefix, payloadR2Key, readPayloadKey } from "./r2";
+import { endpointPrefix, isWellFormedPayloadKey, payloadR2Key, readPayloadKey } from "./r2";
 
 const org = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const ep = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
@@ -69,5 +69,23 @@ describe("readPayloadKey — stored-key read fence", () => {
     expect(readPayloadKey(org, ep, undefined as unknown as string)).toBeNull();
     expect(readPayloadKey(org, ep, null as unknown as string)).toBeNull();
     expect(readPayloadKey(org, ep, 42 as unknown as string)).toBeNull();
+  });
+});
+
+describe("isWellFormedPayloadKey — the orphan-sweep prefix fence (S6c-iii)", () => {
+  const good = `${endpointPrefix(org, ep)}${"a".repeat(64)}`;
+
+  it("accepts an exact org/{uuid}/ep/{uuid}/{sha256hex} key", () => {
+    expect(isWellFormedPayloadKey(good)).toBe(true);
+  });
+
+  it("REJECTS anything not exactly that shape (never delete a foreign/malformed object)", () => {
+    expect(isWellFormedPayloadKey("some/other/thing")).toBe(false);
+    expect(isWellFormedPayloadKey(`org/not-a-uuid/ep/${ep}/${"a".repeat(64)}`)).toBe(false);
+    expect(isWellFormedPayloadKey(`${endpointPrefix(org, ep)}${"a".repeat(63)}`)).toBe(false); // short hash
+    expect(isWellFormedPayloadKey(`${endpointPrefix(org, ep)}${"A".repeat(64)}`)).toBe(false); // upper hex
+    expect(isWellFormedPayloadKey(`${good}/extra`)).toBe(false); // trailing segment
+    expect(isWellFormedPayloadKey(`prefix/${good}`)).toBe(false); // leading segment
+    expect(isWellFormedPayloadKey(undefined as unknown as string)).toBe(false);
   });
 });
