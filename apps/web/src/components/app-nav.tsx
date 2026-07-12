@@ -13,6 +13,11 @@ export function AppNav() {
   const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
   return (
     <>
+      {/* Overview is the landing after login — a cross-cutting read before you pick a section, so it sits
+          above the direction groups (it belongs to neither Inbound nor Outbound). */}
+      <AppNavItem href="/dashboard" active={isActive("/dashboard")}>
+        Overview
+      </AppNavItem>
       {/* Grouped by direction: Inbound is what you receive; Outbound is where you send it and how those
           sends fared. Within Outbound, Destinations (the targets) precede Deliveries (the results) —
           a delivery can't exist before a destination. */}
