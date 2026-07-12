@@ -29,7 +29,10 @@ export type AuthAuditEventType =
   | "key_minted"
   | "key_revoked"
   | "policy_changed"
-  | "reauth";
+  | "reauth"
+  | "invite_created"
+  | "invite_accepted"
+  | "invite_revoked";
 
 /** The hashed control-plane audit fields. seq is the per-org monotonic sequence. */
 export interface AuthAuditEntry {
