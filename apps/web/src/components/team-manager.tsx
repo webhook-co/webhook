@@ -25,30 +25,62 @@ import {
 import * as React from "react";
 
 import type { CreateInviteResult, RevokeInviteResult } from "@/server/invite-actions";
+import type { MemberActionResult } from "@/server/member-actions";
 import type { TeamResult } from "@/server/team";
 
-type PendingInvite = Extract<TeamResult, { status: "ok" }>["invites"][number];
+type OkTeam = Extract<TeamResult, { status: "ok" }>;
+type PendingInvite = OkTeam["invites"][number];
+type OrgMember = OkTeam["members"][number];
 type MembershipRole = "owner" | "admin" | "member";
+
+/** Privilege rank: 0 = owner (most). Mirrors @webhook-co/shared's roleRank, inlined so this client
+ *  component doesn't pull the shared (zod-bearing) module into the browser bundle. The SERVER re-checks
+ *  every one of these decisions — what's here only decides which controls to draw. */
+const ROLE_ORDER: readonly MembershipRole[] = ["owner", "admin", "member"];
+function rank(role: string): number {
+  const i = ROLE_ORDER.indexOf(role as MembershipRole);
+  return i === -1 ? Number.POSITIVE_INFINITY : i;
+}
+/** May `actor` act on / grant `target`? At-or-below only — you cannot hand out more than you hold. */
+function canGrant(actor: string, target: string): boolean {
+  const a = rank(actor);
+  const t = rank(target);
+  return Number.isFinite(a) && Number.isFinite(t) && t >= a;
+}
 
 export interface TeamManagerProps {
   readonly result: TeamResult;
-  /** Roles the caller may grant (server-derived from their own role). The invite form offers exactly these. */
+  /** Roles the caller may grant (server-derived). The pickers offer exactly these. */
   readonly grantableRoles: readonly MembershipRole[];
-  /** Whether the caller may invite/revoke (owner/admin). Server-derived; the actions re-check regardless. */
+  /** Whether the caller may manage members/invites (owner/admin). The actions re-check regardless. */
   readonly canManage: boolean;
   readonly createInvite: (formData: FormData) => Promise<CreateInviteResult>;
   readonly revokeInvite: (formData: FormData) => Promise<RevokeInviteResult>;
+  readonly changeRole: (formData: FormData) => Promise<MemberActionResult>;
+  readonly removeMember: (formData: FormData) => Promise<MemberActionResult>;
 }
 
-/** A one-time-ish share link for a freshly-created invite (full URL built from the current origin). */
 function acceptUrl(acceptPath: string): string {
   if (typeof window === "undefined") return acceptPath;
   return `${window.location.origin}${acceptPath}`;
 }
 
-/** Sentence-case a role for display (the value stays lowercase). */
 function roleLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+/** Turn a member-action refusal into copy that says what actually happened. */
+function memberErrorCopy(status: MemberActionResult["status"]): string {
+  switch (status) {
+    case "last_owner":
+      return "This is the last owner. Transfer ownership to someone else first — an org with no owner can't be managed by anyone.";
+    case "forbidden":
+      return "You don't have permission to do that.";
+    case "not_found":
+      return "They're no longer a member of this org.";
+    default:
+      return "That didn't work. Please try again.";
+  }
 }
 
 export function TeamManager({
@@ -57,23 +89,31 @@ export function TeamManager({
   canManage,
   createInvite,
   revokeInvite,
+  changeRole,
+  removeMember,
 }: TeamManagerProps) {
-  const [invites, setInvites] = React.useState<readonly PendingInvite[]>(
-    result.status === "ok" ? result.invites : [],
-  );
+  const ok = result.status === "ok" ? result : null;
+  const [members, setMembers] = React.useState<readonly OrgMember[]>(ok?.members ?? []);
+  const [invites, setInvites] = React.useState<readonly PendingInvite[]>(ok?.invites ?? []);
+
   const [inviteOpen, setInviteOpen] = React.useState(false);
   const [email, setEmail] = React.useState("");
-  const [role, setRole] = React.useState<string>(grantableRoles[0] ?? "member");
+  const [inviteRole, setInviteRole] = React.useState<string>(grantableRoles[0] ?? "member");
   const [pending, setPending] = React.useState(false);
   const [formError, setFormError] = React.useState<string | null>(null);
-  // The freshly-created invite's share link, held for the copy dialog.
   const [shareLink, setShareLink] = React.useState<{ email: string; url: string } | null>(null);
-  // The invite the confirm dialog is asking to revoke, plus its in-flight/error state.
-  const [revoking, setRevoking] = React.useState<PendingInvite | null>(null);
-  const [revokePending, setRevokePending] = React.useState(false);
-  const [revokeError, setRevokeError] = React.useState<string | null>(null);
 
-  if (result.status !== "ok") {
+  const [revokingInvite, setRevokingInvite] = React.useState<PendingInvite | null>(null);
+  const [removingMember, setRemovingMember] = React.useState<OrgMember | null>(null);
+  // A pending role change, held until the user confirms (a demotion revokes their credentials).
+  const [roleChange, setRoleChange] = React.useState<{
+    member: OrgMember;
+    newRole: MembershipRole;
+  } | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const [dialogError, setDialogError] = React.useState<string | null>(null);
+
+  if (!ok) {
     return (
       <Banner tone="danger">
         We couldn&apos;t load your team right now. Refresh the page to try again.
@@ -81,9 +121,17 @@ export function TeamManager({
     );
   }
 
-  function resetForm() {
+  const callerRole = ok.role;
+  const callerId = ok.userId;
+
+  /** May the caller act on this member? Not on themselves here, and never on someone who outranks them. */
+  function actionable(m: OrgMember): boolean {
+    return canManage && m.userId !== callerId && canGrant(callerRole, m.role);
+  }
+
+  function resetInviteForm() {
     setEmail("");
-    setRole(grantableRoles[0] ?? "member");
+    setInviteRole(grantableRoles[0] ?? "member");
     setFormError(null);
   }
 
@@ -94,7 +142,7 @@ export function TeamManager({
     try {
       const fd = new FormData();
       fd.set("email", email.trim());
-      fd.set("role", role);
+      fd.set("role", inviteRole);
       const res = await createInvite(fd);
       if (res.status !== "ok") {
         setFormError(
@@ -107,7 +155,7 @@ export function TeamManager({
         return;
       }
       setInviteOpen(false);
-      resetForm();
+      resetInviteForm();
       setShareLink({ email: res.invitedEmail, url: acceptUrl(res.acceptPath) });
     } catch {
       setFormError("We couldn't create the invite. Please try again.");
@@ -116,38 +164,78 @@ export function TeamManager({
     }
   }
 
-  async function confirmRevoke() {
-    if (!revoking) return;
-    const target = revoking; // stable across the await
-    setRevokePending(true);
-    setRevokeError(null);
+  async function confirmRevokeInvite() {
+    if (!revokingInvite) return;
+    const target = revokingInvite;
+    setBusy(true);
+    setDialogError(null);
     try {
-      const res = await revokeInvite(
-        (() => {
-          const fd = new FormData();
-          fd.set("inviteId", target.id);
-          return fd;
-        })(),
-      );
+      const fd = new FormData();
+      fd.set("inviteId", target.id);
+      const res = await revokeInvite(fd);
       if (res.status !== "ok") {
-        setRevokeError(
-          res.status === "forbidden"
-            ? "You don't have permission to revoke invites."
-            : "We couldn't revoke the invite. Please try again.",
-        );
+        setDialogError("We couldn't revoke the invite. Please try again.");
         return;
       }
       setInvites((prev) => prev.filter((i) => i.id !== target.id));
-      setRevoking(null);
+      setRevokingInvite(null);
     } catch {
-      setRevokeError("We couldn't revoke the invite. Please try again.");
+      setDialogError("We couldn't revoke the invite. Please try again.");
     } finally {
-      setRevokePending(false);
+      setBusy(false);
     }
   }
 
-  const memberWord = result.memberCount === 1 ? "member" : "members";
+  async function confirmRemoveMember() {
+    if (!removingMember) return;
+    const target = removingMember;
+    setBusy(true);
+    setDialogError(null);
+    try {
+      const fd = new FormData();
+      fd.set("userId", target.userId);
+      const res = await removeMember(fd);
+      if (res.status !== "ok") {
+        setDialogError(memberErrorCopy(res.status));
+        return;
+      }
+      setMembers((prev) => prev.filter((m) => m.userId !== target.userId));
+      setRemovingMember(null);
+    } catch {
+      setDialogError("That didn't work. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmRoleChange() {
+    if (!roleChange) return;
+    const { member, newRole } = roleChange;
+    setBusy(true);
+    setDialogError(null);
+    try {
+      const fd = new FormData();
+      fd.set("userId", member.userId);
+      fd.set("role", newRole);
+      const res = await changeRole(fd);
+      if (res.status !== "ok") {
+        setDialogError(memberErrorCopy(res.status));
+        return;
+      }
+      setMembers((prev) =>
+        prev.map((m) => (m.userId === member.userId ? { ...m, role: newRole } : m)),
+      );
+      setRoleChange(null);
+    } catch {
+      setDialogError("That didn't work. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const canInvite = email.trim() !== "" && !pending;
+  // A demotion (lower privilege = higher rank) kills the member's credentials; a promotion doesn't.
+  const isDemotion = roleChange ? rank(roleChange.newRole) > rank(roleChange.member.role) : false;
 
   return (
     <div className="flex flex-col gap-6">
@@ -157,9 +245,8 @@ export function TeamManager({
             <div className="flex flex-col gap-1.5">
               <CardTitle>Members</CardTitle>
               <CardDescription>
-                {result.memberCount} {memberWord} · {result.ownerCount}{" "}
-                {result.ownerCount === 1 ? "owner" : "owners"}. Invite teammates by email — they
-                join once they accept.
+                Everyone with access to this organization. Owners and admins can invite people and
+                manage roles.
               </CardDescription>
             </div>
             {canManage ? (
@@ -167,7 +254,7 @@ export function TeamManager({
                 open={inviteOpen}
                 onOpenChange={(open) => {
                   setInviteOpen(open);
-                  if (!open) resetForm();
+                  if (!open) resetInviteForm();
                 }}
               >
                 <DialogTrigger asChild>
@@ -196,9 +283,9 @@ export function TeamManager({
                       <Label htmlFor="invite-role">Role</Label>
                       <Select
                         id="invite-role"
-                        value={role}
+                        value={inviteRole}
                         disabled={pending}
-                        onChange={(e) => setRole(e.target.value)}
+                        onChange={(e) => setInviteRole(e.target.value)}
                       >
                         {grantableRoles.map((r) => (
                           <option key={r} value={r}>
@@ -227,6 +314,72 @@ export function TeamManager({
           </div>
         </CardHeader>
         <CardContent>
+          <ul className="flex flex-col divide-y divide-hairline">
+            {members.map((m) => {
+              const isYou = m.userId === callerId;
+              const canAct = actionable(m);
+              const selectId = `role-${m.userId}`;
+              return (
+                <li key={m.userId} className="flex items-center justify-between gap-4 py-3">
+                  <div className="flex min-w-0 flex-col gap-1">
+                    <span className="flex items-center gap-2">
+                      <span className="truncate font-medium text-fg">{m.name || m.email}</span>
+                      {isYou ? <Badge tone="neutral">You</Badge> : null}
+                    </span>
+                    <span className="truncate text-xs text-fg-secondary">{m.email}</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {canAct ? (
+                      <>
+                        <Label htmlFor={selectId} className="sr-only">
+                          Role for {m.email}
+                        </Label>
+                        <Select
+                          id={selectId}
+                          value={m.role}
+                          onChange={(e) =>
+                            setRoleChange({
+                              member: m,
+                              newRole: e.target.value as MembershipRole,
+                            })
+                          }
+                        >
+                          {grantableRoles.map((r) => (
+                            <option key={r} value={r}>
+                              {roleLabel(r)}
+                            </option>
+                          ))}
+                        </Select>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => {
+                            setDialogError(null);
+                            setRemovingMember(m);
+                          }}
+                        >
+                          Remove
+                        </Button>
+                      </>
+                    ) : (
+                      <Badge tone="neutral">{roleLabel(m.role)}</Badge>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Pending invites</CardTitle>
+          <CardDescription>
+            Invites that haven&apos;t been accepted yet. They expire 7 days after they&apos;re sent.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
           {invites.length === 0 ? (
             <p className="text-sm text-fg-secondary">No pending invites.</p>
           ) : (
@@ -236,7 +389,7 @@ export function TeamManager({
                   <div className="flex min-w-0 flex-col gap-1">
                     <span className="truncate font-medium text-fg">{invite.invitedEmail}</span>
                     <span className="text-xs text-fg-secondary">
-                      Invited · expires {new Date(invite.expiresAt).toLocaleDateString()}
+                      Expires {new Date(invite.expiresAt).toLocaleDateString()}
                     </span>
                   </div>
                   <div className="flex items-center gap-3">
@@ -246,8 +399,8 @@ export function TeamManager({
                         variant="secondary"
                         size="sm"
                         onClick={() => {
-                          setRevokeError(null);
-                          setRevoking(invite);
+                          setDialogError(null);
+                          setRevokingInvite(invite);
                         }}
                       >
                         Revoke
@@ -261,32 +414,102 @@ export function TeamManager({
         </CardContent>
       </Card>
 
-      {/* Revoke confirm */}
+      {/* Remove member — state the consequence, don't imply it */}
       <Dialog
-        open={revoking !== null}
+        open={removingMember !== null}
         onOpenChange={(open) => {
-          if (open || revokePending) return;
-          setRevoking(null);
-          setRevokeError(null);
+          if (open || busy) return;
+          setRemovingMember(null);
+          setDialogError(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remove from this organization?</DialogTitle>
+            <DialogDescription>
+              {removingMember
+                ? `${removingMember.name || removingMember.email} loses access immediately. Their API keys and connected devices for this org are revoked and can't be restored.`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          {dialogError ? <Banner tone="danger">{dialogError}</Banner> : null}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary" disabled={busy}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button variant="danger" onClick={confirmRemoveMember} disabled={busy}>
+              Remove member
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Role change — a demotion revokes credentials, so say so before it happens */}
+      <Dialog
+        open={roleChange !== null}
+        onOpenChange={(open) => {
+          if (open || busy) return;
+          setRoleChange(null);
+          setDialogError(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Change role?</DialogTitle>
+            <DialogDescription>
+              {roleChange
+                ? isDemotion
+                  ? `${roleChange.member.name || roleChange.member.email} becomes a ${roleLabel(roleChange.newRole).toLowerCase()}. Because that's less access than they have now, the API keys they created are revoked — a key can't keep powers its owner no longer has.`
+                  : `${roleChange.member.name || roleChange.member.email} becomes a ${roleLabel(roleChange.newRole).toLowerCase()}. Their existing API keys keep working.`
+                : null}
+            </DialogDescription>
+          </DialogHeader>
+          {dialogError ? <Banner tone="danger">{dialogError}</Banner> : null}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary" disabled={busy}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              variant={isDemotion ? "danger" : "primary"}
+              onClick={confirmRoleChange}
+              disabled={busy}
+            >
+              Change role
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Revoke invite */}
+      <Dialog
+        open={revokingInvite !== null}
+        onOpenChange={(open) => {
+          if (open || busy) return;
+          setRevokingInvite(null);
+          setDialogError(null);
         }}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Revoke invite?</DialogTitle>
             <DialogDescription>
-              {revoking
-                ? `The link sent to "${revoking.invitedEmail}" will stop working. This can't be undone.`
+              {revokingInvite
+                ? `The link sent to "${revokingInvite.invitedEmail}" will stop working. This can't be undone.`
                 : null}
             </DialogDescription>
           </DialogHeader>
-          {revokeError ? <Banner tone="danger">{revokeError}</Banner> : null}
+          {dialogError ? <Banner tone="danger">{dialogError}</Banner> : null}
           <DialogFooter>
             <DialogClose asChild>
-              <Button type="button" variant="secondary" disabled={revokePending}>
+              <Button type="button" variant="secondary" disabled={busy}>
                 Cancel
               </Button>
             </DialogClose>
-            <Button variant="danger" onClick={confirmRevoke} disabled={revokePending}>
+            <Button variant="danger" onClick={confirmRevokeInvite} disabled={busy}>
               Revoke invite
             </Button>
           </DialogFooter>
