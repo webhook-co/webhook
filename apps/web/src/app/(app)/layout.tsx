@@ -1,8 +1,9 @@
-import { AppShell, ThemeToggle } from "@webhook-co/ui";
+import { ThemeToggle } from "@webhook-co/ui";
 import type { ReactNode } from "react";
 
 import { AccountMenu } from "@/components/account-menu";
 import { AppNav } from "@/components/app-nav";
+import { AppShellClient } from "@/components/app-shell-client";
 import { logout } from "@/server/auth-actions";
 import { verifySession } from "@/server/session";
 
@@ -15,7 +16,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const session = await verifySession();
 
   return (
-    <AppShell
+    <AppShellClient
       homeHref="/"
       sidebar={<AppNav />}
       topBar={
@@ -27,6 +28,6 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
       }
     >
       {children}
-    </AppShell>
+    </AppShellClient>
   );
 }
