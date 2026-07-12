@@ -1,4 +1,4 @@
-import { Button, cn, Wordmark } from "@webhook-co/ui";
+import { Button, cn, ThemeToggle, Wordmark } from "@webhook-co/ui";
 
 import { NavMenus } from "@/components/marketing/nav-menus";
 import { NAV_LINKS } from "@/components/marketing/nav-links";
@@ -43,6 +43,7 @@ export function Nav() {
             make for no reason. "Get started" also does the right thing for someone already signed in:
             straight to the dashboard, which "Sign in" would not. */}
         <div className="flex items-center gap-2">
+          <ThemeToggle />
           <Button asChild size="md" className="max-[940px]:hidden">
             <a href={LINKS.startFree}>Get started</a>
           </Button>
