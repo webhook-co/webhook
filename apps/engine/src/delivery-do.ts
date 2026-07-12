@@ -70,8 +70,19 @@ export class DeliveryDO extends DurableObject<Env> {
    * scheduled hours ahead). An alarm already at/behind now is left as-is (it is about to fire).
    */
   async wake(orgId: string, destinationId: string): Promise<void> {
-    if ((await this.ctx.storage.get<DeliveryBinding>("binding")) === undefined) {
+    // A DeliveryDO is pinned to its first (org, destination) binding, and this DO is keyed by destinationId
+    // alone (idFromName(destinationId)). On any later wake, REFUSE a mismatched binding — throwing BEFORE we
+    // arm the alarm, so a mis-scoped wake does nothing at all. Mirrors ListenSession's session-pinning
+    // (listen-session.ts). Without it, a wake carrying another org for an already-bound destination was
+    // accepted and silently ignored: it re-armed the alarm under the FIRST org's binding, so the drain ran
+    // under the wrong org's RLS (which sees none of the rightful org's rows) and that org's deliveries
+    // wedged — durably owed, never sent. RLS downstream keeps it from being a cross-org READ, so this is a
+    // liveness / defense-in-depth guard against a mis-scoped producer, not a confidentiality fix.
+    const bound = await this.ctx.storage.get<DeliveryBinding>("binding");
+    if (bound === undefined) {
       await this.ctx.storage.put<DeliveryBinding>("binding", { orgId, destinationId });
+    } else if (bound.orgId !== orgId || bound.destinationId !== destinationId) {
+      throw new Error("delivery binding mismatch");
     }
     this.#wakeSeq++;
     const existing = await this.ctx.storage.getAlarm();
