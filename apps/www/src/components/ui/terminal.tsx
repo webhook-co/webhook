@@ -28,8 +28,8 @@ export function Terminal({
     >
       {(title || meta) && (
         <div className="flex items-center justify-between gap-3 border-b border-hairline px-3.5 py-2.5">
-          <span className="font-mono text-[0.6875rem] text-fg-muted">{title}</span>
-          {meta ? <span className="font-mono text-[0.6875rem] text-fg-muted">{meta}</span> : null}
+          <span className="font-mono text-[0.75rem] text-fg-muted">{title}</span>
+          {meta ? <span className="font-mono text-[0.75rem] text-fg-muted">{meta}</span> : null}
         </div>
       )}
       {/* Real product output is wide — one `wbhk events list` row is an ISO timestamp plus a uuid — so
@@ -43,7 +43,7 @@ export function Terminal({
         role="region"
         aria-label={title ? `${title} output` : "Terminal output"}
         tabIndex={0}
-        className="overflow-x-auto px-[18px] py-4 font-mono text-[0.78125rem] leading-[1.85] text-fg"
+        className="overflow-x-auto px-[22px] py-5 font-mono text-[0.8125rem] leading-[1.85] text-fg"
       >
         {children}
       </div>
