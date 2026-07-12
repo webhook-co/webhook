@@ -16,7 +16,10 @@ import {
   DEFAULT_TRANSPORT_SETTLE_LAG_MS,
   DEFAULT_METER_REPORTER_LIMIT,
   DEFAULT_METERING_ROLLUP_LIMIT,
+  DEFAULT_DELIVERY_STATS_ROLLUP_LIMIT,
+  DELIVERY_STATS_SETTLE_DAYS,
   DEFAULT_RECONCILE_LIMIT,
+  runDeliveryStatsRollup,
   makeCapTransitionEvictor,
   makeIngestHashEvictor,
   reconcileMeteringUsage,
@@ -868,6 +871,17 @@ export default {
         console.log(JSON.stringify({ message: "metering rollup cron failed", error: String(err) })),
       ),
     );
+    // Delivery-stats rollup (Lane 1.1): pre-aggregate outbound-delivery outcomes per org per day so the
+    // /dashboard overview reads O(days), not O(deliveries). A display cache (not billing), so no freeze —
+    // recent days just refine as deliveries settle. Independent of the others — one failing must not sink
+    // the rest.
+    ctx.waitUntil(
+      runDeliveryStatsRollupCron(env).catch((err: unknown) =>
+        console.log(
+          JSON.stringify({ message: "delivery stats rollup cron failed", error: String(err) }),
+        ),
+      ),
+    );
     // Outbound meter reporting (S4.4c): report each paying org's finalized daily usage to Stripe through
     // the outbox. Gated on BILLING_MODE — a no-op when off (the default), so it ships dark. Independent of
     // the rollup cron (it reads the frozen usage the rollup produces, but a failure must not sink it).
@@ -1191,6 +1205,32 @@ async function runMeteringRollupCron(env: Env): Promise<void> {
       log,
     });
     log("metering.rollup.done", { ...rollup });
+  } finally {
+    await Promise.all([meter.end(), app.end()]);
+  }
+}
+
+/**
+ * Wire the real deps and run one delivery-stats rollup pass (Lane 1.1). Same two-connection shape as the
+ * metering rollup — webhook_meter enumerates orgs cross-org (already granted select (org_id, created_at) on
+ * delivery_attempts, migration 0049), webhook_app re-rolls each settle-window day under RLS. Unlike metering
+ * this is a display cache, so the pure core (runDeliveryStatsRollup) has no freeze/immutability logic.
+ */
+async function runDeliveryStatsRollupCron(env: Env): Promise<void> {
+  const meter = createClient(env.HYPERDRIVE_METER.connectionString);
+  const app = createClient(env.HYPERDRIVE_TENANT.connectionString);
+  const log = (message: string, fields?: Record<string, unknown>) =>
+    console.log(JSON.stringify({ message, ...fields }));
+  try {
+    const rollup = await runDeliveryStatsRollup({
+      meter,
+      app,
+      now: Date.now(),
+      settleDays: DELIVERY_STATS_SETTLE_DAYS,
+      limit: DEFAULT_DELIVERY_STATS_ROLLUP_LIMIT,
+      log,
+    });
+    log("delivery_stats.rollup.done", { ...rollup });
   } finally {
     await Promise.all([meter.end(), app.end()]);
   }

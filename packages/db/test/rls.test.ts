@@ -28,6 +28,9 @@ const TENANT_TABLES = [
   { table: "events", col: "org_id" },
   { table: "delivery_attempts", col: "org_id" },
   { table: "usage", col: "org_id" },
+  // Daily delivery-outcome rollup for the dashboard overview (migration 0063). Full org-scoped CRUD
+  // (the hourly rollup upserts under RLS; the page reads under RLS) — same shape as `usage`.
+  { table: "delivery_stats", col: "org_id" },
   { table: "org_limits", col: "org_id" },
   { table: "ingest_paused", col: "org_id" },
   { table: "usage_alerts", col: "org_id" },
