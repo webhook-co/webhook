@@ -21,7 +21,18 @@ describe("AppLayout (gated dashboard shell)", () => {
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Endpoints" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
+    // Credentials is its own top-level nav entry (moved out of Settings), sitting just above Settings.
+    expect(screen.getByRole("link", { name: "Credentials" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Account menu" })).toBeInTheDocument();
+  });
+
+  it("places the Credentials nav entry directly above Settings in the Account section", async () => {
+    render(await AppLayout({ children: <p>page content</p> }));
+    const links = screen.getAllByRole("link").map((l) => l.textContent);
+    const credentials = links.indexOf("Credentials");
+    const settings = links.indexOf("Settings");
+    expect(credentials).toBeGreaterThanOrEqual(0);
+    expect(settings).toBe(credentials + 1); // Credentials immediately precedes Settings
   });
 
   it("groups the nav Inbound/Outbound and orders Destinations before Deliveries", async () => {
