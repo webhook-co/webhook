@@ -53,6 +53,7 @@ function listenReq(opts: {
   since?: string;
   upgrade?: boolean;
   forgeOrgHeader?: string;
+  forgeUserHeader?: string;
   origin?: string;
   subprotocol?: string;
 }): Request {
@@ -65,6 +66,7 @@ function listenReq(opts: {
   if (opts.auth) headers.authorization = opts.auth;
   if (opts.upgrade) headers.Upgrade = "websocket";
   if (opts.forgeOrgHeader) headers["x-listen-org-id"] = opts.forgeOrgHeader;
+  if (opts.forgeUserHeader) headers["x-listen-user-id"] = opts.forgeUserHeader;
   if (opts.origin) headers.Origin = opts.origin;
   if (opts.subprotocol) headers["sec-websocket-protocol"] = opts.subprotocol;
   return new Request(url, { headers });
@@ -75,7 +77,7 @@ const TICKET_ORG = "33333333-3333-3333-3333-333333333333";
 const TICKET_ENDPOINT = "44444444-4444-4444-4444-444444444444";
 
 /** A fake ticket verifier: returns a fixed grant, or null to simulate an invalid/expired ticket. */
-function fakeVerifyTicket(grant: { orgId: string; endpointId: string } | null) {
+function fakeVerifyTicket(grant: { orgId: string; endpointId: string; userId?: string } | null) {
   return async () => grant;
 }
 
@@ -184,6 +186,67 @@ describe("listen upgrade — routing", () => {
     expect(binding?.orgId).toBe(ORG); // the verified principal's org, never the forged header
   });
 
+  it("binds a grant-bound bearer's userId, and drops a forged x-listen-user-id", async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
+    await runInDurableObject(stub, (inst) => {
+      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
+    });
+
+    const res = await handleListenUpgrade(
+      listenReq({
+        auth: "Bearer whsk_ok",
+        endpointId: crypto.randomUUID(),
+        sessionId,
+        upgrade: true,
+        forgeUserHeader: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      }),
+      bindings,
+      fakeAuth({ ctx: { orgId: ORG, scopes: ["events:read"], userId: "u-grant" }, exists: true }),
+    );
+    expect(res.status).toBe(101);
+
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ userId?: string }>("binding"),
+    );
+    expect(binding?.userId).toBe("u-grant"); // the bearer's verified user, not the forged header
+  });
+
+  it("omits userId for a standalone api key (no user on the auth context)", async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
+    await runInDurableObject(stub, (inst) => {
+      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
+    });
+
+    const res = await handleListenUpgrade(
+      listenReq({
+        auth: "Bearer whsk_ok",
+        endpointId: crypto.randomUUID(),
+        sessionId,
+        upgrade: true,
+        forgeUserHeader: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      }),
+      bindings,
+      fakeAuth({ ctx: READ_CTX, exists: true }), // READ_CTX has no userId
+    );
+    expect(res.status).toBe(101);
+
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ userId?: string }>("binding"),
+    );
+    // No user on the credential → no membership re-check subject; a forged header can't create one.
+    expect(binding?.userId).toBeUndefined();
+  });
+
   it("400s an invalid --since value before spinning a DO", async () => {
     const res = await handleListenUpgrade(
       listenReq({ auth: "Bearer whsk_ok", endpointId: crypto.randomUUID(), since: "garbage" }),
@@ -287,6 +350,77 @@ describe("listen upgrade — dashboard ticket", () => {
     // Bound to the SIGNED ticket, never the query string.
     expect(binding?.orgId).toBe(TICKET_ORG);
     expect(binding?.endpointId).toBe(TICKET_ENDPOINT);
+  });
+
+  // S.8 trusted-header boundary: the periodic membership re-check hinges on `x-listen-user-id` being set
+  // from the VERIFIED credential and a client-supplied one being stripped. These tests exercise the upgrade
+  // handler's own wiring (index.ts), which the DO-level tests can't — they inject the header directly.
+  it("binds the DO to the TICKET's user and IGNORES a client-forged x-listen-user-id", async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
+    await runInDurableObject(stub, (inst) => {
+      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
+    });
+
+    const res = await handleListenUpgrade(
+      listenReq({
+        sessionId,
+        upgrade: true,
+        origin: DASHBOARD_ORIGIN,
+        subprotocol: "wbhk.listen.v1, ticket.goodtoken",
+        forgeUserHeader: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", // attacker-supplied; must be dropped
+      }),
+      bindings,
+      okAuth,
+      fakeVerifyTicket({
+        orgId: TICKET_ORG,
+        endpointId: TICKET_ENDPOINT,
+        userId: "55555555-5555-5555-5555-555555555555",
+      }),
+    );
+    expect(res.status).toBe(101);
+
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ userId?: string }>("binding"),
+    );
+    // The membership-check subject is the SIGNED ticket's user, never the forged header.
+    expect(binding?.userId).toBe("55555555-5555-5555-5555-555555555555");
+  });
+
+  it("omits userId (and drops a forged one) for an older USERLESS ticket", async () => {
+    const sessionId = crypto.randomUUID();
+    const stub = bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
+    const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
+    const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
+    await runInDurableObject(stub, (inst) => {
+      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      di.pollEvents = emptyPoll;
+      di.backlogMeta = emptyMeta;
+    });
+
+    const res = await handleListenUpgrade(
+      listenReq({
+        sessionId,
+        upgrade: true,
+        origin: DASHBOARD_ORIGIN,
+        subprotocol: "wbhk.listen.v1, ticket.goodtoken",
+        forgeUserHeader: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      }),
+      bindings,
+      okAuth,
+      fakeVerifyTicket({ orgId: TICKET_ORG, endpointId: TICKET_ENDPOINT }), // no userId (older mint)
+    );
+    expect(res.status).toBe(101);
+
+    const binding = await runInDurableObject(stub, (_i, state) =>
+      state.storage.get<{ userId?: string }>("binding"),
+    );
+    // A userless ticket must NOT let a forged header smuggle in a membership subject.
+    expect(binding?.userId).toBeUndefined();
   });
 
   it("prefers the bearer path when BOTH an Authorization header and a ticket subprotocol are present", async () => {
