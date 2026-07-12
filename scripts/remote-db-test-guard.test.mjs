@@ -1,24 +1,103 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
+  blankComments,
   DB_TEST_GLOB,
+  harnessFields,
   readDbTestSources,
   remoteSafetyViolations,
 } from "./remote-db-test-guard.mjs";
 
-// The guard running against PRODUCTION: the real, committed packages/db test sources. This is the
-// assertion that actually blocks the bug — the unit cases below only pin the brain's edges.
-test("the real packages/db test suite is remote-safe (no violations on the committed sources)", async () => {
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const HARNESS_SRC = readFileSync(join(ROOT, "packages/db/test/pg.ts"), "utf8");
+const FIELDS = harnessFields(HARNESS_SRC);
+
+// The guard running against PRODUCTION: every real, committed source the nightly runs against Neon.
+// This is the assertion that actually blocks the bug — the unit cases below only pin the brain's edges.
+test("every source the nightly runs is remote-safe (no violations on the committed tree)", async () => {
   const sources = await readDbTestSources();
-  // Vacuity check: a glob that matches nothing would make every assertion below trivially true.
+  // Vacuity checks: a glob matching nothing — or missing the apps' suites, as the first cut of this
+  // guard did — would make every assertion below trivially true.
   assert.ok(sources.length > 40, `expected the db test suite, got ${sources.length} files`);
-  const violations = sources.flatMap(({ file, src }) => remoteSafetyViolations(file, src));
+  assert.ok(
+    sources.some((s) => s.file.startsWith("apps/")),
+    "the apps' *.pg.test.ts suites run on Neon too and must be scanned",
+  );
+  const violations = sources.flatMap(({ file, src }) => remoteSafetyViolations(file, src, FIELDS));
   assert.deepEqual(violations, []);
 });
 
-test("DB_TEST_GLOB points at the suite the nightly runs", () => {
+test("DB_TEST_GLOB names both suites the nightly runs", () => {
   assert.match(DB_TEST_GLOB, /packages\/db\/test/);
+  assert.match(DB_TEST_GLOB, /apps/);
+});
+
+// ── R3: a `pg.<field>` the harness does not expose ────────────────────────────────────────────
+// The apps exclude test files from tsconfig, so TypeScript does NOT catch a stale harness field
+// there: it reads as undefined, postgres(undefined) silently falls back to local env defaults, and
+// the suite dies against Neon. This is exactly how the ownerUrl -> providerUrl rename missed
+// apps/api/src/stripe-webhook.pg.test.ts.
+
+test("harnessFields parses EphemeralPostgres' real members off the committed harness", () => {
+  assert.ok(FIELDS.has("providerUrl"));
+  assert.ok(FIELDS.has("urlFor"));
+  assert.ok(FIELDS.has("stop"));
+  assert.equal(FIELDS.has("ownerUrl"), false); // the renamed-away field
+});
+
+test("harnessFields fails closed when the interface cannot be read", () => {
+  assert.equal(harnessFields("export interface Something Else {}"), null);
+  assert.equal(harnessFields(undefined), null);
+});
+
+test("R3 flags a reference to a harness field that no longer exists", () => {
+  const v = remoteSafetyViolations("x.pg.test.ts", "admin = createClient(pg.ownerUrl);", FIELDS);
+  assert.equal(v.length, 1);
+  assert.match(v[0], /pg\.ownerUrl/);
+});
+
+test("R3 allows every field the harness really exposes", () => {
+  const src = `const u = pg.urlFor({ role: DB_ROLES.app });
+    const p = pg.providerUrl; const d = pg.database; const a = pg.auth;
+    pg.passwordFor("x"); await pg?.stop(); const h = pg.host; const port = pg.port;`;
+  assert.deepEqual(remoteSafetyViolations("x.pg.test.ts", src, FIELDS), []);
+});
+
+test("R3 is skipped when no field set is supplied (the brain stays usable without the harness)", () => {
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", "pg.whatever", undefined), []);
+});
+
+// ── Prose is not code ─────────────────────────────────────────────────────────────────────────
+// These files DISCUSS the patterns the guard hunts for. A comment saying "see pg.ts" or "never
+// truncate on the provider" must not be a violation — the first cut of this guard flagged three.
+
+test("a comment mentioning pg.<something> is not a reference (the filename pg.ts, notably)", () => {
+  const src = `// the remote-path timeouts live in pg.ts, next to pg.providerUrl
+    const u = pg.urlFor({ role: DB_ROLES.app });`;
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", src, FIELDS), []);
+});
+
+test("a comment describing the banned TRUNCATE pattern is not a violation", () => {
+  const src = `const admin = createClient(pg.providerUrl);
+    /* Do NOT do: admin\`truncate events cascade\` — the provider does not own the tables. */
+    await admin\`delete from events\`;`;
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", src, FIELDS), []);
+});
+
+test("blankComments leaves a URL alone — `https://` is not a line comment", () => {
+  const src = `const url = "https://x.test/dest"; // trailing comment`;
+  const out = blankComments(src);
+  assert.match(out, /https:\/\/x\.test\/dest/);
+  assert.doesNotMatch(out, /trailing comment/);
+});
+
+test("blankComments preserves line numbers (R2 reports them)", () => {
+  const src = "a\n/* two\n   lines */\nb";
+  assert.equal(blankComments(src).split("\n").length, src.split("\n").length);
 });
 
 // ── R1: TRUNCATE through the provider connection ──────────────────────────────────────────────

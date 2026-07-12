@@ -24,9 +24,17 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DB_TEST_DIR = join(ROOT, "packages/db/test");
+const APPS_DIR = join(ROOT, "apps");
+const HARNESS = join(ROOT, "packages/db/test/pg.ts");
 
-/** Documented for the guard's own test — the suite the nightly actually runs. */
-export const DB_TEST_GLOB = "packages/db/test/*.ts";
+/**
+ * Everything `pnpm test:db` runs against the Neon branch — which is NOT just packages/db. The
+ * turbo task also fans out to the apps' own `*.pg.test.ts` suites (apps/api, apps/web), and those
+ * import the SAME harness. Scanning only packages/db left them uncovered, and a harness field
+ * renamed out from under apps/api/src/stripe-webhook.pg.test.ts sailed past lint AND typecheck
+ * (the apps exclude test files from their tsconfig) straight into the nightly.
+ */
+export const DB_TEST_GLOB = "packages/db/test/*.ts + apps/*/src/**/*.pg.test.ts";
 
 /**
  * Identifiers bound to the PROVIDER connection: `x = createClient(pg.providerUrl)` or
@@ -48,14 +56,62 @@ function escapeRe(s) {
 }
 
 /**
+ * Blank out comments so prose can't trip the rules — these files DISCUSS the very patterns the
+ * guard hunts for ("see pg.ts", "don't truncate on the provider"), and a comment is not code.
+ * Comment bodies are replaced with spaces rather than deleted, so offsets and line numbers still
+ * line up with the original source. A `//` preceded by `:` is left alone — that is `https://`, not
+ * a comment.
+ * @param {string} src @returns {string}
+ */
+export function blankComments(src) {
+  const blank = (m) => m.replace(/[^\n]/g, " ");
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, blank)
+    .replace(/(^|[^:])(\/\/[^\n]*)/g, (_m, before, comment) => before + blank(comment));
+}
+
+/**
+ * The fields the EphemeralPostgres harness actually exposes, parsed from its interface in
+ * packages/db/test/pg.ts. Returns null if the interface can't be found (⇒ fail closed upstream).
+ * @param {unknown} harnessSrc @returns {Set<string> | null}
+ */
+export function harnessFields(harnessSrc) {
+  if (typeof harnessSrc !== "string") return null;
+  const block = harnessSrc.match(/export interface EphemeralPostgres \{([\s\S]*?)\n\}/);
+  if (!block) return null;
+  const fields = new Set();
+  // `name: type;` / `name(...)` / `readonly name:` — one per member line, comments ignored.
+  for (const m of block[1].matchAll(/^\s*(?:readonly\s+)?(\w+)\s*[?:(]/gm)) fields.add(m[1]);
+  return fields.size > 0 ? fields : null;
+}
+
+/**
  * The pure decision. Returns a human-readable violation per offending site (empty = safe).
  * @param {string} file repo-relative path, for the message
  * @param {string} src  file contents
+ * @param {Set<string> | null} [fields] EphemeralPostgres' members; omit to skip R3
  * @returns {string[]}
  */
-export function remoteSafetyViolations(file, src) {
-  if (typeof src !== "string") return [`${file}: unreadable source (fail closed)`];
+export function remoteSafetyViolations(file, rawSrc, fields) {
+  if (typeof rawSrc !== "string") return [`${file}: unreadable source (fail closed)`];
+  const src = blankComments(rawSrc);
   const violations = [];
+
+  // R3 — a `pg.<field>` the harness does not expose. TypeScript would normally catch this, but the
+  // apps exclude their test files from tsconfig, so a stale field silently reads as `undefined`,
+  // postgres(undefined) falls back to local env defaults, and the suite dies against Neon with a
+  // baffling error. This is how the ownerUrl -> providerUrl rename missed apps/api.
+  if (fields) {
+    for (const m of src.matchAll(/\bpg\??\.(\w+)/g)) {
+      if (!fields.has(m[1])) {
+        violations.push(
+          `${file}: references \`pg.${m[1]}\`, which EphemeralPostgres does not expose ` +
+            `(known: ${[...fields].sort().join(", ")}). It reads as undefined at runtime — the ` +
+            `apps' tsconfigs exclude test files, so nothing else catches this before the nightly.`,
+        );
+      }
+    }
+  }
 
   // R1 — TRUNCATE through the provider handle. The provider role does not own the tables on a
   // managed Postgres, and TRUNCATE requires ownership (or an explicit TRUNCATE grant): 42501.
@@ -91,24 +147,51 @@ export function remoteSafetyViolations(file, src) {
   return violations;
 }
 
-/** Read every packages/db test source (tests + their helpers). @returns {Promise<{file: string, src: string}[]>} */
+/** Every `*.pg.test.ts` under apps/ — the app-level suites `pnpm test:db` also runs on Neon.
+ *  @param {string} dir @returns {Promise<string[]>} absolute paths */
+async function findAppPgTests(dir) {
+  const out = [];
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    if (entry.name === "node_modules" || entry.name.startsWith(".")) continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...(await findAppPgTests(full)));
+    else if (entry.name.endsWith(".pg.test.ts")) out.push(full);
+  }
+  return out;
+}
+
+/** Read every source the nightly runs against Neon: packages/db tests + helpers, and the apps'
+ *  own *.pg.test.ts suites. @returns {Promise<{file: string, src: string}[]>} */
 export async function readDbTestSources() {
-  const names = (await readdir(DB_TEST_DIR)).filter((f) => f.endsWith(".ts")).sort();
+  const dbFiles = (await readdir(DB_TEST_DIR))
+    .filter((f) => f.endsWith(".ts"))
+    .sort()
+    .map((name) => join(DB_TEST_DIR, name));
+  const appFiles = (await findAppPgTests(APPS_DIR)).sort();
   return Promise.all(
-    names.map(async (name) => ({
-      file: `packages/db/test/${name}`,
-      src: await readFile(join(DB_TEST_DIR, name), "utf8"),
+    [...dbFiles, ...appFiles].map(async (path) => ({
+      file: path.slice(ROOT.length + 1),
+      src: await readFile(path, "utf8"),
     })),
   );
 }
 
 async function main() {
-  const sources = await readDbTestSources();
+  const [sources, fields] = await Promise.all([
+    readDbTestSources(),
+    readFile(HARNESS, "utf8").then(harnessFields),
+  ]);
   if (sources.length === 0) {
     console.error("✖ remote-db-test-guard: no db test sources found — cannot prove remote safety.");
     process.exit(1);
   }
-  const violations = sources.flatMap(({ file, src }) => remoteSafetyViolations(file, src));
+  if (!fields) {
+    console.error(
+      "✖ remote-db-test-guard: could not read EphemeralPostgres' members from packages/db/test/pg.ts.",
+    );
+    process.exit(1);
+  }
+  const violations = sources.flatMap(({ file, src }) => remoteSafetyViolations(file, src, fields));
   if (violations.length > 0) {
     console.error(
       "✖ packages/db tests that pass locally but FAIL (or false-pass) against the nightly Neon branch:\n",
