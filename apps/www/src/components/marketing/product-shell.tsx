@@ -25,6 +25,7 @@ export function ProductShell({
   name,
   docsHref,
   docsLabel = "Read the docs",
+  showStartCta = true,
   visual,
   children,
 }: {
@@ -38,6 +39,12 @@ export function ProductShell({
   /** The docs page this capability documents — the one place a product page links to docs.webhook.co. */
   docsHref: string;
   docsLabel?: string;
+  /**
+   * Whether the hero leads with the sign-up CTA. True for the /product pages — they're selling a
+   * capability. False for /security, which is a TRUST page: someone reading it is asking "can I
+   * rely on this", and answering with "Start free" is answering a question they didn't ask.
+   */
+  showStartCta?: boolean;
   /** The hero's right column — a live/animated widget, mirroring the homepage hero's Inspector. */
   visual?: ReactNode;
   children: ReactNode;
@@ -72,10 +79,12 @@ export function ProductShell({
           </h1>
           <p className="mb-8 max-w-[54ch] text-lg text-pretty text-fg-secondary">{lede}</p>
           <div className="flex flex-wrap gap-3">
-            <Button asChild size="md">
-              <a href={LINKS.startFree}>Get started</a>
-            </Button>
-            <Button asChild variant="secondary" size="md">
+            {showStartCta ? (
+              <Button asChild size="md">
+                <a href={LINKS.startFree}>Get started</a>
+              </Button>
+            ) : null}
+            <Button asChild variant={showStartCta ? "secondary" : "primary"} size="md">
               <a href={docsHref}>{docsLabel}</a>
             </Button>
           </div>
@@ -94,8 +103,8 @@ export function ProductShell({
  * The features of a product page, as ONE row of cards rather than a stack of full-width rows — three
  * long prose bands down a wide page made every product page read the same and scroll forever.
  *
- * The grid WRAPS rather than hardcoding three across: the pages carry 3, 4 (verification) and 5
- * (/security) features, so a fixed `grid-cols-3` would strand the 4th and 5th. Three-up on a wide
+ * The grid WRAPS rather than hardcoding three across: the pages carry 3, 4 (verification) and 6
+ * (/security) features, so a fixed `grid-cols-3` would strand the extras. Three-up on a wide
  * screen, two-up on a tablet, one-up on a phone.
  *
  * `items-start` matters: without it the grid stretches every card to the tallest one's height, which

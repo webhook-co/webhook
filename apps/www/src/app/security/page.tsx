@@ -23,6 +23,10 @@ export default function SecurityPage() {
       path="/security"
       name="Security"
       docsHref={LINKS.concepts.security}
+      docsLabel="Read the security docs"
+      // A trust page, not a pitch. Someone here is asking "can I rely on this" — "Get started" answers
+      // a question they haven't asked yet. The closing CTA still carries the sign-up.
+      showStartCta={false}
     >
       <ProductFeatures>
         <ProductFeature id="private" heading="Private by default">
@@ -55,6 +59,21 @@ export default function SecurityPage() {
             Security-relevant actions are written to an append-only, hash-chained log, so a later
             edit to history is detectable rather than silent. It&rsquo;s the record you want to have
             kept before you need it.
+          </p>
+        </ProductFeature>
+
+        {/* The only card about OUTBOUND risk — the rest of this page is about what we hold. Everything
+            below is shipped and verifiable in the open-source engine (delivery-dispatcher.ts): the
+            engine is the single egress chokepoint, every resolved address is validated at connect
+            time, the guard fails closed, redirects are not followed blindly, and headers are filtered. */}
+        <ProductFeature id="egress" heading="Your endpoints can't be turned into a probe">
+          <p>
+            Replay and delivery send events to a URL <em>you</em> register &mdash; which is exactly
+            the shape of a request-forgery bug if nobody is watching. So all outbound traffic leaves
+            through one chokepoint in the engine: every address a destination resolves to is checked
+            before the connection is made, not just the hostname you typed, and a redirect
+            can&rsquo;t quietly move the target afterwards. If the check can&rsquo;t be completed,
+            the delivery doesn&rsquo;t go &mdash; it fails closed.
           </p>
         </ProductFeature>
 

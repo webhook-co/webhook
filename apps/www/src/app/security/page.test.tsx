@@ -56,6 +56,42 @@ describe("/security", () => {
     }
   });
 
+  it("does NOT lead with a sign-up CTA — it is a trust page, not a pitch", () => {
+    render(<SecurityPage />);
+    // Someone on this page is asking "can I rely on this". "Get started" answers a question they
+    // haven't asked. The docs link is the hero's only CTA here.
+    const hero = screen.getByRole("heading", { level: 1 }).closest("section")!;
+    const heroLinks = [...hero.querySelectorAll("a")].map((a) => a.textContent?.trim());
+    expect(heroLinks).not.toContain("Get started");
+    expect(heroLinks).toContain("Read the security docs");
+    // …but the page must not lose the conversion entirely: the closing CTA still carries it.
+    expect(screen.getAllByRole("link", { name: /start free|get started/i }).length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it("shows six cards, including the outbound-egress one", () => {
+    const { container } = render(<SecurityPage />);
+    const cards = [...container.querySelectorAll("article[aria-labelledby]")];
+    expect(cards).toHaveLength(6);
+    expect(container.querySelector("#egress")).not.toBeNull();
+  });
+
+  it("describes the egress guard's DEFENCES without disclosing un-hardened surface", () => {
+    // Public-repo/site hygiene: show the defences, never the cracks. The dispatcher documents a
+    // residual it deliberately does not publish; a marketing page is the last place it should appear.
+    const { container } = render(<SecurityPage />);
+    const egress = container.querySelector("#egress")!.closest("article")!;
+    const text = egress.textContent ?? "";
+    expect(text.length).toBeGreaterThan(100); // non-vacuous
+    for (const leak of [/rebind/i, /TOCTOU/i, /race/i, /residual/i, /workaround/i, /bypass/i]) {
+      expect(text, `must not disclose ${leak}`).not.toMatch(leak);
+    }
+    // …and it does state the guarantees that ARE shipped.
+    expect(text).toMatch(/fails closed/i);
+    expect(text).toMatch(/redirect/i);
+  });
+
   it("has a main landmark wired to the skip link", () => {
     render(<SecurityPage />);
     expect(screen.getByRole("main")).toHaveAttribute("id", "main");
