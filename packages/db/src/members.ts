@@ -21,10 +21,14 @@ import { withTenant, type Sql, type TenantTx } from "./client";
 // grant a role above your own, and the LAST OWNER can never be demoted or removed (a zero-owner org is
 // RLS-unreachable forever, still billed, and its alerts go nowhere — see org-lifecycle.ts).
 //
-// LIMITATION (documented, not silently accepted): keys minted BEFORE migration 0057 carry a null
-// `created_by`, so a removal cannot attribute them to the leaver. Grant-derived keys are still caught (via
-// grant_id), but a pre-0057 standalone key is not. Prod is young enough that this set is empty-to-tiny;
-// revisit if it ever isn't.
+// UNATTRIBUTABLE KEYS — the one gap, and it is SURFACED rather than silently claimed away. A standalone key
+// (no grant) whose `created_by` is NULL cannot be tied to the leaver, so a removal cannot know to revoke it.
+// Two things produce such keys: (a) keys minted before migration 0057 added `created_by`, and (b) keys whose
+// creator later deleted their account — `created_by` is `ON DELETE SET NULL`, so attribution is destroyed by
+// design. (b) means this can never be fixed by a NOT NULL constraint or a backfill; the set is not purely
+// historical. So removeMember COUNTS these and returns the count: it lands in the audit metadata and the
+// caller surfaces it, turning "we revoked everything" into an honest "N org keys can't be attributed to
+// anyone — review them in /credentials". Never claim an atomicity you don't have.
 
 /** Thrown when the actor may not act on this target, or may not grant the requested role. */
 export class MemberCeilingError extends Error {
@@ -71,20 +75,15 @@ export async function listOrgMembers(app: Sql, orgId: string): Promise<OrgMember
     orgId,
     (tx) =>
       tx<
-        { user_id: string; name: string; email: string; role: MembershipRole; created_at: Date }[]
-      >`
-        select m.user_id, u.name, u.email, m.role, m.created_at
-          from memberships m
-          join "user" u on u.id = m.user_id
-         where m.org_id = ${orgId}
-         order by m.created_at asc`,
+        { user_id: string; name: string; email: string; role: MembershipRole; joined_at: Date }[]
+      >`select user_id, name, email, role, joined_at from org_member_directory()`,
   );
   return rows.map((r) => ({
     userId: r.user_id,
     name: r.name,
     email: r.email,
     role: r.role,
-    joinedAt: r.created_at.toISOString(),
+    joinedAt: r.joined_at.toISOString(),
   }));
 }
 
@@ -126,11 +125,33 @@ async function readTargetAndCensus(
 }
 
 /**
+ * Take the row locks on the user's grants — the ONE thing that serializes us against a concurrent refresh.
+ *
+ * `mintKeyForGrant` does `select ... from auth_grant where id = $1 FOR UPDATE` before inserting a key, and
+ * refuses if it then sees a non-active grant. That row lock IS the protocol: a revoker must contend on the
+ * grant row, or a refresh in flight can commit a brand-new key AFTER our api_keys sweep has taken its
+ * snapshot — and the cold auth lookup authenticates on `revoked_at is null` ALONE (it checks neither grant
+ * status nor membership), so that key would stay live forever for a user we just removed.
+ *
+ * removeMember gets these locks implicitly by UPDATE-ing auth_grant first. A DEMOTION does not revoke the
+ * grant (its next refresh legitimately re-mints, narrowed to the new role), so it must take the locks
+ * EXPLICITLY — otherwise a refresh that read the pre-demotion role commits a key carrying the old, higher
+ * scopes and escapes the sweep entirely.
+ */
+async function lockUserGrants(tx: TenantTx, orgId: string, userId: string): Promise<void> {
+  await tx`
+    select id from auth_grant
+     where org_id = ${orgId} and user_id = ${userId}
+     for update`;
+}
+
+/**
  * Revoke, in the caller's tx, every credential the user holds in this org: the keys minted under their
  * grants (caught by grant_id, so a null created_by doesn't hide them) and every key they created
  * (including org-owned service keys — they may still know the plaintext). Returns the revoked hashes.
- * The grants themselves are revoked separately (only on removal — a demotion leaves the grant, whose
- * next refresh NARROWS its scopes to the new role).
+ *
+ * MUST run AFTER the user's grants are locked/revoked (see lockUserGrants) — otherwise a concurrent refresh
+ * slips a fresh key in behind this sweep's snapshot.
  */
 async function revokeUserKeysInTx(tx: TenantTx, orgId: string, userId: string): Promise<Buffer[]> {
   const rows = await tx<{ key_hash: Buffer }[]>`
@@ -200,7 +221,15 @@ export async function changeMemberRole(
 
     // A HIGHER rank number = LESS privilege, so a demotion is rank(new) > rank(old).
     const demoted = roleRank(input.newRole) > roleRank(currentRole);
-    const revokedKeyHashes = demoted ? await revokeUserKeysInTx(tx, input.orgId, input.userId) : [];
+    let revokedKeyHashes: Buffer[] = [];
+    if (demoted) {
+      // Lock the grants BEFORE sweeping. A demotion deliberately leaves the grant ACTIVE (its next refresh
+      // legitimately re-mints, narrowed to the new role), so nothing else in this tx contends with
+      // mintKeyForGrant's `FOR UPDATE`. Without this lock, a refresh that read the PRE-demotion role commits
+      // a key carrying the old, higher scopes after our sweep's snapshot — and nothing would ever revoke it.
+      await lockUserGrants(tx, input.orgId, input.userId);
+      revokedKeyHashes = await revokeUserKeysInTx(tx, input.orgId, input.userId);
+    }
 
     await appendAuthAuditEntry(tx, input.auditKey, {
       orgId: input.orgId,
@@ -231,6 +260,13 @@ export interface RemoveMemberResult {
   readonly removed: boolean;
   /** Hashes of every revoked key — the caller MUST evict each from the credential cache. */
   readonly revokedKeyHashes: readonly Buffer[];
+  /**
+   * Active org keys that belong to NOBODY we can name (no grant, and `created_by` is NULL — either minted
+   * before 0057 or their creator's account was deleted, which nulls the column by design). A removal cannot
+   * revoke these, because it cannot prove they were the leaver's. Non-zero means the removal is NOT a
+   * complete revocation: surface it so an admin reviews them in /credentials. See the header note.
+   */
+  readonly unattributableKeyCount: number;
 }
 
 /**
@@ -256,19 +292,35 @@ export async function removeMember(
       throw new LastOwnerError();
     }
 
-    // Revoke the keys BEFORE the grants: the key sweep selects grants by user_id (not status), so the order
-    // is immaterial for correctness — but doing keys first keeps the returned hash set complete even if a
-    // future edit narrows the grant update.
-    const revokedKeyHashes = await revokeUserKeysInTx(tx, input.orgId, input.userId);
+    // Revoke the GRANTS FIRST, then sweep the keys. The order is load-bearing, not cosmetic: the UPDATE
+    // takes the auth_grant row locks that mintKeyForGrant's `FOR UPDATE` contends on. Sweeping keys first
+    // would let a refresh already holding that lock commit a fresh key behind our snapshot — and since the
+    // cold auth lookup checks only `revoked_at is null` (never grant status or membership), that key would
+    // authenticate FOREVER for a member we just removed. With grants first, a concurrent minter either
+    // already committed (so the sweep below sees its key) or blocks and then refuses on the revoked grant.
     const grantRows = await tx<{ id: string }[]>`
       update auth_grant
          set status = 'revoked', revoked_by = ${input.actorId}, revoked_at = now(),
              revocation_reason = 'member_removed'
        where org_id = ${input.orgId} and user_id = ${input.userId} and status <> 'revoked'
       returning id`;
+    // Belt-and-braces: also lock any ALREADY-revoked grant rows the UPDATE's `status <> 'revoked'` filter
+    // skipped, so no in-flight mint against them can outrun the sweep either.
+    await lockUserGrants(tx, input.orgId, input.userId);
+    const revokedKeyHashes = await revokeUserKeysInTx(tx, input.orgId, input.userId);
 
     await tx`
       delete from memberships where org_id = ${input.orgId} and user_id = ${input.userId}`;
+
+    // Keys we could not attribute to anyone (see the header note) — counted, audited, and returned so the
+    // removal reports honestly instead of implying it revoked everything.
+    const [orphans] = await tx<{ n: string }[]>`
+      select count(*) as n from api_keys
+       where org_id = ${input.orgId}
+         and revoked_at is null
+         and created_by is null
+         and grant_id is null`;
+    const unattributableKeyCount = Number(orphans?.n ?? 0);
 
     await appendAuthAuditEntry(tx, input.auditKey, {
       orgId: input.orgId,
@@ -279,8 +331,9 @@ export async function removeMember(
         role: currentRole,
         revokedKeyCount: revokedKeyHashes.length,
         revokedGrantCount: grantRows.length,
+        unattributableKeyCount,
       },
     });
-    return { removed: true, revokedKeyHashes };
+    return { removed: true, revokedKeyHashes, unattributableKeyCount };
   });
 }

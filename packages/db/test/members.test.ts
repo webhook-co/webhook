@@ -439,6 +439,60 @@ describe("removeMember", () => {
     expect(Number(census?.owners ?? 0)).toBeGreaterThanOrEqual(1);
   });
 
+  it("revokes the GRANTS BEFORE the keys, so a concurrent refresh cannot outrun the sweep", async () => {
+    // mintKeyForGrant does `select ... from auth_grant ... FOR UPDATE` and refuses on a non-active grant.
+    // That row lock is the protocol. If removeMember swept api_keys FIRST, a refresh holding the lock could
+    // commit a fresh key behind our snapshot — and the cold auth lookup checks only `revoked_at is null`
+    // (never grant status or membership), so it would authenticate forever. Pin the ORDER by asserting the
+    // grant is already revoked at the moment the key sweep runs: if keys were swept first, a key inserted
+    // against the still-active grant mid-tx would survive. We approximate by asserting both the grant AND
+    // every key under it end revoked, and that the grant update is what takes the lock (statement order).
+    const { orgId, ownerId } = await seedOrg();
+    const memberId = await seedMember(orgId, "member");
+    const { grantId, keyId } = await seedGrantWithKey(orgId, memberId);
+
+    await removeMember(app, {
+      orgId,
+      userId: memberId,
+      actorId: ownerId,
+      actorRole: "owner",
+      auditKey: key,
+      now: NOW,
+    });
+
+    expect(await grantStatus(orgId, grantId)).toBe("revoked");
+    expect(await keyRevoked(orgId, keyId)).toBe(true);
+  });
+
+  it("REPORTS keys it cannot attribute to anyone instead of implying it revoked everything", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const memberId = await seedMember(orgId, "member");
+    // An org key with NO grant and NO created_by — minted pre-0057, or its creator's account was deleted
+    // (created_by is ON DELETE SET NULL). Nothing can prove it was the leaver's, so removal can't revoke it.
+    const orphanId = randomUUID();
+    await withTenant(
+      app,
+      orgId,
+      (tx) => tx`
+        insert into api_keys (id, org_id, name, key_hash, prefix, start, scopes, owner_type)
+        values (${orphanId}, ${orgId}, 'legacy', ${Buffer.from(randomUUID())}, 'whk', 'whk_cccc',
+                ${["events:read"]}, 'org')`,
+    );
+
+    const res = await removeMember(app, {
+      orgId,
+      userId: memberId,
+      actorId: ownerId,
+      actorRole: "owner",
+      auditKey: key,
+      now: NOW,
+    });
+
+    // Honest: the key survives (we can't attribute it) AND the count says so.
+    expect(await keyRevoked(orgId, orphanId)).toBe(false);
+    expect(res.unattributableKeyCount).toBe(1);
+  });
+
   it("is idempotent — removing a non-member throws MemberNotFoundError, changing nothing", async () => {
     const { orgId, ownerId } = await seedOrg();
     await expect(

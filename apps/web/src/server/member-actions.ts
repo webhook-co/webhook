@@ -102,6 +102,18 @@ export async function removeMemberAction(formData: FormData): Promise<MemberActi
       }),
     );
     await evictRevokedKeyHashes(result.revokedKeyHashes, { kind: "member", id: targetId });
+    // The removal is NOT a complete revocation when the org holds keys nobody can be proven to own (no
+    // grant + a null created_by — minted pre-0057, or their creator's account was deleted, which nulls the
+    // column by design). Say so out loud rather than letting "removed" imply more than it delivered; an
+    // admin must review them in /credentials.
+    if (result.unattributableKeyCount > 0) {
+      console.warn(
+        JSON.stringify({
+          message: "member.removed_with_unattributable_keys",
+          unattributableKeyCount: result.unattributableKeyCount,
+        }),
+      );
+    }
     return { status: "ok" };
   } catch (error) {
     return mapError(error, "member.remove_failed");

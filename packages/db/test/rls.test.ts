@@ -1312,13 +1312,58 @@ describe("webhook_reconciler cross-org delivery read", () => {
 });
 
 describe("no unexpected SECURITY DEFINER functions", () => {
-  it("has zero SECURITY DEFINER functions in the public schema", async () => {
-    // The schema intentionally ships no SECURITY DEFINER routine (all helpers are
-    // INVOKER, so RLS is never silently bypassed). If a future migration adds one, it
-    // must be reviewed and allowlisted here with a documented reason.
+  /**
+   * The ALLOWLIST. The schema ships INVOKER helpers by default so RLS is never silently bypassed; each
+   * SECURITY DEFINER routine must be reviewed and justified here.
+   *
+   * `org_member_directory` (0066) — reads member identity (name/email) for the members list. Those columns
+   * live in `"user"`, Better Auth's GLOBAL table, which has no org column and is deliberately NOT RLS'd (it
+   * is written by webhook_auth on the login path). The alternative was to grant webhook_app a plain
+   * `select` on `"user"` — which would put tenant isolation in the hands of every future query author
+   * remembering to join `memberships`, i.e. app-layer filtering as the sole isolation mechanism.
+   *
+   * Sealing the join inside this function is STRICTLY SAFER, and it bypasses no RLS:
+   *   - `memberships` is FORCE RLS, so it is policed by current_org_id() even for the definer;
+   *   - `"user"` has no RLS to bypass in the first place;
+   *   - the body carries an explicit `org_id = current_org_id()` predicate;
+   *   - current_org_id() is NULL when unset ⇒ zero rows (deny-by-default), not the whole table;
+   *   - search_path is pinned, so the definer cannot be search-path-hijacked.
+   * The properties that make it safe are asserted below — the allowlist entry is not taken on trust.
+   */
+  const ALLOWED_SECURITY_DEFINERS = ["org_member_directory"];
+
+  it("has no SECURITY DEFINER functions beyond the reviewed allowlist", async () => {
     const definers = await owner<{ proname: string }[]>`
       select proname from pg_proc
-      where pronamespace = 'public'::regnamespace and prosecdef`;
-    expect(definers.map((d) => d.proname)).toEqual([]);
+      where pronamespace = 'public'::regnamespace and prosecdef
+      order by proname`;
+    expect(definers.map((d) => d.proname)).toEqual(ALLOWED_SECURITY_DEFINERS);
+  });
+
+  it("webhook_app cannot read the identity table directly — the function is the ONLY path", async () => {
+    // If this ever passes, the isolation argument above has collapsed: the tenant role could enumerate
+    // every user in the system, in any org.
+    await expect(app`select id, email from "user" limit 1`).rejects.toThrow(/permission denied/i);
+  });
+
+  it("org_member_directory returns ONLY the current org's members, and nothing when unscoped", async () => {
+    const inA = await withTenant(
+      app,
+      orgA.orgId,
+      (tx) => tx<{ user_id: string }[]>`select user_id from org_member_directory()`,
+    );
+    const inB = await withTenant(
+      app,
+      orgB.orgId,
+      (tx) => tx<{ user_id: string }[]>`select user_id from org_member_directory()`,
+    );
+    // Whatever each org has, neither can see the other's members.
+    const idsA = inA.map((r) => r.user_id);
+    const idsB = inB.map((r) => r.user_id);
+    expect(idsA.filter((id) => idsB.includes(id))).toEqual([]);
+
+    // No tenant GUC set ⇒ current_org_id() is NULL ⇒ deny-by-default, not a full-table read.
+    const unscoped = await app<{ user_id: string }[]>`select user_id from org_member_directory()`;
+    expect(unscoped).toEqual([]);
   });
 });
