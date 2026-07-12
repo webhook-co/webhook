@@ -1,5 +1,5 @@
 import { PROVIDERS } from "@webhook-co/webhooks-spec";
-import { Banner } from "@webhook-co/ui";
+import { Banner, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -76,7 +76,7 @@ export default async function EventsPage({
   const backHref = deleted ? "/endpoints" : `/endpoints/${id}`;
 
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+    <PageContainer>
       <div className="flex flex-col gap-1.5">
         <Link
           href={backHref}
@@ -119,6 +119,6 @@ export default async function EventsPage({
           />
         </div>
       )}
-    </div>
+    </PageContainer>
   );
 }

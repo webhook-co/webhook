@@ -1,3 +1,4 @@
+import { PageContainer } from "@webhook-co/ui";
 // Instant navigation feedback for the endpoint detail route. The page is force-dynamic (it does a couple of
 // per-request Postgres reads before it can render), so without this skeleton a click on an endpoint name
 // showed nothing until the server render finished. Next.js renders this instantly on navigation. Mirrors the
@@ -16,7 +17,7 @@ function SkeletonCard({ rows = 3 }: { rows?: number }) {
 
 export default function EndpointDetailLoading() {
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8" aria-busy>
+    <PageContainer aria-busy>
       <div className="flex flex-col gap-1.5">
         <div className="h-4 w-24 animate-pulse rounded bg-surface-sunken" />
         <div className="h-8 w-40 animate-pulse rounded bg-surface-sunken" />
@@ -25,6 +26,6 @@ export default function EndpointDetailLoading() {
       <SkeletonCard rows={2} />
       <SkeletonCard rows={2} />
       <span className="sr-only">Loading endpoint…</span>
-    </div>
+    </PageContainer>
   );
 }

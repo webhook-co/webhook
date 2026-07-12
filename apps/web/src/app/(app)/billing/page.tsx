@@ -1,4 +1,4 @@
-import { Banner, Button } from "@webhook-co/ui";
+import { Banner, Button, PageContainer } from "@webhook-co/ui";
 import { planLabel, type BillingDisplay, type PendingPlanChange } from "@webhook-co/shared";
 import type { Metadata } from "next";
 
@@ -357,7 +357,7 @@ export default async function BillingPage({
       : undefined;
 
   return (
-    <div className="flex flex-col gap-6">
+    <PageContainer gap="gap-6">
       <div>
         <h1 className="text-2xl font-semibold tracking-display text-fg">Billing</h1>
         <p className="mt-1 text-fg-secondary">Your plan, payment, and invoices.</p>
@@ -411,6 +411,6 @@ export default async function BillingPage({
           )}
         </>
       )}
-    </div>
+    </PageContainer>
   );
 }

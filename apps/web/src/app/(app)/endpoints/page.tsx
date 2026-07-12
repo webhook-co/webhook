@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PageContainer } from "@webhook-co/ui";
 
 import { EndpointsManager } from "@/components/endpoints-manager";
 import { EndpointsSearch } from "@/components/endpoints-search";
@@ -26,7 +27,7 @@ export default async function EndpointsPage({
   const result = await loadEndpoints(session.orgId, trimmed || undefined);
 
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+    <PageContainer>
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-heading text-fg">Endpoints</h1>
         <p className="leading-snug text-fg-secondary">
@@ -44,6 +45,6 @@ export default async function EndpointsPage({
         rotateEndpoint={rotateEndpointAction}
         deleteEndpoint={deleteEndpointAction}
       />
-    </div>
+    </PageContainer>
   );
 }

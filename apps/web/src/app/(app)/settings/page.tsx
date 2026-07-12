@@ -1,4 +1,12 @@
-import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@webhook-co/ui";
+import {
+  Button,
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+  PageContainer,
+} from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { DeleteAccountCard } from "@/components/delete-account-card";
@@ -14,7 +22,7 @@ export default async function SettingsPage() {
   const session = await verifySession();
 
   return (
-    <div className="mx-auto flex max-w-[760px] flex-col gap-6 p-8">
+    <PageContainer size="narrow" gap="gap-6">
       <h1 className="text-2xl font-semibold tracking-heading text-fg">Settings</h1>
 
       <Card>
@@ -67,6 +75,6 @@ export default async function SettingsPage() {
 
       <DeleteOrgCard />
       <DeleteAccountCard />
-    </div>
+    </PageContainer>
   );
 }

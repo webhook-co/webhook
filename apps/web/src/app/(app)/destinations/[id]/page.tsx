@@ -1,4 +1,4 @@
-import { Banner, StatusPill } from "@webhook-co/ui";
+import { Banner, StatusPill, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
@@ -40,7 +40,7 @@ export default async function DestinationDetailPage({
 
   if (destResult.status === "error") {
     return (
-      <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+      <PageContainer>
         <div className="flex flex-col gap-1.5">
           <Link
             href="/destinations"
@@ -51,7 +51,7 @@ export default async function DestinationDetailPage({
           <h1 className="text-2xl font-semibold tracking-heading text-fg">Destination</h1>
         </div>
         <Banner tone="danger">We couldn&apos;t load this destination. Refresh to try again.</Banner>
-      </div>
+      </PageContainer>
     );
   }
 
@@ -61,7 +61,7 @@ export default async function DestinationDetailPage({
   const copy = destinationCopy(destinationDisplayStatus(destination));
 
   return (
-    <div className="mx-auto flex max-w-[860px] flex-col gap-8 p-8">
+    <PageContainer>
       <div className="flex flex-col gap-1.5">
         <Link
           href="/destinations"
@@ -125,6 +125,6 @@ export default async function DestinationDetailPage({
           />
         )}
       </div>
-    </div>
+    </PageContainer>
   );
 }
