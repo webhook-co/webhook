@@ -201,9 +201,6 @@ test.describe("pricing page accessibility (real browser)", () => {
   // IntersectionObserver fires — as does the `faqOpen` keyframe's first frame. A regression that
   // painted the disclosures invisible would sail straight through. So assert the computed opacity.
   //
-  // The set is DERIVED from the `discloses` flag rather than hand-listed. A hardcoded list drifts the
-  // moment someone marks a sixth item MUST-disclose — the browser check would silently stop covering
-  // it while still looking thorough. The flag is the contract; this reads the contract.
   // AGENTS.md names exactly ONE thing that must be disclosed up front on this page: "the billable unit
   // — every captured request to an endpoint". It is the FIRST FAQ, and the first panel is open on
   // load, so it is readable without a click. That is the strict guard.
