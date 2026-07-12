@@ -25,25 +25,33 @@ export interface DrainDeps {
     secrets: readonly SealedSigningSecret[],
   ) => Promise<DeliverResult>;
   /** Record a terminal success. */
-  readonly recordDelivered: (d: DueDelivery, statusCode: number) => Promise<void>;
+  readonly recordDelivered: (
+    d: DueDelivery,
+    statusCode: number,
+    durationMs: number,
+  ) => Promise<void>;
   /** Record a retryable failure scheduled for `nextRetryAt` (the delivery stays owed). */
   readonly recordRetry: (
     d: DueDelivery,
     nextRetryAt: Date,
     statusCode: number | null,
     error: string | null,
+    durationMs: number,
   ) => Promise<void>;
   /** Record a terminal dead-letter (retries exhausted). */
   readonly recordDead: (
     d: DueDelivery,
     statusCode: number | null,
     error: string | null,
+    durationMs: number,
   ) => Promise<void>;
   /** Record a terminal block (a real SSRF refusal — not retried). */
+  /** durationMs is null for a PRE-delivery refusal (no POST was made); the ms latency for a real SSRF block. */
   readonly recordBlocked: (
     d: DueDelivery,
     statusCode: number | null,
     error: string | null,
+    durationMs: number | null,
   ) => Promise<void>;
   readonly now: () => number;
 }
@@ -78,25 +86,32 @@ export async function runDeliveryDrain(deps: DrainDeps): Promise<void> {
         d.sourceDeleted
           ? "source event was deleted"
           : "verification failed: source signature was checked and rejected",
+        null, // no POST was made, so there is no latency to record
       );
       continue;
     }
     const result = await deps.deliver(d, secrets);
     if (result.outcome === "delivered") {
-      await deps.recordDelivered(d, result.status ?? 0);
+      await deps.recordDelivered(d, result.status ?? 0, result.latencyMs);
       continue;
     }
     if (result.outcome === "blocked") {
-      await deps.recordBlocked(d, result.status, result.error);
+      await deps.recordBlocked(d, result.status, result.error, result.latencyMs);
       continue;
     }
     // failed = retryable: schedule the next attempt, or dead-letter once the schedule is exhausted.
     const delay = nextRetryDelayMs(d.attempt);
     if (delay === null) {
-      await deps.recordDead(d, result.status, result.error);
+      await deps.recordDead(d, result.status, result.error, result.latencyMs);
       continue;
     }
-    await deps.recordRetry(d, new Date(deps.now() + delay), result.status, result.error);
+    await deps.recordRetry(
+      d,
+      new Date(deps.now() + delay),
+      result.status,
+      result.error,
+      result.latencyMs,
+    );
     if (ordered) break; // strict-FIFO: a retrying head blocks newer deliveries this drain
   }
 }
@@ -119,6 +134,7 @@ export interface DrainIo {
     destinationId: string;
     attempt: number;
     statusCode: number;
+    durationMs: number | null;
   }) => Promise<void>;
   readonly scheduleRetry: (a: {
     id: string;
@@ -126,6 +142,7 @@ export interface DrainIo {
     nextRetryAt: Date;
     statusCode: number | null;
     error: string | null;
+    durationMs: number | null;
   }) => Promise<void>;
   readonly markTerminal: (a: {
     id: string;
@@ -134,6 +151,7 @@ export interface DrainIo {
     attempt: number;
     statusCode: number | null;
     error: string | null;
+    durationMs: number | null;
   }) => Promise<void>;
   readonly now: () => number;
 }
@@ -152,11 +170,18 @@ export function makeDrainDeps(io: DrainIo): DrainDeps {
     signingSecrets: io.signingSecrets,
     ordered: io.ordered,
     deliver: io.deliver,
-    recordDelivered: (d, statusCode) =>
-      io.markDelivered({ id: d.id, destinationId, attempt: d.attempt, statusCode }),
-    recordRetry: (d, nextRetryAt, statusCode, error) =>
-      io.scheduleRetry({ id: d.id, nextAttempt: d.attempt + 1, nextRetryAt, statusCode, error }),
-    recordDead: (d, statusCode, error) =>
+    recordDelivered: (d, statusCode, durationMs) =>
+      io.markDelivered({ id: d.id, destinationId, attempt: d.attempt, statusCode, durationMs }),
+    recordRetry: (d, nextRetryAt, statusCode, error, durationMs) =>
+      io.scheduleRetry({
+        id: d.id,
+        nextAttempt: d.attempt + 1,
+        nextRetryAt,
+        statusCode,
+        error,
+        durationMs,
+      }),
+    recordDead: (d, statusCode, error, durationMs) =>
       io.markTerminal({
         id: d.id,
         destinationId,
@@ -164,8 +189,9 @@ export function makeDrainDeps(io: DrainIo): DrainDeps {
         attempt: d.attempt,
         statusCode,
         error,
+        durationMs,
       }),
-    recordBlocked: (d, statusCode, error) =>
+    recordBlocked: (d, statusCode, error, durationMs) =>
       io.markTerminal({
         id: d.id,
         destinationId,
@@ -173,6 +199,7 @@ export function makeDrainDeps(io: DrainIo): DrainDeps {
         attempt: d.attempt,
         statusCode,
         error,
+        durationMs,
       }),
     now: io.now,
   };
