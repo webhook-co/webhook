@@ -316,6 +316,25 @@ export function getStripePlans(): StripePlans | null {
   return parseStripePlans(raw);
 }
 
+/**
+ * The Stripe Billing Portal `configuration` id (`bpc_…`) to PIN the portal session to (S6c-ii). The
+ * no-refund contract (ADR-0112: `subscription_cancel.mode = at_period_end`, `proration_behavior = none`,
+ * `subscription_update` disabled) otherwise rests on an unversioned dashboard DEFAULT that a console click
+ * could silently change. Pinning names the exact configuration. A `bpc_` id is not a secret — a plain deploy
+ * var, like STRIPE_PLANS. Null/unset ⇒ the portal falls back to the account default (the current behaviour),
+ * so this is dark-safe until the var is set.
+ */
+export function getStripePortalConfigId(): string | null {
+  const v = workerEnv().STRIPE_PORTAL_CONFIGURATION_ID;
+  const raw =
+    (typeof v === "string" && v.length > 0 ? v : null) ??
+    (process.env.STRIPE_PORTAL_CONFIGURATION_ID &&
+    process.env.STRIPE_PORTAL_CONFIGURATION_ID.length > 0
+      ? process.env.STRIPE_PORTAL_CONFIGURATION_ID
+      : null);
+  return raw;
+}
+
 /** The auth. origin to backchannel the A-SX `/session/exchange` against. */
 export function getAuthBaseUrl(): string {
   const fromBinding = workerEnv().AUTH_BASE_URL;
