@@ -47,6 +47,7 @@ export * from "./signing-keys";
 export * from "./subscriptions";
 export * from "./org-lifecycle";
 export * from "./usage-rollup";
+export * from "./delivery-stats-rollup";
 export * from "./cap-producer";
 export * from "./meter-reporter";
 export * from "./meter-reconcile";
