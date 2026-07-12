@@ -24,7 +24,14 @@ import type { ProviderEntry } from "@/components/marketing/provider-entries";
 export function ProviderMark({ entry, size = 14 }: { entry: ProviderEntry; size?: number }) {
   if (entry.mark) {
     return (
-      <ProviderLogo slug={entry.slug} size={size} faviconFallback={false} className="shrink-0" />
+      <ProviderLogo
+        slug={entry.slug}
+        size={size}
+        faviconFallback={false}
+        // `provider-mark` is the hook the dark-mode rule in globals.css uses to neutralise the baked
+        // brand hex; `text-fg-secondary` is the colour it neutralises TO (via currentColor).
+        className="provider-mark shrink-0 text-fg-secondary"
+      />
     );
   }
   return (
@@ -40,7 +47,10 @@ export function ProviderMark({ entry, size = 14 }: { entry: ProviderEntry; size?
       decoding="async"
       // Explicit width/height above reserve the box; the wall is 142 items, so without them the
       // page would shift as each icon lands (the Lighthouse gate holds CLS ≤ 0.1).
-      className="shrink-0 rounded-[3px]"
+      // A permanently LIGHT chip. These are raster favicons and can't be recoloured: some are
+      // opaque-light (a white box on a dark page) and some are transparent-dark (invisible on one).
+      // A small light tile is right in both themes.
+      className="shrink-0 rounded-[3px] bg-white"
     />
   );
 }
