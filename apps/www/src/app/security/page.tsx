@@ -4,7 +4,7 @@ import { LINKS } from "@/lib/links";
 import { proseLink } from "@/lib/styles";
 
 export const metadata = pageMetadata({
-  path: "/product/security",
+  path: "/security",
   title: "Security",
   description:
     "Private by default. Tenant isolation enforced in the database by row-level security, secrets in a KMS, a tamper-evident audit log, and an open-source core you can read.",
@@ -16,7 +16,7 @@ export default function SecurityPage() {
       eyebrow="security"
       title="Private by default, open at the core"
       lede="Nothing you capture is listed or shared unless you make it so. Tenant isolation is enforced in the database, secrets live in a KMS, and the audit log is tamper-evident. The parts that verify and move your events are open source."
-      path="/product/security"
+      path="/security"
       name="Security"
       docsHref={LINKS.concepts.security}
     >

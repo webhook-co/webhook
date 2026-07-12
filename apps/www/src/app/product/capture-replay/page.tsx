@@ -1,4 +1,5 @@
 import { pageMetadata } from "@/app/metadata";
+import { Inspector } from "@/components/marketing/inspector/inspector";
 import { ProductFeature, ProductShell } from "@/components/marketing/product-shell";
 import { LINKS } from "@/lib/links";
 
@@ -17,6 +18,7 @@ export default function CaptureReplayPage() {
       lede="A permanent ingest URL that captures the full request — headers and body, exactly as received — before it acknowledges. Inspect it, then replay it to your machine with one command."
       path="/product/capture-replay"
       name="Capture & replay"
+      visual={<Inspector />}
       docsHref={LINKS.concepts.captureAndReplay}
     >
       <ProductFeature id="durable" heading="Durable before the acknowledgement">

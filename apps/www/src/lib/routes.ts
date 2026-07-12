@@ -88,14 +88,14 @@ export const MARKETING_ROUTES: readonly MarketingRoute[] = [
     sitemap: true,
   },
   {
-    path: "/product/mcp",
+    path: "/product/agent-triggers",
     changeFrequency: "monthly",
     priority: 0.7,
     a11y: true,
     sitemap: true,
   },
   {
-    path: "/product/security",
+    path: "/security",
     changeFrequency: "monthly",
     priority: 0.7,
     a11y: true,

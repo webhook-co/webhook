@@ -1,5 +1,6 @@
 import { pageMetadata } from "@/app/metadata";
 import { ProductFeature, ProductShell } from "@/components/marketing/product-shell";
+import { DeliveryPipeline } from "@/components/marketing/visuals/delivery-pipeline";
 import { LINKS } from "@/lib/links";
 
 export const metadata = pageMetadata({
@@ -17,6 +18,7 @@ export default function DeliveryPage() {
       lede="The same engine that captures your events runs the pipeline that moves them onward. Each endpoint keeps first-in-first-out order and its own isolation; failed deliveries retry, and what still can't land is dead-lettered, not dropped."
       path="/product/delivery"
       name="Delivery"
+      visual={<DeliveryPipeline />}
       docsHref={LINKS.concepts.delivery}
       docsLabel="How delivery works"
     >

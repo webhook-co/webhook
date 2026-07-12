@@ -53,21 +53,38 @@ export default function AboutPage() {
         />
       }
     >
+      {/* The hero uses the homepage's grammar — the full 1120px container and a two-column grid —
+          rather than capping the whole page at 62ch, which read as a narrow column adrift in a wide
+          canvas. Line length is still controlled, but per-element, the way the homepage does it. */}
       <div className={cn(container, sectionPad)}>
-        <article className="mx-auto max-w-[62ch]">
-          {/* Hero */}
-          <SectionEyebrow rule={false} className="mb-4">
-            about
-          </SectionEyebrow>
-          <h1 className="mb-6 text-[clamp(30px,4.6vw,48px)] leading-[1.08] font-semibold tracking-display text-balance text-fg">
-            webhook.co is built by one person, on purpose
-          </h1>
-          <p className="mb-6 text-lg text-pretty text-fg-secondary">
-            I&rsquo;m Sourabh Choraria, and I&rsquo;m building webhook.co on my own, from Porto,
-            Portugal. It&rsquo;s an inbound webhook gateway: it captures the events other services
-            send you, verifies them, keeps them in order, and never drops one silently.
-          </p>
+        <div className="mb-4 grid items-center gap-x-12 gap-y-8 min-[820px]:grid-cols-[minmax(0,1fr)_minmax(0,260px)]">
+          <div>
+            <SectionEyebrow rule={false} className="mb-4">
+              about
+            </SectionEyebrow>
+            <h1 className="mb-6 max-w-[18ch] text-[clamp(30px,4.6vw,48px)] leading-[1.08] font-semibold tracking-display text-balance text-fg">
+              webhook.co is built by one person, on purpose
+            </h1>
+            <p className="max-w-[56ch] text-lg text-pretty text-fg-secondary">
+              I&rsquo;m Sourabh Choraria, and I&rsquo;m building webhook.co on my own, from Porto,
+              Portugal. It&rsquo;s an inbound webhook gateway: it captures the events other services
+              send you, verifies them, keeps them in order, and never drops one silently.
+            </p>
+          </div>
+          {/* Self-hosted (never hotlinked), resized and EXIF-stripped — the original carried camera
+              and timestamp metadata. Explicit dimensions so it reserves its box and can't shift the
+              layout (the Lighthouse gate holds CLS ≤ 0.1). It's also the Person node's image. */}
+          <img
+            src="/sourabh-choraria.webp"
+            alt="Sourabh Choraria, the founder of webhook.co"
+            width={480}
+            height={480}
+            loading="eager"
+            className="mx-auto w-full max-w-[220px] rounded-card border border-hairline min-[820px]:max-w-[260px]"
+          />
+        </div>
 
+        <article className="max-w-[64ch]">
           {/* Why this exists */}
           <section aria-labelledby="why" className="mt-14">
             <h2 id="why" className={cn("mb-4", sectionH2)}>

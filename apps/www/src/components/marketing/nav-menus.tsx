@@ -25,8 +25,7 @@ const MENUS: readonly MenuDef[] = [
       { label: "Capture & replay", href: LINKS.product.captureReplay },
       { label: "Verification", href: LINKS.product.verification },
       { label: "Delivery", href: LINKS.product.delivery },
-      { label: "MCP server", href: LINKS.product.mcp },
-      { label: "Security", href: LINKS.product.security },
+      { label: "Agent triggers", href: LINKS.product.agentTriggers },
     ],
   },
 ];

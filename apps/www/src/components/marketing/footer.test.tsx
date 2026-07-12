@@ -41,7 +41,7 @@ describe("Footer", () => {
     expect(byLabel["Pricing"]).toBe("/pricing");
     expect(byLabel["Capture & replay"]).toBe("/product/capture-replay");
     expect(byLabel["Verification"]).toBe("/product/verification");
-    expect(byLabel["MCP server"]).toBe("/product/mcp");
+    expect(byLabel["Agent triggers"]).toBe("/product/agent-triggers");
     // No Product-column link leaves for the docs subdomain.
     expect(Object.values(byLabel).some((h) => h?.includes("docs.webhook.co"))).toBe(false);
   });
@@ -57,7 +57,9 @@ describe("Footer", () => {
     expect(byLabel["About"]).toBe("/about");
     expect(byLabel["Guides"]).toBe("https://docs.webhook.co/guides");
     expect(byLabel["Changelog"]).toBe("https://docs.webhook.co/changelog");
-    expect(byLabel["Security"]).toBe("https://docs.webhook.co/concepts/security");
+    // Security is a www trust page now, not a docs deep-link: the buyer question is answered on
+    // our own domain (docs.webhook.co is a different subdomain — its authority does not accrue here).
+    expect(byLabel["Security"]).toBe("/security");
     expect(byLabel["Contact"]).toBe("mailto:sourabh@webhook.co");
   });
 

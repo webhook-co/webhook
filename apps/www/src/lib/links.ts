@@ -56,12 +56,18 @@ export const LINKS = {
     captureReplay: "/product/capture-replay",
     verification: "/product/verification",
     delivery: "/product/delivery",
-    mcp: "/product/mcp",
-    security: "/product/security",
+    agentTriggers: "/product/agent-triggers",
   },
 
   // ── site ─────────────────────────────────────────────────────────────────
   home: "/",
+  /**
+   * Security is a TRUST page, not a product — it answers the buyer's question, it doesn't sell a
+   * capability. So it lives at the top level and is reachable from the footer and the trust band,
+   * NOT from the Product menu. It stays on www (rather than only in the docs) because docs.webhook.co
+   * is a different subdomain: authority it earns there does not accrue to www.
+   */
+  securityPage: "/security",
   pricing: "/pricing",
   about: "/about",
   /** The no-signup sandbox. NOINDEX (robots) — a link to it is fine; the page's noindex keeps it out. */

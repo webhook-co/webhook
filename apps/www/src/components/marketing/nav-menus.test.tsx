@@ -40,8 +40,7 @@ describe("NavMenus", () => {
       "/product/capture-replay",
       "/product/verification",
       "/product/delivery",
-      "/product/mcp",
-      "/product/security",
+      "/product/agent-triggers",
     ]);
     expect(hrefs.some((h) => h?.includes("docs.webhook.co"))).toBe(false);
   });

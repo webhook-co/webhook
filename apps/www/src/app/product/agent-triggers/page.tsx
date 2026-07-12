@@ -1,22 +1,24 @@
 import { pageMetadata } from "@/app/metadata";
 import { ProductFeature, ProductShell } from "@/components/marketing/product-shell";
+import { AgentTriggerCard } from "@/components/marketing/visuals/agent-trigger-card";
 import { LINKS } from "@/lib/links";
 
 export const metadata = pageMetadata({
-  path: "/product/mcp",
-  title: "MCP server",
+  path: "/product/agent-triggers",
+  title: "Agent triggers",
   description:
-    "A first-class MCP server: your agent subscribes to the webhooks you capture and reads them with a durable, at-least-once, cursor-acked call — captured even when the agent isn't running.",
+    "Turn a webhook into an agent trigger: your agent subscribes to the events you capture and reads them with a durable, at-least-once, cursor-acked call — captured even when the agent isn't running.",
 });
 
-export default function McpPage() {
+export default function AgentTriggersPage() {
   return (
     <ProductShell
-      eyebrow="mcp server"
+      eyebrow="agent triggers"
       title="Give your agents an event they can act on"
-      lede="webhook.co ships a first-class MCP server. Your agent subscribes to the webhooks you capture and reads matching events with a durable, at-least-once, cursor-acked call — so an event is captured even when the agent isn't running."
-      path="/product/mcp"
-      name="MCP server"
+      lede="A webhook arrives whether or not your agent is awake. Subscribe to the events you care about and read them with a durable, at-least-once, cursor-acked call — reachable from MCP today, and from the same contract on every other surface."
+      path="/product/agent-triggers"
+      name="Agent triggers"
+      visual={<AgentTriggerCard />}
       docsHref={LINKS.mcp}
     >
       <ProductFeature

@@ -18,8 +18,7 @@ const columns: { title: string; links: FooterLink[] }[] = [
       { label: "Capture & replay", href: LINKS.product.captureReplay },
       { label: "Verification", href: LINKS.product.verification },
       { label: "Delivery", href: LINKS.product.delivery },
-      { label: "MCP server", href: LINKS.product.mcp },
-      { label: "Security", href: LINKS.product.security },
+      { label: "Agent triggers", href: LINKS.product.agentTriggers },
       { label: "Pricing", href: LINKS.pricing },
     ],
   },
@@ -41,7 +40,7 @@ const columns: { title: string; links: FooterLink[] }[] = [
       // a separate blog. (Founder decision, 2026-07-11.)
       { label: "Guides", href: LINKS.guides },
       { label: "Changelog", href: LINKS.changelog },
-      { label: "Security", href: LINKS.security },
+      { label: "Security", href: LINKS.securityPage },
       { label: "Contact", href: LINKS.contact },
     ],
   },

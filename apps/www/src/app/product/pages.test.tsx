@@ -6,8 +6,7 @@ import { axeComponent } from "@/test/axe";
 
 import CaptureReplayPage, { metadata as captureMeta } from "./capture-replay/page";
 import DeliveryPage, { metadata as deliveryMeta } from "./delivery/page";
-import McpPage, { metadata as mcpMeta } from "./mcp/page";
-import SecurityPage, { metadata as securityMeta } from "./security/page";
+import AgentTriggersPage, { metadata as agentTriggersMeta } from "./agent-triggers/page";
 import VerificationPage, { metadata as verificationMeta } from "./verification/page";
 
 // One test file for the five /product/* pages: they share the ProductShell, so they share these
@@ -29,8 +28,12 @@ const PAGES = [
     h1: /signature fails, you.ll know why/i,
   },
   { name: "Delivery", Page: DeliveryPage, meta: deliveryMeta, h1: /never silently dropped/i },
-  { name: "MCP server", Page: McpPage, meta: mcpMeta, h1: /an event they can act on/i },
-  { name: "Security", Page: SecurityPage, meta: securityMeta, h1: /open at the core/i },
+  {
+    name: "Agent triggers",
+    Page: AgentTriggersPage,
+    meta: agentTriggersMeta,
+    h1: /an event they can act on/i,
+  },
 ] as const;
 
 // Claims no product page may make — the truth-debt this whole lane removes. Regex, case-insensitive.

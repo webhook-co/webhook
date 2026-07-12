@@ -1,5 +1,6 @@
 import { pageMetadata } from "@/app/metadata";
 import { ProductFeature, ProductShell } from "@/components/marketing/product-shell";
+import { VerifyCard } from "@/components/marketing/visuals/verify-card";
 import { LINKS } from "@/lib/links";
 import { proseLink } from "@/lib/styles";
 
@@ -21,6 +22,7 @@ export default function VerificationPage() {
       lede="142 providers, checked at the edge. Every event lands in one of four states — and when a signature doesn't match, we name the likely reason, one of eleven codes, with the fix, instead of a bare match/no-match."
       path="/product/verification"
       name="Verification"
+      visual={<VerifyCard />}
       docsHref={LINKS.concepts.verification}
       docsLabel="Read the verification guide"
     >
@@ -39,7 +41,7 @@ export default function VerificationPage() {
           Wrong secret. Raw body modified. A proxy mutated the bytes. Timestamp outside the window.
           No matching key. When verification fails, the edge names the likely cause in plain
           language &mdash; not &ldquo;no signatures found matching the expected signature.&rdquo;
-          The one you hit most, <code>raw_body_modified</code>, usually means a framework
+          The one you hit most, <code>RAW_BODY_MODIFIED</code>, usually means a framework
           re-serialized the body before you verified it; the message says so.
         </p>
       </ProductFeature>

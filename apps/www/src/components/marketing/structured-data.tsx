@@ -32,6 +32,7 @@ export interface PersonNode {
   jobTitle: string;
   worksFor: Ref;
   url: string;
+  image?: string;
   sameAs?: string[];
 }
 
@@ -61,8 +62,8 @@ export function organizationNode(): OrganizationNode {
 export function personNode(): PersonNode {
   // Name + role + location are already public on the legal pages (terms/privacy/dpa name the sole
   // trader in Porto, PT), so this adds no disclosure — it just makes the founder↔company relationship
-  // machine-readable. `sameAs` is deliberately OMITTED until real personal profiles exist: a
-  // hallucinated one is the exact mistake the entity research flagged.
+  // machine-readable. Every `sameAs` here is a REAL, founder-confirmed profile: a hallucinated one is
+  // the exact mistake the entity research flagged, and the point of this node is to be believed.
   return {
     "@type": "Person",
     "@id": PERSON_ID,
@@ -70,6 +71,9 @@ export function personNode(): PersonNode {
     jobTitle: "Founder",
     worksFor: { "@id": ORG_ID },
     url: `${SITE_URL}/about`,
+    // The same photo the /about page renders — self-hosted, so the entity's image is one we control.
+    image: `${SITE_URL}/sourabh-choraria.webp`,
+    sameAs: ["https://www.linkedin.com/in/choraria/", "https://github.com/choraria"],
   };
 }
 

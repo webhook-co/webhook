@@ -34,18 +34,35 @@ describe("structured-data builders", () => {
   });
 
   it("ships NO fabricated sameAs — every sameAs URL is a real, absolute https profile", () => {
-    // The entity research: "Do not ship a hallucinated sameAs." So we assert the only sameAs present
-    // are real absolute URLs, and that the Person carries none until real profiles exist (a founder
-    // to-do: create X/LinkedIn, then add them here).
+    // The entity research: "Do not ship a hallucinated sameAs." A sameAs is a claim that two URLs are
+    // the SAME entity; a wrong one poisons exactly the entity graph this exists to build. So the rule
+    // is an allowlist: only profiles the founder has confirmed may appear here. Adding one means
+    // confirming it first, then adding it to this list — never the other way round.
+    const CONFIRMED = new Set([
+      "https://github.com/webhook-co", // the org
+      "https://www.linkedin.com/in/choraria/", // founder-confirmed 2026-07-12
+      "https://github.com/choraria", // founder-confirmed 2026-07-12
+    ]);
+
     const org = organizationNode();
-    for (const url of org.sameAs ?? []) {
-      expect(url).toMatch(/^https:\/\//);
-    }
     expect(org.sameAs).toContain("https://github.com/webhook-co");
 
     const person = personNode();
-    // No unverified personal profiles yet — the field is omitted, not populated with a guess.
-    expect(person.sameAs).toBeUndefined();
+    // Non-vacuous: the Person really does carry profiles now (the entity work depends on it).
+    expect(person.sameAs?.length).toBeGreaterThan(0);
+    expect(person.sameAs).toContain("https://www.linkedin.com/in/choraria/");
+
+    for (const url of [...(org.sameAs ?? []), ...(person.sameAs ?? [])]) {
+      expect(url).toMatch(/^https:\/\//);
+      expect(CONFIRMED, `unconfirmed sameAs: ${url}`).toContain(url);
+    }
+  });
+
+  it("points the Person at a self-hosted image, never a hotlink", () => {
+    const person = personNode();
+    expect(person.image).toBe("https://www.webhook.co/sourabh-choraria.webp");
+    // A third-party host could change or remove the file under us — and it would leak a referrer.
+    expect(person.image).not.toMatch(/choraria\.io/);
   });
 
   it("the WebSite node is published by the Organization", () => {

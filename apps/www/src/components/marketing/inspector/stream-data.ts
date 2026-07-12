@@ -12,8 +12,13 @@
  * feed. The UI says so out loud (see `inspector.tsx`).
  */
 
-/** Why a signature check failed. Mirrors the real verification failure modes we surface elsewhere. */
-export type SigFailReason = "timestamp_too_old" | "wrong_secret" | "raw_body_modified";
+/**
+ * Why a signature check failed. These are the REAL codes: members of the shipped verification failure
+ * union (`VerificationFailureSchema` in `@webhook-co/webhooks-spec`), spelled exactly as the product
+ * spells them. `stream-data.test.ts` pins them to that union (a test-only import — the schema never
+ * enters this static-export bundle).
+ */
+export type SigFailReason = "TIMESTAMP_TOO_OLD" | "WRONG_SECRET" | "RAW_BODY_MODIFIED";
 
 /** A signature-verification outcome: verified, or failed with a concrete reason. */
 export type SigStatus = { ok: true } | { ok: false; reason: SigFailReason };
@@ -43,7 +48,7 @@ export const MAX_ROWS = 5;
 
 /**
  * The ordered pool the engine walks (modulo its length) to produce new rows. Exactly one entry fails
- * verification (`raw_body_modified`, index 4) — a fixed ~1-in-9 failure rate that the tests assert
+ * verification (`RAW_BODY_MODIFIED`, index 4) — a fixed ~1-in-9 failure rate that the tests assert
  * deterministically, rather than a coin flip that would be both untestable and hydration-unsafe.
  */
 export const EVENT_POOL: readonly EventTemplate[] = [
@@ -68,7 +73,7 @@ export const EVENT_POOL: readonly EventTemplate[] = [
     badge: "ST",
     event: "charge.refunded",
     latencyMs: 51,
-    status: { ok: false, reason: "raw_body_modified" },
+    status: { ok: false, reason: "RAW_BODY_MODIFIED" },
   },
   { provider: "github", badge: "GH", event: "pull_request", latencyMs: 33, status: { ok: true } },
   { provider: "resend", badge: "RS", event: "email.bounced", latencyMs: 19, status: { ok: true } },
@@ -84,7 +89,7 @@ export const EVENT_POOL: readonly EventTemplate[] = [
 
 /**
  * The five rows the stream paints on first render — identical on the server and the client. One is a
- * historical failure with a *different* reason (`timestamp_too_old`) so the static frame already shows
+ * historical failure with a *different* reason (`TIMESTAMP_TOO_OLD`) so the static frame already shows
  * both a verified and a failed event without waiting for the stream to advance. Newest first.
  */
 export const SEED_ROWS: readonly StreamRow[] = [
@@ -110,7 +115,7 @@ export const SEED_ROWS: readonly StreamRow[] = [
     badge: "SH",
     event: "orders.create",
     latencyMs: 61,
-    status: { ok: false, reason: "timestamp_too_old" },
+    status: { ok: false, reason: "TIMESTAMP_TOO_OLD" },
   },
   {
     id: "seed-3",
@@ -135,7 +140,7 @@ export const SEED_COUNTER = 1284;
 
 /** Human-readable labels for the failure reasons, for the row's "failed — …" copy. */
 export const FAIL_REASON_LABEL: Record<SigFailReason, string> = {
-  timestamp_too_old: "timestamp too old",
-  wrong_secret: "wrong secret",
-  raw_body_modified: "raw body modified",
+  TIMESTAMP_TOO_OLD: "timestamp too old",
+  WRONG_SECRET: "wrong secret",
+  RAW_BODY_MODIFIED: "raw body modified",
 };
