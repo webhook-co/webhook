@@ -10,6 +10,7 @@
     "./client": "./src/client.ts",
     "./orgs": "./src/orgs.ts",
     "./invites": "./src/invites.ts",
+    "./members": "./src/members.ts",
     "./api-keys": "./src/api-keys.ts",
     "./grants": "./src/grants.ts",
     "./credential": "./src/credential.ts",
