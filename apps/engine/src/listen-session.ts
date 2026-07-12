@@ -199,6 +199,19 @@ export class ListenSession extends DurableObject<ListenEnv> {
       if (existing.orgId !== orgId || existing.endpointId !== endpointId) {
         return new Response("session binding mismatch", { status: 403 });
       }
+      // RESET the lifetime clock on this reconnect. Reaching here means the upgrade handler already verified
+      // a FRESH credential (a newly-minted 60s ticket, or a live bearer) for this exact binding — i.e. the
+      // client just re-authorized. The absolute-lifetime cap exists to FORCE that periodic re-auth, not to
+      // kill a session that keeps proving itself: without this reset a client that reconnects with the same
+      // sticky sessionId would land on the same DO with the old boundAtMs and be re-closed 1008 immediately,
+      // permanently wedging the tail (and hot-looping the CLI). The membership subject may also have arrived
+      // (an older userless ticket upgrading to a userful one), so refresh it too. Cursor/binding identity are
+      // unchanged, so the resume stays seamless.
+      await this.ctx.storage.put<Binding>("binding", {
+        ...existing,
+        ...(userId ? { userId } : {}),
+        boundAtMs: Date.now(),
+      });
     } else {
       // Resolve the seed cursor BEFORE persisting the binding, so a load-bearing `--since` resolution
       // failure leaves NO binding behind — the CLI's retry re-enters first-bind and re-seeds, rather

@@ -437,9 +437,13 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
     expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
   });
 
-  it("keeps streaming while the bound user is STILL a member", async () => {
+  it("CONSULTS the membership check for a userful binding and keeps streaming when it passes", async () => {
     const b = newBinding({ userId: crypto.randomUUID() });
-    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, STILL);
+    let checked = false;
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, async () => {
+      checked = true;
+      return true;
+    });
     const ws = res.webSocket as WebSocket;
     let closeCode = 0;
     ws.addEventListener("close", (e) => (closeCode = e.code));
@@ -447,8 +451,9 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
 
     await runDurableObjectAlarm(stub);
 
-    expect(closeCode).toBe(0); // never closed
-    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull(); // still polling
+    expect(checked).toBe(true); // the seam WAS consulted (not skipped) — else "revoked" is the only guard
+    expect(closeCode).toBe(0); // and it kept streaming
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
   });
 
   // The CLI/bearer path carries no userId (the api key is the revocable credential). The membership check
@@ -489,6 +494,40 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
 
     await vi.waitFor(() => expect(closeCode).toBe(1008));
     expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
+  });
+
+  // The cap FORCES a re-mint; it must not KILL the session. A reconnect (same sticky sessionId, a fresh
+  // ticket the upgrade handler already verified) lands on the same DO and must reset the lifetime clock —
+  // otherwise the stale boundAtMs re-closes the fresh socket 1008 immediately and the tail wedges forever.
+  it("a reconnect after a lifetime-cap close resets the clock and streams again (not a permanent kill)", async () => {
+    const b = newBinding({ userId: crypto.randomUUID() });
+    const { stub } = await openSession(b, EMPTY_POLL, EMPTY_META, STILL);
+
+    // Age the binding past the cap, fire the alarm → first socket closed 1008 + poll stopped.
+    await runInDurableObject(stub, async (_i, state) => {
+      const bound = (await state.storage.get("binding")) as Record<string, unknown>;
+      await state.storage.put("binding", { ...bound, boundAtMs: 1 });
+    });
+    await runDurableObjectAlarm(stub);
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
+
+    // The client reconnects with the SAME sessionId (a fresh ticket already verified upstream). It must NOT
+    // be immediately re-closed: the reconnect reset boundAtMs, so a subsequent poll keeps streaming.
+    const res2 = await connect(stub, b);
+    expect(res2.status).toBe(101);
+    const ws2 = res2.webSocket as WebSocket;
+    let closeCode2 = 0;
+    ws2.addEventListener("close", (e) => (closeCode2 = e.code));
+    ws2.accept();
+
+    const bound2 = (await runInDurableObject(stub, (_i, s) => s.storage.get("binding"))) as {
+      boundAtMs: number;
+    };
+    expect(bound2.boundAtMs).toBeGreaterThan(1); // clock reset on reconnect
+
+    await runDurableObjectAlarm(stub);
+    expect(closeCode2).toBe(0); // the reconnected socket survives — no permanent kill
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
   });
 });
 

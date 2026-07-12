@@ -1096,7 +1096,22 @@ export class DeliveryDispatcher extends WorkerEntrypoint<Env> {
 export class DeliveryEnqueuer extends WorkerEntrypoint<Env> {
   async enqueue(orgId: string, destinationId: string): Promise<void> {
     const stub = this.env.DELIVERY_DO.get(this.env.DELIVERY_DO.idFromName(destinationId));
-    await stub.wake(orgId, destinationId);
+    // Isolate wake()'s binding-mismatch throw (S.7), like the fan-out and reconciler callers do. The durable
+    // `queued` row is ALREADY written by the producer, so a mismatch must not 500 the api caller: the row
+    // stays owed and the reconciler cron re-wakes the DO. A mismatch is a mis-scoped-producer anomaly (RLS
+    // makes it unreachable in normal flow), so we log it rather than propagate — the guard is defense in
+    // depth, not a user-facing error.
+    try {
+      await stub.wake(orgId, destinationId);
+    } catch (err) {
+      console.log(
+        JSON.stringify({
+          message: "delivery.enqueue_wake_failed",
+          destinationId,
+          error: String(err),
+        }),
+      );
+    }
   }
 }
 

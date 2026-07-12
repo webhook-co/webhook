@@ -39,7 +39,7 @@ export const LISTEN_TICKET_SUBPROTOCOL_PREFIX = "ticket.";
  * The current envelope version. `verifyListenTicket` rejects any envelope whose `v` is missing or != this,
  * so a codec change is a clean break: mismatched tickets fail closed (→ null) and the client re-mints.
  */
-export const LISTEN_TICKET_VERSION = 2;
+export const LISTEN_TICKET_VERSION = 1;
 
 /**
  * Ticket lifetime (seconds). Kept SHORT — the ticket only has to survive the round-trip from mint to the
@@ -57,11 +57,14 @@ interface ListenTicketEnvelope {
   /** The endpoint the ticket authorizes tailing (validated to belong to `o` at mint time). */
   e: string;
   /**
-   * The user the ticket was minted for (from the minting session, never the client). Carried so the engine's
-   * live-events socket can periodically re-check this user is STILL a member of `o` — a removed member's open
-   * tab would otherwise keep streaming event metadata across hibernation for the socket's lifetime (S.8).
+   * The user the ticket was minted for (from the minting session, never the client). OPTIONAL, and
+   * deliberately NOT gated by a version bump: the engine and web deploy independently, so a hard v1->v2 break
+   * would 401 every live-events session in the window where one side is ahead. An ADDITIVE optional field
+   * interoperates both ways — an older userless ticket verifies fine and just falls back to the lifetime cap
+   * (no membership re-check), a newer one carries the user for the periodic re-check (S.8). Forging a userless
+   * ticket to EVADE the check is impossible: minting requires the HMAC key.
    */
-  u: string;
+  u?: string;
   /** Unix seconds — the ticket is dead strictly after this (now > exp). */
   exp: number;
 }
@@ -70,7 +73,8 @@ interface ListenTicketEnvelope {
 export interface ListenTicketGrant {
   readonly orgId: string;
   readonly endpointId: string;
-  readonly userId: string;
+  /** Present on a current mint; absent on an older userless ticket (then only the lifetime cap applies). */
+  readonly userId?: string;
 }
 
 /**
@@ -111,7 +115,7 @@ export async function mintListenTicket(
     v: LISTEN_TICKET_VERSION,
     o: grant.orgId,
     e: grant.endpointId,
-    u: grant.userId,
+    ...(grant.userId ? { u: grant.userId } : {}),
     exp: nowSeconds + LISTEN_TICKET_TTL_SECONDS,
   };
   const bytes = utf8Encoder.encode(JSON.stringify(env));
@@ -153,7 +157,8 @@ export async function verifyListenTicket(
   if (typeof env.o !== "string" || env.o === "" || typeof env.e !== "string" || env.e === "") {
     return null;
   }
-  // A ticket without a user cannot be membership-re-checked, so an empty/missing `u` fails closed.
-  if (typeof env.u !== "string" || env.u === "") return null;
-  return { orgId: env.o, endpointId: env.e, userId: env.u };
+  // `u` is optional (deploy-compat). If present it must be a non-empty string (a malformed one is a bad
+  // ticket); if absent, the socket simply has no membership re-check and relies on the lifetime cap.
+  if (env.u !== undefined && (typeof env.u !== "string" || env.u === "")) return null;
+  return { orgId: env.o, endpointId: env.e, ...(env.u ? { userId: env.u } : {}) };
 }

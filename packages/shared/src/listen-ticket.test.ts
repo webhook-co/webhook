@@ -93,7 +93,7 @@ describe("listen-ticket codec", () => {
   });
 });
 
-describe("listen-ticket codec — userId (S.8)", () => {
+describe("listen-ticket codec — optional userId (S.8, deploy-compatible)", () => {
   // The ticket must carry WHICH USER it was minted for, so the engine's live-events socket can periodically
   // re-check that user is still a member of the org (a removed member's open tab used to stream event
   // metadata for the socket's whole lifetime). Before v2 the envelope was {o, e, exp} only.
@@ -111,30 +111,35 @@ describe("listen-ticket codec — userId (S.8)", () => {
     });
   });
 
-  it("rejects a v1 (userless) ticket — a clean break, so it can never verify without a user", async () => {
-    // Hand-forge the OLD envelope shape and sign it with the real key: it must fail on the version check,
-    // because a socket authorized without a userId can never be membership-re-checked.
+  it("still verifies an older USERLESS ticket — no version bump, so a rolling deploy never 401s", async () => {
+    // A ticket minted by an older web deploy (no `u`). It MUST verify — a hard version bump would break every
+    // live-events session in the window where engine and web are on different versions. Engine sees no userId
+    // and falls back to the lifetime cap.
     const key = await keyA();
-    const oldEnvelope = { v: 1, o: ORG, e: ENDPOINT, exp: NOW + 60 };
-    const bytes = utf8Encoder.encode(JSON.stringify(oldEnvelope));
-    const sig = new Uint8Array(
-      await crypto.subtle.sign("HMAC", key, bytes as Uint8Array<ArrayBuffer>),
-    ).slice(0, 16);
-    const forged = `${bytesToB64url(bytes)}.${bytesToB64url(sig)}`;
-    expect(await verifyListenTicket(key, forged, NOW)).toBeNull();
+    const token = await mintListenTicket(key, { orgId: ORG, endpointId: ENDPOINT }, NOW);
+    const grant = await verifyListenTicket(key, token, NOW);
+    expect(grant).toEqual({ orgId: ORG, endpointId: ENDPOINT });
+    expect(grant).not.toHaveProperty("userId");
   });
 
-  it("rejects a ticket with an empty or missing userId", async () => {
+  it("drops an empty userId at mint, so it can never emit a trust-later empty-string user", async () => {
     const key = await keyA();
     const token = await mintListenTicket(
       key,
       { orgId: ORG, endpointId: ENDPOINT, userId: "" },
       NOW,
     );
-    expect(await verifyListenTicket(key, token, NOW)).toBeNull();
+    expect(await verifyListenTicket(key, token, NOW)).toEqual({ orgId: ORG, endpointId: ENDPOINT });
   });
 
-  it("bumped the version to 2", () => {
-    expect(LISTEN_TICKET_VERSION).toBe(2);
+  it("rejects a hand-forged ticket whose `u` is an empty string on the wire", async () => {
+    const key = await keyA();
+    const envelope = { v: LISTEN_TICKET_VERSION, o: ORG, e: ENDPOINT, u: "", exp: NOW + 60 };
+    const bytes = utf8Encoder.encode(JSON.stringify(envelope));
+    const sig = new Uint8Array(
+      await crypto.subtle.sign("HMAC", key, bytes as Uint8Array<ArrayBuffer>),
+    ).slice(0, 16);
+    const forged = `${bytesToB64url(bytes)}.${bytesToB64url(sig)}`;
+    expect(await verifyListenTicket(key, forged, NOW)).toBeNull();
   });
 });
