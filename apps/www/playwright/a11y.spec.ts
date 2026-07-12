@@ -1,7 +1,7 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
-import { MUST_DISCLOSE_FACTS } from "../src/components/marketing/pricing-disclosure";
+import { BILLABLE_UNIT, BILLING_TERMS } from "../src/components/marketing/faq";
 import { a11yRoutes } from "../src/lib/routes";
 
 // WCAG 2.0/2.1/2.2 A + AA. This is the only layer that sees real layout, so the only one that
@@ -204,51 +204,51 @@ test.describe("pricing page accessibility (real browser)", () => {
   // The set is DERIVED from the `discloses` flag rather than hand-listed. A hardcoded list drifts the
   // moment someone marks a sixth item MUST-disclose — the browser check would silently stop covering
   // it while still looking thorough. The flag is the contract; this reads the contract.
-  // The FAQ used to carry the disclosure with five entries forced open; it is now a collapsed
-  // accordion, and the obligation lives in <PricingDisclosure>. These guards follow the OBLIGATION,
-  // not that old implementation: every required fact must be READABLE on /pricing.
+  // AGENTS.md names exactly ONE thing that must be disclosed up front on this page: "the billable unit
+  // — every captured request to an endpoint". It is the FIRST FAQ, and the first panel is open on
+  // load, so it is readable without a click. That is the strict guard.
   //
-  // Playwright's visibility check ignores OPACITY, and <Reveal> paints its children at `opacity: 0`
-  // until an IntersectionObserver fires — a regression that painted the disclosure invisible would
-  // sail straight through `toBeVisible()`. So the computed opacity is asserted up the whole ancestor
-  // chain. The set is DERIVED from MUST_DISCLOSE_FACTS, never hand-listed here: a hardcoded copy would
-  // stop covering a sixth obligation the day someone adds one, while still looking thorough.
-  test("every MUST-disclose fact is actually painted, not merely present", async ({ page }) => {
+  // Playwright's toBeVisible() ignores OPACITY, and <Reveal> paints its children at `opacity: 0` until
+  // an IntersectionObserver fires — a regression that painted the disclosure invisible would sail
+  // straight through it. So the computed opacity is asserted up the whole ancestor chain.
+  test("the BILLABLE UNIT is readable without a click", async ({ page }) => {
     await page.goto("/pricing");
+    const el = page.getByText(BILLABLE_UNIT).first();
+    await expect(el, "the pricing page never states the billable unit").toBeVisible();
+
+    const inClosedPanel = await el.evaluate((node) => {
+      const d = (node as Element).closest("details");
+      return d ? !d.open : false;
+    });
     expect(
-      MUST_DISCLOSE_FACTS.length,
-      "the must-disclose contract is empty — the obligation has been lost",
-    ).toBeGreaterThan(0);
+      inClosedPanel,
+      "the billable unit is hidden behind a click — that is not 'up front'",
+    ).toBe(false);
 
-    for (const { what, needle } of MUST_DISCLOSE_FACTS) {
-      const el = page.getByText(needle).first();
-      await expect(el, `the pricing page never states: ${what}`).toBeVisible();
-
-      // Walk up the tree: any ancestor at opacity 0 makes this text unreadable, however "visible".
-      const effectiveOpacity = await el.evaluate((node) => {
-        let opacity = 1;
-        for (let n: Element | null = node; n; n = n.parentElement) {
-          opacity *= Number(getComputedStyle(n).opacity);
-        }
-        return opacity;
-      });
-      expect(effectiveOpacity, `"${what}" is present but painted invisible`).toBeGreaterThan(0.9);
-    }
+    const effectiveOpacity = await el.evaluate((node) => {
+      let opacity = 1;
+      for (let n: Element | null = node; n; n = n.parentElement) {
+        opacity *= Number(getComputedStyle(n).opacity);
+      }
+      return opacity;
+    });
+    expect(effectiveOpacity, "the billable unit is present but painted invisible").toBeGreaterThan(
+      0.9,
+    );
   });
 
-  // …and none of it may sit behind a click. A collapsed <details> puts the text in the DOM while
-  // showing the reader nothing, which is exactly what "disclosed up front" forbids.
-  test("no MUST-disclose fact is hidden behind a click", async ({ page }) => {
+  // The remaining billing terms are STATED on the page (and carried in the FAQPage schema), but sit
+  // one click away in the accordion — a deliberate founder decision, taken over an earlier
+  // implementation that forced five panels open. So this asserts PRESENCE, not openness. If someone
+  // deletes one, the page stops saying something it promises to say, and this goes red.
+  test("every other billing term is still stated on the pricing page", async ({ page }) => {
     await page.goto("/pricing");
-    for (const { what, needle } of MUST_DISCLOSE_FACTS) {
-      const inClosedAccordion = await page
-        .getByText(needle)
-        .first()
-        .evaluate((node) => {
-          const d = (node as Element).closest("details");
-          return d ? !d.open : false;
-        });
-      expect(inClosedAccordion, `"${what}" is hidden inside a collapsed accordion`).toBe(false);
+    expect(BILLING_TERMS.length, "the billing-terms contract is empty").toBeGreaterThan(0);
+    for (const { what, needle } of BILLING_TERMS) {
+      await expect(
+        page.getByText(needle).first(),
+        `the pricing page never states: ${what}`,
+      ).toBeAttached();
     }
   });
 
