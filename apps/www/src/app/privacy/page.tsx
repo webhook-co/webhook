@@ -133,6 +133,15 @@ export default function PrivacyPage() {
             using the CLI, whether or not they're a paying customer.
           </p>
           <p>
+            <strong>Website analytics (aggregate, cookieless):</strong> to see which pages people
+            find useful, this marketing site records a single anonymous measurement per page view —
+            the page path, the referring site's domain, a country-level location, and any campaign
+            (UTM) tags in the link you followed. It's measured on our servers via Cloudflare
+            Analytics Engine and <strong>sets no cookie</strong>. We <strong>don't</strong> store
+            your IP address, and there's no identifier that could link one page view to another or
+            follow you across sites — so it can't be tied back to you.
+          </p>
+          <p>
             <strong>Support communications:</strong> if you email us, we keep the correspondence to
             help you.
           </p>
@@ -157,7 +166,8 @@ export default function PrivacyPage() {
             </li>
             <li>
               <strong>To understand and improve the Service</strong> (anonymous CLI telemetry,
-              aggregate usage) — <em>legitimate interests</em>; you can opt out of CLI telemetry.
+              aggregate cookieless website analytics) — <em>legitimate interests</em>; you can opt
+              out of CLI telemetry.
             </li>
             <li>
               <strong>To respond to support requests</strong> — <em>legitimate interests</em> /{" "}
