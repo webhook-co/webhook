@@ -13,8 +13,10 @@ import { withTenant, type Sql, type TenantTx } from "./client";
  *  passes (mirrors the metering rollup). Effectively uncapped at current scale. */
 export const DEFAULT_DELIVERY_STATS_ROLLUP_LIMIT = 1000;
 
-/** Days re-rolled each run. A delivery can retry for ~28h, so a 2-day window catches a delivery created near
- *  the end of yesterday that only reaches a terminal status today — its day's counts refine on this pass. */
+/** Lookback depth re-rolled each run (same semantics as the metering rollup's settleDays): rollupWindows
+ *  returns today plus this many prior days. A delivery can retry for ~28h, so re-rolling the last couple of
+ *  days catches one created late yesterday that only reaches a terminal status today — its day's counts
+ *  refine on this pass via the upsert. */
 export const DELIVERY_STATS_SETTLE_DAYS = 2;
 
 export interface DeliveryStatsRollupDeps {
