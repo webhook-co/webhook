@@ -36,7 +36,24 @@ export interface EphemeralPostgres {
    * password mode.
    */
   auth: "trust" | "password";
-  /** Provider/superuser connection (authed) — bootstraps the owner + the test DB. */
+  /**
+   * The PROVIDER connection — the role the managed Postgres hands us, NOT the schema owner.
+   * It bootstraps the owner + the test DB, and it BYPASSES RLS, which makes it the right handle
+   * for a cross-org read or a `delete from` cleanup that must see every tenant's rows.
+   *
+   * It is NOT a superuser on the nightly's Neon branch (there it is `neondb_owner`, holding
+   * webhook_owner membership with inherit_option = f), so it owns NOTHING and cannot TRUNCATE:
+   * `42501 permission denied for table …`. Locally it IS the postgres superuser, so that mistake
+   * passes every local run and only breaks at 04:00 — which is precisely what happened (#383).
+   * For TRUNCATE, use `ownerUrl`. scripts/remote-db-test-guard.mjs enforces this.
+   */
+  providerUrl: string;
+  /**
+   * The SCHEMA OWNER (`webhook_owner`) — it owns every table, so it is the only role that may
+   * TRUNCATE them, in both environments. RLS never filters TRUNCATE, so its FORCE RLS is not in
+   * the way. Do NOT reach for it to read or delete ACROSS orgs: it is FORCE-RLS-policed, so
+   * without a tenant GUC those silently see zero rows. That is what `providerUrl` is for.
+   */
   ownerUrl: string;
   /** A fully-authed connection URL (password + sslmode) for a known role. */
   urlFor: (opts: RoleUrl) => string;
@@ -138,6 +155,18 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
 
     // Per-run, in-memory passwords for the created roles (password mode only). Never
     // stored in source; rotated every run.
+    //
+    // ⚠️ Postgres ROLES ARE CLUSTER-GLOBAL — they are NOT scoped to the per-file database created
+    // below. So every caller of this function ALTERs the passwords of the same shared roles on the
+    // Neon branch. Two things that provision concurrently therefore invalidate each other's
+    // credentials mid-run, and the loser dies on `password authentication failed for user '…'` —
+    // a failure that has nothing to do with the code under test.
+    //
+    // Everything that runs against the branch must therefore be SERIALIZED. That is why the root
+    // `test:db` script chains packages/db with `&&` and passes `--concurrency=1` to the apps' turbo
+    // task (they would otherwise run in parallel and race), why vitest sets `fileParallelism: false`
+    // in all three configs, and why you must not run a local TEST_DATABASE_URL suite while a
+    // `nightly-rls` run is in flight. scripts/remote-db-test-guard.mjs pins the `--concurrency=1`.
     const passwords: Record<string, string> = {};
     // eslint-disable-next-line security/detect-possible-timing-attacks -- not a credential compare; this branches on the connection auth MODE
     if (auth === "password") {
@@ -160,7 +189,8 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
       database,
       auth,
       passwordFor,
-      ownerUrl: urlFor({ role: superRole }),
+      providerUrl: urlFor({ role: superRole }),
+      ownerUrl: urlFor({ role: DB_ROLES.owner }),
       urlFor,
       stop: async () => {
         const adm = postgres(
@@ -243,7 +273,8 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
     database: DEFAULT_DB,
     auth: "trust",
     passwordFor: () => undefined,
-    ownerUrl: buildUrl(host, port, SUPERUSER, undefined, DEFAULT_DB, "disable"),
+    providerUrl: buildUrl(host, port, SUPERUSER, undefined, DEFAULT_DB, "disable"),
+    ownerUrl: buildUrl(host, port, DB_ROLES.owner, undefined, DEFAULT_DB, "disable"),
     urlFor: ({ role, database = DEFAULT_DB }) =>
       buildUrl(host, port, role, undefined, database, "disable"),
     stop,

@@ -30,7 +30,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   audit = createClient(pg.urlFor({ role: DB_ROLES.meterAudit }));
-  admin = createClient(pg.ownerUrl);
+  admin = createClient(pg.providerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
