@@ -324,12 +324,19 @@ export async function nextDueAt(tx: TenantTx, destinationId: string): Promise<Da
  *  OPEN status so a concurrent reconciler re-drive can't double-finalize. */
 export async function markDeliveryDelivered(
   tx: TenantTx,
-  input: { id: string; destinationId: string; attempt: number; statusCode: number },
+  input: {
+    id: string;
+    destinationId: string;
+    attempt: number;
+    statusCode: number;
+    /** How long the POST took (ms); the dashboard's p95 latency reads delivered rows' duration_ms. */
+    durationMs?: number | null;
+  },
 ): Promise<void> {
   const res = await tx`
     update delivery_attempts
        set status = 'delivered', attempt = ${input.attempt}, status_code = ${input.statusCode},
-           error = null, next_retry_at = null
+           error = null, next_retry_at = null, duration_ms = ${input.durationMs ?? null}
      where id = ${input.id} and status in ('queued', 'pending')`;
   if (res.count > 0) {
     await tx`update replay_destinations set consecutive_failures = 0 where id = ${input.destinationId}`;
@@ -346,12 +353,14 @@ export async function scheduleDeliveryRetry(
     nextRetryAt: Date;
     statusCode: number | null;
     error: string | null;
+    durationMs?: number | null;
   },
 ): Promise<void> {
   await tx`
     update delivery_attempts
        set status = 'pending', attempt = ${input.nextAttempt}, next_retry_at = ${input.nextRetryAt},
-           status_code = ${input.statusCode}, error = ${input.error}
+           status_code = ${input.statusCode}, error = ${input.error},
+           duration_ms = ${input.durationMs ?? null}
      where id = ${input.id} and status in ('queued', 'pending')`;
 }
 
@@ -394,6 +403,7 @@ export async function markDeliveryTerminalFailure(
     attempt: number;
     statusCode: number | null;
     error: string | null;
+    durationMs?: number | null;
   },
 ): Promise<{ readonly consecutiveFailures: number | null }> {
   // A `blocked` outcome also UN-BILLS the dispatch (0055): the SSRF guard refused to send it, so no
@@ -404,6 +414,7 @@ export async function markDeliveryTerminalFailure(
     update delivery_attempts
        set status = ${input.status}, attempt = ${input.attempt}, status_code = ${input.statusCode},
            error = ${input.error}, next_retry_at = null,
+           duration_ms = ${input.durationMs ?? null},
            billable = case when ${input.status} = 'blocked' then false else billable end
      where id = ${input.id} and status in ('queued', 'pending')`;
   if (res.count === 0) return { consecutiveFailures: null }; // already finalized — don't double-count

@@ -226,6 +226,38 @@ describe("transitions", () => {
     expect((await failures(dest)).n).toBe(0);
   });
 
+  it("markDeliveryDelivered writes duration_ms (the POST latency for the p95 tile); omitting it leaves null", async () => {
+    const dest = (await createReplayDestination(app, { orgId, url: "https://dur.example.com/in" }))
+      .id;
+    const withDur = await seedDelivery(dest);
+    const withoutDur = await seedDelivery(dest);
+    await withTenant(app, orgId, async (tx) => {
+      await markDeliveryDelivered(tx, {
+        id: withDur,
+        destinationId: dest,
+        attempt: 1,
+        statusCode: 200,
+        durationMs: 42,
+      });
+      await markDeliveryDelivered(tx, {
+        id: withoutDur,
+        destinationId: dest,
+        attempt: 1,
+        statusCode: 200,
+      });
+    });
+    const rows = await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx<{ id: string; duration_ms: number | null }[]>`
+          select id, duration_ms from delivery_attempts where destination_id = ${dest}`,
+    );
+    const by = Object.fromEntries(rows.map((r) => [r.id, r.duration_ms]));
+    expect(by[withDur]).toBe(42);
+    expect(by[withoutDur]).toBeNull(); // forward-only: an unmeasured delivery reads null, not 0
+  });
+
   it("scheduleDeliveryRetry → pending + next_retry_at + advanced attempt (no tally change)", async () => {
     const dest = (await createReplayDestination(app, { orgId, url: "https://d4.example.com/in" }))
       .id;

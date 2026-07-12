@@ -74,7 +74,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   transport = createClient(pg.urlFor({ role: DB_ROLES.meterTransport }));
-  admin = createClient(pg.ownerUrl);
+  admin = createClient(pg.providerUrl);
 }, setupHookTimeoutMs());
 
 afterEach(async () => {

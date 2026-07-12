@@ -71,7 +71,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   audit = createClient(pg.urlFor({ role: DB_ROLES.meterAudit }));
-  admin = createClient(pg.ownerUrl);
+  admin = createClient(pg.providerUrl);
 }, setupHookTimeoutMs());
 
 afterEach(async () => {

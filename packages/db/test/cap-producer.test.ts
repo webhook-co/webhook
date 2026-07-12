@@ -95,7 +95,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   meter = createClient(pg.urlFor({ role: DB_ROLES.meter }));
-  admin = createClient(pg.ownerUrl); // the postgres superuser — bypasses RLS for cleanup
+  admin = createClient(pg.providerUrl); // the postgres superuser — bypasses RLS for cleanup
 }, setupHookTimeoutMs());
 
 // Per-test isolation: runCapProducer enumerates ALL orgs cross-tenant, so state seeded by one test
