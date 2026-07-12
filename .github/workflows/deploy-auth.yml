@@ -48,7 +48,9 @@ jobs:
     # Same-repo only: fork PRs don't receive secrets/vars, so a deploy/dry-run can't authenticate.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     env:
-      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # Empty on the pull_request path (dry-run + gen-wrangler need no auth) so a PR run never has the
+      # prod deploy token in scope; real secret only on push/dispatch. Enforced by deploy-token-pr-guard.
+      CLOUDFLARE_API_TOKEN: ${{ github.event_name != 'pull_request' && secrets.CLOUDFLARE_API_TOKEN || '' }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       SECRETS_STORE_ID: ${{ vars.SECRETS_STORE_ID }}
       # The generator reqEnv()s every app's ids (it emits all apps each run) — provide the full set.
