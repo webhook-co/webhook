@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 
 import {
   createClient,
+  readMembershipRole,
   resolveSince,
   tailEventsWithCursors,
   tailMeta,
@@ -33,6 +34,22 @@ import {
  * against the 5s floor. Tunable.
  */
 export const POLL_INTERVAL_MS = 2_000;
+
+/**
+ * How often the poll re-checks that the bound user is still a member of the org (S.8). The socket is
+ * authorized once at upgrade and then hibernates across evictions for days; without a re-check, a removed
+ * member's open tab keeps streaming event metadata. ~30s bounds that leak without adding meaningful load
+ * (one indexed membership read, on the poll's existing tenant connection).
+ */
+export const REAUTH_INTERVAL_MS = 30_000;
+
+/**
+ * Absolute lifetime of a live-events socket before it is force-closed and the client must re-mint (S.8).
+ * A fresh mint re-runs the session + endpoint-ownership RLS check, so this bounds ANY stale authorization —
+ * a revoked SESSION on a still-member user, a userless CLI socket — that the membership check alone can't
+ * catch. The client reconnects seamlessly, resuming from its acked cursor.
+ */
+export const MAX_SESSION_LIFETIME_MS = 30 * 60_000;
 
 /**
  * Max pages drained per poll (each page ≤ the keyset limit, ~50 events). Bounds the inline backlog
@@ -80,6 +97,8 @@ export interface ListenEnv {
 const HDR_ORG = "x-listen-org-id";
 const HDR_ENDPOINT = "x-listen-endpoint-id";
 const HDR_SESSION = "x-listen-session-id";
+/** The user id the ticket was minted for (dashboard path); absent on the CLI/bearer path. */
+const HDR_USER = "x-listen-user-id";
 const HDR_SINCE = "x-listen-since-cursor";
 /** `?since=<grammar>` (now|beginning|<duration>|<RFC3339>): resolved server-side to a boundary cursor. */
 const HDR_SINCE_SPEC = "x-listen-since-spec";
@@ -91,6 +110,14 @@ interface Binding {
   readonly orgId: string;
   readonly endpointId: string;
   readonly sessionId: string;
+  /**
+   * The user this socket was authorized for (dashboard ticket path). Carried so the poll can periodically
+   * re-check they are still a member of `orgId` (S.8). Absent on the CLI/bearer path, where the api key is
+   * the revocable credential and no membership check applies.
+   */
+  readonly userId?: string;
+  /** Wall-clock ms when the binding was first established — the absolute-lifetime cap reads it (S.8). */
+  readonly boundAtMs: number;
 }
 
 /** The durable resume position (last ACKed cursor). Stores the cursor's UTC ISO-µs `orderKey` verbatim (a
@@ -134,6 +161,12 @@ export class ListenSession extends DurableObject<ListenEnv> {
    * on any not-caught-up poll so a later backlog re-arms the next transition.
    */
   private wasCaughtUp?: boolean;
+  /**
+   * In-memory only: wall-clock ms of the last membership re-check. Starts at 0 so the FIRST poll after any
+   * (re)start — including a resume from hibernation — re-checks immediately, which is exactly when a socket
+   * that survived an eviction should be re-authorized. Lost on eviction by design.
+   */
+  private lastReauthMs = 0;
 
   constructor(ctx: DurableObjectState, env: ListenEnv) {
     super(ctx, env);
@@ -149,6 +182,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
     const orgId = request.headers.get(HDR_ORG);
     const endpointId = request.headers.get(HDR_ENDPOINT);
     const sessionId = request.headers.get(HDR_SESSION);
+    const userId = request.headers.get(HDR_USER) ?? undefined; // dashboard path only; CLI/bearer omit it
     if (!orgId || !endpointId || !sessionId) {
       // The trusted upgrade handler always sets these; a missing one is a wiring bug, not a client.
       return new Response("missing listen binding", { status: 400 });
@@ -200,7 +234,13 @@ export class ListenSession extends DurableObject<ListenEnv> {
           return new Response("could not resolve --since position", { status: 503 });
         }
       }
-      await this.ctx.storage.put<Binding>("binding", { orgId, endpointId, sessionId });
+      await this.ctx.storage.put<Binding>("binding", {
+        orgId,
+        endpointId,
+        sessionId,
+        ...(userId ? { userId } : {}),
+        boundAtMs: Date.now(),
+      });
       if (seed) await this.persistCursor(seed);
     }
 
@@ -256,8 +296,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
     // the recurring poll. The alarm is scheduled one interval out — NOT immediately due: a now()-alarm
     // auto-fires before the next event loop turn, racing the reconnect/idle bookkeeping. Immediate
     // flush comes from this inline scan; the alarm only drives the steady-state tail.
-    await this.runPoll();
-    await this.armPoll();
+    if (!(await this.runPoll())) await this.armPoll();
     // Echo the accepted subprotocol on the 101 when the upgrade handler asked for it (the dashboard ticket
     // path). workerd does NOT auto-negotiate `Sec-WebSocket-Protocol`, and a browser that offered a
     // subprotocol aborts the connection unless the server accepts exactly one — so this echo is load-bearing
@@ -272,8 +311,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
   override async alarm(): Promise<void> {
     // No listeners → stop the loop without re-arming; a future connect re-arms it.
     if (this.ctx.getWebSockets().length === 0) return;
-    await this.runPoll();
-    await this.armPoll();
+    if (!(await this.runPoll())) await this.armPoll();
   }
 
   /** Schedule the next poll if none is pending (idempotent across reconnects + the inline flush). */
@@ -289,10 +327,19 @@ export class ListenSession extends DurableObject<ListenEnv> {
    * retrying after ~6 attempts and the tail goes silent — so a poll failure becomes a recoverable
    * POLL_DEGRADED notice, never an escaping error.
    */
-  private async runPoll(): Promise<void> {
+  private async runPoll(): Promise<boolean> {
     const sockets = this.ctx.getWebSockets();
     const binding = await this.ctx.storage.get<Binding>("binding");
-    if (!binding || sockets.length === 0) return;
+    if (!binding || sockets.length === 0) return false;
+
+    // Re-authorize BEFORE streaming any more events (S.8): the socket was authorized once at upgrade and
+    // then hibernates across evictions for days. A revoked authorization must lose the tail, not keep it.
+    // Returning true tells the caller NOT to re-arm the alarm (terminate already deleted it).
+    const revoked = await this.reauthReason(binding);
+    if (revoked) {
+      await this.terminate(revoked);
+      return true;
+    }
 
     try {
       const resume =
@@ -324,6 +371,7 @@ export class ListenSession extends DurableObject<ListenEnv> {
       });
       for (const ws of sockets) this.safeSend(ws, notice);
     }
+    return false;
   }
 
   override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
@@ -425,6 +473,72 @@ export class ListenSession extends DurableObject<ListenEnv> {
     } finally {
       await tenant.end();
     }
+  }
+
+  /**
+   * Decide whether this socket's authorization is still valid, returning a close reason or null. Two
+   * independent bounds (S.8):
+   *
+   *  - ABSOLUTE LIFETIME (both paths): a socket older than MAX_SESSION_LIFETIME_MS is closed so the client
+   *    must re-mint. A fresh mint re-runs the session + endpoint-ownership RLS check, bounding any stale
+   *    authorization the membership check can't see (a revoked session on a still-member user, a userless
+   *    CLI socket).
+   *  - PERIODIC MEMBERSHIP (dashboard tickets, which carry a userId): every REAUTH_INTERVAL_MS, confirm the
+   *    bound user is still a member of the org. A removed member loses the tail within one interval.
+   *
+   * Fails OPEN on a membership-read error — a transient tenant-DB blip must not kick every legitimate
+   * viewer (the lifetime cap is the backstop), and we do NOT advance the timer, so it retries next poll.
+   */
+  private async reauthReason(binding: Binding): Promise<string | null> {
+    if (Date.now() - binding.boundAtMs > MAX_SESSION_LIFETIME_MS) {
+      return "session lifetime reached — reconnect";
+    }
+    if (binding.userId !== undefined && Date.now() - this.lastReauthMs > REAUTH_INTERVAL_MS) {
+      try {
+        const stillMember = await this.checkStillMember(binding);
+        this.lastReauthMs = Date.now();
+        if (!stillMember) return "membership revoked";
+      } catch (err) {
+        // Fail open: keep the socket, retry next poll (timer not advanced). Logged, not silent.
+        console.log(JSON.stringify({ message: "listen.reauth_degraded", error: String(err) }));
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Is the bound user still a member of the bound org? Reads `memberships` under the org's RLS on a
+   * short-lived tenant client as webhook_app (which holds SELECT on memberships). Overridable seam in tests
+   * (no live Postgres). Only called when `binding.userId` is set.
+   */
+  protected async checkStillMember(binding: Binding): Promise<boolean> {
+    if (binding.userId === undefined) return true;
+    const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
+    try {
+      const role = await withTenant(tenant, binding.orgId, (tx) =>
+        readMembershipRole(tx, binding.orgId, binding.userId as string),
+      );
+      return role !== null;
+    } finally {
+      await tenant.end();
+    }
+  }
+
+  /**
+   * Tear down every socket with a policy-violation close (1008) carrying a machine-readable REAUTHORIZE
+   * frame first, then stop the poll loop. The client reconnects and re-mints; a still-authorized user
+   * resumes seamlessly from its acked cursor, a revoked one's re-mint fails and it stops.
+   */
+  private async terminate(reason: string): Promise<void> {
+    for (const ws of this.ctx.getWebSockets()) {
+      this.safeSend(ws, encodeServerFrame({ type: "error", code: "REAUTHORIZE", message: reason }));
+      try {
+        ws.close(1008, reason.slice(0, 120)); // WS close reason must be <= 123 bytes
+      } catch {
+        /* already closing/closed */
+      }
+    }
+    await this.ctx.storage.deleteAlarm();
   }
 
   /** Stop polling once no sockets remain so the DO can hibernate/evict between sessions. */

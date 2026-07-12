@@ -39,7 +39,7 @@ export const LISTEN_TICKET_SUBPROTOCOL_PREFIX = "ticket.";
  * The current envelope version. `verifyListenTicket` rejects any envelope whose `v` is missing or != this,
  * so a codec change is a clean break: mismatched tickets fail closed (→ null) and the client re-mints.
  */
-export const LISTEN_TICKET_VERSION = 1;
+export const LISTEN_TICKET_VERSION = 2;
 
 /**
  * Ticket lifetime (seconds). Kept SHORT — the ticket only has to survive the round-trip from mint to the
@@ -48,7 +48,7 @@ export const LISTEN_TICKET_VERSION = 1;
  */
 export const LISTEN_TICKET_TTL_SECONDS = 60;
 
-/** The signed grant: version + org + endpoint + expiry. The engine derives the DO binding from o/e. */
+/** The signed grant: version + org + endpoint + user + expiry. The engine derives the DO binding from o/e/u. */
 interface ListenTicketEnvelope {
   /** Envelope version — must equal LISTEN_TICKET_VERSION to verify. */
   v: number;
@@ -56,6 +56,12 @@ interface ListenTicketEnvelope {
   o: string;
   /** The endpoint the ticket authorizes tailing (validated to belong to `o` at mint time). */
   e: string;
+  /**
+   * The user the ticket was minted for (from the minting session, never the client). Carried so the engine's
+   * live-events socket can periodically re-check this user is STILL a member of `o` — a removed member's open
+   * tab would otherwise keep streaming event metadata across hibernation for the socket's lifetime (S.8).
+   */
+  u: string;
   /** Unix seconds — the ticket is dead strictly after this (now > exp). */
   exp: number;
 }
@@ -64,6 +70,7 @@ interface ListenTicketEnvelope {
 export interface ListenTicketGrant {
   readonly orgId: string;
   readonly endpointId: string;
+  readonly userId: string;
 }
 
 /**
@@ -104,6 +111,7 @@ export async function mintListenTicket(
     v: LISTEN_TICKET_VERSION,
     o: grant.orgId,
     e: grant.endpointId,
+    u: grant.userId,
     exp: nowSeconds + LISTEN_TICKET_TTL_SECONDS,
   };
   const bytes = utf8Encoder.encode(JSON.stringify(env));
@@ -145,5 +153,7 @@ export async function verifyListenTicket(
   if (typeof env.o !== "string" || env.o === "" || typeof env.e !== "string" || env.e === "") {
     return null;
   }
-  return { orgId: env.o, endpointId: env.e };
+  // A ticket without a user cannot be membership-re-checked, so an empty/missing `u` fails closed.
+  if (typeof env.u !== "string" || env.u === "") return null;
+  return { orgId: env.o, endpointId: env.e, userId: env.u };
 }

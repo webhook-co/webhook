@@ -46,7 +46,7 @@ export async function mintListenTicketAction(endpointId: string): Promise<MintLi
     const key = await importListenTicketKey(b64ToBytes(await getListenTicketKey()));
     const ticket = await mintListenTicket(
       key,
-      { orgId: session.orgId, endpointId },
+      { orgId: session.orgId, endpointId, userId: session.userId },
       Math.floor(Date.now() / 1000),
     );
     return { ok: true, ticket, subprotocol: LISTEN_SUBPROTOCOL };
