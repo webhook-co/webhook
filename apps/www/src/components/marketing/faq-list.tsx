@@ -50,7 +50,10 @@ export function FaqList({
   }, []);
 
   return (
-    <div className="mx-auto max-w-[820px]">
+    // 720px, not 820: the answers are capped at 68ch anyway, so the extra width bought nothing but a
+    // wider click target and a question line that ran further from its own chevron. Shared by the
+    // pricing and homepage FAQs — they should not drift apart.
+    <div className="mx-auto max-w-[720px]">
       {items.map((item, index) => (
         <FaqEntry
           key={item.question}
