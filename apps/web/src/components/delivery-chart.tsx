@@ -1,10 +1,15 @@
+"use client";
+
+import { motion, useReducedMotion } from "motion/react";
+
 import type { DashboardChartModel } from "@/lib/dashboard-chart";
 
-// A hand-rolled, dependency-free stacked-bar chart of daily delivery outcomes — no chart library on a Workers
-// app (per the plan). Pure server render over the chart model: each day is a bar, delivered stacked under
-// failed (dead + blocked), scaled to the window's busiest day. Colours come from the sanctioned --wh-chart-*
-// palette (which ships light + dark values) via the fill-chart-* utilities, so it themes for free; a legend
-// names the colours because colour alone isn't an accessible signal, and the SVG carries an aria summary.
+// A hand-rolled, dependency-free stacked-bar chart of daily delivery outcomes — no chart library, just SVG.
+// Colours are the design system's SEMANTIC functional tokens, not the muted categorical --wh-chart palette:
+// delivered = ok (success), failed (dead + blocked) = danger. Same colours the needs-attention dots use, so
+// the page reads as one system. A legend names the colours (colour alone isn't accessible) and the SVG
+// carries an aria summary. Bars grow up from the baseline on mount (motion.dev), staggered, and the whole
+// animation is skipped under prefers-reduced-motion.
 
 const SLOT = 10; // viewBox units per day column
 const BAR_FRAC = 0.64; // bar width as a fraction of its slot (leaves a gutter)
@@ -24,6 +29,7 @@ function axisTicks(bars: DashboardChartModel["bars"]): { index: number; label: s
 
 export function DeliveryChart({ model }: { model: DashboardChartModel }) {
   const { bars, maxTotal, totalDelivered, totalFailed } = model;
+  const reduce = useReducedMotion();
   const width = bars.length * SLOT;
   const barW = SLOT * BAR_FRAC;
   const pad = (SLOT - barW) / 2;
@@ -45,21 +51,33 @@ export function DeliveryChart({ model }: { model: DashboardChartModel }) {
           const deliveredH = (bar.delivered / maxTotal) * H;
           const failedH = (bar.failed / maxTotal) * H;
           const x = i * SLOT + pad;
+          // Each day column grows up from the baseline as one unit — quiet, in-brand motion. Skipped whole
+          // under reduced-motion (initial=false renders the final state with no transition).
           return (
-            <g key={bar.date}>
+            <motion.g
+              key={bar.date}
+              initial={reduce ? false : { scaleY: 0 }}
+              animate={{ scaleY: 1 }}
+              transition={{
+                duration: 0.4,
+                delay: i * 0.03,
+                ease: [0.32, 0.72, 0, 1], // --wh-ease-smooth
+              }}
+              style={{ transformBox: "fill-box", transformOrigin: "center bottom" }}
+            >
               {bar.delivered > 0 && (
                 <rect
                   x={x}
                   y={H - deliveredH}
                   width={barW}
                   height={deliveredH}
-                  className="fill-chart-2"
+                  className="fill-ok"
                 />
               )}
               {bar.failed > 0 && (
-                <rect x={x} y={H - totalH} width={barW} height={failedH} className="fill-chart-3" />
+                <rect x={x} y={H - totalH} width={barW} height={failedH} className="fill-danger" />
               )}
-            </g>
+            </motion.g>
           );
         })}
       </svg>
@@ -79,11 +97,11 @@ export function DeliveryChart({ model }: { model: DashboardChartModel }) {
 
       <div className="flex items-center gap-4 text-xs text-fg-secondary">
         <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2.5 rounded-[2px] bg-chart-2" aria-hidden />
+          <span className="inline-block size-2.5 rounded-[2px] bg-ok" aria-hidden />
           Delivered
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block size-2.5 rounded-[2px] bg-chart-3" aria-hidden />
+          <span className="inline-block size-2.5 rounded-[2px] bg-danger" aria-hidden />
           Failed
         </span>
       </div>

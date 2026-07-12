@@ -61,10 +61,7 @@ export default async function DashboardPage() {
 
   return (
     <PageContainer>
-      <PageHeader
-        title="Overview"
-        description="How your webhooks are flowing — inbound capture and outbound delivery at a glance."
-      />
+      <PageHeader title="Overview" />
 
       {attention.length > 0 ? <NeedsAttention items={attention} /> : null}
 
