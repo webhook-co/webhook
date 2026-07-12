@@ -45,6 +45,9 @@ export function AppNav() {
       <AppNavItem href="/credentials" active={isActive("/credentials")}>
         Credentials
       </AppNavItem>
+      <AppNavItem href="/team" active={isActive("/team")}>
+        Team
+      </AppNavItem>
       <AppNavItem href="/settings" active={isActive("/settings")}>
         Settings
       </AppNavItem>

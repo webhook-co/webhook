@@ -21,18 +21,22 @@ describe("AppLayout (gated dashboard shell)", () => {
     expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Endpoints" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
-    // Credentials is its own top-level nav entry (moved out of Settings), sitting just above Settings.
+    // Credentials is its own top-level nav entry (moved out of Settings).
     expect(screen.getByRole("link", { name: "Credentials" })).toBeInTheDocument();
+    // Team (collaboration) sits in the Account section too.
+    expect(screen.getByRole("link", { name: "Team" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Account menu" })).toBeInTheDocument();
   });
 
-  it("places the Credentials nav entry directly above Settings in the Account section", async () => {
+  it("orders the Account section Credentials → Team → Settings", async () => {
     render(await AppLayout({ children: <p>page content</p> }));
     const links = screen.getAllByRole("link").map((l) => l.textContent);
     const credentials = links.indexOf("Credentials");
+    const team = links.indexOf("Team");
     const settings = links.indexOf("Settings");
     expect(credentials).toBeGreaterThanOrEqual(0);
-    expect(settings).toBe(credentials + 1); // Credentials immediately precedes Settings
+    expect(team).toBe(credentials + 1); // Team immediately follows Credentials
+    expect(settings).toBe(team + 1); // …and Settings immediately follows Team
   });
 
   it("groups the nav Inbound/Outbound and orders Destinations before Deliveries", async () => {
