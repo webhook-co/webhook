@@ -127,9 +127,18 @@ function buildFaqSchema(items: readonly FaqItem[]) {
   };
 }
 
-function FaqEntry({ item }: { item: FaqItem }) {
+function FaqEntry({ item, group }: { item: FaqItem; group: string }) {
   return (
-    <details open={item.discloses} className="group border-b border-hairline last:border-0">
+    // `name` makes this a NATIVE exclusive accordion: opening one closes the others, with no
+    // JavaScript, no state, and no client component — the browser does it, so it still works before
+    // hydration and with JS off. (Baseline since 2024.)
+    //
+    // Nothing is `open` by default any more. The MUST-DISCLOSE items used to be forced open here,
+    // because AGENTS.md requires the billing terms be "disclosed up front on the pricing page". That
+    // promise is NOT dropped — it moved to <PricingDisclosure>, where it is visible unconditionally
+    // and cannot be collapsed at all. Collapsing these without moving it would have silently deleted
+    // a constitutional disclosure; `pricing-disclosure.test.tsx` is what keeps that honest.
+    <details name={group} className="group border-b border-hairline last:border-0">
       <summary
         className={cn(
           focusRing,
@@ -195,6 +204,9 @@ export function Faq({
   heading?: string;
 } = {}) {
   const faqSchema = buildFaqSchema(items);
+  // One accordion group per FAQ instance, so the homepage's set and the pricing set never fight each
+  // other if both ever render on one page.
+  const groupName = `faq-${heading.replace(/\W+/g, "-").toLowerCase()}`;
   return (
     <section id="faq" aria-labelledby="faq-heading" className={cn(container, sectionPad)}>
       <script
@@ -213,7 +225,7 @@ export function Faq({
       </h2>
       <div className="mx-auto max-w-[820px]">
         {items.map((item) => (
-          <FaqEntry key={item.question} item={item} />
+          <FaqEntry key={item.question} item={item} group={groupName} />
         ))}
       </div>
     </section>

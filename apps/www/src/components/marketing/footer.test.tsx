@@ -60,7 +60,7 @@ describe("Footer", () => {
     // Security is a www trust page now, not a docs deep-link: the buyer question is answered on
     // our own domain (docs.webhook.co is a different subdomain — its authority does not accrue here).
     expect(byLabel["Security"]).toBe("/security");
-    expect(byLabel["Contact"]).toBe("mailto:sourabh@webhook.co");
+    expect(byLabel["Contact"]).toBe("mailto:hello@webhook.co");
   });
 
   it("keeps the legal column pointing at the legal routes", () => {
