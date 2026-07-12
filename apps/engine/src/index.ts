@@ -58,6 +58,7 @@ import {
   stripeKeyMatchesMode,
   parseFreeEventCap,
   parseSince,
+  isWellFormedPayloadKey,
   readPayloadKey,
   readSecretBinding,
   USAGE_SETTLE_DAYS,
@@ -76,9 +77,11 @@ import {
   deleteExpiredEvents,
   listExpiringEvents,
 } from "@webhook-co/db/retention";
+import { existingPayloadKeys } from "@webhook-co/db/orphan-sweep";
 
 import { runAnchorCron } from "./anchor-cron";
 import { runEventPayloadPurgeCron } from "./event-payload-purge-cron";
+import { parseOrphanSweepDelete, runOrphanSweep } from "./orphan-sweep-cron";
 import { runPayloadPurgeCron } from "./payload-purge-cron";
 import { runReconcileCron } from "./reconcile-cron";
 import { isTotalRetentionFailure, runRetentionPruneCron } from "./retention-prune-cron";
@@ -207,6 +210,13 @@ export interface Env {
    * Free-pause enforcement) — a fail-safe default; setting it is the enable-Free-enforcement switch.
    */
   FREE_EVENT_CAP?: string;
+  /**
+   * Whether the orphan-sweep cron (S6c-iii) may ACTUALLY delete identified orphans. Fail-safe default: unset
+   * / anything but "true" → COUNT-ONLY (the sweep finds + logs orphans but deletes nothing). Set to "true"
+   * (a deploy VAR) to enable deletion — a founder switch, flipped after eyeballing the count-only passes,
+   * because a stranded-body delete is irreversible and cross-org.
+   */
+  ORPHAN_SWEEP_DELETE?: string;
   /**
    * Billing mode (off | test | live) — gates the S4.4 outbound Stripe flows (the meter-reporter cron).
    * A committed VAR. Unset/garbage → off (fail-safe: no Stripe call, the reporter no-ops). `live` is the
@@ -894,6 +904,15 @@ export default {
         console.log(JSON.stringify({ message: "retention prune cron failed", error: String(err) })),
       ),
     );
+    // R2 orphan-reconcile sweep (S6c-iii): delete R2 payload objects with NO events row (an insert that
+    // failed after the durable-before-ACK PUT, or a prune that crashed before its R2 delete). Bounded per
+    // tick, cursor-resumed, triple-fenced (age + shape + anti-join). Reuses the retention Hyperdrive; dark
+    // until it's provisioned. Independent of the others — a failure must not sink them.
+    ctx.waitUntil(
+      runOrphanSweepDrainCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "orphan sweep cron failed", error: String(err) })),
+      ),
+    );
     // Event-payload purge (S3): delete the R2 body of each user-tombstoned event, then mark the job done.
     // Reuses the webhook_purge role/Hyperdrive (0058 extended it to event_payload_purge). Dark until that
     // Hyperdrive is provisioned; independent of the others — a failure must not sink them.
@@ -1500,6 +1519,61 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
     if (isTotalRetentionFailure(result)) {
       throw new Error(`retention prune: all ${result.orgs} claimed orgs failed`);
     }
+  } finally {
+    await sql.end();
+  }
+}
+
+// R2 orphan-reconcile sweep (S6c-iii). One R2 list page per tick, cursor-resumed across ticks (KV). The
+// safety window is DELIBERATELY generous — a stranded orphan is permanent, so waiting to reclaim it costs
+// nothing, and the window must dwarf the ingest PUT→insert latency (milliseconds) by orders of magnitude so
+// an in-flight event's body is never touched. PAGE_SIZE bounds both the R2 list and the one `in (…)`
+// anti-join query.
+const ORPHAN_SWEEP_PAGE_SIZE = 1000;
+const ORPHAN_SWEEP_SAFETY_WINDOW_MS = 24 * 60 * 60 * 1000; // 24h — vastly above any PUT→insert latency
+const ORPHAN_SWEEP_CURSOR_KEY = "orphan-sweep:r2-cursor";
+
+/**
+ * Wire the real deps and run one orphan-sweep pass (S6c-iii). Reuses the webhook_retention connection for the
+ * cross-org `events.payload_r2_key` anti-join (migration 0053 grants it that column, cross-org) + the
+ * R2_PAYLOADS binding (the engine is the sole R2 delete principal) + KV_CONFIG for the resumable list cursor.
+ * Dark until the retention Hyperdrive is provisioned (same gate as the prune — both are the R2-cleanup lane).
+ */
+async function runOrphanSweepDrainCron(env: Env): Promise<void> {
+  if (!env.HYPERDRIVE_RETENTION) return; // dark until the retention role + Hyperdrive are provisioned
+  const sql = createClient(env.HYPERDRIVE_RETENTION.connectionString);
+  try {
+    await runOrphanSweep({
+      readCursor: () => env.KV_CONFIG.get(ORPHAN_SWEEP_CURSOR_KEY),
+      listPage: async (cursor, limit) => {
+        const listed = await env.R2_PAYLOADS.list({
+          prefix: "org/",
+          cursor: cursor ?? undefined,
+          limit,
+        });
+        return {
+          objects: listed.objects.map((o) => ({ key: o.key, uploadedMs: o.uploaded.getTime() })),
+          // `truncated` false = last page → null cursor tells the sweep the bucket is exhausted.
+          cursor: listed.truncated ? (listed.cursor ?? null) : null,
+        };
+      },
+      // PREFIX FENCE — only ever delete an exact `org/{uuid}/ep/{uuid}/{hash}` object.
+      validKey: (key) => isWellFormedPayloadKey(key),
+      existingKeys: (keys) => existingPayloadKeys(sql, keys),
+      deleteR2: (keys) => env.R2_PAYLOADS.delete(keys),
+      // COUNT-ONLY by default — an irreversible cross-org R2 delete only runs once ORPHAN_SWEEP_DELETE=true
+      // is set, after the count-only passes have been eyeballed. The pure, unit-tested parse fail-safes to
+      // count-only for anything but "true".
+      deleteEnabled: parseOrphanSweepDelete(env.ORPHAN_SWEEP_DELETE),
+      writeCursor: (cursor) =>
+        cursor === null
+          ? env.KV_CONFIG.delete(ORPHAN_SWEEP_CURSOR_KEY)
+          : env.KV_CONFIG.put(ORPHAN_SWEEP_CURSOR_KEY, cursor),
+      now: Date.now(),
+      safetyWindowMs: ORPHAN_SWEEP_SAFETY_WINDOW_MS,
+      pageSize: ORPHAN_SWEEP_PAGE_SIZE,
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
+    });
   } finally {
     await sql.end();
   }

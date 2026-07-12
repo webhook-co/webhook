@@ -4,6 +4,7 @@ import { afterEach, beforeAll, afterAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
+import { existingPayloadKeys } from "../src/orphan-sweep";
 import { claimRetentionOrgs, deleteExpiredEvents, listExpiringEvents } from "../src/retention";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -407,5 +408,39 @@ describe("per-plan retention windows", () => {
     expect(removedIds).toContain(freeExpired); // past its window → fair game
     expect(removedIds).not.toContain(proInWindow); // inside Pro's 30 days → policy refuses
     expect(removedIds).not.toContain(entAncient); // unlimited → policy refuses, at any age
+  });
+});
+
+// The orphan-sweep anti-join (S6c-iii): under the SAME cross-org webhook_retention role, resolve which of a
+// batch of R2 keys have an events row. The sweep deletes the complement (the orphans).
+describe("existingPayloadKeys (orphan-sweep anti-join)", () => {
+  it("returns the CROSS-ORG subset of keys that have an events row; the rest are orphans", async () => {
+    const a = await seedOrg("org-a");
+    const b = await seedOrg("org-b");
+    const keyA = `org/${a.orgId}/ep/${a.endpointId}/${"a".repeat(64)}`;
+    const keyB = `org/${b.orgId}/ep/${b.endpointId}/${"b".repeat(64)}`;
+    await seedEvent(a.orgId, a.endpointId, { ageDays: 1, r2Key: keyA });
+    await seedEvent(b.orgId, b.endpointId, { ageDays: 1, r2Key: keyB });
+
+    const orphanKey = `org/${a.orgId}/ep/${a.endpointId}/${"c".repeat(64)}`; // no row for this one
+    const existing = await existingPayloadKeys(retention, [keyA, keyB, orphanKey]);
+
+    expect(existing.has(keyA)).toBe(true); // org A's row — spanning orgs in one query
+    expect(existing.has(keyB)).toBe(true); // org B's row
+    expect(existing.has(orphanKey)).toBe(false); // no row → the sweep would delete it
+  });
+
+  it("still counts a TOMBSTONED event's key as existing (its body is the purge cron's job, not an orphan)", async () => {
+    const o = await seedOrg("org-t");
+    const key = `org/${o.orgId}/ep/${o.endpointId}/${"d".repeat(64)}`;
+    const id = await seedEvent(o.orgId, o.endpointId, { ageDays: 1, r2Key: key });
+    await admin`update events set deleted_at = now() where id = ${id}`; // soft-delete (tombstone)
+
+    const existing = await existingPayloadKeys(retention, [key]);
+    expect(existing.has(key)).toBe(true); // row still present → NOT an orphan
+  });
+
+  it("returns an empty set for no keys (no query)", async () => {
+    expect((await existingPayloadKeys(retention, [])).size).toBe(0);
   });
 });

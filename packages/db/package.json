@@ -27,6 +27,7 @@
     "./replay": "./src/replay.ts",
     "./org-lifecycle": "./src/org-lifecycle.ts",
     "./retention": "./src/retention.ts",
+    "./orphan-sweep": "./src/orphan-sweep.ts",
     "./event-delete": "./src/event-delete.ts"
   },
   "scripts": {

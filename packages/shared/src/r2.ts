@@ -67,3 +67,16 @@ export function readPayloadKey(
   if (!/^[0-9a-f]{64}$/.test(suffix)) return null;
   return storedKey;
 }
+
+// A standalone `org/{uuid}/ep/{uuid}/{sha256hex}` shape check (no pre-parsed org/endpoint needed) — the
+// PREFIX FENCE for the orphan sweep (S6c-iii). DELIBERATELY strict (UUID-shaped org + endpoint): a key that
+// isn't exactly the write-side format is skipped and NEVER deleted, so the destructive sweep can only ever
+// touch objects that look like our own payload bodies. Kept next to `payloadR2Key`/`endpointPrefix` so the
+// three can't drift.
+const WELL_FORMED_PAYLOAD_KEY =
+  /^org\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/ep\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[0-9a-f]{64}$/;
+
+/** True when `key` is exactly the `org/{uuid}/ep/{uuid}/{sha256hex}` payload-object shape. */
+export function isWellFormedPayloadKey(key: string): boolean {
+  return typeof key === "string" && WELL_FORMED_PAYLOAD_KEY.test(key);
+}

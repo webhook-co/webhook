@@ -79,6 +79,8 @@ const TOKEN = {
   // empty price/meter → disabled). An empty var is a valid wrangler var, so — unlike the optional Hyperdrive
   // bindings — these substitute in unconditionally. No price/tier figure lives here (ids/names only).
   "<BILLING_MODE>": process.env.BILLING_MODE ?? "",
+  // ORPHAN_SWEEP_DELETE (S6c-iii) — "true" enables the orphan-sweep delete; anything else = count-only.
+  "<ORPHAN_SWEEP_DELETE>": process.env.ORPHAN_SWEEP_DELETE ?? "",
   "<STRIPE_METER_EVENT_NAME>": process.env.STRIPE_METER_EVENT_NAME ?? "",
   "<STRIPE_METER_ID>": process.env.STRIPE_METER_ID ?? "",
   // STRIPE_PLANS is a JSON map (plan id → {base, overage} price ids) that lands INSIDE a JSON string value,
@@ -122,6 +124,7 @@ const APPS = {
       "<KV_CONFIG_ID>",
       "<KV_AUTHZ_ID>",
       "<FREE_EVENT_CAP>",
+      "<ORPHAN_SWEEP_DELETE>",
       "<BILLING_MODE>",
       "<STRIPE_METER_EVENT_NAME>",
       "<STRIPE_METER_ID>",
