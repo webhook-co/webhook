@@ -14,8 +14,12 @@ import { loadUsage } from "./usage";
 // blip in one signal degrades that tile rather than 500-ing the landing page a user hits on every login. The
 // series is the display cache from the hourly rollup (migration 0063); everything downstream is O(days).
 
-/** How many trailing days the overview chart + totals cover. */
-export const DASHBOARD_WINDOW_DAYS = 14;
+/** The resolved chart window: how many UTC days to cover and the day the window ends on (see
+ *  resolveDashboardWindow — usually now, or a past day under a custom date-range filter). */
+export interface DashboardWindow {
+  readonly days: number;
+  readonly endMs: number;
+}
 
 export interface DashboardData {
   /** Daily delivery-outcome series (oldest→newest); [] on a read fault (chart renders empty). */
@@ -30,12 +34,13 @@ export interface DashboardData {
   readonly pastDue: boolean;
 }
 
-async function loadSeries(orgId: string): Promise<{ series: DeliveryStatsDay[]; ok: boolean }> {
+async function loadSeries(
+  orgId: string,
+  window: DashboardWindow,
+): Promise<{ series: DeliveryStatsDay[]; ok: boolean }> {
   try {
     const series = await withTenantDb((app) =>
-      withTenant(app, orgId, (tx) =>
-        readDeliveryStatsSeries(tx, DASHBOARD_WINDOW_DAYS, Date.now()),
-      ),
+      withTenant(app, orgId, (tx) => readDeliveryStatsSeries(tx, window.days, window.endMs)),
     );
     return { series, ok: true };
   } catch (error) {
@@ -62,9 +67,12 @@ async function loadPastDue(orgId: string): Promise<boolean> {
  * signal falls back to its safe "nothing to flag" default so the page always renders. `deadCount` for the
  * attention panel is derived from `series` by the page (the rollup already carries it), so no extra read.
  */
-export async function loadDashboard(orgId: string): Promise<DashboardData> {
+export async function loadDashboard(
+  orgId: string,
+  window: DashboardWindow,
+): Promise<DashboardData> {
   const [series, usage, destinations, pastDue] = await Promise.all([
-    loadSeries(orgId),
+    loadSeries(orgId, window),
     loadUsage(orgId),
     loadDestinations(orgId),
     loadPastDue(orgId),

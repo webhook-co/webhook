@@ -13,12 +13,19 @@ import {
 import type { Metadata } from "next";
 import Link from "next/link";
 
+import { DashboardDateFilter } from "@/components/dashboard-date-filter";
 import { DeliveryChart } from "@/components/delivery-chart";
 import { NeedsAttention } from "@/components/needs-attention";
 import { buildDashboardChart } from "@/lib/dashboard-chart";
 import { deriveAttention } from "@/lib/dashboard-attention";
-import { DASHBOARD_WINDOW_DAYS, loadDashboard } from "@/server/dashboard";
+import { resolveDashboardWindow } from "@/lib/dashboard-window";
+import { loadDashboard } from "@/server/dashboard";
 import { verifySession } from "@/server/session";
+
+/** First value of a possibly-repeated search param (a hand-edited `?range=a&range=b` → array). */
+function first(v: string | string[] | undefined): string | undefined {
+  return Array.isArray(v) ? v[0] : v;
+}
 
 export const metadata: Metadata = {
   title: "Overview · webhook.co",
@@ -48,10 +55,22 @@ function formatLatency(ms: number | null): string {
   return oneDecimal >= 10 ? `${Math.round(seconds)} s` : `${oneDecimal.toFixed(1)} s`;
 }
 
-export default async function DashboardPage() {
-  const session = await verifySession();
-  const data = await loadDashboard(session.orgId);
-  const chart = buildDashboardChart(data.series, DASHBOARD_WINDOW_DAYS, Date.now());
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{
+    range?: string | string[];
+    from?: string | string[];
+    to?: string | string[];
+  }>;
+}) {
+  const [session, sp] = await Promise.all([verifySession(), searchParams]);
+  const window = resolveDashboardWindow(
+    { range: first(sp.range), from: first(sp.from), to: first(sp.to) },
+    Date.now(),
+  );
+  const data = await loadDashboard(session.orgId, { days: window.days, endMs: window.endMs });
+  const chart = buildDashboardChart(data.series, window.days, window.endMs);
   const attention = deriveAttention({
     pastDue: data.pastDue,
     paused: data.paused,
@@ -61,7 +80,7 @@ export default async function DashboardPage() {
 
   return (
     <PageContainer>
-      <PageHeader title="Overview" />
+      <PageHeader title="Overview" actions={<DashboardDateFilter />} />
 
       {attention.length > 0 ? <NeedsAttention items={attention} /> : null}
 
@@ -76,7 +95,7 @@ export default async function DashboardPage() {
             <StatTile
               label="Delivered"
               value={formatCount(chart.totalDelivered)}
-              hint={`last ${DASHBOARD_WINDOW_DAYS} days`}
+              hint={window.label.toLowerCase()}
             />
             <StatTile
               label="Failed"

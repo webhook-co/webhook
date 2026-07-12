@@ -109,11 +109,12 @@ export interface DeliveryStatsDay {
 export async function readDeliveryStatsSeries(
   tx: TenantTx,
   days: number,
-  nowMs: number = Date.now(),
+  endMs: number = Date.now(),
 ): Promise<DeliveryStatsDay[]> {
   // Compute the UTC-midnight cutoff in JS (not in SQL) so it can't misalign against the session's default
   // TimeZone — window_start is stored at UTC midnight (the rollup pins UTC), so the boundary must be too.
-  const t = new Date(nowMs);
+  // `endMs` is the window's last day (now by default; a past day under a custom date-range filter).
+  const t = new Date(endMs);
   const cutoff = new Date(
     Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() - (days - 1)),
   );
