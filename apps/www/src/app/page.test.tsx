@@ -99,25 +99,38 @@ describe("HomePage", () => {
     );
   });
 
-  it("puts the sandbox in the hero's CTA row as a real button, alongside the other two", () => {
-    // /play is the only thing on this page a stranger can do without an account, and it started life
-    // as a small text link under the CTAs — the least prominent element in the hero. It now sits in
-    // the CTA row itself. This pins PROMINENCE, not just presence: a regression that demotes it back
-    // to prose sails through a naive "is there a link to /play" check, and fails this one.
+  it("leads the hero with the sandbox — the one thing a stranger can do without an account", () => {
+    // /play started life as a small text link under the CTAs: the least prominent element in the hero,
+    // for the only thing on the page that needs no account. It now takes the hero's PRIMARY slot.
+    // This pins prominence and ORDER, not just presence — a regression that demotes it back to prose,
+    // or drops it behind the docs button, sails through a naive "is there a link to /play" check and
+    // fails this one.
     render(<HomePage />);
     const cta = screen.getByRole("link", { name: /^open playground$/i });
     expect(cta).toHaveAttribute("href", "/play");
     // The design system's Button renders its own class; a plain prose link does not.
     expect(cta.className, "the sandbox CTA must be a button, not a text link").toMatch(/rounded/);
 
-    // …and it shares the row with Start free + Read the docs, rather than floating elsewhere.
+    // `Button asChild` renders the <a> itself, so its parent IS the CTA row.
     const row = cta.parentElement!;
-    const siblings = [...row.querySelectorAll("a")].map((a) => a.textContent?.trim());
-    expect(siblings).toEqual(["Start free", "Read the docs", "Open playground"]);
+    const buttons = [...row.querySelectorAll("a")].map((a) => a.textContent?.trim());
+    expect(buttons).toEqual(["Open playground", "Read the docs"]);
+
+    // No "Start free" in the hero: the nav's "Get started" is the same door on the same screen, and
+    // two buttons to one destination is a decision the reader has to make for nothing.
+    expect(buttons).not.toContain("Start free");
 
     // "Try it" read as an invitation to trial the whole platform — a promise the Free tier doesn't
     // make. The sandbox is named for what it is.
     expect(document.body.textContent ?? "").not.toMatch(/try it\s*—\s*no signup/i);
+  });
+
+  it("still closes the page with the sign-up CTA (dropping it from the hero must not lose it)", () => {
+    render(<HomePage />);
+    // The hero gave up "Start free"; the page must not have given up the conversion. The final CTA
+    // and the nav both still carry a way in.
+    expect(screen.getAllByRole("link", { name: /start free/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("link", { name: /get started/i }).length).toBeGreaterThan(0);
   });
 
   it("renders the closing call to action", () => {

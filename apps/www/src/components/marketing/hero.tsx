@@ -45,19 +45,18 @@ export function Hero() {
             it to localhost. Then hand your agents an event they can act on.
           </p>
 
-          {/* Three doors, three weights — so a row of three buttons still reads as a hierarchy rather
-              than three equal choices: sign up (primary), learn (secondary), poke at it (ghost).
-              "Try it" was rejected: it promised a trial of the whole platform, which the Free tier
-              doesn't offer. "Open playground" names the sandbox for what it is. */}
+          {/* No "Start free" here: the nav's "Get started" button is the same door, in view on the
+              same screen, and two buttons to one destination is a choice the reader has to make for
+              nothing. That frees the hero's primary slot for the one thing a stranger can do WITHOUT
+              an account — the sandbox. ("Try it" was rejected as a name: it promised a trial of the
+              whole platform, which the Free tier doesn't offer. "Open playground" says what it is.)
+              Sign-up still closes the page: the final CTA carries "Start free". */}
           <div className="mb-8 flex flex-wrap gap-3">
             <Button asChild size="md">
-              <a href={LINKS.startFree}>Start free</a>
+              <a href={LINKS.play}>Open playground</a>
             </Button>
             <Button asChild variant="secondary" size="md">
               <a href={LINKS.docs}>Read the docs</a>
-            </Button>
-            <Button asChild variant="ghost" size="md">
-              <a href={LINKS.play}>Open playground</a>
             </Button>
           </div>
 
