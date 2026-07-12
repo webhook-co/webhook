@@ -60,3 +60,6 @@ internal/
 # Git worktrees created by coding agents (EnterWorktree). These are LOCAL scratch checkouts:
 # committing them records phantom 160000 gitlink entries that break `git clone` for everyone else.
 .claude/worktrees/
+
+# Local prod-migration config (DATABASE_URL + expected host for unattended apply) — never commit
+scripts/.prod-migrate.env
