@@ -11,7 +11,9 @@ import {
   claimPurgeJobs,
   deleteOrgWithAudit,
   isOrgOwner,
+  lastOwnerWouldOrphan,
   OrgNotFoundError,
+  readOrgMembershipCensus,
 } from "../src/org-lifecycle";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -148,6 +150,57 @@ describe("isOrgOwner", () => {
     expect(await isOrgOwner(app, ownerId, orgId)).toBe(true);
     expect(await isOrgOwner(app, memberId, orgId)).toBe(false);
     expect(await isOrgOwner(app, "u_nobody", orgId)).toBe(false);
+  });
+});
+
+describe("last-owner guard (readOrgMembershipCensus + lastOwnerWouldOrphan)", () => {
+  async function addMember(orgId: string, userId: string, role: string): Promise<void> {
+    await seedUser(userId);
+    await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${role})`,
+    );
+  }
+
+  it("censuses owners vs total members under RLS", async () => {
+    const ownerId = `u_own_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const orgId = await seedOrg("census-org", ownerId); // seeds one owner membership
+
+    expect(await readOrgMembershipCensus(app, orgId)).toEqual({ owners: 1, total: 1 });
+
+    await addMember(orgId, `u_mem_${randomUUID().slice(0, 8)}`, "member");
+    await addMember(orgId, `u_adm_${randomUUID().slice(0, 8)}`, "admin");
+    expect(await readOrgMembershipCensus(app, orgId)).toEqual({ owners: 1, total: 3 });
+
+    await addMember(orgId, `u_own2_${randomUUID().slice(0, 8)}`, "owner");
+    expect(await readOrgMembershipCensus(app, orgId)).toEqual({ owners: 2, total: 4 });
+  });
+
+  it("guards: a sole owner with other members would orphan; solo or multi-owner does not", async () => {
+    const ownerId = `u_g_${randomUUID().slice(0, 8)}`;
+    await seedUser(ownerId);
+    const orgId = await seedOrg("guard-org", ownerId);
+
+    // Solo org (owner only) — safe to leave/delete.
+    expect(lastOwnerWouldOrphan(await readOrgMembershipCensus(app, orgId))).toBe(false);
+
+    // Add a member — now the sole owner leaving WOULD orphan them.
+    await addMember(orgId, `u_gm_${randomUUID().slice(0, 8)}`, "member");
+    expect(lastOwnerWouldOrphan(await readOrgMembershipCensus(app, orgId))).toBe(true);
+
+    // A second owner removes the risk — someone remains to own it.
+    await addMember(orgId, `u_go2_${randomUUID().slice(0, 8)}`, "owner");
+    expect(lastOwnerWouldOrphan(await readOrgMembershipCensus(app, orgId))).toBe(false);
+  });
+
+  it("lastOwnerWouldOrphan is a pure decision over the census", () => {
+    expect(lastOwnerWouldOrphan({ owners: 1, total: 1 })).toBe(false); // solo owner
+    expect(lastOwnerWouldOrphan({ owners: 1, total: 2 })).toBe(true); // sole owner + 1 member
+    expect(lastOwnerWouldOrphan({ owners: 2, total: 3 })).toBe(false); // two owners
+    expect(lastOwnerWouldOrphan({ owners: 0, total: 0 })).toBe(false); // empty (nothing to orphan)
   });
 });
 

@@ -38,6 +38,47 @@ export async function isOrgOwner(app: Sql, userId: string, orgId: string): Promi
   return rows.length > 0;
 }
 
+/** How many members an org has, and how many of them are owners — the input to the last-owner guard. */
+export interface OrgMembershipCensus {
+  readonly owners: number;
+  readonly total: number;
+}
+
+/**
+ * Count the org's members and how many hold the `owner` role. Runs under the org's RLS context like
+ * isOrgOwner, with an EXPLICIT `org_id` predicate — RLS policies are permissive/OR'd, so a future policy
+ * could widen the visible set; never lean on RLS alone for a count (see readMembershipRole's warning).
+ */
+export async function readOrgMembershipCensus(
+  app: Sql,
+  orgId: string,
+): Promise<OrgMembershipCensus> {
+  const [row] = await withTenant(
+    app,
+    orgId,
+    (tx) =>
+      tx<{ owners: string; total: string }[]>`
+        select
+          count(*) filter (where role = 'owner') as owners,
+          count(*) as total
+        from memberships
+        where org_id = ${orgId}`,
+  );
+  return { owners: Number(row?.owners ?? 0), total: Number(row?.total ?? 0) };
+}
+
+/**
+ * Would removing this org's SOLE owner orphan it — leave members with no owner? True iff there is exactly
+ * one owner and at least one other member. A zero-owner org is a trap: it can never be deleted again
+ * (isOrgOwner is false for everyone, so deleteOrgWithAudit can't be called), its failure alerts go nowhere
+ * (notifier's owner LEFT JOIN finds none), and its Stripe subscription runs on with no one able to manage
+ * it. So a sole owner must transfer ownership before they can leave. A SOLO org (the owner is the only
+ * member) is safe — nothing is orphaned. This is the guard's whole decision, kept pure for testing.
+ */
+export function lastOwnerWouldOrphan(census: OrgMembershipCensus): boolean {
+  return census.owners === 1 && census.total > 1;
+}
+
 /**
  * Hard-delete an org and all of its Postgres metadata (every `org_id` child table is
  * `ON DELETE CASCADE`), while PRESERVING the two append-only WORM audit trails — `audit_log` and

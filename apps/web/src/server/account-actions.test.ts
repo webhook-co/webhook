@@ -21,10 +21,15 @@ vi.mock("./session", async () => {
 
 const isOrgOwner = vi.fn(async () => true);
 const deleteOrgWithAudit = vi.fn(async () => ({ orgId: "org_1", deletedAt: "now" }));
+// Default census: a solo personal org (owner is the only member) — the guard lets deletion proceed.
+const readOrgMembershipCensus = vi.fn(async () => ({ owners: 1, total: 1 }));
 vi.mock("@webhook-co/db/org-lifecycle", () => ({
   isOrgOwner: (...a: unknown[]) => isOrgOwner(...a),
   deleteOrgWithAudit: (...a: unknown[]) => deleteOrgWithAudit(...a),
   personalOrgId: (userId: string) => `personal_${userId}`,
+  readOrgMembershipCensus: (...a: unknown[]) => readOrgMembershipCensus(...a),
+  // The real (pure) guard logic, so the census mock actually drives the branch.
+  lastOwnerWouldOrphan: (c: { owners: number; total: number }) => c.owners === 1 && c.total > 1,
 }));
 vi.mock("./db", () => ({ getTenantDb: async () => ({ end: async () => {} }) }));
 const deleteAccountRpc = vi.fn(async () => {});
@@ -76,5 +81,14 @@ describe("deleteAccount", () => {
     await expect(deleteAccount(form("DELETE"))).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
     expect(deleteOrgWithAudit).not.toHaveBeenCalled();
     expect(deleteAccountRpc).toHaveBeenCalledWith("usr_1");
+  });
+
+  it("BLOCKS erasure — and erases NOTHING — when the user is the sole owner of an org with other members", async () => {
+    // The last-owner guard: deleting would leave a zero-owner org (unreachable, un-billed-out, alert-less).
+    readOrgMembershipCensus.mockResolvedValueOnce({ owners: 1, total: 3 });
+    await expect(deleteAccount(form("DELETE"))).rejects.toThrow(/only owner of an organization/i);
+    expect(deleteOrgWithAudit).not.toHaveBeenCalled();
+    expect(deleteAccountRpc).not.toHaveBeenCalled(); // identity NOT erased → no orphaned org
+    expect(cookieStore.delete).not.toHaveBeenCalled();
   });
 });
