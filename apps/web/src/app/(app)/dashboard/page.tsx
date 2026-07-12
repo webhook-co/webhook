@@ -41,8 +41,11 @@ function formatCount(n: number): string {
 
 function formatLatency(ms: number | null): string {
   if (ms === null) return "—";
-  if (ms >= 1000) return `${(ms / 1000).toFixed(ms >= 10_000 ? 0 : 1)} s`;
-  return `${ms} ms`;
+  if (ms < 1000) return `${ms} ms`;
+  const seconds = ms / 1000;
+  // Round to one decimal first, THEN choose precision, so 9999ms reads "10 s" (not "10.0 s") like 10000ms.
+  const oneDecimal = Math.round(seconds * 10) / 10;
+  return oneDecimal >= 10 ? `${Math.round(seconds)} s` : `${oneDecimal.toFixed(1)} s`;
 }
 
 export default async function DashboardPage() {

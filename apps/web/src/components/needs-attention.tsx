@@ -28,7 +28,7 @@ export function NeedsAttention({ items }: { items: readonly AttentionItem[] }) {
             <li key={item.kind}>
               <Link
                 href={item.href}
-                className="flex items-start gap-3 border-t border-hairline px-6 py-3 transition-colors hover:bg-surface-sunken focus-visible:bg-surface-sunken focus-visible:outline-none"
+                className="relative flex items-start gap-3 border-t border-hairline px-6 py-3 transition-colors hover:bg-surface-sunken focus-visible:z-10 focus-visible:rounded-[2px] focus-visible:outline-none focus-visible:shadow-[var(--wh-focus-ring)]"
               >
                 <span
                   className={`mt-1.5 inline-block size-2 shrink-0 rounded-full ${toneDot[item.tone]}`}
