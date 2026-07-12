@@ -1,6 +1,6 @@
 import { isUuid } from "@/server/endpoints";
 import { downloadExtension, openPayloadForDownload } from "@/server/payloads";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 // Reads cookies + the DB + R2 per request — never statically optimized.
 export const dynamic = "force-dynamic";
@@ -9,7 +9,8 @@ const notFound = () => new Response("Not found", { status: 404 });
 
 /**
  * Download an event's captured body as opaque bytes. Route handlers are NOT covered by the `(app)` layout
- * gate, so `verifySession()` is the literal first line. The body is streamed from R2 (resolved under RLS +
+ * gate, so `requireOrgAccess()` (which calls verifySession, then re-checks membership) is the literal first
+ * line. The body is streamed from R2 (resolved under RLS +
  * endpoint scope in `openPayloadForDownload`) and ALWAYS served as `application/octet-stream` +
  * `attachment` + `nosniff` — never with the stored content type — so an attacker-controlled `text/html` /
  * `image/svg+xml` body can't execute on the app/session origin.
@@ -18,7 +19,7 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ id: string; eventId: string }> },
 ): Promise<Response> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const { id, eventId } = await params;
   if (!isUuid(id) || !isUuid(eventId)) return notFound();
 

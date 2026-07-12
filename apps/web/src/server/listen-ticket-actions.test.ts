@@ -4,14 +4,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // The action is the session/CSRF boundary + input guard + RLS endpoint-ownership check over the pure ticket
 // codec. Mock the session gate, the endpoint loader, and the key accessor; verify the MINTED ticket with the
 // real codec so the round-trip (org + endpoint bound) is proven end-to-end.
-const { verifySession } = vi.hoisted(() => ({
-  verifySession: vi.fn(async () => ({
+const { requireOrgAccess } = vi.hoisted(() => ({
+  requireOrgAccess: vi.fn(async () => ({
     userId: "u1",
     orgId: "org-1",
     user: { name: "A", email: "a@x.com", image: null },
   })),
 }));
-vi.mock("./session", () => ({ verifySession }));
+vi.mock("./org-access", () => ({ requireOrgAccess }));
 
 const { loadEndpoint } = vi.hoisted(() => ({ loadEndpoint: vi.fn() }));
 vi.mock("./endpoints", async (orig) => ({

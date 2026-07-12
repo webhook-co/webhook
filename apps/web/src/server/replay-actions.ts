@@ -12,7 +12,7 @@ import {
   ReplayPausedError,
   ReplayUnverifiedError,
 } from "./replay-mutations";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 // The replay-to-destination action — the session/CSRF boundary (Next same-origin) + input guard + error
 // taxonomy over the replay orchestration. Authz is the session + RLS-org-pinning (any org member may replay
@@ -41,7 +41,7 @@ export async function replayToDestinationAction(
   eventId: string,
   destinationId: string,
 ): Promise<ReplayResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!isUuid(eventId)) return { ok: false, error: "That event no longer exists." };
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {

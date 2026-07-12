@@ -11,7 +11,7 @@ import {
 } from "./agent-trigger-mutations";
 import { toTriggerItem, type TriggerItem } from "./agent-triggers";
 import { isUuid } from "./endpoints";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 // The agent-trigger mutation actions — the session/CSRF boundary (Next same-origin) + input guard + error
 // taxonomy over the mutations seam. Authz is the session + RLS-org-pinning (any org member may manage the
@@ -44,7 +44,7 @@ export async function createTriggerAction(input: {
   endpointId: string;
   name?: string;
 }): Promise<CreateTriggerResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const endpointId = typeof input?.endpointId === "string" ? input.endpointId : "";
   if (!isUuid(endpointId)) return { ok: false, error: "Choose an endpoint." };
   const nameRaw = typeof input?.name === "string" ? input.name.trim() : "";
@@ -78,7 +78,7 @@ export async function createTriggerAction(input: {
 
 /** Revoke a trigger — it stops waking its agent immediately. Idempotent; an unknown id reads as "no longer exists". */
 export async function revokeTriggerAction(triggerId: string): Promise<TriggerActionResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!isUuid(triggerId)) return { ok: false, error: "That trigger no longer exists." };
   try {
     const revoked = await revokeTrigger({

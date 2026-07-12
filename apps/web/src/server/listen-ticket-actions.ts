@@ -10,7 +10,7 @@ import {
 import { logActionError } from "./action-log";
 import { isUuid, loadEndpoint } from "./endpoints";
 import { getListenTicketKey } from "./env";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 // Mint a short-lived, HMAC-signed LISTEN TICKET so the dashboard can open the engine's `/listen` WebSocket
 // for live events. app.webhook.co is session-cookie-authed, but `/listen` is on the cookieless wbhk.my apex
@@ -30,7 +30,7 @@ export type MintListenTicketResult =
  * The ticket itself is never logged (logActionError takes the error only).
  */
 export async function mintListenTicketAction(endpointId: string): Promise<MintListenTicketResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   // Runtime guard: a crafted server-action POST can deliver a non-string; a non-uuid can't name a real row.
   if (typeof endpointId !== "string" || !isUuid(endpointId)) {
     return { ok: false, error: "That endpoint no longer exists." };

@@ -7,7 +7,7 @@ import { parseDeliveryFilters, type DeliveryFilterParams } from "@/lib/delivery-
 import { logActionError } from "./action-log";
 import { loadMoreDeliveries, type DeliveryItem } from "./deliveries";
 import { isUuid } from "./endpoints";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 export type LoadMoreDeliveriesResult =
   | {
@@ -30,7 +30,7 @@ export async function loadMoreDeliveriesAction(input: {
   cursor: Cursor;
   filters?: DeliveryFilterParams;
 }): Promise<LoadMoreDeliveriesResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
 
   // The cursor is a structured {orderKey, id} round-tripped through the client; fail closed on any other
   // shape before it reaches SQL — a uuid id + an ISO-µs orderKey (see cursor.ts).
