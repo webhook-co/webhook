@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./kv-cache": "./src/kv-cache.ts",
     "./audit": "./src/audit.ts",
-    "./bytes": "./src/bytes.ts"
+    "./bytes": "./src/bytes.ts",
+    "./plans": "./src/plans.ts"
   },
   "scripts": {
     "build": "tsc",
