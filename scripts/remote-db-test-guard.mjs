@@ -28,23 +28,47 @@ const APPS_DIR = join(ROOT, "apps");
 const HARNESS = join(ROOT, "packages/db/test/pg.ts");
 
 /**
- * Everything `pnpm test:db` runs against the Neon branch — which is NOT just packages/db. The
- * turbo task also fans out to the apps' own `*.pg.test.ts` suites (apps/api, apps/web), and those
- * import the SAME harness. Scanning only packages/db left them uncovered, and a harness field
- * renamed out from under apps/api/src/stripe-webhook.pg.test.ts sailed past lint AND typecheck
- * (the apps exclude test files from their tsconfig) straight into the nightly.
+ * Identifiers bound to the SCHEMA OWNER — the only role that may TRUNCATE. Either spelling counts:
+ * `pg.ownerUrl` (preferred) or the explicit `pg.urlFor({ role: DB_ROLES.owner })`. Covers both a
+ * declaration and the bare assignment used when the handle is a module-scope `let` filled in by
+ * beforeAll.
+ * @param {string} src @returns {Set<string>}
  */
-export const DB_TEST_GLOB = "packages/db/test/*.ts + apps/*/src/**/*.pg.test.ts";
+export function ownerHandles(src) {
+  const ids = new Set();
+  const bind = String.raw`(\w+)\s*=\s*(?:createClient|postgres)\(\s*pg\.`;
+  for (const m of src.matchAll(new RegExp(bind + String.raw`ownerUrl`, "g"))) ids.add(m[1]);
+  for (const m of src.matchAll(
+    new RegExp(bind + String.raw`urlFor\(\s*\{\s*role:\s*DB_ROLES\.owner`, "g"),
+  )) {
+    ids.add(m[1]);
+  }
+  return ids;
+}
 
 /**
- * Identifiers bound to the PROVIDER connection: `x = createClient(pg.providerUrl)` or
- * `x = postgres(pg.providerUrl, …)`. Covers both a declaration (`const x = …`) and the bare
- * assignment used when the handle is a module-scope `let` filled in by beforeAll.
+ * Every handle a TRUNCATE is issued on, with the line it happens on. Both postgres.js spellings:
+ * a tagged template (``x`truncate …` ``) and `x.unsafe("truncate …")`.
+ * @param {string} src @returns {{handle: string, line: number}[]}
+ */
+export function truncateSites(src) {
+  const sites = [];
+  const re = /(\w+)(?:<[^`]*>)?(?:`\s*truncate\b|\.unsafe\(\s*["'`]\s*truncate\b)/gi;
+  for (const m of src.matchAll(re)) {
+    sites.push({ handle: m[1], line: src.slice(0, m.index).split("\n").length });
+  }
+  return sites;
+}
+
+/**
+ * Identifiers that hold a rate-limit cap: the `*_MAX_PER_WINDOW` constants themselves, plus any
+ * local aliased from one (`const cap = EVENT_DELETE_MAX_PER_WINDOW`).
  * @param {string} src @returns {string[]}
  */
-function providerHandles(src) {
+function capIdentifiers(src) {
   const ids = new Set();
-  for (const m of src.matchAll(/(\w+)\s*=\s*(?:createClient|postgres)\(\s*pg\.providerUrl/g)) {
+  for (const m of src.matchAll(/\b(\w*MAX_PER_WINDOW)\b/g)) ids.add(m[1]);
+  for (const m of src.matchAll(/(?:const|let|var)\s+(\w+)\s*=\s*(\w*MAX_PER_WINDOW)\b/g)) {
     ids.add(m[1]);
   }
   return [...ids];
@@ -113,34 +137,44 @@ export function remoteSafetyViolations(file, rawSrc, fields) {
     }
   }
 
-  // R1 — TRUNCATE through the provider handle. The provider role does not own the tables on a
-  // managed Postgres, and TRUNCATE requires ownership (or an explicit TRUNCATE grant): 42501.
-  for (const id of providerHandles(src)) {
-    const tagged = new RegExp(`\\b${escapeRe(id)}\`\\s*truncate\\b`, "i");
-    const unsafe = new RegExp(`\\b${escapeRe(id)}\\.unsafe\\(\\s*["'\`]\\s*truncate\\b`, "i");
-    if (tagged.test(src) || unsafe.test(src)) {
-      violations.push(
-        `${file}: \`${id}\` is the PROVIDER connection (pg.providerUrl) and TRUNCATEs. The provider ` +
-          `role does not own the tables on Neon → 42501. Truncate on the schema owner instead: ` +
-          `createClient(pg.urlFor({ role: DB_ROLES.owner })) — RLS never filters TRUNCATE.`,
-      );
-    }
+  // R1 — TRUNCATE on anything that is not the schema owner. FAIL CLOSED: rather than enumerate the
+  // handles known to be wrong (which misses aliases, handles passed into helpers, and whatever the
+  // next author invents), require every TRUNCATE to sit on a handle this file binds to the OWNER.
+  // TRUNCATE needs ownership; on Neon the provider role owns nothing → 42501.
+  const owners = ownerHandles(src);
+  for (const { handle, line } of truncateSites(src)) {
+    if (owners.has(handle)) continue;
+    violations.push(
+      `${file}:${line}: TRUNCATEs on \`${handle}\`, which is not bound to the schema owner in this ` +
+        `file. TRUNCATE requires OWNERSHIP, and on the nightly's Neon branch the provider role owns ` +
+        `nothing (it has BYPASSRLS + DML, but not the owner's rights) → 42501 permission denied. ` +
+        `Bind the handle with createClient(pg.ownerUrl) — RLS never filters TRUNCATE, so the owner's ` +
+        `FORCE RLS is not in the way.`,
+    );
   }
 
-  // R2 — seeding a wall-clock rate-limit window with cap-many serial appends. Each appendAuditEntry
-  // is 3 round-trips and every row is stamped with the TRANSACTION's now(), so on a remote DB the
-  // loop outlives the limiter's window and the seeded rows are born expired: the test false-passes.
-  const lines = src.split("\n");
-  for (const [i, line] of lines.entries()) {
-    if (!/for\s*\(.*<\s*\w*MAX_PER_WINDOW/.test(line)) continue;
-    const body = lines.slice(i + 1, i + 13).join("\n");
-    if (/\bappendAuditEntry\s*\(/.test(body)) {
-      violations.push(
-        `${file}:${i + 1}: seeds a rate-limit window with cap-many serial appendAuditEntry calls ` +
-          `(3 round-trips each, all stamped with the transaction's now()). On Neon the loop outlasts ` +
-          `the limiter's wall-clock window, so the rows expire before the assertion and the test ` +
-          `FALSE-PASSES. Use seedAuditChain(tx, key, input, count) — one insert, one round-trip.`,
-      );
+  // R2 — seeding a wall-clock rate-limit window with cap-many round-trips. Audit rows are stamped
+  // `created_at := now()` — the TRANSACTION timestamp — and the limiters count inside a 60s WALL
+  // CLOCK. Any cap-many loop of awaited DB work (a raw appendAuditEntry, a full handler call, a
+  // delete) outlives that window on a remote DB, so the rows it seeds are born already expired, the
+  // limiter counts zero, and the test FALSE-PASSES. Keyed on the loop's BOUND, not on what it calls:
+  // #413 fixed the appendAuditEntry shape but the original defect was a loop of handler reveals.
+  const caps = capIdentifiers(src);
+  if (caps.length > 0) {
+    const bound = new RegExp(`for\\s*\\([^)]*<\\s*(?:${caps.map(escapeRe).join("|")})\\b`);
+    const lines = src.split("\n");
+    for (const [i, line] of lines.entries()) {
+      if (!bound.test(line)) continue;
+      const body = lines.slice(i + 1, i + 13).join("\n");
+      if (/\bawait\b/.test(body)) {
+        violations.push(
+          `${file}:${i + 1}: seeds a rate-limit window with cap-many awaited round-trips. Every audit ` +
+            `row is stamped with its TRANSACTION's now(), and the limiter counts inside a 60s WALL-CLOCK ` +
+            `window — on Neon this loop outlasts the window it is filling, so the rows expire before the ` +
+            `assertion and the test FALSE-PASSES (resolves instead of rejecting). Seed it in one shot: ` +
+            `seedAuditChain(tx, key, input, count).`,
+        );
+      }
     }
   }
 

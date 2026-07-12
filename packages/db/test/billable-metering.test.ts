@@ -65,7 +65,7 @@ beforeAll(async () => {
   // TRUNCATE, so the owner's FORCE RLS is not in the way. Locally the provider IS the postgres
   // superuser, which bypasses the ACL check — which is exactly why truncating on it passed every
   // local run and only broke at 04:00 against Neon (issue #383).
-  owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+  owner = createClient(pg.ownerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {

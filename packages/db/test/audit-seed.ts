@@ -17,7 +17,7 @@
 
 import { computeAuditRowHash, formatAuditActor, type StoredAuditRow } from "@webhook-co/shared";
 
-import type { AuditAppendInput } from "../src/audit-append";
+import { AUDIT_LOCK_NAMESPACE, type AuditAppendInput } from "../src/audit-append";
 import type { TenantTx } from "../src/client";
 
 /** The chain head to continue from: the org's latest (seq, row_hash), or null for a fresh chain. */
@@ -72,6 +72,11 @@ export async function seedAuditChain(
   input: AuditAppendInput,
   count: number,
 ): Promise<StoredAuditRow[]> {
+  // The same per-org, transaction-scoped advisory lock appendAuditEntry takes, for the same reason:
+  // it makes head-read + insert atomic per org. Without it, a seed racing a real append off the same
+  // head would collide on `unique (org_id, seq)`. One extra round-trip against a 60s window is free.
+  await tx`select pg_advisory_xact_lock(hashtextextended(${input.orgId}, ${AUDIT_LOCK_NAMESPACE}))`;
+
   const [head] = await tx<{ seq: string | number; row_hash: Uint8Array }[]>`
     select seq, row_hash from audit_log
     where org_id = ${input.orgId}

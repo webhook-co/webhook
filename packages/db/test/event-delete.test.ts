@@ -108,7 +108,7 @@ beforeAll(async () => {
   // never filters TRUNCATE, so the schema owner's FORCE RLS is not in the way. Locally the provider
   // IS the postgres superuser and bypasses the check — which is why truncating on it passed every
   // local run and only broke against Neon (issue #383).
-  owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+  owner = createClient(pg.ownerUrl);
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 5) % 256)),
   );

@@ -6,7 +6,6 @@ import { fileURLToPath } from "node:url";
 
 import {
   blankComments,
-  DB_TEST_GLOB,
   harnessFields,
   readDbTestSources,
   remoteSafetyViolations,
@@ -31,9 +30,10 @@ test("every source the nightly runs is remote-safe (no violations on the committ
   assert.deepEqual(violations, []);
 });
 
-test("DB_TEST_GLOB names both suites the nightly runs", () => {
-  assert.match(DB_TEST_GLOB, /packages\/db\/test/);
-  assert.match(DB_TEST_GLOB, /apps/);
+test("the scan reaches both suites the nightly runs (packages/db AND the apps)", async () => {
+  const files = (await readDbTestSources()).map((s) => s.file);
+  assert.ok(files.some((f) => f.startsWith("packages/db/test/")));
+  assert.ok(files.some((f) => f.startsWith("apps/") && f.endsWith(".pg.test.ts")));
 });
 
 // ── R3: a `pg.<field>` the harness does not expose ────────────────────────────────────────────
@@ -43,10 +43,12 @@ test("DB_TEST_GLOB names both suites the nightly runs", () => {
 // apps/api/src/stripe-webhook.pg.test.ts.
 
 test("harnessFields parses EphemeralPostgres' real members off the committed harness", () => {
-  assert.ok(FIELDS.has("providerUrl"));
+  // The two handles whose confusion caused #383 are now BOTH named, and both mean what they say.
+  assert.ok(FIELDS.has("providerUrl")); // BYPASSRLS, owns nothing → must not TRUNCATE
+  assert.ok(FIELDS.has("ownerUrl")); // the schema owner → the only role that may TRUNCATE
   assert.ok(FIELDS.has("urlFor"));
   assert.ok(FIELDS.has("stop"));
-  assert.equal(FIELDS.has("ownerUrl"), false); // the renamed-away field
+  assert.equal(FIELDS.has("superuserUrl"), false); // never existed; the harness is not a superuser on Neon
 });
 
 test("harnessFields fails closed when the interface cannot be read", () => {
@@ -54,10 +56,14 @@ test("harnessFields fails closed when the interface cannot be read", () => {
   assert.equal(harnessFields(undefined), null);
 });
 
-test("R3 flags a reference to a harness field that no longer exists", () => {
-  const v = remoteSafetyViolations("x.pg.test.ts", "admin = createClient(pg.ownerUrl);", FIELDS);
+test("R3 flags a reference to a harness field that does not exist", () => {
+  const v = remoteSafetyViolations(
+    "x.pg.test.ts",
+    "admin = createClient(pg.superuserUrl);",
+    FIELDS,
+  );
   assert.equal(v.length, 1);
-  assert.match(v[0], /pg\.ownerUrl/);
+  assert.match(v[0], /pg\.superuserUrl/);
 });
 
 test("R3 allows every field the harness really exposes", () => {
@@ -127,15 +133,41 @@ test("R1 flags a TRUNCATE issued via .unsafe() on a provider handle", () => {
   assert.equal(remoteSafetyViolations("x.test.ts", src).length, 1);
 });
 
+// FAIL CLOSED. The first cut enumerated the handles known to be WRONG, so anything it did not
+// recognise — an alias, a handle handed to a helper, a name it had never seen — truncated freely and
+// lint stayed green. Requiring the handle to be a known OWNER binding inverts that: unrecognised is
+// now a violation, so the guard cannot be walked around by renaming.
+test("R1 flags a TRUNCATE on an ALIASED handle (the enumerate-the-bad-ones version missed this)", () => {
+  const src = `const admin = createClient(pg.providerUrl);
+    const t = admin;
+    await t\`truncate events cascade\`;`;
+  assert.equal(remoteSafetyViolations("x.test.ts", src).length, 1);
+});
+
+test("R1 flags a TRUNCATE on a handle this file never binds at all (e.g. passed in from a helper)", () => {
+  const src = `import { cleaner } from "./helpers";
+    afterEach(async () => { await cleaner\`truncate events cascade\`; });`;
+  assert.equal(remoteSafetyViolations("x.test.ts", src).length, 1);
+});
+
 test("R1 allows DELETE FROM on a provider handle — BYPASSRLS + DML both hold on Neon", () => {
   const src = `const admin = createClient(pg.providerUrl);
     afterEach(async () => { await admin\`delete from events\`; });`;
   assert.deepEqual(remoteSafetyViolations("x.test.ts", src), []);
 });
 
-test("R1 allows TRUNCATE on the webhook_owner handle — it owns the tables, and RLS never filters TRUNCATE", () => {
-  const src = `const owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+test("R1 allows TRUNCATE on the owner handle — both spellings", () => {
+  const viaField = `const owner = createClient(pg.ownerUrl);
     afterEach(async () => { await owner\`truncate events, orgs cascade\`; });`;
+  const viaUrlFor = `const owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+    afterEach(async () => { await owner\`truncate events, orgs cascade\`; });`;
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", viaField), []);
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", viaUrlFor), []);
+});
+
+test("R1 allows a TRUNCATE the test EXPECTS to be rejected (rls.test.ts asserts audit_log is WORM)", () => {
+  const src = `const owner = createClient(pg.ownerUrl);
+    await expect(owner\`truncate audit_log\`).rejects.toThrow(/append-only/i);`;
   assert.deepEqual(remoteSafetyViolations("x.test.ts", src), []);
 });
 
@@ -154,6 +186,31 @@ test("R2 flags a cap-many serial appendAuditEntry loop", () => {
   const v = remoteSafetyViolations("x.test.ts", src);
   assert.equal(v.length, 1);
   assert.match(v[0], /seedAuditChain/);
+});
+
+// R2 keys on the loop's BOUND, not on what the body calls. #413's ACTUAL defect was a loop of full
+// handler reveals — keying on `appendAuditEntry` would have let that exact shape back in.
+test("R2 flags a cap-many loop of HANDLER calls (the original #413 shape, not appendAuditEntry)", () => {
+  const src = `for (let i = 0; i < INGEST_URL_REVEAL_MAX_PER_WINDOW; i++) {
+      await h(ctx, { endpointId: ep });
+    }`;
+  assert.equal(remoteSafetyViolations("x.test.ts", src).length, 1);
+});
+
+test("R2 flags a loop bounded by a local ALIASED from the cap constant", () => {
+  const src = `const cap = EVENT_DELETE_MAX_PER_WINDOW;
+    for (let i = 0; i < cap; i++) {
+      await deleteEventWithAudit(app, { orgId, eventId }, auditKey);
+    }`;
+  assert.equal(remoteSafetyViolations("x.test.ts", src).length, 1);
+});
+
+test("R2 does not flag a cap-many loop with NO awaited work (no round-trips, no window to outlive)", () => {
+  const src = `const rows = [];
+    for (let i = 0; i < EVENT_DELETE_MAX_PER_WINDOW; i++) {
+      rows.push({ seq: i });
+    }`;
+  assert.deepEqual(remoteSafetyViolations("x.test.ts", src), []);
 });
 
 test("R2 allows the batched seeder (one insert, so the window can't age out)", () => {
