@@ -48,7 +48,7 @@ export const LISTEN_TICKET_VERSION = 1;
  */
 export const LISTEN_TICKET_TTL_SECONDS = 60;
 
-/** The signed grant: version + org + endpoint + expiry. The engine derives the DO binding from o/e. */
+/** The signed grant: version + org + endpoint + user + expiry. The engine derives the DO binding from o/e/u. */
 interface ListenTicketEnvelope {
   /** Envelope version — must equal LISTEN_TICKET_VERSION to verify. */
   v: number;
@@ -56,6 +56,15 @@ interface ListenTicketEnvelope {
   o: string;
   /** The endpoint the ticket authorizes tailing (validated to belong to `o` at mint time). */
   e: string;
+  /**
+   * The user the ticket was minted for (from the minting session, never the client). OPTIONAL, and
+   * deliberately NOT gated by a version bump: the engine and web deploy independently, so a hard v1->v2 break
+   * would 401 every live-events session in the window where one side is ahead. An ADDITIVE optional field
+   * interoperates both ways — an older userless ticket verifies fine and just falls back to the lifetime cap
+   * (no membership re-check), a newer one carries the user for the periodic re-check (S.8). Forging a userless
+   * ticket to EVADE the check is impossible: minting requires the HMAC key.
+   */
+  u?: string;
   /** Unix seconds — the ticket is dead strictly after this (now > exp). */
   exp: number;
 }
@@ -64,6 +73,8 @@ interface ListenTicketEnvelope {
 export interface ListenTicketGrant {
   readonly orgId: string;
   readonly endpointId: string;
+  /** Present on a current mint; absent on an older userless ticket (then only the lifetime cap applies). */
+  readonly userId?: string;
 }
 
 /**
@@ -104,6 +115,7 @@ export async function mintListenTicket(
     v: LISTEN_TICKET_VERSION,
     o: grant.orgId,
     e: grant.endpointId,
+    ...(grant.userId ? { u: grant.userId } : {}),
     exp: nowSeconds + LISTEN_TICKET_TTL_SECONDS,
   };
   const bytes = utf8Encoder.encode(JSON.stringify(env));
@@ -145,5 +157,8 @@ export async function verifyListenTicket(
   if (typeof env.o !== "string" || env.o === "" || typeof env.e !== "string" || env.e === "") {
     return null;
   }
-  return { orgId: env.o, endpointId: env.e };
+  // `u` is optional (deploy-compat). If present it must be a non-empty string (a malformed one is a bad
+  // ticket); if absent, the socket simply has no membership re-check and relies on the lifetime cap.
+  if (env.u !== undefined && (typeof env.u !== "string" || env.u === "")) return null;
+  return { orgId: env.o, endpointId: env.e, ...(env.u ? { userId: env.u } : {}) };
 }

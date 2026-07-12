@@ -42,7 +42,7 @@ describe("mintListenTicketAction", () => {
       expect(res.subprotocol).toBe("wbhk.listen.v1");
       const key = await importListenTicketKey(b64ToBytes(KEY_B64));
       const grant = await verifyListenTicket(key, res.ticket, Math.floor(Date.now() / 1000));
-      expect(grant).toEqual({ orgId: "org-1", endpointId: ENDPOINT });
+      expect(grant).toEqual({ orgId: "org-1", endpointId: ENDPOINT, userId: "u1" });
     }
   });
 

@@ -28,6 +28,7 @@ const HDR = {
   ORG: "x-listen-org-id",
   ENDPOINT: "x-listen-endpoint-id",
   SESSION: "x-listen-session-id",
+  USER: "x-listen-user-id",
   SINCE: "x-listen-since-cursor",
   SINCE_SPEC: "x-listen-since-spec",
 } as const;
@@ -36,6 +37,7 @@ interface Binding {
   orgId: string;
   endpointId: string;
   sessionId: string;
+  userId?: string;
 }
 type PollFn = (
   binding: Binding,
@@ -47,7 +49,11 @@ type MetaFn = (
   resume: Cursor | undefined,
 ) => Promise<{ headCursor: Cursor | null; backlogCount: number }>;
 /** The DO with its protected seams exposed for injection (tests aren't typechecked by tsc). */
-type Pollable = ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+type Pollable = ListenSession & {
+  pollEvents: PollFn;
+  backlogMeta: MetaFn;
+  checkStillMember: (binding: Binding) => Promise<boolean>;
+};
 const EMPTY_POLL: PollFn = async () => ({ events: [], caughtUp: true });
 /** A benign backlog probe (caught up, nothing behind) so connect emits a harmless status frame. */
 const EMPTY_META: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
@@ -85,11 +91,12 @@ function stubFor(sessionId: string): DurableObjectStub {
   return bindings.LISTEN_SESSION.get(bindings.LISTEN_SESSION.idFromName(sessionId));
 }
 
-function newBinding(): Binding {
+function newBinding(over: Partial<Binding> = {}): Binding {
   return {
     orgId: crypto.randomUUID(),
     endpointId: crypto.randomUUID(),
     sessionId: crypto.randomUUID(),
+    ...over,
   };
 }
 
@@ -108,6 +115,7 @@ function connect(
     [HDR.ENDPOINT]: b.endpointId,
     [HDR.SESSION]: b.sessionId,
   };
+  if (b.userId) headers[HDR.USER] = b.userId;
   if (opts.since) headers[HDR.SINCE] = opts.since;
   if (opts.sinceSpec) headers[HDR.SINCE_SPEC] = opts.sinceSpec;
   return stub.fetch("https://engine.example/listen", { headers });
@@ -128,11 +136,13 @@ async function openSession(
   b: Binding,
   poll: PollFn = EMPTY_POLL,
   meta: MetaFn = EMPTY_META,
+  stillMember: (binding: Binding) => Promise<boolean> = async () => true,
 ): Promise<{ stub: DurableObjectStub; res: Response }> {
   const stub = stubFor(b.sessionId);
   await runInDurableObject(stub, (inst) => {
     (inst as Pollable).pollEvents = poll;
     (inst as Pollable).backlogMeta = meta;
+    (inst as Pollable).checkStillMember = stillMember;
   });
   const res = await connect(stub, b);
   return { stub, res };
@@ -398,6 +408,171 @@ describe("ListenSession — session pinning", () => {
     expect((await connect(stub, { ...b, orgId: crypto.randomUUID() })).status).toBe(403);
     // The legitimate same-binding reconnect still upgrades.
     expect((await connect(stub, b)).status).toBe(101);
+  });
+});
+
+describe("ListenSession — periodic re-authorization (S.8)", () => {
+  const REVOKED = async () => false;
+  const STILL = async () => true;
+
+  // A live-events socket used to be authorized ONCE at upgrade and then hibernate across evictions for days,
+  // re-reading only its persisted binding — never re-checking that the user is still a member. So a removed
+  // member's open tab kept streaming event metadata (EventSummary) indefinitely. The dashboard ticket now
+  // carries a userId, and the poll periodically re-checks membership.
+  it("closes the socket and stops polling when the bound user is no longer a member", async () => {
+    const b = newBinding({ userId: crypto.randomUUID() });
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, REVOKED);
+    const ws = res.webSocket as WebSocket;
+    const frames: { code?: string }[] = [];
+    ws.addEventListener("message", (e) => frames.push(JSON.parse(String(e.data))));
+    let closeCode = 0;
+    ws.addEventListener("close", (e) => (closeCode = e.code));
+    ws.accept();
+
+    await runDurableObjectAlarm(stub); // the re-auth check runs on the poll tick
+
+    await vi.waitFor(() => expect(closeCode).toBe(1008)); // policy violation → client re-mints/stops
+    expect(frames.some((f) => f.code === "REAUTHORIZE")).toBe(true);
+    // Stopped: no alarm re-armed, so the DO can hibernate rather than keep streaming to a revoked user.
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
+  });
+
+  it("CONSULTS the membership check for a userful binding and keeps streaming when it passes", async () => {
+    const b = newBinding({ userId: crypto.randomUUID() });
+    let checked = false;
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, async () => {
+      checked = true;
+      return true;
+    });
+    const ws = res.webSocket as WebSocket;
+    let closeCode = 0;
+    ws.addEventListener("close", (e) => (closeCode = e.code));
+    ws.accept();
+
+    await runDurableObjectAlarm(stub);
+
+    expect(checked).toBe(true); // the seam WAS consulted (not skipped) — else "revoked" is the only guard
+    expect(closeCode).toBe(0); // and it kept streaming
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+  });
+
+  // The CLI/bearer path carries no userId (the api key is the revocable credential). The membership check
+  // must be SKIPPED there, never crash or close — revoking the key is that path's control.
+  it("does not membership-check a session with no bound user (CLI/bearer)", async () => {
+    const b = newBinding(); // no userId
+    let checked = false;
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, async () => {
+      checked = true;
+      return false;
+    });
+    (res.webSocket as WebSocket).accept();
+
+    await runDurableObjectAlarm(stub);
+
+    expect(checked).toBe(false); // never consulted for a userless binding
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+  });
+
+  // Regression guard for the fail-open throttle: a THROWING membership check must not be retried on the very
+  // next poll. Advancing lastReauthMs only on success (the bug) means a DB blip re-opens a tenant connection
+  // every ~2s poll per socket — a self-inflicted connection storm during an outage. The throttle is advanced
+  // before the read, so a throw still waits the full interval.
+  it("does not re-check membership on the next poll after the check THREW (no 2s-cadence storm)", async () => {
+    const b = newBinding({ userId: crypto.randomUUID() });
+    let calls = 0;
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, async () => {
+      calls++;
+      throw new Error("tenant db unavailable");
+    });
+    (res.webSocket as WebSocket).accept();
+
+    await runDurableObjectAlarm(stub); // first poll: checks (throws → fail open), advances the throttle
+    await runDurableObjectAlarm(stub); // immediate next poll: within the interval → must SKIP the check
+
+    expect(calls).toBe(1); // NOT 2 — the throw still advanced the throttle
+    // Failed open: the socket is kept and polling continues (the lifetime cap is the backstop).
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+  });
+
+  // The absolute-lifetime backstop: independent of membership, a socket older than the cap is closed so the
+  // client must re-mint a fresh ticket — which re-runs the session + endpoint RLS check, bounding a stale
+  // authorization (e.g. a revoked SESSION on a still-member user) even when the membership check would pass.
+  it("closes a socket past the absolute lifetime cap, forcing a re-mint", async () => {
+    const b = newBinding({ userId: crypto.randomUUID() });
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, STILL);
+    const ws = res.webSocket as WebSocket;
+    let closeCode = 0;
+    ws.addEventListener("close", (e) => (closeCode = e.code));
+    ws.accept();
+
+    // Age the binding past the cap by rewriting boundAtMs — the DO reads it on the next poll.
+    await runInDurableObject(stub, async (_i, state) => {
+      const bound = (await state.storage.get("binding")) as Record<string, unknown>;
+      await state.storage.put("binding", { ...bound, boundAtMs: 1 }); // epoch → far past the cap
+    });
+
+    await runDurableObjectAlarm(stub);
+
+    await vi.waitFor(() => expect(closeCode).toBe(1008));
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
+  });
+
+  // A socket already open when this change deployed has a binding with NO boundAtMs. `Date.now() - undefined`
+  // is NaN, so a naive `> MAX` cap silently never fires — the legacy hibernated tail would stream forever,
+  // defeating S.8 for exactly the sockets it must bound. The cap fails CLOSED on a missing clock.
+  it("terminates a legacy binding that has no boundAtMs (fail closed, not never)", async () => {
+    const b = newBinding(); // userless + (below) no boundAtMs — the pre-deploy shape
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, STILL);
+    const ws = res.webSocket as WebSocket;
+    let closeCode = 0;
+    ws.addEventListener("close", (e) => (closeCode = e.code));
+    ws.accept();
+
+    // Simulate a binding persisted before this change: strip boundAtMs.
+    await runInDurableObject(stub, async (_i, state) => {
+      const bound = (await state.storage.get("binding")) as Record<string, unknown>;
+      delete bound.boundAtMs;
+      await state.storage.put("binding", bound);
+    });
+
+    await runDurableObjectAlarm(stub);
+
+    await vi.waitFor(() => expect(closeCode).toBe(1008)); // NaN age → treated as expired → terminated
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
+  });
+
+  // The cap FORCES a re-mint; it must not KILL the session. A reconnect (same sticky sessionId, a fresh
+  // ticket the upgrade handler already verified) lands on the same DO and must reset the lifetime clock —
+  // otherwise the stale boundAtMs re-closes the fresh socket 1008 immediately and the tail wedges forever.
+  it("a reconnect after a lifetime-cap close resets the clock and streams again (not a permanent kill)", async () => {
+    const b = newBinding({ userId: crypto.randomUUID() });
+    const { stub } = await openSession(b, EMPTY_POLL, EMPTY_META, STILL);
+
+    // Age the binding past the cap, fire the alarm → first socket closed 1008 + poll stopped.
+    await runInDurableObject(stub, async (_i, state) => {
+      const bound = (await state.storage.get("binding")) as Record<string, unknown>;
+      await state.storage.put("binding", { ...bound, boundAtMs: 1 });
+    });
+    await runDurableObjectAlarm(stub);
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
+
+    // The client reconnects with the SAME sessionId (a fresh ticket already verified upstream). It must NOT
+    // be immediately re-closed: the reconnect reset boundAtMs, so a subsequent poll keeps streaming.
+    const res2 = await connect(stub, b);
+    expect(res2.status).toBe(101);
+    const ws2 = res2.webSocket as WebSocket;
+    let closeCode2 = 0;
+    ws2.addEventListener("close", (e) => (closeCode2 = e.code));
+    ws2.accept();
+
+    const bound2 = (await runInDurableObject(stub, (_i, s) => s.storage.get("binding"))) as {
+      boundAtMs: number;
+    };
+    expect(bound2.boundAtMs).toBeGreaterThan(1); // clock reset on reconnect
+
+    await runDurableObjectAlarm(stub);
+    expect(closeCode2).toBe(0); // the reconnected socket survives — no permanent kill
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
   });
 });
 

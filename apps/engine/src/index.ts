@@ -592,6 +592,7 @@ export async function handleListenUpgrade(
     // (orgId, endpointId) that the client never controls, then bind the DO from it.
     let orgId: string;
     let endpointId: string | null;
+    let userId: string | undefined; // the DO's membership re-check subject (S.8); absent on a userless key
     let acceptSubprotocol: string | undefined;
 
     // Prefer the bearer path; only take the ticket path when a ticket subprotocol is actually present and
@@ -611,6 +612,7 @@ export async function handleListenUpgrade(
         });
       }
       orgId = authz.ctx.orgId;
+      userId = authz.ctx.userId; // present for a grant-bound key; a standalone api key has none (no re-check)
       endpointId = url.searchParams.get("endpointId");
     } else {
       // Dashboard ticket path. Enforce the Origin allowlist FIRST (a cross-origin page must never even
@@ -623,6 +625,7 @@ export async function handleListenUpgrade(
       if (!grant) return new Response("invalid or expired listen ticket", { status: 401 });
       orgId = grant.orgId;
       endpointId = grant.endpointId;
+      userId = grant.userId; // dashboard tickets carry the user so the DO can re-check membership (S.8)
       acceptSubprotocol = LISTEN_SUBPROTOCOL;
     }
 
@@ -647,6 +650,10 @@ export async function handleListenUpgrade(
     headers.set("x-listen-org-id", orgId);
     headers.set("x-listen-endpoint-id", endpointId);
     headers.set("x-listen-session-id", sessionId);
+    // Bearer-derived user for the DO's periodic membership re-check (S.8). Always delete first so a client
+    // can't inject one; set only when the resolved credential actually carries a user.
+    headers.delete("x-listen-user-id");
+    if (userId) headers.set("x-listen-user-id", userId);
     // Tell the DO which subprotocol to echo on its 101 (a browser aborts if the server accepts none). Only
     // set for the ticket path; the CLI doesn't offer a subprotocol. Always delete first (never trust client).
     headers.delete("x-listen-accept-subprotocol");
@@ -1108,7 +1115,22 @@ export class DeliveryDispatcher extends WorkerEntrypoint<Env> {
 export class DeliveryEnqueuer extends WorkerEntrypoint<Env> {
   async enqueue(orgId: string, destinationId: string): Promise<void> {
     const stub = this.env.DELIVERY_DO.get(this.env.DELIVERY_DO.idFromName(destinationId));
-    await stub.wake(orgId, destinationId);
+    // Isolate wake()'s binding-mismatch throw (S.7), like the fan-out and reconciler callers do. The durable
+    // `queued` row is ALREADY written by the producer, so a mismatch must not 500 the api caller: the row
+    // stays owed and the reconciler cron re-wakes the DO. A mismatch is a mis-scoped-producer anomaly (RLS
+    // makes it unreachable in normal flow), so we log it rather than propagate — the guard is defense in
+    // depth, not a user-facing error.
+    try {
+      await stub.wake(orgId, destinationId);
+    } catch (err) {
+      console.log(
+        JSON.stringify({
+          message: "delivery.enqueue_wake_failed",
+          destinationId,
+          error: String(err),
+        }),
+      );
+    }
   }
 }
 

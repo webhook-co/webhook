@@ -39,8 +39,46 @@ describe("DeliveryDO — wake()", () => {
       });
       expect(await state.storage.getAlarm()).not.toBeNull(); // wake armed it
 
-      await s.wake("other-org", "dest-wake"); // idempotent: binding not overwritten
+      // A SECOND wake for the SAME org is idempotent: the binding is not rewritten, and it still re-arms.
+      await s.wake(ORG, "dest-wake");
       expect((await state.storage.get<{ orgId: string }>("binding"))!.orgId).toBe(ORG);
+    });
+  });
+
+  // S.7 — the TOFU binding guard, mirroring ListenSession's session-pinning (listen-session.ts:162-166).
+  // A DeliveryDO is keyed by destinationId only (idFromName(destinationId)), and pins its org on first wake.
+  // Without a guard, a wake() carrying a DIFFERENT org for an already-bound destination was accepted and
+  // SILENTLY IGNORED — it just re-armed the alarm under the FIRST org's binding. So whoever won the first-wake
+  // race owned the DO, and the rightful org's deliveries drained under the wrong org's RLS (which sees none of
+  // their rows) → they wedge, durably owed but never sent. It is a liveness/defense-in-depth gap (RLS
+  // downstream prevents a cross-org read), and the fix is the same as ListenSession's: refuse the mismatch.
+  it("REFUSES a wake that rebinds the destination to a different org, and does not re-arm on it", async () => {
+    await runInDurableObject(stubFor("dest-guard"), async (inst, state) => {
+      const s = inst as unknown as Shell;
+      s.drainOnce = async () => null;
+
+      await s.wake(ORG, "dest-guard"); // first wake pins (ORG, dest-guard)
+      await state.storage.deleteAlarm(); // clear so we can prove a rejected wake does NOT re-arm
+
+      await expect(s.wake("22222222-2222-4222-8222-222222222222", "dest-guard")).rejects.toThrow(
+        /binding mismatch/i,
+      );
+      // The binding is untouched and the rejected wake armed nothing.
+      expect((await state.storage.get<{ orgId: string }>("binding"))!.orgId).toBe(ORG);
+      expect(await state.storage.getAlarm()).toBeNull();
+    });
+  });
+
+  it("REFUSES a wake whose destinationId does not match the bound one (defense in depth)", async () => {
+    await runInDurableObject(stubFor("dest-x"), async (inst, state) => {
+      const s = inst as unknown as Shell;
+      s.drainOnce = async () => null;
+      await s.wake(ORG, "dest-x");
+      // Same DO (same name), but a wake asserting a different destinationId must be refused, never served.
+      await expect(s.wake(ORG, "dest-y")).rejects.toThrow(/binding mismatch/i);
+      expect((await state.storage.get<{ destinationId: string }>("binding"))!.destinationId).toBe(
+        "dest-x",
+      );
     });
   });
 
