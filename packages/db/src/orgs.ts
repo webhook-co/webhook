@@ -65,6 +65,37 @@ export async function createMembership(
   });
 }
 
+export interface CreateOrgWithOwnerInput extends CreateOrgInput {
+  /** The user who becomes the org's first OWNER — inserted in the SAME transaction as the org. */
+  readonly ownerUserId: string;
+}
+
+/**
+ * Create a tenant org AND its first owner membership ATOMICALLY (one transaction). This is the primitive any
+ * "create a shared org" flow (team creation, invite-accept that spins up an org) MUST use — NOT createOrg
+ * followed by createMembership, which are separate transactions: a crash between them would leave an org with
+ * NO members, a zero-owner orphan that RLS makes permanently unreachable (the same trap the last-owner guard
+ * prevents on the delete side). Here the org and its owner commit together or not at all — a bad ownerUserId
+ * (the "user" FK) rolls the whole thing back, so an orphan can never be born. The caller still owns authz
+ * (who may create an org); this primitive trusts its input.
+ */
+export async function createOrgWithOwner(
+  app: Sql,
+  input: CreateOrgWithOwnerInput,
+): Promise<CreatedOrg> {
+  const id = randomUUID();
+  const region = input.region ?? "us";
+  await withTenant(app, id, async (tx) => {
+    await tx`
+      insert into orgs (id, slug, name, region, retention_days)
+      values (${id}, ${input.slug}, ${input.name}, ${region}, ${FREE_RETENTION_DAYS})`;
+    await tx`
+      insert into memberships (org_id, user_id, role)
+      values (${id}, ${input.ownerUserId}, ${"owner"})`;
+  });
+  return { id, slug: input.slug, name: input.name, region };
+}
+
 /**
  * The tenancy bind for the OAuth issuer: is `userId` a member of `orgId`? The `/token` mint asserts this
  * before minting a key for a consent-recorded org (token-core's `isOrgMember` seam), so a tampered or
