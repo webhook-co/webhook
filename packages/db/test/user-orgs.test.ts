@@ -128,17 +128,25 @@ describe("the user-scoped policies are DENY-BY-DEFAULT", () => {
     expect(rows.some((r) => r.org_id === ginasOrg)).toBe(false);
   });
 
-  it("withUser sees the user's rows across orgs WITHOUT any tenant context", async () => {
+  it("webhook_app CANNOT read across orgs directly, even inside withUser — only the directory can", async () => {
+    // The heart of the design. A permissive `user_id = current_app_user()` policy on webhook_app would make
+    // this bare read return BOTH orgs — and would thereby make every unqualified membership read in the
+    // codebase cross-org (the Lane S.4 escalation: a team `member` who owns their personal org reading back
+    // `owner`). webhook_app has no such policy, so the raw read sees NOTHING; the capability lives only in
+    // the SECURITY DEFINER directory, which is bounded to the caller's own rows.
     const hana = `u_h_${randomUUID().slice(0, 8)}`;
     await seedUser(hana);
     const a = await seedOrg("Hana A", hana);
     const b = await seedOrg("Hana B", hana);
 
-    const rows = await withUser(
+    const raw = await withUser(
       app,
       hana,
       (tx) => tx<{ org_id: string }[]>`select org_id from memberships`,
     );
-    expect(rows.map((r) => r.org_id).sort()).toEqual([a, b].sort());
+    expect(raw).toEqual([]); // no cross-org leak through the request-path role
+
+    // …and the sanctioned path still answers the question.
+    expect((await listUserOrgs(app, hana)).map((o) => o.orgId).sort()).toEqual([a, b].sort());
   });
 });

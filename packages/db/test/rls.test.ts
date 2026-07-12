@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createClient, withTenant, type Sql } from "../src/client";
+import { createClient, withTenant, withUser, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -1311,31 +1311,44 @@ describe("webhook_reconciler cross-org delivery read", () => {
   });
 });
 
-describe("the user-scoped policies (0067) are confined to webhook_app", () => {
-  it("memberships_self_select and orgs_member_select apply to webhook_app ONLY", async () => {
-    // Load-bearing, and it bit us once already. A policy's expression is evaluated AS THE CALLING ROLE, and
-    // orgs_member_select reads `memberships` — so if these policies applied to every role, then EVERY role
-    // that merely touches `orgs` (billing, meter, sweeper, reconciler, notifier) would need a SELECT grant
-    // on `memberships` or fail with "permission denied". Un-scoping them breaks the billing writer.
-    const rows = await owner<{ policyname: string; role: string; role_count: number }[]>`
-      select
-        pol.polname as policyname,
-        (select rolname from pg_roles where oid = pol.polroles[1]) as role,
-        coalesce(array_length(pol.polroles, 1), 0) as role_count
+describe("the org-directory capability (0067) is CONFINED to the definer", () => {
+  it("gives webhook_app NO user-scoped policy — an unqualified membership read stays org-bound", async () => {
+    // THE invariant of migration 0067, and the whole reason it is shaped the way it is.
+    //
+    // The tempting design was a permissive `user_id = current_app_user()` policy ON webhook_app. Policies OR
+    // together, so that would make every membership read WITHOUT an explicit org_id silently CROSS-ORG —
+    // and `select role from memberships where user_id = $1 limit 1` (the exact shape Lane S.4 fixed, no
+    // org_id, no ORDER BY) would then return an ARBITRARY row: a plain `member` of a team who OWNS their
+    // personal org reads back `owner` and clears an owner/admin gate ON THE TEAM.
+    //
+    // So webhook_app has no such policy. Pin it: even with the user GUC set, an unqualified read as
+    // webhook_app must see nothing outside the tenant context.
+    const policies = await owner<{ polname: string }[]>`
+      select pol.polname
       from pg_policy pol
-      where pol.polname in ('memberships_self_select', 'orgs_member_select')
-      order by pol.polname`;
+      join pg_class c on c.oid = pol.polrelid
+      where c.relname in ('memberships', 'orgs')
+        and 'webhook_app'::regrole = any(pol.polroles)`;
+    expect(policies).toEqual([]); // no webhook_app-scoped policy on either table
 
-    expect(rows.map((r) => r.policyname)).toEqual([
-      "memberships_self_select",
-      "orgs_member_select",
-    ]);
-    for (const row of rows) {
-      // Exactly one role, and it is webhook_app. `polroles = {0}` (PUBLIC / all roles) would come back as
-      // role_count 1 with a null rolname — hence asserting the NAME, not just the count.
-      expect(Number(row.role_count)).toBe(1);
-      expect(row.role).toBe("webhook_app");
-    }
+    // Behavioural proof, not just catalog shape: orgA's user is in orgA only. With the user GUC set and NO
+    // tenant context, webhook_app sees NOTHING — the cross-org rows are reachable only via the definer.
+    const leaked = await withUser(
+      app,
+      orgA.userId,
+      (tx) => tx<{ org_id: string }[]>`select org_id from memberships`,
+    );
+    expect(leaked).toEqual([]);
+  });
+
+  it("…while user_org_directory() DOES resolve the caller's orgs (the capability still works)", async () => {
+    const rows = await withUser(
+      app,
+      orgA.userId,
+      (tx) => tx<{ org_id: string }[]>`select org_id from user_org_directory()`,
+    );
+    expect(rows.map((r) => r.org_id)).toContain(orgA.orgId);
+    expect(rows.map((r) => r.org_id)).not.toContain(orgB.orgId);
   });
 });
 
@@ -1358,7 +1371,7 @@ describe("no unexpected SECURITY DEFINER functions", () => {
    *   - search_path is pinned, so the definer cannot be search-path-hijacked.
    * The properties that make it safe are asserted below — the allowlist entry is not taken on trust.
    */
-  const ALLOWED_SECURITY_DEFINERS = ["org_member_directory"];
+  const ALLOWED_SECURITY_DEFINERS = ["org_member_directory", "user_org_directory"];
 
   it("has no SECURITY DEFINER functions beyond the reviewed allowlist", async () => {
     const definers = await owner<{ proname: string }[]>`

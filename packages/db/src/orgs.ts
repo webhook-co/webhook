@@ -178,29 +178,23 @@ export interface UserOrg {
  * structurally cannot answer (they can only confirm an org you already name, which is exactly why
  * `personalOrgId` DERIVES an id instead of querying for one).
  *
- * It runs under {@link withUser} — the user-scoped RLS context added in migration 0067 — and deliberately
- * sets NO tenant context: the caller is *choosing* an org, so it cannot already have one. Every row it can
- * see is gated on `user_id = current_app_user()`, so it can only ever return the caller's own memberships;
- * an unset GUC returns nothing. `userId` MUST come from the verified session — it is the entire
- * authorization boundary here.
+ * Reads through `user_org_directory()` (migration 0067), the ONE place the cross-org question may be asked.
+ * webhook_app has NO user-scoped policy of its own — deliberately, so that an unqualified membership read by
+ * the request-path role still cannot see another org, and the permissive-policy escalation this lane could
+ * so easily have introduced simply does not exist. The capability is confined to the definer function, which
+ * takes no argument and is bounded by `user_id = current_app_user()`.
  *
- * Ordered oldest-first, so a user's personal org (created at signup) leads and the ordering is stable.
+ * {@link withUser} sets that GUC (and NO tenant GUC — the caller is *choosing* an org, so it cannot already
+ * have one). `userId` MUST come from the verified session: it is the entire authorization boundary here.
+ * Ordered oldest-first (tie-broken by org id), so the personal org leads and the order is stable.
  */
 export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]> {
   const rows = await withUser(
     app,
     userId,
-    // rls-scope: user — the ONE deliberately cross-org membership read in the codebase, and the reason the
-    // user-scoped policy exists. It is safe precisely because it is bounded by `user_id = current_app_user()`
-    // (set by withUser from the verified session), so it can only ever return the CALLER's own rows.
-    // Everything else must stay org-qualified; scripts/memberships-org-scope-guard.mjs enforces that.
     (tx) =>
       tx<{ org_id: string; name: string; role: MembershipRole }[]>`
-        select m.org_id, o.name, m.role
-          from memberships m
-          join orgs o on o.id = m.org_id
-         where m.user_id = ${userId}
-         order by m.created_at asc`,
+        select org_id, name, role from user_org_directory()`,
   );
   return rows.map((r) => ({ orgId: r.org_id, name: r.name, role: r.role }));
 }

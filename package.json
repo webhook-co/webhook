@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run memberships-org-scope-guard && pnpm run cap-cron-sync-guard && pnpm run deploy-token-pr-guard && pnpm run remote-db-test-guard && pnpm run adr-no-dup && pnpm run test:scripts",
+    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run cap-cron-sync-guard && pnpm run deploy-token-pr-guard && pnpm run remote-db-test-guard && pnpm run adr-no-dup && pnpm run test:scripts",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -24,7 +24,6 @@
     "no-unverified-claims": "node scripts/no-unverified-claims.mjs",
     "tsconfig-boundary": "node scripts/tsconfig-boundary.mjs",
     "dal-gate-guard": "node scripts/dal-gate-guard.mjs",
-    "memberships-org-scope-guard": "node scripts/memberships-org-scope-guard.mjs",
     "cap-cron-sync-guard": "node scripts/cap-cron-sync-guard.mjs",
     "deploy-token-pr-guard": "node scripts/deploy-token-pr-guard.mjs",
     "remote-db-test-guard": "node scripts/remote-db-test-guard.mjs",
