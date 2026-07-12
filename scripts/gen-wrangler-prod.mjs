@@ -85,6 +85,10 @@ const TOKEN = {
   // so its quotes must be escaped or the generated wrangler.prod.jsonc is unparseable. `JSON.stringify`
   // then strip the surrounding quotes = exactly the JSON string-body escaping wrangler needs.
   "<STRIPE_PLANS>": jsonStringBody(process.env.STRIPE_PLANS ?? ""),
+  // The Billing Portal configuration id (bpc_…, S6c-ii) — pins the no-refund/at-period-end contract to a
+  // versioned config instead of the dashboard default. Optional: unset → "" → the portal uses the account
+  // default (current behaviour), so it ships dark-safe.
+  "<STRIPE_PORTAL_CONFIGURATION_ID>": process.env.STRIPE_PORTAL_CONFIGURATION_ID ?? "",
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
 };
@@ -271,6 +275,7 @@ const APPS = {
       "<FREE_EVENT_CAP>",
       "<BILLING_MODE>",
       "<STRIPE_PLANS>",
+      "<STRIPE_PORTAL_CONFIGURATION_ID>",
       "webhook-payloads-dev",
     ],
     // AUTH_SESSION_EXCHANGE — the web→auth service binding to auth.'s SessionExchange WorkerEntrypoint, so the

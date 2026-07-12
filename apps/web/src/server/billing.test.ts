@@ -6,6 +6,7 @@ const env = vi.hoisted(() => ({
   getBillingMode: vi.fn(),
   getStripePlans: vi.fn(),
   getStripeSecretKey: vi.fn(),
+  getStripePortalConfigId: vi.fn(),
 }));
 vi.mock("./env", () => env);
 
@@ -38,6 +39,7 @@ function enableBilling(
     scale: { base: "price_scale_base", overage: "price_scale_overage" },
   });
   env.getStripeSecretKey.mockResolvedValue("sk_test_x");
+  env.getStripePortalConfigId.mockReturnValue(null); // dark by default; a test overrides to assert the pin
   db.withTenantDb.mockResolvedValue({ customerId, sub, role }); // short-circuits withTenant(readOrgBilling)
   const client = {
     createCheckoutSession: vi.fn().mockResolvedValue({ id: "cs_1", url: "https://checkout" }),
@@ -207,6 +209,19 @@ describe("openBillingPortal", () => {
     const res = await openBillingPortal("org-1", "u-1");
     expect(res).toEqual({ status: "ok", url: "https://portal" });
     expect(client.createPortalSession.mock.calls[0][0].customer).toBe("cus_1");
+  });
+
+  it("PINS the portal to the configured configuration id when set (S6c-ii)", async () => {
+    const client = enableBilling("cus_1");
+    env.getStripePortalConfigId.mockReturnValue("bpc_live_1");
+    await openBillingPortal("org-1", "u-1");
+    expect(client.createPortalSession.mock.calls[0][0].configuration).toBe("bpc_live_1");
+  });
+
+  it("leaves configuration undefined (account default) when no id is configured", async () => {
+    const client = enableBilling("cus_1"); // getStripePortalConfigId → null by default
+    await openBillingPortal("org-1", "u-1");
+    expect(client.createPortalSession.mock.calls[0][0].configuration).toBeUndefined();
   });
 });
 

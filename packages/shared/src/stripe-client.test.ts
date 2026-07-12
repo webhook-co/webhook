@@ -256,7 +256,7 @@ describe("makeStripeClient hosted flows", () => {
     expect(p.has("timestamp")).toBe(false);
   });
 
-  it("createPortalSession sends the customer + return_url", async () => {
+  it("createPortalSession sends the customer + return_url; omits configuration when unset", async () => {
     const { impl, calls } = fakeFetch({ status: 200, body: { id: "ps_1", url: "https://portal" } });
     const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
     const out = await client.createPortalSession({
@@ -267,6 +267,19 @@ describe("makeStripeClient hosted flows", () => {
     const p = new URLSearchParams(calls[0].init.body as string);
     expect(p.get("customer")).toBe("cus_1");
     expect(p.get("return_url")).toBe("https://app/back");
+    expect(p.has("configuration")).toBe(false); // account default when unset
+  });
+
+  it("createPortalSession PINS the configuration when given one (S6c-ii)", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: { id: "ps_1", url: "https://portal" } });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
+    await client.createPortalSession({
+      customer: "cus_1",
+      returnUrl: "https://app/back",
+      configuration: "bpc_123",
+    });
+    const p = new URLSearchParams(calls[0].init.body as string);
+    expect(p.get("configuration")).toBe("bpc_123");
   });
 });
 

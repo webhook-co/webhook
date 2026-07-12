@@ -13,6 +13,7 @@ import {
   getProviderSecretSealer,
   getSessionSecret,
   getStripePlans,
+  getStripePortalConfigId,
   getStripeSecretKey,
 } from "./env";
 
@@ -176,6 +177,16 @@ describe("billing env accessors", () => {
       pro: { base: "price_pb", overage: "price_po" },
       scale: { base: "price_tb", overage: "price_to" },
     });
+  });
+
+  it("getStripePortalConfigId returns the bpc_ id when set, else null (dark-safe default)", () => {
+    getCloudflareContext.mockReturnValue({
+      env: { STRIPE_PORTAL_CONFIGURATION_ID: "bpc_live_123" },
+    });
+    expect(getStripePortalConfigId()).toBe("bpc_live_123");
+    getCloudflareContext.mockReturnValue({ env: {} });
+    vi.stubEnv("STRIPE_PORTAL_CONFIGURATION_ID", "");
+    expect(getStripePortalConfigId()).toBeNull(); // unset → account default
   });
 
   it("getStripePlans is fail-closed on an unset or malformed map (no Checkout beats a wrong one)", () => {

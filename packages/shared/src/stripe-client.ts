@@ -172,10 +172,13 @@ export interface StripeClient {
   createCustomer(args: { orgId: string; email?: string }): Promise<{ id: string }>;
   /** Create a hosted Checkout Session (mode=subscription) for the base + overage prices. */
   createCheckoutSession(args: CreateCheckoutArgs): Promise<StripeHostedSession>;
-  /** Create a hosted Customer Portal session (manage/cancel the subscription). `idempotencyKey` optional. */
+  /** Create a hosted Customer Portal session (manage/cancel the subscription). `idempotencyKey` optional.
+   *  `configuration` PINS the session to a specific Billing Portal configuration (`bpc_…`, S6c-ii) so the
+   *  no-refund / at-period-end contract can't drift with the dashboard default; omit for the account default. */
   createPortalSession(args: {
     customer: string;
     returnUrl: string;
+    configuration?: string;
     idempotencyKey?: string;
   }): Promise<StripeHostedSession>;
   /** Report one metered-usage event to a Stripe Billing Meter (the outbox drainer's send step). */
@@ -381,10 +384,15 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
         idempotencyKey,
       );
     },
-    async createPortalSession({ customer, returnUrl, idempotencyKey }) {
+    async createPortalSession({ customer, returnUrl, configuration, idempotencyKey }) {
       return request<StripeHostedSession>(
         "/billing_portal/sessions",
-        { customer, return_url: returnUrl },
+        {
+          customer,
+          return_url: returnUrl,
+          // Pin the portal to a specific configuration (bpc_…) when provided; omit for the account default.
+          ...(configuration ? { configuration } : {}),
+        },
         idempotencyKey,
       );
     },

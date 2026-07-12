@@ -34,6 +34,10 @@
     // (parseStripePlans fail-closed). Enterprise is contact-sales and has no entry.
     "BILLING_MODE": "<BILLING_MODE>",
     "STRIPE_PLANS": "<STRIPE_PLANS>",
+    // The Billing Portal configuration id (bpc_…, S6c-ii) — pins the no-refund / at-period-end contract to a
+    // versioned config. DEPLOY-INJECTED (optional STRIPE_PORTAL_CONFIGURATION_ID GH var); unset → "" → the
+    // portal uses the account default (current behaviour).
+    "STRIPE_PORTAL_CONFIGURATION_ID": "<STRIPE_PORTAL_CONFIGURATION_ID>",
   },
   // OpenNext emits the client/static assets under `.open-next/assets`; the worker serves them via this
   // binding (run-time-handled by the OpenNext server). No `account_id`/`routes` here — app.webhook.co is
