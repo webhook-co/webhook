@@ -15,7 +15,7 @@ import {
 } from "./replay-destination-mutations";
 import { loadSigningSecrets, toDestinationItem, type DestinationItem } from "./replay-destinations";
 import { destinationUrlError } from "../lib/destination-copy";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 // The replay-destinations mutation actions — the session/CSRF boundary (Next same-origin) + input guard +
 // error taxonomy over the mutations seam. Authz is the session + RLS-org-pinning (any org member may manage
@@ -67,7 +67,7 @@ export async function createDestinationAction(input: {
   url: string;
   label?: string;
 }): Promise<CreateDestinationResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const url = typeof input?.url === "string" ? input.url.trim() : "";
   if (!url) return { ok: false, error: "Enter a destination URL." };
   if (url.length > MAX_URL_LEN) return { ok: false, error: "That URL is too long." };
@@ -105,7 +105,7 @@ export async function createDestinationAction(input: {
 export async function deleteDestinationAction(
   destinationId: string,
 ): Promise<DestinationActionResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {
     const removed = await removeDestination({
@@ -126,7 +126,7 @@ export async function deleteDestinationAction(
 export async function enableDestinationAction(
   destinationId: string,
 ): Promise<DestinationMutationResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {
     const rec = await enableDestination({
@@ -148,7 +148,7 @@ export async function setDestinationOrderedAction(
   destinationId: string,
   ordered: boolean,
 ): Promise<DestinationMutationResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {
     const rec = await setDestinationOrdered({
@@ -173,7 +173,7 @@ export async function setDestinationOrderedAction(
 export async function rotateDestinationSecretAction(
   destinationId: string,
 ): Promise<RotateSecretResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {
     const rotated = await rotateDestinationSecret({
@@ -196,7 +196,7 @@ export async function rotateDestinationSecretAction(
 export async function listDestinationSecretsAction(
   destinationId: string,
 ): Promise<ListSecretsResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   const res = await loadSigningSecrets(session.orgId, destinationId);
   if (res.status === "not_found") return { ok: false, error: "That destination no longer exists." };

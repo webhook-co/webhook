@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The action gates on the session; stub it so the unit runs without a cookie.
-vi.mock("./session", () => ({
-  verifySession: vi.fn(async () => ({
+vi.mock("./org-access", () => ({
+  requireOrgAccess: vi.fn(async () => ({
     userId: "u",
     orgId: "o",
     user: { name: "", email: "", image: null },

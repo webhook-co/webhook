@@ -7,7 +7,7 @@ import type { Provider, ProviderSecretKind } from "@webhook-co/shared";
 import { logActionError } from "./action-log";
 import { isUuid } from "./endpoints";
 import { addSecret, revokeSecret, SealerUnavailableError } from "./provider-secret-mutations";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 // The provider-secret mutation actions — the session/CSRF boundary (Next same-origin) + input guard + error
 // taxonomy over the mutations seam. Authz is the session + RLS-org-pinning (any org member may manage the
@@ -68,7 +68,7 @@ export async function addProviderSecretAction(input: {
   secret: string;
   label?: string;
 }): Promise<AddProviderSecretResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
 
   // Runtime type guards: TS types are erased, so a crafted server-action POST can deliver non-strings —
   // coerce-guard before use so a bad payload returns a graceful error, not an unhandled 500.
@@ -138,7 +138,7 @@ export async function revokeProviderSecretAction(
   endpointId: string,
   secretId: string,
 ): Promise<ProviderSecretActionResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   // A non-uuid can never name a real row — treat it as gone (a clean error) rather than letting the db
   // raise 22P02 → a misleading retryable error (parity with the api/cli/mcp uuid input validation).
   if (!isUuid(endpointId) || !isUuid(secretId)) {
