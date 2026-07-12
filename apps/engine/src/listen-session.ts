@@ -504,7 +504,14 @@ export class ListenSession extends DurableObject<ListenEnv> {
    * viewer (the lifetime cap is the backstop), and we do NOT advance the timer, so it retries next poll.
    */
   private async reauthReason(binding: Binding): Promise<string | null> {
-    if (Date.now() - binding.boundAtMs > MAX_SESSION_LIFETIME_MS) {
+    // FAIL CLOSED on a missing/non-finite boundAtMs. A socket already open when this change deployed has a
+    // binding persisted WITHOUT boundAtMs; `Date.now() - undefined` is NaN and `NaN > MAX` is false, so the
+    // cap would never fire — and such legacy bindings also carry no userId, so the membership check is
+    // skipped too. That is exactly the socket S.8 must bound (a hibernated tail that survives the deploy):
+    // treat an absent clock as already-expired so it terminates and the client re-mints (establishing a real
+    // boundAtMs). `!Number.isFinite` catches both undefined→NaN and any garbled value.
+    const age = Date.now() - binding.boundAtMs;
+    if (!Number.isFinite(age) || age > MAX_SESSION_LIFETIME_MS) {
       return "session lifetime reached — reconnect";
     }
     if (binding.userId !== undefined && Date.now() - this.lastReauthMs > REAUTH_INTERVAL_MS) {

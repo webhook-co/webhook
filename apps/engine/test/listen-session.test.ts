@@ -517,6 +517,30 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
     expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
   });
 
+  // A socket already open when this change deployed has a binding with NO boundAtMs. `Date.now() - undefined`
+  // is NaN, so a naive `> MAX` cap silently never fires — the legacy hibernated tail would stream forever,
+  // defeating S.8 for exactly the sockets it must bound. The cap fails CLOSED on a missing clock.
+  it("terminates a legacy binding that has no boundAtMs (fail closed, not never)", async () => {
+    const b = newBinding(); // userless + (below) no boundAtMs — the pre-deploy shape
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, STILL);
+    const ws = res.webSocket as WebSocket;
+    let closeCode = 0;
+    ws.addEventListener("close", (e) => (closeCode = e.code));
+    ws.accept();
+
+    // Simulate a binding persisted before this change: strip boundAtMs.
+    await runInDurableObject(stub, async (_i, state) => {
+      const bound = (await state.storage.get("binding")) as Record<string, unknown>;
+      delete bound.boundAtMs;
+      await state.storage.put("binding", bound);
+    });
+
+    await runDurableObjectAlarm(stub);
+
+    await vi.waitFor(() => expect(closeCode).toBe(1008)); // NaN age → treated as expired → terminated
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).toBeNull();
+  });
+
   // The cap FORCES a re-mint; it must not KILL the session. A reconnect (same sticky sessionId, a fresh
   // ticket the upgrade handler already verified) lands on the same DO and must reset the lifetime clock —
   // otherwise the stale boundAtMs re-closes the fresh socket 1008 immediately and the tail wedges forever.
