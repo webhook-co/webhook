@@ -26,6 +26,8 @@ import { handleRevokeRequest } from "./revoke-route";
 import { makeSessionExchangeDeps } from "./session-exchange-deps";
 import { handleSessionExchange, isPublicSessionExchangeRetired } from "./session-exchange-route";
 import { makeSessionHandoffDeps } from "./session-handoff-deps";
+import { handleLogout } from "./logout-route";
+import { makeLogoutDeps } from "./logout-deps";
 import { handleSessionHandoff } from "./session-handoff-route";
 import { redeemAuthCode, redeemRefresh } from "./token-core";
 import { makeTokenDeps } from "./token-deps";
@@ -165,6 +167,20 @@ export function makeIssuerDefaultHandler(openNextHandler: FetchHandler): FetchHa
           return await handleDeviceVerify(deps, request);
         } finally {
           drain(ctx, close, "device_verify.pool_close_failed");
+        }
+      }
+
+      // GET /logout — end the IdP session. Mounted BEFORE the handoff for a reason: /session/handoff will
+      // happily re-mint a session from a live auth cookie, so logging out has to kill that cookie's session
+      // at the source, or "log out" means nothing.
+      if (request.method === "GET" && url.pathname === "/logout") {
+        const limited = await edgeRateLimit(rl, "logout", request, EDGE_RULES.logout);
+        if (limited) return limited;
+        const { deps, close } = await makeLogoutDeps(readAuthEnv(rawEnv), ctx);
+        try {
+          return await handleLogout(deps, request);
+        } finally {
+          drain(ctx, close, "logout.pool_close_failed");
         }
       }
 

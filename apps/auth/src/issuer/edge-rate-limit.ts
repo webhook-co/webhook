@@ -18,6 +18,7 @@ export type EdgeEndpoint =
   | "consent_complete"
   | "device_authorization"
   | "device_verify"
+  | "logout"
   | "session_handoff"
   | "session_exchange";
 
@@ -33,6 +34,7 @@ export const EDGE_RULES: Record<EdgeEndpoint, RateLimitRule> = {
   // device_verify carries its own per-user-code guess-throttle (which fails CLOSED). That is a correctness
   // gate on guessing a code, not a volume gate on the endpoint — this rule is the volume half.
   device_verify: { limit: 30, windowSeconds: 60 },
+  logout: { limit: 60, windowSeconds: 60 },
   session_handoff: { limit: 60, windowSeconds: 60 },
   session_exchange: { limit: 60, windowSeconds: 60 },
 };

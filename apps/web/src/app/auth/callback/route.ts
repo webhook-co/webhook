@@ -23,6 +23,15 @@ export async function GET(request: Request): Promise<Response> {
   const ticket = url.searchParams.get("ticket");
   const login = new URL(LOGIN_URL, url.origin);
 
+  // A failed handoff must land on a real sign-in FORM, not silently re-enter the handoff. auth.'s /login now
+  // resumes an already-signed-in user by bouncing them to /session/handoff — so a bare redirect back to
+  // /login here would loop forever whenever the ticket cannot be redeemed (expired, replayed, exchange down):
+  // login → handoff → ticket → callback fails → login → … This param is the loop breaker; /login shows the
+  // form when it is present. Its VALUE is deliberately generic — it is a signal to our own page, not a
+  // diagnosis for the user, and never carries the ticket or a raw error.
+  const failed = new URL(login);
+  failed.searchParams.set("error", "handoff_failed");
+
   if (!ticket) {
     return NextResponse.redirect(login);
   }
@@ -40,7 +49,7 @@ export async function GET(request: Request): Promise<Response> {
     console.warn(
       JSON.stringify({ message: "auth.callback.exchange_failed", error: String(error) }),
     );
-    return NextResponse.redirect(login);
+    return NextResponse.redirect(failed);
   }
 
   // Land on the dashboard with a clean URL — the ticket never enters history.

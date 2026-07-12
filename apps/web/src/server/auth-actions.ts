@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 import { sessionCookieOptions } from "./session-cookie";
 import { redirect } from "next/navigation";
 
-import { LOGIN_URL, SESSION_COOKIE } from "./session";
+import { LOGOUT_URL, SESSION_COOKIE } from "./session";
 
 // dal-gate-allow: session-management — owns the session cookie, scopes no tenant data.
 
@@ -18,5 +18,5 @@ export async function logout() {
   // `Secure` is rejected outright by the browser (RFC 6265bis §4.1.3) — the header would be dropped and
   // the session would survive logout entirely.
   (await cookies()).delete({ name: SESSION_COOKIE, ...sessionCookieOptions() });
-  redirect(LOGIN_URL);
+  redirect(LOGOUT_URL);
 }
