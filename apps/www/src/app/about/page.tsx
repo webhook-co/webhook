@@ -84,7 +84,12 @@ export default function AboutPage() {
           />
         </div>
 
-        <article className="max-w-[64ch]">
+        {/* CENTRED, not left-aligned. The hero is a two-column grid (prose + photo); leaving the prose
+            below it hard against the left edge made the photo's column read as an empty right-hand
+            sidebar running the length of the page. Centring makes the whitespace symmetric and the
+            column deliberate — an essay, which is what this is. The principles grid below breaks out
+            to the full container so the page still uses its width. */}
+        <article className="mx-auto max-w-[68ch]">
           {/* Why this exists */}
           <section aria-labelledby="why" className="mt-14">
             <h2 id="why" className={cn("mb-4", sectionH2)}>
@@ -121,22 +126,24 @@ export default function AboutPage() {
               until it&rsquo;s true, and the roadmap lives in the changelog, not the marketing.
             </p>
           </section>
-
-          {/* Principles */}
-          <section aria-labelledby="principles" className="mt-14">
-            <h2 id="principles" className={cn("mb-6", sectionH2)}>
-              What it&rsquo;s built around
-            </h2>
-            <dl className="grid gap-6 sm:grid-cols-2">
-              {PRINCIPLES.map((p) => (
-                <div key={p.title} className="rounded-card border border-hairline bg-surface p-5">
-                  <dt className="mb-1.5 font-semibold tracking-tight text-fg">{p.title}</dt>
-                  <dd className="text-sm text-pretty text-fg-secondary">{p.body}</dd>
-                </div>
-              ))}
-            </dl>
-          </section>
         </article>
+
+        {/* OUTSIDE the prose article, so it spans the full 1120px container: four cards across on a
+            wide screen. This is what stops the centred essay above from reading as a thin ribbon on a
+            big canvas — the page narrows to read, then opens back up. */}
+        <section aria-labelledby="principles" className="mt-16">
+          <h2 id="principles" className={cn("mb-6", sectionH2)}>
+            What it&rsquo;s built around
+          </h2>
+          <dl className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+            {PRINCIPLES.map((p) => (
+              <div key={p.title} className="rounded-card border border-hairline bg-surface p-5">
+                <dt className="mb-1.5 font-semibold tracking-tight text-fg">{p.title}</dt>
+                <dd className="text-sm text-pretty text-fg-secondary">{p.body}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
       </div>
 
       <FinalCta />

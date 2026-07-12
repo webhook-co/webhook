@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mockMatchMedia } from "@/lib/test-utils";
 import { axeComponent } from "@/test/axe";
 
-import { CaptureRow, PLAY_SESSION_KEY, PlayTester, type Capture } from "./play-tester";
+import { CaptureRow, PLAY_SESSION_KEY, PlayTester, verbStyle, type Capture } from "./play-tester";
 
 // The render half of the /play XSS control: captured request content is attacker-controlled, so it
 // must render as INERT text — never as HTML/DOM. React text nodes give this for free; these tests pin
@@ -435,4 +435,79 @@ describe("PlayTester — the Turnstile challenge (prod posture)", () => {
     await act(async () => solve!(null as unknown as string));
     expect(screen.getByRole("button", { name: /create a test url/i })).toBeDisabled();
   });
+});
+
+// The method badge is colour-coded from the design system's semantic token triplets. Two things must
+// hold, and only one of them is about colour:
+//   1. the verb still READS — colour is reinforcement, never the signal (WCAG 1.4.1); and
+//   2. an unknown verb degrades to neutral rather than to an unstyled/invisible chip.
+// NOTE ON WHAT THIS CAN AND CANNOT PROVE: jsdom does not apply the cascade, so asserting a class is
+// present says NOTHING about the rendered colour or its contrast. The contrast is enforced by the
+// token triplets (each bg/text pair is designed to pass together) and by the axe pass below + the
+// Playwright a11y run against the real browser. Don't mistake these class assertions for a contrast
+// test — they pin the MAPPING, not the pixels.
+describe("CaptureRow — the HTTP verb badge", () => {
+  const base: Capture = {
+    id: "v1",
+    method: "GET",
+    headers: [],
+    contentType: null,
+    body: "",
+    bodyBytes: 0,
+    truncated: false,
+    receivedAt: 0,
+  };
+
+  it("maps each verb to its semantic token, by meaning", () => {
+    expect(verbStyle("GET")).toContain("text-info"); // read
+    expect(verbStyle("POST")).toContain("text-ok"); // create
+    expect(verbStyle("PUT")).toContain("text-warn"); // update
+    expect(verbStyle("PATCH")).toContain("text-warn"); // update
+    expect(verbStyle("DELETE")).toContain("text-danger"); // remove
+  });
+
+  it("uses the matched bg/border from the same triplet — never a saturated fill", () => {
+    // A solid brand-colour chip can't hold 4.5:1 against its own label at this size. Each token
+    // triplet (text + -bg + -border) is designed to pass together; mixing families would break that.
+    for (const [verb, family] of [
+      ["GET", "info"],
+      ["POST", "ok"],
+      ["PUT", "warn"],
+      ["DELETE", "danger"],
+    ] as const) {
+      const style = verbStyle(verb);
+      expect(style).toContain(`bg-${family}-bg`);
+      expect(style).toContain(`text-${family}`);
+      expect(style).toContain(`border-${family}-border`);
+      // …and NOT the saturated fill (bg-danger, not bg-danger-bg) which would fail contrast.
+      expect(style).not.toMatch(new RegExp(`bg-${family}(?![-a-z])`));
+    }
+  });
+
+  it("degrades an unknown or metadata verb to a neutral, still-legible chip", () => {
+    for (const verb of ["OPTIONS", "HEAD", "PURGE", "banana"]) {
+      expect(verbStyle(verb)).toContain("text-fg-secondary");
+    }
+  });
+
+  it("is case-insensitive — a lowercase verb still gets its colour", () => {
+    expect(verbStyle("post")).toBe(verbStyle("POST"));
+  });
+
+  it("keeps the verb NAME as the signal — colour only reinforces it (WCAG 1.4.1)", () => {
+    const { container } = render(<CaptureRow capture={{ ...base, method: "DELETE" }} />);
+    expect(container.textContent).toContain("DELETE");
+  });
+
+  it("has no accessibility violations for any verb", async () => {
+    for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]) {
+      const { container, unmount } = render(
+        <ul>
+          <CaptureRow capture={{ ...base, method }} />
+        </ul>,
+      );
+      expect(await axeComponent(container)).toHaveNoViolations();
+      unmount();
+    }
+  }, 20000);
 });
