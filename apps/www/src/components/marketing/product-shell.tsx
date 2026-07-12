@@ -66,11 +66,18 @@ export function ProductShell({
       <section
         className={cn(
           container,
-          "grid items-center gap-x-12 gap-y-10 pt-[clamp(40px,6vw,72px)] pb-[clamp(28px,4vw,44px)]",
+          // `grid-cols-1` is LOAD-BEARING, not decoration. Without an explicit column the grid falls
+          // back to an IMPLICIT one, which is sized to max-content — so the wide terminal in `visual`
+          // stretched the column past the viewport (473px inside a 393px phone) and dragged the whole
+          // page sideways, wrecking the text alignment. Tailwind's grid-cols-1 is
+          // `repeat(1, minmax(0, 1fr))`: it lets the column SHRINK, so the wide content scrolls inside
+          // its own box instead of pushing the page. `min-w-0` on the children is the same fix for the
+          // 940px+ two-column case, where a grid item's automatic min-width is also min-content.
+          "grid grid-cols-1 items-center gap-x-12 gap-y-10 pt-[clamp(40px,6vw,72px)] pb-[clamp(28px,4vw,44px)]",
           visual && "min-[940px]:grid-cols-[minmax(0,1fr)_minmax(0,520px)]",
         )}
       >
-        <div>
+        <div className="min-w-0">
           <SectionEyebrow rule={false} className="mb-4">
             {eyebrow}
           </SectionEyebrow>
@@ -89,7 +96,7 @@ export function ProductShell({
             </Button>
           </div>
         </div>
-        {visual ? <div className="mx-auto w-full max-w-[520px]">{visual}</div> : null}
+        {visual ? <div className="mx-auto w-full max-w-[520px] min-w-0">{visual}</div> : null}
       </section>
 
       {children}
@@ -113,7 +120,9 @@ export function ProductShell({
 export function ProductFeatures({ children }: { children: ReactNode }) {
   return (
     <section className={cn(container, sectionPad, "border-t border-hairline")}>
-      <div className="grid items-start gap-5 sm:grid-cols-2 lg:grid-cols-3">{children}</div>
+      <div className="grid grid-cols-1 items-start gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        {children}
+      </div>
     </section>
   );
 }

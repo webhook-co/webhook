@@ -1,25 +1,18 @@
 import { Button, cn, Wordmark } from "@webhook-co/ui";
 
 import { NavMenus } from "@/components/marketing/nav-menus";
+import { NAV_LINKS } from "@/components/marketing/nav-links";
+import { MobileNav } from "@/components/marketing/mobile-nav";
 import { LINKS } from "@/lib/links";
 import { container, focusRing } from "@/lib/styles";
 
-// Plain top-level links; the Product dropdown is the <NavMenus/> client island. "Docs" is the ONLY
-// nav item that leaves for docs.webhook.co — Changelog and the developer deep-links moved to the
-// footer, so the top nav stays on www except that one deliberate door.
-//
-// Docs is LAST for that reason: every item before it keeps you on this site, and the one that hands
-// you off to another domain sits at the far end rather than in the middle of them.
-const navLinks = [
-  { label: "Pricing", href: LINKS.pricing },
-  { label: "About", href: LINKS.about },
-  { label: "Docs", href: LINKS.docs },
-];
+// The links live in `nav-links.ts` — ONE source, because they are rendered twice (this bar and the
+// mobile menu) and two copies would drift the first time someone adds a page.
 
 export function Nav() {
   return (
     <div className="site-nav sticky top-0 z-50 border-b border-hairline">
-      <div className={cn(container, "flex h-[3.75rem] items-center justify-between")}>
+      <div className={cn(container, "relative flex h-[3.75rem] items-center justify-between")}>
         <a
           href="/"
           aria-label="webhook.co home"
@@ -30,7 +23,7 @@ export function Nav() {
 
         <nav aria-label="Main" className="flex items-center gap-0.5 max-[940px]:hidden">
           <NavMenus />
-          {navLinks.map((link) => (
+          {NAV_LINKS.map((link) => (
             <a
               key={link.label}
               href={link.href}
@@ -49,9 +42,12 @@ export function Nav() {
             yet? Signing in creates one." Two labels for one door is just a choice the reader has to
             make for no reason. "Get started" also does the right thing for someone already signed in:
             straight to the dashboard, which "Sign in" would not. */}
-        <Button asChild size="md">
-          <a href={LINKS.startFree}>Get started</a>
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button asChild size="md" className="max-[940px]:hidden">
+            <a href={LINKS.startFree}>Get started</a>
+          </Button>
+          <MobileNav />
+        </div>
       </div>
     </div>
   );
