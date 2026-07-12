@@ -39,6 +39,8 @@ export const LINKS = {
   /** The existing docs guides estate. We rename "Blog" → "Guides" here rather than run a blog. */
   guides: `${DOCS}/guides`,
   changelog: `${DOCS}/changelog`,
+  /** The flat table of all 142 providers + their schemes/headers. No per-provider anchors exist. */
+  providerDirectory: `${DOCS}/providers/directory`,
 
   /** The docs pages each /product/* page (and the homepage showcases) deep-link to for detail. */
   concepts: {

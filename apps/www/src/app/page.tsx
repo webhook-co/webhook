@@ -3,7 +3,7 @@ import { FinalCta } from "@/components/marketing/final-cta";
 import { Hero } from "@/components/marketing/hero";
 import { HOME_FAQ_ITEMS } from "@/components/marketing/home-faq";
 import { PageShell } from "@/components/marketing/page-shell";
-import { ProviderWall } from "@/components/marketing/provider-wall";
+import { ProviderStrip } from "@/components/marketing/provider-strip";
 import { Reveal } from "@/components/marketing/reveal";
 import { Showcases } from "@/components/marketing/showcases";
 import { SurfacesTabs } from "@/components/marketing/surfaces/surfaces-tabs";
@@ -17,10 +17,10 @@ export default function HomePage() {
       <Reveal>
         <Showcases />
       </Reveal>
-      {/* The 142 providers we can verify, named. The most credible thing the site owns, and it was
-          invisible until now — the copy claimed the number while the page showed nothing. */}
+      {/* A recognisable handful of the 142 we verify, then a way through to the full registry on
+          /product/verification. The whole wall here was a thing to scroll past, not a fact to absorb. */}
       <Reveal>
-        <ProviderWall />
+        <ProviderStrip />
       </Reveal>
       <Reveal>
         <TrustBand />

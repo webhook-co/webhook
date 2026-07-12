@@ -1,4 +1,7 @@
-import { providerDisplayName, PROVIDER_LOGO_PATHS } from "@webhook-co/ui";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+import { PROVIDER_LOGO_PATHS, providerDisplayName, providerIconDomain } from "@webhook-co/ui";
 import { PROVIDERS } from "@webhook-co/webhooks-spec";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
@@ -11,17 +14,23 @@ import { ProviderWall } from "./provider-wall";
 // The registry, re-derived here exactly as the generator did. This import is TEST-ONLY: pulling
 // webhooks-spec into shipped code costs bundle bytes and breaks the TS program (Workers-vs-DOM libs).
 const EXPECTED = [...PROVIDERS]
-  .map((slug) => ({ slug, name: providerDisplayName(slug) }))
+  .map((slug) => ({
+    slug,
+    name: providerDisplayName(slug),
+    domain: providerIconDomain(slug) ?? "",
+    mark: Boolean(PROVIDER_LOGO_PATHS[slug]),
+  }))
   .sort((a, b) => a.name.localeCompare(b.name));
 
+const ICON_DIR = join(__dirname, "../../../public/providers");
+
 // The wall's whole value is that it is TRUE: it is the inventory of what the code can actually
-// verify. So it is derived from the adapter registry rather than typed out, and this test pins that
-// derivation — a hand-maintained list of 142 names would start lying the day someone adds the 143rd
-// adapter, with nothing to notice.
+// verify. So it is derived from the adapter registry rather than typed out, and pinned here — a
+// hand-maintained list of 142 would start lying the day someone adds the 143rd adapter.
 
 describe("ProviderWall", () => {
   it("is the registry, not a hand-typed list — regenerate provider-entries.ts if this fails", () => {
-    // THE PIN. If someone adds an adapter, or renames one, this fails and names the drift.
+    // THE PIN. Add or rename an adapter and this fails, naming the drift.
     expect(PROVIDER_ENTRIES).toEqual(EXPECTED);
   });
 
@@ -38,34 +47,57 @@ describe("ProviderWall", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the real brand mark for every provider that has one", () => {
-    const { container } = render(<ProviderWall />);
-    const withMark = PROVIDER_ENTRIES.filter((p) => PROVIDER_LOGO_PATHS[p.slug]);
-    // Anti-vacuity: there really are marks to render (if the data module went empty, the <svg> count
-    // below would be 0 and would still "match" a 0 expectation).
-    expect(withMark.length).toBeGreaterThan(50);
-    expect(container.querySelectorAll("svg")).toHaveLength(withMark.length);
-    // …and the marks are inline path data, not an image reference.
-    expect(container.querySelector("svg path")).toHaveAttribute("d");
+  it("has a committed icon for EVERY provider without a vector mark", () => {
+    // The guard that makes the two-tier mark scheme safe. A provider with no vector mark renders
+    // <img src="/providers/<slug>.webp"> — a file fetched once by scripts/fetch-provider-icons.mjs
+    // and committed. Add a provider and forget to run it, and the wall would ship a BROKEN IMAGE.
+    // This fails first, and tells you exactly what to run.
+    const missing = PROVIDER_ENTRIES.filter(
+      (p) => !p.mark && !existsSync(join(ICON_DIR, `${p.slug}.webp`)),
+    ).map((p) => p.slug);
+    expect(
+      missing,
+      `missing icons — run: node --experimental-strip-types scripts/fetch-provider-icons.mjs`,
+    ).toEqual([]);
+    // Anti-vacuity: there really ARE logo-less providers, so the check above isn't passing on an
+    // empty set.
+    expect(PROVIDER_ENTRIES.filter((p) => !p.mark).length).toBeGreaterThan(10);
   });
 
-  it("makes NO third-party or proxied image request — the marks are inline SVG", () => {
+  it("renders an inline vector for marked providers and a static icon for the rest", () => {
     const { container } = render(<ProviderWall />);
-    // An <img> would mean either a bundled file (over the byte budget) or a hotlink (breaks the
-    // `img-src 'self'` CSP).
-    expect(container.querySelectorAll("img")).toHaveLength(0);
-    // And crucially: NOT the dashboard's favicon-proxy route. That endpoint doesn't exist on a static
-    // export, so every logo-less provider would fire a request that 404s. Hence faviconFallback={false}.
-    expect(container.innerHTML).not.toContain("/api/provider-icon");
+    const marked = PROVIDER_ENTRIES.filter((p) => p.mark);
+    const unmarked = PROVIDER_ENTRIES.filter((p) => !p.mark);
+    expect(marked.length).toBeGreaterThan(50); // non-vacuous
+    expect(unmarked.length).toBeGreaterThan(10);
+
+    expect(container.querySelectorAll("svg")).toHaveLength(marked.length);
+    expect(container.querySelector("svg path")).toHaveAttribute("d"); // inline path data, not a ref
+    expect(container.querySelectorAll("img")).toHaveLength(unmarked.length);
   });
 
-  it("keeps the brand mark decorative — the name is the accessible text, said once", () => {
+  it("requests NOTHING from a third party — every icon is same-origin and static", () => {
     const { container } = render(<ProviderWall />);
-    const svgs = [...container.querySelectorAll("svg")];
-    expect(svgs.length).toBeGreaterThan(0); // non-vacuous
-    for (const svg of svgs) {
-      expect(svg).toHaveAttribute("aria-hidden", "true");
-      expect(svg).not.toHaveAttribute("aria-label");
+    const imgs = [...container.querySelectorAll("img")];
+    expect(imgs.length).toBeGreaterThan(0); // non-vacuous
+    for (const img of imgs) {
+      const src = img.getAttribute("src") ?? "";
+      // A hotlink would break the `img-src 'self'` CSP and leak a visitor's request to a third party.
+      expect(src).toMatch(/^\/providers\/[a-z0-9_]+\.webp$/);
+      // …and NOT the dashboard's favicon-proxy route, which doesn't exist on a static export.
+      expect(src).not.toContain("/api/provider-icon");
+      // Dimensions are set, or 142 icons landing one by one would shift the page (CLS gate).
+      expect(img).toHaveAttribute("width");
+      expect(img).toHaveAttribute("height");
+    }
+    expect(container.innerHTML).not.toMatch(/https?:\/\/(?!docs\.webhook\.co)/);
+  });
+
+  it("keeps every brand mark decorative — the name is the accessible text, said once", () => {
+    const { container } = render(<ProviderWall />);
+    for (const el of [...container.querySelectorAll("svg, img")]) {
+      expect(el).toHaveAttribute("aria-hidden", "true");
+      expect(el).not.toHaveAttribute("aria-label");
     }
   });
 

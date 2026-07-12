@@ -4,6 +4,7 @@ import {
   ProductFeatures,
   ProductShell,
 } from "@/components/marketing/product-shell";
+import { ProviderWall } from "@/components/marketing/provider-wall";
 import { VerifyCard } from "@/components/marketing/visuals/verify-card";
 import { LINKS } from "@/lib/links";
 import { proseLink } from "@/lib/styles";
@@ -65,15 +66,12 @@ export default function VerificationPage() {
             , for receiving and sending.
           </p>
         </ProductFeature>
-
-        <ProductFeature id="registry" heading="142 providers in one open registry">
-          <p>
-            Every provider&rsquo;s verification recipe lives as plain data in an Apache-2.0
-            registry: a new provider is one config row, not a hand-written adapter. Add your
-            thirteenth provider without learning a thirteenth signature dialect.
-          </p>
-        </ProductFeature>
       </ProductFeatures>
+
+      {/* The claim used to be a CARD that said "142 providers in one open registry". Showing the 142
+          is a better argument than asserting them — so the full registry lives here, on the page it
+          is actually about. The homepage shows a recognisable few and links through. */}
+      <ProviderWall />
     </ProductShell>
   );
 }
