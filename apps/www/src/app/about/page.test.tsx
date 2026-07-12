@@ -51,4 +51,26 @@ describe("AboutPage", () => {
     const { container } = render(<AboutPage />);
     expect(await axeComponent(container)).toHaveNoViolations();
   });
+
+  it("centres the prose and lets the principles grid use the full width", () => {
+    // The founder photo sits in the hero's right column. With the prose below it left-aligned, that
+    // column read as an empty right-hand SIDEBAR running the length of the page. The prose is now
+    // centred (symmetric whitespace, a deliberate essay measure) and the principles grid lives
+    // OUTSIDE the prose article so it spans the container — the page narrows to read, then opens up.
+    //
+    // ⚠️ jsdom cannot see the cascade: these assert STRUCTURE (which element the grid is nested in)
+    // and the class contract, not the rendered pixels. The visual is a human-eyeball item.
+    const { container } = render(<AboutPage />);
+
+    const article = container.querySelector("article")!;
+    expect(article.className, "the prose column must be centred, not left-aligned").toMatch(
+      /\bmx-auto\b/,
+    );
+
+    const principles = container.querySelector("#principles")!.closest("section")!;
+    expect(
+      article.contains(principles),
+      "the principles grid must NOT be inside the narrow prose column",
+    ).toBe(false);
+  });
 });
