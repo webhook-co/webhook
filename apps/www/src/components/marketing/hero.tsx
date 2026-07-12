@@ -45,25 +45,18 @@ export function Hero() {
             it to localhost. Then hand your agents an event they can act on.
           </p>
 
-          <div className="mb-4 flex flex-wrap gap-3">
+          {/* The sandbox gets a real button, not a footnote. It was a small text link under the CTAs,
+              which is the least prominent thing on the page — and it is the ONE thing here you can do
+              without an account, so it deserves the secondary slot. "Read the docs" doesn't lose its
+              home: Docs is the top-nav item, and the closing CTA still carries the button. */}
+          <div className="mb-8 flex flex-wrap gap-3">
             <Button asChild size="md">
               <a href={LINKS.startFree}>Start free</a>
             </Button>
             <Button asChild variant="secondary" size="md">
-              <a href={LINKS.docs}>Read the docs</a>
+              <a href={LINKS.play}>Try it — no signup</a>
             </Button>
           </div>
-
-          <a
-            href={LINKS.play}
-            className={cn(
-              focusRing,
-              "mb-8 inline-flex items-center gap-1.5 rounded-control text-sm text-fg-secondary transition-colors hover:text-fg",
-            )}
-          >
-            or try it now — send a webhook, no signup
-            <span aria-hidden="true">→</span>
-          </a>
 
           <ul className="flex flex-wrap gap-x-5 gap-y-2 font-mono text-xs text-fg-muted">
             {trustSignals.map(({ icon: Icon, label }) => (
@@ -80,6 +73,21 @@ export function Hero() {
             full-bleed). On desktop mx-auto is a no-op — it already fills its 520px grid track. */}
         <div className="hero-rise-inspector mx-auto w-full max-w-[520px]">
           <Inspector />
+          {/* The Inspector is an honest DEMO (fixed data, and it says so). This is the line that turns
+              it into an offer: the same thing, with the visitor's own webhook, no account.
+              Deliberately a sibling and NOT a wrapper around the card — the Inspector has its own
+              pause and replay buttons, and nesting those inside a link is both invalid and unusable
+              with a keyboard. */}
+          <a
+            href={LINKS.play}
+            className={cn(
+              focusRing,
+              "mt-3 inline-flex items-center gap-1.5 rounded-control text-sm text-fg-secondary transition-colors hover:text-fg",
+            )}
+          >
+            Send a real one and watch it land — no signup
+            <span aria-hidden="true">→</span>
+          </a>
         </div>
       </div>
     </section>
