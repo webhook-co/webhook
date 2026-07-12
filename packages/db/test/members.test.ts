@@ -397,6 +397,48 @@ describe("removeMember", () => {
     expect(await membershipRole(orgId, ownerId)).toBe("owner");
   });
 
+  it("CONCURRENT removals of two different owners cannot both win (no zero-owner org)", async () => {
+    // The last-owner guard reads an owners census and then deletes only the TARGET's row — so two
+    // transactions removing two DIFFERENT owners never contend on a row. Without a per-org lock both read
+    // owners=2, both pass the guard, and both commit: the org is left with ZERO owners, which no admin can
+    // repair (canGrantRole('admin','owner') is false). Exactly one of these must succeed.
+    const { orgId, ownerId: alice } = await seedOrg();
+    const bob = await seedMember(orgId, "owner");
+    await seedMember(orgId, "member"); // a bystander, so the org isn't emptied
+
+    const results = await Promise.allSettled([
+      removeMember(app, {
+        orgId,
+        userId: bob,
+        actorId: alice,
+        actorRole: "owner",
+        auditKey: key,
+        now: NOW,
+      }),
+      removeMember(app, {
+        orgId,
+        userId: alice,
+        actorId: bob,
+        actorRole: "owner",
+        auditKey: key,
+        now: NOW,
+      }),
+    ]);
+
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    expect(succeeded).toBe(1); // the loser must be refused, not silently allowed
+
+    // The invariant that actually matters: the org still has an owner.
+    const [census] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ owners: string }[]>`
+        select count(*) filter (where role = 'owner') as owners
+          from memberships where org_id = ${orgId}`,
+    );
+    expect(Number(census?.owners ?? 0)).toBeGreaterThanOrEqual(1);
+  });
+
   it("is idempotent — removing a non-member throws MemberNotFoundError, changing nothing", async () => {
     const { orgId, ownerId } = await seedOrg();
     await expect(

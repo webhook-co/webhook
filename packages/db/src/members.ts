@@ -88,7 +88,29 @@ export async function listOrgMembers(app: Sql, orgId: string): Promise<OrgMember
   }));
 }
 
-/** The org's owner count + the target's current role, read inside the mutation's own tx. */
+/**
+ * Serializes member mutations per org. WITHOUT this the last-owner guard is a TOCTOU: the census counts
+ * owners, but each mutation only touches the TARGET's row, so two transactions removing two DIFFERENT
+ * owners never contend on a row lock. Under READ COMMITTED (what `withTenant`'s `sql.begin()` gives) both
+ * read owners=2, both pass the `owners === 1` check, and both commit — leaving a ZERO-OWNER org, which no
+ * admin can repair (canGrantRole('admin','owner') is false) and which is exactly the permanent lockout the
+ * guard exists to prevent. A regression test runs the two removals concurrently.
+ *
+ * Taken FIRST in every member mutation, before the census, so the decision and the write are one atomic
+ * unit. It is a DIFFERENT namespace from the auth-audit chain lock (which appendAuthAuditEntry takes later
+ * in the same tx); the order is always member-lock → audit-lock, and no other writer takes them in the
+ * reverse order, so there is no deadlock cycle.
+ */
+const MEMBER_LOCK_NAMESPACE = 0x4d454d31; // "MEM1"
+
+async function lockOrgMembers(tx: TenantTx, orgId: string): Promise<void> {
+  await tx`select pg_advisory_xact_lock(hashtextextended(${orgId}, ${MEMBER_LOCK_NAMESPACE}))`;
+}
+
+/**
+ * The org's owner count + the target's current role, read inside the mutation's own tx — AFTER
+ * {@link lockOrgMembers}, so the census cannot go stale between the check and the write.
+ */
 async function readTargetAndCensus(
   tx: TenantTx,
   orgId: string,
@@ -157,6 +179,7 @@ export async function changeMemberRole(
     throw new MemberCeilingError(input.actorRole, `grant the role '${input.newRole}'`);
   }
   return withTenant(app, input.orgId, async (tx) => {
+    await lockOrgMembers(tx, input.orgId); // before the census — the guard must not be a TOCTOU
     const { role: currentRole, owners } = await readTargetAndCensus(tx, input.orgId, input.userId);
 
     // You can never act on someone who outranks you (an admin cannot touch an owner).
@@ -222,6 +245,7 @@ export async function removeMember(
   input: RemoveMemberInput,
 ): Promise<RemoveMemberResult> {
   return withTenant(app, input.orgId, async (tx) => {
+    await lockOrgMembers(tx, input.orgId); // before the census — the guard must not be a TOCTOU
     const { role: currentRole, owners } = await readTargetAndCensus(tx, input.orgId, input.userId);
 
     if (!canGrantRole(input.actorRole, currentRole)) {
