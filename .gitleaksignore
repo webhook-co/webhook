@@ -1,0 +1,10 @@
+# gitleaks false positives — suppressed by fingerprint (commit:file:rule:line).
+#
+# The marketing "surfaces" tab renders a SAMPLE captured-event object with demo dedup keys
+# (msg_… strings). gitleaks' generic-api-key rule flags them on entropy, but they are made-up
+# example values in public marketing copy — not secrets. They live only in git history (the current
+# file no longer contains them), so they can't be fixed at the source; a fingerprint ignore is the
+# correct suppression. Introduced by 71bb1701 ("feat(www): real product data in every visual").
+71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:63
+71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:74
+71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:85
