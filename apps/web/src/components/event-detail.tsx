@@ -1,12 +1,20 @@
 "use client";
 
 import {
+  Banner,
   Button,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
   CopyButton,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
   StatusPill,
   Table,
   TableBody,
@@ -19,10 +27,13 @@ import {
   providerDisplayName,
 } from "@webhook-co/ui";
 import { deriveVerificationState } from "@webhook-co/shared";
+import { useRouter } from "next/navigation";
 import * as React from "react";
+import { flushSync } from "react-dom";
 
 import { formatDateTime } from "@/lib/format";
 import { verificationCopy } from "@/lib/verification-copy";
+import type { DeleteEventResult } from "@/server/event-actions";
 import type { DetailHeader, EventDetailItem, RevealHeaderResult } from "@/server/events";
 import type { PayloadResult } from "@/server/payloads";
 import type { ReplayResult } from "@/server/replay-actions";
@@ -50,6 +61,9 @@ export interface EventDetailProps {
   destinationsError?: boolean;
   /** Replay this event to a registered destination via the engine (server action). Injected by the page. */
   replay: (eventId: string, destinationId: string) => Promise<ReplayResult>;
+  /** Delete (tombstone) this event (server action). Injected by the gated page. On success we navigate back
+   *  to the endpoint's events list — the event is no longer readable (reads filter `deleted_at`). */
+  deleteEvent: (input: { eventId: string }) => Promise<DeleteEventResult>;
 }
 
 export function EventDetail({
@@ -60,7 +74,9 @@ export function EventDetail({
   destinations,
   destinationsError,
   replay,
+  deleteEvent,
 }: EventDetailProps) {
+  const router = useRouter();
   const verification = verificationCopy(event.verification);
   // The un-forgeable server-derived state (ADR-0103): a `failed` event (signature checked + rejected) can't
   // be replayed — replaying would re-sign forged content — so we pre-gate the button rather than let the
@@ -70,12 +86,48 @@ export function EventDetail({
   const canReplay = verificationState !== "failed";
   const [replayOpen, setReplayOpen] = React.useState(false);
 
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  const [deletePending, setDeletePending] = React.useState(false);
+  const [deleteError, setDeleteError] = React.useState<string | null>(null);
+  // Synchronous in-flight latch so a double-fire (double-click / re-entrancy) can't delete twice.
+  const deletePendingRef = React.useRef(false);
+
+  async function confirmDelete() {
+    if (deletePendingRef.current) return;
+    deletePendingRef.current = true;
+    setDeletePending(true);
+    setDeleteError(null);
+    try {
+      const result = await deleteEvent({ eventId: event.id });
+      if (!result.ok) {
+        setDeleteError("We couldn't delete this event. Please try again.");
+        setDeletePending(false);
+        deletePendingRef.current = false;
+        return;
+      }
+      // flushSync the dialog close BEFORE navigating away, so Radix + react-remove-scroll run their close
+      // cleanup (restoring <body> pointer-events / scroll-lock) synchronously — otherwise React could batch
+      // the close with the navigation and strand those body styles (mirrors EndpointControls' delete).
+      flushSync(() => setDeleteOpen(false));
+      router.push(`/endpoints/${endpointId}/events`);
+    } catch {
+      setDeleteError("We couldn't delete this event. Please try again.");
+      setDeletePending(false);
+      deletePendingRef.current = false;
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-3">
           <CardTitle>Event</CardTitle>
-          <StatusPill tone={verification.tone}>{verification.pill}</StatusPill>
+          <div className="flex items-center gap-3">
+            <StatusPill tone={verification.tone}>{verification.pill}</StatusPill>
+            <Button variant="danger" size="sm" onClick={() => setDeleteOpen(true)}>
+              Delete
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <dl className="grid grid-cols-[auto_1fr] items-center gap-x-6 gap-y-2 text-sm">
@@ -186,6 +238,36 @@ export function EventDetail({
         destinationsError={destinationsError}
         replay={replay}
       />
+
+      <Dialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          if (open || deletePending) return;
+          setDeleteOpen(false);
+          setDeleteError(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this event?</DialogTitle>
+            <DialogDescription>
+              This event becomes immediately inaccessible — it disappears from this list and the API
+              — and its stored payload is purged shortly after. This can&apos;t be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError ? <Banner tone="danger">{deleteError}</Banner> : null}
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary" disabled={deletePending}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button variant="danger" onClick={confirmDelete} disabled={deletePending}>
+              Delete event
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
