@@ -27,6 +27,11 @@ jobs:
   rls-neon:
     name: rls-neon
     runs-on: ubuntu-latest
+    # Surfaced to open-issue-on-failure so the issue it files names WHAT broke, not just that
+    # something did. Both are empty when the suite dies before its own classifier runs.
+    outputs:
+      classification: ${{ steps.suite.outputs.classification }}
+      signature: ${{ steps.suite.outputs.signature }}
     steps:
       - name: Check for Neon secret
         id: guard
@@ -56,6 +61,7 @@ jobs:
           chmod +x /usr/local/bin/dbmate
           dbmate --version
       - name: RLS / tenant-leak suite vs Neon branch (retry once on TRANSIENT failure)
+        id: suite
         if: steps.guard.outputs.enabled == 'true'
         env:
           TEST_DATABASE_URL: ${{ secrets.NEON_TEST_DATABASE_URL }}
@@ -69,6 +75,22 @@ jobs:
           # Markers of a transient Neon/network failure worth one retry. A plain
           # AssertionError / TypeError / syntax error matches none of these -> fail fast.
           transient='CONNECT_TIMEOUT|Test timed out|Hook timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|socket hang up|Connection terminated|terminating connection|the database system is (starting up|shutting down)|too many clients|Client has encountered a connection error|fetch failed'
+
+          # Hand the failure job a machine-readable verdict + a bounded signature, so the issue it
+          # files says WHAT broke without a human opening the run. The signature is built from a
+          # FIXED set of error shapes rather than raw log lines: an allowlist can't accidentally
+          # carry something unexpected out of the log and into a public issue body.
+          emit() {
+            {
+              echo "classification=$1"
+              echo 'signature<<SIGEOF'
+              sed 's/\x1b\[[0-9;]*m//g' test-db.out \
+                | grep -aoE "PostgresError: [^\"]{0,70}|AssertionError: [^\"]{0,70}|permission denied for table [a-z_]+|password authentication failed for user .?[a-z_]+|Test timed out in [0-9]+ms|Hook timed out in [0-9]+ms|CONNECT_TIMEOUT|FAIL +[A-Za-z0-9/._-]+\.test\.ts" \
+                | sort -u | head -8
+              echo 'SIGEOF'
+            } >> "$GITHUB_OUTPUT"
+          }
+
           for attempt in 1 2; do
             echo "::group::pnpm test:db (attempt ${attempt}/2)"
             set +e
@@ -81,6 +103,7 @@ jobs:
             fi
             if [ "${attempt}" -eq 2 ]; then
               echo "::error title=nightly-rls::test:db failed after 2 attempts (exit ${status})"
+              emit "transient-looking, but failed BOTH attempts"
               exit "${status}"
             fi
             if grep -qiE "${transient}" test-db.out; then
@@ -88,13 +111,21 @@ jobs:
               sleep 15
             else
               echo "::error title=nightly-rls::attempt ${attempt} failed (exit ${status}) with a non-transient error; not retrying"
+              emit "NON-TRANSIENT (a deterministic failure — not Neon latency)"
               exit "${status}"
             fi
           done
 
   # On a real failure (not the clean skip when the secret is unset — that leaves rls-neon
-  # green), reuse a single rolling issue so a multi-night outage doesn't file duplicates.
-  # The issue is left un-tagged on purpose: a human comments @claude on it to investigate.
+  # green), file a NEW issue — one per failing run, never a comment on a previous one.
+  #
+  # This used to append to a single rolling issue. That thread became a pile of unrelated
+  # incidents under one title, so each new failure inherited the last one's diagnosis: the
+  # 2026-07-12 outage (#512) was three deterministic bugs, but the thread's standing advice said
+  # "failures are usually transient Neon latency" and it read as another slow night for days.
+  # One issue per failure means each has its own signature, its own state, and closes on its own.
+  #
+  # The issue is left unassigned on purpose: a human comments @claude on it to investigate.
   open-issue-on-failure:
     name: open-issue-on-failure
     needs: rls-neon
@@ -104,42 +135,43 @@ jobs:
       contents: read
       issues: write
     steps:
-      - name: Find, reopen, or create the rolling failure issue
+      - name: File a new issue for THIS failing run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          CLASSIFICATION: ${{ needs.rls-neon.outputs.classification }}
+          SIGNATURE: ${{ needs.rls-neon.outputs.signature }}
         run: |
           set -euo pipefail
           LABEL="nightly-rls-failure"
-          TITLE="nightly-rls is failing"
 
           # Idempotent: create the label if it does not exist yet.
           gh label create "$LABEL" --repo "$REPO" --color "B60205" \
             --description "Automated: the nightly RLS/tenant-leak suite failed" \
             --force >/dev/null 2>&1 || true
 
-          run_line="Run: ${RUN_URL} ($(date -u +'%Y-%m-%d %H:%M') UTC)"
-          # Single-quoted so the markdown backticks stay literal. One line — the body is
-          # assembled with printf below, which keeps YAML indentation out of the string.
-          note='This suite runs the RLS / tenant-leak tests against the real Neon branch. Failures are often transient Neon latency (a cold-start `CONNECT_TIMEOUT`, or a `Test timed out` on a round-trip-heavy test) rather than an isolation regression — open the failing run above and check the step log to tell which. To have it investigated, comment `@claude` on this issue describing what to look at.'
+          today="$(date -u +'%Y-%m-%d')"
+          title="nightly-rls failed on ${today} (run ${RUN_ID})"
 
-          num="$(gh issue list --repo "$REPO" --state all --label "$LABEL" \
-                   --limit 1 --json number --jq '.[0].number // empty')"
-
-          if [ -n "$num" ]; then
-            state="$(gh issue view "$num" --repo "$REPO" --json state --jq '.state')"
-            if [ "$state" = "CLOSED" ]; then
-              gh issue reopen "$num" --repo "$REPO"
-            fi
-            body="$(printf '%s\n\n%s\n\n%s\n' \
-              'The `nightly-rls` workflow failed again.' "$run_line" "$note")"
-            gh issue comment "$num" --repo "$REPO" --body "$body"
-            echo "updated rolling issue #${num} (was ${state})"
+          # The suite dies before the retry loop on an infra fault (e.g. the setup step), in which
+          # case there is no classification/signature to report. Say so rather than print nothing.
+          class="${CLASSIFICATION:-unknown (the suite did not reach its own failure classifier — likely a setup/infra fault)}"
+          sig="${SIGNATURE:-}"
+          if [ -n "$sig" ]; then
+            sig_block="$(printf '```\n%s\n```' "$sig")"
           else
-            body="$(printf '%s\n\n%s\n\n%s\n' \
-              'Tracking issue for failures of the scheduled `nightly-rls` workflow. It is reused (reopened + commented) on each failure rather than filed anew.' \
-              "$run_line" "$note")"
-            gh issue create --repo "$REPO" --title "$TITLE" --label "$LABEL" --body "$body"
-            echo "created rolling issue"
+            sig_block='_No recognised error signature — open the run log._'
           fi
+
+          # Single-quoted so the markdown backticks stay literal.
+          note='This suite runs the RLS / tenant-leak tests against the real Neon branch. **Do not assume it is Neon latency** — the step above already retries once on a genuinely transient error (a cold-start `CONNECT_TIMEOUT`, a `Test timed out`) and fails fast on anything deterministic, so trust the classification and read the signature. A `NON-TRANSIENT` verdict means a real bug. To have it investigated, comment `@claude` on this issue describing what to look at.'
+
+          body="$(printf '%s\n\nRun: %s\n\n**Classification:** %s\n\n**Failure signature:**\n\n%s\n\n---\n\n%s\n\nPrior failures: [`%s` issues](%s/%s/issues?q=is%%3Aissue+label%%3A%s).\n' \
+            'The `nightly-rls` workflow failed.' \
+            "$RUN_URL" "$class" "$sig_block" "$note" \
+            "$LABEL" "${GITHUB_SERVER_URL:-https://github.com}" "$REPO" "$LABEL")"
+
+          url="$(gh issue create --repo "$REPO" --title "$title" --label "$LABEL" --body "$body")"
+          echo "filed ${url}"
