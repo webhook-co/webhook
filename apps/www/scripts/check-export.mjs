@@ -61,6 +61,30 @@ try {
   if (!/Strict-Transport-Security:/i.test(headers)) {
     failures.push("out/_headers is missing Strict-Transport-Security");
   }
+
+  // /play MUST unset the inherited CSP before setting its own. This shipped broken to production:
+  // Cloudflare _headers rules are ADDITIVE, so without the `!` line /play is served with TWO
+  // Content-Security-Policy headers — and a browser enforces their INTERSECTION, not "most specific
+  // wins". The global `script-src 'self'` therefore still blocked challenges.cloudflare.com, the
+  // Turnstile script never loaded, and the sandbox's mint button stayed disabled forever. No other
+  // check could see it: the a11y/Lighthouse jobs serve out/ WITHOUT applying _headers at all.
+  const playBlock = headers.split(/^\/(?=\S)/m).find((b) => b.startsWith("play\n"));
+  if (!playBlock) {
+    failures.push("out/_headers has no /play block (the sandbox needs its own CSP)");
+  } else {
+    if (!/^\s*!\s*Content-Security-Policy\s*$/im.test(playBlock)) {
+      failures.push(
+        "out/_headers /play does not UNSET the inherited CSP (`! Content-Security-Policy`) — " +
+          "two CSP headers intersect, which blocks Turnstile and disables the mint button",
+      );
+    }
+    if (!/Content-Security-Policy:[^\n]*script-src[^;]*challenges\.cloudflare\.com/i.test(playBlock)) {
+      failures.push("out/_headers /play CSP must allow challenges.cloudflare.com in script-src");
+    }
+    if (!/Content-Security-Policy:[^\n]*connect-src[^;]*play\.wbhk\.my/i.test(playBlock)) {
+      failures.push("out/_headers /play CSP must allow play.wbhk.my in connect-src");
+    }
+  }
 } catch {
   failures.push("could not read out/_headers");
 }
