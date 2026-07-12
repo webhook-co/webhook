@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -32,6 +32,7 @@ const baseRequest: ConsentRequest = {
   redirect: { host: null, isLoopback: false },
   device: { name: "Dana's MacBook Pro" },
   org: { id: "org_1", name: "Acme Inc" },
+  orgOptions: [{ id: "org_1", name: "Acme Inc" }],
   origin: {
     ip: "203.0.113.7",
     location: "US",
@@ -72,7 +73,7 @@ describe("ConsentForm", () => {
     const actions = makeActions();
     render(<ConsentForm request={baseRequest} actions={actions} />);
     await userEvent.click(screen.getByRole("button", { name: /authorize/i }));
-    expect(actions.decide).toHaveBeenCalledWith("approve");
+    expect(actions.decide).toHaveBeenCalledWith("approve", "org_1");
     expect(await screen.findByRole("status")).toHaveTextContent(/authorized|all set/i);
   });
 
@@ -80,7 +81,7 @@ describe("ConsentForm", () => {
     const actions = makeActions();
     render(<ConsentForm request={baseRequest} actions={actions} />);
     await userEvent.click(screen.getByRole("button", { name: /deny/i }));
-    expect(actions.decide).toHaveBeenCalledWith("deny");
+    expect(actions.decide).toHaveBeenCalledWith("deny", "org_1");
     expect(await screen.findByRole("status")).toHaveTextContent(/denied/i);
   });
 
@@ -283,5 +284,45 @@ describe("fmtDuration", () => {
     expect(fmtDuration(1_800)).toBe("30 minutes");
     expect(fmtDuration(60)).toBe("1 minute");
     expect(fmtDuration(90)).toBe("90 seconds");
+  });
+});
+
+// ---- org selection (Lane 2.4b) --------------------------------------------------------------------
+// An app authorized on this screen gets access to ONE org's data. When the user belongs to more than one
+// (i.e. they were invited to a team), the choice has to be here — not derived behind their back, which is
+// how a teammate's CLI used to end up in their own empty personal org.
+
+const twoOrgs = {
+  ...baseRequest,
+  org: { id: "org_1", name: "Acme Inc" },
+  orgOptions: [
+    { id: "org_1", name: "Acme Inc" },
+    { id: "org_2", name: "Beta Team" },
+  ],
+};
+
+describe("ConsentForm — organization", () => {
+  it("renders the org as plain text when there is nothing to choose", () => {
+    render(<ConsentForm request={baseRequest} actions={makeActions()} />);
+    expect(screen.getByText("Acme Inc")).toBeInTheDocument();
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+  });
+
+  it("offers a picker when the user belongs to several orgs, defaulting to the ticket's default", () => {
+    render(<ConsentForm request={twoOrgs} actions={makeActions()} />);
+    const select = screen.getByRole("combobox");
+    expect(select).toHaveValue("org_1"); // the default (their personal org)
+    expect(screen.getByRole("option", { name: "Beta Team" })).toBeInTheDocument();
+  });
+
+  it("authorizes for the org the user PICKED, not the default", async () => {
+    const user = userEvent.setup();
+    const actions = makeActions();
+    render(<ConsentForm request={twoOrgs} actions={actions} />);
+
+    await user.selectOptions(screen.getByRole("combobox"), "org_2");
+    await user.click(screen.getByRole("button", { name: /authorize/i }));
+
+    await waitFor(() => expect(actions.decide).toHaveBeenCalledWith("approve", "org_2"));
   });
 });

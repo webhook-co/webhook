@@ -13,6 +13,7 @@ const VALID_REQUEST = {
   client: { id: "cli_wbhk", name: "webhook CLI", identityDomain: null, verified: false },
   redirect: { host: "127.0.0.1", isLoopback: true },
   org: { id: "org_1", name: "Personal" },
+  orgOptions: [{ id: "org_1", name: "Personal" }],
   origin: { ip: "203.0.113.7", location: null },
   scopes: ["events:read"],
   audience: "https://api.webhook.co",
@@ -70,5 +71,33 @@ describe("ConsentDecisionSchema", () => {
       ConsentDecisionSchema.safeParse({ requestId: "a", csrfToken: "", decision: "approve" })
         .success,
     ).toBe(false);
+  });
+});
+
+// The org candidate list (Lane 2.4b): the screen may offer a choice, and the decision may carry the pick —
+// but the SERVER validates it against what the ticket sealed. The contract only has to carry it.
+describe("org selection", () => {
+  it("requires at least one org option (the default is always among them)", () => {
+    expect(ConsentRequestSchema.safeParse({ ...VALID_REQUEST, orgOptions: [] }).success).toBe(
+      false,
+    );
+  });
+
+  it("accepts several org options — the user was invited to a team", () => {
+    const parsed = ConsentRequestSchema.safeParse({
+      ...VALID_REQUEST,
+      orgOptions: [
+        { id: "org_1", name: "Personal" },
+        { id: "org_2", name: "Acme Team" },
+      ],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("lets the decision carry the picked org — and works without it (no choice offered)", () => {
+    const base = { requestId: "r", csrfToken: "c", decision: "approve" as const };
+    expect(ConsentDecisionSchema.safeParse(base).success).toBe(true);
+    expect(ConsentDecisionSchema.safeParse({ ...base, orgId: "org_2" }).success).toBe(true);
+    expect(ConsentDecisionSchema.safeParse({ ...base, orgId: "" }).success).toBe(false);
   });
 });

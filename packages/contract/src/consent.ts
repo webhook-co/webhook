@@ -39,8 +39,16 @@ export const ConsentRequestSchema = z.object({
   redirect: z.object({ host: z.string().nullable(), isLoopback: z.boolean() }),
   /** Present for the device-code flow: the device the user-code was entered on. */
   device: z.object({ name: z.string() }).optional(),
-  /** The org the grant is for (the consenting user's active org). */
+  /** The org the grant is for — the DEFAULT selection (the user's first/personal org). */
   org: z.object({ id: z.string(), name: z.string() }),
+  /**
+   * Every org the consenting user belongs to — the candidate list the screen may offer (Lane 2.4). Sealed
+   * into the consent ticket at /authorize time from the user's live memberships, so the decision endpoint
+   * can VALIDATE a form-supplied choice against it rather than trusting the page. One entry means no choice
+   * to make (the screen renders the org read-only); more than one means the user picks which org the app is
+   * being authorized for. Always contains `org`.
+   */
+  orgOptions: z.array(z.object({ id: z.string(), name: z.string() })).min(1),
   /**
    * Where the request originates — a trust signal. `location` is the best-effort 2-letter country (may be
    * null). `city`/`region`/`regionCode` are best-effort geo from the edge — OPTIONAL + nullable (additive;
@@ -70,5 +78,11 @@ export const ConsentDecisionSchema = z.object({
   requestId: z.string().min(1),
   csrfToken: z.string().min(1),
   decision: z.enum(["approve", "deny"]),
+  /**
+   * The org the user picked, when the screen offered a choice. UNTRUSTED — the decision endpoint MUST check
+   * it against the candidate list sealed in the ticket and refuse anything else; a page cannot widen which
+   * org an app is authorized for. Absent ⇒ the ticket's default org.
+   */
+  orgId: z.string().min(1).optional(),
 });
 export type ConsentDecision = z.infer<typeof ConsentDecisionSchema>;

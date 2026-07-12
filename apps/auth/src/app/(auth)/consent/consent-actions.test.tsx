@@ -11,6 +11,7 @@ const request: ConsentRequest = {
   client: { id: "cli", name: "webhook CLI", identityDomain: null, verified: false },
   redirect: { host: "127.0.0.1", isLoopback: true },
   org: { id: "org", name: "Acme Inc" },
+  orgOptions: [{ id: "org", name: "Acme Inc" }],
   origin: {
     ip: "203.0.113.7",
     location: "US",
