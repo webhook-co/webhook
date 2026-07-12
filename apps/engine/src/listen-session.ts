@@ -38,8 +38,9 @@ export const POLL_INTERVAL_MS = 2_000;
 /**
  * How often the poll re-checks that the bound user is still a member of the org (S.8). The socket is
  * authorized once at upgrade and then hibernates across evictions for days; without a re-check, a removed
- * member's open tab keeps streaming event metadata. ~30s bounds that leak without adding meaningful load
- * (one indexed membership read, on the poll's existing tenant connection).
+ * member's open tab keeps streaming event metadata. ~30s bounds that leak without adding meaningful load:
+ * one indexed membership read on a short-lived tenant client (the same per-operation client pattern the poll
+ * already uses every ~2s), and only once per interval, not every poll.
  */
 export const REAUTH_INTERVAL_MS = 30_000;
 
