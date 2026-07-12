@@ -7,11 +7,15 @@ import { IngestUrlReveal } from "./ingest-url-reveal";
 // blocking render path — the page streams it in behind a <Suspense>). It maps the reveal result to the URL +
 // copy affordance, or the rotate-to-reveal hint when there's no recoverable copy. The retry/fail-soft logic
 // lives in revealEndpointIngestUrl (its own suite); here we mock that seam and prove the render mapping.
-vi.mock("@/server/endpoint-reveal", () => ({ revealEndpointIngestUrl: vi.fn() }));
-import { revealEndpointIngestUrl } from "@/server/endpoint-reveal";
+vi.mock("@/server/endpoint-reveal", () => ({
+  revealEndpointIngestUrl: vi.fn(),
+  recordIngestUrlDisclosure: vi.fn(async () => {}),
+}));
+import { recordIngestUrlDisclosure, revealEndpointIngestUrl } from "@/server/endpoint-reveal";
 
 const reveal = vi.mocked(revealEndpointIngestUrl);
-const props = { orgId: "org-1", endpointId: "ep-1" };
+const record = vi.mocked(recordIngestUrlDisclosure);
+const props = { orgId: "org-1", userId: "u-1", endpointId: "ep-1" };
 
 beforeEach(() => reveal.mockReset());
 
@@ -37,5 +41,24 @@ describe("IngestUrlReveal", () => {
     // Critically: NO rotate advice for a transient failure (the token still exists).
     expect(screen.queryByText(/rotate/i)).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /copy/i })).not.toBeInTheDocument();
+  });
+});
+
+describe("IngestUrlReveal — disclosure audit (S.9)", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("records the disclosure when a URL is actually shown", async () => {
+    reveal.mockResolvedValue({ kind: "url", url: "https://wbhk.my/tok" });
+    render(await IngestUrlReveal(props));
+    expect(record).toHaveBeenCalledWith({ orgId: "org-1", userId: "u-1", endpointId: "ep-1" });
+  });
+
+  it("does NOT record when nothing was disclosed (no-copy / unavailable)", async () => {
+    for (const kind of ["no-copy", "unavailable"] as const) {
+      vi.clearAllMocks();
+      reveal.mockResolvedValue({ kind });
+      render(await IngestUrlReveal(props));
+      expect(record).not.toHaveBeenCalled();
+    }
   });
 });

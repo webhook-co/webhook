@@ -3,7 +3,13 @@ import "server-only";
 import type { IngestUrlRevealerRpc } from "@webhook-co/shared";
 
 import { normalizeIngestApex } from "./endpoint-mutations";
-import { getIngestBaseUrl, getIngestUrlRevealer } from "./env";
+import { auditIngestUrlDisclosureOnce } from "@webhook-co/db/ingest-url-reveal";
+import { userActor } from "@webhook-co/shared";
+import { importAuditKey } from "@webhook-co/shared/audit";
+import { b64ToBytes } from "@webhook-co/shared/bytes";
+
+import { getTenantDb } from "./db";
+import { getAuditChainKey, getIngestBaseUrl, getIngestUrlRevealer } from "./env";
 
 // The dashboard's always-shown ingest URL (S8-remainder Slice 2b / decision-0018 / ADR-0101). The
 // endpoint-detail page displays the wbhk.my/<token> URL PERSISTENTLY, as part of the endpoint's own config
@@ -121,5 +127,43 @@ export async function revealEndpointIngestUrl(
     // normalizeIngestApex, or a binding-lookup fault) must NEVER crash the endpoint page. Degrade to the hint.
     logRevealFault("endpoint.reveal_failed", fatal);
     return { kind: "unavailable" };
+  }
+}
+
+/**
+ * Record the DASHBOARD ingest-URL disclosure to the tamper-evident audit chain — best-effort, deduped to the
+ * FIRST view per (actor, endpoint) (S.9). Call ONLY after `revealEndpointIngestUrl` returned a real URL.
+ *
+ * FAIL-SOFT by contract, like the reveal itself: it runs inside the same <Suspense> with no error boundary,
+ * so it must NEVER throw (a throw would blank the endpoint page) and must never block showing the URL — the
+ * audit is a side effect of the disclosure, not a gate on it. Any fault degrades to a logged no-op; the URL
+ * is already rendered regardless.
+ *
+ * Kept SEPARATE from `revealEndpointIngestUrl` (which deliberately holds no DB pool): the reveal is the
+ * engine unseal, this is the control-plane audit. The dashboard has a real `session.userId`, so the row is
+ * attributed to the human (`user:<id>`) — better attribution than the api path's null-actor bearer.
+ */
+export async function recordIngestUrlDisclosure(input: {
+  orgId: string;
+  userId: string;
+  endpointId: string;
+}): Promise<void> {
+  try {
+    const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
+    const app = await getTenantDb();
+    try {
+      await auditIngestUrlDisclosureOnce(
+        app,
+        auditKey,
+        input.orgId,
+        userActor(input.userId),
+        input.endpointId,
+      );
+    } finally {
+      await app.end({ timeout: 5 }).catch(() => {});
+    }
+  } catch (err) {
+    // Never blank the page over an audit hiccup. Log so a persistently-failing disclosure audit is visible.
+    logRevealFault("endpoint.disclosure_audit_failed", err);
   }
 }

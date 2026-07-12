@@ -71,7 +71,7 @@ export default async function EndpointDetailPage({ params }: { params: Promise<{
             endpoint={result.endpoint}
             ingestUrlSlot={
               <Suspense fallback={<IngestUrlRevealSkeleton />}>
-                <IngestUrlReveal orgId={session.orgId} endpointId={id} />
+                <IngestUrlReveal orgId={session.orgId} userId={session.userId} endpointId={id} />
               </Suspense>
             }
             rotateEndpoint={rotateEndpointAction}

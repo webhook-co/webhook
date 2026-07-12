@@ -7,9 +7,9 @@
 // where a named binding from a transpiled-package `export *` barrel resolves to `undefined` at runtime — so
 // `new CapabilityFault` would throw "not a constructor" on the RATE_LIMITED path (see [[turbopack-contract-barrel]]).
 import { CapabilityFault } from "@webhook-co/contract/capability";
-import type { AuditActorInput } from "@webhook-co/shared";
+import { formatAuditActor, type AuditActorInput } from "@webhook-co/shared";
 
-import { appendAuditEntry } from "./audit-append";
+import { appendAuditEntry, AUDIT_LOCK_NAMESPACE } from "./audit-append";
 import { withTenant, type Sql } from "./client";
 
 /** The audit action a reveal writes — a bearer-credential disclosure must be attributable + detectable. */
@@ -71,4 +71,49 @@ export async function appendIngestUrlRevealAudit(
       target: endpointId,
     }),
   );
+}
+
+/**
+ * Record the DASHBOARD ingest-URL disclosure — but only the FIRST time a given actor sees a given endpoint's
+ * URL (S.9). Returns true if a row was written, false if this actor had already been recorded for this
+ * endpoint.
+ *
+ * The dashboard shows the URL as always-shown config (ADR-0101), so there is no discrete reveal action to
+ * audit and per-render auditing would flood the tamper-evident chain (the exact thing ADR-0101 avoided). A
+ * deduped first-disclosure event closes the gap the plan flags — the dashboard disclosure was invisible to
+ * the audit chain — without the spam: an attributable "this human retrieved this endpoint's ingest
+ * credential" record, with BETTER attribution than the api path (a real `user:<id>`, not the null actor a
+ * bearer key carries).
+ *
+ * Atomic: takes the SAME per-org advisory lock appendAuditEntry uses BEFORE the exists-check, so two
+ * concurrent first-renders can't both write. Runs under the org's RLS as webhook_app.
+ */
+export async function auditIngestUrlDisclosureOnce(
+  app: Sql,
+  auditKey: CryptoKey,
+  orgId: string,
+  actor: AuditActorInput,
+  endpointId: string,
+): Promise<boolean> {
+  const actorStr = formatAuditActor(actor);
+  return withTenant(app, orgId, async (tx) => {
+    // Serialize with any concurrent disclosure/audit-append for this org, so the exists-check + append is
+    // one critical section (xact-scoped, auto-released on commit) — otherwise two simultaneous first renders
+    // would each pass the check and write a duplicate row.
+    await tx`select pg_advisory_xact_lock(hashtextextended(${orgId}, ${AUDIT_LOCK_NAMESPACE}))`;
+    const [seen] = await tx<{ one: number }[]>`
+      select 1 as one from audit_log
+      where action = ${INGEST_URL_REVEAL_AUDIT_ACTION}
+        and target = ${endpointId}
+        and actor = ${actorStr}
+      limit 1`;
+    if (seen) return false;
+    await appendAuditEntry(tx, auditKey, {
+      orgId,
+      actor,
+      action: INGEST_URL_REVEAL_AUDIT_ACTION,
+      target: endpointId,
+    });
+    return true;
+  });
 }
