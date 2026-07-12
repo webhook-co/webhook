@@ -249,4 +249,20 @@ describe("readDeliveryStatsSeries", () => {
     // b sees exactly its own single day, not a's.
     expect(bSeries).toHaveLength(1);
   });
+
+  it("bounds the read to [end-(days-1) .. end] — a past endMs excludes newer rows", async () => {
+    const { orgId } = await seedOrg("ds-bound");
+    // Insert delivery_stats rows directly (past the rollup's settle window) across Jul 4..Jul 7.
+    await withTenant(app, orgId, async (tx) => {
+      for (const daysAgo of [0, 1, 2, 3]) {
+        await tx`insert into delivery_stats (org_id, window_start, delivered_count)
+                 values (${orgId}, ${dayIso(daysAgo)}, ${10 + daysAgo})`;
+      }
+    });
+    // Window ends on a PAST day (Jul 5 = 2 days ago), 3 days → Jul 3..Jul 5. Jul 6 + Jul 7 must be excluded
+    // by the upper bound, so the read stays ≤ days rows even for a past custom range.
+    const pastEnd = Date.UTC(2026, 6, 5, 12);
+    const series = await withTenant(app, orgId, (tx) => readDeliveryStatsSeries(tx, 3, pastEnd));
+    expect(series.map((d) => d.windowStart)).toEqual([dayIso(3), dayIso(2)]); // Jul 4, Jul 5 (Jul 3 absent)
+  });
 });

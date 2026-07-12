@@ -29,5 +29,5 @@ export function DashboardDateFilter() {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
-  return <DateRangeFilter value={value} onApply={onApply} />;
+  return <DateRangeFilter value={value} onApply={onApply} subject="delivery date" />;
 }

@@ -33,6 +33,12 @@ export interface DateRangeFilterProps {
    * sends `{ from, to, range: "" }` — the two date modes are mutually exclusive, so each clears the other.
    */
   readonly onApply: (patch: Record<string, string>) => void;
+  /**
+   * What the control filters by, for the trigger's aria-label ("Filter by <subject>: …"). Defaults to
+   * "received date" (the events list). The dashboard passes "delivery date" — it scopes delivery outcomes,
+   * not received-at — so screen readers announce the right thing.
+   */
+  readonly subject?: string;
 }
 
 // The wire `?to=` is an EXCLUSIVE upper bound (received_at < to), shared with `--before` on the CLI for
@@ -51,7 +57,11 @@ function shiftUtcDay(ymd: string, delta: number): string | undefined {
 // a graphical range calendar — no separate row. A Popover (not a DropdownMenu) hosts them so the calendar
 // keeps normal keyboard behavior (a menu would hijack arrow keys). A valid preset OWNS the range (mirrors
 // the parser, which ignores from/to under a preset); selecting calendar days clears the preset.
-export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
+export function DateRangeFilter({
+  value,
+  onApply,
+  subject = "received date",
+}: DateRangeFilterProps) {
   const active = hasDateRange(value);
 
   function pickPreset(id: string) {
@@ -84,7 +94,7 @@ export function DateRangeFilter({ value, onApply }: DateRangeFilterProps) {
       <PopoverTrigger asChild>
         <button
           type="button"
-          aria-label={`Filter by received date: ${activeDateLabel(value)}`}
+          aria-label={`Filter by ${subject}: ${activeDateLabel(value)}`}
           className={[
             "inline-flex h-[2.625rem] items-center gap-2 rounded-control border bg-surface px-3 text-base",
             "font-sans transition-[box-shadow,border-color] duration-[var(--wh-dur-fast)] ease-[var(--wh-ease-swift)]",

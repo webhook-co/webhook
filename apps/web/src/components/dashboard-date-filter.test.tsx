@@ -22,7 +22,8 @@ describe("DashboardDateFilter", () => {
   it("shows the default (all time / any) trigger when no window is set", () => {
     currentParams = new URLSearchParams();
     render(<DashboardDateFilter />);
-    // No range/from/to → the picker renders its inactive trigger (a labelled button), not a crash.
-    expect(screen.getByRole("button", { name: /filter by/i })).toBeInTheDocument();
+    // No range/from/to → the picker renders its inactive trigger, labelled for the DELIVERY-outcomes
+    // context (not the events list's "received date").
+    expect(screen.getByRole("button", { name: /filter by delivery date/i })).toBeInTheDocument();
   });
 });
