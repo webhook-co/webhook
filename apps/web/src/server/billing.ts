@@ -29,7 +29,7 @@ import {
 
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
-import { getBillingMode, getStripePlans, getStripeSecretKey } from "./env";
+import { getBillingMode, getStripePlans, getStripePortalConfigId, getStripeSecretKey } from "./env";
 
 // The dashboard billing actions (S4.4b) — hosted Stripe Checkout (upgrade) + Customer Portal (manage).
 // Everything is gated on BILLING_MODE: unless it is test/live AND the Stripe key + price ids are configured,
@@ -174,6 +174,9 @@ export async function openBillingPortal(
     const session = await client.createPortalSession({
       customer: customerId,
       returnUrl: BILLING_RETURN_URL,
+      // Pin the portal configuration (S6c-ii) so the no-refund / at-period-end contract can't drift with a
+      // dashboard toggle. `?? undefined`: unset ⇒ the account default (current behaviour), so this is dark-safe.
+      configuration: getStripePortalConfigId() ?? undefined,
     });
     return { status: "ok", url: session.url };
   } catch (error) {

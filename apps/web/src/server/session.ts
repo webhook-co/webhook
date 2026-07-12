@@ -23,6 +23,17 @@ export const SESSION_COOKIE = sessionCookieName();
  */
 export const LOGIN_URL = process.env.AUTH_LOGIN_URL || `${getAuthBaseUrl()}/login`;
 
+/**
+ * Where SIGNING OUT goes — auth.'s `/logout`, which ends the IdP session, not `/login`, which now RESUMES it.
+ *
+ * These two must not be confused, and the distinction is load-bearing. The unauthenticated GATE (an absent or
+ * expired app. cookie) sends you to {@link LOGIN_URL}, and auth. is expected to sign you straight back in if
+ * its own session is still live — that is single sign-on working. Logout is the opposite intent: it must
+ * DESTROY that session. Pointed at /login it would do the reverse of what the user asked, bouncing them back
+ * into the dashboard they just left.
+ */
+export const LOGOUT_URL = process.env.AUTH_LOGOUT_URL || `${getAuthBaseUrl()}/logout`;
+
 /** The app. session lifetime — the signed cookie's TTL. The user re-authenticates after this. */
 export const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7; // 7 days
 

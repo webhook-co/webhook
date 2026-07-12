@@ -57,19 +57,30 @@ describe("GET /auth/callback", () => {
     expect(session?.userId).toBe("usr_dana");
   });
 
-  it("redirects to login and sets no cookie when no ticket is present", async () => {
+  it("redirects to login WITHOUT the error flag when no ticket is present", async () => {
     const res = await GET(new Request("https://app.test/auth/callback"));
     expect(exchangeTicket).not.toHaveBeenCalled();
     expect(setCookieOf(res)).toBe("");
-    expect(res.headers.get("location")).toContain("login");
+    const location = res.headers.get("location") ?? "";
+    expect(location).toContain("login");
+    // A bare visit is not a FAILED handoff — it must not carry the loop-breaker flag, or a signed-in user
+    // would be stranded on the form instead of resumed.
+    expect(location).not.toContain("error=handoff_failed");
   });
 
-  it("redirects to login and sets no cookie when the exchange fails (invalid/expired ticket)", async () => {
+  // THE LOOP-BREAKER PRODUCER CONTRACT. auth.'s /login now resumes an already-signed-in user by bouncing to
+  // /session/handoff. If this failure redirect were a BARE /login, a live IdP session would bounce right back
+  // into the handoff that just failed — login → handoff → ticket → fail → login → … forever. The `error=`
+  // flag is what makes /login show the form instead. Asserting only `contains("login")` would let a
+  // regression to bare /login pass and silently reintroduce the lockout, so pin the exact query.
+  it("redirects to login WITH error=handoff_failed when the exchange fails (breaks the resume loop)", async () => {
     exchangeTicket.mockImplementationOnce(async () =>
       Promise.reject(new Error("session exchange failed: 401")),
     );
     const res = await GET(new Request("https://app.test/auth/callback?ticket=sxt_bad"));
     expect(setCookieOf(res)).toBe("");
-    expect(res.headers.get("location")).toContain("login");
+    const location = new URL(res.headers.get("location") ?? "", "https://app.test");
+    expect(location.pathname.endsWith("/login")).toBe(true);
+    expect(location.searchParams.get("error")).toBe("handoff_failed");
   });
 });

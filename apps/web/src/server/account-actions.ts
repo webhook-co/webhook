@@ -10,7 +10,7 @@ import { redirect } from "next/navigation";
 
 import { getTenantDb } from "./db";
 import { getAccountDeleterBinding, getAuditChainKey } from "./env";
-import { LOGIN_URL, SESSION_COOKIE, verifySession } from "./session";
+import { LOGOUT_URL, SESSION_COOKIE, verifySession } from "./session";
 
 /**
  * Permanently erase the signed-in user's account (right to erasure, slice 2.2):
@@ -62,5 +62,5 @@ export async function deleteAccount(formData: FormData): Promise<void> {
   // Same attributes as the set — a `__Host-` cookie cleared without `Secure` is rejected by the browser
   // and the session would survive (RFC 6265bis §4.1.3).
   (await cookies()).delete({ name: SESSION_COOKIE, ...sessionCookieOptions() });
-  redirect(LOGIN_URL);
+  redirect(LOGOUT_URL);
 }

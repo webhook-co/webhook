@@ -206,12 +206,17 @@ export function plain(
 ): Response {
   // No Set-Cookie, no Access-Control-* — wbhk.my is cookieless + no-CORS by construction. nosniff:
   // wbhk.my now answers browser-facing GET/HEAD/OPTIONS (accept-all-verbs), so pin the declared
-  // content-type against MIME sniffing on every text response.
+  // content-type against MIME sniffing on every text response. HSTS (S6a) on every plain() text response
+  // (capture ack, liveness, 404/405/413/429/500) so a browser-reachable https response carries the
+  // auto-upgrade directive; a caller-supplied `strict-transport-security` in `headers` (e.g.
+  // LIVENESS_HEADERS) is identical, so the spread just dedups. (The provider-specific handshake/challenge
+  // and Slack url_verification replies build their own Response and are server-to-server, so HSTS is moot.)
   return new Response(body, {
     status,
     headers: {
       "content-type": "text/plain; charset=utf-8",
       "x-content-type-options": "nosniff",
+      "strict-transport-security": "max-age=63072000",
       ...headers,
     },
   });
@@ -251,6 +256,12 @@ export function ingestPathToken(url: URL): string {
 export const LIVENESS_HEADERS = {
   "referrer-policy": "no-referrer",
   "x-robots-tag": "noindex",
+  // HSTS (S6a): once a browser sees this over https, it auto-upgrades future wbhk.my requests to https,
+  // so a pasted `http://wbhk.my/...` never leaves the client in cleartext. Host-scoped (no
+  // includeSubDomains) — wbhk.my is a separate apex but has other subdomains we serve (telemetry.wbhk.my),
+  // so, like apps/get, we don't force HSTS onto them from here. Ignored by a UA over http (RFC 6797), so
+  // it's harmless on the 301 and load-bearing on the https liveness/ack/404 responses.
+  "strict-transport-security": "max-age=63072000",
 } as const;
 const LIVENESS_BODY = "this webhook endpoint is live. POST your events here.\n";
 

@@ -78,6 +78,9 @@ jobs:
       # workflow does not forward reaches the generator as "" and fail-closes the dashboard silently.
       BILLING_MODE: ${{ vars.BILLING_MODE }}
       STRIPE_PLANS: ${{ vars.STRIPE_PLANS }}
+      # The Billing Portal configuration id (bpc_…, S6c-ii) — pins the no-refund/at-period-end contract.
+      # OPTIONAL; unset → "" → the portal uses the account default.
+      STRIPE_PORTAL_CONFIGURATION_ID: ${{ vars.STRIPE_PORTAL_CONFIGURATION_ID }}
       # auth.webhook.co ids — the generator emits every app each run + reqEnv()s its ids (web deploys only web).
       AUTH_OAUTH_KV_ID: ${{ vars.AUTH_OAUTH_KV_ID }}
       AUTH_DEVICE_KV_ID: ${{ vars.AUTH_DEVICE_KV_ID }}
