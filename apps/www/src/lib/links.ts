@@ -39,7 +39,6 @@ export const LINKS = {
   /** The existing docs guides estate. We rename "Blog" → "Guides" here rather than run a blog. */
   guides: `${DOCS}/guides`,
   changelog: `${DOCS}/changelog`,
-  security: `${DOCS}/concepts/security`,
 
   /** The docs pages each /product/* page (and the homepage showcases) deep-link to for detail. */
   concepts: {
@@ -63,9 +62,9 @@ export const LINKS = {
   home: "/",
   /**
    * Security is a TRUST page, not a product — it answers the buyer's question, it doesn't sell a
-   * capability. So it lives at the top level and is reachable from the footer and the trust band,
-   * NOT from the Product menu. It stays on www (rather than only in the docs) because docs.webhook.co
-   * is a different subdomain: authority it earns there does not accrue to www.
+   * capability. So it lives at the top level and is linked from the FOOTER, not from the Product
+   * menu. It stays on www (rather than only in the docs) because docs.webhook.co is a different
+   * subdomain: authority it earns there does not accrue to www.
    */
   securityPage: "/security",
   pricing: "/pricing",

@@ -9,7 +9,7 @@ import DeliveryPage, { metadata as deliveryMeta } from "./delivery/page";
 import AgentTriggersPage, { metadata as agentTriggersMeta } from "./agent-triggers/page";
 import VerificationPage, { metadata as verificationMeta } from "./verification/page";
 
-// One test file for the five /product/* pages: they share the ProductShell, so they share these
+// One test file for the four /product/* pages: they share the ProductShell, so they share these
 // invariants. The honesty guard is the point — these pages state shipped capabilities, so a
 // regression that reintroduced a compliance claim we don't hold, or the "blocks until" MCP framing
 // that's factually wrong, must turn a test red rather than ship.

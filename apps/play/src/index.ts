@@ -99,11 +99,20 @@ function ipBucket(ip: string): string {
  * 503ing its ingest. Instead: reject a declared over-cap length before touching the body at all, and
  * otherwise stop accumulating and let the runtime tear the stream down with the response.
  */
-async function readCapped(request: Request, cap: number): Promise<Uint8Array | null> {
+type BodyRead =
+  | { ok: true; bytes: Uint8Array }
+  /** Over the cap — the client's fault, and a fact we can state precisely. */
+  | { ok: false; reason: "too_large" }
+  /** The body never arrived intact (hang-up, malformed chunk). NOT the same thing as too large. */
+  | { ok: false; reason: "unreadable" };
+
+async function readCapped(request: Request, cap: number): Promise<BodyRead> {
   // Fast path: an honest Content-Length over the cap is refused without reading a single byte.
+  // NOTE the direction — a declared length is only ever grounds to REJECT. A small or absent one is
+  // never trusted to admit a body; the streaming loop below always enforces the real byte count.
   const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > cap) return null;
-  if (!request.body) return new Uint8Array(0);
+  if (Number.isFinite(declared) && declared > cap) return { ok: false, reason: "too_large" };
+  if (!request.body) return { ok: true, bytes: new Uint8Array(0) };
 
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -113,12 +122,16 @@ async function readCapped(request: Request, cap: number): Promise<Uint8Array | n
       const { value, done } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > cap) return null; // chunked/undeclared body that lied about its size
+      // A chunked or undeclared body that lied about its size. Stop accumulating and return — do NOT
+      // cancel the stream (see the doc comment above).
+      if (total > cap) return { ok: false, reason: "too_large" };
       chunks.push(value);
     }
   } catch {
-    // A client that hangs up mid-body is not our problem — and must never become the DO's problem.
-    return null;
+    // A client that hung up mid-body, or a malformed frame. Reporting this as "payload too large"
+    // would be a lie that makes a real incident un-debuggable — it gets its own reason and its own
+    // status. What matters is that it never becomes the DO's problem.
+    return { ok: false, reason: "unreadable" };
   }
 
   const out = new Uint8Array(total);
@@ -127,7 +140,7 @@ async function readCapped(request: Request, cap: number): Promise<Uint8Array | n
     out.set(c, off);
     off += c.byteLength;
   }
-  return out;
+  return { ok: true, bytes: out };
 }
 
 /** Verify a Turnstile token. Off in dev/tests. The only outbound fetch, to a fixed URL. */
@@ -153,7 +166,7 @@ async function verifyTurnstile(env: Env, token: string | undefined, ip: string):
  * ERR_SSL_PROTOCOL_ERROR. Only LOOPBACK may follow the request's real scheme; every other host is
  * forced to https, so a plaintext request to prod can never make us advertise a plaintext ingest URL.
  */
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 function advertisedOrigin(url: URL): string {
   const scheme = LOOPBACK_HOSTS.has(url.hostname) ? url.protocol.replace(":", "") : "https";
   return `${scheme}://${url.host}`;
@@ -165,7 +178,10 @@ function advertisedOrigin(url: URL): string {
  * accepts every verb, and the sandbox must not teach a behaviour the product doesn't have.
  */
 function isBrowserEndpoint(path: string): boolean {
-  return path === "/api/mint" || /^\/[0-9a-f]{32}\/stream$/.test(path);
+  const [, token, tail, ...rest] = path.split("/");
+  return (
+    path === "/api/mint" || (TOKEN_RE.test(token ?? "") && tail === "stream" && rest.length === 0)
+  );
 }
 
 /** Read the per-token viewer-secret cookie (`pv_<token>`) from the request. */
@@ -225,31 +241,50 @@ async function handleMint(request: Request, env: Env, url: URL, origin: string):
       token,
       ingestUrl,
       expiresAt,
-      curl: `curl -X POST ${ingestUrl} -H 'content-type: application/json' -d '{"hello":"webhook.co"}'`,
-      // Every verb is captured (same posture as live ingest), so a plain browser GET works too — the
-      // easiest possible first request for someone who doesn't want to open a terminal.
-      browseUrl: ingestUrl,
     },
     200,
     { ...corsHeaders(origin), "set-cookie": cookie },
   );
 }
 
+/**
+ * Ingest is OPEN CORS, and only ingest. A sandbox URL is something people poke from a devtools
+ * `fetch()` as well as from curl, and a JSON content-type makes that a preflighted request — so the
+ * token path answers a preflight for ANY origin, and captures the OPTIONS as well (live ingest takes
+ * every verb; the sandbox must not teach otherwise).
+ *
+ * Safe to be a wildcard, and deliberately NOT `corsHeaders()`: credentials are OFF here, so no cookie
+ * rides along and the only readable body is our own "captured" acknowledgement. The viewer cookie is
+ * path-scoped to `/{token}/stream`, which stays pinned to the www origin WITH credentials — an
+ * attacker origin can write to a sandbox it already knows the token for (it always could: a form POST
+ * needs no CORS at all), but it can never READ one.
+ */
+const INGEST_CORS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "*",
+  "access-control-allow-headers": "*",
+  "access-control-max-age": "600",
+};
+
 async function handleIngest(request: Request, env: Env, token: string): Promise<Response> {
-  const raw = await readCapped(request, INGEST_MAX_BYTES);
-  if (raw === null) return text("payload too large", 413);
+  const body = await readCapped(request, INGEST_MAX_BYTES);
+  if (!body.ok) {
+    return body.reason === "too_large"
+      ? text("payload too large", 413, INGEST_CORS)
+      : text("could not read the request body", 400, INGEST_CORS);
+  }
 
   const session = env.PLAY_SESSION.get(env.PLAY_SESSION.idFromName(token));
   const result = await session.capture({
     method: request.method,
     headers: [...request.headers],
-    bodyBytes: raw,
+    bodyBytes: body.bytes,
     now: Date.now(),
   });
-  if (result.reason === "uninitialized") return text("not found", 404);
-  if (result.reason === "expired") return text("this sandbox url has expired", 410);
-  if (result.reason === "cap") return text("capture limit reached", 429);
-  return text("captured — watch it in the browser tab that made this url\n", 200);
+  if (result.reason === "uninitialized") return text("not found", 404, INGEST_CORS);
+  if (result.reason === "expired") return text("this sandbox url has expired", 410, INGEST_CORS);
+  if (result.reason === "cap") return text("capture limit reached", 429, INGEST_CORS);
+  return text("captured — watch it in the browser tab that made this url\n", 200, INGEST_CORS);
 }
 
 async function handleStream(

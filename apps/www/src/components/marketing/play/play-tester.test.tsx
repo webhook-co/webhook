@@ -196,13 +196,32 @@ describe("PlayTester — surviving a reload", () => {
     expect(es.init?.withCredentials).toBe(true);
   });
 
-  it("never persists the viewer secret — only the token, url and expiry", async () => {
-    sessionStorage.setItem(PLAY_SESSION_KEY, stored(Date.now() + 600_000));
+  it("never persists the viewer secret — the WRITE is filtered, not just the fixture", async () => {
+    // This guards the load-bearing invariant: the viewer secret lives ONLY in the HttpOnly cookie.
+    // It must therefore exercise the code that WRITES to storage (start()), not read back a fixture
+    // the test itself wrote — that version passed even when start() persisted the whole mint payload.
+    // So: hand the component a mint response salted with decoy secrets the real worker never sends,
+    // and assert none of them survive into storage.
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        token,
+        ingestUrl: `https://play.wbhk.my/${token}`,
+        expiresAt: Date.now() + 900_000,
+        curl: `curl -X POST https://play.wbhk.my/${token}`,
+        viewerSecret: "DECOY_SECRET_VALUE",
+        secret: "DECOY_SECRET_VALUE",
+      }),
+    }) as unknown as typeof fetch;
+
     render(<PlayTester />);
-    await screen.findAllByText(new RegExp(token));
-    const raw = sessionStorage.getItem(PLAY_SESSION_KEY) ?? "";
-    expect(Object.keys(JSON.parse(raw)).sort()).toEqual(["expiresAt", "ingestUrl", "token"]);
-    expect(raw).not.toMatch(/secret|viewer|pv_/i);
+    await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
+
+    const raw = sessionStorage.getItem(PLAY_SESSION_KEY);
+    expect(raw, "the session must actually be persisted").not.toBeNull();
+    expect(raw).not.toContain("DECOY_SECRET_VALUE");
+    expect(Object.keys(JSON.parse(raw!)).sort()).toEqual(["expiresAt", "ingestUrl", "token"]);
   });
 
   it("ignores an expired stored sandbox (offers a fresh one instead of a dead URL)", async () => {
@@ -263,6 +282,29 @@ describe("PlayTester — copying the URL and the curl", () => {
     expect(await screen.findByRole("status")).toHaveTextContent(/copied/i);
   });
 
+  it("announces EACH copy — the live region text changes between the url and the curl", async () => {
+    // aria-live only announces on a CHANGE. A bare "copied" string is identical for both buttons, so
+    // copying the url and then the curl would announce exactly once and then go silent — the second
+    // copy would be invisible to a screen-reader user while looking fine on screen.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, { clipboard: { writeText } });
+
+    render(<PlayTester />);
+    await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
+
+    await userEvent.click(await screen.findByRole("button", { name: /copy sandbox url/i }));
+    const first = (await screen.findByRole("status")).textContent;
+
+    await userEvent.click(screen.getByRole("button", { name: /copy curl command/i }));
+    const second = (await screen.findByRole("status")).textContent;
+
+    expect(first).toMatch(/copied/i);
+    expect(second).toMatch(/copied/i);
+    expect(second, "the announcement must change, or the second copy is never announced").not.toBe(
+      first,
+    );
+  });
+
   it("copies the curl command from its own labelled button", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
@@ -270,7 +312,10 @@ describe("PlayTester — copying the URL and the curl", () => {
     render(<PlayTester />);
     await userEvent.click(screen.getByRole("button", { name: /create a test url/i }));
     await userEvent.click(await screen.findByRole("button", { name: /copy curl command/i }));
-    expect(writeText).toHaveBeenCalledWith(`curl -X POST https://play.wbhk.my/${token}`);
+    // Derived from the ingest URL — the ONE source for this command (the worker no longer sends one).
+    expect(writeText).toHaveBeenCalledWith(
+      expect.stringContaining(`curl -X POST https://play.wbhk.my/${token}`),
+    );
   });
 
   it("tells the user any verb works, including a plain browser GET", async () => {

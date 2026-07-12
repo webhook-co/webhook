@@ -91,36 +91,22 @@ export function ProductShell({
 }
 
 /**
- * One feature section on a product page: an h2 wired to `aria-labelledby`, then its prose — and,
- * optionally, a visual in a second column (the homepage's alternating showcase rhythm). Prose is
- * capped at a readable measure by the COLUMN, not by squeezing the page.
+ * One feature section on a product page: an h2 wired to `aria-labelledby`, then its prose. Prose is
+ * capped at a readable measure by its own column rather than by squeezing the whole page — the page
+ * keeps the homepage's full-width container, and the hero's visual lives on {@link ProductShell}.
  */
 export function ProductFeature({
   id,
   heading,
-  visual,
-  flip = false,
   children,
 }: {
   id: string;
   heading: string;
-  /** An illustrative or live widget for this feature. Omit for a prose-only section. */
-  visual?: ReactNode;
-  /** Alternate the visual to the left, so consecutive features don't march down one side. */
-  flip?: boolean;
   children: ReactNode;
 }) {
   return (
-    <section
-      aria-labelledby={id}
-      className={cn(
-        container,
-        sectionPad,
-        "border-t border-hairline",
-        visual && "grid items-center gap-x-[clamp(36px,6vw,84px)] gap-y-10 min-[940px]:grid-cols-2",
-      )}
-    >
-      <div className={cn("max-w-[62ch]", visual && flip && "min-[940px]:order-2")}>
+    <section aria-labelledby={id} className={cn(container, sectionPad, "border-t border-hairline")}>
+      <div className="max-w-[62ch]">
         <h2
           id={id}
           className="mb-4 text-2xl font-semibold tracking-heading text-balance text-fg sm:text-[28px]"
@@ -129,7 +115,6 @@ export function ProductFeature({
         </h2>
         <div className="flex flex-col gap-4 text-md text-pretty text-fg-secondary">{children}</div>
       </div>
-      {visual ? <div className="mx-auto w-full max-w-[560px]">{visual}</div> : null}
     </section>
   );
 }

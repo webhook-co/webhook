@@ -238,13 +238,12 @@ describe("/play — the advertised ingest URL is callable", () => {
       headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.9" },
       body: JSON.stringify({}),
     });
-    return (await res.json()) as { token: string; ingestUrl: string; curl: string };
+    return (await res.json()) as { token: string; ingestUrl: string };
   }
 
   it("advertises https for a real host", async () => {
     const body = await mintAt(HOST);
     expect(body.ingestUrl).toBe(`https://play.wbhk.my/${body.token}`);
-    expect(body.curl).toContain(`https://play.wbhk.my/${body.token}`);
   });
 
   it("advertises http for loopback so a local wrangler dev URL is actually reachable", async () => {
@@ -284,6 +283,47 @@ describe("/play — accepts all verbs, like live ingest", () => {
     for (const method of ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]) {
       expect(replay, `${method} should appear in the stream`).toContain(`"${method}"`);
     }
+  });
+
+  it("lets a BROWSER fetch() a sandbox url: the token path answers its own preflight", async () => {
+    // Found in security review: scoping the preflight meant a devtools
+    // `fetch(url, {method:'POST', headers:{'content-type':'application/json'}})` — a preflighted
+    // request — would fail. Ingest is open-CORS so poking a sandbox from the console works, while the
+    // OPTIONS itself is still captured like every other verb.
+    const res = await mint("203.0.113.40");
+    const { token } = (await res.json()) as { token: string };
+    const cookie = cookieFor(res, token);
+
+    const pre = await SELF.fetch(`${HOST}/${token}`, {
+      method: "OPTIONS",
+      headers: {
+        origin: "https://example.com",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type",
+      },
+    });
+    expect(pre.headers.get("access-control-allow-origin")).toBe("*");
+    expect(pre.headers.get("access-control-allow-headers")).toBe("*");
+
+    const post = await SELF.fetch(`${HOST}/${token}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "https://example.com" },
+      body: '{"from":"devtools"}',
+    });
+    expect(post.headers.get("access-control-allow-origin")).toBe("*");
+    expect(await readReplay(token, cookie)).toContain("devtools");
+  });
+
+  it("open CORS on ingest does NOT extend to the stream — a sandbox is writable, never readable", async () => {
+    // The asymmetry is the whole security model: anyone can WRITE to a token they know (a form POST
+    // never needed CORS anyway), but READING the captures stays pinned to the www origin, with
+    // credentials, behind the HttpOnly viewer cookie.
+    const res = await mint("203.0.113.41");
+    const { token } = (await res.json()) as { token: string };
+    const stream = await SELF.fetch(`${HOST}/${token}/stream`, {
+      headers: { origin: "https://example.com", cookie: cookieFor(res, token) },
+    });
+    expect(stream.headers.get("access-control-allow-origin")).not.toBe("*");
   });
 
   it("still answers a real CORS preflight on /api/mint (the browser needs it)", async () => {

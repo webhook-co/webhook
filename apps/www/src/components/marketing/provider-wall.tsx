@@ -23,8 +23,6 @@ import { container, sectionPad } from "@/lib/styles";
  * drags the crypto package into this app's DOM-lib TS program and into the bundle.)
  */
 
-const NAMES = PROVIDER_NAMES;
-
 export function ProviderWall() {
   return (
     <section aria-labelledby="providers" className={cn(container, sectionPad)}>
@@ -34,7 +32,7 @@ export function ProviderWall() {
           id="providers"
           className="mb-4 text-[clamp(26px,3.4vw,36px)] leading-tight font-semibold tracking-heading text-balance text-fg"
         >
-          {NAMES.length} providers, built in
+          {PROVIDER_NAMES.length} providers, built in
         </h2>
         <p className="text-md text-pretty text-fg-secondary">
           Point any of these at a webhook.co endpoint and its signature is checked on arrival — you
@@ -45,7 +43,7 @@ export function ProviderWall() {
 
       {/* A plain list: crawlable, zero client JS, and it reads as what it is — an inventory. */}
       <ul className="flex flex-wrap gap-x-2 gap-y-2">
-        {NAMES.map((name) => (
+        {PROVIDER_NAMES.map((name) => (
           <li
             key={name}
             className="rounded-control border border-hairline bg-surface px-2.5 py-1 font-mono text-xs text-fg-secondary"

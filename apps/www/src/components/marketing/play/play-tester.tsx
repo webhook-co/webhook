@@ -27,8 +27,6 @@ interface Session {
   token: string;
   ingestUrl: string;
   expiresAt: number;
-  /** The worker-issued example command. Absent on a restored session — derived by `curlFor` instead. */
-  curl?: string;
 }
 
 type Status = "idle" | "minting" | "live" | "error" | "expired";
@@ -46,7 +44,10 @@ type Status = "idle" | "minting" | "live" | "error" | "expired";
  */
 export const PLAY_SESSION_KEY = "wbhk.play.session";
 
-/** Rebuild the example command for a restored session (the worker only sends it at mint time). */
+/**
+ * The one and only source of the example command. Derived from the ingest URL rather than sent by the
+ * worker, so a freshly-minted sandbox and a restored one can never show different commands.
+ */
 function curlFor(ingestUrl: string): string {
   return `curl -X POST ${ingestUrl} -H 'content-type: application/json' -d '{"hello":"webhook.co"}'`;
 }
@@ -179,16 +180,28 @@ export function PlayTester() {
     }
   }, [teardown, attach]);
 
-  /** Copy a worker-issued string (our own, never user input) and announce it to assistive tech. */
+  /**
+   * Copy a worker-issued string (our own, never user input) and announce it to assistive tech.
+   * The timer is held in a ref and cleared on each copy: without that, copying the url and then the
+   * curl 1.9s later lets the FIRST timer fire and wipe the second confirmation after 100ms.
+   */
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const copy = useCallback(async (what: string, value: string) => {
     try {
       await navigator.clipboard.writeText(value);
-      setCopied(what);
-      setTimeout(() => setCopied(null), 2000);
     } catch {
-      /* clipboard denied (insecure context / permissions) — the text is selectable either way */
+      return; // clipboard denied (insecure context / permissions) — the text is selectable either way
     }
+    if (copyTimer.current) clearTimeout(copyTimer.current);
+    setCopied(what);
+    copyTimer.current = setTimeout(() => setCopied(null), 2000);
   }, []);
+  useEffect(
+    () => () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+    },
+    [],
+  );
 
   return (
     <div className="mx-auto max-w-[62ch]">
@@ -243,11 +256,11 @@ export function PlayTester() {
             <p className="mt-3 mb-1 font-mono text-xs text-fg-muted">try it:</p>
             <div className="flex items-stretch gap-2">
               <code className="block flex-1 overflow-x-auto rounded-control bg-surface-sunken px-3 py-2 font-mono text-xs whitespace-pre text-fg-secondary">
-                {session.curl ?? curlFor(session.ingestUrl)}
+                {curlFor(session.ingestUrl)}
               </code>
               <CopyButton
                 label="Copy curl command"
-                onCopy={() => copy("curl", session.curl ?? curlFor(session.ingestUrl))}
+                onCopy={() => copy("curl", curlFor(session.ingestUrl))}
                 copied={copied === "curl"}
               />
             </div>
@@ -255,9 +268,15 @@ export function PlayTester() {
               Any method works — POST, PUT, DELETE, even a plain GET you can paste straight into
               your browser. Same as a real endpoint.
             </p>
-            {/* Announced, not just painted: screen-reader users get the copy confirmation too. */}
+            {/* Announced, not just painted. The text must NAME what was copied: a bare "copied" string
+                is unchanged when you copy the url and then the curl, and aria-live only announces on
+                a CHANGE — so the second copy would be silent for a screen-reader user. */}
             <p role="status" aria-live="polite" className="sr-only">
-              {copied ? "copied" : ""}
+              {copied === "url"
+                ? "sandbox url copied"
+                : copied === "curl"
+                  ? "curl command copied"
+                  : ""}
             </p>
             {status === "expired" ? (
               <div className="mt-4 text-center">
