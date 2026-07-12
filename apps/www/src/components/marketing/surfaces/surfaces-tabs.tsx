@@ -60,7 +60,7 @@ export const CLI_EVENTS = [
     endpointId: ENDPOINT_ID,
     receivedAt: "2026-07-12T14:02:11.840Z",
     provider: "linear",
-    dedupKey: "msg_2Nf7RbK9xQ",
+    dedupKey: "msg_2Nf7RbK9xQ", // gitleaks:allow — demo fixture: a provider idempotency key, not a secret
     dedupStrategy: "sw_webhook_id",
     verified: true,
     verificationState: "verified",
@@ -71,7 +71,7 @@ export const CLI_EVENTS = [
     endpointId: ENDPOINT_ID,
     receivedAt: "2026-07-12T14:02:38.114Z",
     provider: "github",
-    dedupKey: "8f2b1c40-6d19-4f0a-9e77-1b3c5d2a8e04",
+    dedupKey: "8f2b1c40-6d19-4f0a-9e77-1b3c5d2a8e04", // gitleaks:allow — demo fixture: a provider idempotency key, not a secret
     dedupStrategy: "provider_event_id",
     verified: true,
     verificationState: "verified",
@@ -82,7 +82,7 @@ export const CLI_EVENTS = [
     endpointId: ENDPOINT_ID,
     receivedAt: "2026-07-12T14:03:02.902Z",
     provider: "gitlab",
-    dedupKey: "3d9c1a77e0b45f28",
+    dedupKey: "3d9c1a77e0b45f28", // gitleaks:allow — demo fixture: a provider idempotency key, not a secret
     dedupStrategy: "content_hash",
     verified: true,
     verificationState: "authenticated",

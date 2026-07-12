@@ -1,10 +1,22 @@
-# gitleaks false positives — suppressed by fingerprint (commit:file:rule:line).
+# gitleaks false positives, suppressed by fingerprint (commit:file:rule:line).
 #
-# The marketing "surfaces" tab renders a SAMPLE captured-event object with demo dedup keys
-# (msg_… strings). gitleaks' generic-api-key rule flags them on entropy, but they are made-up
-# example values in public marketing copy — not secrets. They live only in git history (the current
-# file no longer contains them), so they can't be fixed at the source; a fingerprint ignore is the
-# correct suppression. Introduced by 71bb1701 ("feat(www): real product data in every visual").
+# The marketing "surfaces" tabs render a SAMPLE captured event, and a real captured event carries a
+# `dedupKey` — a provider-supplied idempotency key. gitleaks' generic-api-key rule fires on ANY value
+# bound to a name containing "key", so it flags the demo values on entropy alone. They are made-up
+# illustrative values in public marketing copy, not credentials, and the field cannot be renamed —
+# `dedupKey` is the real API field name the tab is showing.
+#
+# The CURRENT file suppresses these inline (`// gitleaks:allow`). These fingerprints cover the same
+# values in git HISTORY, which gitleaks also scans and which cannot be fixed at the source.
+#
+# ⚠️ Fingerprints are COMMIT-BOUND: a rebase rewrites the SHA and they stop matching. If the secret
+# scan starts failing on these lines again after a rebase, re-derive them from the run log rather
+# than adding a broader rule.
+5314c00f8792ddeeac5aa2a5ae00313020aab210:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:63
+5314c00f8792ddeeac5aa2a5ae00313020aab210:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:74
+5314c00f8792ddeeac5aa2a5ae00313020aab210:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:85
+# The same three values under their PRE-REBASE commit (from #515, merged to main before this branch
+# was rebased). Kept so the ignore is correct from either history.
 71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:63
 71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:74
 71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:85
