@@ -236,6 +236,10 @@ describe("TeamManager — invites", () => {
 
     expect(await screen.findByText(/couldn't email it/i)).toBeInTheDocument();
     expect(screen.queryByText(/we emailed the invite/i)).not.toBeInTheDocument();
+    // THE POINT of this path: mail didn't go out, so the link MUST still be there to copy. Without this
+    // assertion a regression that hid the link whenever `emailed` was false would pass — and the invite
+    // would be unrecoverable: created, un-emailed, and un-shareable.
+    expect(screen.getByText(/\/invite\/accept\?org=org_1&token=whinv_secret/)).toBeInTheDocument();
   });
 
   it("surfaces a server rejection as an error, without a link", async () => {
