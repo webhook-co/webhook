@@ -78,7 +78,9 @@ try {
           "two CSP headers intersect, which blocks Turnstile and disables the mint button",
       );
     }
-    if (!/Content-Security-Policy:[^\n]*script-src[^;]*challenges\.cloudflare\.com/i.test(playBlock)) {
+    if (
+      !/Content-Security-Policy:[^\n]*script-src[^;]*challenges\.cloudflare\.com/i.test(playBlock)
+    ) {
       failures.push("out/_headers /play CSP must allow challenges.cloudflare.com in script-src");
     }
     if (!/Content-Security-Policy:[^\n]*connect-src[^;]*play\.wbhk\.my/i.test(playBlock)) {
