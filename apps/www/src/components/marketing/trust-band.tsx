@@ -20,7 +20,7 @@ export function TrustBand() {
     <section
       aria-labelledby="trust-title"
       className={cn(
-        "border-y border-fg-on-inverse/15 bg-surface-inverse text-fg-on-inverse",
+        "trust-band border-y border-fg-on-inverse/15 bg-surface-inverse text-fg-on-inverse",
         sectionPad,
       )}
     >

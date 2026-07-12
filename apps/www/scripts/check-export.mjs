@@ -91,6 +91,36 @@ try {
   failures.push("could not read out/_headers");
 }
 
+// THE FLASH-OF-WRONG-THEME GUARD. The site is a static export: there is no server to read a cookie, so
+// the theme is applied by an inline script that stamps `data-theme` on <html>. It must be in <head> —
+// everything there runs before the first paint. Move it into <body> (or into a React effect) and a
+// dark-mode reader gets a white flash on every single navigation.
+//
+// Checked HERE, structurally, because it cannot be checked at runtime: a Playwright probe at
+// `readyState: interactive` STILL PASSES with the script at the end of <body>, because interactive
+// fires after body scripts run — verified by mutation. Where the tag sits in the emitted HTML is the
+// thing that actually decides it.
+//
+// (Its position relative to the stylesheet <link> is deliberately NOT asserted: stylesheets are
+// render-blocking, so a script anywhere in <head> executes before paint either way. Asserting that
+// would be a guard that fails on correct code.)
+try {
+  const html = await readFile(outDir + "index.html", "utf8");
+  const head = html.slice(0, html.indexOf("</head>"));
+  const themeInHead = /<script[^>]*>[^<]*data-theme[^<]*<\/script>/.test(head);
+
+  if (!/data-theme/.test(html)) {
+    failures.push("out/index.html has no inline theme-init script — dark mode would flash on load");
+  } else if (!themeInHead) {
+    failures.push(
+      "the theme-init script is not in <head> — it must run before the first paint, or dark-mode " +
+        "readers get a white flash on every navigation",
+    );
+  }
+} catch {
+  failures.push("could not read out/index.html");
+}
+
 if (failures.length > 0) {
   console.error("check:export failed:\n  - " + failures.join("\n  - "));
   process.exit(1);

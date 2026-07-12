@@ -21,3 +21,30 @@
   --wh-font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, -apple-system, sans-serif;
   --wh-font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", "Cascadia Code", monospace;
 }
+
+/* ── Provider brand marks in dark mode ────────────────────────────────────────────────────────────
+   29 of the 78 official marks carry a near-black brand hex (GitHub is #181717). On the dark surface
+   they are invisible — not "off-brand", GONE. So in dark they render in the foreground token instead
+   of their brand colour: legible, consistent, and provably contrast-safe. `fill` on the <path> is a
+   presentation attribute, so this rule outranks it without touching @webhook-co/ui.
+
+   The fetched favicons (the 64 brands with no vector mark) are raster and cannot be recoloured, and
+   they are a mix — some opaque-light (a white box on a dark page), some transparent-dark (invisible).
+   They sit on a permanently light chip instead, which is correct in both themes. */
+[data-theme="dark"] .provider-mark path {
+  fill: currentColor;
+}
+
+/* ── The trust band in dark mode ──────────────────────────────────────────────────────────────────
+   The band is deliberately INVERSE: a dark slab on a light page, to set the security section apart.
+   But `surface-inverse` / `text-on-inverse` flip with the theme, so in dark mode it inverted into a
+   glaring WHITE slab in the middle of a dark page. Readable (axe passed — dark ink on a light
+   surface), and obviously wrong.
+
+   Redefining the two variables LOCALLY is the honest fix: every utility in the band resolves through
+   them, so the background, the text, the /60 and /75 alpha variants and the pill borders all flip
+   together and stay coherent. Overriding just the background would have left dark ink on a dark slab. */
+[data-theme="dark"] .trust-band {
+  --wh-surface-inverse: var(--wh-surface-sunken);
+  --wh-text-on-inverse: var(--wh-text-primary);
+}
