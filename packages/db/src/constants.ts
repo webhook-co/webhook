@@ -7,6 +7,14 @@
 export const TENANT_GUC = "app.current_org" as const;
 
 /**
+ * Session GUC carrying the current authenticated USER, for the user-scoped RLS policies added in
+ * migration 0067 (`memberships_self_select` / `orgs_member_select`). It answers the one question the
+ * org-scoped policies structurally cannot: "which orgs do I belong to?" — the read multi-org needs.
+ * Unset/blank -> current_app_user() is NULL -> matches no rows (deny-by-default).
+ */
+export const USER_GUC = "app.current_user" as const;
+
+/**
  * Database roles. The request path connects as a NON-OWNER, non-BYPASSRLS role so
  * RLS is never silently bypassed (table owners bypass RLS by default).
  */

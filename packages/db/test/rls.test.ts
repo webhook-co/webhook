@@ -2,7 +2,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { createClient, withTenant, type Sql } from "../src/client";
+import { createClient, withTenant, withUser, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -1311,6 +1311,47 @@ describe("webhook_reconciler cross-org delivery read", () => {
   });
 });
 
+describe("the org-directory capability (0067) is CONFINED to the definer", () => {
+  it("gives webhook_app NO user-scoped policy — an unqualified membership read stays org-bound", async () => {
+    // THE invariant of migration 0067, and the whole reason it is shaped the way it is.
+    //
+    // The tempting design was a permissive `user_id = current_app_user()` policy ON webhook_app. Policies OR
+    // together, so that would make every membership read WITHOUT an explicit org_id silently CROSS-ORG —
+    // and `select role from memberships where user_id = $1 limit 1` (the exact shape Lane S.4 fixed, no
+    // org_id, no ORDER BY) would then return an ARBITRARY row: a plain `member` of a team who OWNS their
+    // personal org reads back `owner` and clears an owner/admin gate ON THE TEAM.
+    //
+    // So webhook_app has no such policy. Pin it: even with the user GUC set, an unqualified read as
+    // webhook_app must see nothing outside the tenant context.
+    const policies = await owner<{ polname: string }[]>`
+      select pol.polname
+      from pg_policy pol
+      join pg_class c on c.oid = pol.polrelid
+      where c.relname in ('memberships', 'orgs')
+        and 'webhook_app'::regrole = any(pol.polroles)`;
+    expect(policies).toEqual([]); // no webhook_app-scoped policy on either table
+
+    // Behavioural proof, not just catalog shape: orgA's user is in orgA only. With the user GUC set and NO
+    // tenant context, webhook_app sees NOTHING — the cross-org rows are reachable only via the definer.
+    const leaked = await withUser(
+      app,
+      orgA.userId,
+      (tx) => tx<{ org_id: string }[]>`select org_id from memberships`,
+    );
+    expect(leaked).toEqual([]);
+  });
+
+  it("…while user_org_directory() DOES resolve the caller's orgs (the capability still works)", async () => {
+    const rows = await withUser(
+      app,
+      orgA.userId,
+      (tx) => tx<{ org_id: string }[]>`select org_id from user_org_directory()`,
+    );
+    expect(rows.map((r) => r.org_id)).toContain(orgA.orgId);
+    expect(rows.map((r) => r.org_id)).not.toContain(orgB.orgId);
+  });
+});
+
 describe("no unexpected SECURITY DEFINER functions", () => {
   /**
    * The ALLOWLIST. The schema ships INVOKER helpers by default so RLS is never silently bypassed; each
@@ -1330,7 +1371,7 @@ describe("no unexpected SECURITY DEFINER functions", () => {
    *   - search_path is pinned, so the definer cannot be search-path-hijacked.
    * The properties that make it safe are asserted below — the allowlist entry is not taken on trust.
    */
-  const ALLOWED_SECURITY_DEFINERS = ["org_member_directory"];
+  const ALLOWED_SECURITY_DEFINERS = ["org_member_directory", "user_org_directory"];
 
   it("has no SECURITY DEFINER functions beyond the reviewed allowlist", async () => {
     const definers = await owner<{ proname: string }[]>`
