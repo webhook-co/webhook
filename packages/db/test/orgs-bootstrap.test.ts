@@ -8,6 +8,7 @@ import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/cred
 import {
   bootstrapPersonalOrg,
   createMembership,
+  createOrgWithOwner,
   getConsentOrg,
   isOrgMember,
   personalOrgId,
@@ -166,6 +167,39 @@ describe("bootstrapPersonalOrg", () => {
       hasher,
     );
     expect(ra.orgId).not.toBe(rb.orgId);
+  });
+});
+
+describe("createOrgWithOwner (atomic — no orphan org can be born)", () => {
+  it("creates the org and its owner membership in one transaction", async () => {
+    const userId = `user_${randomUUID()}`;
+    await seedUser(userId);
+    const { id, name } = await createOrgWithOwner(app, {
+      slug: `s-${randomUUID().slice(0, 8)}`,
+      name: "Team",
+      ownerUserId: userId,
+    });
+    expect(name).toBe("Team");
+    const rows = await withTenant(
+      app,
+      id,
+      (tx) =>
+        tx<{ user_id: string; role: string }[]>`
+          select user_id, role from memberships where org_id = ${id}`,
+    );
+    expect(rows).toEqual([{ user_id: userId, role: "owner" }]); // exactly one member: the owner
+  });
+
+  it("rolls the org back when the owner FK is invalid — leaves no orphan org", async () => {
+    const slug = `s-${randomUUID().slice(0, 8)}`;
+    await expect(
+      createOrgWithOwner(app, { slug, name: "Doomed", ownerUserId: "user_does_not_exist" }),
+    ).rejects.toThrow();
+    // The org insert shared the transaction with the failing membership insert, so it rolled back too.
+    // Assert cross-org as the superuser seed role (RLS would hide another org from webhook_app).
+    const [{ n }] = await owner<{ n: number }[]>`
+      select count(*)::int as n from orgs where slug = ${slug}`;
+    expect(n).toBe(0);
   });
 });
 
