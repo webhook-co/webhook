@@ -32,7 +32,7 @@ export default function PrivacyPage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Privacy Policy" updated="11 July 2026">
+        <LegalDoc title="Privacy Policy" updated="12 July 2026">
           <blockquote>
             <strong>In short (this summary isn't the legal text, but it's honest):</strong> This
             policy covers the <strong>hosted</strong> webhook.co service. We play{" "}
@@ -188,9 +188,11 @@ export default function PrivacyPage() {
             We don't sell your data or share it for advertising. To run the Service we rely on a
             small set of trusted infrastructure providers (sub-processors) — including{" "}
             <strong>Cloudflare</strong>, <strong>Neon</strong>, <strong>Amazon Web Services</strong>
-            , <strong>Stripe</strong>, and <strong>Resend</strong>. Our{" "}
-            <a href="/sub-processors">Sub-processors page</a> lists each one, what it does, the data
-            it may process, and where it's located, and we update it whenever the list changes.
+            , <strong>Stripe</strong>, <strong>Resend</strong>, <strong>Google</strong> and{" "}
+            <strong>GitHub</strong> (only if you sign in with them), and <strong>Mintlify</strong>{" "}
+            (our documentation site). Our <a href="/sub-processors">Sub-processors page</a> lists
+            each one, what it does, the data it may process, and where it's located, and we update
+            it whenever the list changes.
           </p>
           <p>
             We may also disclose data if required by law, to protect our rights or users' safety, or
