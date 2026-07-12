@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { importAuditKey } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
@@ -32,6 +33,7 @@ const hasher: CredentialHasher = createCredentialHasher({
 let pg: EphemeralPostgres;
 let app: Sql;
 let owner: Sql;
+let key: CryptoKey; // audit-chain HMAC key
 
 async function seedUser(id: string, email: string): Promise<void> {
   await owner`
@@ -68,12 +70,73 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+  key = await importAuditKey(new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 7) % 256)));
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await app?.end();
   await owner?.end();
   await pg?.stop();
+});
+
+describe("audit", () => {
+  it("writes tamper-evident auth_audit_event rows for create / accept / revoke", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const email = `aud-${randomUUID().slice(0, 8)}@acme.test`;
+    const a = await createInvite(app, hasher, {
+      orgId,
+      invitedEmail: email,
+      role: "member",
+      invitedBy: ownerId,
+      inviterRole: "owner",
+      auditKey: key,
+      now: NOW,
+    });
+    const accepterId = `u_aud_${randomUUID().slice(0, 8)}`;
+    await seedUser(accepterId, email);
+    await acceptInvite(app, hasher, {
+      orgId,
+      token: a.token,
+      auditKey: key,
+      userId: accepterId,
+      userEmail: email,
+      now: NOW + 1000,
+    });
+    // A second, revoked invite.
+    const b = await createInvite(app, hasher, {
+      orgId,
+      invitedEmail: `aud2-${randomUUID().slice(0, 8)}@acme.test`,
+      role: "member",
+      invitedBy: ownerId,
+      inviterRole: "owner",
+      auditKey: key,
+      now: NOW + 2000,
+    });
+    await revokeInvite(app, {
+      orgId,
+      inviteId: b.id,
+      revokedBy: ownerId,
+      auditKey: key,
+      now: NOW + 3000,
+    });
+
+    const events = await withTenant(
+      app,
+      orgId,
+      (tx) =>
+        tx<{ event_type: string; target_id: string }[]>`
+          select event_type, target_id from auth_audit_event where org_id = ${orgId} order by seq`,
+    );
+    expect(events.map((e) => e.event_type)).toEqual([
+      "invite_created",
+      "invite_accepted",
+      "invite_created",
+      "invite_revoked",
+    ]);
+    // Each links to its invite by target_id.
+    expect(events[0].target_id).toBe(a.id);
+    expect(events[3].target_id).toBe(b.id);
+  });
 });
 
 describe("createInvite", () => {
@@ -85,7 +148,8 @@ describe("createInvite", () => {
         invitedEmail: "x@acme.test",
         role: "owner",
         invitedBy: ownerId,
-        inviterRole: "admin", // an admin can't grant owner
+        inviterRole: "admin",
+        auditKey: key, // an admin can't grant owner
         now: NOW,
       }),
     ).rejects.toBeInstanceOf(InviteRoleCeilingError);
@@ -100,6 +164,7 @@ describe("createInvite", () => {
         role: "member",
         invitedBy: ownerId,
         inviterRole: "owner",
+        auditKey: key,
         now: NOW,
       }),
     ).rejects.toThrow(/non-empty/);
@@ -113,6 +178,7 @@ describe("createInvite", () => {
       role: "member",
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW,
     });
     expect(invite.token).toMatch(/^whinv_/);
@@ -139,6 +205,7 @@ describe("acceptInvite", () => {
       role,
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW,
     });
     const accepterId = `u_acc_${randomUUID().slice(0, 8)}`;
@@ -151,6 +218,7 @@ describe("acceptInvite", () => {
     const res = await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: accepterId,
       userEmail: email,
       now: NOW + 1000,
@@ -164,6 +232,7 @@ describe("acceptInvite", () => {
     await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: accepterId,
       userEmail: email,
       now: NOW + 1000,
@@ -171,6 +240,7 @@ describe("acceptInvite", () => {
     const replay = await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: accepterId,
       userEmail: email,
       now: NOW + 2000,
@@ -186,6 +256,7 @@ describe("acceptInvite", () => {
     const res = await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: stranger,
       userEmail: strangerEmail, // not the invited address
       now: NOW + 1000,
@@ -204,6 +275,7 @@ describe("acceptInvite", () => {
       role: "member",
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW,
     });
     const accepterId = `u_ci_${randomUUID().slice(0, 8)}`;
@@ -211,6 +283,7 @@ describe("acceptInvite", () => {
     const res = await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: accepterId,
       userEmail: lower,
       now: NOW + 1000,
@@ -227,6 +300,7 @@ describe("acceptInvite", () => {
       role: "member",
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       ttlMs: 1000,
       now: NOW,
     });
@@ -235,6 +309,7 @@ describe("acceptInvite", () => {
     const res = await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: accepterId,
       userEmail: email,
       now: NOW + 5000,
@@ -247,6 +322,7 @@ describe("acceptInvite", () => {
     const res = await acceptInvite(app, hasher, {
       orgId,
       token: "whinv_nope",
+      auditKey: key,
       userId: "u_x",
       userEmail: "x@acme.test",
       now: NOW,
@@ -265,11 +341,13 @@ describe("acceptInvite", () => {
       role: "member",
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW,
     });
     const res = await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: ownerId,
       userEmail: ownerEmail,
       now: NOW + 1000,
@@ -287,6 +365,7 @@ describe("acceptInvite", () => {
       role: "member",
       invitedBy: a.ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW,
     });
     const b = await seedOrg(); // a different org
@@ -296,6 +375,7 @@ describe("acceptInvite", () => {
     const res = await acceptInvite(app, hasher, {
       orgId: b.orgId,
       token: invite.token,
+      auditKey: key,
       userId: accepterId,
       userEmail: email,
       now: NOW + 1000,
@@ -314,9 +394,18 @@ describe("revokeInvite + listPendingInvites", () => {
       role: "member",
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW,
     });
-    expect(await revokeInvite(app, { orgId, inviteId: invite.id, now: NOW + 500 })).toBe(true);
+    expect(
+      await revokeInvite(app, {
+        orgId,
+        inviteId: invite.id,
+        revokedBy: "u_revoker",
+        auditKey: key,
+        now: NOW + 500,
+      }),
+    ).toBe(true);
     // Not listable.
     expect((await listPendingInvites(app, orgId, NOW + 600)).map((i) => i.id)).not.toContain(
       invite.id,
@@ -327,6 +416,7 @@ describe("revokeInvite + listPendingInvites", () => {
     const res = await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: accepterId,
       userEmail: email,
       now: NOW + 700,
@@ -337,7 +427,15 @@ describe("revokeInvite + listPendingInvites", () => {
   it("revokeInvite returns false for an unknown or already-accepted invite", async () => {
     const { orgId, ownerId } = await seedOrg();
     // Unknown id.
-    expect(await revokeInvite(app, { orgId, inviteId: randomUUID(), now: NOW })).toBe(false);
+    expect(
+      await revokeInvite(app, {
+        orgId,
+        inviteId: randomUUID(),
+        revokedBy: "u_revoker",
+        auditKey: key,
+        now: NOW,
+      }),
+    ).toBe(false);
     // Already accepted → can't revoke.
     const email = `acc-${randomUUID().slice(0, 8)}@acme.test`;
     const invite = await createInvite(app, hasher, {
@@ -346,6 +444,7 @@ describe("revokeInvite + listPendingInvites", () => {
       role: "member",
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW,
     });
     const accepterId = `u_ra_${randomUUID().slice(0, 8)}`;
@@ -353,11 +452,20 @@ describe("revokeInvite + listPendingInvites", () => {
     await acceptInvite(app, hasher, {
       orgId,
       token: invite.token,
+      auditKey: key,
       userId: accepterId,
       userEmail: email,
       now: NOW + 1000,
     });
-    expect(await revokeInvite(app, { orgId, inviteId: invite.id, now: NOW + 2000 })).toBe(false);
+    expect(
+      await revokeInvite(app, {
+        orgId,
+        inviteId: invite.id,
+        revokedBy: "u_revoker",
+        auditKey: key,
+        now: NOW + 2000,
+      }),
+    ).toBe(false);
   });
 
   it("lists pending invites (no token), newest first", async () => {
@@ -370,6 +478,7 @@ describe("revokeInvite + listPendingInvites", () => {
       role: "member",
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW,
     });
     const b = await createInvite(app, hasher, {
@@ -378,6 +487,7 @@ describe("revokeInvite + listPendingInvites", () => {
       role: "admin",
       invitedBy: ownerId,
       inviterRole: "owner",
+      auditKey: key,
       now: NOW + 1000,
     });
     const pending = await listPendingInvites(app, orgId, NOW + 2000);

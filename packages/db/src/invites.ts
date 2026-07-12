@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { canGrantRole, type MembershipRole } from "@webhook-co/shared";
 
+import { appendAuthAuditEntry } from "./auth-audit";
 import { withTenant, type Sql } from "./client";
 import { mintCredential, type CredentialHasher } from "./credential";
 
@@ -49,6 +50,8 @@ export interface CreateInviteInput {
    * requireOrgAccess / readMembershipRole), NEVER trusted from the client, or the ceiling is bypassable.
    */
   readonly inviterRole: MembershipRole;
+  /** HMAC key for the tamper-evident auth_audit_event entry (invite_created), written in the same tx. */
+  readonly auditKey: CryptoKey;
   readonly ttlMs?: number;
   /** Injected clock (ms) for deterministic tests. */
   readonly now?: number;
@@ -87,13 +90,18 @@ export async function createInvite(
   const expiresAt = new Date(now + (input.ttlMs ?? INVITE_DEFAULT_TTL_MS));
   const { plaintext, keyHash, start } = mintCredential(INVITE_TOKEN_PREFIX, hasher);
 
-  await withTenant(
-    app,
-    input.orgId,
-    (tx) =>
-      tx`insert into org_invites (id, org_id, token_hash, start, invited_email, role, invited_by, expires_at)
-         values (${id}, ${input.orgId}, ${keyHash}, ${start}, ${input.invitedEmail}, ${input.role}, ${input.invitedBy}, ${expiresAt})`,
-  );
+  await withTenant(app, input.orgId, async (tx) => {
+    await tx`insert into org_invites (id, org_id, token_hash, start, invited_email, role, invited_by, expires_at)
+       values (${id}, ${input.orgId}, ${keyHash}, ${start}, ${input.invitedEmail}, ${input.role}, ${input.invitedBy}, ${expiresAt})`;
+    // Tamper-evident audit in the SAME tx. No email in metadata (PII) — targetId links to the invite row.
+    await appendAuthAuditEntry(tx, input.auditKey, {
+      orgId: input.orgId,
+      actor: input.invitedBy,
+      eventType: "invite_created",
+      targetId: id,
+      metadata: { role: input.role },
+    });
+  });
 
   return {
     id,
@@ -112,6 +120,8 @@ export interface AcceptInviteInput {
   readonly userId: string;
   /** The accepting user's (verified) email — MUST match the invited_email (case-insensitive). */
   readonly userEmail: string;
+  /** HMAC key for the auth_audit_event (invite_accepted) written in the accept tx. */
+  readonly auditKey: CryptoKey;
   readonly now?: number;
 }
 
@@ -139,7 +149,7 @@ export async function acceptInvite(
     // (mirrors the api-key / refresh-token cold lookup). token_hash is unique, so at most one matches; the
     // per-candidate UPDATE is itself the atomic single-use gate.
     for (const candidate of candidates) {
-      const rows = await tx<{ role: MembershipRole }[]>`
+      const rows = await tx<{ id: string; role: MembershipRole }[]>`
         update org_invites
            set accepted_at = ${now}, accepted_by = ${input.userId}
          where org_id = ${input.orgId}
@@ -148,7 +158,7 @@ export async function acceptInvite(
            and accepted_at is null
            and revoked_at is null
            and expires_at > ${now}
-        returning role`;
+        returning id, role`;
       const invite = rows[0];
       if (invite) {
         // Create the membership. If the user is ALREADY a member, accept does NOT change their role — a
@@ -165,6 +175,13 @@ export async function acceptInvite(
             select role from memberships where org_id = ${input.orgId} and user_id = ${input.userId}`;
           role = existing?.role ?? invite.role;
         }
+        await appendAuthAuditEntry(tx, input.auditKey, {
+          orgId: input.orgId,
+          actor: input.userId,
+          eventType: "invite_accepted",
+          targetId: invite.id,
+          metadata: { role },
+        });
         return { status: "accepted" as const, role };
       }
     }
@@ -175,20 +192,24 @@ export async function acceptInvite(
 /** Revoke a pending invite. Returns true if a pending (unaccepted, unrevoked) invite was revoked. */
 export async function revokeInvite(
   app: Sql,
-  input: { orgId: string; inviteId: string; now?: number },
+  input: { orgId: string; inviteId: string; revokedBy: string; auditKey: CryptoKey; now?: number },
 ): Promise<boolean> {
   const now = new Date(input.now ?? Date.now());
-  const rows = await withTenant(
-    app,
-    input.orgId,
-    (tx) =>
-      tx<{ id: string }[]>`
-        update org_invites set revoked_at = ${now}
-         where id = ${input.inviteId} and org_id = ${input.orgId}
-           and accepted_at is null and revoked_at is null
-        returning id`,
-  );
-  return rows.length > 0;
+  return withTenant(app, input.orgId, async (tx) => {
+    const rows = await tx<{ id: string }[]>`
+      update org_invites set revoked_at = ${now}
+       where id = ${input.inviteId} and org_id = ${input.orgId}
+         and accepted_at is null and revoked_at is null
+      returning id`;
+    if (rows.length === 0) return false; // already accepted / revoked / unknown — nothing to audit
+    await appendAuthAuditEntry(tx, input.auditKey, {
+      orgId: input.orgId,
+      actor: input.revokedBy,
+      eventType: "invite_revoked",
+      targetId: input.inviteId,
+    });
+    return true;
+  });
 }
 
 export interface PendingInvite {
