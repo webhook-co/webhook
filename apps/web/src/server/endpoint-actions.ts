@@ -12,7 +12,7 @@ import {
   type MintedEndpoint,
 } from "./endpoint-mutations";
 import { isUuid, type EndpointItem } from "./endpoints";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 /**
  * The fault code of a Lane B CapabilityFault, duck-typed by `name` + `code` (not `instanceof`, so it is
@@ -64,7 +64,7 @@ export async function createEndpointAction(input: {
   name: string;
   dedupConfig?: DedupConfig | null;
 }): Promise<CreateEndpointResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   // Runtime type guard: TS types are erased, so a crafted server-action POST can deliver a non-string —
   // coerce-guard before .trim() so a bad payload returns a graceful error, not an unhandled 500.
   const name = typeof input?.name === "string" ? input.name.trim() : "";
@@ -100,7 +100,7 @@ export async function createEndpointAction(input: {
   // reported as a failure (that would tell the user nothing was created while a live endpoint + URL exist).
   // No revalidatePath here: create never navigates — EndpointsManager prepends the new row optimistically
   // and stays on /endpoints; a later real navigation re-runs loadEndpoints (the page is dynamic via
-  // cookies()), so revalidating would only run a verifySession + DB round-trip whose RSC nothing renders.
+  // cookies()), so revalidating would only run the org-access gate + DB round-trip whose RSC nothing renders.
   return { ok: true, endpoint: toItem(minted), ingestUrl: minted.ingestUrl };
 }
 
@@ -109,7 +109,7 @@ export async function createEndpointAction(input: {
  * NEW one-time ingest URL. The id/name/paused/createdAt and the endpoint's captured events are preserved.
  */
 export async function rotateEndpointAction(endpointId: string): Promise<RotateEndpointResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (typeof endpointId !== "string" || !endpointId.trim()) {
     return { ok: false, error: "Missing endpoint id." };
   }
@@ -139,7 +139,7 @@ export async function updateEndpointDedupAction(input: {
   endpointId: string;
   dedupConfig: DedupConfig | null;
 }): Promise<UpdateEndpointDedupResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const endpointId = input?.endpointId;
   if (typeof endpointId !== "string" || !endpointId.trim()) {
     return { ok: false, error: "Missing endpoint id." };
@@ -190,7 +190,7 @@ export async function updateEndpointDedupAction(input: {
  * Idempotent at the db. `{ok:false}` means the mutation itself failed (not a stale ingest-cache entry).
  */
 export async function deleteEndpointAction(endpointId: string): Promise<EndpointActionResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (typeof endpointId !== "string" || !endpointId.trim()) {
     return { ok: false, error: "Missing endpoint id." };
   }

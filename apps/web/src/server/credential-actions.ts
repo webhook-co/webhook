@@ -7,7 +7,7 @@ import { logActionError } from "./action-log";
 import { mintApiKey } from "./credential-mint";
 import { revokeGrantById, revokeKeyById } from "./credential-revoke";
 import type { ApiKeyItem } from "./credentials";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 export interface CreateKeyInput {
   readonly name: string;
@@ -28,7 +28,7 @@ export type CreateKeyResult =
  * beyond them (e.g. the reserved `keys:manage` is dropped).
  */
 export async function createApiKey(input: CreateKeyInput): Promise<CreateKeyResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
 
   const name = input.name.trim();
   if (!name) return { ok: false, error: "Give the key a name." };
@@ -87,7 +87,7 @@ export type RevokeResult = { readonly ok: true } | { readonly ok: false; readonl
  * not a stale cache. Idempotent — re-revoking an already-revoked key revokes nothing and evicts nothing.
  */
 export async function revokeApiKey(keyId: string): Promise<RevokeResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!keyId.trim()) return { ok: false, error: "Missing key id." };
   try {
     await revokeKeyById({ orgId: session.orgId, userId: session.userId, keyId });
@@ -105,7 +105,7 @@ export async function revokeApiKey(keyId: string): Promise<RevokeResult> {
  * caller reflects the cascade in the UI (the grant + its child keys all read revoked).
  */
 export async function revokeGrant(grantId: string): Promise<RevokeResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   if (!grantId.trim()) return { ok: false, error: "Missing grant id." };
   try {
     await revokeGrantById({ orgId: session.orgId, userId: session.userId, grantId });

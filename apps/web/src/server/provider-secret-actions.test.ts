@@ -3,14 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mock the session gate + the mutations seam; the action layer is the CSRF/session boundary + the input
 // guard + the error taxonomy, so we test THAT in isolation. vi.hoisted lifts the mock fns above the hoisted
 // vi.mock factory (the repo's vitest requires this).
-const { verifySession } = vi.hoisted(() => ({
-  verifySession: vi.fn(async () => ({
+const { requireOrgAccess } = vi.hoisted(() => ({
+  requireOrgAccess: vi.fn(async () => ({
     userId: "user-1",
     orgId: "org-1",
     user: { name: "A", email: "a@x.com", image: null },
   })),
 }));
-vi.mock("./session", () => ({ verifySession }));
+vi.mock("./org-access", () => ({ requireOrgAccess }));
 
 const { mutations, SealerUnavailableError } = vi.hoisted(() => {
   class SealerUnavailableError extends Error {

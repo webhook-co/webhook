@@ -19,7 +19,7 @@ import {
   type RevealHeaderResult,
 } from "./events";
 import { loadEventPayload, type PayloadResult } from "./payloads";
-import { verifySession } from "./session";
+import { requireOrgAccess } from "./org-access";
 
 export type LoadMoreEventsResult =
   | {
@@ -42,7 +42,7 @@ export async function loadMoreEventsAction(input: {
   cursor: Cursor;
   filters?: EventFilterParams;
 }): Promise<LoadMoreEventsResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
 
   const endpointId = input?.endpointId;
   if (typeof endpointId !== "string" || !isUuid(endpointId)) return { ok: false };
@@ -91,7 +91,7 @@ export async function revealHeaderAction(input: {
   eventId: string;
   index: number;
 }): Promise<RevealHeaderResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const { endpointId, eventId, index } = input ?? {};
   if (typeof endpointId !== "string" || !isUuid(endpointId)) return { ok: false };
   if (typeof eventId !== "string" || !isUuid(eventId)) return { ok: false };
@@ -116,7 +116,7 @@ export async function loadEventPayloadAction(input: {
   endpointId: string;
   eventId: string;
 }): Promise<PayloadResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const { endpointId, eventId } = input ?? {};
   if (typeof endpointId !== "string" || typeof eventId !== "string") return { kind: "not_found" };
   return loadEventPayload(session.orgId, endpointId, eventId);
@@ -133,7 +133,7 @@ export type DeleteEventResult = { readonly ok: true } | { readonly ok: false };
  * to `{ok:false}` (already logged) rather than throwing.
  */
 export async function deleteEventAction(input: { eventId: string }): Promise<DeleteEventResult> {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const eventId = input?.eventId;
   if (typeof eventId !== "string" || !isUuid(eventId)) return { ok: false };
 

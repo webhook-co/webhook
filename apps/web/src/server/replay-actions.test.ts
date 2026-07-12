@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { verifySession } = vi.hoisted(() => ({
-  verifySession: vi.fn(async () => ({
+const { requireOrgAccess } = vi.hoisted(() => ({
+  requireOrgAccess: vi.fn(async () => ({
     userId: "user-1",
     orgId: "org-1",
     user: { name: "A", email: "a@x.com", image: null },
   })),
 }));
-vi.mock("./session", () => ({ verifySession }));
+vi.mock("./org-access", () => ({ requireOrgAccess }));
 
 const {
   replayToDestination,
