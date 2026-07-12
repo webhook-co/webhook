@@ -380,9 +380,6 @@ importers:
       '@webhook-co/openapi':
         specifier: workspace:*
         version: link:../../packages/openapi
-      '@webhook-co/shared':
-        specifier: workspace:*
-        version: link:../../packages/shared
       '@webhook-co/webhooks-spec':
         specifier: workspace:*
         version: link:../../packages/webhooks-spec
