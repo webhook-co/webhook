@@ -211,6 +211,10 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/setup
+      # Unit-test the pure gate helpers (dead-link regex, SEO head rules, sitemap parsing) against
+      # fixtures BEFORE the build — a fast fail if the gate logic itself regressed. These node:test
+      # files previously existed but were wired into no CI job, so they could rot unnoticed.
+      - run: pnpm --filter @webhook-co/www test:scripts
       - run: pnpm --filter @webhook-co/www build
       - run: pnpm --filter @webhook-co/www test:seo
       # Legal section anchors are pasted into signed agreements and vendor questionnaires. This

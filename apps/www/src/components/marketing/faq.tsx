@@ -111,17 +111,21 @@ export const FAQ_ITEMS: readonly FaqItem[] = [
   },
 ];
 
-const faqSchema = {
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  // Generated from the same array the DOM renders, so the markup can never say something the page
-  // doesn't — which is both a Google policy requirement and the only way to keep two copies honest.
-  mainEntity: FAQ_ITEMS.map((item) => ({
-    "@type": "Question",
-    name: item.question,
-    acceptedAnswer: { "@type": "Answer", text: item.answer },
-  })),
-};
+/**
+ * Build the FAQPage schema from the SAME array the DOM renders, so the markup can never say something
+ * the page doesn't — both a Google policy requirement and the only way to keep two copies honest.
+ */
+function buildFaqSchema(items: readonly FaqItem[]) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: items.map((item) => ({
+      "@type": "Question",
+      name: item.question,
+      acceptedAnswer: { "@type": "Answer", text: item.answer },
+    })),
+  };
+}
 
 function FaqEntry({ item }: { item: FaqItem }) {
   return (
@@ -178,7 +182,19 @@ function FaqEntry({ item }: { item: FaqItem }) {
  * and screen-reader semantics for free — so the page stays a server component with zero client
  * bundle, and the whole thing still works if the JS never arrives.
  */
-export function Faq() {
+export function Faq({
+  items = FAQ_ITEMS,
+  heading = "Frequently asked questions",
+}: {
+  /**
+   * Which questions to answer. Each PAGE passes its own set: two pages emitting the SAME FAQPage
+   * schema is duplicate structured data, and the questions a pricing page must answer are not the
+   * ones a homepage must answer.
+   */
+  items?: readonly FaqItem[];
+  heading?: string;
+} = {}) {
+  const faqSchema = buildFaqSchema(items);
   return (
     <section id="faq" aria-labelledby="faq-heading" className={cn(container, sectionPad)}>
       <script
@@ -193,10 +209,10 @@ export function Faq() {
         id="faq-heading"
         className="mb-8 text-center text-[clamp(24px,3vw,34px)] leading-tight font-semibold tracking-heading text-fg"
       >
-        Frequently asked questions
+        {heading}
       </h2>
       <div className="mx-auto max-w-[820px]">
-        {FAQ_ITEMS.map((item) => (
+        {items.map((item) => (
           <FaqEntry key={item.question} item={item} />
         ))}
       </div>

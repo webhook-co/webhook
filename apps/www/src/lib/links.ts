@@ -36,22 +36,43 @@ export const LINKS = {
   apiReference: `${DOCS}/api-reference/introduction`,
   cli: `${DOCS}/cli/overview`,
   mcp: `${DOCS}/mcp/overview`,
+  /** The existing docs guides estate. We rename "Blog" → "Guides" here rather than run a blog. */
+  guides: `${DOCS}/guides`,
   changelog: `${DOCS}/changelog`,
-  security: `${DOCS}/concepts/security`,
+  /** The flat table of all 142 providers + their schemes/headers. No per-provider anchors exist. */
+  providerDirectory: `${DOCS}/providers/directory`,
 
-  /** The Product menu has no marketing feature pages behind it, so it points at the concepts docs. */
+  /** The docs pages each /product/* page (and the homepage showcases) deep-link to for detail. */
   concepts: {
     captureAndReplay: `${DOCS}/concepts/how-webhook-co-works`,
-    ingestion: `${DOCS}/concepts/ingest-urls`,
     delivery: `${DOCS}/concepts/delivery-retry-signing`,
     verification: `${DOCS}/guides/verify-inbound-signatures`,
-    mcpServer: `${DOCS}/mcp/overview`,
     security: `${DOCS}/concepts/security`,
+  },
+
+  // ── product pages (www) ────────────────────────────────────────────────────
+  // Real marketing pages now exist for each capability, so the Product nav menu and footer point
+  // here (www) — only "Docs" leaves for docs.webhook.co. These deep-link to the docs for detail.
+  product: {
+    captureReplay: "/product/capture-replay",
+    verification: "/product/verification",
+    delivery: "/product/delivery",
+    agentTriggers: "/product/agent-triggers",
   },
 
   // ── site ─────────────────────────────────────────────────────────────────
   home: "/",
+  /**
+   * Security is a TRUST page, not a product — it answers the buyer's question, it doesn't sell a
+   * capability. So it lives at the top level and is linked from the FOOTER, not from the Product
+   * menu. It stays on www (rather than only in the docs) because docs.webhook.co is a different
+   * subdomain: authority it earns there does not accrue to www.
+   */
+  securityPage: "/security",
   pricing: "/pricing",
+  about: "/about",
+  /** The no-signup sandbox. NOINDEX (robots) — a link to it is fine; the page's noindex keeps it out. */
+  play: "/play",
 
   // ── external ─────────────────────────────────────────────────────────────
   openSource: REPO,

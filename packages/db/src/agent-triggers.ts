@@ -1,6 +1,7 @@
 // Agent triggers (S5): the webhook→agent trigger subscription registry. An agent trigger is a thin
-// org-scoped (endpoint) binding that an authenticated principal creates to be woken — via the
-// triggers.wait long-poll tool (Slice C) — when the endpoint captures a new event. Unlike the egress
+// org-scoped (endpoint) binding that an authenticated principal creates so it can consume — via the
+// triggers.wait SHORT-poll tool (Slice C), one fast scan per call, the caller drives the cadence (see
+// the handler below) — the events its endpoint captures. It does not push or "wake" the agent. Unlike the egress
 // delivery_subscriptions (which route events to third-party destinations and are mcp-EXEMPT for
 // confused-deputy reasons), a trigger creates NO egress: it only lets the caller consume, over MCP, the
 // same events it can already read (events:read). So the triggers.* capabilities are MCP-BOUND, and their

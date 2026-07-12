@@ -32,9 +32,22 @@ export function Terminal({
           {meta ? <span className="font-mono text-[0.6875rem] text-fg-muted">{meta}</span> : null}
         </div>
       )}
-      <div className="overflow-x-auto px-[18px] py-4 font-mono text-[0.78125rem] leading-[1.85] text-fg">
+      {/* Real product output is wide — one `wbhk events list` row is an ISO timestamp plus a uuid — so
+          this body scrolls horizontally. A scrollable region MUST be keyboard-reachable, or its
+          right-hand columns are pointer-only (axe `scrollable-region-focusable`): hence the tab stop,
+          plus the labelled `region` that gives the stop a name. jsx-a11y's `no-noninteractive-tabindex`
+          allowlists only `tabpanel` by default, so it flags this exact WAI-ARIA pattern; the a11y
+          requirement wins, and the suppression is scoped to this one element. */}
+      {/* eslint-disable jsx-a11y/no-noninteractive-tabindex */}
+      <div
+        role="region"
+        aria-label={title ? `${title} output` : "Terminal output"}
+        tabIndex={0}
+        className="overflow-x-auto px-[18px] py-4 font-mono text-[0.78125rem] leading-[1.85] text-fg"
+      >
         {children}
       </div>
+      {/* eslint-enable jsx-a11y/no-noninteractive-tabindex */}
     </div>
   );
 }
@@ -63,8 +76,10 @@ export const Tok = {
 
 /**
  * One monospace row in the terminal. Rows are flex blocks (not literal `<pre>` whitespace) so
- * Prettier can't reflow the rendered output.
+ * Prettier can't reflow the rendered output. `data-terminal-line` is the row seam the surface tests
+ * read: it lets a test reconstruct the panel's output line by line and compare it to what the real
+ * CLI renderer / API / MCP tool actually returns.
  */
 export function TerminalLine({ className, ...props }: ComponentPropsWithoutRef<"div">) {
-  return <div className={cn("whitespace-pre", className)} {...props} />;
+  return <div data-terminal-line="" className={cn("whitespace-pre", className)} {...props} />;
 }

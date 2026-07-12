@@ -2,6 +2,7 @@ import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 
 import { FAQ_ITEMS } from "../src/components/marketing/faq";
+import { a11yRoutes } from "../src/lib/routes";
 
 // WCAG 2.0/2.1/2.2 A + AA. This is the only layer that sees real layout, so the only one that
 // catches color contrast (1.4.3) — e.g. the dark terminal's dim text and the monochrome gray ramp.
@@ -30,18 +31,34 @@ async function expectClean(page: Page) {
   ).toEqual([]);
 }
 
-// The five legal pages. Until now they had jsdom-only axe coverage — which cannot see layout, and
-// therefore cannot see color contrast (1.4.3) or target size (2.5.8). So the pages a customer's
-// lawyer actually reads were the least verified on the site. They are also where the section anchors
-// live, so this is the only layer that can prove the affordance works.
-const LEGAL_PAGES = ["/terms", "/privacy", "/dpa", "/acceptable-use", "/sub-processors"];
+// EVERY human-facing page, DERIVED from the route manifest (`a11y: true`) — including `/` and
+// `/pricing`. Coverage is coupled to the manifest, not to a hand-maintained exclusion list: a new
+// /about or /product/* page is axe-scanned the moment it joins the manifest, and no page can silently
+// drop out of scanning because someone removed a bespoke describe. The homepage and /pricing DO keep
+// extra bespoke describes below (interactive states, disclosures); this baseline pass is deliberate
+// redundancy for their default state — the cheap price of a manifest-coupled guarantee.
+//
+// This is the only layer that sees real layout, so the only one that catches color contrast (1.4.3)
+// and target size (2.5.8) — jsdom cannot. The legal pages are also where the section anchors live.
+const SCANNED_PAGES = a11yRoutes();
 
-test.describe("legal page accessibility (real browser)", () => {
-  for (const path of LEGAL_PAGES) {
+test.describe("page accessibility (real browser, manifest-driven)", () => {
+  // A guard on the guard: if the manifest ever yields nothing, this suite would pass while scanning
+  // zero pages — that looks like coverage but is none.
+  test("the manifest yields pages to scan", () => {
+    expect(SCANNED_PAGES.length).toBeGreaterThan(0);
+  });
+
+  for (const path of SCANNED_PAGES) {
     test(`${path} has no violations`, async ({ page }) => {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await page.goto(path);
       await page.getByRole("heading", { level: 1 }).waitFor();
+      // The homepage's live demo is an SSR'd, reduced-motion-paused island — wait for it so axe sees
+      // the settled page, not a mid-hydration frame.
+      if (path === "/") {
+        await page.getByRole("group", { name: /demo webhook inspector/i }).waitFor();
+      }
       await expectClean(page);
     });
   }
@@ -250,12 +267,11 @@ test.describe("homepage accessibility (real browser)", () => {
     await expectClean(page);
   });
 
-  test("no violations with each nav dropdown open", async ({ page }) => {
-    for (const name of [/^product$/i, /^developers$/i]) {
-      await page.getByRole("button", { name }).click();
-      await expectClean(page);
-      await page.keyboard.press("Escape");
-    }
+  test("no violations with the Product nav dropdown open", async ({ page }) => {
+    // The IA lane left a single dropdown (Product → www pages); Developers was removed.
+    await page.getByRole("button", { name: /^product$/i }).click();
+    await expectClean(page);
+    await page.keyboard.press("Escape");
   });
 
   test("no violations on each surface tab (covers all four dark terminals)", async ({ page }) => {

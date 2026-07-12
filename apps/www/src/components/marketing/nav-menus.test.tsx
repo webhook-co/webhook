@@ -23,11 +23,26 @@ describe("NavMenus", () => {
     expect(trigger(/^product$/i)).toHaveAttribute("aria-expanded", "false");
     const panel = document.getElementById("navmenu-product");
     expect(panel).toHaveAttribute("hidden");
-    // Was `href="#"` until the destinations existed. The Product menu has no marketing feature pages,
-    // so it points at the concepts docs — which is an honest destination, not an invented page.
+    // The Product menu points at real www /product/* pages now (not docs) — the whole point of the
+    // IA lane: only the top-level "Docs" link leaves for docs.webhook.co.
     expect(
       within(panel as HTMLElement).getByRole("link", { name: "Capture & replay", hidden: true }),
-    ).toHaveAttribute("href", "https://docs.webhook.co/concepts/how-webhook-co-works");
+    ).toHaveAttribute("href", "/product/capture-replay");
+  });
+
+  it("keeps the whole Product menu on www — no item leaves for the docs subdomain", () => {
+    render(<NavMenus />);
+    const panel = document.getElementById("navmenu-product") as HTMLElement;
+    const hrefs = within(panel)
+      .getAllByRole("link", { hidden: true })
+      .map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual([
+      "/product/capture-replay",
+      "/product/verification",
+      "/product/delivery",
+      "/product/agent-triggers",
+    ]);
+    expect(hrefs.some((h) => h?.includes("docs.webhook.co"))).toBe(false);
   });
 
   it("opens on click and reveals the links", async () => {
@@ -39,25 +54,14 @@ describe("NavMenus", () => {
     expect(within(panel).getByRole("link", { name: "Delivery" })).toBeInTheDocument();
   });
 
-  // The Developers menu is for OUR surfaces — docs, quickstart, API, CLI, MCP. "Standard Webhooks"
-  // pointed at a third party's site and "Open source" at the repo, so two of the seven doors in the
-  // menu led off the product. Both removed; the repo still has its home in the footer socials.
-  it("keeps the Developers menu on our own surfaces", async () => {
+  // The "Developers" dropdown (docs/quickstart/API/CLI/MCP) was removed in the IA lane — those docs
+  // deep-links live in the footer now, and the top nav carries a single "Docs" link (in nav.tsx).
+  // NavMenus renders exactly one disclosure, "Product".
+  it("renders exactly one menu — Product — no Developers dropdown", () => {
     render(<NavMenus />);
-    await userEvent.click(trigger(/^developers$/i));
-    const panel = document.getElementById("navmenu-developers") as HTMLElement;
-    const labels = within(panel)
-      .getAllByRole("link")
-      .map((a) => a.textContent);
-    expect(labels).toEqual(["Docs", "Quickstart", "API reference", "CLI", "MCP"]);
-  });
-
-  it("keeps only one menu open at a time", async () => {
-    render(<NavMenus />);
-    await userEvent.click(trigger(/^product$/i));
-    await userEvent.click(trigger(/^developers$/i));
-    expect(trigger(/^product$/i)).toHaveAttribute("aria-expanded", "false");
-    expect(trigger(/^developers$/i)).toHaveAttribute("aria-expanded", "true");
+    expect(trigger(/^product$/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^developers$/i })).toBeNull();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
   });
 
   it("closes on Escape and restores focus to the trigger", async () => {
