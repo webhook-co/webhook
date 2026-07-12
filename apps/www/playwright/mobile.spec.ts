@@ -67,7 +67,9 @@ test.describe("no page scrolls sideways on a phone", () => {
     test(`${path} does not overflow horizontally`, async ({ page }) => {
       await page.emulateMedia({ reducedMotion: "reduce" });
       await page.goto(path);
-      await page.waitForLoadState("networkidle");
+      // Wait on a RENDERED ELEMENT, never `networkidle`: /play loads the Turnstile challenge and holds
+      // an SSE connection open, so the network never goes idle and the wait simply times out.
+      await page.getByRole("heading", { level: 1 }).first().waitFor();
 
       const overflow = await page.evaluate(() => {
         const doc = document.documentElement;
