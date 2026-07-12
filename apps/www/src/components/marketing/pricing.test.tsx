@@ -5,6 +5,7 @@ import { axeComponent } from "@/test/axe";
 
 import { PricingHero, PricingTable } from "./pricing";
 import { OVERAGE_PER_MILLION, TIERS } from "./pricing-tiers";
+import { PLANS } from "@webhook-co/shared/plans";
 
 // The figures on this page are what Stripe actually charges.
 //
@@ -17,6 +18,15 @@ import { OVERAGE_PER_MILLION, TIERS } from "./pricing-tiers";
 describe("pricing ladder (the sanctioned figures)", () => {
   it("is exactly Free / Pro / Scale / Enterprise, in ladder order", () => {
     expect(TIERS.map((t) => t.id)).toEqual(["free", "pro", "scale", "enterprise"]);
+  });
+
+  // The figures are DERIVED from the one canonical catalog (@webhook-co/shared/plans), not re-typed here —
+  // so the pricing page can never quote a number the dashboard/engine disagree with. This pins that the
+  // ladder still mirrors the catalog (a regression that hardcodes TIERS again fails).
+  it("derives its plan facts from the shared catalog (single source of truth)", () => {
+    expect(
+      TIERS.map((t) => ({ id: t.id, price: t.price, includedEvents: t.includedEvents })),
+    ).toEqual(PLANS.map((p) => ({ id: p.id, price: p.price, includedEvents: p.includedEvents })));
   });
 
   it("carries the real prices and included volumes", () => {

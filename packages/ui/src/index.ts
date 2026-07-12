@@ -105,6 +105,7 @@ export {
   type PageHeaderProps,
   type EmptyStateProps,
 } from "./components/page-container";
+export { PlanCard, type PlanCardProps, type PlanCardPlan } from "./components/plan-card";
 export {
   StatusPill,
   deliveryStatusTone,

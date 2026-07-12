@@ -1,95 +1,23 @@
-// The sanctioned pricing ladder (ADR-0004, internal research/unit-economics-2026-07-09.md).
-//
-// These figures are PUBLIC and are what Stripe actually charges — the live prices carry the same amounts and
-// the same included volumes (`metadata.event_cap`). If you change a number here, change it in Stripe too, or
-// the page lies. `apps/web` deliberately holds NO figures: the dashboard reads the org's cap from the DB and
-// Stripe's hosted Checkout shows the price. This file is the one public place a number lives.
-//
-// Price per event FALLS as you climb (26k → 30k → 40k events per euro). That is the whole shape of the
-// ladder: upgrading must buy cheaper events, never dearer ones.
-//
-// The `retention` strings below must stay in step with what the engine actually ENFORCES —
-// packages/shared/src/retention.ts (PLAN_RETENTION_DAYS): Free 7d / Pro 30d / Scale 90d. Enterprise is
-// unlimited/contractual there (never auto-pruned); publicly we state "up to 1 year". Change one, change both.
+// The pricing ladder RENDERED on the marketing page. The figures no longer live here — they come from the
+// one canonical catalog, `@webhook-co/shared/plans` (the same source the dashboard billing cards and the
+// engine's retention/metering read), so a price can never disagree across surfaces. This file only adds the
+// marketing-specific CTA (where each tier's button lands) on top of the shared plan data.
+
+import { OVERAGE_PER_MILLION, PLANS, type Plan } from "@webhook-co/shared/plans";
 
 import { LINKS, SALES } from "@/lib/links";
 
-export interface Tier {
-  readonly id: string;
-  readonly name: string;
-  /** A small qualifier rendered BEFORE the amount ("From"), so it never wraps away from it. */
-  readonly pricePrefix?: string;
-  /** Display price. `null` = free. */
-  readonly price: string | null;
-  readonly cadence: string | null;
-  readonly includedEvents: string;
-  /** The one line that says who this is for. No hedging. */
-  readonly summary: string;
-  readonly retention: string;
-  /** Overage, or the reason there isn't one. */
-  readonly overage: string;
-  readonly cta: { readonly label: string; readonly href: string };
-  readonly featured?: boolean;
-}
+export { OVERAGE_PER_MILLION };
 
-export const OVERAGE_PER_MILLION = "€25";
+/** A marketing tier: the shared plan facts + the page's own CTA. */
+export type Tier = Plan & { readonly cta: { readonly label: string; readonly href: string } };
 
-export const TIERS: readonly Tier[] = [
-  {
-    id: "free",
-    name: "Free",
-    price: null,
-    cadence: null,
-    includedEvents: "5,000 events, once",
-    summary: "A real trial, not a perpetual tier. The 5,000 events never reset.",
-    retention: "7-day retention",
-    // Kept short so it sets on one line in the tier card. "At the limit" is already carried by
-    // `includedEvents` directly above it, and the pause is stated in full three more times on the
-    // page — so the MUST-disclose fact (ADR-0004) survives the shorter line intact.
-    overage: "No overage. Capture pauses.",
-    cta: { label: "Start free", href: LINKS.startFree },
-  },
-  {
-    id: "pro",
-    name: "Pro",
-    price: "€19",
-    cadence: "/month",
-    includedEvents: "500,000 events / month",
-    summary: "For a service in production with real traffic.",
-    retention: "30-day retention",
-    overage: `${OVERAGE_PER_MILLION} per extra million events`,
-    cta: { label: "Start on Pro", href: LINKS.usage },
-    featured: true,
-  },
-  {
-    id: "scale",
-    name: "Scale",
-    price: "€99",
-    cadence: "/month",
-    includedEvents: "3,000,000 events / month",
-    summary: "For high-volume ingestion and fan-out to many destinations.",
-    retention: "90-day retention",
-    overage: `${OVERAGE_PER_MILLION} per extra million events`,
-    cta: { label: "Start on Scale", href: LINKS.usage },
-  },
-  {
-    id: "enterprise",
-    name: "Enterprise",
-    pricePrefix: "From",
-    price: "€499",
-    cadence: "/month",
-    includedEvents: "20,000,000+ events / month",
-    // NOT "SAML SSO … and a BAA". Both were false: SSO is a DISABLED "coming soon" button in the
-    // login form, and our own Terms say we "provide no BAA or PCI attestation" while the AUP says
-    // "we do not sign BAAs" — a line our test suite already pins. Selling, on the pricing page, a
-    // thing the contract explicitly refuses is the worst kind of untrue: the customer finds out at
-    // the exact moment they were trusting us most.
-    // "audit export" went the same way as "SAML SSO … and a BAA": we don't have it. There is an
-    // `audit.verify` capability (it verifies the hash chain); there is no export. Selling it on a
-    // €499 tier is the same defect as the BAA, just one line further down.
-    summary: "Committed volume, and terms we agree up front.",
-    retention: "Retention up to 1 year",
-    overage: "Custom, agreed up front.",
-    cta: { label: "Talk to us", href: SALES },
-  },
-];
+/** Per-tier CTA. Free/paid land on the app (usage is where a plan is chosen); Enterprise is sales-led. */
+const CTA_BY_ID: Record<Plan["id"], { label: string; href: string }> = {
+  free: { label: "Start free", href: LINKS.startFree },
+  pro: { label: "Start on Pro", href: LINKS.usage },
+  scale: { label: "Start on Scale", href: LINKS.usage },
+  enterprise: { label: "Talk to us", href: SALES },
+};
+
+export const TIERS: readonly Tier[] = PLANS.map((plan) => ({ ...plan, cta: CTA_BY_ID[plan.id] }));
