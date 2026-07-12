@@ -95,6 +95,43 @@ export function blankComments(src) {
 }
 
 /**
+ * R4 — everything that touches the shared Neon branch must be SERIALIZED.
+ *
+ * Postgres roles are CLUSTER-GLOBAL: they are not scoped to the per-file test database, so every
+ * startEphemeralPostgres() ALTERs the passwords of the SAME shared roles on the branch. Two suites
+ * provisioning at the same time invalidate each other's credentials mid-run, and the loser dies on
+ * `password authentication failed for user '…'` — nothing to do with the code under test.
+ *
+ * The root `test:db` script must therefore keep each multi-package turbo invocation serial. Without
+ * `--concurrency=1`, turbo runs @webhook-co/api and @webhook-co/web in PARALLEL — a live race that
+ * was invisible only because a failing db#test short-circuited the `&&` before the apps ever ran.
+ *
+ * @param {unknown} script the root package.json `test:db` script
+ * @returns {string[]}
+ */
+export function testDbSerializationViolations(script) {
+  if (typeof script !== "string" || script.trim() === "") {
+    return ["package.json: no `test:db` script — cannot prove the Neon suites are serialized."];
+  }
+  const violations = [];
+  for (const invocation of script.split("&&").map((s) => s.trim())) {
+    // Only a turbo invocation that fans out to MORE THAN ONE package can race with itself.
+    const filters = invocation.match(/--filter=/g)?.length ?? 0;
+    if (!/\bturbo run\b/.test(invocation) || filters < 2) continue;
+    if (!/--concurrency=1\b/.test(invocation)) {
+      violations.push(
+        `package.json test:db: \`${invocation}\` fans out to ${filters} packages WITHOUT ` +
+          `--concurrency=1, so turbo runs them in PARALLEL. Postgres roles are cluster-global — ` +
+          `each suite's startEphemeralPostgres() rotates the SAME roles' passwords on the Neon ` +
+          `branch, so concurrent suites invalidate each other's credentials and one dies on ` +
+          `\`password authentication failed\`. Add --concurrency=1, or split them with &&.`,
+      );
+    }
+  }
+  return violations;
+}
+
+/**
  * The fields the EphemeralPostgres harness actually exposes, parsed from its interface in
  * packages/db/test/pg.ts. Returns null if the interface can't be found (⇒ fail closed upstream).
  * @param {unknown} harnessSrc @returns {Set<string> | null}
@@ -211,9 +248,10 @@ export async function readDbTestSources() {
 }
 
 async function main() {
-  const [sources, fields] = await Promise.all([
+  const [sources, fields, pkg] = await Promise.all([
     readDbTestSources(),
     readFile(HARNESS, "utf8").then(harnessFields),
+    readFile(join(ROOT, "package.json"), "utf8").then(JSON.parse),
   ]);
   if (sources.length === 0) {
     console.error("✖ remote-db-test-guard: no db test sources found — cannot prove remote safety.");
@@ -225,16 +263,20 @@ async function main() {
     );
     process.exit(1);
   }
-  const violations = sources.flatMap(({ file, src }) => remoteSafetyViolations(file, src, fields));
+  const violations = [
+    ...sources.flatMap(({ file, src }) => remoteSafetyViolations(file, src, fields)),
+    ...testDbSerializationViolations(pkg.scripts?.["test:db"]),
+  ];
   if (violations.length > 0) {
     console.error(
-      "✖ packages/db tests that pass locally but FAIL (or false-pass) against the nightly Neon branch:\n",
+      "✖ suites that pass locally but FAIL (or false-pass) against the nightly Neon branch:\n",
     );
     for (const v of violations) console.error(`  ${v}\n`);
     process.exit(1);
   }
   console.log(
-    `✔ remote-db-test safety: ${sources.length} db test sources hold under the Neon provider role.`,
+    `✔ remote-db-test safety: ${sources.length} sources hold under the Neon provider role, ` +
+      `and test:db serializes every suite that touches the shared branch.`,
   );
 }
 

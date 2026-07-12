@@ -155,6 +155,18 @@ export async function startEphemeralPostgres(): Promise<EphemeralPostgres> {
 
     // Per-run, in-memory passwords for the created roles (password mode only). Never
     // stored in source; rotated every run.
+    //
+    // ⚠️ Postgres ROLES ARE CLUSTER-GLOBAL — they are NOT scoped to the per-file database created
+    // below. So every caller of this function ALTERs the passwords of the same shared roles on the
+    // Neon branch. Two things that provision concurrently therefore invalidate each other's
+    // credentials mid-run, and the loser dies on `password authentication failed for user '…'` —
+    // a failure that has nothing to do with the code under test.
+    //
+    // Everything that runs against the branch must therefore be SERIALIZED. That is why the root
+    // `test:db` script chains packages/db with `&&` and passes `--concurrency=1` to the apps' turbo
+    // task (they would otherwise run in parallel and race), why vitest sets `fileParallelism: false`
+    // in all three configs, and why you must not run a local TEST_DATABASE_URL suite while a
+    // `nightly-rls` run is in flight. scripts/remote-db-test-guard.mjs pins the `--concurrency=1`.
     const passwords: Record<string, string> = {};
     // eslint-disable-next-line security/detect-possible-timing-attacks -- not a credential compare; this branches on the connection auth MODE
     if (auth === "password") {

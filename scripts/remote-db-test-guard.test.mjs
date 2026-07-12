@@ -9,6 +9,7 @@ import {
   harnessFields,
   readDbTestSources,
   remoteSafetyViolations,
+  testDbSerializationViolations,
 } from "./remote-db-test-guard.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,6 +35,41 @@ test("the scan reaches both suites the nightly runs (packages/db AND the apps)",
   const files = (await readDbTestSources()).map((s) => s.file);
   assert.ok(files.some((f) => f.startsWith("packages/db/test/")));
   assert.ok(files.some((f) => f.startsWith("apps/") && f.endsWith(".pg.test.ts")));
+});
+
+// ── R4: everything that touches the shared Neon branch must be SERIALIZED ──────────────────────
+// Postgres roles are CLUSTER-GLOBAL, so every startEphemeralPostgres() ALTERs the passwords of the
+// same shared roles. Two suites provisioning concurrently invalidate each other's credentials and
+// the loser dies on `password authentication failed for user '…'`. The apps' turbo task ran api and
+// web in PARALLEL — a real race that was invisible only because a failing db#test short-circuited
+// the `&&` before the apps ever ran.
+
+test("the real test:db script serializes every suite that touches the branch", () => {
+  const pkg = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
+  assert.deepEqual(testDbSerializationViolations(pkg.scripts?.["test:db"]), []);
+});
+
+test("R4 flags the apps' turbo task running api and web in parallel", () => {
+  const script =
+    "turbo run test --filter=@webhook-co/db && turbo run test:db --filter=@webhook-co/api --filter=@webhook-co/web";
+  const v = testDbSerializationViolations(script);
+  assert.equal(v.length, 1);
+  assert.match(v[0], /concurrency=1/);
+});
+
+test("R4 flags packages/db sharing a turbo invocation with the apps (no && to serialize them)", () => {
+  const script = "turbo run test:db --filter=@webhook-co/db --filter=@webhook-co/api";
+  assert.equal(testDbSerializationViolations(script).length, 1);
+});
+
+test("R4 accepts the serialized script", () => {
+  const script =
+    "turbo run test --filter=@webhook-co/db && turbo run test:db --filter=@webhook-co/api --filter=@webhook-co/web --concurrency=1";
+  assert.deepEqual(testDbSerializationViolations(script), []);
+});
+
+test("R4 fails closed on a missing script", () => {
+  assert.equal(testDbSerializationViolations(undefined).length, 1);
 });
 
 // ── R3: a `pg.<field>` the harness does not expose ────────────────────────────────────────────
