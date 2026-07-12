@@ -265,7 +265,7 @@ describe("triggers.* capability handlers", () => {
 
 describe("agent_triggers RLS + grants (isolation red-team)", () => {
   it("has ONLY current_org_id() policies — none role-targeted", async () => {
-    const owner = createClient(pg.ownerUrl);
+    const owner = createClient(pg.providerUrl);
     try {
       const policies = await owner<
         { polname: string; roles: string; using_expr: string | null; check_expr: string | null }[]
@@ -291,7 +291,7 @@ describe("agent_triggers RLS + grants (isolation red-team)", () => {
   });
 
   it("grants DML on agent_triggers to webhook_app only (no cross-org role)", async () => {
-    const owner = createClient(pg.ownerUrl);
+    const owner = createClient(pg.providerUrl);
     try {
       // Which non-owner roles hold ANY privilege on agent_triggers? Probe each via
       // has_table_privilege (owner excluded — it owns the table, so it holds everything).

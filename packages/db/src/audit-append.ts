@@ -101,8 +101,10 @@ export async function appendAuditEntry(
   return { ...entry, prevHash, rowHash };
 }
 
-/** Distinguishes the audit advisory-lock space from any other advisory-lock user. */
-const AUDIT_LOCK_NAMESPACE = 0x41554449; // "AUDI"
+/** Distinguishes the audit advisory-lock space from any other advisory-lock user. Exported so any
+ *  other writer to this chain (today: the tests' batched window seeder) takes the SAME lock — a
+ *  second lock space would not serialize against this one, which is the whole point of the lock. */
+export const AUDIT_LOCK_NAMESPACE = 0x41554449; // "AUDI"
 
 /**
  * Read an org's full audit chain (ascending seq) as StoredAuditRow[], ready for

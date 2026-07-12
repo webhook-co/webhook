@@ -5,7 +5,7 @@ import { importAuditKey, userActor } from "@webhook-co/shared";
 import type { IngestUrlRevealerRpc, RevealedIngestToken } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { appendAuditEntry, readAuditChain } from "../src/audit-append";
+import { readAuditChain } from "../src/audit-append";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createCredentialHasher, CREDENTIAL_PEPPER_MIN_BYTES } from "../src/credential";
@@ -16,6 +16,7 @@ import {
 } from "../src/ingest-url-reveal";
 import { createOrg } from "../src/orgs";
 import { createWriteHandlers } from "../src/write-handlers";
+import { seedAuditChain } from "./audit-seed";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -131,23 +132,27 @@ describe("endpoints.revealIngestUrl handler", () => {
     revealImpl = async () => ({ found: true, token: "whep_x" });
     const h = handlers().get("endpoints.revealIngestUrl")!;
     const ctx: AuthContext = { orgId: capOrg, scopes: ["endpoints:write"], keyId: "key_test" };
-    // Seed the window to the cap by appending the disclosure audit rows the limiter counts
-    // (action = endpoint.ingest_url_revealed) DIRECTLY, in a SINGLE transaction — instead of
-    // driving the cap via that many full handler reveals. The handler path (rate-limit query +
-    // reveal RPC + audit append, each its own round-trip × the cap) took ~100s on a slow Neon
-    // night, and the limiter's window is 60s WALL-CLOCK, so the earliest reveals aged out before
-    // the last landed and the cap was never observed — the test false-passed (resolved instead of
-    // RATE_LIMITED). One in-tx append loop is far faster than the window, so the count is real.
-    await withTenant(app, capOrg, async (tx) => {
-      for (let i = 0; i < INGEST_URL_REVEAL_MAX_PER_WINDOW; i++) {
-        await appendAuditEntry(tx, auditKey, {
+    // Seed the window to the cap by writing the disclosure audit rows the limiter counts
+    // (action = endpoint.ingest_url_revealed) DIRECTLY, in ONE insert — instead of driving the cap
+    // via that many full handler reveals. The limiter's window is 60s WALL-CLOCK and every audit row
+    // is stamped with its TRANSACTION's now(), so any seed that takes longer than the window makes
+    // the rows expire before the assertion and the test false-passes (resolves instead of
+    // RATE_LIMITED). #413 cut the handler path down to an in-tx appendAuditEntry loop, but that is
+    // still 3 round-trips × the cap (120) = 360 — ~54s on a slow Neon night, i.e. still a coin-flip
+    // against the same 60s window. seedAuditChain writes the identical chain in a single round-trip.
+    await withTenant(app, capOrg, (tx) =>
+      seedAuditChain(
+        tx,
+        auditKey,
+        {
           orgId: capOrg,
           actor: userActor("user_alice"),
           action: INGEST_URL_REVEAL_AUDIT_ACTION,
           target: ep,
-        });
-      }
-    });
+        },
+        INGEST_URL_REVEAL_MAX_PER_WINDOW,
+      ),
+    );
     // With the window already at the cap, the next real reveal must be throttled BEFORE the unseal.
     await expect(h(ctx, { endpointId: ep })).rejects.toMatchObject({
       name: "CapabilityFault",

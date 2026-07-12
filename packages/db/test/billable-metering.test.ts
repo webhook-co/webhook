@@ -50,23 +50,31 @@ const DAY_MS = 86_400_000;
 let pg: EphemeralPostgres;
 let app: Sql;
 let audit: Sql;
-let admin: Sql;
+let provider: Sql; // BYPASSRLS — cross-org reads that must see a row no tenant GUC is set for
+let owner: Sql; // the schema owner — the only role that may TRUNCATE (see below)
 
 beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   audit = createClient(pg.urlFor({ role: DB_ROLES.meterAudit }));
-  admin = createClient(pg.ownerUrl);
+  provider = createClient(pg.providerUrl);
+  // Cleanup TRUNCATEs, so it runs as the SCHEMA OWNER — not as `provider`. TRUNCATE requires
+  // ownership, and on the nightly's Neon branch the provider role owns nothing (it holds
+  // webhook_owner membership with inherit_option = f) → 42501 permission denied. RLS never filters
+  // TRUNCATE, so the owner's FORCE RLS is not in the way. Locally the provider IS the postgres
+  // superuser, which bypasses the ACL check — which is exactly why truncating on it passed every
+  // local run and only broke at 04:00 against Neon (issue #383).
+  owner = createClient(pg.ownerUrl);
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
-  await Promise.all([app?.end(), audit?.end(), admin?.end()]);
+  await Promise.all([app?.end(), audit?.end(), provider?.end(), owner?.end()]);
   await pg?.stop();
 });
 
 afterEach(async () => {
-  await admin`truncate delivery_attempts, events, endpoints, usage, orgs cascade`;
+  await owner`truncate delivery_attempts, events, endpoints, usage, orgs cascade`;
 });
 
 /** UTC-midnight ISO of the day `daysAgo` before NOW. */
@@ -341,7 +349,7 @@ describe("the billable trigger — what keeps the F6 oracle a pure function", ()
 
     // The status transitioned, but the billing decision for a frozen day is untouchable.
     expect(await billableOf(orgId, id)).toBe(true);
-    const [row] = await admin<{ status: string }[]>`
+    const [row] = await provider<{ status: string }[]>`
       select status from delivery_attempts where id = ${id}`;
     expect(row!.status).toBe("blocked");
   });

@@ -1,5 +1,6 @@
-import { Banner, Button, PageContainer } from "@webhook-co/ui";
+import { Banner, Button, PageContainer, PlanCard } from "@webhook-co/ui";
 import { planLabel, type BillingDisplay, type PendingPlanChange } from "@webhook-co/shared";
+import { planById } from "@webhook-co/shared/plans";
 import type { Metadata } from "next";
 
 import { loadBillingSummary } from "@/server/billing";
@@ -266,18 +267,28 @@ function ChangePlanCard({ targets }: { targets: readonly string[] }) {
         : you keep the plan you&apos;ve paid for until it runs out, then move to the smaller one. We
         don&apos;t refund or credit the part you&apos;ve already paid for.
       </p>
-      <div className="flex flex-wrap gap-3">
-        {targets.map((planId) => (
-          <form key={planId} action={switchPlanAction}>
-            <input type="hidden" name="planId" value={planId} />
-            {/* Per-render nonce → the Stripe Idempotency-Key: a double-click of THIS button collapses to
-                one charge, while a fresh render (a later, deliberate switch) gets a new nonce. */}
-            <input type="hidden" name="nonce" value={crypto.randomUUID()} />
-            <Button type="submit" variant="secondary">
-              Switch to {planLabel(planId)}
-            </Button>
-          </form>
-        ))}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {targets.map((planId) => {
+          const plan = planById(planId);
+          if (!plan) return null;
+          return (
+            <PlanCard
+              key={planId}
+              plan={plan}
+              cta={
+                <form action={switchPlanAction}>
+                  <input type="hidden" name="planId" value={planId} />
+                  {/* Per-render nonce → the Stripe Idempotency-Key: a double-click of THIS button collapses
+                      to one charge, while a fresh render (a later, deliberate switch) gets a new nonce. */}
+                  <input type="hidden" name="nonce" value={crypto.randomUUID()} />
+                  <Button type="submit" variant="secondary" className="w-full">
+                    Switch to {plan.name}
+                  </Button>
+                </form>
+              }
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -305,18 +316,36 @@ function UpgradeCard({
       </div>
       {/* Starting a subscription commits the org to a charge — owner/admin only, and the server enforces it.
           A plain member still sees what the plans are; they just can't be the one to buy. */}
-      {canManage ? (
-        <div className="flex flex-wrap gap-3">
-          {planIds.map((planId) => (
-            <form key={planId} action={startCheckoutAction}>
-              <input type="hidden" name="planId" value={planId} />
-              <Button type="submit" variant={planId === "pro" ? "primary" : "secondary"}>
-                {resubscribe ? "Resubscribe to" : "Start on"} {planLabel(planId)}
-              </Button>
-            </form>
-          ))}
-        </div>
-      ) : (
+      <div className="grid gap-4 sm:grid-cols-2">
+        {planIds.map((planId) => {
+          const plan = planById(planId);
+          if (!plan) return null;
+          return (
+            <PlanCard
+              key={planId}
+              plan={plan}
+              // A member sees the plan and its figures, just not a buy button — they lose the control, not
+              // the information. Starting a subscription commits the org to a charge (owner/admin only; the
+              // server re-enforces it).
+              cta={
+                canManage ? (
+                  <form action={startCheckoutAction}>
+                    <input type="hidden" name="planId" value={planId} />
+                    <Button
+                      type="submit"
+                      variant={planId === "pro" ? "primary" : "secondary"}
+                      className="w-full"
+                    >
+                      {resubscribe ? "Resubscribe to" : "Start on"} {plan.name}
+                    </Button>
+                  </form>
+                ) : undefined
+              }
+            />
+          );
+        })}
+      </div>
+      {!canManage && (
         <p className="text-fg-secondary">Only an owner or admin can start or change a plan.</p>
       )}
       <p className="text-fg-secondary">

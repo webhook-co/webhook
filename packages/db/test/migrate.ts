@@ -62,7 +62,7 @@ function passwordClause(pg: EphemeralPostgres, role: string): string {
  * mode it also gets its per-run login password.
  */
 export async function bootstrapOwner(pg: EphemeralPostgres): Promise<void> {
-  const sql = postgres(pg.ownerUrl, { max: 1, prepare: false, fetch_types: false });
+  const sql = postgres(pg.providerUrl, { max: 1, prepare: false, fetch_types: false });
   try {
     const owner = DB_ROLES.owner;
     const ownerIdent = quoteIdent(owner);
@@ -114,7 +114,7 @@ export const ROLES_NEEDING_PASSWORDS: readonly string[] = MANAGED_ROLES.filter(
  */
 export async function applyRolePasswords(pg: EphemeralPostgres): Promise<void> {
   if (pg.auth !== "password") return;
-  const sql = postgres(pg.ownerUrl, { max: 1, prepare: false, fetch_types: false });
+  const sql = postgres(pg.providerUrl, { max: 1, prepare: false, fetch_types: false });
   try {
     for (const role of ROLES_NEEDING_PASSWORDS) {
       await sql.unsafe(`alter role ${quoteIdent(role)}${passwordClause(pg, role)}`);

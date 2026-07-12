@@ -18,7 +18,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   billing = createClient(pg.urlFor({ role: DB_ROLES.billing }));
-  admin = createClient(pg.ownerUrl);
+  admin = createClient(pg.providerUrl);
 }, setupHookTimeoutMs());
 
 afterEach(async () => {

@@ -57,6 +57,25 @@ describe("BillingPage — the billing-manager gate is reflected in the UI", () =
     expect(screen.getAllByRole("button", { name: /start on|resubscribe to/i })).toHaveLength(2);
   });
 
+  // The Lane 1.3 point: the billing plan options now render as the SAME cards as /pricing — from the one
+  // catalog — so a plan's price + included volume are shown here, not hidden behind Stripe Checkout.
+  it("shows the catalog figures on each plan card (same cards as pricing)", async () => {
+    // A clean unsubscribed org (only the upgrade cards render; switch/current don't) so each figure is shown
+    // once — upgradePlanIds and switchTargets are mutually exclusive in reality.
+    await renderPage(view({ canManageBilling: true, display: null, switchTargets: [] }));
+    expect(screen.getByText("€19")).toBeInTheDocument(); // Pro price, from @webhook-co/shared/plans
+    expect(screen.getByText("500,000 events / month")).toBeInTheDocument();
+    expect(screen.getByText("€99")).toBeInTheDocument(); // Scale
+    expect(screen.getByText("3,000,000 events / month")).toBeInTheDocument();
+  });
+
+  it("shows a member the plan FIGURES even without a buy button (info, not controls)", async () => {
+    await renderPage(view({ canManageBilling: false, display: null, switchTargets: [] }));
+    expect(screen.getByText("€19")).toBeInTheDocument();
+    expect(screen.getByText("500,000 events / month")).toBeInTheDocument();
+    expect(screen.queryAllByRole("button", { name: /start on|resubscribe to/i })).toHaveLength(0);
+  });
+
   it("offers a plain member NEITHER — and explains who can", async () => {
     await renderPage(view({ canManageBilling: false }));
 

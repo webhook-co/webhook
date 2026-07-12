@@ -184,7 +184,7 @@ beforeAll(async () => {
   sweeper = createClient(pg.urlFor({ role: DB_ROLES.sweeper }));
   reconciler = createClient(pg.urlFor({ role: DB_ROLES.reconciler }));
   notifier = createClient(pg.urlFor({ role: DB_ROLES.notifier }));
-  root = createClient(pg.ownerUrl);
+  root = createClient(pg.providerUrl);
   orgA = await seedOrg("aaa");
   orgB = await seedOrg("bbb");
 }, setupHookTimeoutMs());

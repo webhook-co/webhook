@@ -12,13 +12,13 @@
   },
   "scripts": {
     "build": "turbo run build",
-    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run cap-cron-sync-guard && pnpm run deploy-token-pr-guard && pnpm run adr-no-dup && pnpm run test:scripts",
+    "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run cap-cron-sync-guard && pnpm run deploy-token-pr-guard && pnpm run remote-db-test-guard && pnpm run adr-no-dup && pnpm run test:scripts",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test --filter=!@webhook-co/db",
-    "test:db": "turbo run test --filter=@webhook-co/db && turbo run test:db --filter=@webhook-co/api --filter=@webhook-co/web",
+    "test:db": "turbo run test --filter=@webhook-co/db && turbo run test:db --filter=@webhook-co/api --filter=@webhook-co/web --concurrency=1",
     "no-skipped-tests": "node scripts/no-skipped-tests.mjs",
     "no-absolute-type-size": "node scripts/no-absolute-type-size.mjs",
     "no-unverified-claims": "node scripts/no-unverified-claims.mjs",
@@ -26,6 +26,7 @@
     "dal-gate-guard": "node scripts/dal-gate-guard.mjs",
     "cap-cron-sync-guard": "node scripts/cap-cron-sync-guard.mjs",
     "deploy-token-pr-guard": "node scripts/deploy-token-pr-guard.mjs",
+    "remote-db-test-guard": "node scripts/remote-db-test-guard.mjs",
     "adr-no-dup": "node scripts/adr-no-dup.mjs",
     "test:scripts": "node --test 'scripts/**/*.test.mjs' 'apps/*/scripts/**/*.test.mjs'",
     "prepare": "husky"
