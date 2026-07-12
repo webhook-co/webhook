@@ -267,7 +267,10 @@ test.describe("homepage accessibility (real browser)", () => {
     await expectClean(page);
   });
 
-  test("no violations with the Product nav dropdown open", async ({ page }) => {
+  test("no violations with the Product nav dropdown open", async ({ page }, testInfo) => {
+    // DESKTOP ONLY: below 940px the Product dropdown doesn't exist — the nav collapses into the
+    // burger, whose own open/closed a11y is covered by mobile.spec.ts.
+    test.skip(testInfo.project.name === "mobile", "the dropdown is a desktop control");
     // The IA lane left a single dropdown (Product → www pages); Developers was removed.
     await page.getByRole("button", { name: /^product$/i }).click();
     await expectClean(page);

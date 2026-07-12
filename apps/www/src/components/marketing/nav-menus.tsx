@@ -4,13 +4,13 @@ import { cn } from "@webhook-co/ui";
 import { ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { LINKS } from "@/lib/links";
+import { PRODUCT_LINKS } from "@/components/marketing/nav-links";
 import { focusRing } from "@/lib/styles";
 
 interface MenuDef {
   id: string;
   label: string;
-  links: { label: string; href: string }[];
+  links: readonly { label: string; href: string }[];
 }
 
 // The Product menu now points at real www /product/* pages (built in the IA lane), so the only nav
@@ -21,12 +21,7 @@ const MENUS: readonly MenuDef[] = [
   {
     id: "product",
     label: "Product",
-    links: [
-      { label: "Capture & replay", href: LINKS.product.captureReplay },
-      { label: "Verification", href: LINKS.product.verification },
-      { label: "Delivery", href: LINKS.product.delivery },
-      { label: "Agent triggers", href: LINKS.product.agentTriggers },
-    ],
+    links: PRODUCT_LINKS,
   },
 ];
 

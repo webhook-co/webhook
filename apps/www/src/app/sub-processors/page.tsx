@@ -1,8 +1,11 @@
+import { cn } from "@webhook-co/ui";
+
 import { pageMetadata } from "@/app/metadata";
 import { AnnounceBar } from "@/components/marketing/announce-bar";
 import { Footer } from "@/components/marketing/footer";
 import { AnchoredHeading } from "@/components/marketing/anchored-heading";
 import { LegalDoc } from "@/components/marketing/legal-doc";
+import { focusRing } from "@/lib/styles";
 import { Nav } from "@/components/marketing/nav";
 import { SUB_PROCESSORS_ANCHORS } from "@/app/legal-anchors";
 import { SkipLink } from "@/components/marketing/skip-link";
@@ -42,7 +45,20 @@ export default function SubProcessorsPage() {
           <AnchoredHeading id={SUB_PROCESSORS_ANCHORS.currentSubProcessors}>
             Current sub-processors
           </AnchoredHeading>
-          <div className="overflow-x-auto">
+          {/* A scrollable region needs keyboard access (axe: scrollable-region-focusable). The table
+              only overflows on a narrow screen — which is exactly why the desktop-only axe scan never
+              flagged it. Named + focusable, like the terminal and the pipeline lanes. */}
+          {/* jsx-a11y forbids tabIndex on a non-interactive element, but axe REQUIRES a scrollable region
+          to be keyboard-reachable (scrollable-region-focusable) — the two rules genuinely conflict here,
+          and axe is the one describing a real user being unable to reach the content. Same resolution
+          as ui/terminal.tsx. */}
+          {/* eslint-disable jsx-a11y/no-noninteractive-tabindex -- see above: axe requires it */}
+          <div
+            role="region"
+            aria-label="Sub-processors"
+            tabIndex={0}
+            className={cn(focusRing, "overflow-x-auto")}
+          >
             <table>
               <thead>
                 <tr>
