@@ -19,10 +19,17 @@
 
 # /play needs to reach the isolated sandbox worker (play.wbhk.my) for the mint fetch + the SSE
 # stream (connect-src), and to load the Turnstile challenge (script/frame/connect to
-# challenges.cloudflare.com) in production. This override is SCOPED to /play so the rest of the site
-# keeps the tight connect-src 'self' global policy — the more-specific rule wins for the CSP header,
-# while the /* security headers (nosniff, HSTS, …) still apply. Exact hosts only, no wildcards.
+# challenges.cloudflare.com). This override is SCOPED to /play so the rest of the site keeps the tight
+# global policy. Exact hosts only, no wildcards.
+#
+# ⚠️ THE `!` LINE IS LOAD-BEARING. Cloudflare _headers rules are ADDITIVE: without it, /play is served
+# with BOTH this policy and the /* one. Two CSP headers are not "most specific wins" — a browser
+# enforces their INTERSECTION, so the global `script-src 'self'` still blocked
+# challenges.cloudflare.com and the Turnstile script never loaded, leaving the mint button disabled
+# forever ("failed to load the Turnstile script"). Unset the inherited header, then set ours.
+# The /* security headers (nosniff, HSTS, Referrer-Policy, …) are separate headers and still apply.
 /play
+  ! Content-Security-Policy
   Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://play.wbhk.my https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'
 
 # Only /_next/static/* is content-hashed (JS/CSS chunks + the self-hosted Geist fonts under
