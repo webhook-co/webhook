@@ -508,12 +508,16 @@ export class ListenSession extends DurableObject<ListenEnv> {
       return "session lifetime reached — reconnect";
     }
     if (binding.userId !== undefined && Date.now() - this.lastReauthMs > REAUTH_INTERVAL_MS) {
+      // Advance the throttle BEFORE the read, unconditionally. On a tenant-DB blip checkStillMember throws
+      // and we fail open (keep the socket — the lifetime cap is the backstop), but we must NOT then retry on
+      // every 2s poll: that would open a fresh tenant connection every 2s per socket exactly when the DB is
+      // already struggling — a self-inflicted connection storm. Advancing here makes the next attempt wait
+      // the full interval regardless of outcome; the lifetime cap still bounds a persistently-unverifiable
+      // socket.
+      this.lastReauthMs = Date.now();
       try {
-        const stillMember = await this.checkStillMember(binding);
-        this.lastReauthMs = Date.now();
-        if (!stillMember) return "membership revoked";
+        if (!(await this.checkStillMember(binding))) return "membership revoked";
       } catch (err) {
-        // Fail open: keep the socket, retry next poll (timer not advanced). Logged, not silent.
         console.log(JSON.stringify({ message: "listen.reauth_degraded", error: String(err) }));
       }
     }

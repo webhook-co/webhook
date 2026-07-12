@@ -473,6 +473,27 @@ describe("ListenSession — periodic re-authorization (S.8)", () => {
     expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
   });
 
+  // Regression guard for the fail-open throttle: a THROWING membership check must not be retried on the very
+  // next poll. Advancing lastReauthMs only on success (the bug) means a DB blip re-opens a tenant connection
+  // every ~2s poll per socket — a self-inflicted connection storm during an outage. The throttle is advanced
+  // before the read, so a throw still waits the full interval.
+  it("does not re-check membership on the next poll after the check THREW (no 2s-cadence storm)", async () => {
+    const b = newBinding({ userId: crypto.randomUUID() });
+    let calls = 0;
+    const { stub, res } = await openSession(b, EMPTY_POLL, EMPTY_META, async () => {
+      calls++;
+      throw new Error("tenant db unavailable");
+    });
+    (res.webSocket as WebSocket).accept();
+
+    await runDurableObjectAlarm(stub); // first poll: checks (throws → fail open), advances the throttle
+    await runDurableObjectAlarm(stub); // immediate next poll: within the interval → must SKIP the check
+
+    expect(calls).toBe(1); // NOT 2 — the throw still advanced the throttle
+    // Failed open: the socket is kept and polling continues (the lifetime cap is the backstop).
+    expect(await runInDurableObject(stub, (_i, s) => s.storage.getAlarm())).not.toBeNull();
+  });
+
   // The absolute-lifetime backstop: independent of membership, a socket older than the cap is closed so the
   // client must re-mint a fresh ticket — which re-runs the session + endpoint RLS check, bounding a stale
   // authorization (e.g. a revoked SESSION on a still-member user) even when the membership check would pass.
