@@ -74,14 +74,20 @@ export function ProviderStrip() {
       </ul>
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+        {/* Lands on the registry itself, not the top of the page — the same deep-link-to-a-section
+            behaviour the legal pages have. `#providers` is the wall's own heading id, and
+            check-anchors.mjs verifies against the BUILT html that this fragment still resolves, so
+            the link can't quietly rot into a scroll-to-nowhere. */}
         <a
-          href={LINKS.product.verification}
+          href={`${LINKS.product.verification}#providers`}
           className={cn(
             "rounded-control font-medium text-fg underline underline-offset-2 hover:text-fg-secondary",
             focusRing,
           )}
         >
-          See all {PROVIDER_ENTRIES.length} providers &rarr;
+          {/* One string, not text-and-expression: JSX dropped the space around the interpolated count
+              and it shipped as "See all 142providers". */}
+          {`See all ${PROVIDER_ENTRIES.length} providers`} <span aria-hidden="true">&rarr;</span>
         </a>
         <a
           href={LINKS.providerDirectory}

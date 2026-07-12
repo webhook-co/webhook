@@ -99,25 +99,24 @@ describe("HomePage", () => {
     );
   });
 
-  it("offers the no-signup sandbox as a real BUTTON in the hero, not a footnote", () => {
-    // /play is the only thing on this page a stranger can do without an account, and it used to be a
-    // small text link under the CTAs — the least prominent element there. It now holds the hero's
-    // secondary CTA slot. This pins the PROMINENCE, not just the presence of a link: a regression that
-    // demotes it back to body text passes a naive "is there a link to /play" check and fails this one.
+  it("offers the sandbox as a real BUTTON on the demo — and never as a 'try the platform' promise", () => {
+    // /play is the only thing on this page a stranger can do without an account, and it started life
+    // as a small text link — the least prominent element in the hero. It is now a button attached to
+    // the demo it belongs to. This pins PROMINENCE, not just presence: a regression that demotes it
+    // back to prose passes a naive "is there a link to /play" check, and fails this one.
     render(<HomePage />);
-    const ctas = screen.getAllByRole("link", { name: /try it — no signup/i });
-    expect(ctas.length).toBeGreaterThan(0);
-    // The design system's Button renders its own class; a plain prose link does not.
-    const cta = ctas[0]!;
+    const cta = screen.getByRole("link", { name: /playground/i });
     expect(cta).toHaveAttribute("href", "/play");
+    // The design system's Button renders its own class; a plain prose link does not.
     expect(cta.className, "the sandbox CTA must be a button, not a text link").toMatch(/rounded/);
-
-    // …and the demo card carries its own way through to the real thing.
-    const fromDemo = screen.getByRole("link", { name: /send a real one and watch it land/i });
-    expect(fromDemo).toHaveAttribute("href", "/play");
     // It must NOT wrap the Inspector: that card has pause/replay buttons, and nesting interactive
     // controls inside an anchor is invalid and keyboard-hostile.
-    expect(fromDemo.querySelector("button")).toBeNull();
+    expect(cta.querySelector("button")).toBeNull();
+
+    // "Try it" read as an invitation to trial the whole platform — a promise the Free tier doesn't
+    // make. The sandbox is named for what it is.
+    const text = document.body.textContent ?? "";
+    expect(text).not.toMatch(/try it\s*—\s*no signup/i);
   });
 
   it("renders the closing call to action", () => {

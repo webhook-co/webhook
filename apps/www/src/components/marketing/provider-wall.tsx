@@ -24,9 +24,12 @@ export function ProviderWall() {
     <section aria-labelledby="providers" className={cn(container, sectionPad)}>
       <div className="mb-8 max-w-[62ch]">
         <SectionEyebrow className="mb-4">the registry</SectionEyebrow>
+        {/* The homepage links straight here (/product/verification#providers), so this is a landing
+            target, not just a heading. `scroll-mt-24` keeps the sticky header from parking on top of
+            it — without it the browser scrolls the heading exactly under the nav bar. */}
         <h2
           id="providers"
-          className="mb-4 text-[clamp(26px,3.4vw,36px)] leading-tight font-semibold tracking-heading text-balance text-fg"
+          className="mb-4 scroll-mt-24 text-[clamp(26px,3.4vw,36px)] leading-tight font-semibold tracking-heading text-balance text-fg"
         >
           All {PROVIDER_ENTRIES.length} providers, built in
         </h2>

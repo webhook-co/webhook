@@ -35,14 +35,22 @@ describe("ProviderStrip", () => {
     ).toBeInTheDocument();
   });
 
-  it("routes to the full registry on /product/verification, and to the docs directory", () => {
+  it("deep-links to the REGISTRY SECTION of the verification page, not the top of it", () => {
     render(<ProviderStrip />);
     const all = screen.getByRole("link", { name: new RegExp(`see all ${PROVIDERS.length}`, "i") });
-    expect(all).toHaveAttribute("href", "/product/verification");
+    // The fragment is what makes the click land on the wall. check-anchors.mjs proves it resolves in
+    // the BUILT html; this proves we still ask for it.
+    expect(all).toHaveAttribute("href", "/product/verification#providers");
 
     const docs = screen.getByRole("link", { name: /schemes and signature headers/i });
     expect(docs).toHaveAttribute("href", "https://docs.webhook.co/providers/directory");
   });
+
+  // NOTE: the "See all 142providers" missing-space defect is NOT guarded here, on purpose. React
+  // Testing Library preserves the whitespace around an interpolated expression, so a jsdom assertion
+  // passes whether or not the bug is present (mutation-checked — it does). The whitespace is lost in
+  // the SERVER-RENDERED markup, so the guard lives in `playwright/copy.spec.ts`, which reads the
+  // built HTML. Don't "restore" a jsdom version of it: it would be green and worthless.
 
   it("requests nothing from a third party — icons are same-origin static files", () => {
     const { container } = render(<ProviderStrip />);

@@ -7,10 +7,13 @@ import { container, focusRing } from "@/lib/styles";
 // Plain top-level links; the Product dropdown is the <NavMenus/> client island. "Docs" is the ONLY
 // nav item that leaves for docs.webhook.co — Changelog and the developer deep-links moved to the
 // footer, so the top nav stays on www except that one deliberate door.
+//
+// Docs is LAST for that reason: every item before it keeps you on this site, and the one that hands
+// you off to another domain sits at the far end rather than in the middle of them.
 const navLinks = [
-  { label: "Docs", href: LINKS.docs },
   { label: "Pricing", href: LINKS.pricing },
   { label: "About", href: LINKS.about },
+  { label: "Docs", href: LINKS.docs },
 ];
 
 export function Nav() {

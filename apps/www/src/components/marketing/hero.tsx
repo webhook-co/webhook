@@ -45,16 +45,15 @@ export function Hero() {
             it to localhost. Then hand your agents an event they can act on.
           </p>
 
-          {/* The sandbox gets a real button, not a footnote. It was a small text link under the CTAs,
-              which is the least prominent thing on the page — and it is the ONE thing here you can do
-              without an account, so it deserves the secondary slot. "Read the docs" doesn't lose its
-              home: Docs is the top-nav item, and the closing CTA still carries the button. */}
+          {/* "Try it" read as "try the whole platform" — a free-trial promise the Free tier doesn't
+              make. The sandbox is named for what it is (a playground) and lives on the demo it
+              belongs to, in the right column; the two hero buttons stay about the product. */}
           <div className="mb-8 flex flex-wrap gap-3">
             <Button asChild size="md">
               <a href={LINKS.startFree}>Start free</a>
             </Button>
             <Button asChild variant="secondary" size="md">
-              <a href={LINKS.play}>Try it — no signup</a>
+              <a href={LINKS.docs}>Read the docs</a>
             </Button>
           </div>
 
@@ -73,21 +72,17 @@ export function Hero() {
             full-bleed). On desktop mx-auto is a no-op — it already fills its 520px grid track. */}
         <div className="hero-rise-inspector mx-auto w-full max-w-[520px]">
           <Inspector />
-          {/* The Inspector is an honest DEMO (fixed data, and it says so). This is the line that turns
-              it into an offer: the same thing, with the visitor's own webhook, no account.
-              Deliberately a sibling and NOT a wrapper around the card — the Inspector has its own
-              pause and replay buttons, and nesting those inside a link is both invalid and unusable
-              with a keyboard. */}
-          <a
-            href={LINKS.play}
-            className={cn(
-              focusRing,
-              "mt-3 inline-flex items-center gap-1.5 rounded-control text-sm text-fg-secondary transition-colors hover:text-fg",
-            )}
-          >
-            Send a real one and watch it land — no signup
-            <span aria-hidden="true">→</span>
-          </a>
+          {/* The Inspector is an honest DEMO (fixed data, and it says so). The button turns that into
+              an offer: the same view, with your own webhook. It sits ON the demo rather than in the
+              hero's CTA row so it reads as "this thing, for real" — not as a second way to sign up.
+              Deliberately a SIBLING of the card, never a wrapper around it: the Inspector has pause
+              and replay buttons, and nesting interactive controls inside a link is invalid and
+              keyboard-hostile. */}
+          <div className="mt-4 flex justify-center">
+            <Button asChild variant="secondary" size="sm">
+              <a href={LINKS.play}>Test a webhook in the playground</a>
+            </Button>
+          </div>
         </div>
       </div>
     </section>
