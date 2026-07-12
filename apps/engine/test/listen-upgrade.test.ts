@@ -159,9 +159,14 @@ describe("listen upgrade — routing", () => {
     const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
     const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
     await runInDurableObject(stub, (inst) => {
-      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        checkStillMember: () => Promise<boolean>;
+      };
       di.pollEvents = emptyPoll;
       di.backlogMeta = emptyMeta;
+      di.checkStillMember = async () => true; // no live Postgres in the pool; a userful binding would dial it
     });
 
     const res = await handleListenUpgrade(
@@ -192,9 +197,14 @@ describe("listen upgrade — routing", () => {
     const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
     const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
     await runInDurableObject(stub, (inst) => {
-      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        checkStillMember: () => Promise<boolean>;
+      };
       di.pollEvents = emptyPoll;
       di.backlogMeta = emptyMeta;
+      di.checkStillMember = async () => true; // no live Postgres in the pool; a userful binding would dial it
     });
 
     const res = await handleListenUpgrade(
@@ -222,9 +232,14 @@ describe("listen upgrade — routing", () => {
     const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
     const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
     await runInDurableObject(stub, (inst) => {
-      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        checkStillMember: () => Promise<boolean>;
+      };
       di.pollEvents = emptyPoll;
       di.backlogMeta = emptyMeta;
+      di.checkStillMember = async () => true; // no live Postgres in the pool; a userful binding would dial it
     });
 
     const res = await handleListenUpgrade(
@@ -321,9 +336,14 @@ describe("listen upgrade — dashboard ticket", () => {
     const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
     const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
     await runInDurableObject(stub, (inst) => {
-      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        checkStillMember: () => Promise<boolean>;
+      };
       di.pollEvents = emptyPoll;
       di.backlogMeta = emptyMeta;
+      di.checkStillMember = async () => true; // no live Postgres in the pool; a userful binding would dial it
     });
 
     const res = await handleListenUpgrade(
@@ -361,9 +381,14 @@ describe("listen upgrade — dashboard ticket", () => {
     const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
     const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
     await runInDurableObject(stub, (inst) => {
-      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        checkStillMember: () => Promise<boolean>;
+      };
       di.pollEvents = emptyPoll;
       di.backlogMeta = emptyMeta;
+      di.checkStillMember = async () => true; // no live Postgres in the pool; a userful binding would dial it
     });
 
     const res = await handleListenUpgrade(
@@ -397,9 +422,14 @@ describe("listen upgrade — dashboard ticket", () => {
     const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
     const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
     await runInDurableObject(stub, (inst) => {
-      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        checkStillMember: () => Promise<boolean>;
+      };
       di.pollEvents = emptyPoll;
       di.backlogMeta = emptyMeta;
+      di.checkStillMember = async () => true; // no live Postgres in the pool; a userful binding would dial it
     });
 
     const res = await handleListenUpgrade(
@@ -429,9 +459,14 @@ describe("listen upgrade — dashboard ticket", () => {
     const emptyPoll: PollFn = async () => ({ events: [], caughtUp: true });
     const emptyMeta: MetaFn = async () => ({ headCursor: null, backlogCount: 0 });
     await runInDurableObject(stub, (inst) => {
-      const di = inst as ListenSession & { pollEvents: PollFn; backlogMeta: MetaFn };
+      const di = inst as ListenSession & {
+        pollEvents: PollFn;
+        backlogMeta: MetaFn;
+        checkStillMember: () => Promise<boolean>;
+      };
       di.pollEvents = emptyPoll;
       di.backlogMeta = emptyMeta;
+      di.checkStillMember = async () => true; // no live Postgres in the pool; a userful binding would dial it
     });
 
     const res = await handleListenUpgrade(
