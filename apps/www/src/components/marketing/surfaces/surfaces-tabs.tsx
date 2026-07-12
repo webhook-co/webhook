@@ -32,7 +32,12 @@ export function SurfacesTabs() {
       </SectionHeading>
 
       {/* A focused, centered code card — the terminal reads better narrow than full-bleed. */}
-      <div className="mx-auto max-w-[600px]">
+      {/* Sized to the WIDEST panel's content, not guessed. Measured at 1440px: the MCP tab needs 776px
+          of line width (the event uuid), Web app 716, API 678, CLI 671 — against a 598px box, so every
+          tab scrolled and the MCP one hid a third of itself. 840px clears the widest with headroom, and
+          still sits well inside the 1120px container. Below 880px it just uses the width available and
+          the terminal scrolls internally, as it always did. */}
+      <div className="mx-auto max-w-[840px]">
         <Tabs aria-label="Webhook surfaces" idBase="surfaces" defaultId="mcp" items={SURFACES} />
       </div>
     </section>
