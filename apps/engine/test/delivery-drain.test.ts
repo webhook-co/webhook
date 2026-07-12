@@ -271,6 +271,21 @@ describe("makeDrainDeps — outcome → lifecycle-write mapping (the DO's pure w
     ]);
   });
 
+  // The POST latency guardedDeliver already measures (result.latencyMs) must reach the write as duration_ms,
+  // so the dashboard's p95 tile has data. It threads through every outcome.
+  it("threads durationMs into each lifecycle write", async () => {
+    const i = io();
+    const deps = makeDrainDeps(i);
+    await deps.recordDelivered(due({ id: "a", attempt: 1 }), 200, 42);
+    await deps.recordRetry(due({ id: "b", attempt: 1 }), new Date(1), 500, "e", 7);
+    await deps.recordDead(due({ id: "c", attempt: 8 }), 500, "e", 99);
+    await deps.recordBlocked(due({ id: "d", attempt: 1 }), null, "ssrf", 3);
+    expect((i.delivered[0] as { durationMs: number }).durationMs).toBe(42);
+    expect((i.retried[0] as { durationMs: number }).durationMs).toBe(7);
+    expect((i.terminal[0] as { durationMs: number }).durationMs).toBe(99);
+    expect((i.terminal[1] as { durationMs: number }).durationMs).toBe(3);
+  });
+
   it("recordDead → status 'dead', recordBlocked → status 'blocked' (threading the destination + attempt)", async () => {
     const i = io();
     const deps = makeDrainDeps(i);
