@@ -39,6 +39,12 @@ export interface DateRangeFilterProps {
    * not received-at — so screen readers announce the right thing.
    */
   readonly subject?: string;
+  /**
+   * Which edge the popover aligns to. Defaults to "start" (opens rightward — right for a left-aligned
+   * trigger, e.g. the events filter bar). A right-aligned trigger (the dashboard header) passes "end" so
+   * the popover opens leftward and its right edge stays inside the content, not off the max-width.
+   */
+  readonly align?: "start" | "end";
 }
 
 // The wire `?to=` is an EXCLUSIVE upper bound (received_at < to), shared with `--before` on the CLI for
@@ -61,6 +67,7 @@ export function DateRangeFilter({
   value,
   onApply,
   subject = "received date",
+  align = "start",
 }: DateRangeFilterProps) {
   const active = hasDateRange(value);
 
@@ -107,7 +114,7 @@ export function DateRangeFilter({
           <ChevronDown className="size-4 shrink-0 text-fg-muted" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="flex w-auto gap-0 p-0">
+      <PopoverContent align={align} className="flex w-auto gap-0 p-0">
         <div className="flex w-40 flex-col gap-0.5 border-r border-hairline p-1.5">
           {DATE_PRESETS.map((preset) => (
             <button

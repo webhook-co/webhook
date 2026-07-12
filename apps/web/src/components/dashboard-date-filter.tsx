@@ -29,5 +29,7 @@ export function DashboardDateFilter() {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   }
 
-  return <DateRangeFilter value={value} onApply={onApply} subject="delivery date" />;
+  // align="end": the trigger sits at the right of the header, so the popover opens LEFTWARD and its right
+  // edge stays inside the dashboard's max-width rather than spilling off toward the viewport edge.
+  return <DateRangeFilter value={value} onApply={onApply} subject="delivery date" align="end" />;
 }
