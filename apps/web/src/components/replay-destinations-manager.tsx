@@ -57,6 +57,9 @@ function rowKey(id: string): string {
 }
 
 export interface ReplayDestinationsManagerProps {
+  /** The CANONICAL org slug (off OrgAccess) — the org every action below acts in, and the prefix of every
+   *  link out of this list. The org comes from the URL now, never from the session cookie. */
+  slug: string;
   initial: readonly DestinationItem[];
 }
 
@@ -67,7 +70,7 @@ export interface ReplayDestinationsManagerProps {
  * can't fire a mutation twice. Signing secrets are shown ONCE via OneTimeSecretDialog and are never held in
  * row state or logged.
  */
-export function ReplayDestinationsManager({ initial }: ReplayDestinationsManagerProps) {
+export function ReplayDestinationsManager({ slug, initial }: ReplayDestinationsManagerProps) {
   const [destinations, setDestinations] = React.useState<readonly DestinationItem[]>(initial);
   // Reconcile the list to a fresh server-provided `initial` WITHOUT remounting (mirrors endpoints-manager):
   // out-of-band server changes — e.g. the delivery engine auto-disables a destination — must surface on the
@@ -137,7 +140,7 @@ export function ReplayDestinationsManager({ initial }: ReplayDestinationsManager
       setFormError(null);
       setNote(null);
       try {
-        const result = await createDestinationAction({
+        const result = await createDestinationAction(slug, {
           url: url.trim(),
           label: label.trim() || undefined,
         });
@@ -169,7 +172,7 @@ export function ReplayDestinationsManager({ initial }: ReplayDestinationsManager
       setRowError(null);
       setNote(null);
       try {
-        const result = await rotateDestinationSecretAction(dest.id);
+        const result = await rotateDestinationSecretAction(slug, dest.id);
         if (!result.ok) {
           setRowError(result.error);
           return;
@@ -190,7 +193,7 @@ export function ReplayDestinationsManager({ initial }: ReplayDestinationsManager
       setRowError(null);
       setNote(null);
       try {
-        const result = await enableDestinationAction(dest.id);
+        const result = await enableDestinationAction(slug, dest.id);
         if (!result.ok) {
           setRowError(result.error);
           return;
@@ -209,7 +212,7 @@ export function ReplayDestinationsManager({ initial }: ReplayDestinationsManager
       // Optimistically flip so the toggle feels instant; the server row is authoritative on success.
       upsert({ ...dest, ordered: next });
       try {
-        const result = await setDestinationOrderedAction(dest.id, next);
+        const result = await setDestinationOrderedAction(slug, dest.id, next);
         if (!result.ok) {
           upsert({ ...dest, ordered: !next }); // revert
           setRowError(result.error);
@@ -240,7 +243,7 @@ export function ReplayDestinationsManager({ initial }: ReplayDestinationsManager
       setRemoveError(null);
       setNote(null);
       try {
-        const result = await deleteDestinationAction(dest.id);
+        const result = await deleteDestinationAction(slug, dest.id);
         if (!result.ok) {
           // Keep the modal open and show the failure INSIDE it — a page-level Banner renders behind it.
           setRemoveError(result.error);
@@ -349,7 +352,7 @@ export function ReplayDestinationsManager({ initial }: ReplayDestinationsManager
                   <TableCell className="text-right">
                     <div className="flex flex-wrap items-center justify-end gap-2">
                       <Link
-                        href={`/destinations/${dest.id}`}
+                        href={`/org/${slug}/destinations/${dest.id}`}
                         className="text-sm text-fg-secondary underline-offset-4 hover:underline"
                       >
                         View
@@ -409,6 +412,7 @@ export function ReplayDestinationsManager({ initial }: ReplayDestinationsManager
       />
 
       <DestinationKeysDialog
+        slug={slug}
         open={keysFor !== null}
         destinationId={keysFor?.id ?? null}
         onClose={() => setKeysFor(null)}

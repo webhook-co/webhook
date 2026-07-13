@@ -44,6 +44,8 @@ function keyTone(status: string): StatusTone {
 }
 
 export interface DestinationKeysDialogProps {
+  /** The CANONICAL org slug — the org the action acts in (the org comes from the URL, not the cookie). */
+  slug: string;
   open: boolean;
   destinationId: string | null;
   onClose: () => void;
@@ -56,6 +58,7 @@ export interface DestinationKeysDialogProps {
  * composition — deliberately NOT the one-time-secret dialog.
  */
 export function DestinationKeysDialog({
+  slug,
   open,
   destinationId,
   onClose,
@@ -68,7 +71,7 @@ export function DestinationKeysDialog({
     setState({ kind: "loading" });
     (async () => {
       try {
-        const res = await listDestinationSecretsAction(destinationId);
+        const res = await listDestinationSecretsAction(slug, destinationId);
         if (cancelled) return;
         if (!res.ok) {
           setState({ kind: "error", message: res.error });
@@ -82,7 +85,7 @@ export function DestinationKeysDialog({
     return () => {
       cancelled = true;
     };
-  }, [open, destinationId]);
+  }, [open, destinationId, slug]);
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>

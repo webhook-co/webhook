@@ -61,14 +61,18 @@ export type ProviderSecretActionResult =
  * endpoint / secret shape / the per-endpoint cap map to distinct, honest messages (VALIDATION surfaces the
  * write core's fixed, secret-free shape hint); everything else is a generic retry.
  */
-export async function addProviderSecretAction(input: {
-  endpointId: string;
-  provider: string;
-  kind: string;
-  secret: string;
-  label?: string;
-}): Promise<AddProviderSecretResult> {
-  const session = await requireOrgAccess();
+export async function addProviderSecretAction(
+  slug: string,
+  input: {
+    endpointId: string;
+    provider: string;
+    kind: string;
+    secret: string;
+    label?: string;
+  },
+): Promise<AddProviderSecretResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect.
+  const session = await requireOrgAccess(slug);
 
   // Runtime type guards: TS types are erased, so a crafted server-action POST can deliver non-strings —
   // coerce-guard before use so a bad payload returns a graceful error, not an unhandled 500.
@@ -105,7 +109,7 @@ export async function addProviderSecretAction(input: {
     // Best-effort cache bust so a subsequent navigation re-reads the list; wrapped so a revalidate throw can
     // never flip a committed add into a reported failure (the manager prepends the row optimistically too).
     try {
-      revalidatePath(`/endpoints/${endpointId}`);
+      revalidatePath(`/org/${session.slug}/endpoints/${endpointId}`);
     } catch (revalidateError) {
       logActionError("provider_secret.revalidate_failed", revalidateError);
     }
@@ -135,10 +139,11 @@ export async function addProviderSecretAction(input: {
  * / already-revoked secret.
  */
 export async function revokeProviderSecretAction(
+  slug: string,
   endpointId: string,
   secretId: string,
 ): Promise<ProviderSecretActionResult> {
-  const session = await requireOrgAccess();
+  const session = await requireOrgAccess(slug);
   // A non-uuid can never name a real row — treat it as gone (a clean error) rather than letting the db
   // raise 22P02 → a misleading retryable error (parity with the api/cli/mcp uuid input validation).
   if (!isUuid(endpointId) || !isUuid(secretId)) {
@@ -155,14 +160,14 @@ export async function revokeProviderSecretAction(
       // Already gone (revoked elsewhere / cross-org / unknown): revalidate so the server list reconciles on
       // the next render, and tell the client it's `gone` so it settles the row rather than showing an error.
       try {
-        revalidatePath(`/endpoints/${endpointId}`);
+        revalidatePath(`/org/${session.slug}/endpoints/${endpointId}`);
       } catch (revalidateError) {
         logActionError("provider_secret.revalidate_failed", revalidateError);
       }
       return { ok: false, error: "That secret no longer exists.", gone: true };
     }
     try {
-      revalidatePath(`/endpoints/${endpointId}`);
+      revalidatePath(`/org/${session.slug}/endpoints/${endpointId}`);
     } catch (revalidateError) {
       logActionError("provider_secret.revalidate_failed", revalidateError);
     }

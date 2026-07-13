@@ -1,27 +1,36 @@
 "use client";
 
 import { Label, Select } from "@webhook-co/ui";
+import { useRouter } from "next/navigation";
 import * as React from "react";
 
-type Org = { readonly orgId: string; readonly name: string; readonly role: string };
+type Org = { readonly orgId: string; readonly slug: string; readonly name: string };
 
 export interface OrgSwitcherProps {
   readonly orgs: readonly Org[];
   readonly currentOrgId: string;
-  /** The server action. It re-checks membership and refuses anything the user isn't in. */
-  readonly switchOrg: (formData: FormData) => Promise<void>;
 }
 
 /**
  * Pick which org the dashboard is acting as. Renders NOTHING when there's only one — most users have exactly
  * one org, and a picker with a single option is just noise in the sidebar.
  *
- * The selected org is only a request: `switchOrgAction` re-reads the user's memberships server-side and
- * refuses an org they don't belong to, and `requireOrgAccess` re-checks on every request after that. This
- * control is UX, not the gate.
+ * 🔑 Switching is now a NAVIGATION, not a mutation. It used to submit a server action that re-minted the
+ * session cookie onto the new org. Two things were wrong with that, and both disappear here:
+ *
+ *   * It was the ONLY code path in the product that mutated a session's org — the single most
+ *     security-sensitive write we had — and it existed purely to serve a picker.
+ *   * It made the switch INVISIBLE to the other tabs. With one cookie per browser, switching here silently
+ *     retargeted every other open tab's writes: tab A still showing Alpha would create its next endpoint in
+ *     Beta. That is the wrong-org write this whole lane exists to delete.
+ *
+ * Now the org is in the URL, so switching is just going somewhere else. `/org/alpha/…` and `/org/beta/…` are
+ * different Router-Cache keys and cannot alias; other tabs are untouched; the back button lands on the org you
+ * were actually looking at. And `requireOrgAccess` re-resolves the slug in your own directory on every request
+ * afterwards — so this control is UX, and the gate is elsewhere, which is where a gate belongs.
  */
-export function OrgSwitcher({ orgs, currentOrgId, switchOrg }: OrgSwitcherProps) {
-  const [pending, startTransition] = React.useTransition();
+export function OrgSwitcher({ orgs, currentOrgId }: OrgSwitcherProps) {
+  const router = useRouter();
 
   if (orgs.length <= 1) return null;
 
@@ -33,13 +42,12 @@ export function OrgSwitcher({ orgs, currentOrgId, switchOrg }: OrgSwitcherProps)
       <Select
         id="org-switcher"
         value={currentOrgId}
-        disabled={pending}
         onChange={(e) => {
-          const fd = new FormData();
-          fd.set("orgId", e.target.value);
-          startTransition(() => {
-            void switchOrg(fd);
-          });
+          const next = orgs.find((o) => o.orgId === e.target.value);
+          // Land on the org's overview rather than the equivalent page in the new org: the current page may
+          // name a resource (an endpoint, an event) that simply does not exist over there, and a switcher that
+          // 404s you is worse than one that takes a beat.
+          if (next) router.push(`/org/${next.slug}/dashboard`);
         }}
       >
         {orgs.map((o) => (

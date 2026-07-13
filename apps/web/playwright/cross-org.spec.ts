@@ -23,7 +23,7 @@ test("seed: Alpha has an endpoint", async ({ page }) => {
   const { users, orgs } = world();
   await signIn(page, users.dana.id, orgs.alpha.id);
 
-  await page.goto("/endpoints");
+  await page.goto(`/org/${orgs.alpha.slug}/endpoints`);
   await page.getByRole("button", { name: "Create endpoint" }).click();
   await page.getByLabel("Endpoint name").fill(SECRET_ENDPOINT);
   await page.getByRole("button", { name: "Create", exact: true }).click();
@@ -43,7 +43,7 @@ test("a session naming an org you do not belong to discloses nothing", async ({ 
   const req = page.context().request;
   await req.get(`/dev-session?user=${users.robin.id}&org=${orgs.alpha.id}`, { maxRedirects: 0 });
 
-  const res = await req.get("/endpoints", { maxRedirects: 0 });
+  const res = await req.get(`/org/${orgs.alpha.slug}/endpoints`, { maxRedirects: 0 });
 
   // The assertion is the DISCLOSURE, not the status code — the bytes are what leak. A gate that redirects is
   // fine, and a gate that somehow rendered an empty list would be fine too; a response carrying Alpha's
@@ -59,7 +59,7 @@ test("a removed member's live session stops reading the org immediately", async 
   // removal there is something CONCRETE to prove did not leak — a bare `status !== 200` would pass on a 500,
   // on a crash, on an empty render, on anything at all that isn't a success, which is not the claim.
   await signIn(page, users.sam.id, orgs.beta.id);
-  await page.goto("/endpoints");
+  await page.goto(`/org/${orgs.beta.slug}/endpoints`);
   await page.getByRole("button", { name: "Create endpoint" }).click();
   await page.getByLabel("Endpoint name").fill(BETA_ENDPOINT);
   await page.getByRole("button", { name: "Create", exact: true }).click();
@@ -83,7 +83,9 @@ test("a removed member's live session stops reading the org immediately", async 
 
   // Same cookie, same browser, next request. He must not be reading Beta any more — and specifically, the
   // endpoint he could see one request ago must not be in these bytes.
-  const res = await page.context().request.get("/endpoints", { maxRedirects: 0 });
+  const res = await page
+    .context()
+    .request.get(`/org/${orgs.beta.slug}/endpoints`, { maxRedirects: 0 });
   expect(res.status()).not.toBe(200);
   expect(await res.text()).not.toContain(BETA_ENDPOINT);
 });

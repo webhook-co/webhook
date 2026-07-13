@@ -25,12 +25,16 @@ import { requireOrgAccess } from "./org-access";
 // happens to sit behind it. Gate at the front door, and let the callees keep their own checks as
 // defense-in-depth rather than as the only defense.
 
-const BILLING = "/billing";
+/** The org-scoped billing page these actions land back on. `slug` MUST be the canonical one off OrgAccess —
+ *  the raw URL segment may be mis-cased or retired, and a redirect built from it would 308 on arrival. */
+const billingPath = (slug: string): string => `/org/${slug}/billing`;
 
 /** Start hosted Checkout for `planId` (untrusted form input; startCheckout gates it before any Stripe call). */
-export async function startCheckoutAction(formData: FormData): Promise<void> {
+export async function startCheckoutAction(slug: string, formData: FormData): Promise<void> {
   const planId = formData.get("planId");
-  const session = await requireOrgAccess();
+  // No subPath: an action doesn't render, so requireOrgAccess must not 308 it — these actions issue their own
+  // redirect at the end, built from the CANONICAL slug.
+  const session = await requireOrgAccess(slug);
   const result =
     typeof planId === "string"
       ? await startCheckout(session.orgId, session.userId, planId, session.user.email)
@@ -38,15 +42,15 @@ export async function startCheckoutAction(formData: FormData): Promise<void> {
 
   // Outside any try/catch — see above.
   if (result.status === "ok") redirect(result.url);
-  redirect(`${BILLING}?billing=${result.status}`);
+  redirect(`${billingPath(session.slug)}?billing=${result.status}`);
 }
 
 /** Open the hosted Customer Portal (manage payment method / cancel). Owner/admin only, gated server-side. */
-export async function openBillingPortalAction(): Promise<void> {
-  const session = await requireOrgAccess();
+export async function openBillingPortalAction(slug: string): Promise<void> {
+  const session = await requireOrgAccess(slug);
   const result = await openBillingPortal(session.orgId, session.userId);
   if (result.status === "ok") redirect(result.url);
-  redirect(`${BILLING}?billing=${result.status}`);
+  redirect(`${billingPath(session.slug)}?billing=${result.status}`);
 }
 
 /**
@@ -54,11 +58,11 @@ export async function openBillingPortalAction(): Promise<void> {
  * form submits the OPPOSITE of the current state. applyOverageToggle never throws (folds faults into a status),
  * gates owner/admin + audits in the DB, and reconciles enforcement via the engine. Lands back on /billing.
  */
-export async function setOverageAction(formData: FormData): Promise<void> {
+export async function setOverageAction(slug: string, formData: FormData): Promise<void> {
   const enabled = formData.get("enabled") === "true";
-  const session = await requireOrgAccess();
+  const session = await requireOrgAccess(slug);
   const result = await applyOverageToggle(session.orgId, session.userId, enabled);
-  redirect(`${BILLING}?overage=${result.status}`);
+  redirect(`${billingPath(session.slug)}?overage=${result.status}`);
 }
 
 /**
@@ -66,12 +70,12 @@ export async function setOverageAction(formData: FormData): Promise<void> {
  * owner/admin, validates the target, and calls Stripe with immediate proration. `planId` is untrusted form
  * input — switchPlan gates it before any Stripe call. Lands back on /billing.
  */
-export async function switchPlanAction(formData: FormData): Promise<void> {
+export async function switchPlanAction(slug: string, formData: FormData): Promise<void> {
   const planId = formData.get("planId");
   // A per-form-render nonce (ChangePlanCard) → the Stripe Idempotency-Key, so a double-submit collapses to
   // one charge. A string or nothing; switchPlan simply forwards it.
   const nonce = formData.get("nonce");
-  const session = await requireOrgAccess();
+  const session = await requireOrgAccess(slug);
   const result =
     typeof planId === "string"
       ? await switchPlan(
@@ -81,7 +85,7 @@ export async function switchPlanAction(formData: FormData): Promise<void> {
           typeof nonce === "string" ? nonce : undefined,
         )
       : ({ status: "unknown_plan" } as const);
-  redirect(`${BILLING}?switch=${result.status}`);
+  redirect(`${billingPath(session.slug)}?switch=${result.status}`);
 }
 
 /**
@@ -89,8 +93,8 @@ export async function switchPlanAction(formData: FormData): Promise<void> {
  * the customer simply stays on their current plan and renews normally. No money moves in either direction.
  * cancelPendingDowngrade never throws and gates owner/admin. Lands back on /billing.
  */
-export async function cancelDowngradeAction(): Promise<void> {
-  const session = await requireOrgAccess();
+export async function cancelDowngradeAction(slug: string): Promise<void> {
+  const session = await requireOrgAccess(slug);
   const result = await cancelPendingDowngrade(session.orgId, session.userId);
-  redirect(`${BILLING}?downgrade=${result.status}`);
+  redirect(`${billingPath(session.slug)}?downgrade=${result.status}`);
 }

@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const cookieStore = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
 vi.mock("next/headers", () => ({ cookies: vi.fn(async () => cookieStore) }));
 vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
   redirect: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);
   }),
@@ -17,6 +18,7 @@ vi.mock("next/navigation", () => ({
 const requireOrgAccess = vi.fn(async () => ({
   userId: "usr_1",
   orgId: "org_1",
+  slug: "acme",
   role: "owner" as const,
   user: { name: "Dana", email: "dana@e.test", image: null },
 }));
@@ -50,7 +52,9 @@ beforeEach(() => vi.clearAllMocks());
 
 describe("deleteOrganization", () => {
   it("clears the session cookie and redirects to LOGOUT — never LOGIN", async () => {
-    await expect(deleteOrganization(form("DELETE"))).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
+    await expect(deleteOrganization("acme", form("DELETE"))).rejects.toThrow(
+      `NEXT_REDIRECT:${LOGOUT_URL}`,
+    );
 
     expect(deleteOrgWithAudit).toHaveBeenCalledOnce();
     expect(cookieStore.delete).toHaveBeenCalledWith({
@@ -63,7 +67,7 @@ describe("deleteOrganization", () => {
   });
 
   it("refuses without the typed DELETE acknowledgement, and never touches the org or the cookie", async () => {
-    await expect(deleteOrganization(form("nope"))).rejects.toThrow(/not confirmed/);
+    await expect(deleteOrganization("acme", form("nope"))).rejects.toThrow(/not confirmed/);
     expect(deleteOrgWithAudit).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });
@@ -75,7 +79,9 @@ describe("deleteOrganization", () => {
       role: "member" as const,
       user: { name: "Dana", email: "dana@e.test", image: null },
     });
-    await expect(deleteOrganization(form("DELETE"))).rejects.toThrow(/only an organization owner/);
+    await expect(deleteOrganization("acme", form("DELETE"))).rejects.toThrow(
+      /only an organization owner/,
+    );
     expect(deleteOrgWithAudit).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });

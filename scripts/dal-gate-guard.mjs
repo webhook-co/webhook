@@ -30,8 +30,8 @@ import { join, relative } from "node:path";
 const ROOT = process.cwd();
 const APP_WEB_SRC = join(ROOT, "apps/web/src");
 const APP_DIR = "apps/web/src/app/";
-const GATED_GROUP = "apps/web/src/app/(app)/";
-const RENDER_GATE = "apps/web/src/app/(app)/layout.tsx";
+const GATED_GROUP = "apps/web/src/app/(app)/org/[slug]/";
+const RENDER_GATE = "apps/web/src/app/(app)/org/[slug]/layout.tsx";
 
 // Match an actual CALL to a DAL gate, after stripping comments — so a disabled/commented call or a
 // `{@link …}` mention doesn't count as gating the path.
@@ -52,7 +52,11 @@ const RENDER_GATE = "apps/web/src/app/(app)/layout.tsx";
 // payloads for the remaining life of their cookie. The e2e suite caught it; this guard is what stops it
 // coming back. Inside `(app)/`, only `requireOrgAccess` counts.
 const GATE_CALL = /\b(?:verifySession|requireOrgAccess)\s*\(/;
-const ORG_GATE_CALL = /\brequireOrgAccess\s*\(/;
+// Note the `[^)\s]`: the call must pass an ARGUMENT. Since the URL move, `requireOrgAccess()` with no slug is
+// a type error — but a guard that accepts it would still be lying, and the whole point of this file is that it
+// does not depend on someone else's type checker having run. The org comes from the URL; a gate that is not
+// told which org it is gating is not gating anything.
+const ORG_GATE_CALL = /\brequireOrgAccess\s*\(\s*[^)\s]/;
 const ALLOW_MARKER = /\/\/\s*dal-gate-allow:/;
 
 const ROUTE_FILE = /(?:^|\/)route\.[cm]?[jt]sx?$/;

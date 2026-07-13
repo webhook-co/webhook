@@ -56,7 +56,7 @@ beforeEach(() => {
 
 describe("changeMemberRoleAction", () => {
   it("passes the SERVER-derived actor role as the ceiling (never the client's)", async () => {
-    const res = await changeMemberRoleAction(form({ userId: "u_x", role: "admin" }));
+    const res = await changeMemberRoleAction("acme", form({ userId: "u_x", role: "admin" }));
     expect(res).toEqual({ status: "ok" });
     expect(changeMemberRole).toHaveBeenCalledWith(
       expect.anything(),
@@ -72,7 +72,7 @@ describe("changeMemberRoleAction", () => {
 
   it("EVICTS every key a demotion revoked from the credential cache", async () => {
     changeMemberRole.mockResolvedValueOnce({ changed: true, revokedKeyHashes: [HASH_A, HASH_B] });
-    await changeMemberRoleAction(form({ userId: "u_x", role: "member" }));
+    await changeMemberRoleAction("acme", form({ userId: "u_x", role: "member" }));
     expect(evictRevokedKeyHashes).toHaveBeenCalledWith([HASH_A, HASH_B], {
       kind: "member",
       id: "u_x",
@@ -86,14 +86,16 @@ describe("changeMemberRoleAction", () => {
       role: "member",
       user: { name: "", email: "", image: null },
     });
-    expect(await changeMemberRoleAction(form({ userId: "u_x", role: "admin" }))).toEqual({
+    expect(await changeMemberRoleAction("acme", form({ userId: "u_x", role: "admin" }))).toEqual({
       status: "forbidden",
     });
     expect(changeMemberRole).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown role", async () => {
-    expect(await changeMemberRoleAction(form({ userId: "u_x", role: "superuser" }))).toMatchObject({
+    expect(
+      await changeMemberRoleAction("acme", form({ userId: "u_x", role: "superuser" })),
+    ).toMatchObject({
       status: "invalid",
     });
     expect(changeMemberRole).not.toHaveBeenCalled();
@@ -101,14 +103,14 @@ describe("changeMemberRoleAction", () => {
 
   it("maps the ceiling error to forbidden", async () => {
     changeMemberRole.mockRejectedValueOnce(new MemberCeilingError("nope"));
-    expect(await changeMemberRoleAction(form({ userId: "u_x", role: "admin" }))).toEqual({
+    expect(await changeMemberRoleAction("acme", form({ userId: "u_x", role: "admin" }))).toEqual({
       status: "forbidden",
     });
   });
 
   it("maps the last-owner guard to its own explanatory status", async () => {
     changeMemberRole.mockRejectedValueOnce(new LastOwnerError("nope"));
-    expect(await changeMemberRoleAction(form({ userId: "u_x", role: "member" }))).toEqual({
+    expect(await changeMemberRoleAction("acme", form({ userId: "u_x", role: "member" }))).toEqual({
       status: "last_owner",
     });
   });
@@ -117,7 +119,7 @@ describe("changeMemberRoleAction", () => {
 describe("removeMemberAction", () => {
   it("removes and evicts every revoked key hash", async () => {
     removeMember.mockResolvedValueOnce({ removed: true, revokedKeyHashes: [HASH_A] });
-    const res = await removeMemberAction(form({ userId: "u_x" }));
+    const res = await removeMemberAction("acme", form({ userId: "u_x" }));
     expect(res).toEqual({ status: "ok" });
     expect(removeMember).toHaveBeenCalledWith(
       expect.anything(),
@@ -138,18 +140,22 @@ describe("removeMemberAction", () => {
       role: "member",
       user: { name: "", email: "", image: null },
     });
-    expect(await removeMemberAction(form({ userId: "u_x" }))).toEqual({ status: "forbidden" });
+    expect(await removeMemberAction("acme", form({ userId: "u_x" }))).toEqual({
+      status: "forbidden",
+    });
     expect(removeMember).not.toHaveBeenCalled();
   });
 
   it("maps the last-owner guard to last_owner", async () => {
     removeMember.mockRejectedValueOnce(new LastOwnerError("nope"));
-    expect(await removeMemberAction(form({ userId: "u_x" }))).toEqual({ status: "last_owner" });
+    expect(await removeMemberAction("acme", form({ userId: "u_x" }))).toEqual({
+      status: "last_owner",
+    });
   });
 
   it("does NOT evict when the DB revoke threw (nothing was committed)", async () => {
     removeMember.mockRejectedValueOnce(new Error("db down"));
-    expect(await removeMemberAction(form({ userId: "u_x" }))).toEqual({ status: "error" });
+    expect(await removeMemberAction("acme", form({ userId: "u_x" }))).toEqual({ status: "error" });
     expect(evictRevokedKeyHashes).not.toHaveBeenCalled();
   });
 });

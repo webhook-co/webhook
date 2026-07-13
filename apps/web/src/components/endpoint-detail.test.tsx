@@ -9,6 +9,7 @@ import { EndpointDetail } from "./endpoint-detail";
 const push = vi.fn();
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
   useRouter: () => ({ push, refresh }),
 }));
 
@@ -119,7 +120,7 @@ describe("EndpointDetail", () => {
     await user.click(within(dialog).getByRole("button", { name: /delete endpoint/i }));
 
     expect(deleteEndpoint).toHaveBeenCalledWith("ep_1");
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/endpoints"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/org/acme/endpoints"));
   });
 
   it("surfaces a rotate error in the confirm dialog without revealing a URL", async () => {

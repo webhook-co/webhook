@@ -38,10 +38,12 @@ function toView(a: DeliveryAttempt): ReplayAttemptView {
  * db 22P02); a missing engine binding fails closed.
  */
 export async function replayToDestinationAction(
+  slug: string,
   eventId: string,
   destinationId: string,
 ): Promise<ReplayResult> {
-  const session = await requireOrgAccess();
+  // No subPath: an action doesn't render, so there is nothing to redirect.
+  const session = await requireOrgAccess(slug);
   if (!isUuid(eventId)) return { ok: false, error: "That event no longer exists." };
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {

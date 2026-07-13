@@ -1,5 +1,7 @@
 "use client";
 
+import { orgHref, useOrgSlug } from "@/lib/org-path";
+
 import {
   Banner,
   Button,
@@ -62,6 +64,8 @@ export function ReplayDialog({
   destinationsError,
   replay,
 }: ReplayDialogProps) {
+  // The org this component is rendered in — read from the URL, which is the source of truth for it.
+  const slug = useOrgSlug();
   // A `failed` event (signature checked + rejected) is never replayable — replaying re-signs forged content
   // (ADR-0103). We block it here too (defense in depth: the caller also disables the trigger button).
   const blocked = verificationState === "failed";
@@ -151,7 +155,10 @@ export function ReplayDialog({
         ) : targets.length === 0 ? (
           <p className="text-fg-secondary">
             Register a replay destination first.{" "}
-            <Link href="/destinations" className="text-fg underline underline-offset-4">
+            <Link
+              href={orgHref(slug, "/destinations")}
+              className="text-fg underline underline-offset-4"
+            >
               Manage destinations
             </Link>
             .

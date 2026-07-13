@@ -26,11 +26,15 @@ export type LoadMoreDeliveriesResult =
  * is independently callable) with the SAME coercion + status validation the page used, so paging stays
  * within the filter set. A db fault returns `{ok:false}` (the list keeps what it has) rather than throwing.
  */
-export async function loadMoreDeliveriesAction(input: {
-  cursor: Cursor;
-  filters?: DeliveryFilterParams;
-}): Promise<LoadMoreDeliveriesResult> {
-  const session = await requireOrgAccess();
+export async function loadMoreDeliveriesAction(
+  slug: string,
+  input: {
+    cursor: Cursor;
+    filters?: DeliveryFilterParams;
+  },
+): Promise<LoadMoreDeliveriesResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect.
+  const session = await requireOrgAccess(slug);
 
   // The cursor is a structured {orderKey, id} round-tripped through the client; fail closed on any other
   // shape before it reaches SQL — a uuid id + an ISO-µs orderKey (see cursor.ts).

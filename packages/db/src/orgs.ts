@@ -204,7 +204,17 @@ export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]>
         {
           org_id: string;
           slug: string;
-          former_slugs: string[] | null;
+          /**
+           * A COMMA-DELIMITED STRING, not an array — and that is not laziness.
+           *
+           * `createClient` sets `fetch_types: false`, so postgres.js never loads the type catalogue and cannot
+           * parse an array OID: a `text[]` column comes back as the raw Postgres literal `"{a,b}"`, a string.
+           * `.some(...)` on it throws at runtime while every mocked unit test stays green — and even a real
+           * Postgres test stays green if it asserts `toContain`, because `toContain` matches a SUBSTRING when
+           * the subject is a string. Migration 0070 returns a delimited string so the parse is explicit and
+           * cannot be silently wrong. A comma is unambiguous: a slug is `[a-z0-9-]` (0069), never a comma.
+           */
+          former_slugs: string;
           name: string;
           role: MembershipRole;
         }[]
@@ -213,7 +223,7 @@ export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]>
   return rows.map((r) => ({
     orgId: r.org_id,
     slug: r.slug,
-    formerSlugs: r.former_slugs ?? [],
+    formerSlugs: r.former_slugs ? r.former_slugs.split(",") : [],
     name: r.name,
     role: r.role,
   }));

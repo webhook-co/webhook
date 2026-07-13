@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const requireOrgAccess = vi.fn(async () => ({
   userId: "u_owner",
   orgId: "org_1",
+  slug: "acme",
   role: "owner" as string,
   user: { name: "O", email: "o@acme.test", image: null },
 }));
@@ -13,9 +14,13 @@ const verifySession = vi.fn(async () => ({
   orgId: "org_x",
   user: { name: "A", email: "bob@acme.test", image: null },
 }));
-vi.mock("./session", () => ({ verifySession: () => verifySession() }));
+vi.mock("./session", () => ({
+  verifySession: () => verifySession(),
+  LOGOUT_URL: "https://auth.test/logout",
+}));
 
 vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
   redirect: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);
   }),
@@ -29,6 +34,10 @@ vi.mock("@webhook-co/db/invites", () => ({
   revokeInvite: (...a: unknown[]) => revokeInvite(...a),
   acceptInvite: (...a: unknown[]) => acceptInvite(...a),
 }));
+const listUserOrgs = vi.fn(async () => [
+  { orgId: "org_x", slug: "acme", name: "Acme", role: "member", formerSlugs: [] },
+]);
+vi.mock("@webhook-co/db/orgs", () => ({ listUserOrgs: (...a: unknown[]) => listUserOrgs(...a) }));
 vi.mock("@webhook-co/db/credential", () => ({ createCredentialHasherFromBase64: () => ({}) }));
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: async () => ({}) as CryptoKey }));
 vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: () => new Uint8Array(32) }));
@@ -62,9 +71,13 @@ beforeEach(() => {
   requireOrgAccess.mockResolvedValue({
     userId: "u_owner",
     orgId: "org_1",
+    slug: "acme",
     role: "owner",
     user: { name: "O", email: "o@acme.test", image: null },
   });
+  listUserOrgs.mockResolvedValue([
+    { orgId: "org_x", slug: "acme", name: "Acme", role: "member", formerSlugs: [] },
+  ]);
   createInvite.mockResolvedValue({
     id: "inv_1",
     token: "whinv_secret",
@@ -75,7 +88,7 @@ beforeEach(() => {
 
 describe("createInviteAction", () => {
   it("owner invites a member → ok, returns the accept link with org + token", async () => {
-    const res = await createInviteAction(form({ email: "bob@acme.test", role: "member" }));
+    const res = await createInviteAction("acme", form({ email: "bob@acme.test", role: "member" }));
     expect(res).toMatchObject({ status: "ok", invitedEmail: "bob@acme.test", role: "member" });
     if (res.status === "ok") {
       expect(res.acceptPath).toContain("org=org_1");
@@ -96,7 +109,9 @@ describe("createInviteAction", () => {
       role: "member",
       user: { name: "", email: "", image: null },
     });
-    expect(await createInviteAction(form({ email: "x@acme.test", role: "member" }))).toEqual({
+    expect(
+      await createInviteAction("acme", form({ email: "x@acme.test", role: "member" })),
+    ).toEqual({
       status: "forbidden",
     });
     expect(createInvite).not.toHaveBeenCalled();
@@ -109,14 +124,16 @@ describe("createInviteAction", () => {
       role: "admin",
       user: { name: "", email: "", image: null },
     });
-    expect(await createInviteAction(form({ email: "x@acme.test", role: "owner" }))).toEqual({
-      status: "forbidden",
-    });
+    expect(await createInviteAction("acme", form({ email: "x@acme.test", role: "owner" }))).toEqual(
+      {
+        status: "forbidden",
+      },
+    );
     expect(createInvite).not.toHaveBeenCalled();
   });
 
   it("EMAILS the invite link and reports emailed:true", async () => {
-    const res = await createInviteAction(form({ email: "bob@acme.test", role: "member" }));
+    const res = await createInviteAction("acme", form({ email: "bob@acme.test", role: "member" }));
     expect(res).toMatchObject({ status: "ok", emailed: true });
     expect(sendInviteEmail).toHaveBeenCalledWith(
       expect.objectContaining({ apiKey: "re_key" }),
@@ -130,31 +147,31 @@ describe("createInviteAction", () => {
 
   it("still succeeds (emailed:false) when mail isn't configured — the invite is not lost", async () => {
     resendKey.mockReturnValueOnce(null);
-    const res = await createInviteAction(form({ email: "bob@acme.test", role: "member" }));
+    const res = await createInviteAction("acme", form({ email: "bob@acme.test", role: "member" }));
     expect(res).toMatchObject({ status: "ok", emailed: false });
     expect(sendInviteEmail).not.toHaveBeenCalled();
   });
 
   it("still succeeds (emailed:false) when the SEND FAILS — never lose a committed invite to a mail outage", async () => {
     sendInviteEmail.mockRejectedValueOnce(new Error("resend 500"));
-    const res = await createInviteAction(form({ email: "bob@acme.test", role: "member" }));
+    const res = await createInviteAction("acme", form({ email: "bob@acme.test", role: "member" }));
     expect(res).toMatchObject({ status: "ok", emailed: false });
     if (res.status === "ok") expect(res.acceptPath).toContain("token=whinv_secret");
   });
 
   it("rejects a malformed email/role", async () => {
-    expect(await createInviteAction(form({ email: "not-an-email", role: "member" }))).toMatchObject(
-      { status: "invalid" },
-    );
     expect(
-      await createInviteAction(form({ email: "x@acme.test", role: "superuser" })),
+      await createInviteAction("acme", form({ email: "not-an-email", role: "member" })),
+    ).toMatchObject({ status: "invalid" });
+    expect(
+      await createInviteAction("acme", form({ email: "x@acme.test", role: "superuser" })),
     ).toMatchObject({ status: "invalid" });
   });
 });
 
 describe("revokeInviteAction", () => {
   it("owner revokes → ok", async () => {
-    expect(await revokeInviteAction(form({ inviteId: "inv_1" }))).toEqual({ status: "ok" });
+    expect(await revokeInviteAction("acme", form({ inviteId: "inv_1" }))).toEqual({ status: "ok" });
     expect(revokeInvite).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ orgId: "org_1", inviteId: "inv_1", revokedBy: "u_owner" }),
@@ -168,7 +185,9 @@ describe("revokeInviteAction", () => {
       role: "member",
       user: { name: "", email: "", image: null },
     });
-    expect(await revokeInviteAction(form({ inviteId: "inv_1" }))).toEqual({ status: "forbidden" });
+    expect(await revokeInviteAction("acme", form({ inviteId: "inv_1" }))).toEqual({
+      status: "forbidden",
+    });
     expect(revokeInvite).not.toHaveBeenCalled();
   });
 });
@@ -177,7 +196,7 @@ describe("acceptInviteAction", () => {
   it("accepts against the SESSION's email and lands on ?invite=accepted", async () => {
     acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
     await expect(acceptInviteAction(form({ org: "org_x", token: "whinv_t" }))).rejects.toThrow(
-      "NEXT_REDIRECT:/dashboard?invite=accepted",
+      "NEXT_REDIRECT:/org/acme/dashboard?invite=accepted",
     );
     expect(acceptInvite).toHaveBeenCalledWith(
       expect.anything(),
@@ -194,13 +213,13 @@ describe("acceptInviteAction", () => {
   it("lands on ?invite=invalid for a bad token", async () => {
     acceptInvite.mockResolvedValueOnce({ status: "invalid" });
     await expect(acceptInviteAction(form({ org: "org_x", token: "nope" }))).rejects.toThrow(
-      "NEXT_REDIRECT:/dashboard?invite=invalid",
+      "NEXT_REDIRECT:/org/acme/dashboard?invite=invalid",
     );
   });
 
   it("lands on ?invite=invalid when org/token are missing (no accept attempt)", async () => {
     await expect(acceptInviteAction(form({}))).rejects.toThrow(
-      "NEXT_REDIRECT:/dashboard?invite=invalid",
+      "NEXT_REDIRECT:/org/acme/dashboard?invite=invalid",
     );
     expect(acceptInvite).not.toHaveBeenCalled();
   });

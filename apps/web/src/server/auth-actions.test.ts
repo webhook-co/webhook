@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const cookieStore = { get: vi.fn(), set: vi.fn(), delete: vi.fn() };
 vi.mock("next/headers", () => ({ cookies: vi.fn(async () => cookieStore) }));
 vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
   // The real redirect() throws to halt rendering; mirror that so nothing can run past it.
   redirect: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);

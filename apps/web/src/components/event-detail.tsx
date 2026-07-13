@@ -1,5 +1,7 @@
 "use client";
 
+import { orgHref, useOrgSlug } from "@/lib/org-path";
+
 import {
   Banner,
   Button,
@@ -29,6 +31,7 @@ import {
 import { deriveVerificationState } from "@webhook-co/shared";
 import { useRouter } from "next/navigation";
 import * as React from "react";
+
 import { flushSync } from "react-dom";
 
 import { formatDateTime } from "@/lib/format";
@@ -76,6 +79,8 @@ export function EventDetail({
   replay,
   deleteEvent,
 }: EventDetailProps) {
+  // The org this component is rendered in — read from the URL, which is the source of truth for it.
+  const slug = useOrgSlug();
   const router = useRouter();
   const verification = verificationCopy(event.verification);
   // The un-forgeable server-derived state (ADR-0103): a `failed` event (signature checked + rejected) can't
@@ -109,7 +114,7 @@ export function EventDetail({
       // cleanup (restoring <body> pointer-events / scroll-lock) synchronously — otherwise React could batch
       // the close with the navigation and strand those body styles (mirrors EndpointControls' delete).
       flushSync(() => setDeleteOpen(false));
-      router.push(`/endpoints/${endpointId}/events`);
+      router.push(orgHref(slug, `/endpoints/${endpointId}/events`));
     } catch {
       setDeleteError("We couldn't delete this event. Please try again.");
       setDeletePending(false);

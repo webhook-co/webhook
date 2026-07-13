@@ -8,6 +8,7 @@ import { DeliveriesFilterBar, DeliveriesList } from "./deliveries-list";
 // The filter bar is URL-driven (next/navigation); stub the hooks so it renders deterministically with no
 // query. The list itself doesn't read these hooks (only next/link), so this mock is inert for its tests.
 vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => "/deliveries",
   useSearchParams: () => new URLSearchParams(""),
@@ -77,7 +78,10 @@ describe("DeliveriesList", () => {
       />,
     );
     const deliveredRow = screen.getByText("Delivered").closest("tr")!;
-    expect(within(deliveredRow).getByRole("link")).toHaveAttribute("href", `/deliveries/${A}`);
+    expect(within(deliveredRow).getByRole("link")).toHaveAttribute(
+      "href",
+      `/org/acme/deliveries/${A}`,
+    );
     // The blocked row shows the honest hint from deliveryCopy; a blocked (non-forwarded) null destination
     // is an em-dash placeholder, never mislabeled "localhost".
     const blockedRow = screen.getByText("Blocked").closest("tr")!;
@@ -107,9 +111,11 @@ describe("DeliveriesList", () => {
       />,
     );
     // Signed on the verified-source row; Unsigned on the unattempted-source row.
-    const signedRow = document.querySelector(`a[href="/deliveries/${A}"]`)!.closest("tr")!;
+    const signedRow = document.querySelector(`a[href="/org/acme/deliveries/${A}"]`)!.closest("tr")!;
     expect(within(signedRow).getByText("Signed")).toBeInTheDocument();
-    const unsignedRow = document.querySelector(`a[href="/deliveries/${B}"]`)!.closest("tr")!;
+    const unsignedRow = document
+      .querySelector(`a[href="/org/acme/deliveries/${B}"]`)!
+      .closest("tr")!;
     expect(within(unsignedRow).getByText("Unsigned")).toBeInTheDocument();
     // The verification-failure block reads about the signature, not the SSRF guard, and shows no signature pill.
     const blockedRow = screen.getByText("Blocked").closest("tr")!;
@@ -144,9 +150,9 @@ describe("DeliveriesList", () => {
     expect(loadMore).toHaveBeenCalledWith({ cursor, filters: { status: "delivered" } });
     // The appended page's row links to its own detail; both pages are now shown.
     await waitFor(() =>
-      expect(document.querySelector(`a[href="/deliveries/${B}"]`)).toBeInTheDocument(),
+      expect(document.querySelector(`a[href="/org/acme/deliveries/${B}"]`)).toBeInTheDocument(),
     );
-    expect(document.querySelector(`a[href="/deliveries/${A}"]`)).toBeInTheDocument();
+    expect(document.querySelector(`a[href="/org/acme/deliveries/${A}"]`)).toBeInTheDocument();
     // cursor exhausted → button gone
     expect(
       screen.queryByRole("button", { name: /load older deliveries/i }),

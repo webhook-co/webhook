@@ -1,5 +1,7 @@
 "use client";
 
+import { orgHref, useOrgSlug } from "@/lib/org-path";
+
 import {
   Button,
   MultiSelect,
@@ -125,6 +127,8 @@ export function DeliveriesList({
   isFiltered,
   loadMore,
 }: DeliveriesListProps) {
+  // The org this component is rendered in — read from the URL, which is the source of truth for it.
+  const slug = useOrgSlug();
   const [items, setItems] = React.useState<readonly DeliveryItem[]>(initialItems);
   const [cursor, setCursor] = React.useState<Cursor | null>(initialCursor);
   const [pending, setPending] = React.useState(false);
@@ -213,7 +217,7 @@ export function DeliveriesList({
                   <TableCell className="text-fg-secondary">{delivery.attempt}</TableCell>
                   <TableCell>
                     <Link
-                      href={`/deliveries/${delivery.id}`}
+                      href={orgHref(slug, `/deliveries/${delivery.id}`)}
                       className="font-medium text-fg underline-offset-4 hover:underline"
                     >
                       {formatDate(delivery.createdAt)}

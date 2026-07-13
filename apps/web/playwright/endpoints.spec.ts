@@ -21,7 +21,7 @@ test("creating an endpoint persists it, and it survives a client-side round trip
   const { users, orgs } = world();
   await signIn(page, users.dana.id, orgs.alpha.id);
 
-  await page.goto("/endpoints");
+  await page.goto(`/org/${orgs.alpha.slug}/endpoints`);
   await createEndpoint(page, ALPHA_ENDPOINT);
 
   await expect(page.getByRole("cell", { name: ALPHA_ENDPOINT }).first()).toBeVisible();
@@ -37,7 +37,7 @@ test("creating an endpoint persists it, and it survives a client-side round trip
   //
   // Its unit test cannot see any of this: it asserts `revalidatePath` was called with a string.
   await page.getByRole("link", { name: "Overview" }).click();
-  await expect(page).toHaveURL(/\/dashboard$/);
+  await expect(page).toHaveURL(new RegExp(`/org/${orgs.alpha.slug}/dashboard$`));
 
   await page.getByRole("link", { name: "Endpoints" }).click();
   await expect(page.getByRole("cell", { name: ALPHA_ENDPOINT }).first()).toBeVisible();
@@ -51,7 +51,7 @@ test("an endpoint is invisible from another org — RLS, under the non-superuser
   // Dana is a member of BOTH orgs, so this is the honest test of tenancy: the same human, the same browser,
   // a different acting org. Alpha's endpoint must not appear in Beta.
   await signIn(page, users.dana.id, orgs.beta.id);
-  await page.goto("/endpoints");
+  await page.goto(`/org/${orgs.beta.slug}/endpoints`);
 
   // A POSITIVE anchor first. Without it this test is vacuous: `toHaveCount(0)` also passes when the page
   // failed to render at all, or redirected, or 500'd — every way of not-showing-the-endpoint scores as a win,

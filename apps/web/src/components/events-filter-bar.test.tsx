@@ -6,6 +6,7 @@ import { EventsFilterBar } from "./events-filter-bar";
 
 // The bar is URL-driven (next/navigation); stub the hooks so it renders deterministically with no query.
 vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   usePathname: () => "/endpoints/ep/events",
   useSearchParams: () => new URLSearchParams(""),

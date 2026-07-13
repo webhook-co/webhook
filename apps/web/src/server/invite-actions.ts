@@ -2,6 +2,7 @@
 
 import { createCredentialHasherFromBase64 } from "@webhook-co/db/credential";
 import { acceptInvite, createInvite, revokeInvite } from "@webhook-co/db/invites";
+import { listUserOrgs } from "@webhook-co/db/orgs";
 import { canGrantRole, MembershipRoleSchema } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
@@ -12,7 +13,7 @@ import { withTenantDb } from "./db";
 import { getAppBaseUrl, getAuditChainKey, getCredentialPepper, getResendApiKey } from "./env";
 import { sendInviteEmail } from "./invite-email";
 import { requireOrgAccess } from "./org-access";
-import { verifySession } from "./session";
+import { LOGOUT_URL, verifySession } from "./session";
 
 // Invite server actions (Lane 2.5). createInvite/revoke gate on requireOrgAccess (owner/admin only) and
 // pass the SERVER-derived role as the ceiling — the client can't lift it. accept gates on verifySession
@@ -91,8 +92,13 @@ async function tryEmailInvite(input: {
 
 /** Create a pending invite for the current org. Owner/admin only; the invited role can't exceed the
  *  inviter's (server-derived). Returns the accept link for the inviter to share. */
-export async function createInviteAction(formData: FormData): Promise<CreateInviteResult> {
-  const { orgId, userId, role, user } = await requireOrgAccess();
+export async function createInviteAction(
+  slug: string,
+  formData: FormData,
+): Promise<CreateInviteResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect — a form posted seconds before a
+  // rename still resolves straight through to the right org.
+  const { orgId, userId, role, user } = await requireOrgAccess(slug);
   if (!canManageMembers(role)) return { status: "forbidden" };
 
   const email = String(formData.get("email") ?? "").trim();
@@ -138,8 +144,11 @@ export async function createInviteAction(formData: FormData): Promise<CreateInvi
 export type RevokeInviteResult = { readonly status: "ok" | "forbidden" | "error" };
 
 /** Revoke a pending invite in the current org. Owner/admin only. */
-export async function revokeInviteAction(formData: FormData): Promise<RevokeInviteResult> {
-  const { orgId, userId, role } = await requireOrgAccess();
+export async function revokeInviteAction(
+  slug: string,
+  formData: FormData,
+): Promise<RevokeInviteResult> {
+  const { orgId, userId, role } = await requireOrgAccess(slug);
   if (!canManageMembers(role)) return { status: "forbidden" };
   const inviteId = String(formData.get("inviteId") ?? "");
   if (!inviteId) return { status: "error" };
@@ -159,8 +168,14 @@ export async function revokeInviteAction(formData: FormData): Promise<RevokeInvi
 /**
  * Accept an invite from its link (`?org=&token=`). Requires only a session — the accepting user is JOINING,
  * not yet a member — and matches the invite against the SESSION's own email (never client-supplied). On any
- * outcome it lands back on the dashboard with an `?invite=` status; the redirect is issued OUTSIDE the try so
+ * outcome it lands back on a dashboard with an `?invite=` status; the redirect is issued OUTSIDE the try so
  * it isn't swallowed as an error.
+ *
+ * It takes NO slug: the accepting user is not yet in the org, so there is no `/org/{slug}` they could have
+ * come from — the invite link carries the orgId. Now that dashboards are org-scoped the landing URL has to be
+ * BUILT: we re-read the caller's own directory (which, on `accepted`, now contains the org they just joined)
+ * to turn the orgId into its canonical slug. On a refusal the org isn't in the directory, so we fall back to
+ * their default org — the status banner is the point, and it must still be shown somewhere they can reach.
  */
 export async function acceptInviteAction(formData: FormData): Promise<void> {
   const session = await verifySession();
@@ -186,5 +201,18 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
       outcome = "error";
     }
   }
-  redirect(`/dashboard?invite=${outcome}`);
+  // The landing org: the one just joined when accepted, else the session's own default (the cookie orgId is
+  // only a hint — validated against the directory), else the first org they belong to. None at all → sign out
+  // rather than bounce them into a dashboard that cannot exist.
+  let orgs: Awaited<ReturnType<typeof listUserOrgs>> = [];
+  try {
+    orgs = await withTenantDb((app) => listUserOrgs(app, session.userId));
+  } catch (error) {
+    logActionError("invite.directory_read_failed", error);
+  }
+  const target =
+    orgs.find((o) => o.orgId === orgId) ?? orgs.find((o) => o.orgId === session.orgId) ?? orgs[0];
+  if (!target) redirect(LOGOUT_URL);
+
+  redirect(`/org/${target.slug}/dashboard?invite=${outcome}`);
 }
