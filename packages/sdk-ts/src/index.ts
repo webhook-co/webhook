@@ -69,3 +69,4 @@ export type {
   // Request shapes
   ReplayTarget,
 } from "./schema.js";
+export type { WebhookAdvisory } from "./advisory.js";

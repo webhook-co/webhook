@@ -19,6 +19,7 @@ from urllib.parse import quote
 import httpx
 import pydantic
 
+from ._advisory import WebhookAdvisory, make_advisory_reporter
 from ._config import resolve_base_url
 from ._errors import WebhookConfigError, WebhookUnexpectedResponseError
 from ._generated import models as m
@@ -674,6 +675,11 @@ class WebhookClient:
             default 30. Not a single total-wall-clock deadline.
         refresh_auth: Hook to swap in a rotated bearer on a 401 (OAuth flows).
         on_debug: Optional sink for redacted, single-line diagnostics (never the raw key).
+        on_advisory: Called AT MOST ONCE if the server reports this SDK version is behind. The advisory
+            rides an ``x-webhook-advisory`` header on a response you already made — the SDK never polls
+            PyPI on your behalf. Give a handler and it is yours to log; give none and the SDK emits a
+            single ``UserWarning``.
+        silence_advisories: Suppress version advisories entirely, including the warning.
     """
 
     def __init__(
@@ -686,6 +692,8 @@ class WebhookClient:
         timeout_s: float | None = None,
         refresh_auth: Callable[[], str | None] | None = None,
         on_debug: Callable[[str], None] | None = None,
+        on_advisory: Callable[[WebhookAdvisory], None] | None = None,
+        silence_advisories: bool = False,
         sleep: Callable[[float], None] | None = None,
         rand: Callable[[], float] | None = None,
     ) -> None:
@@ -708,6 +716,10 @@ class WebhookClient:
             timeout_s=timeout_s if timeout_s is not None else DEFAULT_TIMEOUT_S,
             refresh_auth=refresh_auth,
             on_debug=on_debug,
+            # One reporter per client: the advisory fires at most once, not once per request.
+            report_advisory=make_advisory_reporter(
+                on_advisory, silent=silence_advisories
+            ),
             sleep=sleep,
             rand=rand,
         )

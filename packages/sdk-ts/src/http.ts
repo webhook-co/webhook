@@ -11,6 +11,7 @@ import {
   type WebhookErrorCode,
 } from "./errors.js";
 import { createRedactor } from "./redaction.js";
+import { userAgent } from "./version.js";
 import {
   DEFAULT_MAX_RETRIES,
   DEFAULT_TIMEOUT_MS,
@@ -58,6 +59,11 @@ export interface HttpClientConfig {
   readonly refreshAuth?: () => Promise<string | null>;
   /** Optional debug sink. Receives already-redacted, single-line diagnostics (never the raw key). */
   readonly onDebug?: (line: string) => void;
+  /** Called (at most once) with a version advisory from the server. Injected by the client. */
+  readonly reportAdvisory?: (
+    header: string | null | undefined,
+    deprecation: string | null | undefined,
+  ) => void;
 }
 
 /** A single request to make. `idempotent` gates whether a transient failure may be retried. */
@@ -137,6 +143,9 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
           headers: {
             authorization: `Bearer ${bearer}`,
             accept: "application/json",
+            // Identify the client + version. This is what lets the server answer with a version advisory on
+            // a response you already asked for, instead of the SDK polling npm behind your back.
+            "user-agent": userAgent(),
             ...(spec.body !== undefined ? { "content-type": "application/json" } : {}),
           },
           ...(spec.body !== undefined ? { body: JSON.stringify(spec.body) } : {}),
@@ -156,6 +165,13 @@ export function createHttpClient(config: HttpClientConfig): HttpClient {
         }
         throw errorFromTransport(config.baseUrl);
       }
+
+      // The server rides a version advisory on a response we already asked for. Surface it (at most once)
+      // regardless of status: a client that is too old to work is precisely the one seeing errors.
+      config.reportAdvisory?.(
+        res.headers.get("x-webhook-advisory"),
+        res.headers.get("deprecation"),
+      );
 
       if (res.ok) return parseSuccess(res);
 

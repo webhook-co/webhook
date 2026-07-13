@@ -578,3 +578,71 @@ describe("audit", () => {
     });
   });
 });
+
+// The whole server-driven loop, end to end through the real client: we identify ourselves, the server rides
+// an advisory on a response we already asked for, and we surface it ONCE.
+describe("client version advisory (end to end)", () => {
+  const advisoryResponse = (body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "x-webhook-advisory": "update-available; current=0.0.0; latest=9.9.9",
+      },
+    });
+
+  it("sends a versioned user-agent so the server can recognise this client", async () => {
+    const calls: Array<Record<string, string>> = [];
+    const fetchFn = (async (_url: unknown, init: unknown) => {
+      calls.push((init as { headers: Record<string, string> }).headers);
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    }) as unknown as typeof fetch;
+    const client = new WebhookClient({ apiKey: API_KEY, fetch: fetchFn });
+    await client.whoami();
+    expect(calls[0]!["user-agent"]).toMatch(/^webhook-co-js\/\d+\.\d+\.\d+ \(/);
+  });
+
+  it("surfaces the server's advisory to onAdvisory exactly once across many requests", async () => {
+    const seen: unknown[] = [];
+    const fetchFn = (async () => advisoryResponse({})) as unknown as typeof fetch;
+    const client = new WebhookClient({
+      apiKey: API_KEY,
+      fetch: fetchFn,
+      onAdvisory: (a) => seen.push(a),
+    });
+    await client.whoami();
+    await client.whoami();
+    await client.whoami();
+    expect(seen).toHaveLength(1); // once per client, NOT once per request
+    expect(seen[0]).toMatchObject({ current: "0.0.0", latest: "9.9.9", deprecated: false });
+  });
+
+  it("stays silent when the server sends no advisory (the common case)", async () => {
+    const seen: unknown[] = [];
+    const fetchFn = (async () =>
+      new Response("{}", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const client = new WebhookClient({
+      apiKey: API_KEY,
+      fetch: fetchFn,
+      onAdvisory: (a) => seen.push(a),
+    });
+    await client.whoami();
+    expect(seen).toHaveLength(0);
+  });
+
+  it("can be silenced completely", async () => {
+    const seen: unknown[] = [];
+    const fetchFn = (async () => advisoryResponse({})) as unknown as typeof fetch;
+    const client = new WebhookClient({
+      apiKey: API_KEY,
+      fetch: fetchFn,
+      onAdvisory: (a) => seen.push(a),
+      silenceAdvisories: true,
+    });
+    await client.whoami();
+    expect(seen).toHaveLength(0);
+  });
+});
