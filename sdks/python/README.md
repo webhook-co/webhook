@@ -20,10 +20,14 @@ from webhook_co import WebhookClient
 
 client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
 
-# Create an endpoint. The ingest URL is a credential, but not one-time — it can be re-read any time
-# (POST /v1/endpoints/{id}/reveal-ingest-url, `wbhk endpoints reveal <id>`, or the dashboard).
+# Create an endpoint. The ingest URL is a credential, but it is NOT one-time.
 endpoint = client.endpoints.create(name="orders-prod")
 print(endpoint.ingest_url)
+
+# Lost it? Read it back — the token is sealed at rest, so there is nothing to lose and no need to
+# rotate (rotating would revoke the live URL and break every sender still posting to it).
+revealed = client.endpoints.reveal_ingest_url(endpoint.id)
+print(revealed.ingest_url)
 
 # List events for that endpoint (auto-paginates).
 for event in client.events.list(endpoint.id):
