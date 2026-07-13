@@ -150,9 +150,7 @@ function ChainPanel<T extends { seq: number }>({
   emptyText,
 }: {
   initial: { status: "ok"; items: readonly T[]; nextSeq: number | null } | { status: "error" };
-  loadMore: (
-    fd: FormData,
-  ) => Promise<
+  loadMore: (fd: FormData) => Promise<
     | {
         status: "ok";
         result: { status: "ok"; items: readonly T[]; nextSeq: number | null } | { status: "error" };
