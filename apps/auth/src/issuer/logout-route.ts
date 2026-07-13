@@ -27,10 +27,24 @@ export interface LogoutRouteDeps {
  * from auth.webhook.co also takes out app.webhook.co's `__Host-wh_session`. That is deliberate belt-and-
  * braces: app. already deletes its own cookie, but that clearing header was silently rejected by the browser
  * once before (it lacked `Secure` on a `__Host-` cookie), and a logout should not depend on a single header
- * being perfectly formed. `"cache"` additionally evicts the origin's stored responses, so a Back navigation
- * cannot repaint a signed-in page.
+ * being perfectly formed.
+ *
+ * `"cache"` USED TO BE HERE, to stop a Back navigation repainting a signed-in page. It was removed, because
+ * it was costing ~25 seconds of every logout and buying nothing.
+ *
+ * The measurement (Chrome, real prod session): the server answered GET /logout in 0.27s warm / 1.29s cold,
+ * while Navigation Timing put 24,916ms inside the REDIRECT PHASE (`redirectStart`->`redirectEnd`) — the
+ * browser refusing to commit the navigation while it purged its HTTP cache. Chromium's browsing-data removal
+ * blocks the commit, and the `"cache"` type scales with the size of the user's on-disk cache. That is the
+ * whole of the "logout takes forever" bug.
+ *
+ * And the Back-navigation protection it was supposedly providing is already provided, twice over, by things
+ * that cost nothing: `Cache-Control: no-store` on this response and on every authenticated page (so there is
+ * no stored response to repaint), and the fact that the session cookie and the session ROW are both gone —
+ * so a repaint would render a signed-out page anyway. We were paying 25 seconds for a third lock on a door
+ * that was already bolted.
  */
-const CLEAR_SITE_DATA = '"cookies", "cache"';
+const CLEAR_SITE_DATA = '"cookies"';
 
 function redirect(location: string, setCookies: readonly string[]): Response {
   const headers = new Headers({

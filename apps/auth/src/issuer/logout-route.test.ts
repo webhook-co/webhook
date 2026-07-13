@@ -57,6 +57,18 @@ describe("handleLogout", () => {
     expect(res.headers.get("clear-site-data")).toContain('"cookies"');
   });
 
+  // MEASURED, not theorised: with `"cache"` in this header, a real logout in Chrome took 24.9s inside the
+  // redirect phase (Navigation Timing `redirectStart`->`redirectEnd`) while the server answered GET /logout
+  // in 0.27s warm / 1.29s cold. Chromium blocks the navigation commit until the browsing-data purge finishes,
+  // and `"cache"` drives an HTTP-cache purge for the whole registrable domain that scales with the user's
+  // disk cache. It bought us nothing: what stops a Back navigation repainting a signed-in page is
+  // `Cache-Control: no-store` (asserted below), and what kills the session is the Set-Cookie + the deleted
+  // session row. So the cost was ~25 seconds of a logout and the benefit was zero.
+  it("does NOT purge the HTTP cache — `cache` blocks the navigation for tens of seconds", async () => {
+    const res = await handleLogout(deps(), req());
+    expect(res.headers.get("clear-site-data")).not.toContain('"cache"');
+  });
+
   it("is never cached — a cached logout would be a no-op on the next visit", async () => {
     const res = await handleLogout(deps(), req());
     expect(res.headers.get("cache-control")).toBe("no-store");
