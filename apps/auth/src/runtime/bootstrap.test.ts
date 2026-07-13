@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   bootstrapForUser,
   makeBootstrapHooks,
+  MAX_SLUG_ATTEMPTS,
   personalOrgName,
   personalOrgSlug,
   type BootstrapDeps,
@@ -24,10 +25,14 @@ const user = (over: Partial<BootstrapUser> = {}): BootstrapUser => ({
 });
 
 /**
- * The shape a slug must have to be usable as a URL segment, and the shape the DB will enforce with a CHECK:
- * 3–40 chars, lowercase alphanumeric and hyphens, no leading/trailing hyphen, never all-numeric.
+ * The shape a slug must have to be usable as a URL segment, and the shape the DB CHECK will enforce:
+ * 3–40 chars, lowercase alphanumeric and hyphens, no leading/trailing hyphen. (All-numeric is forbidden too,
+ * but that is a separate predicate — see the assertions; folding it into one regex costs more than it buys.)
+ *
+ * The tail group is MANDATORY, not optional. Written `(?:…)?` it also accepts a 1-char slug, so the regex
+ * would not have enforced the minimum length its own name promises.
  */
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/;
 
 describe("personalOrgSlug", () => {
   it("derives a slug from the name plus a stable per-user suffix", () => {
@@ -102,19 +107,22 @@ describe("personalOrgSlug", () => {
     const slugifiedId = u.id.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     const slug = personalOrgSlug(u);
 
-    expect(slug.length).toBeLessThanOrEqual(30);
+    expect(slug.length).toBeLessThanOrEqual(23); // MAX_BASE(16) + "-" + SUFFIX_HEX(6)
     expect(slug).not.toContain(slugifiedId);
   });
 
-  it("yields a different slug per attempt, so a collision can be retried instead of bricking a user", () => {
-    const first = personalOrgSlug(user(), 0);
-    const second = personalOrgSlug(user(), 1);
-    const third = personalOrgSlug(user(), 2);
+  it("attempt 0 is stable; retries are RANDOM, so a bricked user can heal on a later login", () => {
+    // Attempt 0 must be stable — an idempotent re-run has to derive the same slug.
+    expect(personalOrgSlug(user(), 0)).toBe(personalOrgSlug(user(), 0));
 
-    expect(new Set([first, second, third]).size).toBe(3);
-    for (const s of [first, second, third]) expect(s).toMatch(SLUG_RE);
-    // and each attempt is itself stable
-    expect(personalOrgSlug(user(), 1)).toBe(second);
+    // Retries must NOT be. A deterministic retry set is a FIXED, FINITE set: the same five slugs for that
+    // user forever. If all five were taken, the self-heal would re-derive the same doomed five on every
+    // subsequent login and the user would stay bricked — which is the very bug being fixed, just rarer.
+    // Randomness is what makes it recoverable.
+    const draws = new Set([1, 2, 3, 4, 5, 6, 7, 8].map(() => personalOrgSlug(user(), 1)));
+    expect(draws.size).toBeGreaterThan(1);
+    for (const s of draws) expect(s).toMatch(SLUG_RE);
+    expect(personalOrgSlug(user(), 0)).not.toBe(personalOrgSlug(user(), 1));
   });
 });
 
@@ -138,6 +146,9 @@ function deps(over: Partial<BootstrapDeps> = {}): BootstrapDeps {
       created: true,
     })) as unknown as BootstrapDeps["bootstrap"],
     makeHasher: vi.fn(() => ({}) as never) as unknown as BootstrapDeps["makeHasher"],
+    // The self-heal is handed a bare userId, so bootstrapForUser reads the profile back. Stubbed here; the
+    // real one selects (name, email) from "user" over the same webhook_app client.
+    loadUserProfile: vi.fn(async () => ({ name: "Dana Example", email: "dana@example.com" })),
     ...over,
   };
 }
@@ -219,9 +230,42 @@ describe("bootstrapForUser", () => {
 
     await expect(bootstrapForUser(d, user())).resolves.toBeUndefined();
 
-    expect(bootstrap.mock.calls.length).toBeGreaterThan(1);
-    expect(bootstrap.mock.calls.length).toBeLessThanOrEqual(5);
+    // The REAL budget, not a range — `toBeLessThanOrEqual(5)` would stay green if someone cut it to two.
+    expect(bootstrap).toHaveBeenCalledTimes(MAX_SLUG_ATTEMPTS);
     expect(log.mock.calls.map((c) => c[0])).toContain("auth.bootstrap_failed");
+  });
+
+  // 🐞 The self-heal named the org after NOBODY.
+  //
+  // Better Auth's session row carries only a userId, so the self-heal called bootstrapForUser({ id }) with no
+  // name and no email — and the old comment justified that as "sufficient, since an idempotent re-run ignores
+  // slug/name". That is exactly backwards for the ONE user this path ever does anything for: someone with no
+  // org YET, for whom the slug and name are not ignored but PERSISTED. They were silently given an org called
+  // "Personal" at `/org/org-<hex>/`, and `on conflict (id) do nothing` meant nothing ever repaired it. There
+  // is no rename path. That is their address, forever.
+  it("names the org after the user even when handed only a userId (the self-heal path)", async () => {
+    const d = deps();
+    await bootstrapForUser(d, { id: "usr_ABCdef123456" }); // no name, no email — as the session hook calls it
+
+    expect(d.loadUserProfile).toHaveBeenCalledWith(expect.anything(), "usr_ABCdef123456");
+    const [, input] = (d.bootstrap as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(input.name).toBe("Dana Example"); // NOT "Personal"
+    expect(input.slug).toMatch(/^dana-example-/); // NOT "org-<hex>"
+  });
+
+  it("still bootstraps when the profile cannot be read — a missing name must not block the org", async () => {
+    const d = deps({ loadUserProfile: vi.fn(async () => null) });
+    await bootstrapForUser(d, { id: "usr_ABCdef123456" });
+
+    const [, input] = (d.bootstrap as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(input.name).toBe("Personal"); // degraded, but an org exists — better than no org
+    expect(input.slug).toMatch(/^org-/);
+  });
+
+  it("does NOT re-read the profile when the caller already supplied one (the signup path)", async () => {
+    const d = deps();
+    await bootstrapForUser(d, user());
+    expect(d.loadUserProfile).not.toHaveBeenCalled();
   });
 
   it("does NOT retry a non-collision fault — a db outage is not a slug problem", async () => {
