@@ -1,7 +1,7 @@
 {
   "name": "@webhook-co/sdk",
   "version": "0.0.0",
-  "description": "The official TypeScript SDK for the webhook.co API — a typed client with retries, cursor pagination, idempotency, and secret redaction.",
+  "description": "The official TypeScript SDK for the webhook.co API \u2014 a typed client with retries, cursor pagination, idempotency, and secret redaction.",
   "type": "module",
   "license": "Apache-2.0",
   "homepage": "https://webhook.co",
@@ -52,7 +52,8 @@
     "generate": "node scripts/generate-types.mjs",
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "smoke:packaged": "node ../../scripts/sdk-packaged-smoke.mjs"
   },
   "devDependencies": {
     "openapi-typescript": "^7.13.0",

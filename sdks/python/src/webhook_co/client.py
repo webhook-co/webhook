@@ -619,15 +619,19 @@ class _TriggersResource:
         held connection and no special timeout handling. Drain a backlog by re-calling promptly while
         ``caught_up`` is False, then poll on your own cadence once caught up.
 
-        ``cursor`` accepts None so the ``next_cursor`` of a caught-up page round-trips straight back in::
+        ``cursor`` accepts None so a None ``next_cursor`` round-trips straight back in. Read the semantics
+        carefully: ``next_cursor`` is None ONLY when you sent no cursor and there were no events — an empty
+        page ECHOES the cursor you sent. So None means "start from the oldest retained event", NOT "caught
+        up". ``caught_up`` is the caught-up signal; never infer it from a None cursor. (Passing None back is
+        safe: you re-read from the oldest, which is at-least-once by design — dedup on the event id.)::
 
             cursor = None
             while True:
                 page = client.triggers.wait(trigger_id, cursor=cursor)
                 for event in page.events:
                     handle(event)
-                cursor = page.next_cursor  # None when caught up — safe to pass right back
-                if page.caught_up:
+                cursor = page.next_cursor  # feed straight back in
+                if page.caught_up:  # <- the caught-up signal
                     time.sleep(1)
 
         At-least-once: a crash before you persist ``next_cursor`` re-reads, never loses — dedup on the event

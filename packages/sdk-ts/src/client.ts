@@ -507,14 +507,18 @@ class TriggersResource {
    * connection and no special timeout handling. Drain a backlog by re-calling promptly while `caughtUp` is
    * false, then poll on your own cadence once caught up.
    *
-   * `cursor` accepts null so the `nextCursor` of a caught-up page round-trips straight back in:
+   * `cursor` accepts null so a null `nextCursor` round-trips straight back in. Read the semantics carefully:
+   * `nextCursor` is null ONLY when you sent no cursor and there were no events — an empty page ECHOES the
+   * cursor you sent. So null means "start from the oldest retained event", NOT "caught up". `caughtUp` is
+   * the caught-up signal; never infer it from a null cursor. (Passing null back is safe: you re-read from
+   * the oldest, which is at-least-once by design — dedup on the event id.)
    *
    *     let cursor = null;
    *     for (;;) {
    *       const page = await client.triggers.wait(id, { cursor });
    *       for (const event of page.events) handle(event);
-   *       cursor = page.nextCursor; // null when caught up — safe to pass right back
-   *       if (page.caughtUp) await sleep(1000);
+   *       cursor = page.nextCursor; // feed straight back in
+   *       if (page.caughtUp) await sleep(1000); // <- the caught-up signal
    *     }
    *
    * At-least-once: a crash before you persist `nextCursor` re-reads, never loses — dedup on the event id.
