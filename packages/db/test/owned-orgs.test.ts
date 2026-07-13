@@ -6,6 +6,7 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { classifyOwnedOrgs } from "../src/org-lifecycle";
 import { createOrgWithOwner } from "../src/orgs";
+import { testAuditKey } from "./audit-key";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -37,6 +38,7 @@ async function seedOrg(name: string, ownerUserId: string): Promise<string> {
     slug: `s-${randomUUID().slice(0, 8)}`,
     name,
     ownerUserId,
+    auditKey: await testAuditKey(),
   });
   return id;
 }

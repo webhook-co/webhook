@@ -14,6 +14,7 @@ import {
   personalOrgId,
   readMembershipRole,
 } from "../src/orgs";
+import { testAuditKey } from "./audit-key";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -178,6 +179,7 @@ describe("createOrgWithOwner (atomic — no orphan org can be born)", () => {
       slug: `s-${randomUUID().slice(0, 8)}`,
       name: "Team",
       ownerUserId: userId,
+      auditKey: await testAuditKey(),
     });
     expect(name).toBe("Team");
     const rows = await withTenant(
@@ -193,7 +195,12 @@ describe("createOrgWithOwner (atomic — no orphan org can be born)", () => {
   it("rolls the org back when the owner FK is invalid — leaves no orphan org", async () => {
     const slug = `s-${randomUUID().slice(0, 8)}`;
     await expect(
-      createOrgWithOwner(app, { slug, name: "Doomed", ownerUserId: "user_does_not_exist" }),
+      createOrgWithOwner(app, {
+        slug,
+        name: "Doomed",
+        ownerUserId: "user_does_not_exist",
+        auditKey: await testAuditKey(),
+      }),
     ).rejects.toThrow();
     // The org insert shared the transaction with the failing membership insert, so it rolled back too.
     // Assert cross-org as the superuser seed role (RLS would hide another org from webhook_app).
@@ -326,6 +333,7 @@ describe("listConsentOrgs + personalOrgId (the /authorize consent-org resolution
       slug: `t-${randomUUID().slice(0, 8)}`,
       name: "Acme Team",
       ownerUserId: teamOwner,
+      auditKey: await testAuditKey(),
     });
     await withTenant(
       app,
@@ -352,6 +360,7 @@ describe("listConsentOrgs + personalOrgId (the /authorize consent-org resolution
       slug: `t-${randomUUID().slice(0, 8)}`,
       name: "Acme Team",
       ownerUserId: teamOwner,
+      auditKey: await testAuditKey(),
     });
     // The team membership lands FIRST…
     await withTenant(

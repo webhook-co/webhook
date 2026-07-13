@@ -5,6 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createClient, withTenant, withUser, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { createOrgWithOwner, listUserOrgs, readUserProfile } from "../src/orgs";
+import { testAuditKey } from "./audit-key";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -28,6 +29,7 @@ async function seedOrg(name: string, ownerUserId: string): Promise<string> {
     slug: `s-${randomUUID().slice(0, 8)}`,
     name,
     ownerUserId,
+    auditKey: await testAuditKey(),
   });
   return id;
 }
@@ -255,7 +257,12 @@ describe("the directory resolves a slug — the security keystone of /org/{slug}
     const uid = `u_slug_${randomUUID().slice(0, 8)}`;
     await seedUser(uid);
     const slug = `keystone-${randomUUID().slice(0, 6)}`;
-    const { id } = await createOrgWithOwner(app, { slug, name: "Keystone", ownerUserId: uid });
+    const { id } = await createOrgWithOwner(app, {
+      slug,
+      name: "Keystone",
+      ownerUserId: uid,
+      auditKey: await testAuditKey(),
+    });
 
     const orgs = await listUserOrgs(app, uid);
 
@@ -271,6 +278,7 @@ describe("the directory resolves a slug — the security keystone of /org/{slug}
       slug: first,
       name: "Renamed",
       ownerUserId: uid,
+      auditKey: await testAuditKey(),
     });
 
     // The DB records the retirement itself — the app cannot write org_slug_history (see org-slug.test.ts).
@@ -301,6 +309,7 @@ describe("the directory resolves a slug — the security keystone of /org/{slug}
       slug: original,
       name: "Boomerang",
       ownerUserId: uid,
+      auditKey: await testAuditKey(),
     });
 
     await withTenant(app, id, (tx) => tx`update orgs set slug = ${away} where id = ${id}`);
@@ -319,7 +328,12 @@ describe("the directory resolves a slug — the security keystone of /org/{slug}
     await seedUser(mine);
     await seedUser(theirs);
     const secret = `theirsecret-${randomUUID().slice(0, 6)}`;
-    await createOrgWithOwner(app, { slug: secret, name: "Theirs", ownerUserId: theirs });
+    await createOrgWithOwner(app, {
+      slug: secret,
+      name: "Theirs",
+      ownerUserId: theirs,
+      auditKey: await testAuditKey(),
+    });
 
     // The whole resolution surface, for `mine`. Their slug is not in it — so `/org/theirsecret-…` is, to me,
     // exactly as non-existent as a slug nobody ever registered. There is nothing to distinguish, so there is

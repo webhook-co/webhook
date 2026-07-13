@@ -18,9 +18,13 @@ const ORGS = [
 beforeEach(() => vi.clearAllMocks());
 
 describe("OrgSwitcher", () => {
-  it("renders NOTHING when the user has only one org — a one-option picker is just noise", () => {
-    const { container } = render(<OrgSwitcher orgs={[ORGS[0]!]} currentOrgId="org_a" />);
-    expect(container).toBeEmptyDOMElement();
+  it("hides the PICKER for a single-org user, but always offers Create team", () => {
+    // A one-option picker is noise — but the Create-team link must ALWAYS be present, or the single-org user
+    // (the majority) could never reach /org/new. When the link lived below the hidden picker, the create page
+    // was unreachable for exactly them.
+    render(<OrgSwitcher orgs={[ORGS[0]!]} currentOrgId="org_a" />);
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /create team/i })).toHaveAttribute("href", "/org/new");
   });
 
   it("shows the current org as selected, and the others as options", () => {

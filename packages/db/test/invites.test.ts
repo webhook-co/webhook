@@ -18,6 +18,7 @@ import {
   revokeInvite,
 } from "../src/invites";
 import { createOrgWithOwner } from "../src/orgs";
+import { testAuditKey } from "./audit-key";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -49,6 +50,7 @@ async function seedOrg(): Promise<{ orgId: string; ownerId: string }> {
     slug: `s-${randomUUID().slice(0, 8)}`,
     name: "Acme",
     ownerUserId: ownerId,
+    auditKey: await testAuditKey(),
   });
   return { orgId: id, ownerId };
 }
@@ -127,15 +129,19 @@ describe("audit", () => {
         tx<{ event_type: string; target_id: string }[]>`
           select event_type, target_id from auth_audit_event where org_id = ${orgId} order by seq`,
     );
+    // The org's very first audited event is its own creation (createOrgWithOwner writes org_created in-tx);
+    // the invite lifecycle follows.
     expect(events.map((e) => e.event_type)).toEqual([
+      "org_created",
       "invite_created",
       "invite_accepted",
       "invite_created",
       "invite_revoked",
     ]);
-    // Each links to its invite by target_id.
-    expect(events[0].target_id).toBe(a.id);
-    expect(events[3].target_id).toBe(b.id);
+    // Each invite event links to its invite by target_id (offset by the leading org_created).
+    expect(events[0].target_id).toBe(orgId);
+    expect(events[1].target_id).toBe(a.id);
+    expect(events[4].target_id).toBe(b.id);
   });
 });
 

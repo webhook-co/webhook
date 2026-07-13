@@ -28,17 +28,41 @@ const deleteOrgWithAudit = vi.fn(async () => ({ orgId: "org_1", deletedAt: "now"
 vi.mock("@webhook-co/db/org-lifecycle", () => ({
   deleteOrgWithAudit: (...a: unknown[]) => deleteOrgWithAudit(...a),
 }));
-vi.mock("./db", () => ({ getTenantDb: async () => ({ end: async () => {} }) }));
+const renameOrg = vi.fn();
+const { SlugTakenError, InvalidOrgSlugError, RenameForbiddenError } = vi.hoisted(() => {
+  class SlugTakenError extends Error {}
+  class InvalidOrgSlugError extends Error {
+    constructor(public reason = "format") {
+      super();
+    }
+  }
+  class RenameForbiddenError extends Error {}
+  return { SlugTakenError, InvalidOrgSlugError, RenameForbiddenError };
+});
+vi.mock("@webhook-co/db/orgs", () => ({
+  renameOrg: (...a: unknown[]) => renameOrg(...a),
+  SlugTakenError,
+  InvalidOrgSlugError,
+  RenameForbiddenError,
+}));
+vi.mock("./action-log", () => ({ logActionError: vi.fn() }));
+vi.mock("./db", () => ({
+  getTenantDb: async () => ({ end: async () => {} }),
+  withTenantDb: (fn: (app: unknown) => unknown) => fn({}),
+}));
 vi.mock("./env", () => ({
   getAuditChainKey: async () => "AA".repeat(32),
   getAuthBaseUrl: () => "https://auth.test",
   getSessionSecret: async () => "s".repeat(32),
 }));
-vi.mock("@webhook-co/shared", () => ({ userActor: (id: string) => ({ kind: "user", id }) }));
+vi.mock("@webhook-co/shared", async (orig) => ({
+  ...(await orig<typeof import("@webhook-co/shared")>()),
+  userActor: (id: string) => ({ kind: "user", id }),
+}));
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: async () => ({}) as CryptoKey }));
 vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: () => new Uint8Array(32) }));
 
-import { deleteOrganization } from "./org-actions";
+import { deleteOrganization, renameOrgAction } from "./org-actions";
 import { sessionCookieOptions } from "./session-cookie";
 import { LOGOUT_URL, LOGIN_URL, SESSION_COOKIE } from "./session";
 
@@ -84,5 +108,79 @@ describe("deleteOrganization", () => {
     );
     expect(deleteOrgWithAudit).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
+  });
+});
+
+const renameForm = (fields: Record<string, string>): FormData => {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.set(k, v);
+  return fd;
+};
+
+describe("renameOrgAction", () => {
+  it("renames and redirects to the (new) canonical settings URL", async () => {
+    renameOrg.mockResolvedValueOnce({ id: "org_1", slug: "acme-new", name: "Acme" });
+    await expect(renameOrgAction("acme", renameForm({ slug: "acme-new" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme-new/settings?renamed=1",
+    );
+    // renameOrg(app, input) — the input is the SECOND arg.
+    expect(renameOrg.mock.calls[0]![1]).toMatchObject({
+      orgId: "org_1",
+      actorRole: "owner",
+      slug: "acme-new",
+    });
+  });
+
+  it("rejects a malformed slug BEFORE the DB, with a friendly field error", async () => {
+    const res = await renameOrgAction("acme", renameForm({ slug: "no" }));
+    expect(res).toMatchObject({ ok: false, field: "slug" });
+    expect(renameOrg).not.toHaveBeenCalled();
+  });
+
+  it("rejects a reserved slug before the DB", async () => {
+    const res = await renameOrgAction("acme", renameForm({ slug: "billing" }));
+    expect(res).toMatchObject({ ok: false, field: "slug" });
+    expect(renameOrg).not.toHaveBeenCalled();
+  });
+
+  it("maps a SlugTakenError from the DB to an inline 'URL taken' error", async () => {
+    renameOrg.mockRejectedValueOnce(new SlugTakenError());
+    const res = await renameOrgAction("acme", renameForm({ slug: "acme-taken" }));
+    expect(res).toMatchObject({ ok: false, field: "slug" });
+    expect((res as { error: string }).error).toMatch(/taken/i);
+  });
+
+  it("maps a RenameForbiddenError (server-side role gate) to a message", async () => {
+    renameOrg.mockRejectedValueOnce(new RenameForbiddenError());
+    const res = await renameOrgAction("acme", renameForm({ name: "New" }));
+    expect(res).toMatchObject({ ok: false });
+    expect((res as { error: string }).error).toMatch(/owner or admin/i);
+  });
+
+  it("forwards the caller's REAL role to renameOrg — so a member is refused by the primitive", async () => {
+    // The gate is renameOrg's owner/admin check, fed by the role requireOrgAccess derived server-side. This
+    // asserts the action PASSES that role through rather than hardcoding one: a member's rename reaches
+    // renameOrg as actorRole:"member" (where the real primitive throws RenameForbiddenError). Mutation-check:
+    // hardcoding actorRole:"owner" here would fail the actorRole assertion below.
+    requireOrgAccess.mockResolvedValueOnce({
+      userId: "usr_1",
+      orgId: "org_1",
+      slug: "acme",
+      role: "member" as const,
+      user: { name: "Dana", email: "dana@e.test", image: null },
+    });
+    renameOrg.mockRejectedValueOnce(new RenameForbiddenError());
+    const res = await renameOrgAction("acme", renameForm({ name: "New" }));
+    expect(res).toMatchObject({ ok: false });
+    expect((res as { error: string }).error).toMatch(/owner or admin/i);
+    expect(renameOrg.mock.calls[0]![1]).toMatchObject({ actorRole: "member" });
+  });
+
+  it("does NOT pass the slug to renameOrg when it is unchanged (name-only rename)", async () => {
+    renameOrg.mockResolvedValueOnce({ id: "org_1", slug: "acme", name: "Renamed" });
+    await expect(
+      renameOrgAction("acme", renameForm({ name: "Renamed", slug: "acme" })),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/acme/settings?renamed=1");
+    expect(renameOrg.mock.calls[0]![1].slug).toBeUndefined();
   });
 });

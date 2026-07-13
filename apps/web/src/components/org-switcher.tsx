@@ -32,30 +32,41 @@ export interface OrgSwitcherProps {
 export function OrgSwitcher({ orgs, currentOrgId }: OrgSwitcherProps) {
   const router = useRouter();
 
-  if (orgs.length <= 1) return null;
-
   return (
     <div className="flex flex-col gap-1.5">
-      <Label htmlFor="org-switcher" className="text-xs text-fg-secondary">
-        Organization
-      </Label>
-      <Select
-        id="org-switcher"
-        value={currentOrgId}
-        onChange={(e) => {
-          const next = orgs.find((o) => o.orgId === e.target.value);
-          // Land on the org's overview rather than the equivalent page in the new org: the current page may
-          // name a resource (an endpoint, an event) that simply does not exist over there, and a switcher that
-          // 404s you is worse than one that takes a beat.
-          if (next) router.push(`/org/${next.slug}/dashboard`);
-        }}
+      {/* The picker only earns its space with more than one org — but "Create team" is ALWAYS here, so a
+          single-org user can make a second one. (When it was hidden below the picker, the create page was
+          unreachable for exactly the majority of users who have one org.) */}
+      {orgs.length > 1 ? (
+        <>
+          <Label htmlFor="org-switcher" className="text-xs text-fg-secondary">
+            Organization
+          </Label>
+          <Select
+            id="org-switcher"
+            value={currentOrgId}
+            onChange={(e) => {
+              const next = orgs.find((o) => o.orgId === e.target.value);
+              // Land on the org's overview rather than the equivalent page in the new org: the current page
+              // may name a resource (an endpoint, an event) that doesn't exist over there, and a switcher that
+              // 404s you is worse than one that takes a beat.
+              if (next) router.push(`/org/${next.slug}/dashboard`);
+            }}
+          >
+            {orgs.map((o) => (
+              <option key={o.orgId} value={o.orgId}>
+                {o.name}
+              </option>
+            ))}
+          </Select>
+        </>
+      ) : null}
+      <a
+        href="/org/new"
+        className="text-xs text-fg-secondary underline-offset-4 hover:text-fg hover:underline"
       >
-        {orgs.map((o) => (
-          <option key={o.orgId} value={o.orgId}>
-            {o.name}
-          </option>
-        ))}
-      </Select>
+        + Create team
+      </a>
     </div>
   );
 }

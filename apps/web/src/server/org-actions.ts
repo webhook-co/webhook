@@ -1,14 +1,26 @@
 "use server";
 
 import { deleteOrgWithAudit } from "@webhook-co/db/org-lifecycle";
+import {
+  InvalidOrgSlugError,
+  renameOrg,
+  RenameForbiddenError,
+  SlugTakenError,
+} from "@webhook-co/db/orgs";
 import { sessionCookieOptions } from "./session-cookie";
-import { userActor } from "@webhook-co/shared";
+import {
+  orgSlugErrorMessage,
+  userActor,
+  validateOrgSlug,
+  type OrgSlugError,
+} from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { getTenantDb } from "./db";
+import { logActionError } from "./action-log";
+import { getTenantDb, withTenantDb } from "./db";
 import { getAuditChainKey } from "./env";
 import { requireOrgAccess } from "./org-access";
 import { LOGOUT_URL, SESSION_COOKIE } from "./session";
@@ -51,4 +63,77 @@ export async function deleteOrganization(slug: string, formData: FormData): Prom
   // and the session would survive (RFC 6265bis §4.1.3).
   (await cookies()).delete({ name: SESSION_COOKIE, ...sessionCookieOptions() });
   redirect(LOGOUT_URL);
+}
+
+const MAX_NAME_LEN = 100;
+
+export type RenameOrgResult = {
+  readonly ok: false;
+  readonly error: string;
+  readonly field?: "name" | "slug";
+};
+// On success this REDIRECTS to the (possibly new) canonical URL and never returns ok:true.
+
+/**
+ * Rename the org — its display name, its slug, or both.
+ *
+ * Gated on `requireOrgAccess(slug)` (proves membership + yields the role), then `renameOrg` enforces
+ * owner/admin server-side. The slug is validated in TS for a friendly message, but the DB is the authority —
+ * a taken slug (live OR retired, via the never-recycle guard) comes back as `SlugTakenError` and is shown as
+ * "that URL is taken". On a slug change we redirect to the NEW canonical URL; the old one still resolves (the
+ * retired-slug 308) but landing on the new address is honest.
+ */
+export async function renameOrgAction(slug: string, formData: FormData): Promise<RenameOrgResult> {
+  const { orgId, userId, role } = await requireOrgAccess(slug);
+
+  const nameRaw = formData.get("name");
+  const slugRaw = formData.get("slug");
+  const name = typeof nameRaw === "string" ? nameRaw.trim() : undefined;
+  const nextSlug = typeof slugRaw === "string" ? slugRaw.trim() : undefined;
+
+  if (name !== undefined && name.length === 0) {
+    return { ok: false, error: "A name can't be empty.", field: "name" };
+  }
+  if (name !== undefined && name.length > MAX_NAME_LEN) {
+    return { ok: false, error: `Keep the name under ${MAX_NAME_LEN} characters.`, field: "name" };
+  }
+  if (nextSlug !== undefined && nextSlug !== slug) {
+    const check = validateOrgSlug(nextSlug);
+    if (!check.ok) return { ok: false, error: orgSlugErrorMessage(check.reason), field: "slug" };
+  }
+
+  const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
+
+  let landingSlug: string;
+  try {
+    const result = await withTenantDb((app) =>
+      renameOrg(app, {
+        orgId,
+        actorRole: role,
+        actorId: userId,
+        name,
+        // Only pass slug when it actually changed — an unchanged slug should not attempt a self-collision.
+        slug: nextSlug !== undefined && nextSlug !== slug ? nextSlug : undefined,
+        auditKey,
+      }),
+    );
+    landingSlug = result.slug;
+  } catch (error) {
+    if (error instanceof SlugTakenError) {
+      return { ok: false, error: "That URL is already taken. Try another.", field: "slug" };
+    }
+    if (error instanceof InvalidOrgSlugError) {
+      // reason originates from validateOrgSlug, so it is an OrgSlugError; the DB carries it as a bare string.
+      return { ok: false, error: orgSlugErrorMessage(error.reason as OrgSlugError), field: "slug" };
+    }
+    if (error instanceof RenameForbiddenError) {
+      return { ok: false, error: "Only an owner or admin can rename the organization." };
+    }
+    logActionError("org.rename_failed", error);
+    return { ok: false, error: "We couldn't rename the organization. Please try again." };
+  }
+
+  // Outside the try/catch. Land on the (possibly new) canonical URL — the old one still 308s here, but the
+  // address bar should show the truth.
+  redirect(`/org/${landingSlug}/settings?renamed=1`);
 }
