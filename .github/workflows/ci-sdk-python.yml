@@ -46,3 +46,9 @@ jobs:
           isort --check-only src tests scripts
       - name: Test (with coverage + the generated-models drift guard)
         run: pytest --cov --cov-report=term-missing --cov-fail-under=95
+      # pytest imports from src/. That proves the CODE works and nothing about the WHEEL users install: a
+      # missing package in the build config, an absent py.typed, or a module that never made it into the
+      # archive all ship green. This builds the real wheel, installs it into a throwaway venv, and drives it
+      # against a stub — so a broken artifact fails HERE instead of on someone's `pip install`.
+      - name: Packaged-artifact smoke (build the wheel, install it, drive it)
+        run: python scripts/packaged_smoke.py
