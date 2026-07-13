@@ -24,6 +24,32 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: ./.github/actions/setup
 
+  go-sdk-spec-sync:
+    name: webhook-go vendored spec is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # The Go SDK lives in a separate repo, so its route-coverage ratchet validates against a VENDORED copy
+      # of this spec (webhook-go testdata/openapi.json). A derived artifact whose guard is not triggered by
+      # its SOURCE rots silently — exactly how the Python SDK's generated models fell 12 schemas behind
+      # while CI stayed green (the ci-sdk-python paths filter excluded this very file). A stale vendored
+      # spec would disarm the Go ratchet the same way: it would keep passing against an old route list, so a
+      # newly-shipped route could reach production with no Go method and nothing would say a word.
+      #
+      # If this fails: copy packages/openapi/src/openapi.json into webhook-go/testdata/ and open a PR there.
+      - name: Compare the live spec against webhook-go's vendored copy
+        run: |
+          curl -fsSL -o /tmp/vendored-openapi.json \
+            https://raw.githubusercontent.com/webhook-co/webhook-go/main/testdata/openapi.json
+          if ! diff -q packages/openapi/src/openapi.json /tmp/vendored-openapi.json > /dev/null; then
+            echo "::error::webhook-go's testdata/openapi.json is STALE — its route-coverage ratchet is"
+            echo "::error::validating against an old spec, so a new route can ship with no Go SDK method."
+            echo "::error::Fix: copy packages/openapi/src/openapi.json to webhook-go/testdata/ and open a PR."
+            diff packages/openapi/src/openapi.json /tmp/vendored-openapi.json || true
+            exit 1
+          fi
+          echo "webhook-go's vendored spec matches the live spec."
+
   lint:
     name: lint
     runs-on: ubuntu-latest
