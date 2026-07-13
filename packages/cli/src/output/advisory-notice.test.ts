@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { stripAnsi } from "./color.js";
-import { renderAdvisoryNotice } from "./advisory-notice.js";
+import { parseAdvisoryHeader, renderAdvisoryNotice } from "./advisory-notice.js";
 
 const update = {
   deprecated: false,
@@ -41,5 +41,41 @@ describe("renderAdvisoryNotice", () => {
   it("emits ansi escapes when color is enabled", () => {
     const notice = renderAdvisoryNotice(update, true);
     expect(notice).not.toBe(stripAnsi(notice));
+  });
+});
+
+describe("parseAdvisoryHeader", () => {
+  it("parses an update advisory", () => {
+    expect(parseAdvisoryHeader("update-available; current=0.2.0; latest=0.3.0", null)).toEqual({
+      deprecated: false,
+      current: "0.2.0",
+      latest: "0.3.0",
+      message: "",
+    });
+  });
+
+  it("treats the `deprecated` kind — or a Deprecation: true header — as deprecated", () => {
+    expect(parseAdvisoryHeader("deprecated; current=0.1.0; latest=0.3.0", null)?.deprecated).toBe(
+      true,
+    );
+    // The kind says merely-stale but the server also sent Deprecation: true — believe the louder signal.
+    expect(
+      parseAdvisoryHeader("update-available; current=0.1.0; latest=0.3.0", "true")?.deprecated,
+    ).toBe(true);
+  });
+
+  // The server is not the CLI's parser: a garbled header must never break a command.
+  it("returns null for absent or malformed input instead of throwing", () => {
+    for (const bad of [
+      null,
+      undefined,
+      "",
+      "garbage",
+      "update-available",
+      "update-available; current=; latest=",
+    ]) {
+      expect(() => parseAdvisoryHeader(bad, null)).not.toThrow();
+      expect(parseAdvisoryHeader(bad, null)).toBeNull();
+    }
   });
 });

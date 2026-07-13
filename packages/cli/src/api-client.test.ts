@@ -633,3 +633,77 @@ describe("createApiClient reactive 401 refresh", () => {
     expect((err as ApiError).code).toBe("UNAUTHORIZED");
   });
 });
+
+// The server-driven version advisory. The CLI sends its version in the User-Agent; the API rides an
+// advisory back on a response we already asked for. No npm poll, no extra request.
+describe("client version advisory", () => {
+  const advisoryRes = (status: number): Response =>
+    new Response(JSON.stringify({ orgId: "org_1", scopes: [] }), {
+      status,
+      headers: {
+        "content-type": "application/json",
+        "x-webhook-advisory": "update-available; current=0.0.0; latest=9.9.9",
+      },
+    });
+
+  it("sends a versioned wbhk-cli user-agent so the server can recognise this client", async () => {
+    const { fetch, calls } = fakeFetch(json({ orgId: "org_1", scopes: [] }));
+    const client = createApiClient({ baseUrl: BASE, apiKey: KEY, fetch });
+    await client.whoami();
+    expect(calls[0].headers.get("user-agent")).toMatch(/^wbhk-cli\/\d+\.\d+\.\d+ \(node\//);
+  });
+
+  it("hands the advisory header to onAdvisory on a SUCCESS", async () => {
+    const seen: Array<[string, string | null]> = [];
+    const { fetch } = fakeFetch(advisoryRes(200));
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      onAdvisory: (header, deprecation) => seen.push([header, deprecation]),
+    });
+    await client.whoami();
+    expect(seen).toEqual([["update-available; current=0.0.0; latest=9.9.9", null]]);
+  });
+
+  // A CLI too old to work is precisely the one hitting errors — advising only on 2xx would miss it.
+  it("hands the advisory header to onAdvisory on an ERROR response too", async () => {
+    const seen: string[] = [];
+    const { fetch } = fakeFetch(advisoryRes(404));
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      onAdvisory: (header) => seen.push(header),
+    });
+    await expect(client.whoami()).rejects.toBeDefined();
+    expect(seen).toEqual(["update-available; current=0.0.0; latest=9.9.9"]);
+  });
+
+  it("does not call onAdvisory when the server sends no advisory (the common case)", async () => {
+    const seen: string[] = [];
+    const { fetch } = fakeFetch(json({ orgId: "org_1", scopes: [] }));
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      onAdvisory: (header) => seen.push(header),
+    });
+    await client.whoami();
+    expect(seen).toEqual([]);
+  });
+
+  // A nudge must never fail a command: if the sink throws, the request still succeeds.
+  it("survives a throwing onAdvisory — the command still succeeds", async () => {
+    const { fetch } = fakeFetch(advisoryRes(200));
+    const client = createApiClient({
+      baseUrl: BASE,
+      apiKey: KEY,
+      fetch,
+      onAdvisory: () => {
+        throw new Error("sink blew up");
+      },
+    });
+    await expect(client.whoami()).resolves.toEqual({ orgId: "org_1", scopes: [] });
+  });
+});
