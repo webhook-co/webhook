@@ -27,7 +27,7 @@ export default function SubProcessorsPage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Sub-processors" updated="12 July 2026">
+        <LegalDoc title="Sub-processors" updated="13 July 2026">
           <blockquote>
             <strong>In short:</strong> these are the third-party infrastructure providers we rely on
             to run the hosted webhook.co service, what each one does, and the data it may handle. We
@@ -153,14 +153,12 @@ export default function SubProcessorsPage() {
           </AnchoredHeading>
           <p>
             When we add or replace a sub-processor, we'll update this page and its "Last updated"
-            date above, and give <strong>at least 30 days' advance notice</strong> before the new
-            sub-processor starts handling your data — so you have time to object. To get that notice
-            by email, ask us at <a href="mailto:legal@webhook.co">legal@webhook.co</a> and we'll add
-            you to the list.
+            date above.
           </p>
           <p>
-            If you object on reasonable data-protection grounds within that window, your rights are
-            set out in §6 of our <a href="/dpa">Data Processing Agreement</a>.
+            If you object on reasonable data-protection grounds, your rights — including the notice
+            we owe you before a new sub-processor starts handling your data — are set out in §6 of
+            our <a href="/dpa">Data Processing Agreement</a>.
           </p>
         </LegalDoc>
       </main>

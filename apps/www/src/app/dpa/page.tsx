@@ -30,7 +30,7 @@ export default function DpaPage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Data Processing Agreement" updated="11 July 2026">
+        <LegalDoc title="Data Processing Agreement" updated="13 July 2026">
           <blockquote>
             <strong>In short (this summary isn&apos;t the agreement, but it&apos;s honest):</strong>{" "}
             the webhooks you capture may contain other people&apos;s personal data. For that data{" "}
@@ -223,14 +223,14 @@ export default function DpaPage() {
             <strong>we remain fully liable to you for what they do</strong>.
           </p>
           <p>
-            <strong>Changes.</strong> Before we add or replace a sub-processor we will update that
-            page and give you at least <strong>30 days&apos; notice</strong>. To receive that notice
-            by email, ask us at <a href="mailto:legal@webhook.co">legal@webhook.co</a> and
-            we&apos;ll add you to the list. If you reasonably object on data-protection grounds
-            within that window, tell us and we&apos;ll try to find a way through; if we can&apos;t,
-            you may terminate the affected Service and we&apos;ll refund any prepaid, unused fees
-            for it (an exception to the no-automatic-refunds rule in §6 of the{" "}
-            <a href="/terms">Terms</a>).
+            <strong>Changes.</strong> Before we add or replace a sub-processor we will post it on
+            that page at least <strong>30 days</strong> before they start handling your data. That
+            page — and the &quot;Last updated&quot; date on it — is how we give you notice, so check
+            it periodically to stay current. If you reasonably object on data-protection grounds
+            within that window, tell us at <a href="mailto:legal@webhook.co">legal@webhook.co</a>{" "}
+            and we&apos;ll try to find a way through; if we can&apos;t, you may terminate the
+            affected Service and we&apos;ll refund any prepaid, unused fees for it (an exception to
+            the no-automatic-refunds rule in §6 of the <a href="/terms">Terms</a>).
           </p>
 
           <AnchoredHeading id={DPA_ANCHORS.internationalTransfers}>
@@ -363,9 +363,9 @@ export default function DpaPage() {
           <AnchoredHeading id={DPA_ANCHORS.changes}>13. Changes</AnchoredHeading>
           <p>
             We may update this DPA — to reflect a change in the law, in our sub-processors, or in
-            the Service. If a change materially reduces your protection we&apos;ll give you
-            reasonable advance notice by email or in the dashboard. The date at the top always
-            reflects the current version.
+            the Service. If a change materially reduces your protection we&apos;ll post it here with
+            reasonable advance notice before it takes effect. The date at the top always reflects
+            the current version, so check back periodically.
           </p>
           <p>
             Questions, or a countersignature request:{" "}

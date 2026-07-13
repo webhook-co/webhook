@@ -90,14 +90,19 @@ describe("each channel the legal docs promise actually exists", () => {
     // promise to the address it must keep pointing at.
     const dpa = read("dpa");
     expect(promiseRoutesTo(dpa, "requires a countersignature", "legal@webhook.co")).toBe(true);
-    expect(promiseRoutesTo(dpa, "To receive that notice", "legal@webhook.co")).toBe(true);
+    expect(
+      promiseRoutesTo(dpa, "reasonably object on data-protection grounds", "legal@webhook.co"),
+    ).toBe(true);
     expect(promiseRoutesTo(dpa, "countersignature request", "legal@webhook.co")).toBe(true);
   });
 
-  it("the sub-processors page binds the change-notice promise to legal@", () => {
-    expect(promiseRoutesTo(read("sub-processors"), "To get that notice", "legal@webhook.co")).toBe(
-      true,
-    );
+  it("the sub-processor change notice survives in the DPA, and the list page points at it", () => {
+    // Art 28(2) obliges us to inform you of sub-processor changes and let you object. We do not run a
+    // notification mailing list, so the sub-processors PAGE is the notice vehicle — which only works if the
+    // DPA still states the notice period, and the page still routes you to the clause that grants the right.
+    // Delete either half and customers are left with a list that changes under them and no stated recourse.
+    expect(read("dpa")).toContain("30 days");
+    expect(read("sub-processors")).toContain('href="/dpa"');
   });
 
   it("the Terms bind the refund-review PROMISE to the support channel, not merely mention it", () => {
