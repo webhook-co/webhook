@@ -30,7 +30,7 @@ export default function AcceptableUsePage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Acceptable Use Policy" updated="11 July 2026">
+        <LegalDoc title="Acceptable Use Policy" updated="13 July 2026">
           <blockquote>
             <strong>In short (this summary isn&apos;t the policy, but it&apos;s honest):</strong>{" "}
             webhook.co takes in whatever you send to a URL and can deliver it onward to a
@@ -199,8 +199,8 @@ export default function AcceptableUsePage() {
           <p>
             This is a young service and abuse patterns change, so we may update this policy. If we
             make a material change we&apos;ll update the date at the top and, for anything that
-            would meaningfully restrict how you already use the Service, give you reasonable notice
-            by email or in the dashboard.
+            would meaningfully restrict how you already use the Service, post it here with
+            reasonable notice before it takes effect — so check back periodically.
           </p>
         </LegalDoc>
       </main>
