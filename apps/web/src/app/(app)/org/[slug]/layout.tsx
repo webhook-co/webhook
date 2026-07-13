@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { AccountMenu } from "@/components/account-menu";
 import { AppNav } from "@/components/app-nav";
 import { AppShellClient } from "@/components/app-shell-client";
+import { BfcacheGuard } from "@/components/bfcache-guard";
 import { OrgCommandPalette } from "@/components/org-command-palette";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { logout } from "@/server/auth-actions";
@@ -48,6 +49,11 @@ export default async function OrgLayout({
         </>
       }
     >
+      {/* A bfcache restore re-paints this shell from memory WITHOUT re-running the gate above — no request,
+          no server render, no session check. `Cache-Control: no-store` does not prevent that (it governs the
+          HTTP cache, a different cache). So the guard sends a restored page back to the server, where the
+          gate is. See bfcache-guard.tsx. */}
+      <BfcacheGuard />
       <OrgCommandPalette />
       {children}
     </AppShellClient>

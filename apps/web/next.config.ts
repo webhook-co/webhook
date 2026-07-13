@@ -4,7 +4,11 @@ import { PHASE_DEVELOPMENT_SERVER } from "next/constants";
 // The dashboard deploys to Cloudflare Workers via `@opennextjs/cloudflare` (open-next.config.ts).
 import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
 
-import { securityHeaders } from "./src/security-headers";
+import {
+  AUTHENTICATED_ROUTE_SOURCES,
+  noStoreHeaders,
+  securityHeaders,
+} from "./src/security-headers";
 
 // `dev` ONLY relaxes the CSP (Turbopack evaluates client modules with eval() + opens an HMR websocket);
 // every other field is mode-independent.
@@ -37,7 +41,17 @@ function buildNextConfig(dev: boolean): NextConfig {
     // serverActions.allowedOrigins — Next's same-origin server-action check stays the CSRF guard, pinned by
     // next-config-csrf.test.ts.
     async headers() {
-      return [{ source: "/(.*)", headers: [...securityHeaders(dev)] }];
+      return [
+        { source: "/(.*)", headers: [...securityHeaders(dev)] },
+        // Authenticated HTML is never a stored response. Next already emits this (these routes all read
+        // cookies(), so they render dynamically) — stating it explicitly is what stops a future
+        // `export const revalidate` from silently turning a tenant's page into a cacheable one. Scoped to the
+        // gated routes, NOT `/(.*)`, so the content-hashed /_next/static bundles stay cacheable.
+        ...AUTHENTICATED_ROUTE_SOURCES.map((source) => ({
+          source,
+          headers: [...noStoreHeaders()],
+        })),
+      ];
     },
   };
 }

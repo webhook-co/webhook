@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { buildContentSecurityPolicy, securityHeaders } from "./security-headers";
+import {
+  AUTHENTICATED_ROUTE_SOURCES,
+  buildContentSecurityPolicy,
+  noStoreHeaders,
+  securityHeaders,
+} from "./security-headers";
 
 describe("dashboard CSP (production)", () => {
   it("locks down framing, plugins, base-uri, and form targets", () => {
@@ -74,5 +79,37 @@ describe("dashboard security headers", () => {
     expect(byKey.get("Permissions-Policy")).toContain("geolocation=()");
     expect(byKey.get("Strict-Transport-Security")).toContain("max-age=");
     expect(byKey.has("Content-Security-Policy")).toBe(true);
+  });
+});
+
+// Authenticated HTML must never become a stored response. Today Next already emits no-store on these routes
+// (they all read cookies(), so they render dynamically) — but that is an emergent default, not a defended
+// invariant, and `Clear-Site-Data: "cache"` on logout used to be the backstop until it was removed for costing
+// ~25s of every logout. These assertions ARE the backstop now.
+describe("noStoreHeaders", () => {
+  const byKey = new Map(noStoreHeaders().map((h) => [h.key, h.value]));
+
+  it("forbids storing authenticated HTML anywhere", () => {
+    const value = byKey.get("Cache-Control") ?? "";
+    expect(value).toContain("no-store");
+    expect(value).toContain("private");
+  });
+});
+
+describe("AUTHENTICATED_ROUTE_SOURCES", () => {
+  it("covers the post-login landing, every org-scoped page, and invite acceptance", () => {
+    expect(AUTHENTICATED_ROUTE_SOURCES).toContain("/");
+    expect(AUTHENTICATED_ROUTE_SOURCES).toContain("/org/:path*");
+    expect(AUTHENTICATED_ROUTE_SOURCES).toContain("/invite/:path*");
+  });
+
+  // The whole reason this is a route ALLOWLIST and not `/(.*)`: no-store on the content-hashed, immutable
+  // /_next/static bundles would be a large self-inflicted performance regression — the exact opposite of why
+  // the header that used to cover this was removed.
+  it("never matches the static asset bundles", () => {
+    for (const source of AUTHENTICATED_ROUTE_SOURCES) {
+      expect(source).not.toContain("_next");
+      expect(source).not.toBe("/(.*)");
+    }
   });
 });

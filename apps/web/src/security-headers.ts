@@ -91,3 +91,36 @@ export function securityHeaders(dev = false): ReadonlyArray<{ key: string; value
     { key: "Strict-Transport-Security", value: "max-age=63072000" },
   ];
 }
+
+/**
+ * The route patterns that render AUTHENTICATED HTML — everything the DAL gate stands in front of.
+ *
+ * Deliberately NOT `/(.*)`: that would also match `/_next/static/*`, and telling the browser not to store the
+ * immutable, content-hashed JS/CSS bundles would be a large, self-inflicted performance regression.
+ */
+export const AUTHENTICATED_ROUTE_SOURCES: readonly string[] = [
+  "/", // the post-login landing (resolves the default org, then redirects)
+  "/org/:path*", // every org-scoped dashboard page
+  "/invite/:path*", // invite acceptance — carries the inviting org's name
+];
+
+/**
+ * `Cache-Control` for authenticated HTML: never store it, anywhere.
+ *
+ * Next ALREADY emits exactly this on these routes, because every one of them reads `cookies()` (via
+ * `verifySession`) and a cookie-reading render is dynamic. So today this header changes nothing — which is
+ * precisely why it is worth writing down.
+ *
+ * The problem with an invariant that holds only as an emergent side-effect is that nothing defends it. The
+ * day someone adds `export const revalidate = 60` to a dashboard route for performance — an entirely
+ * reasonable-looking change, and this repo is actively in a performance lane — that page silently becomes a
+ * STORED response holding one tenant's org data, servable to whoever asks next. Nothing in CI would object.
+ *
+ * It used to have a backstop: `Clear-Site-Data: "cache"` on logout purged the whole registrable domain. That
+ * header was removed because it was costing ~25 seconds of every logout (measured). So the invariant it was
+ * quietly propping up needs to be true BY CONSTRUCTION now, and asserted, rather than inferred from a Next
+ * default that no test pins.
+ */
+export function noStoreHeaders(): ReadonlyArray<{ key: string; value: string }> {
+  return [{ key: "Cache-Control", value: "private, no-store, max-age=0, must-revalidate" }];
+}

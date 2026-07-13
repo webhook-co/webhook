@@ -19,7 +19,7 @@ vi.mock("next/headers", () => ({ headers: vi.fn(async () => currentHeaders) }));
 vi.mock("@/runtime/auth", () => ({ makeAuth: (...args: unknown[]) => makeAuth(...args) }));
 vi.mock("@/runtime/env", () => ({ readAuthEnv: (...args: unknown[]) => readAuthEnv(...args) }));
 
-import { hasSessionCookie, isSignedIn } from "./resolve-signed-in";
+import { isSignedIn } from "./resolve-signed-in";
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -112,38 +112,53 @@ describe("isSignedIn", () => {
   });
 });
 
-// The predicate decides whether we skip the DB entirely, so it has to be exactly right about what counts as
-// the session cookie. Getting it WRONG IN EITHER DIRECTION is a real bug: a false negative signs a live user
-// out of the resume path; a false positive just costs the DB read we were avoiding (safe, but pointless).
-describe("hasSessionCookie", () => {
-  it("recognises the prod (Secure-prefixed) and dev (bare) cookie names", () => {
-    expect(hasSessionCookie("__Secure-better-auth.session_token=abc")).toBe(true);
-    expect(hasSessionCookie("better-auth.session_token=abc")).toBe(true);
+// The short-circuit skips the database entirely, so it has to be exactly right about what counts as the
+// session cookie — and it is wrong in DIFFERENT ways in each direction. A false NEGATIVE is the nasty one: it
+// silently signs a live user out of the SSO-resume path on every request. A false positive merely costs the
+// DB read we were trying to avoid.
+//
+// Which name counts is Better Auth's business, not ours: it derives from `advanced.cookiePrefix` and from the
+// https baseURL that adds the `__Secure-` prefix. So the code asks the library (`getSessionCookie`) instead of
+// restating its defaults, and these cases pin the behaviour we depend on THROUGH the real helper. A test that
+// hardcoded the literal would happily stay green against a cookie name production no longer issues; driving
+// the real helper is what makes that failure mode impossible.
+describe("the session-cookie short-circuit", () => {
+  const dbWasConsulted = () => getSession.mock.calls.length > 0;
+
+  async function signedInWith(cookie: string): Promise<boolean> {
+    currentHeaders = new Headers({ cookie });
+    getSession.mockResolvedValueOnce({ userId: "usr_1" });
+    return isSignedIn();
+  }
+
+  it("consults the database for the prod (Secure-prefixed) cookie name", async () => {
+    expect(await signedInWith("__Secure-better-auth.session_token=abc.sig")).toBe(true);
+    expect(dbWasConsulted()).toBe(true);
   });
 
-  it("finds the session cookie among others, in any position", () => {
-    expect(hasSessionCookie("wh_theme=dark; __Secure-better-auth.session_token=abc; x=1")).toBe(
-      true,
-    );
-    expect(hasSessionCookie("a=1; better-auth.session_token=abc")).toBe(true);
+  it("consults the database for the dev (bare) cookie name", async () => {
+    expect(await signedInWith("better-auth.session_token=abc.sig")).toBe(true);
+    expect(dbWasConsulted()).toBe(true);
   });
 
-  it("is false with no cookie header, an empty one, or unrelated cookies", () => {
-    expect(hasSessionCookie(null)).toBe(false);
-    expect(hasSessionCookie("")).toBe(false);
-    expect(hasSessionCookie("wh_theme=dark; consent=1")).toBe(false);
+  it("finds the session cookie among others, in any position", async () => {
+    expect(
+      await signedInWith("wh_theme=dark; __Secure-better-auth.session_token=abc.sig; x=1"),
+    ).toBe(true);
+    expect(dbWasConsulted()).toBe(true);
   });
 
-  // A cookie whose name merely ENDS in the session cookie's name is a DIFFERENT cookie. Without the
-  // name-boundary anchor a substring match would accept it, and an attacker who can set a cookie on the
-  // registrable domain could force a signed-out user into the /session/handoff bounce.
-  it("does not mistake a cookie merely ending in the session name for the session cookie", () => {
-    expect(hasSessionCookie("evilbetter-auth.session_token=abc")).toBe(false);
-    expect(hasSessionCookie("x=1; notbetter-auth.session_token=abc")).toBe(false);
+  it("skips the database for unrelated cookies", async () => {
+    expect(await signedInWith("wh_theme=dark; consent=1")).toBe(false);
+    expect(dbWasConsulted()).toBe(false);
   });
 
-  // The VALUE is never inspected here — an empty/garbage value still goes to the DB, which is the authority.
-  it("defers to the database when the cookie is present but empty", () => {
-    expect(hasSessionCookie("better-auth.session_token=")).toBe(true);
+  // A cookie whose name merely ENDS in the session cookie's name is a DIFFERENT cookie. A substring match
+  // would accept it — that could not sign anyone in (the DB read still verifies the cookie's HMAC), but it
+  // would let anyone able to set a cookie on the registrable domain buy a pointless DB round-trip on every
+  // login page view. The library's parser is name-exact; this pins that we inherit that.
+  it("does not mistake a cookie merely ending in the session name for the session cookie", async () => {
+    expect(await signedInWith("evilbetter-auth.session_token=abc")).toBe(false);
+    expect(dbWasConsulted()).toBe(false);
   });
 });
