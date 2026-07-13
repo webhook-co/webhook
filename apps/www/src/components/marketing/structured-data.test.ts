@@ -62,7 +62,9 @@ describe("structured-data builders", () => {
     const person = personNode();
     expect(person.image).toBe("https://www.webhook.co/sourabh-choraria.webp");
     // A third-party host could change or remove the file under us — and it would leak a referrer.
-    expect(person.image).not.toMatch(/choraria\.io/);
+    // Assert the HOST, parsed: a substring/regex test on a URL matches anywhere in it, so
+    // `https://www.webhook.co.evil.com/…` (or `…/redirect?to=choraria.io`) would sail through one.
+    expect(new URL(person.image!).host).toBe("www.webhook.co");
   });
 
   it("the WebSite node is published by the Organization", () => {

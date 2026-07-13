@@ -117,3 +117,22 @@ test("an inner page does NOT require JSON-LD, but a malformed blob still fails",
   const { errors } = checkPage(broken, { url });
   assert.ok(errors.some((e) => e.includes("JSON-LD")));
 });
+
+// A look-alike origin: `https://www.webhook.co.evil.com` has our canonical host as a *prefix*, so a
+// `startsWith(HOST)` check waves it through. The host has to be compared as an ORIGIN, not a string.
+const LOOKALIKE = "https://www.webhook.co.evil.com";
+
+test("a look-alike host is not mistaken for the canonical origin (canonical check)", () => {
+  const html = goodHead({ url: `${LOOKALIKE}/pricing` });
+  const { errors } = checkPage(html, { url: `${LOOKALIKE}/pricing` });
+  assert.ok(
+    errors.some((e) => e.includes("absolute")),
+    `expected a non-canonical-origin error, got: ${errors.join("; ")}`,
+  );
+});
+
+test("pageFileForUrl maps by PATH, so a look-alike host cannot forge a file path", () => {
+  // The old prefix-slice turned this into ".evil.com/pricing.html" — a path outside the export.
+  assert.equal(pageFileForUrl(`${LOOKALIKE}/pricing`), "pricing.html");
+  assert.equal(pageFileForUrl(`${LOOKALIKE}`), "index.html");
+});
