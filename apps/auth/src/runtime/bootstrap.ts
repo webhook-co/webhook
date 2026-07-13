@@ -15,7 +15,9 @@ import {
   bootstrapPersonalOrg,
   createClient,
   createCredentialHasherFromBase64,
+  readUserProfile,
   type Sql,
+  type UserProfile,
 } from "@webhook-co/db";
 
 export interface BootstrapUser {
@@ -44,16 +46,21 @@ export interface BootstrapDeps {
   log?: (event: string, fields?: Record<string, unknown>) => void;
 }
 
-interface UserProfile {
-  name: string | null;
-  email: string | null;
-}
-
-async function defaultLoadUserProfile(client: Sql, userId: string): Promise<UserProfile | null> {
-  const rows = await client<UserProfile[]>`
-    select "name", "email" from "user" where "id" = ${userId} limit 1`;
-  return rows[0] ?? null;
-}
+/**
+ * 🔑 Reads through `current_user_profile()` (migration 0068), NOT through `"user"`.
+ *
+ * The first cut of this ran `select name, email from "user"` on the webhook_app client. webhook_app has NO
+ * grant on that table — deliberately: `"user"` is Better Auth's GLOBAL identity table, is not
+ * row-level-secured (it has no org column to police), and `rls.test.ts` asserts the refusal outright
+ * ("webhook_app cannot read the identity table directly — the function is the ONLY path"). In production that
+ * query throws `permission denied`, the throw propagates out of `hydrate`, and the bootstrap aborts —
+ * leaving the user with NO ORG AT ALL. Strictly worse than the bug it was fixing.
+ *
+ * Every unit test stubbed this loader, so the whole suite stayed green. The real-Postgres test in
+ * packages/db (`readUserProfile — the ONLY path webhook_app has to an identity`) is what actually holds the
+ * line.
+ */
+const defaultLoadUserProfile = readUserProfile;
 
 /**
  * Give the user a name before we name their org after them.
@@ -78,8 +85,17 @@ async function hydrate(
 ): Promise<BootstrapUser> {
   if (user.name || user.email) return user;
   const load = deps.loadUserProfile ?? defaultLoadUserProfile;
-  const profile = await load(client, user.id);
-  return profile ? { ...user, name: profile.name, email: profile.email } : user;
+  try {
+    const profile = await load(client, user.id);
+    return profile ? { ...user, name: profile.name, email: profile.email } : user;
+  } catch (error) {
+    // A profile we cannot read must NOT cost the user their org. This whole path exists to guarantee an org
+    // exists; letting a failed nicety abort it would invert the point. Degrade to the "Personal" fallback —
+    // an org with a poor name beats no org — and say so, loudly, because a permission fault here means the
+    // definer or its grant has regressed.
+    deps.log?.("auth.bootstrap_profile_unreadable", { userId: user.id, error: String(error) });
+    return user;
+  }
 }
 
 function slugify(value: string): string {

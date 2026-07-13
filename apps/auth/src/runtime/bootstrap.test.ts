@@ -253,13 +253,36 @@ describe("bootstrapForUser", () => {
     expect(input.slug).toMatch(/^dana-example-/); // NOT "org-<hex>"
   });
 
-  it("still bootstraps when the profile cannot be read — a missing name must not block the org", async () => {
+  it("still bootstraps when the profile is absent — a missing name must not block the org", async () => {
     const d = deps({ loadUserProfile: vi.fn(async () => null) });
     await bootstrapForUser(d, { id: "usr_ABCdef123456" });
 
     const [, input] = (d.bootstrap as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(input.name).toBe("Personal"); // degraded, but an org exists — better than no org
     expect(input.slug).toMatch(/^org-/);
+  });
+
+  // The profile read must never cost the user their org. This whole path exists to GUARANTEE an org exists;
+  // letting a failed nicety abort it would invert the point — and that is not hypothetical, it is exactly
+  // what the first cut did (it queried `"user"` directly, which webhook_app may not read, so every self-heal
+  // would have thrown `permission denied` and created nothing).
+  it("still bootstraps when the profile read THROWS — a nicety must not cost the user their org", async () => {
+    const log = vi.fn();
+    const d = deps({
+      log,
+      loadUserProfile: vi.fn(async () => {
+        throw new Error("permission denied for table user");
+      }),
+    });
+
+    await bootstrapForUser(d, { id: "usr_ABCdef123456" });
+
+    expect(d.bootstrap).toHaveBeenCalledTimes(1); // the org still gets created
+    const [, input] = (d.bootstrap as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(input.name).toBe("Personal");
+    // and it is reported loudly — a permission fault here means the definer or its grant has regressed
+    expect(log.mock.calls.map((c) => c[0])).toContain("auth.bootstrap_profile_unreadable");
+    expect(log.mock.calls.map((c) => c[0])).not.toContain("auth.bootstrap_failed");
   });
 
   it("does NOT re-read the profile when the caller already supplied one (the signup path)", async () => {
