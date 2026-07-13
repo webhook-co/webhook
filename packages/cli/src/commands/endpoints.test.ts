@@ -199,21 +199,33 @@ describe("wbhk endpoints create", () => {
     paused: false,
     createdAt: "2026-05-01T00:00:00.000Z",
     dedupConfig: null,
-    ingestUrl: "https://wbhk.my/whep_one_time_secret_token_value_aaaaaaaaaaaa",
+    ingestUrl: "https://wbhk.my/whep_sealed_secret_token_value_aaaaaaaaaaaa",
   };
 
-  it("reveals the ingest url on stdout and the save-it caveat on stderr (pipe-safe)", async () => {
+  it("prints the ingest url on stdout and the reveal-it-later hint on stderr (pipe-safe)", async () => {
     const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(created) });
     await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
-    // The record (with the one-time ingest url) is on stdout.
+    // The record (with the ingest url) is on stdout.
     expect(t.stdout()).toContain("ingest url");
     expect(t.stdout()).toContain(created.ingestUrl);
     expect(t.stdout()).toContain("orders-prod");
-    // The save-it caveat is on stderr only — stdout stays a clean record.
-    expect(t.stderr().toLowerCase()).toContain("save");
-    expect(t.stderr().toLowerCase()).toContain("once");
-    expect(t.stdout().toLowerCase()).not.toContain("save the ingest url");
+    // The hint is on stderr only — stdout stays a clean record — and it points at the reveal command
+    // (with this endpoint's real id) rather than telling the user to save a "one-time" secret.
+    expect(t.stderr()).toContain(`wbhk endpoints reveal ${EP1}`);
+    expect(t.stdout()).not.toContain("wbhk endpoints reveal");
+  });
+
+  // ADR-0101 reversed the one-time reveal: the ingest token is sealed at rest and the URL is retrievable
+  // any time (`endpoints reveal` / the dashboard). Copy that still calls it a one-time secret is a LIE that
+  // sends users to rotate a URL they never lost — pin the retraction so it cannot regress.
+  it("never claims the ingest url is one-time or unrecoverable", async () => {
+    const t = makeTestContext({ store: loggedInStore(), fetch: okFetch(created) });
+    await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
+    const all = `${t.stdout()}${t.stderr()}`.toLowerCase();
+    expect(all).not.toContain("once");
+    expect(all).not.toContain("recover");
+    expect(all).not.toContain("save the ingest url");
   });
 
   it("emits the full record (incl. ingestUrl) as one JSON value with --output json, no stderr noise", async () => {
@@ -313,8 +325,12 @@ describe("wbhk endpoints rotate", () => {
     await run(app, ["endpoints", "rotate", EP1, "--yes"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
     expect(t.stdout()).toContain(rotated.ingestUrl);
-    expect(t.stderr().toLowerCase()).toContain("save");
     expect(t.stderr().toLowerCase()).toContain("previous url"); // the old url is dead (hard cutover)
+    // The surviving caveat is the REVOCATION, not a one-time reveal: the new url is retrievable any time.
+    expect(t.stderr()).toContain(`wbhk endpoints reveal ${EP1}`);
+    const all = `${t.stdout()}${t.stderr()}`.toLowerCase();
+    expect(all).not.toContain("once");
+    expect(all).not.toContain("recover");
   });
 
   it("refuses without --yes in a non-TTY (usage error) and never calls the api", async () => {
@@ -569,7 +585,7 @@ describe("wbhk endpoints create --dedup-*", () => {
     paused: false,
     createdAt: "2026-05-01T00:00:00.000Z",
     dedupConfig: { mode: "content", windowSeconds: 300 },
-    ingestUrl: "https://wbhk.my/whep_one_time_secret_token_value_aaaaaaaaaaaa",
+    ingestUrl: "https://wbhk.my/whep_sealed_secret_token_value_aaaaaaaaaaaa",
   };
   it("sends the dedup config in the create body", async () => {
     const cap = capturingReq(created);

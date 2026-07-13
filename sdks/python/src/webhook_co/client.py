@@ -39,7 +39,7 @@ def _parse(model: type[M], data: Any) -> M:
         return model.model_validate(data)
     except pydantic.ValidationError:
         # Do NOT chain the ValidationError: its string embeds the raw input, which for some responses
-        # includes secondary secrets (a rotated `whsec_`, a one-time ingest URL). `from None` drops the
+        # includes secondary secrets (a rotated `whsec_`, an ingest URL). `from None` drops the
         # cause so no unredacted response body can reach a traceback.
         raise WebhookUnexpectedResponseError(
             "the API returned an unexpected response shape"
@@ -169,7 +169,13 @@ class _EndpointsResource:
         return self._req.get(f"/v1/endpoints/{_enc(endpoint_id)}", m.Endpoint)
 
     def create(self, *, name: str) -> m.CreatedEndpoint:
-        """Create an endpoint. NOT idempotent — each call mints a new endpoint + one-time ingest URL."""
+        """Create an endpoint. NOT idempotent — each call mints a new endpoint + a fresh ingest URL.
+
+        The returned ``ingestUrl`` is a bearer credential, but it is NOT a one-time reveal: the token is
+        sealed at rest, so a lost URL is re-readable any time (``POST
+        /v1/endpoints/{id}/reveal-ingest-url``, ``wbhk endpoints reveal <id>``, or the dashboard) — you do
+        not have to rotate to recover it.
+        """
         return self._req.post("/v1/endpoints", {"name": name}, False, m.CreatedEndpoint)
 
     def delete(self, endpoint_id: str) -> m.DeletedEndpoint:
@@ -179,7 +185,11 @@ class _EndpointsResource:
         )
 
     def rotate(self, endpoint_id: str) -> m.CreatedEndpoint:
-        """Rotate an endpoint's ingest URL (hard cutover). NOT idempotent — never blind-retried."""
+        """Rotate an endpoint's ingest URL (hard cutover — the old URL stops accepting events at once).
+
+        For a LEAKED URL: a merely forgotten one can be re-read instead (see :meth:`create`). NOT
+        idempotent — never blind-retried.
+        """
         return self._req.post(
             f"/v1/endpoints/{_enc(endpoint_id)}/rotate", None, False, m.CreatedEndpoint
         )

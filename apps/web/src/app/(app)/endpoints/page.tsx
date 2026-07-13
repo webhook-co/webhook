@@ -38,7 +38,7 @@ export default async function EndpointsPage({
       <EndpointsSearch />
       <EndpointsManager
         // No `key` remount on filter change — the manager re-syncs its list from initialResult itself,
-        // so a one-time ingest URL shown mid-search isn't discarded by a search-debounce navigation.
+        // so an ingest URL shown mid-search isn't discarded by a search-debounce navigation.
         initialResult={result}
         nameFilter={trimmed}
         createEndpoint={createEndpointAction}

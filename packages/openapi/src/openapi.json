@@ -135,7 +135,7 @@
       },
       "post": {
         "operationId": "endpointsCreate",
-        "summary": "Create an endpoint (returns the one-time ingest URL)",
+        "summary": "Create an endpoint (returns its ingest URL)",
         "tags": [
           "Endpoints"
         ],
@@ -360,7 +360,7 @@
     "/v1/endpoints/{endpointId}/rotate": {
       "post": {
         "operationId": "endpointsRotate",
-        "summary": "Rotate an endpoint's ingest token (returns a new one-time ingest URL)",
+        "summary": "Rotate an endpoint's ingest token (revokes the old URL, returns the new one)",
         "tags": [
           "Endpoints"
         ],

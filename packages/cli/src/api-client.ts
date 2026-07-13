@@ -196,7 +196,7 @@ export interface ApiClient {
   endpointsGet(endpointId: string): Promise<Endpoint>;
   /**
    * Create an endpoint (`POST /v1/endpoints`). NOT idempotent — each call mints a new endpoint + a
-   * one-time ingest URL (returned once in `ingestUrl`; never recoverable after). Sent with
+   * fresh ingest URL (returned in `ingestUrl`; re-readable later via endpointsRevealIngestUrl). Sent with
    * idempotent=false so a transient failure is never blind-retried (no accidental duplicate).
    */
   endpointsCreate(input: { name: string; dedupConfig?: DedupConfig }): Promise<CreatedEndpoint>;
@@ -215,7 +215,7 @@ export interface ApiClient {
   endpointsDelete(endpointId: string): Promise<DeletedEndpoint>;
   /**
    * Rotate an endpoint's ingest URL (`POST /v1/endpoints/:id/rotate`). NOT idempotent — mints a fresh
-   * one-time `ingestUrl` and immediately kills the old one (hard cutover). Sent with idempotent=false so
+   * `ingestUrl` and immediately kills the old one (hard cutover). Sent with idempotent=false so
    * a transient failure is never blind-retried (no accidental second rotation).
    */
   endpointsRotate(endpointId: string): Promise<CreatedEndpoint>;

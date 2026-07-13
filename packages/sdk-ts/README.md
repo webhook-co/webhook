@@ -20,7 +20,8 @@ import { WebhookClient } from "@webhook-co/sdk";
 
 const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
 
-// Create an endpoint — the one-time ingest URL is returned once, so capture it now.
+// Create an endpoint. The ingest URL is a credential, but not one-time — it can be re-read any time
+// (POST /v1/endpoints/{id}/reveal-ingest-url, `wbhk endpoints reveal <id>`, or the dashboard).
 const endpoint = await webhook.endpoints.create({ name: "orders-prod" });
 console.log(endpoint.ingestUrl);
 

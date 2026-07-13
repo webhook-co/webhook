@@ -18,7 +18,7 @@ export interface EndpointDetailProps {
    * blocking this render. The page passes `<Suspense fallback={…}><IngestUrlReveal …/></Suspense>`.
    */
   ingestUrlSlot: ReactNode;
-  /** Rotate the ingest token (hard cutover) → the NEW one-time URL. Injected by the gated page. */
+  /** Rotate the ingest token (hard cutover) → the NEW url. Injected by the gated page. */
   rotateEndpoint: (endpointId: string) => Promise<RotateEndpointResult>;
   /** Soft-delete the endpoint. Injected by the gated page. */
   deleteEndpoint: (endpointId: string) => Promise<EndpointActionResult>;

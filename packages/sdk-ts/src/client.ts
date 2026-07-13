@@ -192,7 +192,13 @@ class EndpointsResource {
     return this.req.get<Endpoint>(`/v1/endpoints/${enc(endpointId)}`);
   }
 
-  /** Create an endpoint. NOT idempotent — each call mints a new endpoint + one-time ingest URL. */
+  /**
+   * Create an endpoint. NOT idempotent — each call mints a new endpoint + a fresh ingest URL.
+   *
+   * The returned `ingestUrl` is a bearer credential, but it is NOT a one-time reveal: the token is sealed
+   * at rest, so a lost URL is re-readable any time (POST /v1/endpoints/{id}/reveal-ingest-url, `wbhk
+   * endpoints reveal <id>`, or the dashboard) — you do not have to rotate to recover it.
+   */
   create(input: { name: string }): Promise<CreatedEndpoint> {
     return this.req.post<CreatedEndpoint>("/v1/endpoints", { name: input.name }, false);
   }
@@ -202,7 +208,11 @@ class EndpointsResource {
     return this.req.del<DeletedEndpoint>(`/v1/endpoints/${enc(endpointId)}`, true);
   }
 
-  /** Rotate an endpoint's ingest URL (hard cutover). NOT idempotent — never blind-retried. */
+  /**
+   * Rotate an endpoint's ingest URL (hard cutover — the old URL stops accepting events immediately, so any
+   * sender still posting to it breaks until repointed). For a LEAKED URL: a merely forgotten one can be
+   * re-read instead (see `create`). NOT idempotent — never blind-retried.
+   */
   rotate(endpointId: string): Promise<CreatedEndpoint> {
     return this.req.post<CreatedEndpoint>(
       `/v1/endpoints/${enc(endpointId)}/rotate`,

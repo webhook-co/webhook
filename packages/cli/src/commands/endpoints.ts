@@ -233,15 +233,16 @@ export const endpointsCreateCommand = buildCommand<CreateFlags, [string], AppCon
     const { format, color } = resolveGlobals(this, flags);
     const created = await client.endpointsCreate({ name, dedupConfig: buildDedupConfig(flags) });
     if (format === "json") {
-      // Machine view: the whole record (incl. the one-time ingestUrl) to stdout, nothing to stderr.
+      // Machine view: the whole record (incl. the ingestUrl) to stdout, nothing to stderr.
       this.process.stdout.write(`${renderJson(created)}\n`);
       return;
     }
-    // Human view: the record (with the ingest url) to stdout; the save-it caveat to stderr so a pipe
-    // capturing stdout still gets a clean record. The ingest url embeds a secret shown only once.
+    // Human view: the record (with the ingest url) to stdout; the where-to-find-it-again hint to stderr so
+    // a pipe capturing stdout still gets a clean record. The ingest token is sealed at rest (ADR-0101), so
+    // the url is NOT a one-time reveal — it can be re-read any time and there is nothing to lose.
     this.process.stdout.write(`${renderCreatedEndpoint(created, color)}\n`);
     this.process.stderr.write(
-      "save the ingest url now — it's shown once and can't be recovered (rotate by creating a new endpoint).\n",
+      `the ingest url is shown again any time — \`wbhk endpoints reveal ${created.id}\`, or the dashboard.\n`,
     );
   },
   parameters: {
@@ -253,7 +254,7 @@ export const endpointsCreateCommand = buildCommand<CreateFlags, [string], AppCon
     },
     flags: { ...globalFlags, ...dedupFlags },
   },
-  docs: { brief: "create an endpoint and reveal its ingest url (shown once)" },
+  docs: { brief: "create an endpoint and print its ingest url" },
 });
 
 interface UpdateFlags extends GlobalFlags, DedupFlagValues {
@@ -314,7 +315,7 @@ export const endpointsUpdateCommand = buildCommand<UpdateFlags, [string], AppCon
 // the destructive write commands (ADR-0076). Both gate on confirmation: `--yes` skips it; in an
 // interactive TTY without `--yes` the user must type `yes`; in a non-TTY without `--yes` they refuse
 // (ConfirmationError, exit 2) so a script can't destroy an endpoint by accident. Delete prints the
-// {id, deleted} record; rotate reveals the NEW one-time ingest url exactly like create.
+// {id, deleted} record; rotate prints the NEW ingest url exactly like create.
 
 export interface DestructiveFlags extends GlobalFlags {
   yes: boolean;
@@ -394,16 +395,17 @@ export const endpointsRotateCommand = buildCommand<DestructiveFlags, [string], A
     if (blocked) return blocked;
     const rotated = await client.endpointsRotate(endpointId);
     if (format === "json") {
-      // Machine view: the whole record (incl. the new one-time ingestUrl) to stdout, nothing to stderr.
+      // Machine view: the whole record (incl. the new ingestUrl) to stdout, nothing to stderr.
       this.process.stdout.write(`${renderJson(rotated)}\n`);
       return;
     }
-    // Human view: the record (with the new ingest url) to stdout; the caveat to stderr so a pipe
-    // capturing stdout still gets a clean record. The old url is revoked (hard cutover) — it stops
-    // working within moments (immediately once the ingest cache evicts; the DB no longer honors it).
+    // Human view: the record (with the new ingest url) to stdout; the caveat to stderr so a pipe capturing
+    // stdout still gets a clean record. The caveat is the REVOCATION — the old url stops working within
+    // moments (immediately once the ingest cache evicts; the DB no longer honors it). The NEW url is not a
+    // one-time reveal: it's sealed at rest (ADR-0101) and re-readable any time.
     this.process.stdout.write(`${renderCreatedEndpoint(rotated, color)}\n`);
     this.process.stderr.write(
-      "save the new ingest url now — it's shown once. the previous url is revoked and stops working.\n",
+      `the previous url is revoked and stops working. the new one is shown again any time — \`wbhk endpoints reveal ${endpointId}\`.\n`,
     );
   },
   parameters: {
@@ -415,7 +417,7 @@ export const endpointsRotateCommand = buildCommand<DestructiveFlags, [string], A
     },
     flags: { ...globalFlags, ...yesFlag },
   },
-  docs: { brief: "rotate an endpoint's ingest url (kills the old one, reveals a new one once)" },
+  docs: { brief: "rotate an endpoint's ingest url (revokes the old one, issues a new one)" },
 });
 
 // `wbhk endpoints reveal <id>` — re-display an endpoint's always-shown ingest url (S8-remainder / ADR-0101).
