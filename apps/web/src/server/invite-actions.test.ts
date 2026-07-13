@@ -223,4 +223,46 @@ describe("acceptInviteAction", () => {
     );
     expect(acceptInvite).not.toHaveBeenCalled();
   });
+
+  // 🔑 A SUCCESSFUL accept must never sign the user out.
+  //
+  // Building the landing URL needs the joined org's slug, which is a second directory read — and that read can
+  // throw transiently while the accept has ALREADY committed. The first cut fell back to LOGOUT_URL, so a flaky
+  // read bounced a user who just joined an org to sign-in. It must degrade to `/` (which re-resolves and keeps
+  // the banner), NOT logout.
+  it("accepted + the directory read THROWS → `/`, never logout", async () => {
+    acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
+    listUserOrgs.mockRejectedValueOnce(new Error("hyperdrive blip"));
+
+    await expect(acceptInviteAction(form({ org: "org_x", token: "whinv_t" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/?invite=accepted",
+    );
+  });
+
+  it("accepted + the joined org is somehow absent from the list → `/`, never logout", async () => {
+    acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
+    listUserOrgs.mockResolvedValueOnce([]); // read succeeded but returned nothing
+
+    await expect(acceptInviteAction(form({ org: "org_x", token: "whinv_t" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/?invite=accepted",
+    );
+  });
+
+  it("INVALID + no org to fall back to → logout (the pre-existing dead end, unchanged)", async () => {
+    acceptInvite.mockResolvedValueOnce({ status: "invalid" });
+    listUserOrgs.mockResolvedValueOnce([]);
+
+    await expect(acceptInviteAction(form({ org: "org_x", token: "nope" }))).rejects.toThrow(
+      "NEXT_REDIRECT:https://auth.test/logout",
+    );
+  });
+
+  it("INVALID + a fallback org present → its dashboard with ?invite=invalid, NOT logout", async () => {
+    acceptInvite.mockResolvedValueOnce({ status: "invalid" });
+    // session's own org is org_x/acme (see the session mock), and it is in the directory → land there.
+
+    await expect(acceptInviteAction(form({ org: "org_x", token: "nope" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard?invite=invalid",
+    );
+  });
 });
