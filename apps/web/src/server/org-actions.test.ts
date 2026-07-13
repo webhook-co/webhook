@@ -157,6 +157,25 @@ describe("renameOrgAction", () => {
     expect((res as { error: string }).error).toMatch(/owner or admin/i);
   });
 
+  it("forwards the caller's REAL role to renameOrg — so a member is refused by the primitive", async () => {
+    // The gate is renameOrg's owner/admin check, fed by the role requireOrgAccess derived server-side. This
+    // asserts the action PASSES that role through rather than hardcoding one: a member's rename reaches
+    // renameOrg as actorRole:"member" (where the real primitive throws RenameForbiddenError). Mutation-check:
+    // hardcoding actorRole:"owner" here would fail the actorRole assertion below.
+    requireOrgAccess.mockResolvedValueOnce({
+      userId: "usr_1",
+      orgId: "org_1",
+      slug: "acme",
+      role: "member" as const,
+      user: { name: "Dana", email: "dana@e.test", image: null },
+    });
+    renameOrg.mockRejectedValueOnce(new RenameForbiddenError());
+    const res = await renameOrgAction("acme", renameForm({ name: "New" }));
+    expect(res).toMatchObject({ ok: false });
+    expect((res as { error: string }).error).toMatch(/owner or admin/i);
+    expect(renameOrg.mock.calls[0]![1]).toMatchObject({ actorRole: "member" });
+  });
+
   it("does NOT pass the slug to renameOrg when it is unchanged (name-only rename)", async () => {
     renameOrg.mockResolvedValueOnce({ id: "org_1", slug: "acme", name: "Renamed" });
     await expect(

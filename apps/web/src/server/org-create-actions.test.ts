@@ -10,6 +10,7 @@ vi.mock("next/navigation", () => nav);
 vi.mock("./session", () => ({
   verifySession: vi.fn(async () => ({ userId: "u_1", orgId: "o", user: { email: "d@e.t" } })),
 }));
+import { verifySession } from "./session";
 vi.mock("./env", () => ({ getAuditChainKey: async () => "AAAA" }));
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: async () => ({}) }));
 vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: () => new Uint8Array() }));
@@ -54,6 +55,14 @@ describe("createTeamAction", () => {
 
   it("rejects an empty name without touching the DB", async () => {
     expect(await createTeamAction(form("   "))).toEqual({ ok: false, error: expect.any(String) });
+    expect(createOrgWithOwner).not.toHaveBeenCalled();
+  });
+
+  it("is gated on the session — an unauthenticated caller never reaches the DB", async () => {
+    // Creating an org doesn't require membership (the org doesn't exist yet), but it DOES require a valid
+    // session. Mutation-check: dropping the verifySession() call would let this proceed to createOrgWithOwner.
+    vi.mocked(verifySession).mockRejectedValueOnce(new Error("no session"));
+    await expect(createTeamAction(form("Acme"))).rejects.toThrow(/no session/);
     expect(createOrgWithOwner).not.toHaveBeenCalled();
   });
 
