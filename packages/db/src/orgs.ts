@@ -5,8 +5,9 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
-import { FREE_RETENTION_DAYS } from "@webhook-co/shared";
+import { FREE_RETENTION_DAYS, validateOrgSlug } from "@webhook-co/shared";
 
+import { appendAuthAuditEntry } from "./auth-audit";
 import { withTenant, type Sql, type TenantTx, withUser } from "./client";
 import { mintCredential, type CredentialHasher } from "./credential";
 import { INGEST_TOKEN_PREFIX } from "./endpoints";
@@ -68,6 +69,12 @@ export async function createMembership(
 export interface CreateOrgWithOwnerInput extends CreateOrgInput {
   /** The user who becomes the org's first OWNER — inserted in the SAME transaction as the org. */
   readonly ownerUserId: string;
+  /**
+   * The audit-chain key. REQUIRED — the `org_created` row is appended in the same tx as the org, and creating
+   * a tenant with no tamper-evident trail is an illegal state (compliance-by-design), so it is not omittable.
+   * Making it a required field is what keeps that invariant off caller discipline and on the type.
+   */
+  readonly auditKey: CryptoKey;
 }
 
 /**
@@ -83,17 +90,148 @@ export async function createOrgWithOwner(
   app: Sql,
   input: CreateOrgWithOwnerInput,
 ): Promise<CreatedOrg> {
+  // The slug is a URL; validate it in TS before the insert so a bad one is a typed refusal, not a raw
+  // constraint error. The DB CHECK is still the final authority — this just gives a better message and a
+  // clean failure mode. (Reserved/format faults are the caller's bug, not a user-facing collision.)
+  const check = validateOrgSlug(input.slug);
+  if (!check.ok) throw new InvalidOrgSlugError(input.slug, check.reason);
+
   const id = randomUUID();
   const region = input.region ?? "us";
-  await withTenant(app, id, async (tx) => {
-    await tx`
-      insert into orgs (id, slug, name, region, retention_days)
-      values (${id}, ${input.slug}, ${input.name}, ${region}, ${FREE_RETENTION_DAYS})`;
-    await tx`
-      insert into memberships (org_id, user_id, role)
-      values (${id}, ${input.ownerUserId}, ${"owner"})`;
-  });
+  try {
+    await withTenant(app, id, async (tx) => {
+      await tx`
+        insert into orgs (id, slug, name, region, retention_days)
+        values (${id}, ${input.slug}, ${input.name}, ${region}, ${FREE_RETENTION_DAYS})`;
+      await tx`
+        insert into memberships (org_id, user_id, role)
+        values (${id}, ${input.ownerUserId}, ${"owner"})`;
+      // Audit in the SAME tx — the invariant is that the trail can never disagree with the state, so the
+      // append is unconditional (the key is required); an org can never commit without its `org_created` row.
+      await appendAuthAuditEntry(tx, input.auditKey, {
+        orgId: id,
+        actor: input.ownerUserId,
+        eventType: "org_created",
+        targetId: id,
+        metadata: { slug: input.slug, name: input.name },
+      });
+    });
+  } catch (error) {
+    if (isSlugTaken(error)) throw new SlugTakenError(input.slug);
+    throw error;
+  }
   return { id, slug: input.slug, name: input.name, region };
+}
+
+/** The slug the caller asked for is held by another org (live or retired). Retryable with a different slug. */
+export class SlugTakenError extends Error {
+  constructor(public readonly slug: string) {
+    super(`org slug '${slug}' is already taken`);
+    this.name = "SlugTakenError";
+  }
+}
+
+/** The slug is malformed or reserved — a programming error in the caller, not a live collision. */
+export class InvalidOrgSlugError extends Error {
+  constructor(
+    public readonly slug: string,
+    public readonly reason: string,
+  ) {
+    super(`org slug '${slug}' is invalid: ${reason}`);
+    this.name = "InvalidOrgSlugError";
+  }
+}
+
+/**
+ * A slug uniqueness violation, from EITHER the `orgs_slug_key` unique index (a live slug) or the
+ * `orgs_slug_not_retired` trigger (a retired one). Both surface as SQLSTATE 23505 with a constraint name
+ * containing "slug" (migration 0069 sets `constraint = 'orgs_slug_retired'` on the trigger precisely so this
+ * one predicate catches both). To the caller, both mean the same thing: pick another slug.
+ */
+function isSlugTaken(error: unknown): boolean {
+  const e = error as { code?: unknown; constraint_name?: unknown } | null;
+  return (
+    !!e &&
+    e.code === "23505" &&
+    typeof e.constraint_name === "string" &&
+    e.constraint_name.includes("slug")
+  );
+}
+
+export interface RenameOrgInput {
+  readonly orgId: string;
+  /** The role the caller holds in `orgId`, read server-side — owner or admin, or this throws. */
+  readonly actorRole: MembershipRole;
+  /** Pseudonymous actor id for the audit row. */
+  readonly actorId: string;
+  /** The new display name, if changing it. */
+  readonly name?: string;
+  /** The new slug, if changing it. Validated; a taken slug throws SlugTakenError. */
+  readonly slug?: string;
+  readonly auditKey: CryptoKey;
+}
+
+/** Nobody below admin may rename an org. */
+export class RenameForbiddenError extends Error {
+  constructor(public readonly role: MembershipRole) {
+    super(`role '${role}' may not rename the organization`);
+    this.name = "RenameForbiddenError";
+  }
+}
+
+/**
+ * Rename an org — its display name, its slug (its URL), or both.
+ *
+ * Owner/admin only: the slug is the org's public address, and a rename retires the old one forever (it can
+ * never be reclaimed by another org — the never-recycle trigger, migration 0069), so it is not a thing a
+ * plain member gets to do. The old slug is recorded in `org_slug_history` AUTOMATICALLY by the
+ * `orgs_slug_record_history` trigger on the UPDATE — the app does not (and cannot) write that table. A
+ * tamper-evident `org_renamed` row is appended in the SAME transaction, so the trail can never disagree with
+ * the state.
+ *
+ * A slug already held by another org — live OR retired — throws `SlugTakenError`; the caller maps it to "that
+ * URL is taken". A no-op (nothing actually changed) writes no audit row.
+ */
+export async function renameOrg(app: Sql, input: RenameOrgInput): Promise<CreatedOrg> {
+  if (input.actorRole !== "owner" && input.actorRole !== "admin") {
+    throw new RenameForbiddenError(input.actorRole);
+  }
+  if (input.slug !== undefined) {
+    const check = validateOrgSlug(input.slug);
+    if (!check.ok) throw new InvalidOrgSlugError(input.slug, check.reason);
+  }
+
+  try {
+    return await withTenant(app, input.orgId, async (tx) => {
+      const [before] = await tx<{ slug: string; name: string; region: string }[]>`
+        select slug, name, region from orgs where id = ${input.orgId}`;
+      if (!before) throw new Error(`renameOrg: org ${input.orgId} not found`);
+
+      const nextName = input.name ?? before.name;
+      const nextSlug = input.slug ?? before.slug;
+      const nameChanged = nextName !== before.name;
+      const slugChanged = nextSlug !== before.slug;
+
+      if (nameChanged || slugChanged) {
+        await tx`update orgs set name = ${nextName}, slug = ${nextSlug} where id = ${input.orgId}`;
+        await appendAuthAuditEntry(tx, input.auditKey, {
+          orgId: input.orgId,
+          actor: input.actorId,
+          eventType: "org_renamed",
+          targetId: input.orgId,
+          metadata: {
+            ...(slugChanged ? { fromSlug: before.slug, toSlug: nextSlug } : {}),
+            ...(nameChanged ? { fromName: before.name, toName: nextName } : {}),
+          },
+        });
+      }
+
+      return { id: input.orgId, slug: nextSlug, name: nextName, region: before.region };
+    });
+  } catch (error) {
+    if (isSlugTaken(error)) throw new SlugTakenError(input.slug ?? "");
+    throw error;
+  }
 }
 
 /**

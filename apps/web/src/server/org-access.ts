@@ -49,6 +49,9 @@ export interface OrgAccess extends Session {
   readonly orgId: string;
   /** Its CURRENT slug, canonically cased. Use this for links and `revalidatePath`, never the raw URL segment. */
   readonly slug: string;
+  /** Its display name, from the SAME directory read that proved membership — the authoritative value, never
+   * inferred from the slug. A settings page renders this directly instead of re-querying. */
+  readonly name: string;
   /** The caller's role in `orgId`, read this request. Never null — a non-member never gets here. */
   readonly role: MembershipRole;
 }
@@ -71,14 +74,26 @@ const resolveOrgAccess = cache(async (slug: string): Promise<OrgAccess> => {
 
   const current = orgs.find((o) => sameSlug(o.slug, slug));
   if (current) {
-    return { ...session, orgId: current.orgId, slug: current.slug, role: current.role };
+    return {
+      ...session,
+      orgId: current.orgId,
+      slug: current.slug,
+      name: current.name,
+      role: current.role,
+    };
   }
 
   // A slug this org has been renamed AWAY from. Old links must keep working — that is the entire point of
   // keeping the history.
   const renamed = orgs.find((o) => o.formerSlugs.some((f) => sameSlug(f, slug)));
   if (renamed) {
-    return { ...session, orgId: renamed.orgId, slug: renamed.slug, role: renamed.role };
+    return {
+      ...session,
+      orgId: renamed.orgId,
+      slug: renamed.slug,
+      name: renamed.name,
+      role: renamed.role,
+    };
   }
 
   // Not in this caller's directory. It could be another org's slug, or nothing at all — and we cannot tell,

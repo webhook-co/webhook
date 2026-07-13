@@ -4,6 +4,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { createClient, DB_ROLES, withTenant, type Sql } from "@webhook-co/db";
 import { createOrgWithOwner } from "@webhook-co/db/orgs";
 
+import { testAuditKey } from "../../../packages/db/test/audit-key";
 import { setupSchema } from "../../../packages/db/test/migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "../../../packages/db/test/pg";
 import { BASE_URL, PORT, writeFixture, type Fixture } from "./fixture";
@@ -74,15 +75,18 @@ async function seed(appUrl: string, ownerUrl: string): Promise<Fixture> {
     await seedUser(owner, "usr_robin", "Robin Vale", "robin@beta.test");
     await seedUser(owner, "usr_sam", "Sam Ortiz", "sam@beta.test");
 
+    const auditKey = await testAuditKey();
     const alpha = await createOrgWithOwner(app, {
       slug: "alpha-e2e",
       name: "Alpha",
       ownerUserId: "usr_dana",
+      auditKey,
     });
     const beta = await createOrgWithOwner(app, {
       slug: "beta-e2e",
       name: "Beta",
       ownerUserId: "usr_robin",
+      auditKey,
     });
 
     // Dana and Sam are both plain members of Beta. Sam exists so the removal spec has someone to remove

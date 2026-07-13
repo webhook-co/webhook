@@ -94,6 +94,12 @@ resolve it per request). We did not do that, for two reasons:
 
 `/org/{slug}` remains available as a later, purely-UX refactor. It is not a prerequisite for anything here.
 
+> **⚠️ Superseded by ADR-0117.** The claim above — that the URL move is UX, not security — was true only until
+> the org switcher shipped in this same lane. The switcher is what turned the latent wrong-org write into a
+> LIVE one: with one cookie per browser, a second tab that switched orgs silently retargeted the first tab's
+> writes, and `requireOrgAccess` does not prevent it, because the user genuinely IS a member of the org the
+> cookie names. `/org/{slug}` is the fix, not a nicety. See ADR-0117.
+
 ## Consequences
 
 - "Which orgs am I in?" is answerable for the first time — which is what made **ADR-0114** (consent-time org

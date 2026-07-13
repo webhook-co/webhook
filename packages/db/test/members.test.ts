@@ -14,6 +14,7 @@ import {
   removeMember,
 } from "../src/members";
 import { createOrgWithOwner } from "../src/orgs";
+import { testAuditKey } from "./audit-key";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -48,6 +49,7 @@ async function seedOrg(): Promise<{ orgId: string; ownerId: string }> {
     slug: `s-${randomUUID().slice(0, 8)}`,
     name: "Acme",
     ownerUserId: ownerId,
+    auditKey: await testAuditKey(),
   });
   return { orgId: id, ownerId };
 }
