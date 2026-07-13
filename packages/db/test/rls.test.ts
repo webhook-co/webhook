@@ -651,6 +651,50 @@ describe("api_keys credential extension (0014)", () => {
     expect(g.owner_type).toBe(false);
     expect(g.sso_authorized).toBe(false);
   });
+
+  it("the authn last_used write grant (0072) is MINIMAL — update `last_used_at` ONLY, no other write", async () => {
+    // webhook_authn's first-ever write privilege. This guard is what keeps it minimal: a future widening
+    // (update on another column, or INSERT/DELETE) turns it red. Mirrors the reconciler-role least-privilege
+    // assertions; there was NO write-privilege guard on api_keys before this grant existed.
+    const [w] = await owner<
+      {
+        upd_last_used: boolean;
+        sel_last_used: boolean;
+        upd_scopes: boolean;
+        upd_revoked: boolean;
+        upd_org: boolean;
+        upd_expires: boolean;
+        tbl_insert: boolean;
+        tbl_delete: boolean;
+        tbl_update_all: boolean;
+      }[]
+    >`
+      select has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'last_used_at', 'UPDATE') as upd_last_used,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'last_used_at', 'SELECT') as sel_last_used,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'scopes', 'UPDATE') as upd_scopes,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'revoked_at', 'UPDATE') as upd_revoked,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'org_id', 'UPDATE') as upd_org,
+             has_column_privilege(${DB_ROLES.authn}, 'api_keys', 'expires_at', 'UPDATE') as upd_expires,
+             has_table_privilege(${DB_ROLES.authn}, 'api_keys', 'INSERT') as tbl_insert,
+             has_table_privilege(${DB_ROLES.authn}, 'api_keys', 'DELETE') as tbl_delete,
+             has_table_privilege(${DB_ROLES.authn}, 'api_keys', 'UPDATE') as tbl_update_all`;
+    expect(w.upd_last_used).toBe(true); // the one column it may write (0072)
+    expect(w.sel_last_used).toBe(true); // + read, needed for the throttle condition's WHERE
+    expect(w.upd_scopes).toBe(false); // and NOTHING else, in any direction:
+    expect(w.upd_revoked).toBe(false); // a key can't be un/revoked from the authn pool
+    expect(w.upd_org).toBe(false); // nor re-homed to another org
+    expect(w.upd_expires).toBe(false);
+    expect(w.tbl_insert).toBe(false); // can't forge a key
+    expect(w.tbl_delete).toBe(false);
+    expect(w.tbl_update_all).toBe(false); // NOT a table-wide UPDATE grant — column-scoped only
+
+    // The enabling UPDATE policy is role-scoped to webhook_authn (not a global widening).
+    const [p] = await owner<{ roles: string; cmd: string }[]>`
+      select array_to_string(roles, ',') as roles, cmd from pg_policies
+      where tablename = 'api_keys' and policyname = 'api_keys_authn_last_used'`;
+    expect(p?.cmd).toBe("UPDATE");
+    expect(p?.roles).toBe(DB_ROLES.authn);
+  });
 });
 
 describe("catalog-driven RLS coverage", () => {

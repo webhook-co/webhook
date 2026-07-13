@@ -35,6 +35,7 @@ import {
   listDestinationsWithDueDeliveries,
   looksLikeCredential,
   makeApiKeyAuthDeps,
+  makeApiKeyLastUsedStamper,
   readAuditChainHeads,
   readSealedIngestToken,
   revealIngestTokenCore,
@@ -548,7 +549,10 @@ async function defaultVerifyListenTicket(
  * KV-cached resolver over the webhook_authn cold lookup, audience-bound to API_RESOURCE) plus a
  * short-lived tenant client for the endpoint existence guard. Both clients torn down by close().
  */
-export async function buildListenAuth(env: Env): Promise<ListenAuthHandle> {
+export async function buildListenAuth(
+  env: Env,
+  waitUntil?: (promise: Promise<unknown>) => void,
+): Promise<ListenAuthHandle> {
   const hasher = createCredentialHasherFromBase64(await readSecretBinding(env.CREDENTIAL_PEPPER));
   const authn = createClient(env.HYPERDRIVE_AUTHN.connectionString, { max: 1 });
   const tenant = createClient(env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
@@ -560,6 +564,14 @@ export async function buildListenAuth(env: Env): Promise<ListenAuthHandle> {
         authn,
         cache: kvCredentialCache(env.KV_AUTHZ),
         resource: API_RESOURCE,
+        // Best-effort last_used_at stamp: a self-contained task on its OWN connection, deferred past the
+        // response via ctx.waitUntil — never on the auth path, never on the request's authn client.
+        stampLastUsed: waitUntil
+          ? makeApiKeyLastUsedStamper({
+              connectionString: env.HYPERDRIVE_AUTHN.connectionString,
+              waitUntil,
+            })
+          : undefined,
       }),
       resourceMetadataUrl: LISTEN_PRM_URL,
     },
@@ -749,7 +761,8 @@ export async function handleFetch(
     if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
       return new Response("expected a websocket upgrade", { status: 426 });
     }
-    return handleListenUpgrade(request, env);
+    // Bind the last_used_at stamp's waitUntil into the auth builder without changing the seam signature.
+    return handleListenUpgrade(request, env, (e) => buildListenAuth(e, (p) => ctx.waitUntil(p)));
   }
 
   // Uniform method gate FIRST (mirrors handleIngest's, ADR-0085 accept-all-verbs): a non-standard verb is

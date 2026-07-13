@@ -27,6 +27,13 @@ export interface ApiKeyAuthDepsOptions {
   readonly cache: CredentialCache;
   /** This surface's RFC 8707 resource (API_RESOURCE | MCP_RESOURCE); the audience keys bind to here. */
   readonly resource: string;
+  /**
+   * The best-effort `api_keys.last_used_at` stamper (from {@link makeApiKeyLastUsedStamper}). Each surface
+   * builds it from its HYPERDRIVE_AUTHN connection string + `(p) => ctx.waitUntil(p)`, so the stamp opens its
+   * OWN connection and runs post-response — never on the auth path, never on the request's authn client.
+   * Omitted → the column is not stamped.
+   */
+  readonly stampLastUsed?: (keyId: string) => void;
 }
 
 /** The api-key auth deps a bearer surface needs: a verifyBearer bound to `resource`. */
@@ -51,7 +58,9 @@ export function makeApiKeyAuthDeps(opts: ApiKeyAuthDepsOptions): ApiKeyAuthDeps 
     cache: opts.cache,
     // The cold lookup returns a key's intrinsic per-key audience (or undefined for legacy keys);
     // `resource` is the surface audience the resolver conditionally stamps on the undefined case (A0b).
-    coldLookup: makeApiKeyColdLookup(opts.authn),
+    // It also carries the best-effort last_used_at stamper (a no-op if the surface supplied none), which
+    // defers a self-contained write past the response, so recording use never touches the auth path.
+    coldLookup: makeApiKeyColdLookup(opts.authn, { stampLastUsed: opts.stampLastUsed }),
     resource: opts.resource,
     // ADR-0073: reject a malformed/typo'd/old-format whk_ key at the edge (before hash/cache/DB).
     // This is INTENTIONALLY only on the api-key path — the ingest resolver (whep_ tokens, which carry
