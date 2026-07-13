@@ -336,7 +336,9 @@ export const auditVerify = defineCapability({
   errors: ["UNAUTHORIZED", "FORBIDDEN", "RATE_LIMITED"],
   auth: { scope: "audit:read" },
   semantics: {},
-  surfaceExempt: { web: WEB_DEFERRED },
+  // No web exemption (Lane 2.8): the dashboard binds this DB-direct behind the /audit page's "Verify chain"
+  // button. A tamper-evident chain nobody can check is worth very little, so the surface that makes it
+  // checkable is the point of the capability.
 });
 
 export const eventsReplay = defineCapability({

@@ -116,9 +116,10 @@ describe("capability parity — current GA surfaces conformance", () => {
     "triggers.wait",
   ];
   // The dashboard surface: endpoints.* (slice 2) + events.list/get (slice 3a) + events.getPayload (slice 3b —
-  // the R2 payload viewer + download), all DB-direct server reads. events.tail / events.replay / audit.verify
-  // stay web-deferred.
+  // the R2 payload viewer + download), all DB-direct server reads. events.tail / events.replay stay
+  // web-deferred. audit.verify is now BOUND on web (Lane 2.8 — the /audit page's "Verify chain" button).
   const WEB_BOUND = [
+    "audit.verify",
     "endpoints.list",
     "endpoints.get",
     "endpoints.create",

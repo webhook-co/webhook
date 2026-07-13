@@ -115,13 +115,13 @@ describe("capability registry", () => {
     expect(eventsTail.semantics.watermark?.deltaMs).toBeGreaterThan(0);
   });
 
-  it("surfaces audit.verify on CLI/API/MCP with a read scope (web deferred with the dashboard)", () => {
+  it("surfaces audit.verify on EVERY surface, web included (Lane 2.8)", () => {
     expect(auditVerify.auth.scope).toBe("audit:read");
-    // The compliance verifier reaches the live bearer surfaces identically; only `web` is
-    // exempt, and only because the whole dashboard epic is deferred (same reason as every
-    // read capability). It is NOT exempt on cli/api/mcp.
-    expect(requiredSurfaces(auditVerify)).toEqual(["api", "cli", "mcp"]);
-    expect(Object.keys(auditVerify.surfaceExempt ?? {})).toEqual(["web"]);
+    // The web exemption is gone: the dashboard's /audit page binds this behind a "Verify chain" button.
+    // A tamper-evident chain nobody can check is worth very little, so the surface that makes it checkable
+    // is the whole point of the capability — it is exempt NOWHERE.
+    expect(requiredSurfaces(auditVerify)).toEqual(["api", "cli", "mcp", "web"]);
+    expect(auditVerify.surfaceExempt).toBeUndefined();
   });
 
   it("round-trips the audit.verify ok and break outputs", () => {
