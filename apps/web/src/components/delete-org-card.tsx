@@ -10,7 +10,7 @@ import { deleteOrganization } from "@/server/org-actions";
  * type-to-confirm — the destructive submit stays disabled until "DELETE" is typed, and the server
  * action re-checks the acknowledgement and the caller's owner role before doing anything.
  */
-export function DeleteOrgCard() {
+export function DeleteOrgCard({ slug }: { slug: string }) {
   const [confirming, setConfirming] = useState(false);
   const [text, setText] = useState("");
 
@@ -29,7 +29,7 @@ export function DeleteOrgCard() {
             Delete organization…
           </Button>
         ) : (
-          <form action={deleteOrganization} className="flex flex-col gap-3">
+          <form action={deleteOrganization.bind(null, slug)} className="flex flex-col gap-3">
             <label htmlFor="confirm-delete" className="text-sm text-fg-secondary">
               Type <span className="font-mono font-semibold text-fg">DELETE</span> to confirm.
             </label>

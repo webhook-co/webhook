@@ -31,6 +31,7 @@ vi.mock("./env", () => ({ getAuditChainKey: async () => "AA".repeat(32) }));
 vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({}) }));
 vi.mock("./session", () => ({ LOGOUT_URL: "https://auth.test/logout" }));
 vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
   redirect: vi.fn((url: string) => {
     throw new Error(`NEXT_REDIRECT:${url}`);
   }),
@@ -45,20 +46,23 @@ beforeEach(() => {
   requireOrgAccess.mockResolvedValue({
     userId: "u_1",
     orgId: "org_team",
+    slug: "acme",
     role: "member",
     user: { name: "D", email: "d@acme.test", image: null },
   });
   removeMember.mockResolvedValue({ removed: true, revokedKeyHashes: [HASH] });
   listUserOrgs.mockResolvedValue([
-    { orgId: "org_team", name: "Acme", role: "member" },
-    { orgId: "org_personal", name: "Personal", role: "owner" },
+    { orgId: "org_team", slug: "acme", name: "Acme", role: "member" },
+    { orgId: "org_personal", slug: "dana", name: "Personal", role: "owner" },
   ]);
   remintSessionForOrg.mockResolvedValue("ok");
 });
 
 describe("leaveOrgAction", () => {
   it("removes YOURSELF with the same atomic revocation as a removal, and evicts your keys", async () => {
-    await expect(leaveOrgAction()).rejects.toThrow("NEXT_REDIRECT:/dashboard?org=left");
+    await expect(leaveOrgAction("acme")).rejects.toThrow(
+      "NEXT_REDIRECT:/org/dana/dashboard?org=left",
+    );
 
     // Leaving IS removing yourself — same code path, so it can't drift from removeMember's guarantees.
     expect(removeMember).toHaveBeenCalledWith(
@@ -74,7 +78,9 @@ describe("leaveOrgAction", () => {
   });
 
   it("moves the session to an org you're still in — otherwise you'd look logged out", async () => {
-    await expect(leaveOrgAction()).rejects.toThrow("NEXT_REDIRECT:/dashboard?org=left");
+    await expect(leaveOrgAction("acme")).rejects.toThrow(
+      "NEXT_REDIRECT:/org/dana/dashboard?org=left",
+    );
     expect(remintSessionForOrg).toHaveBeenCalledWith(
       expect.objectContaining({ userId: "u_1" }),
       "org_personal", // NOT the org just left
@@ -85,24 +91,26 @@ describe("leaveOrgAction", () => {
     // The org would be stranded with no owner. They must promote someone first (the /team role picker), or
     // delete the org. This is the same guard that blocks a sole owner's account deletion.
     removeMember.mockRejectedValueOnce(new LastOwnerError("sole owner"));
-    expect(await leaveOrgAction()).toEqual({ status: "last_owner" });
+    expect(await leaveOrgAction("acme")).toEqual({ status: "last_owner" });
     expect(evictRevokedKeyHashes).not.toHaveBeenCalled();
     expect(remintSessionForOrg).not.toHaveBeenCalled();
   });
 
   it("signs you out rather than leaving the session pointing at an org you just left", async () => {
-    listUserOrgs.mockResolvedValueOnce([{ orgId: "org_team", name: "Acme", role: "member" }]);
-    await expect(leaveOrgAction()).rejects.toThrow("NEXT_REDIRECT:https://auth.test/logout");
+    listUserOrgs.mockResolvedValueOnce([
+      { orgId: "org_team", slug: "acme", name: "Acme", role: "member" },
+    ]);
+    await expect(leaveOrgAction("acme")).rejects.toThrow("NEXT_REDIRECT:https://auth.test/logout");
   });
 
   it("signs you out if the session can't be re-minted — never guesses", async () => {
     remintSessionForOrg.mockResolvedValueOnce("no_session");
-    await expect(leaveOrgAction()).rejects.toThrow("NEXT_REDIRECT:https://auth.test/logout");
+    await expect(leaveOrgAction("acme")).rejects.toThrow("NEXT_REDIRECT:https://auth.test/logout");
   });
 
   it("reports an error without leaving the org half-left", async () => {
     removeMember.mockRejectedValueOnce(new Error("db down"));
-    expect(await leaveOrgAction()).toEqual({ status: "error" });
+    expect(await leaveOrgAction("acme")).toEqual({ status: "error" });
     expect(evictRevokedKeyHashes).not.toHaveBeenCalled();
   });
 });

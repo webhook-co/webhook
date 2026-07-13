@@ -29,9 +29,15 @@ export type TeamResult =
     }
   | { readonly status: "error" };
 
-/** Load the current org's team view (role + members + pending invites) for the /team page. */
-export async function loadTeam(): Promise<TeamResult> {
-  const { orgId, userId, role } = await requireOrgAccess();
+/**
+ * Load the org's team view (role + members + pending invites) for the /team page.
+ *
+ * `slug` + `subPath` are threaded straight through to the gate, and the page passes the SAME pair — that is
+ * deliberate: `requireOrgAccess` is `cache()`d on its ARGUMENTS, so calling it with a different subPath here
+ * than the page uses would miss the cache and issue a second directory read for one render.
+ */
+export async function loadTeam(slug: string, subPath?: string): Promise<TeamResult> {
+  const { orgId, userId, role } = await requireOrgAccess(slug, subPath);
   try {
     const [members, invites] = await withTenantDb((app) =>
       Promise.all([listOrgMembers(app, orgId), listPendingInvites(app, orgId)]),

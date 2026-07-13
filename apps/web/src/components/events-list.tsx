@@ -1,5 +1,7 @@
 "use client";
 
+import { orgHref, useOrgSlug } from "@/lib/org-path";
+
 import {
   Banner,
   Button,
@@ -75,6 +77,8 @@ export function EventsList({
   mintTicket,
   webSocketCtor,
 }: EventsListProps) {
+  // The org this component is rendered in — read from the URL, which is the source of truth for it.
+  const slug = useOrgSlug();
   const [items, setItems] = React.useState<readonly EventSummaryItem[]>(initialItems);
   const [cursor, setCursor] = React.useState<Cursor | null>(initialCursor);
   const [pending, setPending] = React.useState(false);
@@ -194,7 +198,7 @@ export function EventsList({
               <TableRow key={event.id}>
                 <TableCell>
                   <Link
-                    href={`/endpoints/${endpointId}/events/${event.id}`}
+                    href={orgHref(slug, `/endpoints/${endpointId}/events/${event.id}`)}
                     className="font-medium text-fg underline-offset-4 hover:underline"
                   >
                     {formatDateTime(event.receivedAt)}

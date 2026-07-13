@@ -6,6 +6,7 @@ vi.mock("./org-access", () => ({
   requireOrgAccess: vi.fn(async () => ({
     userId: "u",
     orgId: "o",
+    slug: "acme",
     user: { name: "", email: "", image: null },
   })),
 }));
@@ -54,7 +55,7 @@ const cursor: Cursor = { orderKey: ORDER_KEY, id: CURSOR_ID };
 describe("loadMoreEventsAction", () => {
   it("returns the next page on success", async () => {
     loadMoreEvents.mockResolvedValueOnce({ items: [], nextCursor: null });
-    const result = await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor });
+    const result = await loadMoreEventsAction("acme", { endpointId: ENDPOINT_ID, cursor });
     expect(result).toEqual({ ok: true, items: [], nextCursor: null });
     expect(loadMoreEvents).toHaveBeenCalledWith(
       "o",
@@ -67,7 +68,7 @@ describe("loadMoreEventsAction", () => {
   it("parses + threads the active filters (from → an instant lower bound)", async () => {
     loadMoreEvents.mockReset();
     loadMoreEvents.mockResolvedValueOnce({ items: [], nextCursor: null });
-    await loadMoreEventsAction({
+    await loadMoreEventsAction("acme", {
       endpointId: ENDPOINT_ID,
       cursor,
       filters: { provider: ["stripe", "github"], from: "2026-06-01" },
@@ -82,14 +83,16 @@ describe("loadMoreEventsAction", () => {
 
   it("rejects a non-uuid endpoint id without paging", async () => {
     loadMoreEvents.mockReset();
-    expect(await loadMoreEventsAction({ endpointId: "nope", cursor })).toEqual({ ok: false });
+    expect(await loadMoreEventsAction("acme", { endpointId: "nope", cursor })).toEqual({
+      ok: false,
+    });
     expect(loadMoreEvents).not.toHaveBeenCalled();
   });
 
   it("rejects a cursor with a non-uuid id without paging", async () => {
     loadMoreEvents.mockReset();
     const bad = { orderKey: ORDER_KEY, id: "not-a-uuid" } as Cursor;
-    expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: bad })).toEqual({
+    expect(await loadMoreEventsAction("acme", { endpointId: ENDPOINT_ID, cursor: bad })).toEqual({
       ok: false,
     });
     expect(loadMoreEvents).not.toHaveBeenCalled();
@@ -100,7 +103,7 @@ describe("loadMoreEventsAction", () => {
     // Right length-ish but ms precision (3 digits) + a crafted SQL-ish payload — both fail ORDER_KEY_RE.
     for (const orderKey of ["2026-06-28T00:00:00.000Z", "not-a-date", "'; drop table events; --"]) {
       const bad = { orderKey, id: CURSOR_ID } as Cursor;
-      expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: bad })).toEqual({
+      expect(await loadMoreEventsAction("acme", { endpointId: ENDPOINT_ID, cursor: bad })).toEqual({
         ok: false,
       });
     }
@@ -113,7 +116,7 @@ describe("loadMoreEventsAction", () => {
     // A sub-millisecond order key (`.007300Z`) must reach the db byte-for-byte — the whole point of the
     // full-µs cursor. orderKey is already a string on the wire, so there is no lossy Date coercion.
     const wire = { orderKey: "2026-06-28T00:00:00.007300Z", id: CURSOR_ID };
-    const result = await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: wire });
+    const result = await loadMoreEventsAction("acme", { endpointId: ENDPOINT_ID, cursor: wire });
     expect(result.ok).toBe(true);
     expect(loadMoreEvents).toHaveBeenCalledWith(
       "o",
@@ -130,16 +133,20 @@ describe("loadMoreEventsAction", () => {
     // id, non-zero µs) or re-shows them. So we fail closed (consistent with the signed-cursor v1 reject) —
     // "Load more" simply stops until the user reloads and gets fresh v2 cursors. No data is silently dropped.
     const legacy = { receivedAt: "2026-06-28T00:00:00.000Z", id: CURSOR_ID } as unknown as Cursor;
-    expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor: legacy })).toEqual({
-      ok: false,
-    });
+    expect(await loadMoreEventsAction("acme", { endpointId: ENDPOINT_ID, cursor: legacy })).toEqual(
+      {
+        ok: false,
+      },
+    );
     expect(loadMoreEvents).not.toHaveBeenCalled();
   });
 
   it("returns ok:false (no throw) when the pager faults", async () => {
     loadMoreEvents.mockReset();
     loadMoreEvents.mockRejectedValueOnce(new Error("db down"));
-    expect(await loadMoreEventsAction({ endpointId: ENDPOINT_ID, cursor })).toEqual({ ok: false });
+    expect(await loadMoreEventsAction("acme", { endpointId: ENDPOINT_ID, cursor })).toEqual({
+      ok: false,
+    });
   });
 });
 
@@ -149,7 +156,7 @@ describe("revealHeaderAction", () => {
   it("returns the value for a valid sensitive header", async () => {
     revealHeader.mockReset();
     revealHeader.mockResolvedValueOnce({ value: "Bearer sk_live_x" });
-    const result = await revealHeaderAction(input);
+    const result = await revealHeaderAction("acme", input);
     expect(result).toEqual({ ok: true, value: "Bearer sk_live_x" });
     expect(revealHeader).toHaveBeenCalledWith("o", input);
   });
@@ -157,27 +164,29 @@ describe("revealHeaderAction", () => {
   it("returns ok:false when there is no sensitive header at the index", async () => {
     revealHeader.mockReset();
     revealHeader.mockResolvedValueOnce(null);
-    expect(await revealHeaderAction({ ...input, index: 0 })).toEqual({ ok: false });
+    expect(await revealHeaderAction("acme", { ...input, index: 0 })).toEqual({ ok: false });
   });
 
   it("rejects a non-uuid endpointId or eventId without reading", async () => {
     revealHeader.mockReset();
-    expect(await revealHeaderAction({ ...input, endpointId: "nope" })).toEqual({ ok: false });
-    expect(await revealHeaderAction({ ...input, eventId: "nope" })).toEqual({ ok: false });
+    expect(await revealHeaderAction("acme", { ...input, endpointId: "nope" })).toEqual({
+      ok: false,
+    });
+    expect(await revealHeaderAction("acme", { ...input, eventId: "nope" })).toEqual({ ok: false });
     expect(revealHeader).not.toHaveBeenCalled();
   });
 
   it("rejects a negative / non-integer index without reading", async () => {
     revealHeader.mockReset();
-    expect(await revealHeaderAction({ ...input, index: -1 })).toEqual({ ok: false });
-    expect(await revealHeaderAction({ ...input, index: 1.5 })).toEqual({ ok: false });
+    expect(await revealHeaderAction("acme", { ...input, index: -1 })).toEqual({ ok: false });
+    expect(await revealHeaderAction("acme", { ...input, index: 1.5 })).toEqual({ ok: false });
     expect(revealHeader).not.toHaveBeenCalled();
   });
 
   it("returns ok:false (no throw) when the read faults", async () => {
     revealHeader.mockReset();
     revealHeader.mockRejectedValueOnce(new Error("db down"));
-    expect(await revealHeaderAction(input)).toEqual({ ok: false });
+    expect(await revealHeaderAction("acme", input)).toEqual({ ok: false });
   });
 });
 
@@ -190,7 +199,10 @@ describe("loadEventPayloadAction", () => {
       bytes: 2,
       contentType: "application/json",
     });
-    const result = await loadEventPayloadAction({ endpointId: ENDPOINT_ID, eventId: CURSOR_ID });
+    const result = await loadEventPayloadAction("acme", {
+      endpointId: ENDPOINT_ID,
+      eventId: CURSOR_ID,
+    });
     expect(result).toEqual({ kind: "text", text: "{}", bytes: 2, contentType: "application/json" });
     expect(loadEventPayload).toHaveBeenCalledWith("o", ENDPOINT_ID, CURSOR_ID);
   });
@@ -198,7 +210,10 @@ describe("loadEventPayloadAction", () => {
   it("returns not_found for a malformed (non-string) input without reading", async () => {
     loadEventPayload.mockReset();
     expect(
-      await loadEventPayloadAction({ endpointId: 123 as unknown as string, eventId: CURSOR_ID }),
+      await loadEventPayloadAction("acme", {
+        endpointId: 123 as unknown as string,
+        eventId: CURSOR_ID,
+      }),
     ).toEqual({ kind: "not_found" });
     expect(loadEventPayload).not.toHaveBeenCalled();
   });
@@ -207,14 +222,14 @@ describe("loadEventPayloadAction", () => {
 describe("deleteEventAction", () => {
   it("rejects a non-uuid eventId WITHOUT touching the db", async () => {
     deleteEventWithAudit.mockClear();
-    expect(await deleteEventAction({ eventId: "not-a-uuid" })).toEqual({ ok: false });
+    expect(await deleteEventAction("acme", { eventId: "not-a-uuid" })).toEqual({ ok: false });
     expect(deleteEventWithAudit).not.toHaveBeenCalled();
   });
 
   it("enforces the rate limit then tombstones under the session org, returning {ok:true}", async () => {
     enforceEventDeleteRateLimit.mockResolvedValueOnce(undefined);
     deleteEventWithAudit.mockResolvedValueOnce({ id: CURSOR_ID, deletedAt: new Date() });
-    expect(await deleteEventAction({ eventId: CURSOR_ID })).toEqual({ ok: true });
+    expect(await deleteEventAction("acme", { eventId: CURSOR_ID })).toEqual({ ok: true });
     // org comes from the SESSION (mocked "o"), never the input; single eventId.
     expect(enforceEventDeleteRateLimit).toHaveBeenCalledWith({}, "o");
     expect(deleteEventWithAudit).toHaveBeenCalledWith(
@@ -227,7 +242,7 @@ describe("deleteEventAction", () => {
   it("returns {ok:false} (never throws) when the rate limit trips", async () => {
     enforceEventDeleteRateLimit.mockRejectedValueOnce(new Error("RATE_LIMITED"));
     deleteEventWithAudit.mockClear();
-    expect(await deleteEventAction({ eventId: CURSOR_ID })).toEqual({ ok: false });
+    expect(await deleteEventAction("acme", { eventId: CURSOR_ID })).toEqual({ ok: false });
     expect(deleteEventWithAudit).not.toHaveBeenCalled();
   });
 });

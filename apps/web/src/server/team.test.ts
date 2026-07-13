@@ -49,7 +49,7 @@ beforeEach(() => {
 
 describe("loadTeam", () => {
   it("returns the caller's role + id, the members, and the pending invites", async () => {
-    const result = await loadTeam();
+    const result = await loadTeam("acme");
     expect(result).toEqual({
       status: "ok",
       role: "owner",
@@ -69,11 +69,11 @@ describe("loadTeam", () => {
       role: "member",
       user: { name: "M", email: "m@acme.test", image: null },
     });
-    expect(await loadTeam()).toMatchObject({ status: "ok", role: "member", userId: "u_m" });
+    expect(await loadTeam("acme")).toMatchObject({ status: "ok", role: "member", userId: "u_m" });
   });
 
   it("surfaces a read failure as an error result (never throws to the page)", async () => {
     listOrgMembers.mockRejectedValueOnce(new Error("db down"));
-    expect(await loadTeam()).toEqual({ status: "error" });
+    expect(await loadTeam("acme")).toEqual({ status: "error" });
   });
 });

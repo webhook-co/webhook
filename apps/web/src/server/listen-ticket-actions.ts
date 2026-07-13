@@ -29,8 +29,12 @@ export type MintListenTicketResult =
  * subprotocol name; the client opens `wss://wbhk.my/listen` offering `[subprotocol, "ticket." + ticket]`.
  * The ticket itself is never logged (logActionError takes the error only).
  */
-export async function mintListenTicketAction(endpointId: string): Promise<MintListenTicketResult> {
-  const session = await requireOrgAccess();
+export async function mintListenTicketAction(
+  slug: string,
+  endpointId: string,
+): Promise<MintListenTicketResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect.
+  const session = await requireOrgAccess(slug);
   // Runtime guard: a crafted server-action POST can deliver a non-string; a non-uuid can't name a real row.
   if (typeof endpointId !== "string" || !isUuid(endpointId)) {
     return { ok: false, error: "That endpoint no longer exists." };

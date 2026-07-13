@@ -7,6 +7,8 @@ const { requireOrgAccess } = vi.hoisted(() => ({
   requireOrgAccess: vi.fn(async () => ({
     userId: "user-1",
     orgId: "org-1",
+    // The CANONICAL slug the gate resolved — every revalidatePath below is built from it.
+    slug: "acme",
     user: { name: "A", email: "a@x.com", image: null },
   })),
 }));
@@ -66,31 +68,31 @@ beforeEach(() => {
 
 describe("addProviderSecretAction — input guards", () => {
   it("rejects a non-uuid endpoint before touching the mutation", async () => {
-    const res = await addProviderSecretAction(validInput({ endpointId: "not-a-uuid" }));
+    const res = await addProviderSecretAction("acme", validInput({ endpointId: "not-a-uuid" }));
     expect(res.ok).toBe(false);
     expect(mutations.addSecret).not.toHaveBeenCalled();
   });
 
   it("rejects a non-string secret before touching the mutation", async () => {
-    const res = await addProviderSecretAction(validInput({ secret: 123 }));
+    const res = await addProviderSecretAction("acme", validInput({ secret: 123 }));
     expect(res.ok).toBe(false);
     expect(mutations.addSecret).not.toHaveBeenCalled();
   });
 
   it("rejects an oversize secret (> 4096) before touching the mutation", async () => {
-    const res = await addProviderSecretAction(validInput({ secret: "x".repeat(4097) }));
+    const res = await addProviderSecretAction("acme", validInput({ secret: "x".repeat(4097) }));
     expect(res.ok).toBe(false);
     expect(mutations.addSecret).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown kind before touching the mutation", async () => {
-    const res = await addProviderSecretAction(validInput({ kind: "nope" }));
+    const res = await addProviderSecretAction("acme", validInput({ kind: "nope" }));
     expect(res.ok).toBe(false);
     expect(mutations.addSecret).not.toHaveBeenCalled();
   });
 
   it("rejects an empty provider before touching the mutation", async () => {
-    const res = await addProviderSecretAction(validInput({ provider: "  " }));
+    const res = await addProviderSecretAction("acme", validInput({ provider: "  " }));
     expect(res.ok).toBe(false);
     expect(mutations.addSecret).not.toHaveBeenCalled();
   });
@@ -99,7 +101,7 @@ describe("addProviderSecretAction — input guards", () => {
 describe("addProviderSecretAction — success + fault mapping", () => {
   it("returns only non-secret metadata ({id, provider, status}) on success", async () => {
     mutations.addSecret.mockResolvedValue({ id: SECRET_ID, provider: "stripe", status: "active" });
-    const res = await addProviderSecretAction(validInput());
+    const res = await addProviderSecretAction("acme", validInput());
     expect(res).toEqual({
       ok: true,
       secret: { id: SECRET_ID, provider: "stripe", status: "active" },
@@ -110,7 +112,7 @@ describe("addProviderSecretAction — success + fault mapping", () => {
 
   it("maps NOT_FOUND to a clean 'endpoint no longer exists' message", async () => {
     mutations.addSecret.mockRejectedValue(new CapabilityFault("NOT_FOUND", "endpoint not found"));
-    const res = await addProviderSecretAction(validInput());
+    const res = await addProviderSecretAction("acme", validInput());
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/no longer exists/i);
   });
@@ -122,28 +124,28 @@ describe("addProviderSecretAction — success + fault mapping", () => {
         "a Standard Webhooks secret must be base64 key material (optionally whsec_-prefixed)",
       ),
     );
-    const res = await addProviderSecretAction(validInput({ secret: "not-base64" }));
+    const res = await addProviderSecretAction("acme", validInput({ secret: "not-base64" }));
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/base64 key material/i);
   });
 
   it("maps RATE_LIMITED to the per-endpoint-limit message", async () => {
     mutations.addSecret.mockRejectedValue(new CapabilityFault("RATE_LIMITED", "cap reached"));
-    const res = await addProviderSecretAction(validInput());
+    const res = await addProviderSecretAction("acme", validInput());
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/limit/i);
   });
 
   it("maps a missing sealer to the storage-unavailable message", async () => {
     mutations.addSecret.mockRejectedValue(new SealerUnavailableError());
-    const res = await addProviderSecretAction(validInput());
+    const res = await addProviderSecretAction("acme", validInput());
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/unavailable/i);
   });
 
   it("never passes the input/secret to the scrubbed logger on failure", async () => {
     mutations.addSecret.mockRejectedValue(new Error("boom"));
-    await addProviderSecretAction(validInput({ secret: "whsec_super_secret" }));
+    await addProviderSecretAction("acme", validInput({ secret: "whsec_super_secret" }));
     for (const call of logActionError.mock.calls) {
       expect(JSON.stringify(call)).not.toContain("whsec_super_secret");
     }
@@ -153,13 +155,13 @@ describe("addProviderSecretAction — success + fault mapping", () => {
 describe("revokeProviderSecretAction", () => {
   it("returns ok on a successful revoke", async () => {
     mutations.revokeSecret.mockResolvedValue({ id: SECRET_ID, revokedAt: new Date() });
-    const res = await revokeProviderSecretAction(ENDPOINT, SECRET_ID);
+    const res = await revokeProviderSecretAction("acme", ENDPOINT, SECRET_ID);
     expect(res.ok).toBe(true);
   });
 
   it("maps a null (not found) to a clean error flagged `gone` for row reconciliation", async () => {
     mutations.revokeSecret.mockResolvedValue(null);
-    const res = await revokeProviderSecretAction(ENDPOINT, SECRET_ID);
+    const res = await revokeProviderSecretAction("acme", ENDPOINT, SECRET_ID);
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.error).toMatch(/no longer exists/i);
@@ -168,8 +170,8 @@ describe("revokeProviderSecretAction", () => {
   });
 
   it("rejects a non-uuid endpoint or secret id without touching the mutation, flagged `gone`", async () => {
-    const res1 = await revokeProviderSecretAction("nope", SECRET_ID);
-    const res2 = await revokeProviderSecretAction(ENDPOINT, "nope");
+    const res1 = await revokeProviderSecretAction("acme", "nope", SECRET_ID);
+    const res2 = await revokeProviderSecretAction("acme", ENDPOINT, "nope");
     expect(res1.ok).toBe(false);
     expect(res2.ok).toBe(false);
     if (!res1.ok) expect(res1.gone).toBe(true);

@@ -16,6 +16,8 @@ export interface AttentionItem {
 }
 
 export interface AttentionInput {
+  /** The org slug, to build org-scoped links (every dashboard route lives under /org/{slug}/). */
+  readonly slug: string;
   /** billing subscription is past_due (payment failing). */
   readonly pastDue: boolean;
   /** ingest is paused (event limit reached). */
@@ -44,7 +46,7 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
       tone: "danger",
       title: "Payment past due",
       description: "We're retrying your card. Update it to keep your plan active.",
-      href: "/billing",
+      href: `/org/${input.slug}/billing`,
     });
   }
 
@@ -55,7 +57,7 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
       title: "Capture is paused",
       description:
         "You've hit your event limit for this period. New events aren't captured until it resets or your limit is raised.",
-      href: "/usage",
+      href: `/org/${input.slug}/usage`,
     });
   }
 
@@ -66,7 +68,7 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
       tone: "danger",
       title: `${n} ${plural(n, "destination", "destinations")} auto-disabled`,
       description: `We stopped delivering after repeated failures. Fix the ${plural(n, "endpoint", "endpoints")} and re-enable ${plural(n, "it", "them")}.`,
-      href: "/destinations",
+      href: `/org/${input.slug}/destinations`,
     });
   }
 
@@ -77,7 +79,7 @@ export function deriveAttention(input: AttentionInput): AttentionItem[] {
       tone: "warn",
       title: `${n} ${plural(n, "delivery", "deliveries")} gave up`,
       description: `${plural(n, "It", "They")} exhausted every retry. Review and replay when the destination is back.`,
-      href: "/deliveries?status=dead",
+      href: `/org/${input.slug}/deliveries?status=dead`,
     });
   }
 

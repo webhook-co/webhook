@@ -1,5 +1,7 @@
 "use client";
 
+import { orgHref, useOrgSlug } from "@/lib/org-path";
+
 import { Badge, Card, CardContent, CardHeader, CardTitle, CopyButton } from "@webhook-co/ui";
 import { useRouter } from "next/navigation";
 import type { ReactNode } from "react";
@@ -30,6 +32,8 @@ export function EndpointDetail({
   rotateEndpoint,
   deleteEndpoint,
 }: EndpointDetailProps) {
+  // The org this component is rendered in — read from the URL, which is the source of truth for it.
+  const slug = useOrgSlug();
   const router = useRouter();
 
   return (
@@ -70,7 +74,7 @@ export function EndpointDetail({
         deleteEndpoint={deleteEndpoint}
         // Soft-deleted: navigate to the list, which the action just revalidated (the deleted endpoint is
         // gone from its cache). The controls' latches need no reset — the page unmounts on navigation.
-        onDeleted={() => router.push("/endpoints")}
+        onDeleted={() => router.push(orgHref(slug, "/endpoints"))}
         // After a rotate reveal is dismissed, re-fetch this server component so the always-shown ingest URL
         // updates from the stale pre-rotate token to the newly-minted one (ADR-0101).
         onRotated={() => router.refresh()}

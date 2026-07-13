@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 const replace = vi.fn();
 let currentParams = new URLSearchParams();
 vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
   useRouter: () => ({ replace, push: vi.fn() }),
   usePathname: () => "/dashboard",
   useSearchParams: () => currentParams,

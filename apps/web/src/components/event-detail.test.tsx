@@ -11,7 +11,10 @@ import type { ReplayResult } from "@/server/replay-actions";
 import { EventDetail } from "./event-detail";
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }));
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push, refresh: vi.fn() }) }));
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
+  useRouter: () => ({ push, refresh: vi.fn() }),
+}));
 
 // `push` (and the default action mocks) are module-level, so reset call history between tests — otherwise a
 // prior test's navigation leaks into the next's "did NOT navigate" assertion.
@@ -229,7 +232,9 @@ describe("EventDetail", () => {
       await userEvent.click(screen.getByRole("button", { name: /^delete$/i }));
       await userEvent.click(screen.getByRole("button", { name: /delete event/i }));
       expect(del).toHaveBeenCalledWith({ eventId: EVENT_ID });
-      await waitFor(() => expect(push).toHaveBeenCalledWith(`/endpoints/${ENDPOINT_ID}/events`));
+      await waitFor(() =>
+        expect(push).toHaveBeenCalledWith(`/org/acme/endpoints/${ENDPOINT_ID}/events`),
+      );
     });
 
     it("shows an error and does NOT navigate when the delete fails", async () => {

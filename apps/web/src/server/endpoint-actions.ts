@@ -61,11 +61,16 @@ function toItem(m: MintedEndpoint): EndpointItem {
  * ingest URL embeds the freshly-minted token and is returned as this action result (and is re-readable
  * afterwards via the endpoint-detail reveal — it is sealed at rest, not a one-time secret; ADR-0101).
  */
-export async function createEndpointAction(input: {
-  name: string;
-  dedupConfig?: DedupConfig | null;
-}): Promise<CreateEndpointResult> {
-  const session = await requireOrgAccess();
+export async function createEndpointAction(
+  slug: string,
+  input: {
+    name: string;
+    dedupConfig?: DedupConfig | null;
+  },
+): Promise<CreateEndpointResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect — it resolves a renamed slug
+  // straight through and acts on the right org.
+  const session = await requireOrgAccess(slug);
   // Runtime type guard: TS types are erased, so a crafted server-action POST can deliver a non-string —
   // coerce-guard before .trim() so a bad payload returns a graceful error, not an unhandled 500.
   const name = typeof input?.name === "string" ? input.name.trim() : "";
@@ -109,8 +114,11 @@ export async function createEndpointAction(input: {
  * Rotate an endpoint's ingest token — a HARD cutover: the old URL stops resolving immediately. Returns the
  * NEW ingest URL. The id/name/paused/createdAt and the endpoint's captured events are preserved.
  */
-export async function rotateEndpointAction(endpointId: string): Promise<RotateEndpointResult> {
-  const session = await requireOrgAccess();
+export async function rotateEndpointAction(
+  slug: string,
+  endpointId: string,
+): Promise<RotateEndpointResult> {
+  const session = await requireOrgAccess(slug);
   if (typeof endpointId !== "string" || !endpointId.trim()) {
     return { ok: false, error: "Missing endpoint id." };
   }
@@ -136,11 +144,14 @@ export async function rotateEndpointAction(endpointId: string): Promise<RotateEn
  * config within the propagation window. The config is UNTRUSTED (a crafted POST can send any shape), so it is
  * re-validated against the same schema the api/mcp surfaces use before it reaches the db.
  */
-export async function updateEndpointDedupAction(input: {
-  endpointId: string;
-  dedupConfig: DedupConfig | null;
-}): Promise<UpdateEndpointDedupResult> {
-  const session = await requireOrgAccess();
+export async function updateEndpointDedupAction(
+  slug: string,
+  input: {
+    endpointId: string;
+    dedupConfig: DedupConfig | null;
+  },
+): Promise<UpdateEndpointDedupResult> {
+  const session = await requireOrgAccess(slug);
   const endpointId = input?.endpointId;
   if (typeof endpointId !== "string" || !endpointId.trim()) {
     return { ok: false, error: "Missing endpoint id." };
@@ -179,7 +190,7 @@ export async function updateEndpointDedupAction(input: {
   // Bust the detail page's cached render so a later navigation reflects the saved config. Best-effort — a
   // revalidate throw must NOT flip a committed update into a reported failure (mirrors deleteEndpointAction).
   try {
-    revalidatePath(`/endpoints/${endpointId}`);
+    revalidatePath(`/org/${session.slug}/endpoints/${endpointId}`);
   } catch (revalidateError) {
     logActionError("endpoint.revalidate_failed", revalidateError);
   }
@@ -190,8 +201,11 @@ export async function updateEndpointDedupAction(input: {
  * Soft-delete an endpoint — it stops receiving webhooks immediately, but its past events stay inspectable.
  * Idempotent at the db. `{ok:false}` means the mutation itself failed (not a stale ingest-cache entry).
  */
-export async function deleteEndpointAction(endpointId: string): Promise<EndpointActionResult> {
-  const session = await requireOrgAccess();
+export async function deleteEndpointAction(
+  slug: string,
+  endpointId: string,
+): Promise<EndpointActionResult> {
+  const session = await requireOrgAccess(slug);
   if (typeof endpointId !== "string" || !endpointId.trim()) {
     return { ok: false, error: "Missing endpoint id." };
   }
@@ -203,7 +217,7 @@ export async function deleteEndpointAction(endpointId: string): Promise<Endpoint
     // committed soft-delete into a reported failure: the contract is "{ok:false} means the mutation failed",
     // and the list-row flow has already dropped the row optimistically regardless.
     try {
-      revalidatePath("/endpoints");
+      revalidatePath(`/org/${session.slug}/endpoints`);
     } catch (revalidateError) {
       logActionError("endpoint.revalidate_failed", revalidateError);
     }

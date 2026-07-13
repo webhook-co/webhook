@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { deriveAttention, type AttentionInput } from "./dashboard-attention";
 
 const NONE: AttentionInput = {
+  slug: "acme",
   pastDue: false,
   paused: false,
   disabledDestinationCount: 0,
@@ -16,6 +17,7 @@ describe("deriveAttention", () => {
 
   it("orders by severity: past due → paused → disabled destinations → dead deliveries", () => {
     const items = deriveAttention({
+      slug: "acme",
       pastDue: true,
       paused: true,
       disabledDestinationCount: 2,
@@ -45,16 +47,23 @@ describe("deriveAttention", () => {
 
   it("each item links to the page that resolves it, with a tone", () => {
     const items = deriveAttention({
+      slug: "acme",
       pastDue: true,
       paused: true,
       disabledDestinationCount: 1,
       deadCount: 1,
     });
     const byKind = Object.fromEntries(items.map((i) => [i.kind, i]));
-    expect(byKind.past_due).toMatchObject({ href: "/billing", tone: "danger" });
-    expect(byKind.paused).toMatchObject({ href: "/usage", tone: "warn" });
-    expect(byKind.disabled_destinations).toMatchObject({ href: "/destinations", tone: "danger" });
-    expect(byKind.dead_deliveries).toMatchObject({ href: "/deliveries?status=dead", tone: "warn" });
+    expect(byKind.past_due).toMatchObject({ href: "/org/acme/billing", tone: "danger" });
+    expect(byKind.paused).toMatchObject({ href: "/org/acme/usage", tone: "warn" });
+    expect(byKind.disabled_destinations).toMatchObject({
+      href: "/org/acme/destinations",
+      tone: "danger",
+    });
+    expect(byKind.dead_deliveries).toMatchObject({
+      href: "/org/acme/deliveries?status=dead",
+      tone: "warn",
+    });
   });
 
   it("shows only the signals that are firing", () => {

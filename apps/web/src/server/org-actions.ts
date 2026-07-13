@@ -24,8 +24,10 @@ import { LOGOUT_URL, SESSION_COOKIE } from "./session";
  * On success the org — and therefore this session's tenancy — no longer exists, so we clear the
  * cookie and return to sign-in.
  */
-export async function deleteOrganization(formData: FormData): Promise<void> {
-  const { userId, orgId, role } = await requireOrgAccess();
+export async function deleteOrganization(slug: string, formData: FormData): Promise<void> {
+  // No subPath: an action doesn't render. (The redirect at the end is to sign-out — the org is gone, so
+  // there is no `/org/{slug}` left to send anyone to.)
+  const { userId, orgId, role } = await requireOrgAccess(slug);
 
   // Defense-in-depth beyond the client's disabled-until-typed button: the destructive action itself
   // refuses unless the explicit acknowledgement is present.

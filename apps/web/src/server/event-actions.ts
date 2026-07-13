@@ -37,12 +37,16 @@ export type LoadMoreEventsResult =
  * can't reach the db as a malformed value (→ PG 22P02). A db fault returns `{ok:false}` (the list keeps
  * what it has) rather than throwing.
  */
-export async function loadMoreEventsAction(input: {
-  endpointId: string;
-  cursor: Cursor;
-  filters?: EventFilterParams;
-}): Promise<LoadMoreEventsResult> {
-  const session = await requireOrgAccess();
+export async function loadMoreEventsAction(
+  slug: string,
+  input: {
+    endpointId: string;
+    cursor: Cursor;
+    filters?: EventFilterParams;
+  },
+): Promise<LoadMoreEventsResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect.
+  const session = await requireOrgAccess(slug);
 
   const endpointId = input?.endpointId;
   if (typeof endpointId !== "string" || !isUuid(endpointId)) return { ok: false };
@@ -86,12 +90,15 @@ export async function loadMoreEventsAction(input: {
  * (non-negative int) before the db. Returns `{ok:false}` for a bad input, an unknown endpoint/event, a
  * non-sensitive index, or a db fault.
  */
-export async function revealHeaderAction(input: {
-  endpointId: string;
-  eventId: string;
-  index: number;
-}): Promise<RevealHeaderResult> {
-  const session = await requireOrgAccess();
+export async function revealHeaderAction(
+  slug: string,
+  input: {
+    endpointId: string;
+    eventId: string;
+    index: number;
+  },
+): Promise<RevealHeaderResult> {
+  const session = await requireOrgAccess(slug);
   const { endpointId, eventId, index } = input ?? {};
   if (typeof endpointId !== "string" || !isUuid(endpointId)) return { ok: false };
   if (typeof eventId !== "string" || !isUuid(eventId)) return { ok: false };
@@ -112,11 +119,14 @@ export async function revealHeaderAction(input: {
  * `loadEventPayload`, which never returns the R2 key. A bad input or unknown event resolves to
  * `{kind:"not_found"}`; a fault to `{kind:"error"}` (already logged inside).
  */
-export async function loadEventPayloadAction(input: {
-  endpointId: string;
-  eventId: string;
-}): Promise<PayloadResult> {
-  const session = await requireOrgAccess();
+export async function loadEventPayloadAction(
+  slug: string,
+  input: {
+    endpointId: string;
+    eventId: string;
+  },
+): Promise<PayloadResult> {
+  const session = await requireOrgAccess(slug);
   const { endpointId, eventId } = input ?? {};
   if (typeof endpointId !== "string" || typeof eventId !== "string") return { kind: "not_found" };
   return loadEventPayload(session.orgId, endpointId, eventId);
@@ -132,8 +142,11 @@ export type DeleteEventResult = { readonly ok: true } | { readonly ok: false };
  * appends the hash-chained audit row in one tx; NOT_FOUND (an unknown/cross-org id) or a db fault resolves
  * to `{ok:false}` (already logged) rather than throwing.
  */
-export async function deleteEventAction(input: { eventId: string }): Promise<DeleteEventResult> {
-  const session = await requireOrgAccess();
+export async function deleteEventAction(
+  slug: string,
+  input: { eventId: string },
+): Promise<DeleteEventResult> {
+  const session = await requireOrgAccess(slug);
   const eventId = input?.eventId;
   if (typeof eventId !== "string" || !isUuid(eventId)) return { ok: false };
 

@@ -53,8 +53,12 @@ function mapError(error: unknown, op: string): MemberActionResult {
  * Change a member's role. Owner/admin only. A demotion revokes the keys they minted under the higher role
  * (in the DB tx); those hashes are then evicted from the credential cache so they die immediately.
  */
-export async function changeMemberRoleAction(formData: FormData): Promise<MemberActionResult> {
-  const { orgId, userId: actorId, role } = await requireOrgAccess();
+export async function changeMemberRoleAction(
+  slug: string,
+  formData: FormData,
+): Promise<MemberActionResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect.
+  const { orgId, userId: actorId, role } = await requireOrgAccess(slug);
   if (!canManageMembers(role)) return { status: "forbidden" };
 
   const targetId = String(formData.get("userId") ?? "");
@@ -84,8 +88,11 @@ export async function changeMemberRoleAction(formData: FormData): Promise<Member
  * Remove a member from the org. Owner/admin only. The membership delete and the revocation of their grants +
  * every key they hold are one transaction; the revoked hashes are evicted from the credential cache here.
  */
-export async function removeMemberAction(formData: FormData): Promise<MemberActionResult> {
-  const { orgId, userId: actorId, role } = await requireOrgAccess();
+export async function removeMemberAction(
+  slug: string,
+  formData: FormData,
+): Promise<MemberActionResult> {
+  const { orgId, userId: actorId, role } = await requireOrgAccess(slug);
   if (!canManageMembers(role)) return { status: "forbidden" };
 
   const targetId = String(formData.get("userId") ?? "");

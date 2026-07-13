@@ -35,8 +35,10 @@ export type LeaveOrgResult = { readonly status: "last_owner" } | { readonly stat
  * Leave the current org. Redirects on success (so it never returns); returns a result only on refusal, which
  * the page renders. A sole owner is refused — nothing is revoked and nothing is deleted.
  */
-export async function leaveOrgAction(): Promise<LeaveOrgResult> {
-  const { orgId, userId, role, user } = await requireOrgAccess();
+export async function leaveOrgAction(slug: string): Promise<LeaveOrgResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect on the way IN. (The redirect on the
+  // way OUT is a different thing entirely — see below.)
+  const { orgId, userId, role, user } = await requireOrgAccess(slug);
 
   let removed: Awaited<ReturnType<typeof removeMember>>;
   try {
@@ -70,5 +72,9 @@ export async function leaveOrgAction(): Promise<LeaveOrgResult> {
     redirect(LOGOUT_URL); // couldn't re-mint (no/expired cookie) — treat as signed out, never guess
   }
 
-  redirect("/dashboard?org=left");
+  // NOT back to `/org/${slug}/…`: that org is exactly the one they just left, so every URL under it would now
+  // 404. We send them to the org we just re-minted the session onto — we already hold its canonical slug from
+  // the directory read, so we can name it directly and keep the `?org=left` confirmation, which a bounce
+  // through `/` (the default-org resolver) would drop along with the rest of the query string.
+  redirect(`/org/${next.slug}/dashboard?org=left`);
 }

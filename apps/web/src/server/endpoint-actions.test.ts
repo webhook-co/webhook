@@ -5,6 +5,8 @@ vi.mock("./org-access", () => ({
   requireOrgAccess: vi.fn(async () => ({
     userId: "u",
     orgId: "o",
+    // The CANONICAL slug the gate resolved — every revalidatePath below is built from it.
+    slug: "acme",
     user: { name: "", email: "", image: null },
   })),
 }));
@@ -56,20 +58,20 @@ describe("createEndpointAction", () => {
   });
 
   it("rejects an empty name without creating", async () => {
-    expect((await createEndpointAction({ name: "   " })).ok).toBe(false);
+    expect((await createEndpointAction("acme", { name: "   " })).ok).toBe(false);
     expect(createEndpoint).not.toHaveBeenCalled();
   });
 
   it("rejects a non-string name without throwing (crafted payload)", async () => {
-    const result = await createEndpointAction({ name: 123 } as unknown as { name: string });
+    const result = await createEndpointAction("acme", { name: 123 } as unknown as { name: string });
     expect(result.ok).toBe(false);
     expect(createEndpoint).not.toHaveBeenCalled();
   });
 
   it("accepts a 200-char name (parity with the contract max) but rejects 201", async () => {
-    expect((await createEndpointAction({ name: "x".repeat(200) })).ok).toBe(true);
+    expect((await createEndpointAction("acme", { name: "x".repeat(200) })).ok).toBe(true);
     createEndpoint.mockClear();
-    const result = await createEndpointAction({ name: "x".repeat(201) });
+    const result = await createEndpointAction("acme", { name: "x".repeat(201) });
     expect(result.ok).toBe(false);
     expect(createEndpoint).not.toHaveBeenCalled();
   });
@@ -81,12 +83,12 @@ describe("createEndpointAction", () => {
         code: "RATE_LIMITED",
       }),
     );
-    const result = await createEndpointAction({ name: "k" });
+    const result = await createEndpointAction("acme", { name: "k" });
     expect(result).toEqual({ ok: false, error: expect.stringMatching(/limit/i) });
   });
 
   it("creates with the session principal and returns the endpoint + one-time ingest URL", async () => {
-    const result = await createEndpointAction({ name: "  Stripe prod  " });
+    const result = await createEndpointAction("acme", { name: "  Stripe prod  " });
     expect(createEndpoint).toHaveBeenCalledWith({ orgId: "o", userId: "u", name: "Stripe prod" });
     expect(result).toEqual({
       ok: true,
@@ -103,7 +105,7 @@ describe("createEndpointAction", () => {
 
   it("threads a valid dedup config through to the mutation", async () => {
     const dedupConfig: DedupConfig = { mode: "content", windowSeconds: 3600 };
-    await createEndpointAction({ name: "GitHub", dedupConfig });
+    await createEndpointAction("acme", { name: "GitHub", dedupConfig });
     expect(createEndpoint).toHaveBeenCalledWith({
       orgId: "o",
       userId: "u",
@@ -115,7 +117,7 @@ describe("createEndpointAction", () => {
   it("rejects an invalid dedup config without creating", async () => {
     // fields mode with no include list is rejected by the schema's superRefine — a crafted payload must not
     // reach the db.
-    const result = await createEndpointAction({
+    const result = await createEndpointAction("acme", {
       name: "GitHub",
       dedupConfig: { mode: "fields", windowSeconds: 3600 } as unknown as DedupConfig,
     });
@@ -125,7 +127,7 @@ describe("createEndpointAction", () => {
 
   it("surfaces a generic error (no throw) when the create fails", async () => {
     createEndpoint.mockRejectedValue(new Error("db down"));
-    const result = await createEndpointAction({ name: "k" });
+    const result = await createEndpointAction("acme", { name: "k" });
     expect(result.ok).toBe(false);
   });
 });
@@ -140,21 +142,21 @@ describe("updateEndpointDedupAction", () => {
   });
 
   it("rejects a missing id without mutating", async () => {
-    expect((await updateEndpointDedupAction({ endpointId: "  ", dedupConfig: config })).ok).toBe(
-      false,
-    );
+    expect(
+      (await updateEndpointDedupAction("acme", { endpointId: "  ", dedupConfig: config })).ok,
+    ).toBe(false);
     expect(updateEndpointDedup).not.toHaveBeenCalled();
   });
 
   it("rejects a non-uuid id as gone, without mutating", async () => {
     expect(
-      await updateEndpointDedupAction({ endpointId: "not-a-uuid", dedupConfig: config }),
+      await updateEndpointDedupAction("acme", { endpointId: "not-a-uuid", dedupConfig: config }),
     ).toEqual({ ok: false, error: expect.stringMatching(/no longer exists/i) });
     expect(updateEndpointDedup).not.toHaveBeenCalled();
   });
 
   it("rejects an invalid dedup config (crafted payload) without mutating", async () => {
-    const result = await updateEndpointDedupAction({
+    const result = await updateEndpointDedupAction("acme", {
       endpointId: ID,
       // fields mode requires a non-empty include list — the schema rejects this.
       dedupConfig: { mode: "fields", windowSeconds: 3600 } as unknown as DedupConfig,
@@ -165,19 +167,19 @@ describe("updateEndpointDedupAction", () => {
 
   it("accepts a null config (reset to default) and revalidates the detail page", async () => {
     updateEndpointDedup.mockResolvedValue({ dedupConfig: null });
-    const result = await updateEndpointDedupAction({ endpointId: ID, dedupConfig: null });
+    const result = await updateEndpointDedupAction("acme", { endpointId: ID, dedupConfig: null });
     expect(updateEndpointDedup).toHaveBeenCalledWith({
       orgId: "o",
       userId: "u",
       endpointId: ID,
       dedupConfig: null,
     });
-    expect(revalidatePath).toHaveBeenCalledWith(`/endpoints/${ID}`);
+    expect(revalidatePath).toHaveBeenCalledWith(`/org/acme/endpoints/${ID}`);
     expect(result).toEqual({ ok: true, dedupConfig: null });
   });
 
   it("updates with the session principal and returns the applied config", async () => {
-    const result = await updateEndpointDedupAction({ endpointId: ID, dedupConfig: config });
+    const result = await updateEndpointDedupAction("acme", { endpointId: ID, dedupConfig: config });
     expect(updateEndpointDedup).toHaveBeenCalledWith({
       orgId: "o",
       userId: "u",
@@ -194,7 +196,9 @@ describe("updateEndpointDedupAction", () => {
         code: "NOT_FOUND",
       }),
     );
-    expect(await updateEndpointDedupAction({ endpointId: ID, dedupConfig: config })).toEqual({
+    expect(
+      await updateEndpointDedupAction("acme", { endpointId: ID, dedupConfig: config }),
+    ).toEqual({
       ok: false,
       error: expect.stringMatching(/no longer exists/i),
     });
@@ -204,7 +208,9 @@ describe("updateEndpointDedupAction", () => {
     vi.mocked(revalidatePath).mockImplementationOnce(() => {
       throw new Error("revalidate boom");
     });
-    expect(await updateEndpointDedupAction({ endpointId: ID, dedupConfig: config })).toEqual({
+    expect(
+      await updateEndpointDedupAction("acme", { endpointId: ID, dedupConfig: config }),
+    ).toEqual({
       ok: true,
       dedupConfig: config,
     });
@@ -212,9 +218,9 @@ describe("updateEndpointDedupAction", () => {
 
   it("surfaces a generic error (no throw) when the update fails", async () => {
     updateEndpointDedup.mockRejectedValue(new Error("db down"));
-    expect((await updateEndpointDedupAction({ endpointId: ID, dedupConfig: config })).ok).toBe(
-      false,
-    );
+    expect(
+      (await updateEndpointDedupAction("acme", { endpointId: ID, dedupConfig: config })).ok,
+    ).toBe(false);
   });
 });
 
@@ -225,18 +231,18 @@ describe("rotateEndpointAction", () => {
   });
 
   it("rejects a missing id without rotating", async () => {
-    expect((await rotateEndpointAction("  ")).ok).toBe(false);
+    expect((await rotateEndpointAction("acme", "  ")).ok).toBe(false);
     expect(rotateEndpoint).not.toHaveBeenCalled();
   });
 
   it("rejects a non-string id without throwing (crafted payload)", async () => {
-    const result = await rotateEndpointAction(123 as unknown as string);
+    const result = await rotateEndpointAction("acme", 123 as unknown as string);
     expect(result.ok).toBe(false);
     expect(rotateEndpoint).not.toHaveBeenCalled();
   });
 
   it("rejects a non-uuid id as gone, without rotating", async () => {
-    expect(await rotateEndpointAction("not-a-uuid")).toEqual({
+    expect(await rotateEndpointAction("acme", "not-a-uuid")).toEqual({
       ok: false,
       error: expect.stringMatching(/no longer exists/i),
     });
@@ -244,7 +250,7 @@ describe("rotateEndpointAction", () => {
   });
 
   it("returns the new one-time ingest URL on success", async () => {
-    const result = await rotateEndpointAction(ID);
+    const result = await rotateEndpointAction("acme", ID);
     expect(rotateEndpoint).toHaveBeenCalledWith({ orgId: "o", userId: "u", endpointId: ID });
     expect(result).toEqual({ ok: true, ingestUrl: "https://wbhk.my/whep_abc" });
   });
@@ -256,7 +262,7 @@ describe("rotateEndpointAction", () => {
         code: "NOT_FOUND",
       }),
     );
-    expect(await rotateEndpointAction(ID)).toEqual({
+    expect(await rotateEndpointAction("acme", ID)).toEqual({
       ok: false,
       error: expect.stringMatching(/no longer exists/i),
     });
@@ -264,7 +270,7 @@ describe("rotateEndpointAction", () => {
 
   it("surfaces a generic error (no throw) when the rotate fails", async () => {
     rotateEndpoint.mockRejectedValue(new Error("db down"));
-    expect((await rotateEndpointAction(ID)).ok).toBe(false);
+    expect((await rotateEndpointAction("acme", ID)).ok).toBe(false);
   });
 });
 
@@ -275,12 +281,12 @@ describe("deleteEndpointAction", () => {
   });
 
   it("rejects a missing id without deleting", async () => {
-    expect((await deleteEndpointAction("")).ok).toBe(false);
+    expect((await deleteEndpointAction("acme", "")).ok).toBe(false);
     expect(deleteEndpoint).not.toHaveBeenCalled();
   });
 
   it("rejects a non-uuid id as gone, without deleting", async () => {
-    expect(await deleteEndpointAction("not-a-uuid")).toEqual({
+    expect(await deleteEndpointAction("acme", "not-a-uuid")).toEqual({
       ok: false,
       error: expect.stringMatching(/no longer exists/i),
     });
@@ -288,7 +294,7 @@ describe("deleteEndpointAction", () => {
   });
 
   it("soft-deletes via the session principal and returns ok", async () => {
-    const result = await deleteEndpointAction(ID);
+    const result = await deleteEndpointAction("acme", ID);
     expect(deleteEndpoint).toHaveBeenCalledWith({ orgId: "o", userId: "u", endpointId: ID });
     expect(result).toEqual({ ok: true });
   });
@@ -299,7 +305,7 @@ describe("deleteEndpointAction", () => {
     vi.mocked(revalidatePath).mockImplementationOnce(() => {
       throw new Error("revalidate boom");
     });
-    expect(await deleteEndpointAction(ID)).toEqual({ ok: true });
+    expect(await deleteEndpointAction("acme", ID)).toEqual({ ok: true });
     expect(deleteEndpoint).toHaveBeenCalledWith({ orgId: "o", userId: "u", endpointId: ID });
   });
 
@@ -310,7 +316,7 @@ describe("deleteEndpointAction", () => {
         code: "NOT_FOUND",
       }),
     );
-    expect(await deleteEndpointAction(ID)).toEqual({
+    expect(await deleteEndpointAction("acme", ID)).toEqual({
       ok: false,
       error: expect.stringMatching(/no longer exists/i),
     });
@@ -318,6 +324,6 @@ describe("deleteEndpointAction", () => {
 
   it("surfaces a generic error (no throw) when the delete fails", async () => {
     deleteEndpoint.mockRejectedValue(new Error("db down"));
-    expect((await deleteEndpointAction(ID)).ok).toBe(false);
+    expect((await deleteEndpointAction("acme", ID)).ok).toBe(false);
   });
 });
