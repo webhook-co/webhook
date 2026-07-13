@@ -273,10 +273,8 @@ describe("the directory resolves a slug — the security keystone of /org/{slug}
       ownerUserId: uid,
     });
 
-    await withTenant(app, id, async (tx) => {
-      await tx`update orgs set slug = ${second} where id = ${id}`;
-      await tx`insert into org_slug_history (slug, org_id) values (${first}, ${id})`;
-    });
+    // The DB records the retirement itself — the app cannot write org_slug_history (see org-slug.test.ts).
+    await withTenant(app, id, (tx) => tx`update orgs set slug = ${second} where id = ${id}`);
 
     const org = (await listUserOrgs(app, uid)).find((o) => o.orgId === id);
 

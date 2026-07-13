@@ -106,11 +106,10 @@ describe("a retired slug is NEVER recycled", () => {
   // This is not a nicety. It is GitHub's documented account-takeover bug: after an org renames, its old name
   // becomes claimable, and whoever takes it can create resources that override the original's redirects —
   // so anyone still following an old link lands on the attacker's org.
-  async function renameOrg(orgId: string, from: string, to: string): Promise<void> {
-    await withTenant(app, orgId, async (tx) => {
-      await tx`update orgs set slug = ${to} where id = ${orgId}`;
-      await tx`insert into org_slug_history (slug, org_id) values (${from}, ${orgId})`;
-    });
+  // Note what is NOT here: an insert into org_slug_history. The DATABASE records the retirement, on the
+  // rename itself. The app cannot write that table at all — see the squatting exploit below.
+  async function renameOrg(orgId: string, to: string): Promise<void> {
+    await withTenant(app, orgId, (tx) => tx`update orgs set slug = ${to} where id = ${orgId}`);
   }
 
   it("refuses to let ANOTHER org claim a slug this one retired", async () => {
@@ -119,7 +118,7 @@ describe("a retired slug is NEVER recycled", () => {
 
     const { id, error } = await tryCreateOrg(original);
     expect(error).toBeNull();
-    await renameOrg(id, original, renamed);
+    await renameOrg(id, renamed);
 
     // The squatter. They can see nothing of the first org — but the DB still knows.
     const squat = await tryCreateOrg(original);
@@ -134,7 +133,7 @@ describe("a retired slug is NEVER recycled", () => {
 
     const { id, error } = await tryCreateOrg(first);
     expect(error).toBeNull();
-    await renameOrg(id, first, second);
+    await renameOrg(id, second);
 
     // Same org, going back. The guard is `h.org_id <> new.id`, so this is allowed — nobody else's links break.
     const back = await withTenant(
@@ -155,7 +154,7 @@ describe("a retired slug is NEVER recycled", () => {
     // would see an empty history and happily take the slug. That is the whole attack.
     const retired = `globex-${randomUUID().slice(0, 6)}`;
     const { id } = await tryCreateOrg(retired);
-    await renameOrg(id, retired, `globex-new-${randomUUID().slice(0, 6)}`);
+    await renameOrg(id, `globex-new-${randomUUID().slice(0, 6)}`);
 
     // Prove the squatter genuinely cannot SEE the history row (RLS works)…
     const squatterOrg = randomUUID();
@@ -172,21 +171,91 @@ describe("a retired slug is NEVER recycled", () => {
   });
 });
 
-describe("org_slug_history is append-only and tenant-scoped", () => {
-  it("a tenant cannot read another org's retired slugs", async () => {
-    const slug = `hooli-${randomUUID().slice(0, 6)}`;
-    const { id } = await tryCreateOrg(slug);
-    await withTenant(app, id, async (tx) => {
-      await tx`update orgs set slug = ${`hooli-new-${randomUUID().slice(0, 6)}`} where id = ${id}`;
-      await tx`insert into org_slug_history (slug, org_id) values (${slug}, ${id})`;
-    });
+describe("org_slug_history — the app cannot write it, and that is the point", () => {
+  // 🔴 The exploit that shaped this table. THIS TEST IS THE REGRESSION LOCK.
+  //
+  // The first cut let webhook_app insert its own history rows, gated by `with check (org_id =
+  // current_org_id())`. That looks like tenancy and is really just "tag the row with your own id" — it
+  // constrains the column you thought of, not the CLAIM being made. So:
+  //
+  //   1. the attacker inserts (slug => 'acme', org_id => THEIR OWN org). Nothing required them to have ever
+  //      held 'acme';
+  //   2. the never-recycle guard then refuses 'acme' to EVERY other org, forever;
+  //   3. and the attacker can still take it themselves, because reclaiming your own retired slug is allowed.
+  //
+  // Forge one row per desirable name and the whole namespace is permanently squatted. Verified working before
+  // it was closed. The fix is structural: history is DERIVED by a trigger, and webhook_app holds SELECT only —
+  // there is no statement it can issue that puts a row in this table.
+  it("a tenant cannot forge a history row — the namespace-squatting exploit", async () => {
+    const attacker = randomUUID();
+    await withTenant(
+      app,
+      attacker,
+      (tx) =>
+        tx`insert into orgs (id, slug, name) values (${attacker}, ${`evil-${attacker.slice(0, 6)}`}, ${"Evil"})`,
+    );
 
-    const mine = await withTenant(
+    const coveted = `coveted-${randomUUID().slice(0, 6)}`;
+    const forge = await withTenant(
+      app,
+      attacker,
+      (tx) => tx`insert into org_slug_history (slug, org_id) values (${coveted}, ${attacker})`,
+    ).then(
+      () => null,
+      (e: unknown) => e,
+    );
+
+    expect(forge, "webhook_app must not be able to write org_slug_history at all").not.toBeNull();
+    expect((forge as Error).message).toMatch(/permission denied/i);
+
+    // …and the slug the attacker wanted to deny is still freely registrable by an honest org.
+    const honest = await tryCreateOrg(coveted);
+    expect(honest.error).toBeNull();
+  });
+
+  it("the DATABASE records the retirement on rename — nobody has to remember to", async () => {
+    const before = `hooli-${randomUUID().slice(0, 6)}`;
+    const after = `hooli-new-${randomUUID().slice(0, 6)}`;
+    const { id } = await tryCreateOrg(before);
+
+    await withTenant(app, id, (tx) => tx`update orgs set slug = ${after} where id = ${id}`);
+
+    const history = await withTenant(
       app,
       id,
-      (tx) => tx`select slug from org_slug_history where org_id = ${id}`,
+      (tx) => tx<{ slug: string }[]>`select slug from org_slug_history where org_id = ${id}`,
     );
-    expect(mine.map((r) => r.slug)).toContain(slug);
+    expect(history.map((r) => r.slug)).toEqual([before]);
+  });
+
+  it("a DELETED org's slugs stay retired — nobody inherits its URLs", async () => {
+    // ON DELETE SET NULL, not CASCADE. If deleting an org cascaded its history away, its slugs would become
+    // claimable again, and anyone still following an old link would land on whoever grabbed them — the same
+    // takeover, merely requiring the victim to delete first. The row survives; it just stops naming an org.
+    const slug = `initech-${randomUUID().slice(0, 6)}`;
+    const { id } = await tryCreateOrg(slug);
+
+    await withTenant(app, id, (tx) => tx`delete from orgs where id = ${id}`);
+
+    const [row] = await owner<{ slug: string; org_id: string | null }[]>`
+      select slug, org_id from org_slug_history where slug = ${slug}`;
+    expect(row?.slug).toBe(slug);
+    expect(row?.org_id).toBeNull();
+
+    // And it is still refused to everyone. `is distinct from` is what makes this work: a plain `<>` against a
+    // NULL org_id yields NULL — not true — so the guard would have missed it and handed the slug away.
+    const squat = await tryCreateOrg(slug);
+    expect(squat.error).not.toBeNull();
+  });
+
+  it("a tenant cannot read another org's retired slugs", async () => {
+    const slug = `piedpiper-${randomUUID().slice(0, 6)}`;
+    const { id } = await tryCreateOrg(slug);
+    await withTenant(
+      app,
+      id,
+      (tx) => tx`update orgs set slug = ${`pp-new-${randomUUID().slice(0, 6)}`} where id = ${id}`,
+    );
 
     const theirs = await withTenant(
       app,
@@ -196,15 +265,16 @@ describe("org_slug_history is append-only and tenant-scoped", () => {
     expect(theirs.length).toBe(0);
   });
 
-  it("history cannot be rewritten — no update, no delete", async () => {
-    // A history you can edit is not a history. The takeover guard reads this table; a tenant that could
-    // DELETE its own retired slug could then hand it to a confederate.
-    const slug = `piedpiper-${randomUUID().slice(0, 6)}`;
+  it("history cannot be rewritten — no update, no delete, for anyone", async () => {
+    // A history you can edit is not a history, and this one is a security control: a tenant that could DELETE
+    // its own retired slug could hand it to a confederate and reopen the takeover.
+    const slug = `aviato-${randomUUID().slice(0, 6)}`;
     const { id } = await tryCreateOrg(slug);
-    await withTenant(app, id, async (tx) => {
-      await tx`update orgs set slug = ${`pp-new-${randomUUID().slice(0, 6)}`} where id = ${id}`;
-      await tx`insert into org_slug_history (slug, org_id) values (${slug}, ${id})`;
-    });
+    await withTenant(
+      app,
+      id,
+      (tx) => tx`update orgs set slug = ${`av-new-${randomUUID().slice(0, 6)}`} where id = ${id}`,
+    );
 
     await expect(
       withTenant(app, id, (tx) => tx`delete from org_slug_history where slug = ${slug}`),
@@ -214,7 +284,7 @@ describe("org_slug_history is append-only and tenant-scoped", () => {
       withTenant(
         app,
         id,
-        (tx) => tx`update org_slug_history set slug = ${"stolen"} where slug = ${slug}`,
+        (tx) => tx`update org_slug_history set slug = ${"stolen-xyz"} where slug = ${slug}`,
       ),
     ).rejects.toThrow(/permission denied/i);
   });

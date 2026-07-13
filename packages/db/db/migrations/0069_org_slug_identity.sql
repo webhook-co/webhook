@@ -125,9 +125,30 @@ alter table orgs
 -- is GitHub's documented account-takeover bug — after an org renames, its old name becomes available, and
 -- whoever takes it can create resources that override the original's redirects. Anyone still following an old
 -- link lands on the attacker's org. So: retired slugs are cheap rows, and they are kept forever.
+--
+-- 🔴 THE DATABASE WRITES THIS TABLE. THE APPLICATION NEVER DOES. That is not fastidiousness — the first cut
+-- let webhook_app INSERT its own history rows, gated by `with check (org_id = current_org_id())`, and it is a
+-- **namespace-squatting hole**, verified by exploit before it was closed:
+--
+--   1. the attacker inserts (slug => 'acme', org_id => THEIR OWN org) — nothing required them to have ever
+--      held 'acme'; the WITH CHECK only constrains the org_id column, not the truthfulness of the slug;
+--   2. the guard below then refuses 'acme' to EVERY other org, forever;
+--   3. and the attacker can still take it themselves, since reclaiming your own retired slug is allowed.
+--
+-- Forge a row per desirable name and you have permanently denied the entire namespace. The WITH CHECK looked
+-- like tenancy and was really just "tag it with your own id" — the classic mistake of validating the column
+-- you thought of instead of the claim being made.
+--
+-- So history is DERIVED, never asserted: a trigger records the old slug on rename, and on delete. webhook_app
+-- gets SELECT only — no INSERT, no UPDATE, no DELETE — so there is no statement it can issue that puts a row
+-- in this table at all.
 create table org_slug_history (
   slug       citext primary key,
-  org_id     uuid not null references orgs (id) on delete cascade,
+  -- NULLABLE, with ON DELETE SET NULL rather than CASCADE. If deleting an org CASCADED its history away, its
+  -- slugs would become claimable again — and anyone still following an old link would land on whoever grabbed
+  -- them. That is the same takeover, merely requiring the victim to delete first. A retired slug outlives the
+  -- org that retired it; the row simply stops naming one.
+  org_id     uuid references orgs (id) on delete set null,
   retired_at timestamptz not null default now()
 );
 create index org_slug_history_org_id_idx on org_slug_history (org_id);
@@ -135,27 +156,27 @@ create index org_slug_history_org_id_idx on org_slug_history (org_id);
 alter table org_slug_history enable row level security;
 alter table org_slug_history force row level security;
 
--- The request-path role sees only its OWN org's retired slugs — the same tenancy as everything else it
--- touches. It may insert (a rename writes here) but never update or delete: history is append-only, because a
--- history you can edit is not a history.
+-- SELECT only, and only your own. There is deliberately NO insert/update/delete policy and NO such grant: the
+-- table is written exclusively by the triggers below, which run as the definer.
 create policy org_slug_history_tenant on org_slug_history
   for select to webhook_app
   using (org_id = current_org_id());
-create policy org_slug_history_tenant_insert on org_slug_history
-  for insert to webhook_app
-  with check (org_id = current_org_id());
-grant select, insert on org_slug_history to webhook_app;
+grant select on org_slug_history to webhook_app;
 
--- The definer-only view: unrestricted SELECT, scoped `to webhook_owner`, so ONLY a SECURITY DEFINER function
--- owned by it can evaluate this policy. The uniqueness guard below genuinely needs to see every org's retired
--- slugs — a guard that can only see its own tenant's history cannot tell you a slug was retired by someone
--- else, which is precisely the case it exists to refuse.
+-- The definer-only view: unrestricted, scoped `to webhook_owner`, so ONLY a SECURITY DEFINER function owned by
+-- it can evaluate this policy. The guard genuinely needs to see EVERY org's retired slugs — one that could
+-- only see its own tenant's history could not tell you a slug was retired by someone else, which is precisely
+-- the case it exists to refuse.
 create policy org_slug_history_definer on org_slug_history
-  for select to webhook_owner
-  using (true);
+  for all to webhook_owner
+  using (true) with check (true);
 
--- The guard. SECURITY DEFINER for the reason above: as webhook_app the lookup would be tenant-scoped and
--- would miss exactly the collisions that matter. It discloses nothing — it either raises or does not.
+-- The guard. SECURITY DEFINER for the reason above.
+--
+-- `is distinct from`, not `<>`: a retired slug whose org has since been DELETED has a NULL org_id, and
+-- `NULL <> new.id` evaluates to NULL — not true — so the EXISTS would not match and the slug would quietly
+-- become claimable again. Exactly the case the nullable column exists to prevent. `is distinct from` is
+-- null-safe and refuses it.
 create function orgs_slug_not_retired() returns trigger
   language plpgsql
   security definer
@@ -164,9 +185,9 @@ create function orgs_slug_not_retired() returns trigger
   begin
     if exists (
       select 1 from org_slug_history h
-       where h.slug = new.slug and h.org_id <> new.id
+       where h.slug = new.slug and h.org_id is distinct from new.id
     ) then
-      raise exception 'slug % was retired by another organization and can never be reused', new.slug
+      raise exception 'slug % was retired and can never be reused', new.slug
         using errcode = 'unique_violation';
     end if;
     return new;
@@ -178,6 +199,38 @@ create function orgs_slug_not_retired() returns trigger
 create trigger orgs_slug_not_retired_trg
   before insert or update of slug on orgs
   for each row execute function orgs_slug_not_retired();
+
+-- History is RECORDED BY THE DATABASE, on the events that actually retire a slug — a rename, and a delete.
+-- The app cannot write it, and therefore cannot lie about it. `on conflict do nothing` because an org
+-- reclaiming its own former slug leaves that row already present.
+create function orgs_slug_record_history() returns trigger
+  language plpgsql
+  security definer
+  set search_path = public
+  as $$
+  begin
+    if tg_op = 'DELETE' then
+      insert into org_slug_history (slug, org_id) values (old.slug, old.id)
+        on conflict (slug) do nothing;
+      return old;
+    end if;
+    if new.slug is distinct from old.slug then
+      insert into org_slug_history (slug, org_id) values (old.slug, old.id)
+        on conflict (slug) do nothing;
+    end if;
+    return new;
+  end;
+  $$;
+
+create trigger orgs_slug_record_history_trg
+  after update of slug on orgs
+  for each row execute function orgs_slug_record_history();
+
+-- BEFORE delete, so the row lands while the org still exists (the FK is satisfied); the ON DELETE SET NULL
+-- then nulls it as the org goes. A deleted org's slugs stay retired — nobody inherits its URLs.
+create trigger orgs_slug_record_history_on_delete_trg
+  before delete on orgs
+  for each row execute function orgs_slug_record_history();
 
 -- ---------------------------------------------------------------------------------------------------------
 -- 5. The directory learns the slug — and therefore how to RESOLVE one
@@ -247,6 +300,9 @@ create function user_org_directory()
   $$;
 grant execute on function user_org_directory() to webhook_app;
 
+drop trigger if exists orgs_slug_record_history_on_delete_trg on orgs;
+drop trigger if exists orgs_slug_record_history_trg on orgs;
+drop function if exists orgs_slug_record_history();
 drop trigger if exists orgs_slug_not_retired_trg on orgs;
 drop function if exists orgs_slug_not_retired();
 drop table if exists org_slug_history;
