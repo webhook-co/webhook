@@ -71,6 +71,58 @@ client.events.replay(
 )
 ```
 
+## Recovering a lost ingest URL
+
+The ingest URL is a bearer credential, but it is **not** a one-time secret: the token is sealed at rest, so you can read it back any time. You never have to rotate to recover it — and you shouldn't, because rotating revokes the live URL and breaks every sender still posting to it.
+
+```python
+revealed = client.endpoints.reveal_ingest_url(endpoint.id)
+print(revealed.ingest_url)
+```
+
+`ingest_url` is `None` only for endpoints created before sealed storage; rotate those once to mint a fresh, re-readable one.
+
+## Triggers (webhook → agent)
+
+Wait for an endpoint's events with an ack-by-cursor loop. `wait` is a **short poll** — it returns immediately with whatever is past your cursor, so there is no held connection.
+
+```python
+trigger = client.triggers.create(endpoint_id=endpoint.id)
+
+cursor = None
+while True:
+    page = client.triggers.wait(trigger.id, cursor=cursor)
+    for event in page.events:
+        handle(event)
+    cursor = page.next_cursor  # feed straight back in
+    if page.caught_up:         # <- the caught-up signal
+        time.sleep(1)
+```
+
+`next_cursor` is `None` only when you sent no cursor and there were no events — it means "start from the oldest retained event", **not** "caught up". `caught_up` is the caught-up signal. Delivery is at-least-once: a crash before you persist the cursor re-reads rather than loses, so dedupe on the event id.
+
+Pass `include_body=False` for summary-only pages (it skips the payload fetch).
+
+## Usage, deletes, and dedup config
+
+```python
+usage = client.usage.get()                       # events counted, the cap, whether you are paused
+client.endpoints.update(id, dedup_config=None)   # None resets to the default
+client.events.delete(event_id)                   # redacts + purges ONE event; usage is not reduced
+```
+
+## Version advisories
+
+If the server sees you are on an old SDK, it rides an advisory back on a response you already made — the SDK never polls PyPI on your behalf, so there is no extra request and nothing to break offline. By default it emits **one** `UserWarning`. Route it into your own logs instead:
+
+```python
+client = WebhookClient(
+    api_key=api_key,
+    on_advisory=lambda a: log.warning(a.message),  # fires at most once per client
+    # silence_advisories=True,                     # …or hear nothing at all
+)
+```
+
 ## Configuration
 
 ```python

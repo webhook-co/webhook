@@ -74,6 +74,54 @@ await webhook.events.replay({
 });
 ```
 
+## Recovering a lost ingest URL
+
+The ingest URL is a bearer credential, but it is **not** a one-time secret: the token is sealed at rest, so you can read it back any time. You never have to rotate to recover it — and you shouldn't, because rotating revokes the live URL and breaks every sender still posting to it.
+
+```ts
+const { ingestUrl } = await webhook.endpoints.revealIngestUrl(endpoint.id);
+```
+
+`ingestUrl` is `null` only for endpoints created before sealed storage; rotate those once to mint a fresh, re-readable one.
+
+## Triggers (webhook → agent)
+
+Wait for an endpoint's events with an ack-by-cursor loop. `wait` is a **short poll** — it returns immediately with whatever is past your cursor, so there is no held connection.
+
+```ts
+const trigger = await webhook.triggers.create({ endpointId: endpoint.id });
+
+let cursor: string | null = null;
+for (;;) {
+  const page = await webhook.triggers.wait(trigger.id, { cursor });
+  for (const event of page.events) handle(event);
+  cursor = page.nextCursor; // feed straight back in
+  if (page.caughtUp) await sleep(1000); // <- the caught-up signal
+}
+```
+
+`nextCursor` is `null` only when you sent no cursor and there were no events — it means "start from the oldest retained event", **not** "caught up". `caughtUp` is the caught-up signal. Delivery is at-least-once: a crash before you persist the cursor re-reads rather than loses, so dedupe on the event id.
+
+## Usage, deletes, and dedup config
+
+```ts
+const usage = await webhook.usage.get(); // events counted, the cap, whether you are paused
+await webhook.endpoints.update(id, { dedupConfig: null }); // null resets to the default
+await webhook.events.delete(eventId); // redacts + purges ONE event; does not reduce metered usage
+```
+
+## Version advisories
+
+If the server sees you are on an old SDK, it rides an advisory back on a response you already made — the SDK never polls npm on your behalf, so there is no extra request and nothing to break offline. By default it prints **one** line to stderr. Route it into your own logs instead:
+
+```ts
+const webhook = new WebhookClient({
+  apiKey,
+  onAdvisory: (a) => log.warn(a.message), // fires at most once per client
+  // silenceAdvisories: true,             // …or hear nothing at all
+});
+```
+
 ## Configuration
 
 ```ts
