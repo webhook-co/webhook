@@ -63,10 +63,12 @@ export default async function DashboardPage({
     from?: string | string[];
     to?: string | string[];
     invite?: string | string[];
+    org?: string | string[];
   }>;
 }) {
   const [session, sp] = await Promise.all([verifySession(), searchParams]);
   const inviteOutcome = first(sp.invite);
+  const orgOutcome = first(sp.org);
   const window = resolveDashboardWindow(
     { range: first(sp.range), from: first(sp.from), to: first(sp.to) },
     Date.now(),
@@ -94,6 +96,12 @@ export default async function DashboardPage({
       ) : inviteOutcome === "error" ? (
         <Banner tone="danger">
           Something went wrong accepting that invite. Open the link again to retry.
+        </Banner>
+      ) : null}
+
+      {orgOutcome === "denied" ? (
+        <Banner tone="danger">
+          We couldn&apos;t switch to that organization. You may no longer be a member of it.
         </Banner>
       ) : null}
 

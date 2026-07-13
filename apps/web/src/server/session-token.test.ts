@@ -16,7 +16,15 @@ describe("session token codec", () => {
   it("round-trips a principal through sign → verify", async () => {
     const token = await signSessionToken(session, SECRET, 3600, NOW);
     const out = await verifySessionToken(token, SECRET, NOW + 1000);
-    expect(out).toEqual(session);
+    expect(out).toMatchObject(session);
+  });
+
+  it("surfaces the token's EXPIRY, so a re-mint can carry the original deadline forward", async () => {
+    // The org switcher re-signs the cookie with a different org. If it couldn't read the existing expiry it
+    // would have to start a fresh TTL — letting anyone keep a session alive indefinitely by switching orgs.
+    const token = await signSessionToken(session, SECRET, 3600, NOW);
+    const out = await verifySessionToken(token, SECRET, NOW + 1000);
+    expect(out?.expiresAt).toBe(Math.floor(NOW / 1000) + 3600);
   });
 
   it("rejects a token signed with a different secret", async () => {

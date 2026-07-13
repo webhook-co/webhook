@@ -72,7 +72,7 @@ describe("verifySession", () => {
     const token = await signSessionToken(principal, TEST_SECRET, 3600);
     cookieStore.get.mockReturnValue({ name: SESSION_COOKIE, value: token });
     const session = await verifySession();
-    expect(session).toEqual(principal);
+    expect(session).toMatchObject(principal);
     expect(redirect).not.toHaveBeenCalled();
   });
 });
