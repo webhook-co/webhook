@@ -1,15 +1,74 @@
 "use client";
 
-import { Badge, Banner, Button, Spinner } from "@webhook-co/ui";
+import {
+  Badge,
+  Banner,
+  Button,
+  Spinner,
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@webhook-co/ui";
 import * as React from "react";
 
-import type { LoadMoreAuditResult, VerifyChainResult } from "@/server/audit-actions";
-import type { AuditItem, AuditResult } from "@/server/audit";
+import type {
+  LoadMoreAuditResult,
+  LoadMoreAuthAuditResult,
+  VerifyChainResult,
+} from "@/server/audit-actions";
+import type { AuditItem, AuditResult, AuthAuditItem, AuthAuditResult } from "@/server/audit";
 
 export interface AuditLogProps {
   readonly initial: AuditResult;
   readonly loadMore: (formData: FormData) => Promise<LoadMoreAuditResult>;
   readonly verifyChain: () => Promise<VerifyChainResult>;
+  /** The governance chain (aae1): invites, roles, removals, keys, grants. A SEPARATE chain, so it has its
+   *  own list and its own verify — merging them would imply a single sequence that doesn't exist. */
+  readonly initialAuth: AuthAuditResult;
+  readonly loadMoreAuth: (formData: FormData) => Promise<LoadMoreAuthAuditResult>;
+  readonly verifyAuthChain: () => Promise<VerifyChainResult>;
+  /** The signed-in user, so their own actions read as "You" instead of an opaque id. */
+  readonly currentUserId: string;
+}
+
+/** `member_role_changed` → "Member role changed". The event vocabulary is closed, but formatting it beats
+ *  a switch with 13 arms that a new event type would silently fall through. */
+function formatEventType(eventType: string): string {
+  const words = eventType.replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+/** The actor is a pseudonymous user id — never an email. Say "You" when it's the reader; "System" when null. */
+function describeActor(actor: string | null, currentUserId: string): string {
+  if (actor === null) return "System";
+  if (actor === currentUserId) return "You";
+  return actor === "system" ? "System" : `User ${actor.slice(0, 8)}…`;
+}
+
+function AuthAuditRow({ item, currentUserId }: { item: AuthAuditItem; currentUserId: string }) {
+  const meta = item.metadata
+    ? Object.entries(item.metadata)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(" · ")
+    : null;
+  return (
+    <li className="flex items-start justify-between gap-4 py-3">
+      <div className="flex min-w-0 flex-col gap-1">
+        <span className="font-medium text-fg">{formatEventType(item.eventType)}</span>
+        <span className="truncate text-xs text-fg-secondary">
+          {describeActor(item.actor, currentUserId)}
+          {meta ? ` · ${meta}` : ""}
+        </span>
+      </div>
+      <time
+        className="shrink-0 whitespace-nowrap text-xs tabular-nums text-fg-muted"
+        dateTime={item.createdAt}
+      >
+        {new Date(item.createdAt).toLocaleString()}
+      </time>
+    </li>
+  );
 }
 
 /**
@@ -77,8 +136,33 @@ function VerifyOutcome({ result }: { result: VerifyChainResult }) {
   );
 }
 
-export function AuditLog({ initial, loadMore, verifyChain }: AuditLogProps) {
-  const [items, setItems] = React.useState<readonly AuditItem[]>(
+/**
+ * One chain's panel: the entries, "Load more", and "Verify chain". Both chains get the same shell — they are
+ * the same KIND of thing (an append-only hash chain), and giving them two different UIs would make the user
+ * learn twice.
+ */
+function ChainPanel<T extends { seq: number }>({
+  initial,
+  loadMore,
+  verify,
+  renderRow,
+  blurb,
+  emptyText,
+}: {
+  initial: { status: "ok"; items: readonly T[]; nextSeq: number | null } | { status: "error" };
+  loadMore: (fd: FormData) => Promise<
+    | {
+        status: "ok";
+        result: { status: "ok"; items: readonly T[]; nextSeq: number | null } | { status: "error" };
+      }
+    | { status: "forbidden" }
+  >;
+  verify: () => Promise<VerifyChainResult>;
+  renderRow: (item: T) => React.ReactNode;
+  blurb: string;
+  emptyText: string;
+}) {
+  const [items, setItems] = React.useState<readonly T[]>(
     initial.status === "ok" ? initial.items : [],
   );
   const [nextSeq, setNextSeq] = React.useState<number | null>(
@@ -86,7 +170,6 @@ export function AuditLog({ initial, loadMore, verifyChain }: AuditLogProps) {
   );
   const [loading, setLoading] = React.useState(false);
   const [loadError, setLoadError] = React.useState<string | null>(null);
-
   const [verifying, setVerifying] = React.useState(false);
   const [verifyResult, setVerifyResult] = React.useState<VerifyChainResult | null>(null);
 
@@ -102,7 +185,7 @@ export function AuditLog({ initial, loadMore, verifyChain }: AuditLogProps) {
     setVerifying(true);
     setVerifyResult(null);
     try {
-      setVerifyResult(await verifyChain());
+      setVerifyResult(await verify());
     } catch {
       setVerifyResult({ status: "error" });
     } finally {
@@ -139,9 +222,7 @@ export function AuditLog({ initial, loadMore, verifyChain }: AuditLogProps) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-4">
-        <p className="text-sm text-fg-secondary">
-          Every change to this organization, hash-chained so tampering is detectable.
-        </p>
+        <p className="text-sm text-fg-secondary">{blurb}</p>
         <Button variant="secondary" onClick={handleVerify} disabled={verifying}>
           {verifying ? "Verifying…" : "Verify chain"}
         </Button>
@@ -150,13 +231,9 @@ export function AuditLog({ initial, loadMore, verifyChain }: AuditLogProps) {
       {verifyResult ? <VerifyOutcome result={verifyResult} /> : null}
 
       {items.length === 0 ? (
-        <p className="text-sm text-fg-secondary">Nothing has been recorded yet.</p>
+        <p className="text-sm text-fg-secondary">{emptyText}</p>
       ) : (
-        <ul className="flex flex-col divide-y divide-hairline">
-          {items.map((item) => (
-            <AuditRow key={item.seq} item={item} />
-          ))}
-        </ul>
+        <ul className="flex flex-col divide-y divide-hairline">{items.map(renderRow)}</ul>
       )}
 
       {loadError ? <Banner tone="danger">{loadError}</Banner> : null}
@@ -169,5 +246,59 @@ export function AuditLog({ initial, loadMore, verifyChain }: AuditLogProps) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * The audit log: TWO separate hash chains, shown as two tabs.
+ *
+ * They are genuinely separate records with independent sequences — `audit_log` (what changed in the org) and
+ * `auth_audit_event` (who was granted or denied access to it). Interleaving them into one list would imply a
+ * single ordering that does not exist, and a single "verify" that cannot be computed. Tabs keep the
+ * distinction the data actually has.
+ *
+ * Governance is the DEFAULT tab: it's where invites, role changes and removals land, which is what someone
+ * opening an audit log is usually looking for.
+ */
+export function AuditLog({
+  initial,
+  loadMore,
+  verifyChain,
+  initialAuth,
+  loadMoreAuth,
+  verifyAuthChain,
+  currentUserId,
+}: AuditLogProps) {
+  return (
+    <Tabs defaultValue="governance">
+      <TabsList>
+        <TabsTrigger value="governance">Access &amp; governance</TabsTrigger>
+        <TabsTrigger value="changes">Changes</TabsTrigger>
+      </TabsList>
+
+      <TabsContent value="governance">
+        <ChainPanel
+          initial={initialAuth}
+          loadMore={loadMoreAuth}
+          verify={verifyAuthChain}
+          blurb="Invites, roles, removals, keys and devices — hash-chained so tampering is detectable."
+          emptyText="No access changes recorded yet."
+          renderRow={(item) => (
+            <AuthAuditRow key={item.seq} item={item} currentUserId={currentUserId} />
+          )}
+        />
+      </TabsContent>
+
+      <TabsContent value="changes">
+        <ChainPanel
+          initial={initial}
+          loadMore={loadMore}
+          verify={verifyChain}
+          blurb="Every change to endpoints, destinations and events — hash-chained so tampering is detectable."
+          emptyText="Nothing has been recorded yet."
+          renderRow={(item) => <AuditRow key={item.seq} item={item} />}
+        />
+      </TabsContent>
+    </Tabs>
   );
 }

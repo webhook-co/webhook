@@ -25,9 +25,25 @@ vi.mock("./env", () => ({ getAuditChainKey: async () => "AA".repeat(32) }));
 vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({}) }));
 
 const loadAudit = vi.fn(async () => ({ status: "ok", items: [], nextSeq: null }));
-vi.mock("./audit", () => ({ loadAudit: (...a: unknown[]) => loadAudit(...a) }));
+const loadAuthAudit = vi.fn(async () => ({ status: "ok", items: [], nextSeq: null }));
+vi.mock("./audit", () => ({
+  loadAudit: (...a: unknown[]) => loadAudit(...a),
+  loadAuthAudit: (...a: unknown[]) => loadAuthAudit(...a),
+}));
 
-import { loadMoreAuditAction, verifyAuditChainAction } from "./audit-actions";
+const readAuthAuditChain = vi.fn(async () => [{ seq: 1 }]);
+const verifyAuthAuditChain = vi.fn(async () => ({ ok: true, rowsVerified: 1 }));
+vi.mock("@webhook-co/db/auth-audit", () => ({
+  readAuthAuditChain: (...a: unknown[]) => readAuthAuditChain(...a),
+  verifyAuthAuditChain: (...a: unknown[]) => verifyAuthAuditChain(...a),
+}));
+
+import {
+  loadMoreAuditAction,
+  loadMoreAuthAuditAction,
+  verifyAuditChainAction,
+  verifyAuthAuditChainAction,
+} from "./audit-actions";
 
 function form(afterSeq: string): FormData {
   const fd = new FormData();
@@ -40,6 +56,8 @@ beforeEach(() => {
   requireOrgAccess.mockResolvedValue({ userId: "u_1", orgId: "org_1", role: "owner" });
   verifyAuditChain.mockResolvedValue({ ok: true, rowsVerified: 1 });
   loadAudit.mockResolvedValue({ status: "ok", items: [], nextSeq: null });
+  loadAuthAudit.mockResolvedValue({ status: "ok", items: [], nextSeq: null });
+  verifyAuthAuditChain.mockResolvedValue({ ok: true, rowsVerified: 1 });
 });
 
 describe("the audit role gate", () => {
@@ -101,5 +119,71 @@ describe("loadMoreAuditAction", () => {
     const res = await loadMoreAuditAction(form("not-a-number"));
     expect(res).toEqual({ status: "ok", result: { status: "error" } });
     expect(loadAudit).not.toHaveBeenCalled();
+  });
+});
+
+// The GOVERNANCE chain's actions carry the SAME gate — and it has to be pinned separately, because these are
+// client-invoked and never pass through the page's SSR check. A missing isAuditReaderRole here would let a
+// member read (and verify) invites, role changes and removals, while the mint ceiling still refused them an
+// `audit:read` key. The ceiling would be decorative for the chain that matters most.
+describe("the audit role gate — governance chain", () => {
+  it("REFUSES a plain member the governance list — and reads nothing", async () => {
+    requireOrgAccess.mockResolvedValueOnce({ userId: "u_m", orgId: "org_1", role: "member" });
+    expect(await loadMoreAuthAuditAction(form("5"))).toEqual({ status: "forbidden" });
+    expect(loadAuthAudit).not.toHaveBeenCalled();
+  });
+
+  it("REFUSES a plain member the governance VERIFY — and reads nothing", async () => {
+    requireOrgAccess.mockResolvedValueOnce({ userId: "u_m", orgId: "org_1", role: "member" });
+    expect(await verifyAuthAuditChainAction()).toEqual({ status: "forbidden" });
+    expect(readAuthAuditChain).not.toHaveBeenCalled();
+    expect(verifyAuthAuditChain).not.toHaveBeenCalled();
+  });
+
+  it("allows an admin", async () => {
+    requireOrgAccess.mockResolvedValueOnce({ userId: "u_a", orgId: "org_1", role: "admin" });
+    expect(await verifyAuthAuditChainAction()).toMatchObject({ status: "ok" });
+  });
+});
+
+describe("verifyAuthAuditChainAction", () => {
+  it("walks the governance chain and reports the verdict", async () => {
+    expect(await verifyAuthAuditChainAction()).toEqual({
+      status: "ok",
+      verification: { ok: true, rowsVerified: 1 },
+    });
+    expect(readAuthAuditChain).toHaveBeenCalled();
+  });
+
+  it("reports a BREAK verbatim (a deleted governance row is exactly what this exists to catch)", async () => {
+    verifyAuthAuditChain.mockResolvedValueOnce({
+      ok: false,
+      rowsVerified: 2,
+      break: { kind: "seq_gap", seq: 4, detail: "a row is missing" },
+    });
+    expect(await verifyAuthAuditChainAction()).toMatchObject({
+      status: "ok",
+      verification: { ok: false, break: { kind: "seq_gap", seq: 4 } },
+    });
+  });
+
+  it("returns an error result rather than throwing when the read fails", async () => {
+    readAuthAuditChain.mockRejectedValueOnce(new Error("db down"));
+    expect(await verifyAuthAuditChainAction()).toEqual({ status: "error" });
+  });
+});
+
+describe("loadMoreAuthAuditAction", () => {
+  it("pages from the given seq", async () => {
+    await loadMoreAuthAuditAction(form("42"));
+    expect(loadAuthAudit).toHaveBeenCalledWith("org_1", 42);
+  });
+
+  it("refuses a junk cursor without touching the DB", async () => {
+    expect(await loadMoreAuthAuditAction(form("nope"))).toEqual({
+      status: "ok",
+      result: { status: "error" },
+    });
+    expect(loadAuthAudit).not.toHaveBeenCalled();
   });
 });

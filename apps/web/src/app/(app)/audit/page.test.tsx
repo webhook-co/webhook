@@ -5,11 +5,17 @@ const requireOrgAccess = vi.fn();
 vi.mock("@/server/org-access", () => ({ requireOrgAccess: () => requireOrgAccess() }));
 
 const loadAudit = vi.fn(async () => ({ status: "ok", items: [], nextSeq: null }));
-vi.mock("@/server/audit", () => ({ loadAudit: (...a: unknown[]) => loadAudit(...a) }));
+const loadAuthAudit = vi.fn(async () => ({ status: "ok", items: [], nextSeq: null }));
+vi.mock("@/server/audit", () => ({
+  loadAudit: (...a: unknown[]) => loadAudit(...a),
+  loadAuthAudit: (...a: unknown[]) => loadAuthAudit(...a),
+}));
 
 vi.mock("@/server/audit-actions", () => ({
   loadMoreAuditAction: vi.fn(),
   verifyAuditChainAction: vi.fn(),
+  loadMoreAuthAuditAction: vi.fn(),
+  verifyAuthAuditChainAction: vi.fn(),
 }));
 
 import AuditPage from "./page";
@@ -18,6 +24,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   requireOrgAccess.mockResolvedValue({ userId: "u_1", orgId: "org_1", role: "owner" });
   loadAudit.mockResolvedValue({ status: "ok", items: [], nextSeq: null });
+  loadAuthAudit.mockResolvedValue({ status: "ok", items: [], nextSeq: null });
 });
 
 describe("AuditPage — the role gate", () => {
@@ -29,7 +36,8 @@ describe("AuditPage — the role gate", () => {
     render(await AuditPage());
 
     expect(screen.getByText(/only owners and admins can read the audit log/i)).toBeInTheDocument();
-    expect(loadAudit).not.toHaveBeenCalled(); // the chain was never touched
+    expect(loadAudit).not.toHaveBeenCalled(); // NEITHER chain was touched
+    expect(loadAuthAudit).not.toHaveBeenCalled();
   });
 
   it("reads the chain for an owner", async () => {
