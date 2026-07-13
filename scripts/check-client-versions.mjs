@@ -13,6 +13,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const SRC = resolve(import.meta.dirname, "..", "packages", "shared", "src", "client-advisory.ts");
 
@@ -33,21 +34,31 @@ async function npmLatest(pkg) {
 }
 
 /**
- * PyPI's `info.version` LAGS: it still said 0.2.1 for about a minute after 0.3.0 was published (while
- * /pypi/<pkg>/0.3.0/json resolved fine). Reading it would make this guard flap right after every release —
- * the same trap as the Go proxy's cached @latest. Take the max of the actual release list instead.
+ * Pick the newest version from PyPI's `releases` map.
+ *
+ * NOT `info.version`: that field LAGS — it still said 0.2.1 for about a minute after 0.3.0 was published,
+ * while /pypi/webhook-co/0.3.0/json resolved fine. Reading it would fail this guard spuriously right after
+ * every release, the same trap as the Go module proxy's cached @latest (which is why that one asks GitHub).
+ *
+ * Sorting is NUMERIC per part, not lexicographic: "0.10.0" < "0.9.0" as strings, but 10 > 9.
+ * Exported for tests — an untested "pick the latest" is how you end up advising the wrong version.
  */
+export function pickLatest(versions) {
+  const parsed = versions
+    .map((v) => ({ v, parts: /^(\d+)\.(\d+)\.(\d+)$/.exec(v) }))
+    .filter((x) => x.parts !== null) // ignore prereleases/dev builds — only stable releases are "latest"
+    .map((x) => ({ v: x.v, n: [Number(x.parts[1]), Number(x.parts[2]), Number(x.parts[3])] }));
+  if (parsed.length === 0) {
+    throw new Error("no stable releases found — refusing to guess a latest version");
+  }
+  parsed.sort((a, b) => a.n[0] - b.n[0] || a.n[1] - b.n[1] || a.n[2] - b.n[2]);
+  return parsed[parsed.length - 1].v;
+}
+
 async function pypiLatest(pkg) {
   const res = await fetch(`https://pypi.org/pypi/${encodeURIComponent(pkg)}/json`);
   if (!res.ok) throw new Error(`pypi ${pkg}: HTTP ${res.status}`);
-  const releases = Object.keys((await res.json()).releases ?? {});
-  const parse = (v) => v.split(".").map(Number);
-  return releases.sort((a, b) => {
-    const [pa, pb] = [parse(a), parse(b)];
-    for (let i = 0; i < 3; i++)
-      if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
-    return 0;
-  })[releases.length - 1];
+  return pickLatest(Object.keys((await res.json()).releases ?? {}));
 }
 
 /**
@@ -74,34 +85,45 @@ const SOURCES = {
   "wbhk-cli": () => npmLatest("@webhook-co/cli"),
 };
 
-const committed = committedLatest();
-let stale = 0;
+/**
+ * Only run when INVOKED DIRECTLY. Importing this module (the tests do, for `pickLatest`) must not fire off
+ * live registry requests or call process.exit — a module with side effects on import is untestable, which
+ * is exactly why this helper went unguarded in the first place.
+ */
+async function run() {
+  const committed = committedLatest();
+  let stale = 0;
 
-for (const [id, fetchLatest] of Object.entries(SOURCES)) {
-  const published = await fetchLatest();
-  const declared = committed[id];
-  if (declared === published) {
-    console.log(`  ok    ${id}: ${declared}`);
-    continue;
-  }
-  stale++;
-  console.log(`  STALE ${id}: CLIENT_LATEST says ${declared}, the registry serves ${published}`);
-}
-
-// A client we ship but never check would sit unguarded — the same "looks covered, isn't" trap as an
-// unmapped model or an unexempted route.
-for (const id of Object.keys(committed)) {
-  if (!(id in SOURCES)) {
+  for (const [id, fetchLatest] of Object.entries(SOURCES)) {
+    const published = await fetchLatest();
+    const declared = committed[id];
+    if (declared === published) {
+      console.log(`  ok    ${id}: ${declared}`);
+      continue;
+    }
     stale++;
-    console.log(`  STALE ${id}: declared in CLIENT_LATEST but this script never checks it`);
+    console.log(`  STALE ${id}: CLIENT_LATEST says ${declared}, the registry serves ${published}`);
   }
+
+  // A client we ship but never check would sit unguarded — the same "looks covered, isn't" trap as an
+  // unmapped model or an unexempted route.
+  for (const id of Object.keys(committed)) {
+    if (!(id in SOURCES)) {
+      stale++;
+      console.log(`  STALE ${id}: declared in CLIENT_LATEST but this script never checks it`);
+    }
+  }
+
+  if (stale > 0) {
+    console.error(
+      `\n${stale} client version(s) out of date in packages/shared/src/client-advisory.ts.\n` +
+        "Bump CLIENT_LATEST to match the registries. If you just published, this is the reminder.",
+    );
+    process.exit(1);
+  }
+  console.log("\nCLIENT_LATEST matches every registry.");
 }
 
-if (stale > 0) {
-  console.error(
-    `\n${stale} client version(s) out of date in packages/shared/src/client-advisory.ts.\n` +
-      "Bump CLIENT_LATEST to match the registries. If you just published, this is the reminder.",
-  );
-  process.exit(1);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await run();
 }
-console.log("\nCLIENT_LATEST matches every registry.");
