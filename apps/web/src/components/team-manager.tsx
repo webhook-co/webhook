@@ -25,6 +25,7 @@ import {
 import * as React from "react";
 
 import type { CreateInviteResult, RevokeInviteResult } from "@/server/invite-actions";
+import type { LeaveOrgResult } from "@/server/leave-org";
 import type { MemberActionResult } from "@/server/member-actions";
 import type { TeamResult } from "@/server/team";
 
@@ -58,6 +59,10 @@ export interface TeamManagerProps {
   readonly revokeInvite: (formData: FormData) => Promise<RevokeInviteResult>;
   readonly changeRole: (formData: FormData) => Promise<MemberActionResult>;
   readonly removeMember: (formData: FormData) => Promise<MemberActionResult>;
+  /** Leave this org. Redirects on success, so it only ever RETURNS on a refusal. */
+  readonly leaveOrg: () => Promise<LeaveOrgResult>;
+  /** True when this is the user's own personal org — you can't leave that; you delete the account instead. */
+  readonly isPersonalOrg: boolean;
 }
 
 function acceptUrl(acceptPath: string): string {
@@ -91,6 +96,8 @@ export function TeamManager({
   revokeInvite,
   changeRole,
   removeMember,
+  leaveOrg,
+  isPersonalOrg,
 }: TeamManagerProps) {
   const ok = result.status === "ok" ? result : null;
   const [members, setMembers] = React.useState<readonly OrgMember[]>(ok?.members ?? []);
@@ -116,6 +123,8 @@ export function TeamManager({
   } | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [dialogError, setDialogError] = React.useState<string | null>(null);
+  const [leaving, setLeaving] = React.useState(false);
+  const [leaveError, setLeaveError] = React.useState<string | null>(null);
 
   if (!ok) {
     return (
@@ -236,6 +245,25 @@ export function TeamManager({
       setRoleChange(null);
     } catch {
       setDialogError("That didn't work. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmLeave() {
+    setBusy(true);
+    setLeaveError(null);
+    try {
+      // Success REDIRECTS, so this never returns — anything we get back is a refusal. Deliberately NOT
+      // wrapped in a catch: leaveOrgAction returns an error RESULT for real faults, so the only thing it
+      // throws is Next's redirect signal, which Next itself must receive. Swallowing (or re-wrapping) that
+      // would break the navigation and show a false error on a successful leave.
+      const res = await leaveOrg();
+      setLeaveError(
+        res.status === "last_owner"
+          ? "You're the only owner of this organization. Make someone else an owner first, then you can leave."
+          : "We couldn't leave the organization. Please try again.",
+      );
     } finally {
       setBusy(false);
     }
@@ -421,6 +449,64 @@ export function TeamManager({
           )}
         </CardContent>
       </Card>
+
+      {/* Leaving is only offered where it's meaningful: you can't leave your own personal org (delete the
+          account instead), and a sole owner is refused by the server anyway — but we say so up front rather
+          than letting them click into a wall. */}
+      {!isPersonalOrg ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Leave this organization</CardTitle>
+            <CardDescription>
+              You&apos;ll lose access immediately, and the API keys and devices you created for this
+              organization are revoked. You can rejoin only if someone invites you again.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-3">
+            {leaveError ? <Banner tone="danger">{leaveError}</Banner> : null}
+            <div>
+              <Button variant="danger" onClick={() => setLeaving(true)} disabled={busy}>
+                Leave organization
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <Dialog
+        open={leaving}
+        onOpenChange={(open) => {
+          if (open || busy) return;
+          setLeaving(false);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Leave this organization?</DialogTitle>
+            <DialogDescription>
+              You lose access immediately, and the API keys and devices you created here stop
+              working. This can&apos;t be undone — you&apos;d need a new invite to come back.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary" disabled={busy}>
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              variant="danger"
+              disabled={busy}
+              onClick={async () => {
+                await confirmLeave();
+                setLeaving(false);
+              }}
+            >
+              Leave organization
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Remove member — state the consequence, don't imply it */}
       <Dialog

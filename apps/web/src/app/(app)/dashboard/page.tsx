@@ -103,6 +103,8 @@ export default async function DashboardPage({
         <Banner tone="danger">
           We couldn&apos;t switch to that organization. You may no longer be a member of it.
         </Banner>
+      ) : orgOutcome === "left" ? (
+        <Banner tone="ok">You&apos;ve left the organization.</Banner>
       ) : null}
 
       {attention.length > 0 ? <NeedsAttention items={attention} /> : null}
