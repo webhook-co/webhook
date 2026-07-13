@@ -86,6 +86,60 @@ _, err := client.Events.Replay(ctx, eventID,
 	webhook.ReplayTarget{Kind: "destination", DestinationID: destID}, "")
 ```
 
+## Recovering a lost ingest URL
+
+The ingest URL is a bearer credential, but it is **not** a one-time secret: the token is sealed at rest, so you can read it back any time. You never have to rotate to recover it — and you shouldn't, because rotating revokes the live URL and breaks every sender still posting to it.
+
+```go
+revealed, err := client.Endpoints.RevealIngestURL(ctx, endpoint.ID)
+```
+
+`IngestURL` is `nil` only for endpoints created before sealed storage; rotate those once to mint a fresh, re-readable one.
+
+## Triggers (webhook → agent)
+
+Wait for an endpoint's events with an ack-by-cursor loop. `Wait` is a **short poll** — it returns immediately with whatever is past your cursor, so there is no held connection.
+
+```go
+trigger, err := client.Triggers.Create(ctx, webhook.TriggersCreateParams{EndpointID: endpoint.ID})
+
+var cursor *string
+for {
+    page, err := client.Triggers.Wait(ctx, trigger.ID, webhook.TriggersWaitParams{Cursor: cursor})
+    if err != nil {
+        return err
+    }
+    for _, event := range page.Events {
+        handle(event)
+    }
+    cursor = page.NextCursor // feed straight back in
+    if page.CaughtUp {       // <- the caught-up signal
+        time.Sleep(time.Second)
+    }
+}
+```
+
+`NextCursor` is `nil` only when you sent no cursor and there were no events — it means "start from the oldest retained event", **not** "caught up". `CaughtUp` is the caught-up signal. Delivery is at-least-once: a crash before you persist the cursor re-reads rather than loses, so dedupe on the event id.
+
+## Usage, deletes, and dedup config
+
+```go
+usage, err := client.Usage.Get(ctx)                        // events counted, the cap, whether you are paused
+_, err = client.Endpoints.Update(ctx, id, webhook.EndpointsUpdateParams{DedupConfig: nil}) // nil resets
+_, err = client.Events.Delete(ctx, eventID)                // redacts + purges ONE event; usage is not reduced
+```
+
+## Version advisories
+
+If the server sees you are on an old SDK, it rides an advisory back on a response you already made — the SDK never polls the module proxy on your behalf, so there is no extra request and nothing to break offline. By default it prints **one** line to stderr. Route it into your own logs instead:
+
+```go
+client, err := webhook.NewClient(apiKey,
+    webhook.WithAdvisoryHandler(func(a webhook.Advisory) { log.Println(a.Message) }), // at most once
+    // webhook.WithSilentAdvisories(),                                                // …or nothing at all
+)
+```
+
 ## Configuration
 
 ```go
