@@ -1,8 +1,8 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const session = vi.hoisted(() => ({ verifySession: vi.fn() }));
-vi.mock("@/server/session", () => session);
+const session = vi.hoisted(() => ({ requireOrgAccess: vi.fn() }));
+vi.mock("@/server/org-access", () => session);
 
 const billing = vi.hoisted(() => ({ loadBillingSummary: vi.fn() }));
 vi.mock("@/server/billing", () => billing);
@@ -40,7 +40,7 @@ function view(over: Record<string, unknown> = {}) {
 }
 
 async function renderPage(v: Record<string, unknown>) {
-  session.verifySession.mockResolvedValue({ orgId: "org-1", userId: "u-1", user: {} });
+  session.requireOrgAccess.mockResolvedValue({ orgId: "org-1", userId: "u-1", user: {} });
   billing.loadBillingSummary.mockResolvedValue(v);
   render(await BillingPage({ searchParams: Promise.resolve({}) }));
 }
@@ -95,7 +95,7 @@ describe("BillingPage — the billing-manager gate is reflected in the UI", () =
   });
 
   it("renders the forbidden banner when the server rejected a billing action", async () => {
-    session.verifySession.mockResolvedValue({ orgId: "org-1", userId: "u-1", user: {} });
+    session.requireOrgAccess.mockResolvedValue({ orgId: "org-1", userId: "u-1", user: {} });
     billing.loadBillingSummary.mockResolvedValue(view({ canManageBilling: false }));
     render(await BillingPage({ searchParams: Promise.resolve({ billing: "forbidden" }) }));
     expect(screen.getByText(/only an owner or admin can manage billing/i)).toBeVisible();

@@ -13,10 +13,30 @@ import { GET } from "./route";
 
 afterEach(() => vi.unstubAllEnvs());
 
+/** The session this response would establish, or null if it set no cookie. */
+async function sessionFrom(res: Response) {
+  const setCookie = res.headers.get("set-cookie") ?? "";
+  const part = setCookie.split(/;\s*/).find((p) => p.startsWith(`${SESSION_COOKIE}=`));
+  if (!part) return null;
+  const value = decodeURIComponent(part.slice(SESSION_COOKIE.length + 1));
+  return verifySessionToken(value, TEST_SECRET);
+}
+
 describe("GET /dev-session", () => {
   it("returns 404 in production — never a real auth path", async () => {
     vi.stubEnv("NODE_ENV", "production");
     const res = await GET(new Request("http://localhost:3000/dev-session"));
+    expect(res.status).toBe(404);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("ignores user/org overrides in production — they are not a way in", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const res = await GET(
+      new Request(
+        "http://localhost:3000/dev-session?user=attacker&org=11111111-1111-4111-8111-111111111111",
+      ),
+    );
     expect(res.status).toBe(404);
     expect(res.headers.get("set-cookie")).toBeNull();
   });
@@ -27,15 +47,49 @@ describe("GET /dev-session", () => {
 
     expect(res.status).toBeGreaterThanOrEqual(300);
     expect(res.status).toBeLessThan(400);
-
-    const setCookie = res.headers.get("set-cookie") ?? "";
-    expect(setCookie).toMatch(/HttpOnly/i);
-    const part = setCookie.split(/;\s*/).find((p) => p.startsWith(`${SESSION_COOKIE}=`)) ?? "";
-    const value = decodeURIComponent(part.slice(SESSION_COOKIE.length + 1));
+    expect(res.headers.get("set-cookie") ?? "").toMatch(/HttpOnly/i);
 
     // the cookie is a real, verifiable session token (not the old opaque "dev-mock" string)
-    const session = await verifySessionToken(value, TEST_SECRET);
+    const session = await sessionFrom(res);
     expect(session?.orgId).toBeTruthy();
     expect(session?.userId).toBeTruthy();
+  });
+
+  it("mints the default org as a real UUID — a non-UUID org id is a 22P02 against a real Postgres", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const session = await sessionFrom(await GET(new Request("http://localhost:3000/dev-session")));
+    expect(session?.orgId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it("mints the requested principal — the seam the e2e suite seeds a two-org fixture through", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const org = "3f2b1c8e-9d4a-4c7b-8e1f-2a5d6c7b8e9f";
+    const res = await GET(
+      new Request(`http://localhost:3000/dev-session?user=usr_dana&org=${org}`),
+    );
+
+    const session = await sessionFrom(res);
+    expect(session?.userId).toBe("usr_dana");
+    expect(session?.orgId).toBe(org);
+  });
+
+  it("refuses a non-UUID org rather than minting a session that cannot address a tenant", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const res = await GET(
+      new Request("http://localhost:3000/dev-session?user=usr_dana&org=not-a-uuid"),
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("refuses an empty user rather than minting an unattributable session", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const res = await GET(new Request("http://localhost:3000/dev-session?user="));
+
+    expect(res.status).toBe(400);
+    expect(res.headers.get("set-cookie")).toBeNull();
   });
 });

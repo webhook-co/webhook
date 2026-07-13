@@ -66,3 +66,8 @@ scripts/.prod-migrate.env
 
 # Local dev Postgres cluster (scripts/dev-db.sh) — throwaway, never committed.
 .dev-pg/
+
+# Playwright (apps/web e2e)
+apps/web/playwright/.tmp/
+apps/web/playwright-report/
+apps/web/test-results/

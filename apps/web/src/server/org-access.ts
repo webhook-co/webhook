@@ -3,18 +3,32 @@ import "server-only";
 import { withTenant } from "@webhook-co/db/client";
 import { readMembershipRole, type MembershipRole } from "@webhook-co/db/orgs";
 import { redirect } from "next/navigation";
+import { cache } from "react";
 
 import { withTenantDb } from "./db";
 import { LOGIN_URL, verifySession, type Session } from "./session";
 
-// The org-access gate (Lane 2.2): the ONE place a server action proves the caller may act in the session's
-// org and learns their role. verifySession() proves identity and yields the session's orgId, but RLS only
-// proves a query is scoped to that org — never that the caller is (still) a member or what they may do. This
-// closes that gap at the front door: it re-reads membership PER REQUEST, so a removed member (or a stale
-// 7-day cookie naming an org they've left) is turned away like an expired session, not left to slip past to
-// the per-mutation checks. It returns the role so role-gated actions have a single source instead of each
-// re-reading it. It is strictly stronger than verifySession (it calls it, then adds membership), so the
-// dal-gate-guard accepts either. Actions migrate to it incrementally.
+// The org-access gate: the ONE place a request proves the caller may act in the session's org, and learns
+// their role.
+//
+// `verifySession()` proves IDENTITY and yields the session's orgId. It does not prove membership, and RLS
+// does not either — RLS only proves a query was scoped to the org the query named. Nothing in that chain
+// re-asks whether the caller still belongs to it.
+//
+// That distinction is the whole point, because the session is STATELESS: a signed cookie with a 7-day TTL
+// and NO server-side revocation store. The org it names is a claim made at mint time, and it goes on being
+// made long after it stops being true. Re-reading membership per request is the only thing that can make it
+// honest again.
+//
+// This was applied to the server ACTIONS and — until the e2e suite caught it — never to the pages. Every
+// gated page and the (app) render gate called `verifySession()` alone, so the entire READ surface trusted
+// the cookie's orgId outright: a removed member's live cookie kept rendering the org's endpoints, events,
+// deliveries and webhook payloads until it expired, while their writes were correctly refused. The claims in
+// ADR-0113 ("re-checks membership on EVERY request … even a mis-minted cookie could not be used") and
+// ADR-0115 ("web access dies on the next request") were true of actions and false of renders.
+//
+// So the gate is no longer optional for a page. `dal-gate-guard.mjs` now requires *this* function — not
+// merely `verifySession` — everywhere under `(app)/`.
 
 export interface OrgAccess extends Session {
   /** The caller's role in `orgId`, read under RLS this request. Never null — a null membership fails closed. */
@@ -28,8 +42,12 @@ export interface OrgAccess extends Session {
  * principal, and a stale session must not keep acting). The membership read names org_id explicitly and runs
  * under that org's RLS context (RLS policies are permissive/OR'd — never lean on RLS alone; see
  * readMembershipRole).
+ *
+ * Wrapped in React's `cache`, so the layout and the page it renders — which run CONCURRENTLY, and must
+ * therefore BOTH gate; a layout's redirect does not stop a page's query from having already executed — share
+ * one membership read per request instead of issuing one each.
  */
-export async function requireOrgAccess(): Promise<OrgAccess> {
+export const requireOrgAccess = cache(async (): Promise<OrgAccess> => {
   const session = await verifySession();
   const role = await withTenantDb((app) =>
     withTenant(app, session.orgId, (tx) => readMembershipRole(tx, session.orgId, session.userId)),
@@ -43,4 +61,4 @@ export async function requireOrgAccess(): Promise<OrgAccess> {
     redirect(LOGIN_URL);
   }
   return { ...session, role: role as MembershipRole };
-}
+});

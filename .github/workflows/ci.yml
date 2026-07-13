@@ -227,6 +227,53 @@ jobs:
       - run: pnpm --filter @webhook-co/www test:links
 
   # Real-browser accessibility gate: builds the static export, serves it, and runs axe-core in
+  # The DASHBOARD's end-to-end gate: a real Chromium, against a real `next dev`, against a real Postgres
+  # (the app connecting as the non-superuser `webhook_app` role, so RLS is actually enforced — the superuser
+  # bypasses every policy, and a suite booted as it would go green while proving nothing).
+  #
+  # This exists because the layers below it are structurally blind to a whole class of bug. The page unit
+  # tests MOCK the auth gate, so they keep passing when a page reads the acting org from the wrong place —
+  # that is not hypothetical, it is exactly how the dashboard's entire read surface came to be gated on
+  # identity alone (verifySession) rather than membership, serving a removed member their ex-org's endpoints,
+  # events and webhook payloads for the remaining 7-day life of their stateless cookie. And the server-action
+  # tests assert `revalidatePath` was called with a path STRING, so they keep passing when that path no longer
+  # exists and the invalidation has silently become a no-op.
+  #
+  # Postgres service + pinned dbmate, exactly as `test-db` does it: trust auth so the harness's roles connect
+  # without secrets, and the suite provisions its own database on the service.
+  web-e2e:
+    name: web-e2e
+    runs-on: ubuntu-latest
+    needs: install
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+      - name: Install dbmate
+        env:
+          DBMATE_SHA256: dfd4027141b6e4357158099bdfe6c02b286af70f8e49057937744cf80b38ea1c
+        run: |
+          curl -fsSL -o /usr/local/bin/dbmate \
+            https://github.com/amacneil/dbmate/releases/download/v2.33.0/dbmate-linux-amd64
+          echo "${DBMATE_SHA256}  /usr/local/bin/dbmate" | sha256sum -c -
+          chmod +x /usr/local/bin/dbmate
+          dbmate --version
+      - run: pnpm --filter @webhook-co/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @webhook-co/web test:e2e
+
   # Chromium across the homepage's interactive states AND the five legal pages. This is the only
   # layer that sees real layout, so the only one that catches color contrast and target size. Add to
   # the `main` ruleset's required checks to make it blocking.

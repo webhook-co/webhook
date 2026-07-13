@@ -4,12 +4,16 @@ import { PageContainer } from "@webhook-co/ui";
 import { ConnectedAppsManager } from "@/components/connected-apps-manager";
 import { revokeConnectedApp } from "@/server/connected-apps-actions";
 import { loadConnectedApps } from "@/server/connected-apps";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Connected apps · webhook.co",
 };
 
 export default async function ConnectedAppsPage() {
+  // Gate first: membership is re-read per request, so a stale cookie naming an org the user has left cannot
+  // render this. It leans on no data from the gate — the point is the refusal, not the return value.
+  await requireOrgAccess();
   const result = await loadConnectedApps();
 
   return (

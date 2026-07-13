@@ -2,7 +2,7 @@ import { Banner, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { loadUsage } from "@/server/usage";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 import type { UsageSummary } from "@webhook-co/shared";
 
 // Billing (current plan, upgrade, portal) lives in its own dedicated /billing section now — this page is
@@ -22,7 +22,7 @@ const fmtDate = (d: Date): string =>
   });
 
 export default async function UsagePage() {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const result = await loadUsage(session.orgId);
 
   return (

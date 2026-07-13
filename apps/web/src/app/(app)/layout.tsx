@@ -10,15 +10,15 @@ import { OrgSwitcher } from "@/components/org-switcher";
 import { logout } from "@/server/auth-actions";
 import { loadMyOrgs } from "@/server/my-orgs";
 import { switchOrgAction } from "@/server/org-switch";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 /**
- * The gated dashboard layout. `verifySession()` runs first — an absent session redirects to
+ * The gated dashboard layout. `requireOrgAccess()` runs first — an absent session redirects to
  * sign-in before any child renders (the Data-Access-Layer gate; there is no middleware, see
  * ADR-0021). Every route under `(app)` inherits this gate.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
-  const [session, myOrgs] = await Promise.all([verifySession(), loadMyOrgs()]);
+  const [session, myOrgs] = await Promise.all([requireOrgAccess(), loadMyOrgs()]);
 
   return (
     <AppShellClient

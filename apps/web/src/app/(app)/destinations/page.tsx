@@ -3,14 +3,14 @@ import type { Metadata } from "next";
 
 import { ReplayDestinationsManager } from "@/components/replay-destinations-manager";
 import { loadDestinations } from "@/server/replay-destinations";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Destinations · webhook.co",
 };
 
 export default async function DestinationsPage() {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const result = await loadDestinations(session.orgId);
 
   return (

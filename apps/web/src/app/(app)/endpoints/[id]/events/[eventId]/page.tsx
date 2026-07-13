@@ -12,7 +12,7 @@ import {
 import { loadEvent } from "@/server/events";
 import { replayToDestinationAction } from "@/server/replay-actions";
 import { loadDestinations } from "@/server/replay-destinations";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Event · webhook.co",
@@ -23,7 +23,7 @@ export default async function EventDetailPage({
 }: {
   params: Promise<{ id: string; eventId: string }>;
 }) {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const { id, eventId } = await params;
   // The event read and the replay-picker's destinations are independent org-scoped reads — run concurrently.
   const [result, destResult] = await Promise.all([

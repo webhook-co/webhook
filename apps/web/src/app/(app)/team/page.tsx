@@ -8,7 +8,7 @@ import { createInviteAction, revokeInviteAction } from "@/server/invite-actions"
 import { leaveOrgAction } from "@/server/leave-org";
 import { changeMemberRoleAction, removeMemberAction } from "@/server/member-actions";
 import { loadTeam } from "@/server/team";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Team · webhook.co",
@@ -20,7 +20,7 @@ function canManageMembers(role: MembershipRole): boolean {
 }
 
 export default async function TeamPage() {
-  const [result, session] = await Promise.all([loadTeam(), verifySession()]);
+  const [result, session] = await Promise.all([loadTeam(), requireOrgAccess()]);
   // You cannot leave your own personal org — there'd be nowhere to go, and the account-delete flow is what
   // actually erases it. personalOrgId is derived, so this costs no query.
   const isPersonalOrg = session.orgId === personalOrgId(session.userId);

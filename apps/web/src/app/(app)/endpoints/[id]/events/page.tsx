@@ -16,7 +16,7 @@ import { getListenWsUrl } from "@/server/env";
 import { loadMoreEventsAction } from "@/server/event-actions";
 import { loadEvents } from "@/server/events";
 import { mintListenTicketAction } from "@/server/listen-ticket-actions";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Events · webhook.co",
@@ -36,7 +36,7 @@ export default async function EventsPage({
     range?: string | string[];
   }>;
 }) {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const { id } = await params;
   const sp = await searchParams;
   // The raw URL filter values ride to the client list (and back into the load-more action); the page

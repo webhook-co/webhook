@@ -1,14 +1,24 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/server/session", () => ({
-  verifySession: vi.fn(async () => ({
+vi.mock("@/server/org-access", () => ({
+  requireOrgAccess: vi.fn(async () => ({
     userId: "usr_1",
     orgId: "org_1",
+    role: "owner",
     user: { name: "Dana Kessler", email: "dana@acme.co", image: null },
   })),
 }));
 vi.mock("@/server/auth-actions", () => ({ logout: vi.fn() }));
+// The org switcher's data. It has its own gate (verifySession → cookies()), which has no request scope in a
+// unit test — the layout's own gate is mocked above, and this is the other read the layout performs.
+vi.mock("@/server/my-orgs", () => ({
+  loadMyOrgs: vi.fn(async () => ({
+    orgs: [{ orgId: "org_1", name: "Acme", role: "owner" }],
+    currentOrgId: "org_1",
+  })),
+}));
+vi.mock("@/server/org-switch", () => ({ switchOrgAction: vi.fn() }));
 // The sidebar (AppNav) is a client component that reads the active route via usePathname.
 // The layout now also mounts the ⌘K palette, which routes via useRouter.
 vi.mock("next/navigation", () => ({
