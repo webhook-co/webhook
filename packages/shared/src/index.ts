@@ -57,4 +57,4 @@ export * from "./delivery-retry";
 export * from "./billing";
 export * from "./retention";
 export * from "./stripe-client";
-export * from "./client-advisory.js";
+export * from "./client-advisory";

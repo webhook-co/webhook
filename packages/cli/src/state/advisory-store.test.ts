@@ -40,8 +40,14 @@ describe("advisory store", () => {
     }
   });
 
+  // A read-only HOME or a full disk must never fail a command over a nudge. Use a FILE as the "state dir":
+  // mkdir under it fails with ENOTDIR instantly and identically on every platform. (A /proc path did not —
+  // it hung on the Linux runner and timed out, which is a worse test than none.)
   it("never throws when the state dir cannot be written", async () => {
-    await expect(writeAdvisory("/proc/nonexistent/nope", advisory)).resolves.toBeUndefined();
+    const notADir = join(dir, "i-am-a-file");
+    await writeFile(notADir, "");
+    await expect(writeAdvisory(notADir, advisory)).resolves.toBeUndefined();
+    expect(await readAdvisory(notADir)).toBeNull();
   });
 });
 
