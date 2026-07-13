@@ -102,7 +102,11 @@ describe("/play worker", () => {
       last = (await SELF.fetch(`${HOST}/${token}`, { method: "POST", body: `${i}` })).status;
     }
     expect(last).toBe(429); // the 101st is refused
-  });
+    // 30s, not the 5s default: proving the cap REQUIRES MAX_REQUESTS_PER_TOKEN + 1 sequential round-trips
+    // through the Durable Object (101 of them). That is ~190ms on an idle machine but >5s on a contended CI
+    // runner — it timed out on main (run 29255507006), and would keep doing so intermittently. The work is
+    // inherent to the assertion, so budget for it rather than pretend the test is fast.
+  }, 30_000);
 
   it("413s a body over the cap without buffering it whole (streamed guard)", async () => {
     const { token } = (await (await mint()).json()) as { token: string };
