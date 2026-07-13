@@ -9,6 +9,7 @@ import {
   findApiKeyGrant,
   listApiKeys,
   listApiKeysForGrant,
+  listApiKeysForGrants,
   listStandaloneApiKeys,
   makeApiKeyColdLookup,
 } from "../src/api-keys";
@@ -1135,5 +1136,128 @@ describe("mint ceiling on a member's FIRST login (not only on renewal)", () => {
         auditKey,
       ),
     ).rejects.toThrow(/grant not found/);
+  });
+
+  // The batched read that replaced the credentials page's N+1. It must be OBSERVATIONALLY IDENTICAL to
+  // calling listApiKeysForGrant once per grant — same keys, same order, same RLS boundary — or it is not a
+  // refactor, it is a new bug with better latency.
+  describe("listApiKeysForGrants (batched)", () => {
+    it("groups each grant's keys under its own id, and agrees with the per-grant query", async () => {
+      const orgId = randomUUID();
+      await seedOrg(orgId);
+
+      const a = await mintScopedKey(
+        app,
+        {
+          orgId,
+          userId: userOf(orgId),
+          scopes: ["events:read"],
+          audience: API,
+          ttlSeconds: 3600,
+          authMethod: "pkce_loopback",
+        },
+        hasher,
+        auditKey,
+      );
+      if (a.status !== "minted") throw new Error("unreachable");
+      await mintKeyForGrant(
+        app,
+        { orgId, grantId: a.grantId, scopes: ["events:read"], audience: API, ttlSeconds: 3600 },
+        hasher,
+        auditKey,
+      );
+
+      const b = await mintScopedKey(
+        app,
+        {
+          orgId,
+          userId: userOf(orgId),
+          scopes: [],
+          audience: API,
+          ttlSeconds: 3600,
+          authMethod: "device_code",
+        },
+        hasher,
+        auditKey,
+      );
+      if (b.status !== "minted") throw new Error("unreachable");
+
+      const batched = await listApiKeysForGrants(app, orgId, [a.grantId, b.grantId]);
+
+      // Same answer as N separate queries — asserted against the real per-grant function, not a hand-copy.
+      for (const grantId of [a.grantId, b.grantId]) {
+        const perGrant = await listApiKeysForGrant(app, orgId, grantId);
+        expect(batched.get(grantId)).toEqual(perGrant);
+      }
+      expect(batched.get(a.grantId)).toHaveLength(2);
+      expect(batched.get(b.grantId)).toHaveLength(1);
+      // No key leaks across the grant boundary.
+      expect(batched.get(b.grantId)!.map((k) => k.id)).not.toContain(a.keyId);
+      expect(JSON.stringify([...batched.values()])).not.toContain("key_hash");
+    });
+
+    // A grant with no keys must be PRESENT and EMPTY, never absent — otherwise the caller cannot tell "this
+    // device has no keys" from "I never asked about this device", and the page would silently omit a device.
+    it("returns an empty list for a grant that has no keys", async () => {
+      const orgId = randomUUID();
+      await seedOrg(orgId);
+      const g = await mintScopedKey(
+        app,
+        {
+          orgId,
+          userId: userOf(orgId),
+          scopes: [],
+          audience: API,
+          ttlSeconds: 3600,
+          authMethod: "device_code",
+        },
+        hasher,
+        auditKey,
+      );
+      if (g.status !== "minted") throw new Error("unreachable");
+      // Revoking leaves the grant with its minted key; use a fresh unrelated id to model "no keys".
+      const orphan = randomUUID();
+
+      const batched = await listApiKeysForGrants(app, orgId, [orphan]);
+
+      expect(batched.has(orphan)).toBe(true);
+      expect(batched.get(orphan)).toEqual([]);
+    });
+
+    it("is a no-op (and hits no database) for an org with no grants", async () => {
+      const orgId = randomUUID();
+      await seedOrg(orgId);
+      expect(await listApiKeysForGrants(app, orgId, [])).toEqual(new Map());
+    });
+
+    // The whole point of RLS: batching must not become a way to ask about ANOTHER org's grant. Passing a
+    // foreign grant id must return an empty bucket, never that org's keys.
+    it("never returns another org's keys, even when its grant id is passed explicitly", async () => {
+      const orgA = randomUUID();
+      const orgB = randomUUID();
+      await seedOrg(orgA);
+      await seedOrg(orgB);
+
+      const bGrant = await mintScopedKey(
+        app,
+        {
+          orgId: orgB,
+          userId: userOf(orgB),
+          scopes: ["events:read"],
+          audience: API,
+          ttlSeconds: 3600,
+          authMethod: "pkce_loopback",
+        },
+        hasher,
+        auditKey,
+      );
+      if (bGrant.status !== "minted") throw new Error("unreachable");
+
+      // Org A asks about org B's grant id, by id. RLS (org_id = current_org_id()) must starve it.
+      const batched = await listApiKeysForGrants(app, orgA, [bGrant.grantId]);
+
+      expect(batched.get(bGrant.grantId)).toEqual([]);
+      expect(JSON.stringify([...batched.values()])).not.toContain(bGrant.keyId);
+    });
   });
 });

@@ -8,6 +8,7 @@ import {
   PageContainer,
 } from "@webhook-co/ui";
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { DeleteAccountCard } from "@/components/delete-account-card";
 import { DeleteOrgCard } from "@/components/delete-org-card";
@@ -64,7 +65,9 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
         </CardHeader>
         <CardContent>
           <Button asChild variant="secondary">
-            <a href={`/org/${session.slug}/settings/connected-apps`}>Manage connected apps</a>
+            {/* next/link, not a bare <a>: an anchor is a FULL DOCUMENT navigation — it tears down the app
+                shell and re-runs the whole gate + every layout read just to move one page sideways. */}
+            <Link href={`/org/${session.slug}/settings/connected-apps`}>Manage connected apps</Link>
           </Button>
         </CardContent>
       </Card>

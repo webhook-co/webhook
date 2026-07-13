@@ -1,8 +1,8 @@
 import "server-only";
 
-import { listUserOrgs, type UserOrg } from "@webhook-co/db/orgs";
+import type { UserOrg } from "@webhook-co/db/orgs";
 
-import { withTenantDb } from "./db";
+import { readUserOrgDirectory } from "./org-directory";
 import { verifySession } from "./session";
 
 // The orgs the signed-in user may switch between (Lane 2.7). Read for the shell on every gated page, so it
@@ -24,11 +24,17 @@ export interface MyOrgs {
   readonly currentOrgId: string;
 }
 
-/** Every org the signed-in user belongs to, plus which one the session is currently acting as. */
+/**
+ * Every org the signed-in user belongs to, plus which one the session is currently acting as.
+ *
+ * Goes through {@link readUserOrgDirectory}, which is memoized per request — so this SHARES the directory
+ * read that `requireOrgAccess` already performed rather than re-issuing the identical `user_org_directory()`
+ * query on a second connection, which is what it used to do on every single page of the dashboard.
+ */
 export async function loadMyOrgs(): Promise<MyOrgs> {
   const session = await verifySession();
   try {
-    const orgs = await withTenantDb((app) => listUserOrgs(app, session.userId));
+    const orgs = await readUserOrgDirectory(session.userId);
     return { orgs, currentOrgId: session.orgId };
   } catch {
     // The shell must never fail to render because the switcher's read blipped. Degrade to "no choice".

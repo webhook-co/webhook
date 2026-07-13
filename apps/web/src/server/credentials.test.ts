@@ -28,7 +28,7 @@ const standaloneKey = { ...childKey, id: "k2", name: "Production", start: "whsec
 function makeReaders(over: Partial<CredentialReaders> = {}): CredentialReaders {
   return {
     listGrants: vi.fn(async () => [grant]),
-    listApiKeysForGrant: vi.fn(async () => [childKey]),
+    listApiKeysForGrants: vi.fn(async () => new Map([["g1", [childKey]]])),
     listStandaloneApiKeys: vi.fn(async () => [standaloneKey]),
     ...over,
   };
@@ -47,8 +47,11 @@ describe("loadCredentials", () => {
       expect(result.keys.map((k) => k.id)).toEqual(["k2"]);
     }
     expect(readers.listGrants).toHaveBeenCalledWith("org_1");
-    expect(readers.listApiKeysForGrant).toHaveBeenCalledWith("org_1", "g1");
     expect(readers.listStandaloneApiKeys).toHaveBeenCalledWith("org_1");
+    // ONE batched read for every grant's keys — not one call per grant. Asserting on the ARGUMENTS (the full
+    // id list, once) is what pins that: a regression back to the N+1 would call this once PER grant, and
+    // `toHaveBeenCalledExactlyOnceWith` would catch it where a looser `toHaveBeenCalled` would not.
+    expect(readers.listApiKeysForGrants).toHaveBeenCalledExactlyOnceWith("org_1", ["g1"]);
   });
 
   it("returns an error result when a read throws (db/Hyperdrive fault)", async () => {
@@ -68,6 +71,7 @@ describe("loadCredentials", () => {
       "org_1",
       makeReaders({
         listGrants: vi.fn(async () => []),
+        listApiKeysForGrants: vi.fn(async () => new Map()),
         listStandaloneApiKeys: vi.fn(async () => []),
       }),
     );

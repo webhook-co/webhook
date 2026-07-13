@@ -268,6 +268,54 @@ export async function listStandaloneApiKeys(app: Sql, orgId: string): Promise<Ap
   return rows.map(toApiKeyListItem);
 }
 
+/**
+ * List the keys minted under MANY grants at once, grouped by grant id. Display metadata only.
+ *
+ * This exists because the per-grant `listApiKeysForGrant` below was an N+1 with teeth. The credentials page
+ * called it once per grant inside a `Promise.all` — but every call opens its OWN `withTenant` transaction,
+ * and the dashboard's client is `max: 1`, so the concurrency was a fiction: the calls queued on the single
+ * connection and ran strictly serially. The page cost `(2 + N)` transactions x 4 round trips (BEGIN,
+ * set_config, the query, COMMIT), growing with every device a user has ever authorised.
+ *
+ * This is ONE transaction and ONE query, whatever N is.
+ *
+ * The result is keyed by grant id and pre-seeded with an empty list for every id asked for, so a grant with
+ * no keys is present-and-empty rather than missing — the caller never has to distinguish "no keys" from "I
+ * forgot to ask".
+ */
+export async function listApiKeysForGrants(
+  app: Sql,
+  orgId: string,
+  grantIds: readonly string[],
+): Promise<Map<string, ApiKeyListItem[]>> {
+  const byGrant = new Map<string, ApiKeyListItem[]>(grantIds.map((id) => [id, []]));
+  // `= any('{}')` is valid SQL but a pointless round trip; an org with no grants is the common case.
+  if (grantIds.length === 0) return byGrant;
+
+  const rows = await withTenant(app, orgId, async (tx) => {
+    // `in ${tx([...])}` — postgres.js expands a JS array into a real parameterized IN list. NOT
+    // `= any(${ids}::uuid[])`: that cast makes the driver serialize the array as a bare comma-joined string
+    // and Postgres rejects it ("malformed array literal"). A real-Postgres test caught that; a mocked one
+    // would not have.
+    return tx<(ApiKeyListRow & { grant_id: string })[]>`
+      select id, grant_id, name, start, scopes, created_at, last_used_at, expires_at, revoked_at
+      from api_keys
+      where org_id = ${orgId} and grant_id in ${tx(grantIds as string[])}
+      order by created_at desc`;
+  });
+
+  for (const row of rows) {
+    // Rows arrive newest-first, and pushing in arrival order preserves that WITHIN each grant's bucket —
+    // so each list matches what the per-grant query would have returned.
+    //
+    // `?.push` rather than creating the bucket: a grant_id outside `grantIds` cannot come back (the ANY
+    // filter forbids it), so a miss here would mean the database disagreed with the question we asked. Drop
+    // it rather than inventing a bucket the caller never requested.
+    byGrant.get(row.grant_id)?.push(toApiKeyListItem(row));
+  }
+  return byGrant;
+}
+
 /** List the keys minted under one grant (newest first). Display metadata only — no hash, no plaintext. */
 export async function listApiKeysForGrant(
   app: Sql,
