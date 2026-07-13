@@ -80,6 +80,20 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  cli-channels-agree:
+    name: npm and Homebrew serve the same CLI
+    runs-on: ubuntu-latest
+    needs: install
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+      # `wbhk` ships via npm AND Homebrew, and they can silently diverge: release-cli publishes npm
+      # immediately but leaves the GitHub release as a DRAFT (a deliberate human gate), while homebrew-bump
+      # only fires on `release: published`. Tagging cli-v0.3.0 therefore shipped npm 0.3.0 and left brew on
+      # 0.2.0 — and nothing complained. A brew user ran `wbhk -v`, saw 0.2.0, ran `brew upgrade`, and got
+      # 0.2.0 again. The gate stays; forgetting it is now a red check instead of a silent stranding.
+      - run: node scripts/check-cli-channels.mjs
+
   lint:
     name: lint
     runs-on: ubuntu-latest
