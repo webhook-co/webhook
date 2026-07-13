@@ -54,7 +54,7 @@ async function seedOrg(
   await withTenant(app, orgId, async (tx) => {
     // created_at anchors the lifetime allowance window; set it BEFORE the seeded usage date so
     // sumPeriodEventUsage (inside evaluateOrgCap) counts it (else the window excludes it → never over cap).
-    await tx`insert into orgs (id, slug, name, created_at) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"}, ${"2026-01-01T00:00:00.000Z"})`;
+    await tx`insert into orgs (id, slug, name, created_at) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"}, ${"2026-01-01T00:00:00.000Z"})`;
     await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${role})`;
     if (opts.policy !== null && opts.policy !== undefined) {
       await tx`insert into org_limits (org_id, event_cap, pause_policy) values (${orgId}, ${1000}, ${opts.policy})`;

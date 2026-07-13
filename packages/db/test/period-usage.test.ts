@@ -27,7 +27,7 @@ async function seedOrg(createdAt = ORG_CREATED): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name, created_at)
-             values (${orgId}, ${orgId.slice(0, 8)}, ${"o"}, ${createdAt})`;
+             values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"}, ${createdAt})`;
   });
   return orgId;
 }

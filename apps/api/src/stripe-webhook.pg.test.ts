@@ -45,7 +45,7 @@ function subObject(orgId: string, cap = "500000"): Record<string, unknown> {
 async function seedOrg(): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"})`;
   });
   return orgId;
 }
@@ -171,7 +171,7 @@ describe("processStripeEvent (integration)", () => {
 
     // The redelivery (now the org exists — the transient condition cleared) applies cleanly.
     await withTenant(app, org, async (tx) => {
-      await tx`insert into orgs (id, slug, name) values (${org}, ${org.slice(0, 8)}, ${"o"})`;
+      await tx`insert into orgs (id, slug, name) values (${org}, ${"o-" + org.slice(0, 8)}, ${"o"})`;
     });
     expect(await processStripeEvent(billing, e)).toBe("applied");
     expect(await ledgerCount(e.id)).toBe(1);

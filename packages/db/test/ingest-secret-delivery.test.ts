@@ -34,7 +34,7 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
   store = new SecretStore(await LocalKmsProvider.generate());
-  orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
+  orgId = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org" })).id;
 }, setupHookTimeoutMs());
 
 afterAll(async () => {

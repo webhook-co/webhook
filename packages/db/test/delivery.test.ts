@@ -96,7 +96,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
-  orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
+  orgId = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org" })).id;
   endpointId = (await createEndpoint(app, { orgId, name: "ep" }, hasher)).id;
 }, setupHookTimeoutMs());
 
@@ -492,7 +492,7 @@ describe("due predicate — consumer contracts (migration 0027)", () => {
     const idA = await seedDelivery(destA, { status: "queued" });
 
     // a SECOND org with its own endpoint, destination, event, and a due delivery — seeded under org B's RLS.
-    const orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "OrgB" })).id;
+    const orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "OrgB" })).id;
     const endpointB = (await createEndpoint(app, { orgId: orgB, name: "epB" }, hasher)).id;
     const destB = (
       await createReplayDestination(app, { orgId: orgB, url: "https://tb.example.com/in" })

@@ -68,7 +68,7 @@ describe("deleteUserIdentity", () => {
       values (${userId}, ${"Erase Me"}, ${`${userId}@e.test`}, ${true}, now())`;
     const orgId = randomUUID();
     await withTenant(app, orgId, async (tx) => {
-      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o"}, ${"o"})`;
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"})`;
       await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${"owner"})`;
     });
 
@@ -94,7 +94,7 @@ describe("deleteUserIdentity", () => {
     const orgId = randomUUID();
     const grantId = randomUUID();
     await withTenant(app, orgId, async (tx) => {
-      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"g"}, ${"g"})`;
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"g-" + orgId.slice(0, 8)}, ${"g"})`;
       await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${grantee}, ${"member"})`;
       // a grant OWNED by `grantee`, APPROVED BY the `approver` we're about to erase.
       await tx`

@@ -64,7 +64,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   auditKey = await importAuditKey(new Uint8Array(32).fill(9));
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
   endpointId = (
     await createEndpointWithAudit(
       app,
@@ -120,7 +120,8 @@ describe("endpoints.revealIngestUrl handler", () => {
 
   it("rate-limits reveals per org (RATE_LIMITED once the audit-derived window cap is hit)", async () => {
     // Fresh org so this test's window count is isolated.
-    const capOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Cap" })).id;
+    const capOrg = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Cap" }))
+      .id;
     const ep = (
       await createEndpointWithAudit(
         app,

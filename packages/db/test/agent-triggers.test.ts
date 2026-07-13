@@ -86,8 +86,8 @@ beforeAll(async () => {
   cursorKey = await importCursorKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 3 + 1) % 256)),
   );
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
   epB = (await createEndpoint(app, { orgId: orgB, name: "ep-b" }, hasher)).id;
 }, setupHookTimeoutMs());
@@ -128,7 +128,9 @@ describe("createAgentTrigger", () => {
   });
 
   it("enforces a per-org active-trigger soft cap (RATE_LIMITED)", async () => {
-    const capOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org cap" })).id;
+    const capOrg = (
+      await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org cap" })
+    ).id;
     const ep = (await createEndpoint(app, { orgId: capOrg, name: "ep-cap" }, hasher)).id;
     // Fill to a small injected cap, then the next create is rejected.
     await createAgentTrigger(app, { orgId: capOrg, endpointId: ep, maxActive: 2 });
@@ -146,7 +148,8 @@ describe("createAgentTrigger", () => {
 
 describe("listAgentTriggers", () => {
   it("returns an org's active triggers newest-first, filterable by endpoint, org-scoped", async () => {
-    const iso = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org iso" })).id;
+    const iso = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org iso" }))
+      .id;
     const ep1 = (await createEndpoint(app, { orgId: iso, name: "ep1" }, hasher)).id;
     const ep2 = (await createEndpoint(app, { orgId: iso, name: "ep2" }, hasher)).id;
     const t1 = await createAgentTrigger(app, { orgId: iso, endpointId: ep1 });

@@ -48,8 +48,8 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   store = new SecretStore(await LocalKmsProvider.generate());
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
   destA = (await createReplayDestination(app, { orgId: orgA, url: "https://a.example.com/in" })).id;
   destB = (await createReplayDestination(app, { orgId: orgB, url: "https://b.example.com/in" })).id;
 }, setupHookTimeoutMs());

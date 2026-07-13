@@ -39,7 +39,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
-  orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
+  orgId = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org" })).id;
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
@@ -147,7 +147,9 @@ describe("getEndpointIngestTokenHash (the cross-surface invalidation seam, ADR-0
 
   it("is org-scoped under RLS and null for an unknown endpoint id", async () => {
     const ep = await createEndpoint(app, { orgId, name: "seam-rls" }, hasher);
-    const otherOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Other" })).id;
+    const otherOrg = (
+      await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Other" })
+    ).id;
     // Another org's tenant context cannot read this endpoint's token hash (RLS).
     expect(await getEndpointIngestTokenHash(app, otherOrg, ep.id)).toBeNull();
     // An unknown id under the right org is also null.

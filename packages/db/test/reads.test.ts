@@ -137,8 +137,8 @@ beforeAll(async () => {
   );
   handlers = createReadHandlers({ tenant: app, cursorKey, auditKey });
 
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
   ctxA.orgId = orgA;
   ctxB.orgId = orgB;
 
@@ -1104,7 +1104,7 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
 describe("isIngestPaused", () => {
   /** A fresh org (avoids contaminating the shared orgA/orgB fixtures used by the read tests above). */
   async function freshOrg(): Promise<string> {
-    return (await createOrg(app, { slug: randomUUID().slice(0, 12), name: "cap" })).id;
+    return (await createOrg(app, { slug: `o-${randomUUID().slice(0, 12)}`, name: "cap" })).id;
   }
   async function setPaused(orgId: string, paused: boolean): Promise<void> {
     await withTenant(

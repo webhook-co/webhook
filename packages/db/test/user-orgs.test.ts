@@ -240,3 +240,85 @@ describe("readUserProfile — the ONLY path webhook_app has to an identity", () 
     expect(rows.map((r) => r.name)).toEqual([mine]);
   });
 });
+
+describe("the directory resolves a slug — the security keystone of /org/{slug}", () => {
+  // A GLOBAL slug -> org_id lookup is STRUCTURALLY IMPOSSIBLE for webhook_app: its only SELECT policy on
+  // `orgs` is `id = current_org_id()`, so `select id from orgs where slug = $1` returns zero rows — silently.
+  // And the "obvious" fix (a permissive policy so any slug can be looked up) is exactly the escalation
+  // migration 0067 exists to prevent, because Postgres policies OR together.
+  //
+  // So the slug is resolved INSIDE THE CALLER'S OWN DIRECTORY. That makes slug resolution and the membership
+  // check THE SAME OPERATION — they cannot drift apart, because there is only one of them — and it means a
+  // slug you don't belong to is indistinguishable from one that doesn't exist. No enumeration oracle, by
+  // construction rather than by a check someone has to remember.
+  it("returns the current slug for each of the caller's orgs", async () => {
+    const uid = `u_slug_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const slug = `keystone-${randomUUID().slice(0, 6)}`;
+    const { id } = await createOrgWithOwner(app, { slug, name: "Keystone", ownerUserId: uid });
+
+    const orgs = await listUserOrgs(app, uid);
+
+    expect(orgs.find((o) => o.orgId === id)?.slug).toBe(slug);
+  });
+
+  it("returns FORMER slugs too, so an old link still resolves to the org that owns it", async () => {
+    const uid = `u_hist_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const first = `oldname-${randomUUID().slice(0, 6)}`;
+    const second = `newname-${randomUUID().slice(0, 6)}`;
+    const { id } = await createOrgWithOwner(app, {
+      slug: first,
+      name: "Renamed",
+      ownerUserId: uid,
+    });
+
+    // The DB records the retirement itself — the app cannot write org_slug_history (see org-slug.test.ts).
+    await withTenant(app, id, (tx) => tx`update orgs set slug = ${second} where id = ${id}`);
+
+    const org = (await listUserOrgs(app, uid)).find((o) => o.orgId === id);
+
+    expect(org?.slug).toBe(second);
+    expect(org?.formerSlugs).toContain(first);
+  });
+
+  it("an org that RECLAIMS a former slug does not report its own current slug as former", async () => {
+    // The reclaim path leaves a history row for the slug the org is now using again. Without a
+    // `h.slug <> o.slug` filter the directory would report the CURRENT slug as a FORMER one — and the
+    // resolver would then treat a canonical URL as a stale one to redirect away from.
+    const uid = `u_recl_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const original = `boomerang-${randomUUID().slice(0, 6)}`;
+    const away = `elsewhere-${randomUUID().slice(0, 6)}`;
+    const { id } = await createOrgWithOwner(app, {
+      slug: original,
+      name: "Boomerang",
+      ownerUserId: uid,
+    });
+
+    await withTenant(app, id, (tx) => tx`update orgs set slug = ${away} where id = ${id}`);
+    await withTenant(app, id, (tx) => tx`update orgs set slug = ${original} where id = ${id}`); // back
+
+    const org = (await listUserOrgs(app, uid)).find((o) => o.orgId === id);
+
+    expect(org?.slug).toBe(original);
+    expect(org?.formerSlugs).toContain(away);
+    expect(org?.formerSlugs).not.toContain(original); // its OWN current slug is not "former"
+  });
+
+  it("does NOT leak a slug you are not a member of — the resolver simply cannot see it", async () => {
+    const mine = `u_a_${randomUUID().slice(0, 8)}`;
+    const theirs = `u_b_${randomUUID().slice(0, 8)}`;
+    await seedUser(mine);
+    await seedUser(theirs);
+    const secret = `theirsecret-${randomUUID().slice(0, 6)}`;
+    await createOrgWithOwner(app, { slug: secret, name: "Theirs", ownerUserId: theirs });
+
+    // The whole resolution surface, for `mine`. Their slug is not in it — so `/org/theirsecret-…` is, to me,
+    // exactly as non-existent as a slug nobody ever registered. There is nothing to distinguish, so there is
+    // nothing to probe.
+    const resolvable = (await listUserOrgs(app, mine)).flatMap((o) => [o.slug, ...o.formerSlugs]);
+
+    expect(resolvable).not.toContain(secret);
+  });
+});

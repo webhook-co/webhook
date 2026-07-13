@@ -21,7 +21,7 @@ let root: Sql; // superuser — seeds the SELECT-only billing_customers (webhook
 async function seedOrg(): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"})`;
   });
   return orgId;
 }

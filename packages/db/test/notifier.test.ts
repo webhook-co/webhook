@@ -33,7 +33,7 @@ async function seedOrgWithOwner(email: string): Promise<{ orgId: string; endpoin
     insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
     values (${userId}, ${"Owner"}, ${email}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${randomUUID().slice(0, 8)}, ${"Org"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + randomUUID().slice(0, 8)}, ${"Org"})`;
     await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${"owner"})`;
   });
   const endpointId = (await createEndpoint(app, { orgId, name: "ep" }, hasher)).id;
@@ -146,7 +146,7 @@ describe("listPendingNotifications", () => {
     await owner`insert into "user" ("id","name","email","emailVerified","updatedAt")
                 values (${userId}, ${"Comma"}, ${commaEmail}, ${true}, now())`;
     await withTenant(app, orgId, async (tx) => {
-      await tx`insert into orgs (id, slug, name) values (${orgId}, ${randomUUID().slice(0, 8)}, ${"Org"})`;
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + randomUUID().slice(0, 8)}, ${"Org"})`;
       await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${"owner"})`;
     });
     const { intentId } = await seedIntent(orgId);
@@ -169,7 +169,7 @@ describe("listPendingNotifications", () => {
       app,
       orgId,
       (tx) =>
-        tx`insert into orgs (id, slug, name) values (${orgId}, ${randomUUID().slice(0, 8)}, ${"Org"})`,
+        tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + randomUUID().slice(0, 8)}, ${"Org"})`,
     );
     const { intentId } = await seedIntent(orgId);
     const row = (await pendingFor(orgId)).find((n) => n.intentId === intentId);

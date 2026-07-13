@@ -41,8 +41,8 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   sealer = new SecretStore(await LocalKmsProvider.generate());
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
 }, setupHookTimeoutMs());
 
 afterAll(async () => {

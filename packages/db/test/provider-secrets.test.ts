@@ -59,8 +59,8 @@ beforeAll(async () => {
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
   store = new SecretStore(await LocalKmsProvider.generate());
   auditKey = await importAuditKey(new Uint8Array(32).fill(7));
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "stripe-ep" }, hasher)).id;
 }, setupHookTimeoutMs());
 

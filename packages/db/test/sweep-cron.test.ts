@@ -40,7 +40,7 @@ async function seedOrg(orgId: string): Promise<string> {
     values (${userOf(orgId)}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   const grantId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"Org"})`;
     await tx`insert into auth_grant (id, org_id, user_id, status, auth_method)
              values (${grantId}, ${orgId}, ${userOf(orgId)}, ${"active"}, ${"pkce_loopback"})`;
   });

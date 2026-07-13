@@ -168,6 +168,13 @@ export function personalOrgId(userId: string): string {
 
 export interface UserOrg {
   readonly orgId: string;
+  /** The org's CURRENT slug — its URL segment (`/org/{slug}/…`). */
+  readonly slug: string;
+  /**
+   * Slugs this org has been renamed AWAY from, newest first. A URL bearing one of these still belongs to this
+   * org and 308s to the current slug — that is what makes a rename non-destructive to everyone's links.
+   */
+  readonly formerSlugs: readonly string[];
   readonly name: string;
   /** The caller's role in that org. */
   readonly role: MembershipRole;
@@ -193,10 +200,23 @@ export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]>
     app,
     userId,
     (tx) =>
-      tx<{ org_id: string; name: string; role: MembershipRole }[]>`
-        select org_id, name, role from user_org_directory()`,
+      tx<
+        {
+          org_id: string;
+          slug: string;
+          former_slugs: string[] | null;
+          name: string;
+          role: MembershipRole;
+        }[]
+      >`select org_id, slug, former_slugs, name, role from user_org_directory()`,
   );
-  return rows.map((r) => ({ orgId: r.org_id, name: r.name, role: r.role }));
+  return rows.map((r) => ({
+    orgId: r.org_id,
+    slug: r.slug,
+    formerSlugs: r.former_slugs ?? [],
+    name: r.name,
+    role: r.role,
+  }));
 }
 
 /** A user's display identity — what the signup bootstrap names their personal org after. */

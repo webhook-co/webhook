@@ -63,7 +63,7 @@ async function seedOrg(orgId: string): Promise<void> {
     insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
     values (${userOf(orgId)}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"Org"})`;
     await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userOf(orgId)}, 'owner')`;
   });
 }
@@ -477,7 +477,7 @@ describe("mint ceiling — a key can't grant more than the human who minted it",
       insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
       values (${userId}, ${"Seed"}, ${`${userId}@e.test`}, ${true}, now())`;
     await withTenant(app, orgId, async (tx) => {
-      await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"Org"})`;
       await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${role})`;
     });
     return userId;

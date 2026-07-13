@@ -81,8 +81,8 @@ beforeAll(async () => {
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 7) % 256)),
   );
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
@@ -205,7 +205,8 @@ describe("deleteEndpointWithAudit (soft delete)", () => {
   });
 
   it("relieves the per-org create cap — a soft-deleted endpoint no longer counts", async () => {
-    const capOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "CapDel" })).id;
+    const capOrg = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "CapDel" }))
+      .id;
     const a = await createEndpointWithAudit(
       app,
       { orgId: capOrg, name: "c1", actor: userActor("user_alice"), maxEndpoints: 2 },

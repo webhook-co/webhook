@@ -97,8 +97,8 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   reconciler = createClient(pg.urlFor({ role: DB_ROLES.reconciler }));
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "epA" }, hasher)).id;
   epB = (await createEndpoint(app, { orgId: orgB, name: "epB" }, hasher)).id;
 }, setupHookTimeoutMs());

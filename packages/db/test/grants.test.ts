@@ -51,7 +51,7 @@ async function seedOrg(orgId: string): Promise<void> {
     insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
     values (${userId}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"Org"})`;
     // A grant always belongs to a MEMBER — that is what consent established. Seeding the membership makes
     // the fixture model reality: without it the fixture silently describes a user who was already removed,
     // and every mint would be (correctly) refused by the ceiling for the wrong reason.
