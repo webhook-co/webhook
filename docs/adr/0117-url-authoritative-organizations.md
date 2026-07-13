@@ -88,10 +88,17 @@ move is not UX; it is the fix. This ADR supersedes that conclusion.
 - The org switcher is a `<Link>`, not a cookie re-mint — which **deleted `switchOrgAction`**, the only code
   path in the product that mutated a session's org, and an undocumented dependency on Next's
   `cookies().set()`-invalidates-the-Router-Cache behaviour that no test pinned.
-- Every dashboard route is `/org/{slug}/…`. **Hard cutover** — the old paths are deleted, not redirected, so a
-  legacy redirector can never re-introduce the cookie-guessing it exists to delete. `/` survives as the
-  default-org resolver: it has no org because the user just authenticated, so choosing one is a defined
+- Every dashboard route is `/org/{slug}/…`. **Hard cutover** — the old page routes are deleted, not moved, so a
+  redirector can never re-introduce the cookie-guessing of the *acting* org it exists to delete. `/` survives as
+  the default-org resolver: it has no org because the user just authenticated, so choosing one is a defined
   product decision, not a guess.
+  - **Correction (legacy bookmarks).** The clean cutover meant every existing bookmark to an old top-level path
+    (`/endpoints`, `/billing`, …) 404'd **silently** — a large, invisible break (a `www` paid-CTA to
+    `/usage` 404'd for every visitor). So a catch-all `(app)/[...legacy]` forwards a **known** old path to the
+    caller's **default org** (`/org/{slug}/…`, path + query intact), then leaves genuine unknowns as 404s. This
+    does **not** resurrect the deleted hazard: it resolves the *default* org exactly as `/` does — never the
+    cookie's *acting* org, and it is a GET that writes nothing. The org is in the resulting URL and switchable.
+    The distinction the cutover cares about is "don't guess which org a **write** targets," not "never redirect."
 - `/org/a/*` and `/org/b/*` are different Router-Cache keys and cannot alias; the back button lands on the org
   you were actually looking at.
 - There is no middleware (ADR-0021), so the gate and the canonicalization live in the layout/page, and the
