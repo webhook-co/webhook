@@ -108,6 +108,18 @@ describe("requireOrgAccess(slug)", () => {
       );
     });
 
+    it("PRESERVES the query string on the 308 — filters and cursor survive a rename", async () => {
+      // The whole point of former-slug history is that old links keep working. A shared, FILTERED, paginated
+      // events link that dropped its ?status=&cursor= on redirect would land the recipient on an unfiltered,
+      // un-paginated list — the link would "work" while silently losing what made it worth sharing. The
+      // caller carries its query in the subPath; the redirect must keep it.
+      await expect(
+        requireOrgAccess("beta-old", "/endpoints/ep_1/events?status=failed&cursor=abc"),
+      ).rejects.toThrow(
+        "NEXT_PERMANENT_REDIRECT:/org/beta-corp/endpoints/ep_1/events?status=failed&cursor=abc",
+      );
+    });
+
     it("resolves a retired slug straight through when there is no path to redirect to (an action)", async () => {
       // A server action does not render, so there is nothing to redirect. It must still ACT on the right org —
       // refusing here would break a form posted from a page the user loaded seconds before the rename.

@@ -26,7 +26,7 @@ export default function NotFound() {
           The page you&apos;re looking for may have been moved or deleted, or the link was mistyped.
         </p>
         <Button asChild>
-          <Link href="/">Back to endpoints</Link>
+          <Link href="/">Back to your dashboard</Link>
         </Button>
       </div>
     </main>

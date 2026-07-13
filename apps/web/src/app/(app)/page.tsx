@@ -23,13 +23,23 @@ import { LOGOUT_URL } from "@/server/session";
  * Belonging to none means the session names an org that is gone or that they have been removed from, with
  * nothing to fall back to: sign them out rather than loop.
  */
-export default async function AppHome() {
-  const { orgs, currentOrgId } = await loadMyOrgs();
+export default async function AppHome({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const [{ orgs, currentOrgId }, sp] = await Promise.all([loadMyOrgs(), searchParams]);
 
   // The hint is untrusted FOR THIS PURPOSE: it may name an org they have since been removed from. It is only
   // ever used to PICK from the directory, never to bypass it.
   const target = orgs.find((o) => o.orgId === currentOrgId) ?? orgs[0];
   if (!target) redirect(LOGOUT_URL);
 
-  redirect(`/org/${target.slug}/dashboard`);
+  // Forward a whitelisted status flag if one arrived (e.g. the invite-accept fallback lands here as
+  // `/?invite=accepted` when it couldn't resolve the joined org's slug itself). Only `invite` is carried, and
+  // only its known values — this is a redirect target, not an open query-string passthrough.
+  const invite = typeof sp.invite === "string" ? sp.invite : undefined;
+  const q = invite && ["accepted", "invalid", "error"].includes(invite) ? `?invite=${invite}` : "";
+
+  redirect(`/org/${target.slug}/dashboard${q}`);
 }

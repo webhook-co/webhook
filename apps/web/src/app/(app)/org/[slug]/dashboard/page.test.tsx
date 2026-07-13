@@ -116,7 +116,12 @@ describe("DashboardPage", () => {
     const links = within(panel.parentElement as HTMLElement).getAllByRole("link");
     const hrefs = links.map((l) => l.getAttribute("href"));
     // Severity order: past due → paused → disabled destinations → dead deliveries.
-    expect(hrefs).toEqual(["/billing", "/usage", "/destinations", "/deliveries?status=dead"]);
+    expect(hrefs).toEqual([
+      "/org/acme/billing",
+      "/org/acme/usage",
+      "/org/acme/destinations",
+      "/org/acme/deliveries?status=dead",
+    ]);
     expect(screen.getByText("2 destinations auto-disabled")).toBeInTheDocument();
     expect(screen.getByText("4 deliveries gave up")).toBeInTheDocument();
   });

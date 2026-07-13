@@ -201,18 +201,34 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
       outcome = "error";
     }
   }
-  // The landing org: the one just joined when accepted, else the session's own default (the cookie orgId is
-  // only a hint — validated against the directory), else the first org they belong to. None at all → sign out
-  // rather than bounce them into a dashboard that cannot exist.
+  // Where to land, and the RULE THAT MATTERS: a SUCCESSFUL accept must never sign the user out.
+  //
+  // The naive version read the directory again to turn the joined org into a slug, and fell back to
+  // `LOGOUT_URL` when that read returned nothing. But `listUserOrgs` can throw transiently (Hyperdrive/DB
+  // blip), and the accept has ALREADY committed — so a flaky read would bounce a user who just joined an org
+  // straight to sign-in, with no confirmation. The outcome of the write must not hinge on a follow-up read.
+  //
+  // So the landing slug is resolved inside the caller's directory, and the fallbacks degrade toward "still
+  // land somewhere sensible" rather than toward logout:
+  //   - accepted: prefer the org just joined; if the read hiccuped, `/` (the default-org resolver) still
+  //     carries the banner and figures out where they belong. NOT logout.
+  //   - only sign out when the user genuinely has NO org AND nothing was accepted — the pre-existing
+  //     dead-end, unchanged.
   let orgs: Awaited<ReturnType<typeof listUserOrgs>> = [];
   try {
     orgs = await withTenantDb((app) => listUserOrgs(app, session.userId));
   } catch (error) {
     logActionError("invite.directory_read_failed", error);
   }
-  const target =
-    orgs.find((o) => o.orgId === orgId) ?? orgs.find((o) => o.orgId === session.orgId) ?? orgs[0];
-  if (!target) redirect(LOGOUT_URL);
 
+  if (outcome === "accepted") {
+    const joined = orgs.find((o) => o.orgId === orgId);
+    // Land in the joined org if we could resolve its slug; otherwise `/` — which re-reads the directory and
+    // routes them, and still shows the "joined" banner. Never logout on a successful accept.
+    redirect(joined ? `/org/${joined.slug}/dashboard?invite=accepted` : `/?invite=accepted`);
+  }
+
+  const target = orgs.find((o) => o.orgId === session.orgId) ?? orgs[0];
+  if (!target) redirect(LOGOUT_URL); // genuinely no org and nothing joined — the pre-existing dead end
   redirect(`/org/${target.slug}/dashboard?invite=${outcome}`);
 }

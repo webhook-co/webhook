@@ -79,6 +79,7 @@ export default async function DashboardPage({
   const data = await loadDashboard(session.orgId, { days: window.days, endMs: window.endMs });
   const chart = buildDashboardChart(data.series, window.days, window.endMs);
   const attention = deriveAttention({
+    slug: session.slug,
     pastDue: data.pastDue,
     paused: data.paused,
     disabledDestinationCount: data.disabledDestinationCount,

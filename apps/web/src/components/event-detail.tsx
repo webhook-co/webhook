@@ -185,7 +185,7 @@ export function EventDetail({
             payloadBytes={event.payloadBytes}
             contentType={event.contentType}
             loadPayload={loadPayload}
-            downloadHref={`/endpoints/${endpointId}/events/${event.id}/payload`}
+            downloadHref={orgHref(slug, `/endpoints/${endpointId}/events/${event.id}/payload`)}
           />
         </CardContent>
       </Card>

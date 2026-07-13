@@ -57,48 +57,47 @@ export interface OrgAccess extends Session {
 const sameSlug = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
 
 /**
- * Resolve `slug` to an org the caller is a member of, and return the session, the org, and their role.
+ * The pure resolution + membership check, memoized ON THE SLUG ALONE.
  *
- * @param slug     the `[slug]` URL segment — untrusted.
- * @param subPath  the path BELOW `/org/{slug}` (e.g. `/endpoints/ep_1/events`). Pages pass it so a stale or
- *                 mis-cased URL can be 308'd to the canonical one with the deep link intact. Server actions
- *                 OMIT it: they do not render, so there is nothing to redirect — they resolve straight through
- *                 and act on the right org, which is what a form posted seconds before a rename needs.
- *                 It is a parameter rather than something read from the request because there is no
- *                 middleware (ADR-0021) and a server component cannot see its own pathname.
- *
- * Fails closed at every step: no cookie → sign-in (via verifySession); a slug outside your directory → 404.
- *
- * Wrapped in React's `cache`, so a layout and the page it renders — which run CONCURRENTLY, and must
- * therefore BOTH gate, since a layout's redirect does not stop a page's query from having already run — share
- * one directory read per request instead of issuing one each.
+ * Keeping the cache key to just `slug` is what lets the layout (`requireOrgAccess(slug)`) and every page
+ * (which also needs to canonicalize) share ONE `user_org_directory()` round-trip per request. An earlier
+ * version memoized the two-arg entry point, so the layout's `(slug)` and a page's `(slug, subPath)` were
+ * distinct cache entries and the directory was queried twice on every navigation. The redirect decision is
+ * pure and cheap, so it lives OUTSIDE the memo — see `requireOrgAccess`.
  */
-export const requireOrgAccess = cache(
-  async (slug: string, subPath?: string): Promise<OrgAccess> => {
-    const session = await verifySession();
-    const orgs = await withTenantDb((app) => listUserOrgs(app, session.userId));
+const resolveOrgAccess = cache(async (slug: string): Promise<OrgAccess> => {
+  const session = await verifySession();
+  const orgs = await withTenantDb((app) => listUserOrgs(app, session.userId));
 
-    const current = orgs.find((o) => sameSlug(o.slug, slug));
-    if (current) {
-      // Canonical spelling. `/org/ALPHA/…` resolves (citext), but only one spelling is the real URL.
-      if (subPath !== undefined && current.slug !== slug) {
-        permanentRedirect(`/org/${current.slug}${subPath}`);
-      }
-      return { ...session, orgId: current.orgId, slug: current.slug, role: current.role };
-    }
+  const current = orgs.find((o) => sameSlug(o.slug, slug));
+  if (current) {
+    return { ...session, orgId: current.orgId, slug: current.slug, role: current.role };
+  }
 
-    // A slug this org has been renamed AWAY from. Old links must keep working — that is the entire point of
-    // keeping the history — so send the browser to the current URL, deep path intact.
-    const renamed = orgs.find((o) => o.formerSlugs.some((f) => sameSlug(f, slug)));
-    if (renamed) {
-      if (subPath !== undefined) {
-        permanentRedirect(`/org/${renamed.slug}${subPath}`);
-      }
-      return { ...session, orgId: renamed.orgId, slug: renamed.slug, role: renamed.role };
-    }
+  // A slug this org has been renamed AWAY from. Old links must keep working — that is the entire point of
+  // keeping the history.
+  const renamed = orgs.find((o) => o.formerSlugs.some((f) => sameSlug(f, slug)));
+  if (renamed) {
+    return { ...session, orgId: renamed.orgId, slug: renamed.slug, role: renamed.role };
+  }
 
-    // Not in this caller's directory. It could be another org's slug, or nothing at all — and we cannot tell,
-    // which is exactly the property we want. 404, never 403.
-    notFound();
-  },
-);
+  // Not in this caller's directory. It could be another org's slug, or nothing at all — and we cannot tell,
+  // which is exactly the property we want. 404, never 403.
+  notFound();
+});
+
+export const requireOrgAccess = async (slug: string, subPath?: string): Promise<OrgAccess> => {
+  const access = await resolveOrgAccess(slug);
+
+  // Canonicalize AFTER resolving. `access.slug` is the current, correctly-cased spelling; if the URL segment
+  // differs (a mis-case, or a retired slug), 308 the browser to the one true URL with the deep path intact.
+  //
+  // `subPath` carries its own query string when the caller has one (the events page passes
+  // `?${searchParams}`), because a bare path would DROP the filters and cursor on a shared/bookmarked link —
+  // exactly the "old links keep working" case the former-slug history exists to preserve. Actions omit
+  // subPath entirely and so never redirect.
+  if (subPath !== undefined && access.slug !== slug) {
+    permanentRedirect(`/org/${access.slug}${subPath}`);
+  }
+  return access;
+};
