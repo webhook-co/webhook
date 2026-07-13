@@ -67,7 +67,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
-  orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org" })).id;
+  orgId = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org" })).id;
   endpointId = (await createEndpoint(app, { orgId, name: "ep" }, hasher)).id;
   eventId = newId();
   await withTenant(app, orgId, async (tx) => {

@@ -68,8 +68,8 @@ beforeAll(async () => {
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 7) % 256)),
   );
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
@@ -139,7 +139,8 @@ describe("createEndpointWithAudit", () => {
   });
 
   it("enforces the per-org soft cap with RATE_LIMITED and mints nothing past it", async () => {
-    const capOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Cap" })).id;
+    const capOrg = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Cap" }))
+      .id;
     const auditBefore = await auditLen(capOrg);
     await createEndpointWithAudit(
       app,
@@ -166,7 +167,8 @@ describe("createEndpointWithAudit", () => {
   });
 
   it("is atomic — if the audit append fails, the endpoint insert rolls back (no orphan)", async () => {
-    const atomOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Atom" })).id;
+    const atomOrg = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Atom" }))
+      .id;
     const auditBefore = await auditLen(atomOrg);
     // A CryptoKey that is NOT usable for HMAC sign → computeAuditRowHash (crypto.subtle.sign HMAC)
     // throws AFTER the endpoint row is inserted, forcing the single tx to roll back.
@@ -220,7 +222,9 @@ describe("createWriteHandlers — endpoints.create handler", () => {
   // write `actor = NULL` — byte-identical to the delivery DO's genuine `system` actions, which made the
   // compliance chain unable to answer "who did this" or, in an incident, "which credential do I rotate".
   it("attributes an api-key write to key:<keyId> — not NULL, and not the system actor", async () => {
-    const keyOrg = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "KeyAttr" })).id;
+    const keyOrg = (
+      await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "KeyAttr" })
+    ).id;
     const h = handlers().get("endpoints.create")!;
     // The principal a bearer api key resolves to: an org + scopes + the key's own id. NO userId.
     const keyCtx: AuthContext = {

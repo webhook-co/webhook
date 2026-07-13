@@ -39,7 +39,7 @@ beforeAll(async () => {
   auditKey = await importAuditKey(
     new Uint8Array(Array.from({ length: 32 }, (_, i) => (i * 5) % 256)),
   );
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
 }, setupHookTimeoutMs());
 
 afterAll(async () => {

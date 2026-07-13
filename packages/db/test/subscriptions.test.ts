@@ -44,7 +44,7 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
   destA = (await createReplayDestination(app, { orgId: orgA, url: "https://a.example.com/in" })).id;
 }, setupHookTimeoutMs());
@@ -181,7 +181,8 @@ describe("createSubscription", () => {
     ).rejects.toBeInstanceOf(SubscriptionTargetNotFoundError);
 
     // cross-org: org A can't bind to org B's destination (RLS hides it → resolves as not-found → throws)
-    const orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org Bx" })).id;
+    const orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org Bx" }))
+      .id;
     const destB = (
       await createReplayDestination(app, { orgId: orgB, url: "https://cb.example.com/in" })
     ).id;
@@ -207,7 +208,8 @@ describe("listSubscriptions", () => {
     expect((await listSubscriptions(app, orgA)).map((x) => x.id)).toContain(s.id);
 
     // a SECOND org can't see org A's subscriptions
-    const orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+    const orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" }))
+      .id;
     expect(await listSubscriptions(app, orgB)).toHaveLength(0);
   });
 });
@@ -224,7 +226,8 @@ describe("deleteSubscription", () => {
     });
     expect(await deleteSubscription(app, orgA, sub.id)).toEqual({ id: sub.id });
     expect(await deleteSubscription(app, orgA, sub.id)).toBeNull(); // already gone
-    const orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B2" })).id;
+    const orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B2" }))
+      .id;
     const sub2 = await createSubscription(app, {
       orgId: orgA,
       sourceEndpointId: epA,

@@ -85,8 +85,8 @@ beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
   epA = (await createEndpoint(app, { orgId: orgA, name: "ep-a" }, hasher)).id;
   epB = (await createEndpoint(app, { orgId: orgB, name: "ep-b" }, hasher)).id;
   destA = (await createReplayDestination(app, { orgId: orgA, url: "https://a.example.com/in" })).id;
@@ -137,7 +137,8 @@ describe("getDelivery", () => {
     // (verified/authenticated) or delivered unsigned (unattempted). `failed` never delivers, but a pre-gate
     // backlog row could exist, so we project it too. Isolated in a fresh org so it doesn't perturb orgA's
     // global delivery set (the org-wide pagination test below counts on a bounded orgA set).
-    const org = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org VS" })).id;
+    const org = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org VS" }))
+      .id;
     const ep = (await createEndpoint(app, { orgId: org, name: "ep-vs" }, hasher)).id;
     const dest = (
       await createReplayDestination(app, { orgId: org, url: "https://vs.example.com/in" })

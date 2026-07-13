@@ -96,7 +96,7 @@ beforeAll(async () => {
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
   store = new SecretStore(await LocalKmsProvider.generate());
   auditKey = await importAuditKey(new Uint8Array(32).fill(7));
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
@@ -269,8 +269,9 @@ describe("readSealedIngestToken + revealIngestTokenCore — the reveal round-tri
   });
 
   it("is RLS-fenced cross-org: a different org cannot read/reveal another org's sealed token (→ NOT_FOUND)", async () => {
-    const orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B reveal" }))
-      .id;
+    const orgB = (
+      await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B reveal" })
+    ).id;
     const created = await createEndpointWithAudit(
       app,
       { orgId: orgA, name: "reveal-crossorg", actor: userActor("user_alice"), maxEndpoints: 100 },

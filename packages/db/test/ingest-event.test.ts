@@ -36,7 +36,7 @@ beforeAll(async () => {
   await setupSchema(pg);
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   ingest = createClient(pg.urlFor({ role: DB_ROLES.ingest }));
-  orgId = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Ingest Org" })).id;
+  orgId = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Ingest Org" })).id;
   endpointId = (await createEndpoint(app, { orgId, name: "ingest-ep" }, hasher)).id;
 }, setupHookTimeoutMs());
 

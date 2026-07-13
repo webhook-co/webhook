@@ -32,8 +32,8 @@ beforeAll(async () => {
   app = createClient(pg.urlFor({ role: DB_ROLES.app }));
   authn = createClient(pg.urlFor({ role: DB_ROLES.authn }));
 
-  orgA = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org A" })).id;
-  orgB = (await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Org B" })).id;
+  orgA = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org A" })).id;
+  orgB = (await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "Org B" })).id;
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
@@ -109,7 +109,7 @@ describe("paused endpoint", () => {
 
   it("ORs the org-level metering soft-cap pause into a non-paused endpoint (S4.3)", async () => {
     // A dedicated org so the org-level pause doesn't pollute orgA's other cold-lookup tests.
-    const org = await createOrg(app, { slug: randomUUID().slice(0, 8), name: "softcap" });
+    const org = await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "softcap" });
     const ep = await createEndpoint(app, { orgId: org.id, name: "org-paused" }, hasher);
     // The ENDPOINT is not paused, but the ORG is soft-capped (ingest_paused) — the cold lookup must OR
     // the two so ingest 429s the whole org.
@@ -122,7 +122,7 @@ describe("paused endpoint", () => {
   });
 
   it("resolves paused=false when neither the endpoint nor the org is paused", async () => {
-    const org = await createOrg(app, { slug: randomUUID().slice(0, 8), name: "unpaused" });
+    const org = await createOrg(app, { slug: `o-${randomUUID().slice(0, 8)}`, name: "unpaused" });
     const ep = await createEndpoint(app, { orgId: org.id, name: "clean" }, hasher);
     const cold = makeEndpointTokenColdLookup(authn);
     const principal = await cold(hasher.hash(ep.plaintext));
@@ -138,13 +138,20 @@ describe("paused endpoint", () => {
 
 describe("createOrg", () => {
   it("defaults region to 'us' and returns the created fields", async () => {
-    const org = await createOrg(app, { slug: randomUUID().slice(0, 8), name: "Default Region" });
+    const org = await createOrg(app, {
+      slug: `o-${randomUUID().slice(0, 8)}`,
+      name: "Default Region",
+    });
     expect(org.region).toBe("us");
     expect(org.name).toBe("Default Region");
   });
 
   it("honors an explicit region", async () => {
-    const org = await createOrg(app, { slug: randomUUID().slice(0, 8), name: "EU", region: "eu" });
+    const org = await createOrg(app, {
+      slug: `o-${randomUUID().slice(0, 8)}`,
+      name: "EU",
+      region: "eu",
+    });
     expect(org.region).toBe("eu");
   });
 });
