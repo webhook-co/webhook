@@ -307,6 +307,50 @@ describe("verifyAuthAuditChain", () => {
     }
   });
 
+  it("catches a genesis row carrying a prev_hash (it must link to nothing)", async () => {
+    const orgId = await seedChain(`aae-genesis-${randomUUID().slice(0, 6)}`, 2);
+    const rows = await read(orgId);
+    // Someone grafts the chain onto an earlier, hidden history.
+    const grafted = rows.map((r) =>
+      r.seq === 1 ? { ...r, prevHash: new Uint8Array(32).fill(7) } : r,
+    );
+
+    const result = await verifyAuthAuditChain(key, orgId, grafted);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.break.kind).toBe("bad_genesis_prev_hash");
+      expect(result.break.seq).toBe(1);
+      expect(result.rowsVerified).toBe(0); // nothing before it was trustworthy
+    }
+  });
+
+  it("catches a BROKEN LINK — seqs stay contiguous but a row no longer points at its parent", async () => {
+    // The subtle one: nothing is missing and nothing is duplicated, so only the LINK reveals the edit.
+    const orgId = await seedChain(`aae-link-${randomUUID().slice(0, 6)}`, 3);
+    const rows = await read(orgId);
+    const relinked = rows.map((r) =>
+      r.seq === 3 ? { ...r, prevHash: new Uint8Array(32).fill(1) } : r,
+    );
+
+    const result = await verifyAuthAuditChain(key, orgId, relinked);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.break.kind).toBe("broken_link");
+      expect(result.break.seq).toBe(3);
+      expect(result.rowsVerified).toBe(2); // rows 1–2 verified before the break
+    }
+  });
+
+  it("catches a NULL prev_hash on a non-genesis row (an unlinked row is not a chain)", async () => {
+    const orgId = await seedChain(`aae-null-${randomUUID().slice(0, 6)}`, 2);
+    const rows = await read(orgId);
+    const unlinked = rows.map((r) => (r.seq === 2 ? { ...r, prevHash: null } : r));
+
+    const result = await verifyAuthAuditChain(key, orgId, unlinked);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.break.kind).toBe("broken_link");
+  });
+
   it("catches a FORKED chain (a duplicate seq)", async () => {
     const orgId = await seedChain(`aae-fork-${randomUUID().slice(0, 6)}`, 2);
     const rows = await read(orgId);
