@@ -25,7 +25,7 @@ let admin: Sql; // owner: seeds outbox + billing_customers (both FORCE RLS) and 
 
 async function seedOrg(): Promise<string> {
   const orgId = randomUUID();
-  await admin`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+  await admin`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"})`;
   return orgId;
 }
 

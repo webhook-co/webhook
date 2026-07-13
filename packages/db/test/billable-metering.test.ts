@@ -90,7 +90,7 @@ async function seedOrgWithEvent(daysAgo = 0): Promise<{ orgId: string; eventId: 
   const at = new Date(Date.UTC(2026, 6, 15) - daysAgo * DAY_MS + 6 * 3_600_000).toISOString();
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name, created_at)
-             values (${orgId}, ${orgId.slice(0, 8)}, ${"o"}, ${"2026-01-01T00:00:00Z"})`;
+             values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"}, ${"2026-01-01T00:00:00Z"})`;
     await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
              values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
     await tx`insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, dedup_key, dedup_strategy)

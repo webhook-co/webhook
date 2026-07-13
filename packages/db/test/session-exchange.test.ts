@@ -39,7 +39,7 @@ async function seedOrg(): Promise<{ orgId: string; userId: string }> {
     insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
     values (${userId}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"Org"})`;
   });
   return { orgId, userId };
 }

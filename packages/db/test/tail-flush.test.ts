@@ -56,7 +56,7 @@ async function seedOrg(opts: { customer?: string | null } = {}): Promise<{
   const orgId = randomUUID();
   const endpointId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"})`;
     await tx`insert into endpoints (id, org_id, ingest_token_hash, name)
              values (${endpointId}, ${orgId}, ${randomBytes(32)}, ${"ep"})`;
   });

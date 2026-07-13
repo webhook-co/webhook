@@ -106,7 +106,7 @@ beforeAll(async () => {
   orgB = randomUUID();
   for (const orgId of [orgA, orgB]) {
     await withTenant(app, orgId, async (tx) => {
-      await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"Org"})`;
     });
   }
 }, setupHookTimeoutMs());

@@ -26,7 +26,7 @@ let admin: Sql; // superuser cleanup
 async function seedOrg(): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"})`;
   });
   return orgId;
 }

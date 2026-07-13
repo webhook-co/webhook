@@ -61,7 +61,7 @@ async function seedOrg(retentionDays: number | null): Promise<string> {
   const orgId = randomUUID();
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name, retention_days)
-             values (${orgId}, ${orgId.slice(0, 8)}, ${"o"}, ${retentionDays})`;
+             values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"}, ${retentionDays})`;
   });
   return orgId;
 }

@@ -42,7 +42,7 @@ async function seedOrg(orgId: string): Promise<void> {
     insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
     values (${userOf(orgId)}, ${"Seed"}, ${`${orgId.slice(0, 8)}@e.test`}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"Org"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"Org"})`;
     // The grant's user is a MEMBER of the org — that is what consent established, and what the consume's
     // membership re-check reads back. Without this row the fixture would model a user who has already been
     // removed, which is the exception, not the norm.

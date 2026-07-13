@@ -56,7 +56,7 @@ describe("orgs.retention_days default (S2a — fail SAFE, toward over-retention)
     // real free-org path (below); this proves the fail-safe direction for everything else.
     const orgId = randomUUID();
     const [row] = await withTenant(app, orgId, async (tx) => {
-      await tx`insert into orgs (id, slug, name) values (${orgId}, ${orgId.slice(0, 8)}, ${"o"})`;
+      await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"})`;
       return tx<{ retention_days: number | null }[]>`
         select retention_days from orgs where id = ${orgId}`;
     });

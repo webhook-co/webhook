@@ -43,7 +43,7 @@ afterAll(async () => {
 async function seedOrg(orgId: string): Promise<void> {
   await withTenant(app, orgId, async (tx) => {
     await tx`insert into orgs (id, slug, name, created_at)
-             values (${orgId}, ${orgId.slice(0, 8)}, ${"o"}, ${"2026-01-01T00:00:00Z"})`;
+             values (${orgId}, ${"o-" + orgId.slice(0, 8)}, ${"o"}, ${"2026-01-01T00:00:00Z"})`;
   });
 }
 

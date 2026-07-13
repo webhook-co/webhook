@@ -19,6 +19,7 @@ import { setupHookTimeoutMs } from "./pg-timing";
 // list is exhaustive against the live schema, so it can't silently drift.
 const TENANT_TABLES = [
   { table: "orgs", col: "id" },
+  { table: "org_slug_history", col: "org_id" },
   { table: "memberships", col: "org_id" },
   { table: "endpoints", col: "org_id" },
   { table: "signing_keys", col: "org_id" },
@@ -244,6 +245,11 @@ describe("cross-org isolation (every tenant table)", () => {
     // event_payload_purge (0058): identical posture — INSERT+SELECT only for webhook_app, the
     // completion UPDATE is webhook_purge's, no DELETE for anyone.
     "event_payload_purge",
+    // org_slug_history (0069): append-only, and that is load-bearing rather than tidy. It is what the
+    // never-recycle guard reads, so a tenant that could DELETE its own retired slug could then hand it to a
+    // confederate — reopening the takeover the table exists to close. INSERT + SELECT, no UPDATE, no DELETE,
+    // for anyone.
+    "org_slug_history",
   ]);
   const NO_DELETE = new Set([...NO_UPDATE, "stripe_meter_reports"]);
   for (const { table, col } of TENANT_TABLES.filter((t) => !NO_UPDATE.has(t.table))) {
@@ -691,7 +697,12 @@ describe("catalog-driven RLS coverage", () => {
         table === "org_deletions" ||
         table === "event_payload_purge";
       const insertSelectOnly =
-        table === "audit_log" || table === "auth_audit_event" || table === "usage_alerts";
+        table === "audit_log" ||
+        table === "auth_audit_event" ||
+        table === "usage_alerts" ||
+        // org_slug_history (0069): append-only — see the NO_UPDATE note. A history you can edit is not a
+        // history, and this one is a security control.
+        table === "org_slug_history";
       const expected = insertSelectUpdate
         ? ["INSERT", "SELECT", "UPDATE"]
         : insertSelectOnly
@@ -1374,6 +1385,10 @@ describe("no unexpected SECURITY DEFINER functions", () => {
   const ALLOWED_SECURITY_DEFINERS = [
     "current_user_profile",
     "org_member_directory",
+    // The never-recycle guard on orgs.slug. SECURITY DEFINER because under webhook_app's own RLS the history
+    // read would be tenant-scoped — so a squatter's transaction, scoped to the SQUATTER'S org, would see an
+    // empty history and take the retired slug. That is the entire attack it exists to refuse.
+    "orgs_slug_not_retired",
     "user_org_directory",
   ];
 
