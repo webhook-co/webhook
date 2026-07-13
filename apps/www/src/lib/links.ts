@@ -27,8 +27,15 @@ export const LINKS = {
   // in the same place — `app.webhook.co` bounces a signed-out user to the login screen, and that
   // screen says "No account yet? Signing in creates one." One door, one label.
   startFree: APP,
-  /** Where the paid-tier CTAs land: the usage page, which is where a plan is chosen. */
-  usage: `${APP}/usage`,
+  /**
+   * Where the paid-tier CTAs land.
+   *
+   * This USED to be `${APP}/usage`, which is now a hard 404: #563 moved the dashboard under
+   * `/org/{slug}/…` and deliberately dropped the old paths ("hard cutover"). `www` cannot build a
+   * slug-scoped URL — it has no idea which org the visitor belongs to, or whether they have one — so it
+   * points at the app root, the one surviving path: signed out → login; signed in → their org's overview.
+   */
+  usage: APP,
 
   // ── docs ─────────────────────────────────────────────────────────────────
   docs: DOCS,
