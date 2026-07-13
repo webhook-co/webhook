@@ -9,7 +9,7 @@ import {
 } from "@webhook-co/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { appendAuditEntry, readAuditChain } from "../src/audit-append";
+import { appendAuditEntry, listAuditEntries, readAuditChain } from "../src/audit-append";
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import { setupSchema } from "./migrate";
@@ -220,5 +220,74 @@ describe("appendAuditEntry (append-service)", () => {
     expect(chainB.map((r) => r.seq)).toEqual([1, 2]);
     expect((await verifyAuditChain(key, orgA, chainA)).ok).toBe(true);
     expect((await verifyAuditChain(key, orgB, chainB)).ok).toBe(true);
+  });
+});
+
+// The dashboard list read (Lane 2.8). Keyset on `seq` — a per-org monotonic bigint — rather than the shared
+// ISO-µs Cursor (which needs a UUID id; audit_log's is a bigserial). For an audit list the property that
+// matters is that paging can neither SKIP nor DUPLICATE a row, which a single monotonic integer guarantees.
+describe("listAuditEntries", () => {
+  it("returns newest-first and pages through the whole chain without skipping or repeating a row", async () => {
+    const orgId = await seedOrg("audit-list");
+    for (let i = 0; i < 5; i++) {
+      await withTenant(app, orgId, (tx) =>
+        appendAuditEntry(tx, key, {
+          orgId,
+          actor: { kind: "user", id: "u_1" },
+          action: `endpoint.created`,
+          target: `ep_${i}`,
+        }),
+      );
+    }
+
+    const first = await withTenant(app, orgId, (tx) => listAuditEntries(tx, { limit: 2 }));
+    expect(first.items.map((i) => i.seq)).toEqual([5, 4]); // newest first
+    expect(first.items[0]?.target).toBe("ep_4");
+    expect(first.nextSeq).toBe(4);
+
+    const second = await withTenant(app, orgId, (tx) =>
+      listAuditEntries(tx, { limit: 2, afterSeq: first.nextSeq }),
+    );
+    expect(second.items.map((i) => i.seq)).toEqual([3, 2]);
+
+    const third = await withTenant(app, orgId, (tx) =>
+      listAuditEntries(tx, { limit: 2, afterSeq: second.nextSeq }),
+    );
+    expect(third.items.map((i) => i.seq)).toEqual([1]);
+    expect(third.nextSeq).toBeNull(); // exhausted
+
+    // Every row seen exactly once, in order.
+    const all = [...first.items, ...second.items, ...third.items].map((i) => i.seq);
+    expect(all).toEqual([5, 4, 3, 2, 1]);
+  });
+
+  it("carries the PREFIXED actor through, so the UI can say who did it", async () => {
+    const orgId = await seedOrg("audit-list-actor");
+    await withTenant(app, orgId, (tx) =>
+      appendAuditEntry(tx, key, {
+        orgId,
+        actor: { kind: "key", id: "k_9" },
+        action: "endpoint.deleted",
+        target: "ep_x",
+      }),
+    );
+    const page = await withTenant(app, orgId, (tx) => listAuditEntries(tx, { limit: 10 }));
+    expect(page.items[0]?.actor).toBe("key:k_9");
+  });
+
+  it("is RLS-scoped — one org never sees another's entries", async () => {
+    const a = await seedOrg("audit-list-a");
+    const b = await seedOrg("audit-list-b");
+    await withTenant(app, a, (tx) =>
+      appendAuditEntry(tx, key, {
+        orgId: a,
+        actor: { kind: "system" },
+        action: "org.deleted",
+        target: null,
+      }),
+    );
+
+    const inB = await withTenant(app, b, (tx) => listAuditEntries(tx, { limit: 50 }));
+    expect(inB.items).toEqual([]);
   });
 });

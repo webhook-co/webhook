@@ -6,6 +6,7 @@ import {
   billingLive,
   parseBillingMode,
   isBillingActive,
+  isAuditReaderRole,
   isBillingManagerRole,
   isLiveSubscriptionStatus,
   parseStripePlans,
@@ -448,5 +449,32 @@ describe("pendingPlanChangeFromPhases", () => {
 
   it("returns null on empty phases", () => {
     expect(pendingPlanChangeFromPhases([], PLANS, NOW)).toBeNull();
+  });
+});
+
+describe("isAuditReaderRole (the audit gate — must agree with the mint ceiling)", () => {
+  // The mint ceiling puts `audit:read` in MANAGER_ONLY_SCOPES, so a member cannot mint an audit key. If this
+  // predicate ever disagreed, that ceiling would be decorative — the member would just read the chain in the
+  // browser instead. This matrix is the lock.
+  it.each([
+    ["owner", true],
+    ["admin", true],
+    ["member", false],
+    ["viewer", false],
+    ["", false],
+  ] as const)("%s → %s", (role, expected) => {
+    expect(isAuditReaderRole(role)).toBe(expected);
+  });
+
+  it("fails closed on a null/undefined role (no membership = no audit)", () => {
+    expect(isAuditReaderRole(null)).toBe(false);
+    expect(isAuditReaderRole(undefined)).toBe(false);
+  });
+
+  it("grants audit exactly to the roles the MINT CEILING allows an audit:read key", () => {
+    // Stated as an equivalence, so the two surfaces can't drift apart silently.
+    for (const role of ["owner", "admin", "member", "viewer"]) {
+      expect(isAuditReaderRole(role)).toBe(isBillingManagerRole(role));
+    }
   });
 });

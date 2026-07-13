@@ -164,6 +164,21 @@ export function isBillingManagerRole(role: string | null | undefined): boolean {
   return role === "owner" || role === "admin";
 }
 
+/**
+ * Roles allowed to READ the org's audit chain (owner/admin) — the session-surface twin of the mint ceiling's
+ * MANAGER_ONLY_SCOPES, which already refuses a `member` an `audit:read` key ("the audit chain is the org's
+ * compliance record; reading it is an administrative act").
+ *
+ * It exists as its own predicate rather than reusing isBillingManagerRole because the two answer different
+ * questions and will diverge the day a role is added — an audit gate that reads as a billing gate is how
+ * they silently drift. Keeping the surfaces in agreement is the point: without this, a member refused an
+ * audit key over the API could simply read the same chain in the browser, and the ceiling would be
+ * decorative.
+ */
+export function isAuditReaderRole(role: string | null | undefined): boolean {
+  return role === "owner" || role === "admin";
+}
+
 /** A plan entry carries exactly these keys — anything else (notably an `amount`) is a misconfiguration. */
 const PLAN_PRICE_KEYS = ["base", "overage"] as const;
 

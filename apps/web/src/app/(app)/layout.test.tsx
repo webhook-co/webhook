@@ -28,15 +28,17 @@ describe("AppLayout (gated dashboard shell)", () => {
     expect(screen.getByRole("button", { name: "Account menu" })).toBeInTheDocument();
   });
 
-  it("orders the Account section Credentials → Team → Settings", async () => {
+  it("orders the Account section Credentials → Team → Audit log → Settings", async () => {
     render(await AppLayout({ children: <p>page content</p> }));
     const links = screen.getAllByRole("link").map((l) => l.textContent);
     const credentials = links.indexOf("Credentials");
     const team = links.indexOf("Team");
+    const audit = links.indexOf("Audit log");
     const settings = links.indexOf("Settings");
     expect(credentials).toBeGreaterThanOrEqual(0);
-    expect(team).toBe(credentials + 1); // Team immediately follows Credentials
-    expect(settings).toBe(team + 1); // …and Settings immediately follows Team
+    expect(team).toBe(credentials + 1);
+    expect(audit).toBe(team + 1);
+    expect(settings).toBe(audit + 1);
   });
 
   it("groups the nav Inbound/Outbound and orders Destinations before Deliveries", async () => {

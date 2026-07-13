@@ -106,6 +106,69 @@ export async function appendAuditEntry(
  *  second lock space would not serialize against this one, which is the whole point of the lock. */
 export const AUDIT_LOCK_NAMESPACE = 0x41554449; // "AUDI"
 
+export interface AuditListEntry {
+  /** The per-org monotonic sequence — also the keyset cursor. */
+  readonly seq: number;
+  /** Dot-namespaced and OPEN (new actions ship without a schema change) — render it, don't switch on it. */
+  readonly action: string;
+  readonly target: string | null;
+  /** Prefixed actor (`user:<id>` / `key:<id>` / `system`), or null on a legacy pre-attribution row. */
+  readonly actor: string | null;
+  readonly createdAt: Date;
+}
+
+export interface AuditListPage {
+  readonly items: AuditListEntry[];
+  /** Pass back as `afterSeq` for the next page; null when the chain is exhausted. */
+  readonly nextSeq: number | null;
+}
+
+/**
+ * List an org's audit entries, newest first, for the dashboard (Lane 2.8).
+ *
+ * The keyset is `seq` — a per-org monotonic bigint with a `unique (org_id, seq)` index (migration 0005), so
+ * this is index-served and needs no new index. It deliberately does NOT use the shared ISO-µs `Cursor`: that
+ * type requires a UUID id, and audit_log's id is a bigserial. A single monotonic integer is a strictly better
+ * keyset here — and it can't skip or duplicate a row, which for an audit list is the whole point.
+ *
+ * Runs under the caller's RLS context (withTenant), so it returns exactly this org's rows. Reading the chain
+ * is an ADMINISTRATIVE act — the caller must gate on owner/admin (see isAuditReaderRole), matching the mint
+ * ceiling, which already refuses a member an `audit:read` key.
+ */
+export async function listAuditEntries(
+  tx: TenantTx,
+  input: { afterSeq?: number | null; limit: number },
+): Promise<AuditListPage> {
+  const limit = Math.max(1, Math.min(200, Math.floor(input.limit)));
+  const after = input.afterSeq ?? null;
+
+  const rows = await tx<
+    {
+      seq: string | number;
+      action: string;
+      target: string | null;
+      actor: string | null;
+      created_at: Date;
+    }[]
+  >`
+    select seq, action, target, actor, created_at
+      from audit_log
+     ${after === null ? tx`` : tx`where seq < ${after}`}
+     order by seq desc
+     limit ${limit + 1}`;
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const items = page.map((r) => ({
+    seq: Number(r.seq),
+    action: r.action,
+    target: r.target,
+    actor: r.actor,
+    createdAt: r.created_at,
+  }));
+  return { items, nextSeq: hasMore ? (items[items.length - 1]?.seq ?? null) : null };
+}
+
 /**
  * Read an org's full audit chain (ascending seq) as StoredAuditRow[], ready for
  * verifyAuditChain. Runs under the caller's RLS context, so it returns exactly this
