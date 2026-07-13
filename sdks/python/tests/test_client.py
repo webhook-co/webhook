@@ -26,6 +26,7 @@ def _endpoint(**o):
         "name": "n",
         "paused": False,
         "createdAt": TS,
+        "dedupConfig": None,
         **o,
     }
 
@@ -81,6 +82,7 @@ def _delivery():
         "error": None,
         "nextRetryAt": None,
         "createdAt": TS,
+        "sourceVerificationState": "verified",
     }
 
 

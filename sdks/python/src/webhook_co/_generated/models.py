@@ -8,6 +8,25 @@ from typing import Annotated, Any, Literal
 from pydantic import AnyUrl, AwareDatetime, BaseModel, ConfigDict, Field, RootModel
 
 
+class Fields(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    include: Annotated[list[str], Field(max_length=16, min_length=1)]
+    exclude: Annotated[list[str] | None, Field(max_length=16)] = None
+
+
+class DedupConfig(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    mode: str
+    window_seconds: Annotated[
+        int | None, Field(alias="windowSeconds", ge=60, le=604800)
+    ] = None
+    fields: Fields | None = None
+
+
 class Endpoint(BaseModel):
     model_config = ConfigDict(
         extra="ignore",
@@ -28,6 +47,26 @@ class Endpoint(BaseModel):
     name: str
     paused: bool
     created_at: Annotated[AwareDatetime, Field(alias="createdAt")]
+    dedup_config: Annotated[DedupConfig | None, Field(alias="dedupConfig")]
+
+
+class Fields1(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    include: Annotated[list[str], Field(max_length=16, min_length=1)]
+    exclude: Annotated[list[str] | None, Field(max_length=16)] = None
+
+
+class DedupConfig1(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    mode: str
+    window_seconds: Annotated[
+        int | None, Field(alias="windowSeconds", ge=60, le=604800)
+    ] = None
+    fields: Fields1 | None = None
 
 
 class CreatedEndpoint(BaseModel):
@@ -50,6 +89,7 @@ class CreatedEndpoint(BaseModel):
     name: str
     paused: bool
     created_at: Annotated[AwareDatetime, Field(alias="createdAt")]
+    dedup_config: Annotated[DedupConfig1 | None, Field(alias="dedupConfig")]
     ingest_url: Annotated[AnyUrl, Field(alias="ingestUrl")]
 
 
@@ -374,6 +414,13 @@ class EndpointsListResponse(BaseModel):
     next_cursor: Annotated[str | None, Field(alias="nextCursor")]
 
 
+class EndpointsRevealIngestUrlResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    ingest_url: Annotated[AnyUrl | None, Field(alias="ingestUrl")]
+
+
 class EventsGetPayloadResponse(BaseModel):
     model_config = ConfigDict(
         extra="ignore",
@@ -393,6 +440,19 @@ class Lag(BaseModel):
     head_lag_ms: Annotated[
         int | None, Field(alias="headLagMs", ge=0, le=9007199254740991)
     ] = None
+
+
+class EventsDeleteResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    id: Annotated[
+        str,
+        Field(
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        ),
+    ]
+    deleted_at: Annotated[AwareDatetime, Field(alias="deletedAt")]
 
 
 class AuditVerifyResponse1(BaseModel):
@@ -450,11 +510,164 @@ class SubscriptionsListResponse(BaseModel):
     items: list[Subscription]
 
 
+class TriggersCreateResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    id: Annotated[
+        str,
+        Field(
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        ),
+    ]
+    org_id: Annotated[
+        str,
+        Field(
+            alias="orgId",
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+    ]
+    endpoint_id: Annotated[
+        str,
+        Field(
+            alias="endpointId",
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+    ]
+    name: str | None
+    created_at: Annotated[AwareDatetime, Field(alias="createdAt")]
+    revoked_at: Annotated[AwareDatetime | None, Field(alias="revokedAt")]
+
+
+class TriggersListResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    items: list[TriggersCreateResponse]
+
+
+class TriggersRevokeResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    id: Annotated[
+        str,
+        Field(
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        ),
+    ]
+
+
+class UsageGetResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    period_start: Annotated[AwareDatetime, Field(alias="periodStart")]
+    period_end: Annotated[AwareDatetime | None, Field(alias="periodEnd")]
+    cap_kind: Annotated[str, Field(alias="capKind")]
+    events: Annotated[int, Field(ge=0, le=9007199254740991)]
+    event_cap: Annotated[int | None, Field(alias="eventCap")]
+    pause_policy: Annotated[str, Field(alias="pausePolicy")]
+    paused: bool
+
+
+class Event1(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    id: Annotated[
+        str,
+        Field(
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        ),
+    ]
+    org_id: Annotated[
+        str,
+        Field(
+            alias="orgId",
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+    ]
+    endpoint_id: Annotated[
+        str,
+        Field(
+            alias="endpointId",
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+    ]
+    received_at: Annotated[AwareDatetime, Field(alias="receivedAt")]
+    provider: str | None
+    dedup_key: Annotated[str, Field(alias="dedupKey")]
+    dedup_strategy: Annotated[str, Field(alias="dedupStrategy")]
+    verified: bool
+    verification_state: Annotated[str | None, Field(alias="verificationState")] = None
+    vouched: bool
+    body: str | None = None
+    body_encoding: Annotated[str | None, Field(alias="bodyEncoding")] = None
+    body_truncated: Annotated[bool | None, Field(alias="bodyTruncated")] = None
+    content_type: Annotated[str | None, Field(alias="contentType")] = None
+
+
+class TriggersWaitResponse(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    events: list[Event1]
+    next_cursor: Annotated[str | None, Field(alias="nextCursor")]
+    caught_up: Annotated[bool, Field(alias="caughtUp")]
+
+
+class Fields2(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    include: Annotated[list[str], Field(max_length=16, min_length=1)]
+    exclude: Annotated[list[str] | None, Field(max_length=16)] = None
+
+
+class DedupConfig2(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    mode: str
+    window_seconds: Annotated[
+        int | None, Field(alias="windowSeconds", ge=60, le=604800)
+    ] = None
+    fields: Fields2 | None = None
+
+
 class EndpointsCreateRequest(BaseModel):
     model_config = ConfigDict(
         extra="ignore",
     )
     name: Annotated[str, Field(max_length=200, min_length=1)]
+    dedup_config: Annotated[DedupConfig2 | None, Field(alias="dedupConfig")] = None
+
+
+class Fields3(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    include: Annotated[list[str], Field(max_length=16, min_length=1)]
+    exclude: Annotated[list[str] | None, Field(max_length=16)] = None
+
+
+class DedupConfig3(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    mode: str
+    window_seconds: Annotated[
+        int | None, Field(alias="windowSeconds", ge=60, le=604800)
+    ] = None
+    fields: Fields3 | None = None
+
+
+class EndpointsUpdateRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    dedup_config: Annotated[DedupConfig3 | None, Field(alias="dedupConfig")]
 
 
 class EndpointsAddProviderSecretRequest(BaseModel):
@@ -543,6 +756,20 @@ class SubscriptionsCreateRequest(BaseModel):
         list[str] | None, Field(alias="eventTypes", max_length=100)
     ] = None
     require_verified: Annotated[bool | None, Field(alias="requireVerified")] = None
+
+
+class TriggersCreateRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    endpoint_id: Annotated[
+        str,
+        Field(
+            alias="endpointId",
+            pattern="^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+        ),
+    ]
+    name: Annotated[str | None, Field(max_length=100, min_length=1)] = None
 
 
 class Error(BaseModel):
@@ -719,6 +946,7 @@ class Delivery(BaseModel):
     error: str | None
     next_retry_at: Annotated[AwareDatetime | None, Field(alias="nextRetryAt")]
     created_at: Annotated[AwareDatetime, Field(alias="createdAt")]
+    source_verification_state: Annotated[str, Field(alias="sourceVerificationState")]
 
 
 class EndpointsListProviderSecretsResponse(BaseModel):
