@@ -26,15 +26,51 @@ beforeEach(() => {
   currentHeaders = new Headers();
 });
 
+/** A signed-in browser always carries the IdP session cookie — the tests that mean "signed in" must say so. */
+const SIGNED_IN = () => new Headers({ cookie: "__Secure-better-auth.session_token=abc" });
+
 describe("isSignedIn", () => {
   it("is true when the IdP has a live session", async () => {
+    currentHeaders = SIGNED_IN();
     getSession.mockResolvedValueOnce({ userId: "usr_1" });
     expect(await isSignedIn()).toBe(true);
   });
 
-  it("is false when there is no session", async () => {
+  it("is false when the cookie is present but the session row is gone (revoked)", async () => {
+    currentHeaders = SIGNED_IN();
     getSession.mockResolvedValueOnce(null);
     expect(await isSignedIn()).toBe(false);
+  });
+
+  // The hot path after EVERY logout: we 302 to /login, and /login asked the database whether a user we just
+  // signed out is signed in. Answering that cost a full makeAuth() — 7 Secrets Store reads, a pg Pool over
+  // Hyperdrive, and a betterAuth() construction — to learn what the absent cookie already told us for free.
+  // No cookie => no session, with certainty: the session is only ever read FROM the cookie.
+  it("short-circuits with NO database work when the request carries no session cookie", async () => {
+    currentHeaders = new Headers();
+
+    expect(await isSignedIn()).toBe(false);
+
+    expect(makeAuth).not.toHaveBeenCalled();
+    expect(getSession).not.toHaveBeenCalled();
+  });
+
+  // A cookie header that exists but names other cookies (theme, consent) is still "no session".
+  it("short-circuits when a cookie header exists but carries no session cookie", async () => {
+    currentHeaders = new Headers({ cookie: "wh_theme=dark; other=1" });
+
+    expect(await isSignedIn()).toBe(false);
+
+    expect(makeAuth).not.toHaveBeenCalled();
+  });
+
+  // Dev serves the cookie unprefixed (no Secure prefix), so the check must not be pinned to the prod name.
+  it("still consults the database for the dev (unprefixed) cookie name", async () => {
+    currentHeaders = new Headers({ cookie: "better-auth.session_token=abc" });
+    getSession.mockResolvedValueOnce({ userId: "usr_1" });
+
+    expect(await isSignedIn()).toBe(true);
+    expect(getSession).toHaveBeenCalledOnce();
   });
 
   it("passes the request's OWN cookies to getSession (never a bare request)", async () => {
@@ -50,6 +86,7 @@ describe("isSignedIn", () => {
   // The pool MUST be released even when the session read throws — a leaked Hyperdrive connection per login
   // page view is a real availability bug. The close rides ctx.waitUntil so it runs after the response.
   it("always releases the pool via waitUntil, even when getSession throws", async () => {
+    currentHeaders = SIGNED_IN();
     getSession.mockRejectedValueOnce(new Error("db down"));
 
     await expect(isSignedIn()).rejects.toThrow("db down");
@@ -61,8 +98,67 @@ describe("isSignedIn", () => {
   });
 
   it("releases the pool on the normal (signed-in) path too", async () => {
+    currentHeaders = SIGNED_IN();
     getSession.mockResolvedValueOnce({ userId: "usr_1" });
     await isSignedIn();
     expect(waitUntil).toHaveBeenCalledOnce();
+  });
+
+  // There is no pool to release when we never opened one — and calling waitUntil here would be a lie.
+  it("opens no pool to release on the short-circuit path", async () => {
+    currentHeaders = new Headers();
+    await isSignedIn();
+    expect(waitUntil).not.toHaveBeenCalled();
+  });
+});
+
+// The short-circuit skips the database entirely, so it has to be exactly right about what counts as the
+// session cookie — and it is wrong in DIFFERENT ways in each direction. A false NEGATIVE is the nasty one: it
+// silently signs a live user out of the SSO-resume path on every request. A false positive merely costs the
+// DB read we were trying to avoid.
+//
+// Which name counts is Better Auth's business, not ours: it derives from `advanced.cookiePrefix` and from the
+// https baseURL that adds the `__Secure-` prefix. So the code asks the library (`getSessionCookie`) instead of
+// restating its defaults, and these cases pin the behaviour we depend on THROUGH the real helper. A test that
+// hardcoded the literal would happily stay green against a cookie name production no longer issues; driving
+// the real helper is what makes that failure mode impossible.
+describe("the session-cookie short-circuit", () => {
+  const dbWasConsulted = () => getSession.mock.calls.length > 0;
+
+  async function signedInWith(cookie: string): Promise<boolean> {
+    currentHeaders = new Headers({ cookie });
+    getSession.mockResolvedValueOnce({ userId: "usr_1" });
+    return isSignedIn();
+  }
+
+  it("consults the database for the prod (Secure-prefixed) cookie name", async () => {
+    expect(await signedInWith("__Secure-better-auth.session_token=abc.sig")).toBe(true);
+    expect(dbWasConsulted()).toBe(true);
+  });
+
+  it("consults the database for the dev (bare) cookie name", async () => {
+    expect(await signedInWith("better-auth.session_token=abc.sig")).toBe(true);
+    expect(dbWasConsulted()).toBe(true);
+  });
+
+  it("finds the session cookie among others, in any position", async () => {
+    expect(
+      await signedInWith("wh_theme=dark; __Secure-better-auth.session_token=abc.sig; x=1"),
+    ).toBe(true);
+    expect(dbWasConsulted()).toBe(true);
+  });
+
+  it("skips the database for unrelated cookies", async () => {
+    expect(await signedInWith("wh_theme=dark; consent=1")).toBe(false);
+    expect(dbWasConsulted()).toBe(false);
+  });
+
+  // A cookie whose name merely ENDS in the session cookie's name is a DIFFERENT cookie. A substring match
+  // would accept it — that could not sign anyone in (the DB read still verifies the cookie's HMAC), but it
+  // would let anyone able to set a cookie on the registrable domain buy a pointless DB round-trip on every
+  // login page view. The library's parser is name-exact; this pins that we inherit that.
+  it("does not mistake a cookie merely ending in the session name for the session cookie", async () => {
+    expect(await signedInWith("evilbetter-auth.session_token=abc")).toBe(false);
+    expect(dbWasConsulted()).toBe(false);
   });
 });

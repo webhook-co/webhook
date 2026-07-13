@@ -15,6 +15,11 @@ export default defineConfig({
       // The `server-only` marker throws outside a server build; stub it so server-only modules
       // (the session gate) are importable under vitest.
       "server-only": fileURLToPath(new URL("./test/server-only-stub.ts", import.meta.url)),
+      // `geist/font/*` is an ESM directory import Vite can't resolve, and it does real next/font work that
+      // jsdom has no use for. Stubbing it is what makes the ROOT LAYOUT testable — which matters, because the
+      // root layout is where the bfcache guard is mounted, and that mount is a security control.
+      "geist/font/sans": fileURLToPath(new URL("./test/geist-font-stub.ts", import.meta.url)),
+      "geist/font/mono": fileURLToPath(new URL("./test/geist-font-stub.ts", import.meta.url)),
     },
   },
   test: {
