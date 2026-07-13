@@ -32,10 +32,22 @@ async function npmLatest(pkg) {
   return (await res.json()).version;
 }
 
+/**
+ * PyPI's `info.version` LAGS: it still said 0.2.1 for about a minute after 0.3.0 was published (while
+ * /pypi/<pkg>/0.3.0/json resolved fine). Reading it would make this guard flap right after every release —
+ * the same trap as the Go proxy's cached @latest. Take the max of the actual release list instead.
+ */
 async function pypiLatest(pkg) {
   const res = await fetch(`https://pypi.org/pypi/${encodeURIComponent(pkg)}/json`);
   if (!res.ok) throw new Error(`pypi ${pkg}: HTTP ${res.status}`);
-  return (await res.json()).info.version;
+  const releases = Object.keys((await res.json()).releases ?? {});
+  const parse = (v) => v.split(".").map(Number);
+  return releases.sort((a, b) => {
+    const [pa, pb] = [parse(a), parse(b)];
+    for (let i = 0; i < 3; i++)
+      if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) - (pb[i] ?? 0);
+    return 0;
+  })[releases.length - 1];
 }
 
 /**
