@@ -103,12 +103,18 @@ export function validateOrgSlug(slug: string): OrgSlugValidation {
 
 /** The base part of a slug derived from a display name — capped, lowercased, hyphenated. May be "". */
 export function slugifyOrgName(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 16)
-    .replace(/-+$/g, ""); // the slice can land on a hyphen
+  return (
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-") // collapse each run of non-alphanumerics to a SINGLE hyphen
+      // After that collapse there are never consecutive hyphens, so trimming a single leading/trailing one is
+      // enough — and an unquantified `-` cannot backtrack, unlike an anchored `-+` (which CodeQL flags as a
+      // polynomial-ReDoS on hyphen-heavy input, js/polynomial-redos).
+      .replace(/^-/, "")
+      .replace(/-$/, "")
+      .slice(0, 16)
+      .replace(/-$/, "")
+  ); // the 16-char slice can land on the single boundary hyphen
 }
 
 /**

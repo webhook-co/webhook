@@ -99,6 +99,27 @@ describe("createOrgWithOwner", () => {
       createOrgWithOwner(app, { slug, name: "Dupe", ownerUserId: ownerId, auditKey }),
     ).rejects.toBeInstanceOf(SlugTakenError);
   });
+
+  it("refuses a slug another org RETIRED (never-recycle) with SlugTakenError", async () => {
+    // Org A takes `contested`, then renames away — retiring the slug forever. A create, not just a rename,
+    // must be refused it (it is a prod mutation surface now, and this is GitHub's account-takeover bug: a new
+    // owner reclaiming a retired name and hijacking its redirects). The trigger — not the app — closes it.
+    const contested = `contested-${randomUUID().slice(0, 6)}`;
+    const { orgId, ownerId: aOwner } = await seedTeam(contested);
+    await renameOrg(app, {
+      orgId,
+      actorRole: "owner",
+      actorId: aOwner,
+      slug: `moved-${randomUUID().slice(0, 6)}`,
+      auditKey,
+    });
+
+    const bOwner = `u_${randomUUID().slice(0, 8)}`;
+    await seedUser(bOwner);
+    await expect(
+      createOrgWithOwner(app, { slug: contested, name: "Squatter", ownerUserId: bOwner, auditKey }),
+    ).rejects.toBeInstanceOf(SlugTakenError);
+  });
 });
 
 describe("renameOrg", () => {
