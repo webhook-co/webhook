@@ -53,5 +53,10 @@ test("an endpoint is invisible from another org — RLS, under the non-superuser
   await signIn(page, users.dana.id, orgs.beta.id);
   await page.goto("/endpoints");
 
+  // A POSITIVE anchor first. Without it this test is vacuous: `toHaveCount(0)` also passes when the page
+  // failed to render at all, or redirected, or 500'd — every way of not-showing-the-endpoint scores as a win,
+  // including the ones that mean the test never exercised the thing it claims to. Prove we are really looking
+  // at Beta's rendered endpoints list, THEN prove Alpha's row is not in it.
+  await expect(page.getByRole("heading", { name: "Endpoints" })).toBeVisible();
   await expect(page.getByRole("cell", { name: ALPHA_ENDPOINT })).toHaveCount(0);
 });

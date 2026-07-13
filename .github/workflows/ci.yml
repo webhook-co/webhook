@@ -226,7 +226,6 @@ jobs:
       # with smooth scrolling on, yanks the reader back to the top of the page.
       - run: pnpm --filter @webhook-co/www test:links
 
-  # Real-browser accessibility gate: builds the static export, serves it, and runs axe-core in
   # The DASHBOARD's end-to-end gate: a real Chromium, against a real `next dev`, against a real Postgres
   # (the app connecting as the non-superuser `webhook_app` role, so RLS is actually enforced — the superuser
   # bypasses every policy, and a suite booted as it would go green while proving nothing).
@@ -274,6 +273,7 @@ jobs:
       - run: pnpm --filter @webhook-co/web exec playwright install --with-deps chromium
       - run: pnpm --filter @webhook-co/web test:e2e
 
+  # Real-browser accessibility gate: builds the static export, serves it, and runs axe-core in
   # Chromium across the homepage's interactive states AND the five legal pages. This is the only
   # layer that sees real layout, so the only one that catches color contrast and target size. Add to
   # the `main` ruleset's required checks to make it blocking.

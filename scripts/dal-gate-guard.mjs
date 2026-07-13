@@ -105,16 +105,26 @@ for await (const file of walk(APP_WEB_SRC)) {
   // page/layout/default/template under app/, OUTSIDE the gated group, is not render-gated.
   const isUngatedPageLike =
     PAGE_LIKE.test(rel) && rel.startsWith(APP_DIR) && !rel.startsWith(GATED_GROUP);
-  // ...and INSIDE the gated group, the render gate is necessary but NOT sufficient: Next renders a layout and
-  // its page CONCURRENTLY, so the layout's refusal does not prevent the page's tenant query from having
-  // already run. Each page gates for itself. `requireOrgAccess` is memoized per request (React `cache`), so
-  // this costs one membership read, not one per component.
-  const isGatedPageLike = PAGE_LIKE.test(rel) && rel.startsWith(GATED_GROUP);
 
-  if (isGatedPageLike) {
+  // INSIDE the gated group, EVERY server entry point must prove membership — pages AND route handlers.
+  //
+  // Two reasons this is not just the layout's job. First, the render gate is necessary but not sufficient:
+  // Next renders a layout and its page CONCURRENTLY, so the layout's refusal does not prevent the page's
+  // tenant query from having already run. Second, a route handler has no layout above it at ALL — and the one
+  // route handler in this tree, `endpoints/[id]/events/[eventId]/payload/route.ts`, streams an event's raw
+  // captured webhook body out of R2. It is the single most sensitive read in the app, and it is a `route.ts`,
+  // so a page-only rule would leave precisely it able to regress to identity-only gating with CI still green.
+  //
+  // `requireOrgAccess` is memoized per request (React `cache`), so this costs one membership read for a whole
+  // render, not one per component. (In a route handler or an action there is no RSC request in scope, so
+  // `cache` calls straight through — no memoization, and no possibility of a stale or foreign result either.)
+  const isGatedEntry = rel.startsWith(GATED_GROUP) && (PAGE_LIKE.test(rel) || isRoute);
+
+  if (isGatedEntry) {
     if (!ORG_GATE_CALL.test(stripComments(src)) && !ALLOW_MARKER.test(src)) {
+      const kind = isRoute ? "gated route handler" : "gated server component";
       violations.push(
-        `${rel}  (gated server component)  does not call requireOrgAccess() and has no \`// dal-gate-allow:\` marker`,
+        `${rel}  (${kind})  does not call requireOrgAccess() and has no \`// dal-gate-allow:\` marker`,
       );
     }
     continue;

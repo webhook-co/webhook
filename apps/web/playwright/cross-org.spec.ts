@@ -15,6 +15,7 @@ import { signIn, world } from "./support";
 // gate get called" (a unit test can be fooled into believing that by a mock) but "does the data come out".
 
 const SECRET_ENDPOINT = "Alpha payroll hook";
+const BETA_ENDPOINT = "Beta ops hook";
 
 test.describe.configure({ mode: "serial" });
 
@@ -54,10 +55,16 @@ test("a session naming an org you do not belong to discloses nothing", async ({ 
 test("a removed member's live session stops reading the org immediately", async ({ page }) => {
   const { users, orgs, appConnectionString } = world();
 
-  // Sam is a member of Beta and holds a valid session for it.
+  // Sam is a member of Beta and holds a valid session for it. Give Beta a secret of its own, so that after the
+  // removal there is something CONCRETE to prove did not leak — a bare `status !== 200` would pass on a 500,
+  // on a crash, on an empty render, on anything at all that isn't a success, which is not the claim.
   await signIn(page, users.sam.id, orgs.beta.id);
   await page.goto("/endpoints");
-  await expect(page.getByRole("heading", { name: "Endpoints" })).toBeVisible();
+  await page.getByRole("button", { name: "Create endpoint" }).click();
+  await page.getByLabel("Endpoint name").fill(BETA_ENDPOINT);
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("cell", { name: BETA_ENDPOINT }).first()).toBeVisible();
 
   // Now remove him. Nothing touches his cookie — it is stateless, cannot be revoked, and stays
   // cryptographically valid for the rest of its 7-day life. The membership row is the only thing that
@@ -74,7 +81,9 @@ test("a removed member's live session stops reading the org immediately", async 
     await db.end({ timeout: 5 }).catch(() => {});
   }
 
-  // Same cookie, same browser, next request. He must not be reading Beta any more.
+  // Same cookie, same browser, next request. He must not be reading Beta any more — and specifically, the
+  // endpoint he could see one request ago must not be in these bytes.
   const res = await page.context().request.get("/endpoints", { maxRedirects: 0 });
   expect(res.status()).not.toBe(200);
+  expect(await res.text()).not.toContain(BETA_ENDPOINT);
 });

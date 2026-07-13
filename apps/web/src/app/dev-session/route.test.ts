@@ -65,6 +65,7 @@ describe("GET /dev-session", () => {
 
   it("mints the requested principal — the seam the e2e suite seeds a two-org fixture through", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("DEV_SESSION_PRINCIPAL_OVERRIDE", "1");
     const org = "3f2b1c8e-9d4a-4c7b-8e1f-2a5d6c7b8e9f";
     const res = await GET(
       new Request(`http://localhost:3000/dev-session?user=usr_dana&org=${org}`),
@@ -77,6 +78,7 @@ describe("GET /dev-session", () => {
 
   it("refuses a non-UUID org rather than minting a session that cannot address a tenant", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("DEV_SESSION_PRINCIPAL_OVERRIDE", "1");
     const res = await GET(
       new Request("http://localhost:3000/dev-session?user=usr_dana&org=not-a-uuid"),
     );
@@ -85,8 +87,32 @@ describe("GET /dev-session", () => {
     expect(res.headers.get("set-cookie")).toBeNull();
   });
 
+  it("refuses the principal override without the explicit opt-in — two gates, not one", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    // DEV_SESSION_PRINCIPAL_OVERRIDE deliberately unset. The prod 404 is build-time constant-folded and
+    // cannot be flipped by an env var — but it must not be the ONLY thing standing between an anonymous
+    // caller and a signed cookie for any user in any org.
+    const res = await GET(
+      new Request(
+        "http://localhost:3000/dev-session?user=usr_victim&org=3f2b1c8e-9d4a-4c7b-8e1f-2a5d6c7b8e9f",
+      ),
+    );
+
+    expect(res.status).toBe(403);
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("still mints the DEFAULT principal without the opt-in — the override is what is gated", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    const res = await GET(new Request("http://localhost:3000/dev-session"));
+
+    expect(res.status).toBe(307);
+    expect((await sessionFrom(res))?.userId).toBe("usr_dev_local");
+  });
+
   it("refuses an empty user rather than minting an unattributable session", async () => {
     vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("DEV_SESSION_PRINCIPAL_OVERRIDE", "1");
     const res = await GET(new Request("http://localhost:3000/dev-session?user="));
 
     expect(res.status).toBe(400);

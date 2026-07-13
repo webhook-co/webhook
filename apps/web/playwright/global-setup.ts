@@ -119,6 +119,10 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
   // Binding the same host the suite drives keeps the origin (and therefore the cookie) consistent.
   const child = spawn("pnpm", ["exec", "next", "dev", "-H", "127.0.0.1", "-p", String(PORT)], {
     stdio: ["ignore", "inherit", "inherit"],
+    // `detached` puts the child in its own PROCESS GROUP, and teardown signals the group (`-pid`). Without it
+    // we would SIGTERM the `pnpm` wrapper and leave the `next dev` it spawned holding port 3100 — the next run
+    // then fails to bind, or worse, silently talks to the PREVIOUS run's server and its dead database.
+    detached: true,
     env: {
       ...process.env,
       NODE_ENV: "development",
@@ -126,6 +130,9 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
       // Pin the signing secret rather than leaning on env.ts's dev fallback, so the token /dev-session hands
       // the browser is verified against a secret this run chose.
       SESSION_TOKEN_SECRET: "e2e-only-session-secret-do-not-use-anywhere-else",
+      // The positive opt-in /dev-session demands before it will mint an arbitrary principal. Nothing else in
+      // the repo sets this, and no deployment path can.
+      DEV_SESSION_PRINCIPAL_OVERRIDE: "1",
       // Where the gate sends an unauthenticated request. Nothing listens there, deliberately: the specs
       // assert on the redirect itself, and a dead origin makes an accidental follow fail loudly rather than
       // wander off into a real auth server.
@@ -139,18 +146,37 @@ async function startDevServer(appConnectionString: string): Promise<ChildProcess
       throw new Error(`e2e: next dev exited with code ${child.exitCode} before it answered`);
     }
     try {
-      // `/dev-session` is unauthenticated and cheap, and a 3xx from it means Next has compiled and is
-      // serving — a readiness probe that does not depend on the database being seeded correctly.
+      // Readiness means "compiled AND serving correctly", so the probe demands the 307 that /dev-session
+      // actually returns. Accepting any status would let a 500 — a broken Hyperdrive binding, a failed
+      // compile — count as booted, and every spec would then fail with a confusing symptom far from the
+      // cause. (The probe sends no `?user=`/`?org=`, so it is the default-principal path and needs no seed.)
       const res = await fetch(`${BASE_URL}/dev-session`, { redirect: "manual" });
-      if (res.status > 0) return child;
-    } catch {
+      if (res.status === 307) return child;
+      throw new Error(
+        `e2e: /dev-session answered ${res.status}, expected 307 — the dev server booted but is not healthy`,
+      );
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("e2e:")) {
+        killTree(child);
+        throw err;
+      }
       /* not listening yet */
     }
     await sleep(250);
   }
 
-  child.kill("SIGTERM");
+  killTree(child);
   throw new Error(`e2e: next dev did not answer on ${BASE_URL} within ${BOOT_TIMEOUT_MS}ms`);
+}
+
+/** SIGTERM the child's whole process group — see `detached` above. */
+function killTree(child: ChildProcess): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, "SIGTERM");
+  } catch {
+    child.kill("SIGTERM"); // group already gone
+  }
 }
 
 export default async function globalSetup(): Promise<() => Promise<void>> {
@@ -167,7 +193,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   // cluster's and the server's lifetimes tied to the run, rather than leaking a stray postgres and a stray
   // Next process on every invocation.
   return async () => {
-    server.kill("SIGTERM");
+    killTree(server);
     await pg.stop();
   };
 }

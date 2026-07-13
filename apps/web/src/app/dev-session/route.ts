@@ -13,17 +13,21 @@ import { signSessionToken } from "@/server/session-token";
 // there is no production path that sets the session cookie except the A-SX handoff, so prod is fail-closed.
 // The 404 is checked BEFORE the query string is read, so `?user=&org=` is not a way in.
 //
-// `?user=<id>&org=<uuid>` overrides the principal. This is the seam the Playwright suite seeds its two-org
-// fixture through: rather than re-implementing the token format in test code — a fixture that mints with
-// code that isn't the code under test can silently drift from it — the browser gets a cookie from the REAL
-// signer, on the real route.
+// `?user=<id>&org=<uuid>` overrides the principal, behind an explicit `DEV_SESSION_PRINCIPAL_OVERRIDE=1` (see
+// below). This is the seam the Playwright suite seeds its two-org fixture through: rather than
+// re-implementing the token format in test code — a fixture that mints with code that isn't the code under
+// test can silently drift from it — the browser gets a cookie from the REAL signer, on the real route.
 //
 // The org id must be a UUID, and that is not cosmetic. `orgs.id` is `uuid`, and the RLS GUC is read back as
 // `nullif(current_setting('app.current_org', true), '')::uuid` (migration 0003), so a non-UUID org id is a
 // `22P02 invalid input syntax for type uuid` the moment any tenant query runs. The old fixed principal used
-// `org_dev_local`, so this route could only ever address an absent tenant: /dashboard renders blank-but-green
-// (its tiles are fault-isolated) while /endpoints and /team throw. Refusing it turns a confusing runtime
-// crash into an immediate, legible 400.
+// `org_dev_local`, so this route could only ever address an absent tenant.
+//
+// ⚠️ The DEFAULT principal only gets you a rendered dashboard if its org and membership actually exist in
+// your local database — nothing in the repo seeds them. Since ADR-0116 every gated page re-reads membership,
+// so a session naming an org you are not a member of is refused and you land back at sign-in. That is the
+// gate working, not a bug: pass `?user=&org=` for a principal you have really seeded (which is what the e2e
+// harness does), or seed a membership for this default one.
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -40,6 +44,26 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   const url = new URL(request.url);
+  const wantsOverride = url.searchParams.has("user") || url.searchParams.has("org");
+
+  // TWO independent gates on the principal override, not one.
+  //
+  // The 404 above is already build-time constant-folded — @opennextjs/cloudflare's esbuild config `define`s
+  // `process.env.NODE_ENV` to the literal `"production"` unconditionally, so in any deployed artifact this
+  // route reads `"production" === "production"` and returns 404 before it ever looks at the query string. No
+  // Cloudflare var, secret, or misconfiguration can flip it, because it is not a runtime lookup.
+  //
+  // But that single check is now the only thing between an unauthenticated caller and a validly-signed cookie
+  // for ANY user in ANY org — a much bigger prize than the old fixed dev principal, which named a tenant that
+  // doesn't exist. So the override demands a POSITIVE opt-in as well: an env var nothing sets by default, and
+  // that no deployment path sets at all. Two gates, and the escalation needs both to fail.
+  if (wantsOverride && process.env.DEV_SESSION_PRINCIPAL_OVERRIDE !== "1") {
+    return new NextResponse(
+      "dev-session: principal override requires DEV_SESSION_PRINCIPAL_OVERRIDE=1",
+      { status: 403 },
+    );
+  }
+
   const userId = url.searchParams.get("user") ?? DEV_PRINCIPAL.userId;
   const orgId = url.searchParams.get("org") ?? DEV_PRINCIPAL.orgId;
 
