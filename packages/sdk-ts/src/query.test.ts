@@ -32,3 +32,24 @@ describe("withQuery", () => {
     expect(withQuery("/v1/endpoints", { name: "a b&c" })).toBe("/v1/endpoints?name=a+b%26c");
   });
 });
+
+describe("boolean params", () => {
+  it("serialises booleans and SENDS an explicit false (only undefined is omitted)", () => {
+    expect(withQuery("/v1/triggers/t1/wait", { includeBody: true })).toBe(
+      "/v1/triggers/t1/wait?includeBody=true",
+    );
+    expect(withQuery("/v1/triggers/t1/wait", { includeBody: false })).toBe(
+      "/v1/triggers/t1/wait?includeBody=false",
+    );
+    expect(withQuery("/v1/triggers/t1/wait", { includeBody: undefined })).toBe(
+      "/v1/triggers/t1/wait",
+    );
+  });
+
+  // A caught-up triggers.wait returns `nextCursor: null`, and the contract makes the cursor INPUT nullable
+  // precisely so that value round-trips straight back in. If null serialised, we would send the literal
+  // string "null" and the server would reject it as a malformed cursor.
+  it("omits a null param (a caught-up nextCursor must round-trip back in)", () => {
+    expect(withQuery("/v1/triggers/t1/wait", { cursor: null })).toBe("/v1/triggers/t1/wait");
+  });
+});

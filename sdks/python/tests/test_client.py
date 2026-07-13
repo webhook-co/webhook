@@ -207,6 +207,27 @@ class TestEndpoints:
         assert len(calls) == 2
         assert calls[0].method == "DELETE"
 
+    def test_reveal_ingest_url_posts_no_body_and_is_NOT_retried(self):
+        # Every reveal writes a tamper-evident disclosure row, so a blind retry would double-audit.
+        wc, calls = make([unreachable()])
+        with pytest.raises(WebhookTargetUnreachableError):
+            wc.endpoints.reveal_ingest_url(UUID)
+        assert len(calls) == 1
+        assert calls[0].method == "POST"
+        assert str(calls[0].url).endswith("/reveal-ingest-url")
+        assert calls[0].content == b""
+
+    def test_reveal_ingest_url_returns_none_for_pre_sealed_endpoint(self):
+        wc, _ = make([jr(200, {"ingestUrl": None})])
+        assert wc.endpoints.reveal_ingest_url(UUID).ingest_url is None
+
+    def test_update_patches_the_dedup_config_and_is_retried(self):
+        wc, calls = make([unreachable(), jr(200, _endpoint())])
+        wc.endpoints.update(UUID, dedup_config=None)
+        assert len(calls) == 2  # idempotent -> a transient failure is retried
+        assert calls[0].method == "PATCH"
+        assert json.loads(calls[0].content) == {"dedupConfig": None}
+
     def test_rotate_posts_no_body_not_retried(self):
         wc, calls = make([unreachable()])
         with pytest.raises(WebhookTargetUnreachableError):
@@ -470,3 +491,76 @@ class TestAudit:
         assert len(calls) == 2
         assert calls[0].content == b""
         assert str(calls[0].url) == "https://api.webhook.co/v1/audit/verify"
+
+
+class TestUsageAndTriggers:
+    def test_events_delete_is_retried(self):
+        wc, calls = make([unreachable(), jr(200, {"id": UUID, "deletedAt": TS})])
+        wc.events.delete(UUID)
+        assert len(calls) == 2  # idempotent: re-deleting is a no-op
+        assert calls[0].method == "DELETE"
+
+    def test_usage_get(self):
+        wc, calls = make(
+            [
+                jr(
+                    200,
+                    {
+                        "periodStart": TS,
+                        "periodEnd": None,
+                        "capKind": "lifetime",
+                        "events": 12,
+                        "eventCap": 5000,
+                        "pausePolicy": "pause",
+                        "paused": False,
+                    },
+                )
+            ]
+        )
+        assert wc.usage.get().events == 12
+        assert str(calls[0].url).endswith("/v1/usage")
+
+    def test_triggers_create_not_retried(self):
+        wc, calls = make([unreachable()])
+        with pytest.raises(WebhookTargetUnreachableError):
+            wc.triggers.create(endpoint_id=UUID, name="orders")
+        assert len(calls) == 1  # each call mints a trigger
+        assert json.loads(calls[0].content) == {"endpointId": UUID, "name": "orders"}
+
+    def test_triggers_list_filter(self):
+        wc, calls = make([jr(200, {"items": []})])
+        wc.triggers.list(endpoint_id=UUID)
+        assert str(calls[0].url).endswith(f"/v1/triggers?endpointId={UUID}")
+
+    # The ack-by-cursor loop from the docstring must actually run: a caught-up page returns next_cursor=None,
+    # and the contract makes the input nullable so THAT value feeds straight back in. If None serialised we
+    # would send the literal string "None"/"null" and earn a VALIDATION_ERROR.
+    def test_triggers_wait_round_trips_a_caught_up_none_cursor(self):
+        wc, calls = make(
+            [
+                jr(200, {"events": [], "nextCursor": "c1", "caughtUp": False}),
+                jr(200, {"events": [], "nextCursor": None, "caughtUp": True}),
+                jr(200, {"events": [], "nextCursor": None, "caughtUp": True}),
+            ]
+        )
+        cursor = None
+        for _ in range(3):
+            page = wc.triggers.wait(UUID, cursor=cursor)
+            cursor = (
+                page.next_cursor
+            )  # None once caught up — must be accepted next call
+        assert "cursor" not in str(calls[0].url)
+        assert "cursor=c1" in str(calls[1].url)
+        assert "cursor" not in str(calls[2].url)
+
+    def test_triggers_wait_sends_lowercase_booleans(self):
+        # boolParam accepts ONLY "true"/"1"/"false"/"0" — "False" is silently ignored and the server default
+        # (includeBody=true) applies, so a summary-only caller would get full bodies anyway.
+        wc, calls = make(
+            [jr(200, {"events": [], "nextCursor": None, "caughtUp": True})]
+        )
+        wc.triggers.wait(UUID, include_body=False, limit=10, max_body_bytes=4096)
+        url = str(calls[0].url)
+        assert "includeBody=false" in url
+        assert "limit=10" in url
+        assert "maxBodyBytes=4096" in url

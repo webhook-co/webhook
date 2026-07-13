@@ -68,6 +68,11 @@ class _Requester:
             model, self._http.request("POST", path, body=body, idempotent=idempotent)
         )
 
+    def patch(self, path: str, body: Any | None, idempotent: bool, model: type[M]) -> M:
+        return _parse(
+            model, self._http.request("PATCH", path, body=body, idempotent=idempotent)
+        )
+
     def delete(self, path: str, idempotent: bool, model: type[M]) -> M:
         return _parse(model, self._http.request("DELETE", path, idempotent=idempotent))
 
@@ -182,6 +187,41 @@ class _EndpointsResource:
         """Soft-delete an endpoint. Idempotent — a re-delete returns the recorded ``deletedAt``."""
         return self._req.delete(
             f"/v1/endpoints/{_enc(endpoint_id)}", True, m.DeletedEndpoint
+        )
+
+    def update(
+        self, endpoint_id: str, *, dedup_config: dict[str, Any] | None
+    ) -> m.Endpoint:
+        """Update an endpoint's dedup config (ADR-0104).
+
+        Idempotent — it sets the config to a fixed value, so a transient failure is safe to retry.
+        ``dedup_config=None`` RESETS to the default (off — log every request).
+        """
+        return self._req.patch(
+            f"/v1/endpoints/{_enc(endpoint_id)}",
+            {"dedupConfig": dedup_config},
+            True,
+            m.Endpoint,
+        )
+
+    def reveal_ingest_url(self, endpoint_id: str) -> m.EndpointsRevealIngestUrlResponse:
+        """Reveal an endpoint's current ingest URL — non-destructive: it does NOT rotate.
+
+        This is how you recover a FORGOTTEN url. Rotating instead would revoke a live credential and break
+        every sender still posting to the old one. The token is sealed at rest (ADR-0101), so the URL is
+        re-readable any time — it is NOT a one-time secret.
+
+        ``ingest_url`` is None ONLY for endpoints created before sealed storage (their plaintext is gone —
+        rotate to mint a fresh, re-readable one).
+
+        Gated on ``endpoints:write``; every disclosure writes a tamper-evident audit row and is
+        rate-limited. Sent idempotent=False so a blind retry cannot double-audit.
+        """
+        return self._req.post(
+            f"/v1/endpoints/{_enc(endpoint_id)}/reveal-ingest-url",
+            None,
+            False,
+            m.EndpointsRevealIngestUrlResponse,
         )
 
     def rotate(self, endpoint_id: str) -> m.CreatedEndpoint:
@@ -313,6 +353,19 @@ class _EventsResource:
             {"sinceCursor": since_cursor, "since": since},
         )
         return self._req.get(path, m.EventsTailResponse)
+
+    def delete(self, event_id: str) -> m.EventsDeleteResponse:
+        """Permanently delete ONE captured event.
+
+        Its content is redacted immediately and its stored payload body is purged shortly after, so it can
+        no longer be read or replayed, and it stops appearing in listings. There is no bulk or filter
+        delete. Idempotent — re-deleting is a no-op, so a retry is safe.
+
+        This does NOT reduce your metered usage: the event was already counted when it was received.
+        """
+        return self._req.delete(
+            f"/v1/events/{_enc(event_id)}", True, m.EventsDeleteResponse
+        )
 
     def replay(
         self,
@@ -514,6 +567,87 @@ class _SubscriptionsResource:
         )
 
 
+class _UsageResource:
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+
+    def get(self) -> m.UsageGetResponse:
+        """The current period's metered usage: events counted, the cap, and whether the org is paused."""
+        return self._req.get("/v1/usage", m.UsageGetResponse)
+
+
+class _TriggersResource:
+    """Agent triggers (ADR-0106): the webhook->agent primitive behind :meth:`wait`."""
+
+    def __init__(self, req: _Requester) -> None:
+        self._req = req
+
+    def list(self, *, endpoint_id: str | None = None) -> m.TriggersListResponse:
+        """The org's triggers, optionally narrowed to one endpoint."""
+        return self._req.get(
+            with_query("/v1/triggers", {"endpointId": endpoint_id}),
+            m.TriggersListResponse,
+        )
+
+    def create(
+        self, *, endpoint_id: str, name: str | None = None
+    ) -> m.TriggersCreateResponse:
+        """Create a trigger. NOT idempotent — each call mints a new one, so it is never blind-retried."""
+        body: dict[str, Any] = {"endpointId": endpoint_id}
+        if name is not None:
+            body["name"] = name
+        return self._req.post("/v1/triggers", body, False, m.TriggersCreateResponse)
+
+    def revoke(self, trigger_id: str) -> m.TriggersRevokeResponse:
+        """Revoke a trigger. Idempotent."""
+        return self._req.delete(
+            f"/v1/triggers/{_enc(trigger_id)}", True, m.TriggersRevokeResponse
+        )
+
+    def wait(
+        self,
+        trigger_id: str,
+        *,
+        cursor: str | None = None,
+        limit: int | None = None,
+        include_body: bool | None = None,
+        max_body_bytes: int | None = None,
+    ) -> m.TriggersWaitResponse:
+        """Wait for a trigger's events — ack-by-cursor (ADR-0106).
+
+        SHORT-poll, not long-poll: it returns immediately with whatever is past ``cursor``, so there is no
+        held connection and no special timeout handling. Drain a backlog by re-calling promptly while
+        ``caught_up`` is False, then poll on your own cadence once caught up.
+
+        ``cursor`` accepts None so the ``next_cursor`` of a caught-up page round-trips straight back in::
+
+            cursor = None
+            while True:
+                page = client.triggers.wait(trigger_id, cursor=cursor)
+                for event in page.events:
+                    handle(event)
+                cursor = page.next_cursor  # None when caught up — safe to pass right back
+                if page.caught_up:
+                    time.sleep(1)
+
+        At-least-once: a crash before you persist ``next_cursor`` re-reads, never loses — dedup on the event
+        id. ``include_body`` DEFAULTS TO TRUE server-side (pass False for summary-only, skipping the payload
+        fetch); ``max_body_bytes`` clamps the inline body (<= 64 KiB). ``limit`` is capped at 200.
+        """
+        return self._req.get(
+            with_query(
+                f"/v1/triggers/{_enc(trigger_id)}/wait",
+                {
+                    "cursor": cursor,
+                    "limit": limit,
+                    "includeBody": include_body,
+                    "maxBodyBytes": max_body_bytes,
+                },
+            ),
+            m.TriggersWaitResponse,
+        )
+
+
 class _AuditResource:
     def __init__(self, req: _Requester) -> None:
         self._req = req
@@ -580,6 +714,8 @@ class WebhookClient:
         self.deliveries = _DeliveriesResource(req)
         self.replay_destinations = _ReplayDestinationsResource(req)
         self.subscriptions = _SubscriptionsResource(req)
+        self.usage = _UsageResource(req)
+        self.triggers = _TriggersResource(req)
         self.audit = _AuditResource(req)
 
     def whoami(self) -> m.AuthContext:

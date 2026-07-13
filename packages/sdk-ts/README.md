@@ -20,10 +20,13 @@ import { WebhookClient } from "@webhook-co/sdk";
 
 const webhook = new WebhookClient({ apiKey: process.env.WEBHOOK_API_KEY! });
 
-// Create an endpoint. The ingest URL is a credential, but not one-time — it can be re-read any time
-// (POST /v1/endpoints/{id}/reveal-ingest-url, `wbhk endpoints reveal <id>`, or the dashboard).
+// Create an endpoint. The ingest URL is a credential, but it is NOT one-time.
 const endpoint = await webhook.endpoints.create({ name: "orders-prod" });
 console.log(endpoint.ingestUrl);
+
+// Lost it? Read it back — the token is sealed at rest, so there is nothing to lose and no need to
+// rotate (rotating would revoke the live URL and break every sender still posting to it).
+const { ingestUrl } = await webhook.endpoints.revealIngestUrl(endpoint.id);
 
 // List events for that endpoint (auto-paginates).
 for await (const event of webhook.events.list(endpoint.id)) {
