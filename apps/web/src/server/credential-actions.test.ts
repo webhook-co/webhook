@@ -5,6 +5,7 @@ vi.mock("./org-access", () => ({
   requireOrgAccess: vi.fn(async () => ({
     userId: "u",
     orgId: "o",
+    slug: "acme",
     user: { name: "", email: "", image: null },
   })),
 }));
@@ -39,17 +40,17 @@ describe("createApiKey", () => {
   });
 
   it("rejects an empty name without minting", async () => {
-    expect((await createApiKey({ name: "   ", scopes: ["events:read"] })).ok).toBe(false);
+    expect((await createApiKey("acme", { name: "   ", scopes: ["events:read"] })).ok).toBe(false);
     expect(mintApiKey).not.toHaveBeenCalled();
   });
 
   it("rejects when no grantable scope is chosen, without minting", async () => {
-    expect((await createApiKey({ name: "k", scopes: [] })).ok).toBe(false);
+    expect((await createApiKey("acme", { name: "k", scopes: [] })).ok).toBe(false);
     expect(mintApiKey).not.toHaveBeenCalled();
   });
 
   it("narrows scopes to the grantable set before minting — drops reserved/unknown scopes", async () => {
-    const result = await createApiKey({
+    const result = await createApiKey("acme", {
       name: "k",
       scopes: ["events:read", "keys:manage", "totally:bogus"],
     });
@@ -65,7 +66,7 @@ describe("createApiKey", () => {
   });
 
   it("returns the minted key + one-time plaintext (distinct from the redacted start)", async () => {
-    const result = await createApiKey({ name: "CI deploy", scopes: ["events:read"] });
+    const result = await createApiKey("acme", { name: "CI deploy", scopes: ["events:read"] });
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.plaintext).toMatch(/^whk_/);
@@ -79,7 +80,7 @@ describe("createApiKey", () => {
     mintApiKey.mockImplementation(async () => {
       throw new Error("db down");
     });
-    expect((await createApiKey({ name: "k", scopes: ["events:read"] })).ok).toBe(false);
+    expect((await createApiKey("acme", { name: "k", scopes: ["events:read"] })).ok).toBe(false);
   });
 
   it("does not mask a committed key as a failure if result-mapping fails", async () => {
@@ -87,7 +88,7 @@ describe("createApiKey", () => {
     // Reporting {ok:false} would tell the user nothing was created while a key is live — so the
     // mapping (now OUTSIDE the mint try) must propagate rather than be swallowed into the error result.
     mintApiKey.mockResolvedValue(null as never);
-    await expect(createApiKey({ name: "k", scopes: ["events:read"] })).rejects.toThrow();
+    await expect(createApiKey("acme", { name: "k", scopes: ["events:read"] })).rejects.toThrow();
   });
 });
 
@@ -100,12 +101,12 @@ describe("revokeApiKey / revokeGrant", () => {
   });
 
   it("rejects a missing key id without revoking", async () => {
-    expect((await revokeApiKey("   ")).ok).toBe(false);
+    expect((await revokeApiKey("acme", "   ")).ok).toBe(false);
     expect(revokeKeyById).not.toHaveBeenCalled();
   });
 
   it("revokes a key by id — org-scoped, by the session user", async () => {
-    expect((await revokeApiKey("key_live")).ok).toBe(true);
+    expect((await revokeApiKey("acme", "key_live")).ok).toBe(true);
     expect(revokeKeyById).toHaveBeenCalledWith({ orgId: "o", userId: "u", keyId: "key_live" });
   });
 
@@ -113,16 +114,16 @@ describe("revokeApiKey / revokeGrant", () => {
     revokeKeyById.mockImplementation(async () => {
       throw new Error("db down");
     });
-    expect((await revokeApiKey("key_live")).ok).toBe(false);
+    expect((await revokeApiKey("acme", "key_live")).ok).toBe(false);
   });
 
   it("rejects a missing grant id without revoking", async () => {
-    expect((await revokeGrant("")).ok).toBe(false);
+    expect((await revokeGrant("acme", "")).ok).toBe(false);
     expect(revokeGrantById).not.toHaveBeenCalled();
   });
 
   it("revokes a grant by id — cascading + KV eviction handled downstream", async () => {
-    expect((await revokeGrant("grant_live")).ok).toBe(true);
+    expect((await revokeGrant("acme", "grant_live")).ok).toBe(true);
     expect(revokeGrantById).toHaveBeenCalledWith({
       orgId: "o",
       userId: "u",

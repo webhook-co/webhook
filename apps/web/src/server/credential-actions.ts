@@ -27,8 +27,10 @@ export type CreateKeyResult =
  * Scopes are narrowed server-side to the grantable CAPABILITY_SCOPES — a client can never widen a key
  * beyond them (e.g. the reserved `keys:manage` is dropped).
  */
-export async function createApiKey(input: CreateKeyInput): Promise<CreateKeyResult> {
-  const session = await requireOrgAccess();
+export async function createApiKey(slug: string, input: CreateKeyInput): Promise<CreateKeyResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect — it resolves a renamed slug
+  // straight through and acts on the right org.
+  const session = await requireOrgAccess(slug);
 
   const name = input.name.trim();
   if (!name) return { ok: false, error: "Give the key a name." };
@@ -86,8 +88,8 @@ export type RevokeResult = { readonly ok: true } | { readonly ok: false; readonl
  * source-of-truth DB stamp; see {@link revokeKeyById}). `{ok:false}` means the DB revoke itself failed —
  * not a stale cache. Idempotent — re-revoking an already-revoked key revokes nothing and evicts nothing.
  */
-export async function revokeApiKey(keyId: string): Promise<RevokeResult> {
-  const session = await requireOrgAccess();
+export async function revokeApiKey(slug: string, keyId: string): Promise<RevokeResult> {
+  const session = await requireOrgAccess(slug);
   if (!keyId.trim()) return { ok: false, error: "Missing key id." };
   try {
     await revokeKeyById({ orgId: session.orgId, userId: session.userId, keyId });
@@ -104,8 +106,8 @@ export async function revokeApiKey(keyId: string): Promise<RevokeResult> {
  * any entry that fails to evict lapses within the credential-cache TTL; see {@link revokeGrantById}). The
  * caller reflects the cascade in the UI (the grant + its child keys all read revoked).
  */
-export async function revokeGrant(grantId: string): Promise<RevokeResult> {
-  const session = await requireOrgAccess();
+export async function revokeGrant(slug: string, grantId: string): Promise<RevokeResult> {
+  const session = await requireOrgAccess(slug);
   if (!grantId.trim()) return { ok: false, error: "Missing grant id." };
   try {
     await revokeGrantById({ orgId: session.orgId, userId: session.userId, grantId });

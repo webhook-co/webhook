@@ -39,7 +39,7 @@ beforeEach(() => {
 
 describe("ReplayDestinationsManager", () => {
   it("renders the empty state explaining what a destination is when there are none", () => {
-    render(<ReplayDestinationsManager initial={[]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[]} />);
     expect(screen.getByText(/no destinations yet/i)).toBeInTheDocument();
     expect(screen.getByText(/register a public https url/i)).toBeInTheDocument();
   });
@@ -51,12 +51,12 @@ describe("ReplayDestinationsManager", () => {
       destination: dest({ id: "d2", url: "https://new.example.com/hook", label: null }),
       signingSecret: "whsec_fresh",
     });
-    render(<ReplayDestinationsManager initial={[]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[]} />);
 
     await user.type(screen.getByLabelText(/destination url/i), "https://new.example.com/hook");
     await user.click(screen.getByRole("button", { name: /add destination/i }));
 
-    expect(actions.createDestinationAction).toHaveBeenCalledWith({
+    expect(actions.createDestinationAction).toHaveBeenCalledWith("acme", {
       url: "https://new.example.com/hook",
       label: undefined,
     });
@@ -72,7 +72,7 @@ describe("ReplayDestinationsManager", () => {
       ok: false,
       error: "Enter a public hostname, not an IP address.",
     });
-    render(<ReplayDestinationsManager initial={[]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[]} />);
 
     await user.type(screen.getByLabelText(/destination url/i), "https://10.0.0.1/hook");
     await user.click(screen.getByRole("button", { name: /add destination/i }));
@@ -86,7 +86,7 @@ describe("ReplayDestinationsManager", () => {
   it("shows an 'already registered' note and no reveal on an idempotent re-add", async () => {
     const user = userEvent.setup();
     actions.createDestinationAction.mockResolvedValue({ ok: true, destination: dest() });
-    render(<ReplayDestinationsManager initial={[]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[]} />);
 
     await user.type(screen.getByLabelText(/destination url/i), "https://api.example.com/hook");
     await user.click(screen.getByRole("button", { name: /add destination/i }));
@@ -101,18 +101,18 @@ describe("ReplayDestinationsManager", () => {
       ok: true,
       signingSecret: "whsec_rotated",
     });
-    render(<ReplayDestinationsManager initial={[dest()]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[dest()]} />);
 
     await user.click(screen.getByRole("button", { name: /rotate secret/i }));
 
-    expect(actions.rotateDestinationSecretAction).toHaveBeenCalledWith("d1");
+    expect(actions.rotateDestinationSecretAction).toHaveBeenCalledWith("acme", "d1");
     await waitFor(() => expect(screen.getByText("whsec_rotated")).toBeInTheDocument());
   });
 
   it("confirms a remove and drops the row optimistically", async () => {
     const user = userEvent.setup();
     actions.deleteDestinationAction.mockResolvedValue({ ok: true });
-    render(<ReplayDestinationsManager initial={[dest()]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[dest()]} />);
 
     await user.click(screen.getByRole("button", { name: /^remove$/i }));
     const dialog = screen.getByRole("dialog");
@@ -121,7 +121,7 @@ describe("ReplayDestinationsManager", () => {
     ).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: /remove destination/i }));
 
-    expect(actions.deleteDestinationAction).toHaveBeenCalledWith("d1");
+    expect(actions.deleteDestinationAction).toHaveBeenCalledWith("acme", "d1");
     await waitFor(() =>
       expect(screen.queryByText("https://api.example.com/hook")).not.toBeInTheDocument(),
     );
@@ -129,12 +129,15 @@ describe("ReplayDestinationsManager", () => {
   });
 
   it("links each row to its destination detail page", () => {
-    render(<ReplayDestinationsManager initial={[dest({ id: "d7" })]} />);
-    expect(screen.getByRole("link", { name: /view/i })).toHaveAttribute("href", "/destinations/d7");
+    render(<ReplayDestinationsManager slug="acme" initial={[dest({ id: "d7" })]} />);
+    expect(screen.getByRole("link", { name: /view/i })).toHaveAttribute(
+      "href",
+      "/org/acme/destinations/d7",
+    );
   });
 
   it("hides Enable on an active row", () => {
-    render(<ReplayDestinationsManager initial={[dest()]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[dest()]} />);
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^enable$/i })).not.toBeInTheDocument();
   });
@@ -147,6 +150,7 @@ describe("ReplayDestinationsManager", () => {
     });
     render(
       <ReplayDestinationsManager
+        slug="acme"
         initial={[dest({ disabledAt: new Date("2026-07-02T00:00:00Z") })]}
       />,
     );
@@ -154,7 +158,7 @@ describe("ReplayDestinationsManager", () => {
     expect(screen.getByText("Disabled")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /^enable$/i }));
 
-    expect(actions.enableDestinationAction).toHaveBeenCalledWith("d1");
+    expect(actions.enableDestinationAction).toHaveBeenCalledWith("acme", "d1");
     await waitFor(() => expect(screen.getByText("Active")).toBeInTheDocument());
     // Once enabled, the Enable affordance is gone.
     expect(screen.queryByRole("button", { name: /^enable$/i })).not.toBeInTheDocument();
@@ -166,13 +170,13 @@ describe("ReplayDestinationsManager", () => {
       ok: false,
       error: "We couldn't update the destination. Please try again.",
     });
-    render(<ReplayDestinationsManager initial={[dest({ ordered: false })]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[dest({ ordered: false })]} />);
 
     const toggle = screen.getByRole("checkbox", { name: /strict ordering/i });
     expect(toggle).not.toBeChecked();
     await user.click(toggle);
 
-    expect(actions.setDestinationOrderedAction).toHaveBeenCalledWith("d1", true);
+    expect(actions.setDestinationOrderedAction).toHaveBeenCalledWith("acme", "d1", true);
     await waitFor(() =>
       expect(screen.getByText(/couldn't update the destination/i)).toBeInTheDocument(),
     );
@@ -189,7 +193,7 @@ describe("ReplayDestinationsManager", () => {
           resolve = () => r({ ok: true, signingSecret: "whsec_once" });
         }),
     );
-    render(<ReplayDestinationsManager initial={[dest()]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[dest()]} />);
 
     await user.dblClick(screen.getByRole("button", { name: /rotate secret/i }));
     expect(actions.rotateDestinationSecretAction).toHaveBeenCalledTimes(1);
@@ -199,7 +203,7 @@ describe("ReplayDestinationsManager", () => {
   });
 
   it("reconciles a new `initial` array in place (out-of-band auto-disable) without a remount", () => {
-    const { rerender } = render(<ReplayDestinationsManager initial={[dest()]} />);
+    const { rerender } = render(<ReplayDestinationsManager slug="acme" initial={[dest()]} />);
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^enable$/i })).not.toBeInTheDocument();
 
@@ -219,6 +223,7 @@ describe("ReplayDestinationsManager", () => {
     actions.rotateDestinationSecretAction.mockImplementation(() => new Promise(() => {}));
     render(
       <ReplayDestinationsManager
+        slug="acme"
         initial={[dest({ disabledAt: new Date("2026-07-02T00:00:00Z") })]}
       />,
     );
@@ -238,7 +243,7 @@ describe("ReplayDestinationsManager", () => {
       ok: false,
       error: "We couldn't remove the destination. Please try again.",
     });
-    render(<ReplayDestinationsManager initial={[dest()]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[dest()]} />);
 
     await user.click(screen.getByRole("button", { name: /^remove$/i }));
     const dialog = screen.getByRole("dialog");
@@ -258,7 +263,7 @@ describe("ReplayDestinationsManager", () => {
       ok: true,
       signingSecret: "whsec_rotated",
     });
-    render(<ReplayDestinationsManager initial={[dest()]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[dest()]} />);
 
     // Trigger the idempotent-re-add note.
     await user.type(screen.getByLabelText(/destination url/i), "https://api.example.com/hook");
@@ -277,11 +282,11 @@ describe("ReplayDestinationsManager", () => {
       ok: true,
       items: [{ id: "k1", status: "active", createdAt: new Date("2026-07-01T00:00:00Z") }],
     });
-    render(<ReplayDestinationsManager initial={[dest()]} />);
+    render(<ReplayDestinationsManager slug="acme" initial={[dest()]} />);
 
     await user.click(screen.getByRole("button", { name: /^keys$/i }));
 
-    expect(actions.listDestinationSecretsAction).toHaveBeenCalledWith("d1");
+    expect(actions.listDestinationSecretsAction).toHaveBeenCalledWith("acme", "d1");
     // The loaded key metadata renders inside the dialog.
     await waitFor(() => expect(screen.getByText("active")).toBeInTheDocument());
   });

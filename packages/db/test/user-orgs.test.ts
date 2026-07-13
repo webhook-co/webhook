@@ -279,7 +279,14 @@ describe("the directory resolves a slug — the security keystone of /org/{slug}
     const org = (await listUserOrgs(app, uid)).find((o) => o.orgId === id);
 
     expect(org?.slug).toBe(second);
-    expect(org?.formerSlugs).toContain(first);
+    // ⚠️ Assert it is an ARRAY, not merely that it "contains" the slug.
+    //
+    // `former_slugs` was declared `text[]` and postgres.js — with `fetch_types: false` — handed it back as the
+    // RAW LITERAL STRING "{oldname-abc}". `expect(aString).toContain("oldname-abc")` passes, because toContain
+    // matches a SUBSTRING when the subject is a string. So this test was green over a value of entirely the
+    // wrong type, and `formerSlugs.some(...)` threw on the first real browser request. Pin the type.
+    expect(Array.isArray(org?.formerSlugs)).toBe(true);
+    expect(org?.formerSlugs).toEqual([first]);
   });
 
   it("an org that RECLAIMS a former slug does not report its own current slug as former", async () => {
@@ -302,8 +309,8 @@ describe("the directory resolves a slug — the security keystone of /org/{slug}
     const org = (await listUserOrgs(app, uid)).find((o) => o.orgId === id);
 
     expect(org?.slug).toBe(original);
-    expect(org?.formerSlugs).toContain(away);
-    expect(org?.formerSlugs).not.toContain(original); // its OWN current slug is not "former"
+    expect(Array.isArray(org?.formerSlugs)).toBe(true);
+    expect(org?.formerSlugs).toEqual([away]); // and NOT its own current slug
   });
 
   it("does NOT leak a slug you are not a member of — the resolver simply cannot see it", async () => {

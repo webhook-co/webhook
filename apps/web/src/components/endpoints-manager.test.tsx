@@ -7,6 +7,11 @@ import type { EndpointItem, EndpointsResult } from "@/server/endpoints";
 
 import { EndpointsManager } from "./endpoints-manager";
 
+// The component reads its org from the URL (useOrgSlug). Without a router, the hook returns "" and every
+// link renders unprefixed — which is the deliberate fallback (a broken link, never a WRONG-ORG one), but it
+// is not what a page under /org/{slug}/ actually renders. Give it a slug.
+vi.mock("next/navigation", () => ({ useParams: () => ({ slug: "acme" }) }));
+
 const ep: EndpointItem = {
   id: "ep_1",
   name: "Stripe prod",
@@ -56,7 +61,7 @@ describe("EndpointsManager", () => {
       />,
     );
     const link = screen.getByRole("link", { name: "Stripe prod" });
-    expect(link).toHaveAttribute("href", "/endpoints/ep_1");
+    expect(link).toHaveAttribute("href", "/org/acme/endpoints/ep_1");
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Actions for Stripe prod" })).toBeInTheDocument();
   });

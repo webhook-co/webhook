@@ -27,9 +27,11 @@ export type CreateTriggerResult =
 export type TriggerActionResult =
   { readonly ok: true } | { readonly ok: false; readonly error: string };
 
-function revalidate(): void {
+/** `slug` is the CANONICAL slug off OrgAccess — the raw URL segment may be mis-cased or retired, and an
+ *  invalidation aimed at a path that doesn't exist is a silent no-op. */
+function revalidate(slug: string): void {
   try {
-    revalidatePath("/triggers");
+    revalidatePath(`/org/${slug}/triggers`);
   } catch (error) {
     logActionError("triggers.revalidate_failed", error);
   }
@@ -40,11 +42,16 @@ function revalidate(): void {
  * soft-deleted / cross-org endpoint maps to a "no longer exists" message (never leaking existence), and the
  * per-org active-trigger cap maps to friendly copy.
  */
-export async function createTriggerAction(input: {
-  endpointId: string;
-  name?: string;
-}): Promise<CreateTriggerResult> {
-  const session = await requireOrgAccess();
+export async function createTriggerAction(
+  slug: string,
+  input: {
+    endpointId: string;
+    name?: string;
+  },
+): Promise<CreateTriggerResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect — it resolves a renamed slug
+  // straight through and acts on the right org (a form posted seconds before a rename must still work).
+  const session = await requireOrgAccess(slug);
   const endpointId = typeof input?.endpointId === "string" ? input.endpointId : "";
   if (!isUuid(endpointId)) return { ok: false, error: "Choose an endpoint." };
   const nameRaw = typeof input?.name === "string" ? input.name.trim() : "";
@@ -59,7 +66,7 @@ export async function createTriggerAction(input: {
       name: nameRaw || null,
       actor: session.userId,
     });
-    revalidate();
+    revalidate(session.slug);
     return { ok: true, trigger: toTriggerItem(created) };
   } catch (error) {
     logActionError("triggers.create_failed", error);
@@ -77,8 +84,11 @@ export async function createTriggerAction(input: {
 }
 
 /** Revoke a trigger — it stops waking its agent immediately. Idempotent; an unknown id reads as "no longer exists". */
-export async function revokeTriggerAction(triggerId: string): Promise<TriggerActionResult> {
-  const session = await requireOrgAccess();
+export async function revokeTriggerAction(
+  slug: string,
+  triggerId: string,
+): Promise<TriggerActionResult> {
+  const session = await requireOrgAccess(slug);
   if (!isUuid(triggerId)) return { ok: false, error: "That trigger no longer exists." };
   try {
     const revoked = await revokeTrigger({
@@ -87,7 +97,7 @@ export async function revokeTriggerAction(triggerId: string): Promise<TriggerAct
       actor: session.userId,
     });
     if (!revoked) return { ok: false, error: "That trigger no longer exists." };
-    revalidate();
+    revalidate(session.slug);
     return { ok: true };
   } catch (error) {
     logActionError("triggers.revoke_failed", error);

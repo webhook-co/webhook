@@ -8,6 +8,11 @@ import type { DestinationItem } from "@/server/replay-destinations";
 
 import { ReplayDialog } from "./replay-dialog";
 
+// The component reads its org from the URL (useOrgSlug). Without a router, the hook returns "" and every
+// link renders unprefixed — which is the deliberate fallback (a broken link, never a WRONG-ORG one), but it
+// is not what a page under /org/{slug}/ actually renders. Give it a slug.
+vi.mock("next/navigation", () => ({ useParams: () => ({ slug: "acme" }) }));
+
 const EVENT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
 
 function destination(over: Partial<DestinationItem> = {}): DestinationItem {
@@ -65,7 +70,7 @@ describe("ReplayDialog", () => {
 
     expect(screen.getByText(/register a replay destination first/i)).toBeInTheDocument();
     const link = screen.getByRole("link", { name: /manage destinations/i });
-    expect(link).toHaveAttribute("href", "/destinations");
+    expect(link).toHaveAttribute("href", "/org/acme/destinations");
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^replay$/i })).not.toBeInTheDocument();
   });

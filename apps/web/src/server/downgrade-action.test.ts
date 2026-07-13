@@ -20,42 +20,48 @@ import { cancelDowngradeAction, switchPlanAction } from "./plan-actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  session.requireOrgAccess.mockResolvedValue({ orgId: "org-1", userId: "user-1", role: "owner" });
+  session.requireOrgAccess.mockResolvedValue({
+    orgId: "org-1",
+    userId: "user-1",
+    // The CANONICAL slug — every post-action redirect below is built from it, not from the raw argument.
+    slug: "acme",
+    role: "owner",
+  });
 });
 
 describe("cancelDowngradeAction", () => {
   it.each([
-    ["ok", "/billing?downgrade=ok"],
-    ["nothing_pending", "/billing?downgrade=nothing_pending"],
-    ["forbidden", "/billing?downgrade=forbidden"],
-    ["no_subscription", "/billing?downgrade=no_subscription"],
-    ["disabled", "/billing?downgrade=disabled"],
-    ["error", "/billing?downgrade=error"],
+    ["ok", "/org/acme/billing?downgrade=ok"],
+    ["nothing_pending", "/org/acme/billing?downgrade=nothing_pending"],
+    ["forbidden", "/org/acme/billing?downgrade=forbidden"],
+    ["no_subscription", "/org/acme/billing?downgrade=no_subscription"],
+    ["disabled", "/org/acme/billing?downgrade=disabled"],
+    ["error", "/org/acme/billing?downgrade=error"],
   ])("maps %s → %s", async (status, expected) => {
     planSwitch.cancelPendingDowngrade.mockResolvedValue({ status });
-    await cancelDowngradeAction();
+    await cancelDowngradeAction("acme");
     expect(nav.redirect).toHaveBeenCalledWith(expected);
   });
 
   it("passes the acting user, so the undo is gated and audited against a real principal", async () => {
     planSwitch.cancelPendingDowngrade.mockResolvedValue({ status: "ok" });
-    await cancelDowngradeAction();
+    await cancelDowngradeAction("acme");
     expect(planSwitch.cancelPendingDowngrade).toHaveBeenCalledWith("org-1", "user-1");
   });
 });
 
 describe("switchPlanAction", () => {
   it.each([
-    ["ok", "/billing?switch=ok"],
-    ["scheduled", "/billing?switch=scheduled"], // a downgrade booked for period end — NOT applied now
-    ["same_plan", "/billing?switch=same_plan"],
-    ["forbidden", "/billing?switch=forbidden"],
-    ["error", "/billing?switch=error"],
+    ["ok", "/org/acme/billing?switch=ok"],
+    ["scheduled", "/org/acme/billing?switch=scheduled"], // a downgrade booked for period end — NOT applied now
+    ["same_plan", "/org/acme/billing?switch=same_plan"],
+    ["forbidden", "/org/acme/billing?switch=forbidden"],
+    ["error", "/org/acme/billing?switch=error"],
   ])("maps %s → %s", async (status, expected) => {
     planSwitch.switchPlan.mockResolvedValue({ status, plan: "pro" });
     const form = new FormData();
     form.set("planId", "pro");
-    await switchPlanAction(form);
+    await switchPlanAction("acme", form);
     expect(nav.redirect).toHaveBeenCalledWith(expected);
   });
 
@@ -63,7 +69,7 @@ describe("switchPlanAction", () => {
     planSwitch.switchPlan.mockResolvedValue({ status: "scheduled", plan: "pro" });
     const form = new FormData();
     form.set("planId", "pro");
-    await switchPlanAction(form);
-    expect(nav.redirect).not.toHaveBeenCalledWith("/billing?switch=ok");
+    await switchPlanAction("acme", form);
+    expect(nav.redirect).not.toHaveBeenCalledWith("/org/acme/billing?switch=ok");
   });
 });

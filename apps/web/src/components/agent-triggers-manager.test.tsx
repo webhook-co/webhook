@@ -38,20 +38,20 @@ beforeEach(() => {
 
 describe("AgentTriggersManager", () => {
   it("renders the empty state explaining what a trigger is when there are none", () => {
-    render(<AgentTriggersManager initial={[]} endpoints={endpoints} />);
+    render(<AgentTriggersManager slug="acme" initial={[]} endpoints={endpoints} />);
     expect(screen.getByText(/no triggers yet/i)).toBeInTheDocument();
     expect(screen.getByText(/woken when an endpoint captures a new event/i)).toBeInTheDocument();
   });
 
   it("lists an existing trigger with its endpoint NAME (not the raw id) and label", () => {
-    render(<AgentTriggersManager initial={[trigger()]} endpoints={endpoints} />);
+    render(<AgentTriggersManager slug="acme" initial={[trigger()]} endpoints={endpoints} />);
     expect(screen.getByText("fraud-agent")).toBeInTheDocument();
     expect(screen.getByText("orders")).toBeInTheDocument();
     expect(screen.queryByText(EP_A)).not.toBeInTheDocument();
   });
 
   it("disables create and explains why when the org has no endpoints", () => {
-    render(<AgentTriggersManager initial={[]} endpoints={[]} />);
+    render(<AgentTriggersManager slug="acme" initial={[]} endpoints={[]} />);
     expect(screen.getByRole("button", { name: /create trigger/i })).toBeDisabled();
     expect(screen.getByText(/create an endpoint first/i)).toBeInTheDocument();
   });
@@ -62,7 +62,7 @@ describe("AgentTriggersManager", () => {
       ok: true,
       trigger: trigger({ id: "t2", endpointId: EP_B, name: "risk-agent" }),
     });
-    render(<AgentTriggersManager initial={[]} endpoints={endpoints} />);
+    render(<AgentTriggersManager slug="acme" initial={[]} endpoints={endpoints} />);
 
     // Pick an endpoint via the searchable combobox (trigger button announces "Endpoint: …").
     await user.click(screen.getByRole("button", { name: /endpoint:/i }));
@@ -70,7 +70,7 @@ describe("AgentTriggersManager", () => {
     await user.type(screen.getByLabelText(/label/i), "risk-agent");
     await user.click(screen.getByRole("button", { name: /create trigger/i }));
 
-    expect(actions.createTriggerAction).toHaveBeenCalledWith({
+    expect(actions.createTriggerAction).toHaveBeenCalledWith("acme", {
       endpointId: EP_B,
       name: "risk-agent",
     });
@@ -84,7 +84,7 @@ describe("AgentTriggersManager", () => {
       ok: false,
       error: "You've reached the active-trigger limit. Revoke an unused trigger and try again.",
     });
-    render(<AgentTriggersManager initial={[]} endpoints={endpoints} />);
+    render(<AgentTriggersManager slug="acme" initial={[]} endpoints={endpoints} />);
 
     await user.click(screen.getByRole("button", { name: /endpoint:/i }));
     await user.click(screen.getByRole("option", { name: "orders" }));
@@ -97,13 +97,13 @@ describe("AgentTriggersManager", () => {
   it("revokes a trigger through the confirm dialog and drops the row", async () => {
     const user = userEvent.setup();
     actions.revokeTriggerAction.mockResolvedValue({ ok: true });
-    render(<AgentTriggersManager initial={[trigger()]} endpoints={endpoints} />);
+    render(<AgentTriggersManager slug="acme" initial={[trigger()]} endpoints={endpoints} />);
 
     await user.click(screen.getByRole("button", { name: /^revoke$/i }));
     // Confirm dialog appears; confirm the destructive action.
     await user.click(screen.getByRole("button", { name: /revoke trigger/i }));
 
-    expect(actions.revokeTriggerAction).toHaveBeenCalledWith("t1");
+    expect(actions.revokeTriggerAction).toHaveBeenCalledWith("acme", "t1");
     await waitFor(() => expect(screen.queryByText("fraud-agent")).not.toBeInTheDocument());
     expect(screen.getByText(/no triggers yet/i)).toBeInTheDocument();
   });
@@ -114,7 +114,7 @@ describe("AgentTriggersManager", () => {
       ok: false,
       error: "That trigger no longer exists.",
     });
-    render(<AgentTriggersManager initial={[trigger()]} endpoints={endpoints} />);
+    render(<AgentTriggersManager slug="acme" initial={[trigger()]} endpoints={endpoints} />);
 
     await user.click(screen.getByRole("button", { name: /^revoke$/i }));
     await user.click(screen.getByRole("button", { name: /revoke trigger/i }));

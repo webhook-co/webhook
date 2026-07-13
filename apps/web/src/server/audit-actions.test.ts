@@ -66,26 +66,26 @@ describe("the audit role gate", () => {
   // would just read the identical chain in the browser. These pin the two surfaces in agreement.
   it("REFUSES a plain member — and reads nothing", async () => {
     requireOrgAccess.mockResolvedValueOnce({ userId: "u_m", orgId: "org_1", role: "member" });
-    expect(await verifyAuditChainAction()).toEqual({ status: "forbidden" });
+    expect(await verifyAuditChainAction("acme")).toEqual({ status: "forbidden" });
     expect(readAuditChain).not.toHaveBeenCalled();
     expect(verifyAuditChain).not.toHaveBeenCalled();
   });
 
   it("REFUSES a plain member the list too", async () => {
     requireOrgAccess.mockResolvedValueOnce({ userId: "u_m", orgId: "org_1", role: "member" });
-    expect(await loadMoreAuditAction(form("5"))).toEqual({ status: "forbidden" });
+    expect(await loadMoreAuditAction("acme", form("5"))).toEqual({ status: "forbidden" });
     expect(loadAudit).not.toHaveBeenCalled();
   });
 
   it("allows an admin", async () => {
     requireOrgAccess.mockResolvedValueOnce({ userId: "u_a", orgId: "org_1", role: "admin" });
-    expect(await verifyAuditChainAction()).toMatchObject({ status: "ok" });
+    expect(await verifyAuditChainAction("acme")).toMatchObject({ status: "ok" });
   });
 });
 
 describe("verifyAuditChainAction", () => {
   it("walks the whole chain and reports the verdict", async () => {
-    const res = await verifyAuditChainAction();
+    const res = await verifyAuditChainAction("acme");
     expect(res).toEqual({ status: "ok", verification: { ok: true, rowsVerified: 1 } });
     expect(readAuditChain).toHaveBeenCalled();
   });
@@ -96,7 +96,7 @@ describe("verifyAuditChainAction", () => {
       rowsVerified: 3,
       break: { kind: "hash_mismatch", seq: 4, detail: "row 4 does not recompute" },
     });
-    const res = await verifyAuditChainAction();
+    const res = await verifyAuditChainAction("acme");
     expect(res).toMatchObject({
       status: "ok",
       verification: { ok: false, break: { kind: "hash_mismatch", seq: 4 } },
@@ -105,18 +105,18 @@ describe("verifyAuditChainAction", () => {
 
   it("returns an error result rather than throwing when the read fails", async () => {
     readAuditChain.mockRejectedValueOnce(new Error("db down"));
-    expect(await verifyAuditChainAction()).toEqual({ status: "error" });
+    expect(await verifyAuditChainAction("acme")).toEqual({ status: "error" });
   });
 });
 
 describe("loadMoreAuditAction", () => {
   it("pages from the given seq", async () => {
-    await loadMoreAuditAction(form("42"));
+    await loadMoreAuditAction("acme", form("42"));
     expect(loadAudit).toHaveBeenCalledWith("org_1", 42);
   });
 
   it("refuses a junk cursor without touching the DB", async () => {
-    const res = await loadMoreAuditAction(form("not-a-number"));
+    const res = await loadMoreAuditAction("acme", form("not-a-number"));
     expect(res).toEqual({ status: "ok", result: { status: "error" } });
     expect(loadAudit).not.toHaveBeenCalled();
   });
@@ -129,26 +129,26 @@ describe("loadMoreAuditAction", () => {
 describe("the audit role gate — governance chain", () => {
   it("REFUSES a plain member the governance list — and reads nothing", async () => {
     requireOrgAccess.mockResolvedValueOnce({ userId: "u_m", orgId: "org_1", role: "member" });
-    expect(await loadMoreAuthAuditAction(form("5"))).toEqual({ status: "forbidden" });
+    expect(await loadMoreAuthAuditAction("acme", form("5"))).toEqual({ status: "forbidden" });
     expect(loadAuthAudit).not.toHaveBeenCalled();
   });
 
   it("REFUSES a plain member the governance VERIFY — and reads nothing", async () => {
     requireOrgAccess.mockResolvedValueOnce({ userId: "u_m", orgId: "org_1", role: "member" });
-    expect(await verifyAuthAuditChainAction()).toEqual({ status: "forbidden" });
+    expect(await verifyAuthAuditChainAction("acme")).toEqual({ status: "forbidden" });
     expect(readAuthAuditChain).not.toHaveBeenCalled();
     expect(verifyAuthAuditChain).not.toHaveBeenCalled();
   });
 
   it("allows an admin", async () => {
     requireOrgAccess.mockResolvedValueOnce({ userId: "u_a", orgId: "org_1", role: "admin" });
-    expect(await verifyAuthAuditChainAction()).toMatchObject({ status: "ok" });
+    expect(await verifyAuthAuditChainAction("acme")).toMatchObject({ status: "ok" });
   });
 });
 
 describe("verifyAuthAuditChainAction", () => {
   it("walks the governance chain and reports the verdict", async () => {
-    expect(await verifyAuthAuditChainAction()).toEqual({
+    expect(await verifyAuthAuditChainAction("acme")).toEqual({
       status: "ok",
       verification: { ok: true, rowsVerified: 1 },
     });
@@ -161,7 +161,7 @@ describe("verifyAuthAuditChainAction", () => {
       rowsVerified: 2,
       break: { kind: "seq_gap", seq: 4, detail: "a row is missing" },
     });
-    expect(await verifyAuthAuditChainAction()).toMatchObject({
+    expect(await verifyAuthAuditChainAction("acme")).toMatchObject({
       status: "ok",
       verification: { ok: false, break: { kind: "seq_gap", seq: 4 } },
     });
@@ -169,18 +169,18 @@ describe("verifyAuthAuditChainAction", () => {
 
   it("returns an error result rather than throwing when the read fails", async () => {
     readAuthAuditChain.mockRejectedValueOnce(new Error("db down"));
-    expect(await verifyAuthAuditChainAction()).toEqual({ status: "error" });
+    expect(await verifyAuthAuditChainAction("acme")).toEqual({ status: "error" });
   });
 });
 
 describe("loadMoreAuthAuditAction", () => {
   it("pages from the given seq", async () => {
-    await loadMoreAuthAuditAction(form("42"));
+    await loadMoreAuthAuditAction("acme", form("42"));
     expect(loadAuthAudit).toHaveBeenCalledWith("org_1", 42);
   });
 
   it("refuses a junk cursor without touching the DB", async () => {
-    expect(await loadMoreAuthAuditAction(form("nope"))).toEqual({
+    expect(await loadMoreAuthAuditAction("acme", form("nope"))).toEqual({
       status: "ok",
       result: { status: "error" },
     });

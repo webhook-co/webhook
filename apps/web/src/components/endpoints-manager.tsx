@@ -1,5 +1,7 @@
 "use client";
 
+import { orgHref, useOrgSlug } from "@/lib/org-path";
+
 import {
   Badge,
   Banner,
@@ -80,6 +82,8 @@ export function EndpointsManager({
   rotateEndpoint,
   deleteEndpoint,
 }: EndpointsManagerProps) {
+  // The org this component is rendered in — read from the URL, which is the source of truth for it.
+  const slug = useOrgSlug();
   const liveEndpoints = initialResult.status === "ok" ? initialResult.endpoints : [];
   const [endpoints, setEndpoints] = React.useState<readonly EndpointItem[]>(liveEndpoints);
   // Re-sync the list to a freshly server-filtered `initialResult` WITHOUT remounting — the manager
@@ -272,7 +276,7 @@ export function EndpointsManager({
               <TableRow key={endpoint.id}>
                 <TableCell>
                   <Link
-                    href={`/endpoints/${endpoint.id}`}
+                    href={orgHref(slug, `/endpoints/${endpoint.id}`)}
                     className="font-medium text-fg underline-offset-4 hover:underline"
                   >
                     {endpoint.name}

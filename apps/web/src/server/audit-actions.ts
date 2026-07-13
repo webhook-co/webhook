@@ -22,8 +22,12 @@ export type LoadMoreAuditResult =
   { readonly status: "ok"; readonly result: AuditResult } | { readonly status: "forbidden" };
 
 /** The next page of the chain (keyset on seq). Owner/admin only. */
-export async function loadMoreAuditAction(formData: FormData): Promise<LoadMoreAuditResult> {
-  const { orgId, role } = await requireOrgAccess();
+export async function loadMoreAuditAction(
+  slug: string,
+  formData: FormData,
+): Promise<LoadMoreAuditResult> {
+  // No subPath: actions don't render, so there's nothing to redirect — they act on the resolved org.
+  const { orgId, role } = await requireOrgAccess(slug);
   if (!isAuditReaderRole(role)) return { status: "forbidden" };
 
   const raw = String(formData.get("afterSeq") ?? "");
@@ -47,8 +51,8 @@ export type VerifyChainResult =
  * Deliberately NOT cross-checked against the R2 anchor here: that's the external truncation guard and needs
  * an R2 binding the web app doesn't have. This is the internal-consistency half, which is self-contained.
  */
-export async function verifyAuditChainAction(): Promise<VerifyChainResult> {
-  const { orgId, role } = await requireOrgAccess();
+export async function verifyAuditChainAction(slug: string): Promise<VerifyChainResult> {
+  const { orgId, role } = await requireOrgAccess(slug);
   if (!isAuditReaderRole(role)) return { status: "forbidden" };
 
   try {
@@ -71,9 +75,10 @@ export type LoadMoreAuthAuditResult =
 
 /** The next page of the governance chain. Owner/admin only. */
 export async function loadMoreAuthAuditAction(
+  slug: string,
   formData: FormData,
 ): Promise<LoadMoreAuthAuditResult> {
-  const { orgId, role } = await requireOrgAccess();
+  const { orgId, role } = await requireOrgAccess(slug);
   if (!isAuditReaderRole(role)) return { status: "forbidden" };
 
   const afterSeq = Number.parseInt(String(formData.get("afterSeq") ?? ""), 10);
@@ -87,8 +92,8 @@ export async function loadMoreAuthAuditAction(
  * Recompute the governance chain. Until Lane 2.10 `aae1` had only a per-ROW verifier — which cannot see the
  * attacks a chain exists to detect (a deleted row's seq gap, a rewritten link, a forked seq). This walks it.
  */
-export async function verifyAuthAuditChainAction(): Promise<VerifyChainResult> {
-  const { orgId, role } = await requireOrgAccess();
+export async function verifyAuthAuditChainAction(slug: string): Promise<VerifyChainResult> {
+  const { orgId, role } = await requireOrgAccess(slug);
   if (!isAuditReaderRole(role)) return { status: "forbidden" };
 
   try {

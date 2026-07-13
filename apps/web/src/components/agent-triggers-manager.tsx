@@ -43,6 +43,9 @@ export interface EndpointOption {
 }
 
 export interface AgentTriggersManagerProps {
+  /** The CANONICAL org slug (off OrgAccess) — the org every action below acts in. The actions take it as
+   *  their first argument because the org now comes from the URL, never from the session cookie. */
+  readonly slug: string;
   readonly initial: readonly TriggerItem[];
   readonly endpoints: readonly EndpointOption[];
 }
@@ -51,7 +54,7 @@ function rowKey(id: string): string {
   return `row:${id}`;
 }
 
-export function AgentTriggersManager({ initial, endpoints }: AgentTriggersManagerProps) {
+export function AgentTriggersManager({ slug, initial, endpoints }: AgentTriggersManagerProps) {
   const [triggers, setTriggers] = React.useState<readonly TriggerItem[]>(initial);
   // Reconcile to a fresh server-provided `initial` WITHOUT remounting (mirrors the other managers): an
   // out-of-band change surfaces on the next render, not only after a hard reload.
@@ -112,7 +115,7 @@ export function AgentTriggersManager({ initial, endpoints }: AgentTriggersManage
     await guard("create", async () => {
       setFormError(null);
       try {
-        const result = await createTriggerAction({
+        const result = await createTriggerAction(slug, {
           endpointId,
           name: name.trim() || undefined,
         });
@@ -145,7 +148,7 @@ export function AgentTriggersManager({ initial, endpoints }: AgentTriggersManage
     await guard(rowKey(trigger.id), async () => {
       setRevokeError(null);
       try {
-        const result = await revokeTriggerAction(trigger.id);
+        const result = await revokeTriggerAction(slug, trigger.id);
         if (!result.ok) {
           // Keep the modal open and show the failure INSIDE it — a page-level Banner renders behind it.
           setRevokeError(result.error);

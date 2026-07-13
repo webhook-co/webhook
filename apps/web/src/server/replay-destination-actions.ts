@@ -50,9 +50,11 @@ export type ListSecretsResult =
     }
   | { readonly ok: false; readonly error: string };
 
-function revalidate(): void {
+/** `slug` is the CANONICAL slug off OrgAccess — an invalidation aimed at a path that doesn't exist (a
+ *  mis-cased or retired segment) is a silent no-op, and the list would go stale until a hard reload. */
+function revalidate(slug: string): void {
   try {
-    revalidatePath("/destinations");
+    revalidatePath(`/org/${slug}/destinations`);
   } catch (error) {
     logActionError("destinations.revalidate_failed", error);
   }
@@ -63,11 +65,15 @@ function revalidate(): void {
  * write); a refusal maps to honest, plain-language copy. On a fresh create the one-time signing secret is
  * returned ONCE as this result; an idempotent re-add of a live URL returns the row with no secret.
  */
-export async function createDestinationAction(input: {
-  url: string;
-  label?: string;
-}): Promise<CreateDestinationResult> {
-  const session = await requireOrgAccess();
+export async function createDestinationAction(
+  slug: string,
+  input: {
+    url: string;
+    label?: string;
+  },
+): Promise<CreateDestinationResult> {
+  // No subPath: an action doesn't render, so there is nothing to redirect.
+  const session = await requireOrgAccess(slug);
   const url = typeof input?.url === "string" ? input.url.trim() : "";
   if (!url) return { ok: false, error: "Enter a destination URL." };
   if (url.length > MAX_URL_LEN) return { ok: false, error: "That URL is too long." };
@@ -83,7 +89,7 @@ export async function createDestinationAction(input: {
       label: labelRaw || null,
       actor: session.userId,
     });
-    revalidate();
+    revalidate(session.slug);
     return {
       ok: true,
       destination: toDestinationItem(created.record),
@@ -103,9 +109,10 @@ export async function createDestinationAction(input: {
 
 /** Soft-delete a destination — it stops being a delivery target immediately; open deliveries are cancelled. */
 export async function deleteDestinationAction(
+  slug: string,
   destinationId: string,
 ): Promise<DestinationActionResult> {
-  const session = await requireOrgAccess();
+  const session = await requireOrgAccess(slug);
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {
     const removed = await removeDestination({
@@ -114,7 +121,7 @@ export async function deleteDestinationAction(
       actor: session.userId,
     });
     if (!removed) return { ok: false, error: "That destination no longer exists." };
-    revalidate();
+    revalidate(session.slug);
     return { ok: true };
   } catch (error) {
     logActionError("destinations.delete_failed", error);
@@ -124,9 +131,10 @@ export async function deleteDestinationAction(
 
 /** Re-enable an auto-disabled destination so it becomes a delivery target again. */
 export async function enableDestinationAction(
+  slug: string,
   destinationId: string,
 ): Promise<DestinationMutationResult> {
-  const session = await requireOrgAccess();
+  const session = await requireOrgAccess(slug);
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {
     const rec = await enableDestination({
@@ -135,7 +143,7 @@ export async function enableDestinationAction(
       actor: session.userId,
     });
     if (!rec) return { ok: false, error: "That destination no longer exists." };
-    revalidate();
+    revalidate(session.slug);
     return { ok: true, destination: toDestinationItem(rec) };
   } catch (error) {
     logActionError("destinations.enable_failed", error);
@@ -145,10 +153,11 @@ export async function enableDestinationAction(
 
 /** Toggle a destination's strict-FIFO (`ordered`) delivery mode. */
 export async function setDestinationOrderedAction(
+  slug: string,
   destinationId: string,
   ordered: boolean,
 ): Promise<DestinationMutationResult> {
-  const session = await requireOrgAccess();
+  const session = await requireOrgAccess(slug);
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {
     const rec = await setDestinationOrdered({
@@ -158,7 +167,7 @@ export async function setDestinationOrderedAction(
       actor: session.userId,
     });
     if (!rec) return { ok: false, error: "That destination no longer exists." };
-    revalidate();
+    revalidate(session.slug);
     return { ok: true, destination: toDestinationItem(rec) };
   } catch (error) {
     logActionError("destinations.set_ordered_failed", error);
@@ -171,9 +180,10 @@ export async function setDestinationOrderedAction(
  * during overlap), a fresh one is minted. Returns the NEW one-time `whsec_` — shown once, never re-fetchable.
  */
 export async function rotateDestinationSecretAction(
+  slug: string,
   destinationId: string,
 ): Promise<RotateSecretResult> {
-  const session = await requireOrgAccess();
+  const session = await requireOrgAccess(slug);
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   try {
     const rotated = await rotateDestinationSecret({
@@ -194,9 +204,10 @@ export async function rotateDestinationSecretAction(
 
 /** List a destination's signing-secret history as metadata only (id/status/createdAt) — never the plaintext. */
 export async function listDestinationSecretsAction(
+  slug: string,
   destinationId: string,
 ): Promise<ListSecretsResult> {
-  const session = await requireOrgAccess();
+  const session = await requireOrgAccess(slug);
   if (!isUuid(destinationId)) return { ok: false, error: "That destination no longer exists." };
   const res = await loadSigningSecrets(session.orgId, destinationId);
   if (res.status === "not_found") return { ok: false, error: "That destination no longer exists." };

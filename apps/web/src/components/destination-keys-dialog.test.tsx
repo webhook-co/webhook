@@ -24,9 +24,9 @@ describe("DestinationKeysDialog", () => {
         { id: "k2", status: "retiring", createdAt: new Date("2026-06-01T00:00:00Z") },
       ],
     });
-    render(<DestinationKeysDialog open destinationId="d1" onClose={vi.fn()} />);
+    render(<DestinationKeysDialog slug="acme" open destinationId="d1" onClose={vi.fn()} />);
 
-    expect(actions.listDestinationSecretsAction).toHaveBeenCalledWith("d1");
+    expect(actions.listDestinationSecretsAction).toHaveBeenCalledWith("acme", "d1");
     await waitFor(() => expect(screen.getByText("active")).toBeInTheDocument());
     expect(screen.getByText("retiring")).toBeInTheDocument();
     // Metadata only — the dialog never shows a secret.
@@ -35,7 +35,7 @@ describe("DestinationKeysDialog", () => {
 
   it("renders an empty state when there are no signing keys", async () => {
     actions.listDestinationSecretsAction.mockResolvedValue({ ok: true, items: [] });
-    render(<DestinationKeysDialog open destinationId="d1" onClose={vi.fn()} />);
+    render(<DestinationKeysDialog slug="acme" open destinationId="d1" onClose={vi.fn()} />);
     await waitFor(() => expect(screen.getByText(/no signing keys yet/i)).toBeInTheDocument());
   });
 
@@ -44,14 +44,14 @@ describe("DestinationKeysDialog", () => {
       ok: false,
       error: "We couldn't load the signing keys.",
     });
-    render(<DestinationKeysDialog open destinationId="d1" onClose={vi.fn()} />);
+    render(<DestinationKeysDialog slug="acme" open destinationId="d1" onClose={vi.fn()} />);
     await waitFor(() =>
       expect(screen.getByText(/couldn't load the signing keys/i)).toBeInTheDocument(),
     );
   });
 
   it("does not load while closed", () => {
-    render(<DestinationKeysDialog open={false} destinationId="d1" onClose={vi.fn()} />);
+    render(<DestinationKeysDialog slug="acme" open={false} destinationId="d1" onClose={vi.fn()} />);
     expect(actions.listDestinationSecretsAction).not.toHaveBeenCalled();
   });
 });

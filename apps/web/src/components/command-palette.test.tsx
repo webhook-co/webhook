@@ -3,7 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const push = vi.fn();
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
+  useRouter: () => ({ push }),
+}));
 
 import { COMMAND_ITEMS } from "./app-nav";
 import { CommandPalette } from "./command-palette";
@@ -76,17 +79,22 @@ describe("CommandPalette", () => {
 });
 
 describe("the palette and the sidebar cannot drift apart", () => {
-  it("offers every nav route (they're derived from one table)", () => {
+  it("offers every nav route, org-scoped (they're derived from one table)", () => {
     // A page in the sidebar but not the palette (or vice-versa) is drift nobody notices until a user
     // complains. Both come from the same NAV table; this pins that they stay that way.
-    const hrefs = COMMAND_ITEMS.map((i) => i.href);
-    expect(hrefs).toContain("/dashboard");
-    expect(hrefs).toContain("/audit");
-    expect(hrefs).toContain("/team");
+    //
+    // Every href is now rooted at /org/{slug}: the org comes from the URL, so a bare `/dashboard` would be a
+    // 404 — and a palette that navigates you off the org tree is exactly the silent breakage the move exists
+    // to delete. Pin the PREFIX, not just the tail.
+    const items = COMMAND_ITEMS("acme");
+    const hrefs = items.map((i) => i.href);
+    expect(hrefs).toContain("/org/acme/dashboard");
+    expect(hrefs).toContain("/org/acme/audit");
+    expect(hrefs).toContain("/org/acme/team");
     expect(new Set(hrefs).size).toBe(hrefs.length); // no duplicates
-    for (const item of COMMAND_ITEMS) {
+    for (const item of items) {
       expect(item.label.length).toBeGreaterThan(0);
-      expect(item.href.startsWith("/")).toBe(true);
+      expect(item.href.startsWith("/org/acme/")).toBe(true);
     }
   });
 });

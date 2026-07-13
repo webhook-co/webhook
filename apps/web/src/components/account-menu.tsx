@@ -1,5 +1,7 @@
 "use client";
 
+import { orgHref, useOrgSlug } from "@/lib/org-path";
+
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,6 +30,8 @@ export interface AccountMenuProps {
  * a link to settings, and log out. `onLogout` is the server action wired by the layout.
  */
 export function AccountMenu({ name, email, onLogout }: AccountMenuProps) {
+  // The org this component is rendered in — read from the URL, which is the source of truth for it.
+  const slug = useOrgSlug();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -43,7 +47,7 @@ export function AccountMenu({ name, email, onLogout }: AccountMenuProps) {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <a href="/settings">Settings</a>
+          <a href={orgHref(slug, "/settings")}>Settings</a>
         </DropdownMenuItem>
         <DropdownMenuItem destructive onSelect={() => onLogout()}>
           Log out

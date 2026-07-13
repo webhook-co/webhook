@@ -8,6 +8,7 @@ const { requireOrgAccess } = vi.hoisted(() => ({
   requireOrgAccess: vi.fn(async () => ({
     userId: "u1",
     orgId: "org-1",
+    slug: "acme",
     user: { name: "A", email: "a@x.com", image: null },
   })),
 }));
@@ -36,7 +37,7 @@ beforeEach(() => {
 describe("mintListenTicketAction", () => {
   it("mints a ticket that verifies to the session org + the endpoint", async () => {
     loadEndpoint.mockResolvedValue({ status: "ok", endpoint: { id: ENDPOINT } });
-    const res = await mintListenTicketAction(ENDPOINT);
+    const res = await mintListenTicketAction("acme", ENDPOINT);
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.subprotocol).toBe("wbhk.listen.v1");
@@ -47,21 +48,21 @@ describe("mintListenTicketAction", () => {
   });
 
   it("refuses a non-uuid endpoint without touching the loader", async () => {
-    const res = await mintListenTicketAction("not-a-uuid");
+    const res = await mintListenTicketAction("acme", "not-a-uuid");
     expect(res.ok).toBe(false);
     expect(loadEndpoint).not.toHaveBeenCalled();
   });
 
   it("returns not-found for a cross-org / unknown endpoint (no ticket)", async () => {
     loadEndpoint.mockResolvedValue({ status: "not_found" });
-    const res = await mintListenTicketAction(ENDPOINT);
+    const res = await mintListenTicketAction("acme", ENDPOINT);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/no longer exists/i);
   });
 
   it("returns a generic retry error (no ticket) on a loader fault", async () => {
     loadEndpoint.mockRejectedValue(new Error("boom"));
-    const res = await mintListenTicketAction(ENDPOINT);
+    const res = await mintListenTicketAction("acme", ENDPOINT);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/couldn't start/i);
   });
@@ -69,7 +70,7 @@ describe("mintListenTicketAction", () => {
   it("returns a generic retry error when the loader reports a db fault (status: error)", async () => {
     // loadEndpoint catches its own db faults and returns {status:"error"} WITHOUT throwing.
     loadEndpoint.mockResolvedValue({ status: "error" });
-    const res = await mintListenTicketAction(ENDPOINT);
+    const res = await mintListenTicketAction("acme", ENDPOINT);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/couldn't start/i);
   });

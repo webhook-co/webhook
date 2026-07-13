@@ -6,6 +6,8 @@ const { requireOrgAccess } = vi.hoisted(() => ({
   requireOrgAccess: vi.fn(async () => ({
     userId: "user-1",
     orgId: "org-1",
+    // The CANONICAL slug the gate resolved — every revalidatePath below is built from it.
+    slug: "acme",
     user: { name: "A", email: "a@x.com", image: null },
   })),
 }));
@@ -79,7 +81,7 @@ beforeEach(() => {
 describe("createDestinationAction", () => {
   it("returns ok with a stripped item + the one-time signing secret on a fresh create", async () => {
     mutations.createDestination.mockResolvedValue({ record: REC, signingSecret: "whsec_fresh" });
-    const res = await createDestinationAction({
+    const res = await createDestinationAction("acme", {
       url: "https://hooks.example.com/in",
       label: "prod",
     });
@@ -93,13 +95,13 @@ describe("createDestinationAction", () => {
 
   it("omits the secret on an idempotent re-add (already registered)", async () => {
     mutations.createDestination.mockResolvedValue({ record: REC, signingSecret: undefined });
-    const res = await createDestinationAction({ url: "https://hooks.example.com/in" });
+    const res = await createDestinationAction("acme", { url: "https://hooks.example.com/in" });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.signingSecret).toBeUndefined();
   });
 
   it("rejects a non-string url without calling the mutation", async () => {
-    const res = await createDestinationAction({ url: 123 as unknown as string });
+    const res = await createDestinationAction("acme", { url: 123 as unknown as string });
     expect(res.ok).toBe(false);
     expect(mutations.createDestination).not.toHaveBeenCalled();
   });
@@ -108,7 +110,7 @@ describe("createDestinationAction", () => {
     mutations.createDestination.mockRejectedValue(
       new InvalidDestinationUrlError("ip_literal_host"),
     );
-    const res = await createDestinationAction({ url: "https://169.254.169.254" });
+    const res = await createDestinationAction("acme", { url: "https://169.254.169.254" });
     expect(res.ok).toBe(false);
     if (!res.ok) {
       expect(res.error).toMatch(/IP address/i);
@@ -118,13 +120,13 @@ describe("createDestinationAction", () => {
 
   it("fails closed on a missing sealer", async () => {
     mutations.createDestination.mockRejectedValue(new SealerUnavailableError());
-    const res = await createDestinationAction({ url: "https://hooks.example.com/in" });
+    const res = await createDestinationAction("acme", { url: "https://hooks.example.com/in" });
     expect(res.ok).toBe(false);
   });
 
   it("never passes a secret to the scrubbed logger on failure", async () => {
     mutations.createDestination.mockRejectedValue(new Error("boom"));
-    await createDestinationAction({ url: "https://hooks.example.com/in" });
+    await createDestinationAction("acme", { url: "https://hooks.example.com/in" });
     // The logger is called with (event, error) only — never the input/url/secret.
     for (const call of logActionError.mock.calls) {
       expect(JSON.stringify(call)).not.toContain("whsec_");
@@ -135,19 +137,19 @@ describe("createDestinationAction", () => {
 describe("rotateDestinationSecretAction", () => {
   it("returns the one-time rotated secret", async () => {
     mutations.rotateDestinationSecret.mockResolvedValue({ keyId: "k2", secret: "whsec_rot" });
-    const res = await rotateDestinationSecretAction(REC.id);
+    const res = await rotateDestinationSecretAction("acme", REC.id);
     expect(res).toEqual({ ok: true, signingSecret: "whsec_rot" });
   });
 
   it("rejects a non-uuid as gone (no db 22P02)", async () => {
-    const res = await rotateDestinationSecretAction("not-a-uuid");
+    const res = await rotateDestinationSecretAction("acme", "not-a-uuid");
     expect(res.ok).toBe(false);
     expect(mutations.rotateDestinationSecret).not.toHaveBeenCalled();
   });
 
   it("maps a null (soft-deleted / not-live destination) to a clean NOT_FOUND error", async () => {
     mutations.rotateDestinationSecret.mockResolvedValue(null);
-    const res = await rotateDestinationSecretAction(REC.id);
+    const res = await rotateDestinationSecretAction("acme", REC.id);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/no longer exists/i);
   });
@@ -156,20 +158,20 @@ describe("rotateDestinationSecretAction", () => {
 describe("enable / setOrdered / delete", () => {
   it("enableDestinationAction returns the updated stripped item", async () => {
     mutations.enableDestination.mockResolvedValue({ ...REC, disabledAt: null });
-    const res = await enableDestinationAction(REC.id);
+    const res = await enableDestinationAction("acme", REC.id);
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.destination).not.toHaveProperty("orgId");
   });
 
   it("enableDestinationAction maps a null (not found) to a clean error", async () => {
     mutations.enableDestination.mockResolvedValue(null);
-    const res = await enableDestinationAction(REC.id);
+    const res = await enableDestinationAction("acme", REC.id);
     expect(res.ok).toBe(false);
   });
 
   it("setDestinationOrderedAction threads the ordered flag", async () => {
     mutations.setDestinationOrdered.mockResolvedValue({ ...REC, ordered: true });
-    const res = await setDestinationOrderedAction(REC.id, true);
+    const res = await setDestinationOrderedAction("acme", REC.id, true);
     expect(res.ok).toBe(true);
     expect(mutations.setDestinationOrdered).toHaveBeenCalledWith(
       expect.objectContaining({ destinationId: REC.id, ordered: true }),
@@ -178,13 +180,13 @@ describe("enable / setOrdered / delete", () => {
 
   it("deleteDestinationAction maps a null (not found) to a clean error", async () => {
     mutations.removeDestination.mockResolvedValue(null);
-    const res = await deleteDestinationAction(REC.id);
+    const res = await deleteDestinationAction("acme", REC.id);
     expect(res.ok).toBe(false);
   });
 
   it("deleteDestinationAction returns ok on success", async () => {
     mutations.removeDestination.mockResolvedValue({ id: REC.id, deletedAt: new Date() });
-    const res = await deleteDestinationAction(REC.id);
+    const res = await deleteDestinationAction("acme", REC.id);
     expect(res.ok).toBe(true);
   });
 });
@@ -195,26 +197,26 @@ describe("listDestinationSecretsAction", () => {
       status: "ok",
       items: [{ id: "k1", status: "active", createdAt: new Date() }],
     });
-    const res = await listDestinationSecretsAction(REC.id);
+    const res = await listDestinationSecretsAction("acme", REC.id);
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.items).toHaveLength(1);
   });
 
   it("maps a loader error to {ok:false}", async () => {
     loadSigningSecrets.mockResolvedValue({ status: "error" });
-    const res = await listDestinationSecretsAction(REC.id);
+    const res = await listDestinationSecretsAction("acme", REC.id);
     expect(res.ok).toBe(false);
   });
 
   it("maps a not_found (soft-deleted destination) to a clean error", async () => {
     loadSigningSecrets.mockResolvedValue({ status: "not_found" });
-    const res = await listDestinationSecretsAction(REC.id);
+    const res = await listDestinationSecretsAction("acme", REC.id);
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/no longer exists/i);
   });
 
   it("rejects a non-uuid id", async () => {
-    const res = await listDestinationSecretsAction("nope");
+    const res = await listDestinationSecretsAction("acme", "nope");
     expect(res.ok).toBe(false);
     expect(loadSigningSecrets).not.toHaveBeenCalled();
   });
