@@ -112,6 +112,42 @@ describe("switchOrgAction", () => {
     expect(signSessionToken).not.toHaveBeenCalled();
   });
 
+  it("FAILS CLOSED when the session cookie is gone — refuses rather than minting a fresh TTL", async () => {
+    // Membership is fine, but we can't read the current deadline. The tempting fallback is a fresh 7 days —
+    // which is exactly the session-lifetime bypass this design exists to prevent. Refuse instead.
+    cookieStore.get.mockReturnValue(undefined);
+    await expect(switchOrgAction(form("org_b"))).rejects.toThrow(
+      "NEXT_REDIRECT:/dashboard?org=denied",
+    );
+    expect(signSessionToken).not.toHaveBeenCalled();
+    expect(cookieStore.set).not.toHaveBeenCalled();
+  });
+
+  it("FAILS CLOSED when the existing cookie can't be verified — no re-mint", async () => {
+    verifySessionToken.mockResolvedValueOnce(null);
+    await expect(switchOrgAction(form("org_b"))).rejects.toThrow(
+      "NEXT_REDIRECT:/dashboard?org=denied",
+    );
+    expect(signSessionToken).not.toHaveBeenCalled();
+    expect(cookieStore.set).not.toHaveBeenCalled();
+  });
+
+  it("FAILS CLOSED on an already-expired token — never revives a dead session", async () => {
+    const now = 1_000_000_000;
+    vi.setSystemTime(now);
+    verifySessionToken.mockResolvedValueOnce({
+      userId: "u_1",
+      orgId: "org_a",
+      expiresAt: Math.floor(now / 1000) - 1, // already gone
+      user: { name: "D", email: "d@acme.test", image: null },
+    });
+    await expect(switchOrgAction(form("org_b"))).rejects.toThrow(
+      "NEXT_REDIRECT:/dashboard?org=denied",
+    );
+    expect(signSessionToken).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("rejects a missing orgId", async () => {
     const fd = new FormData();
     await expect(switchOrgAction(fd)).rejects.toThrow("NEXT_REDIRECT:/dashboard?org=denied");
