@@ -8,6 +8,7 @@ import {
   createClient,
   createCredentialHasherFromBase64,
   makeApiKeyAuthDeps,
+  makeApiKeyLastUsedStamper,
   MCP_RESOURCE,
 } from "@webhook-co/db";
 import { b64ToBytes, readSecretBinding } from "@webhook-co/shared";
@@ -78,7 +79,10 @@ interface DepsHandle {
  * close(); the pepper is decoded in-worker (Workers secret, never process env). The tenant client used by
  * the tools is opened INSIDE the Durable Object per call (mcp-agent.ts), not here. Mirrors apps/api/buildDeps.
  */
-async function buildResourceDeps(env: McpEnv): Promise<DepsHandle> {
+async function buildResourceDeps(
+  env: McpEnv,
+  waitUntil?: (promise: Promise<unknown>) => void,
+): Promise<DepsHandle> {
   const [pepper, sessionKeyRaw] = await Promise.all([
     readSecretBinding(env.CREDENTIAL_PEPPER),
     readSecretBinding(env.MCP_SESSION_KEY),
@@ -91,6 +95,14 @@ async function buildResourceDeps(env: McpEnv): Promise<DepsHandle> {
     authn,
     cache: kvCredentialCache(env.KV_AUTHZ),
     resource: MCP_RESOURCE,
+    // Best-effort last_used_at stamp: a self-contained task on its OWN connection, deferred past the response
+    // via ctx.waitUntil — never on the auth path, never on the request's authn client (closed in `finally`).
+    stampLastUsed: waitUntil
+      ? makeApiKeyLastUsedStamper({
+          connectionString: env.HYPERDRIVE_AUTHN.connectionString,
+          waitUntil,
+        })
+      : undefined,
   });
   // The opaque-token validator introspects over the AUTH_ISSUER service binding; it's only invoked for a
   // non-`whk_` token, so a `whk_` request never touches the binding.
@@ -148,7 +160,7 @@ export default {
     // escaping throw — incl. an operational verifyBearer fault, which propagates here, never a masked 401).
     let handle: DepsHandle | undefined;
     try {
-      handle = await buildResourceDeps(env);
+      handle = await buildResourceDeps(env, (p) => ctx.waitUntil(p));
       return await handleResourceRequest(handle.deps, request, env, ctx);
     } catch (err) {
       console.log(JSON.stringify({ message: "mcp.unhandled", error: String(err) }));

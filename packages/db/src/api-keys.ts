@@ -23,7 +23,7 @@ import { exceedsMintCeiling } from "@webhook-co/contract/mint-ceiling";
 import type { MembershipRole } from "@webhook-co/shared";
 
 import { appendAuthAuditEntry } from "./auth-audit";
-import { withTenant, type Sql, type TenantTx } from "./client";
+import { createClient, withTenant, type Sql, type TenantTx } from "./client";
 import { insertNotificationIntent } from "./delivery";
 import {
   credentialHashEquals,
@@ -333,7 +333,21 @@ interface AuthnVerifyRow {
  * case (A0b), keeping the shared cache audience-agnostic while confining per-key-audience keys
  * to their bound surface. verifyBearer rejects any audience mismatch.
  */
-export function makeApiKeyColdLookup(authn: Sql) {
+/** Default staleness window for the best-effort last_used_at stamp: don't re-write within 15 minutes. */
+export const LAST_USED_THROTTLE_SECONDS = 900;
+
+export interface ApiKeyColdLookupOptions {
+  /**
+   * Records a just-authenticated key's use. The surface injects {@link makeApiKeyLastUsedStamper}, whose task
+   * opens its OWN connection and runs post-response — so it does NOT depend on the request's authn client,
+   * which the handler's `finally` tears down before the deferred task runs. Omitted (unit tests, the ingest
+   * resolver) → the column is simply not stamped. It is called ONLY for a valid key (past the revoke/expiry
+   * guards) and CANNOT influence resolution: the call is wrapped so even a throwing sink is swallowed.
+   */
+  readonly stampLastUsed?: (keyId: string) => void;
+}
+
+export function makeApiKeyColdLookup(authn: Sql, opts: ApiKeyColdLookupOptions = {}) {
   return async function coldLookup(keyHash: Buffer): Promise<ResolvedPrincipal | null> {
     const rows = await authn<AuthnVerifyRow[]>`
       select id, org_id, scopes, expires_at, revoked_at, key_hash, audience
@@ -348,6 +362,20 @@ export function makeApiKeyColdLookup(authn: Sql) {
     if (!credentialHashEquals(Buffer.from(row.key_hash), keyHash)) return null;
     if (row.revoked_at !== null) return null;
     if (row.expires_at !== null && row.expires_at.getTime() <= Date.now()) return null;
+
+    // Record use — ONLY for a key that actually authenticated (past the revoke/expiry guards; a dead key's
+    // use is not recorded). The stamper defers a self-contained write past the response, so nothing here is
+    // awaited. The call is wrapped because a best-effort telemetry write must NEVER fail auth: even if the
+    // injected sink throws synchronously (e.g. ctx.waitUntil refusing new deferred work), we swallow it and
+    // still return the principal.
+    if (opts.stampLastUsed) {
+      try {
+        opts.stampLastUsed(row.id);
+      } catch {
+        /* telemetry must never unwind authentication for a valid key */
+      }
+    }
+
     // Honor the key's intrinsic per-key audience if stored; undefined for a legacy/org-wide
     // key (the resolver stamps the presenting surface — conditional stamp, A0b). `|| undefined`
     // (not `?? undefined`) so an empty-string audience coalesces to "no binding" too — otherwise
@@ -360,6 +388,62 @@ export function makeApiKeyColdLookup(authn: Sql) {
       keyId: row.id,
     };
   };
+}
+
+export interface ApiKeyLastUsedStamperOptions {
+  /** The webhook_authn connection string (the CACHE-DISABLED HYPERDRIVE_AUTHN binding). */
+  readonly connectionString: string;
+  /** The surface's `(p) => ctx.waitUntil(p)` — holds the isolate alive so the post-response task can run. */
+  readonly waitUntil: (promise: Promise<unknown>) => void;
+  /** Staleness window; the stamp is skipped while `last_used_at` is newer than this. Default 15m. */
+  readonly throttleSeconds?: number;
+}
+
+/**
+ * Build the `last_used_at` stamper a surface injects into the cold lookup.
+ *
+ * Each stamp is a SELF-CONTAINED task deferred past the response via `waitUntil`: it opens its OWN
+ * webhook_authn connection, issues the throttled UPDATE, then closes it — mirroring the ingest auto-delivery
+ * pattern, precisely so it does NOT reuse the request's authn client (which the handler's `finally` closes
+ * before this deferred task runs; reusing it would either add a primary-DB write to the response latency or
+ * drop the write entirely). Best-effort: a failure is logged (keyId + error class only — never key material)
+ * and swallowed. Nothing here can delay or fail authentication.
+ */
+export function makeApiKeyLastUsedStamper(
+  opts: ApiKeyLastUsedStamperOptions,
+): (keyId: string) => void {
+  const throttleSeconds = opts.throttleSeconds ?? LAST_USED_THROTTLE_SECONDS;
+  return (keyId: string) => {
+    opts.waitUntil(stampLastUsedTask(opts.connectionString, keyId, throttleSeconds));
+  };
+}
+
+/** The deferred, self-contained stamp task: open → throttled UPDATE → close, swallowing any fault. */
+async function stampLastUsedTask(
+  connectionString: string,
+  keyId: string,
+  throttleSeconds: number,
+): Promise<void> {
+  let authn: Sql | undefined;
+  try {
+    authn = createClient(connectionString, { max: 1 });
+    // Throttled: only past the staleness window (or if never set), so a hot key is written at most once per
+    // window rather than once per cold miss — the SQL condition also coalesces the cross-PoP writes.
+    await authn`
+      update api_keys set last_used_at = now()
+      where id = ${keyId}
+        and (last_used_at is null or last_used_at < now() - make_interval(secs => ${throttleSeconds}))`;
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        message: "api_key.last_used_touch_failed",
+        keyId,
+        error: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+  } finally {
+    await authn?.end({ timeout: 5 }).catch(() => {});
+  }
 }
 
 /**

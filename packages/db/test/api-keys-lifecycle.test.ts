@@ -140,6 +140,36 @@ describe("createApiKey -> verify -> list -> revoke", () => {
     expect(principal?.audience).toBe(API_RESOURCE);
   });
 
+  it("stamps on a cold-miss resolve, but NOT on the subsequent cache HIT", async () => {
+    // The real throttle: the stamp rides the cold lookup, which the KV cache only reaches on a MISS. So a hot
+    // key (cache hit) invokes the stamper zero times. This exercises the SAME resolver seam makeApiKeyAuthDeps
+    // wires, with a spy standing in for the injected stamper.
+    const created = await createApiKey(
+      app,
+      { orgId: orgA, name: "last-used", scopes: ["events:read"] },
+      hasher,
+      userOf(orgA),
+    );
+
+    const stamped: string[] = [];
+    const cache = new InMemoryCredentialCache();
+    const resolver = createCredentialResolver({
+      hasher,
+      cache,
+      coldLookup: makeApiKeyColdLookup(authn, { stampLastUsed: (keyId) => stamped.push(keyId) }),
+      resource: API_RESOURCE,
+    });
+
+    // Cache MISS → the cold lookup runs and invokes the stamper with the resolved key id.
+    expect((await resolver.resolve(created.plaintext))?.orgId).toBe(orgA);
+    expect(stamped).toEqual([created.id]);
+
+    // Cache HIT → the cold lookup never runs, so the stamper is not called again: the DB write is throttled
+    // by the cache, not by a per-request check.
+    expect((await resolver.resolve(created.plaintext))?.orgId).toBe(orgA);
+    expect(stamped).toEqual([created.id]); // unchanged
+  });
+
   it("lists the org's keys with display metadata only (no hash, no plaintext)", async () => {
     const created = await createApiKey(
       app,

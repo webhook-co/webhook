@@ -14,6 +14,7 @@ import {
   createReplayHandler,
   createSubscriptionHandlers,
   makeApiKeyAuthDeps,
+  makeApiKeyLastUsedStamper,
   makeIngestHashEvictor,
   type ReplayHandler,
 } from "@webhook-co/db";
@@ -167,7 +168,10 @@ interface DepsHandle {
  * short-lived clients (authn + tenant), torn down by close(). The pepper/keys are decoded in-worker
  * (Workers secrets, never process env). Mirrors apps/engine/buildIngestDeps.
  */
-async function buildDeps(env: Env): Promise<DepsHandle> {
+async function buildDeps(
+  env: Env,
+  waitUntil?: (promise: Promise<unknown>) => void,
+): Promise<DepsHandle> {
   // Resolve the Secrets Store bindings, then decode + validate ALL config (pepper + keys) BEFORE
   // opening any DB client, so a bad/missing secret fails fast without leaking an unclosed connection.
   const [pepper, cursorRaw, auditRaw] = await Promise.all([
@@ -191,6 +195,14 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
         authn,
         cache: kvCredentialCache(env.KV_AUTHZ),
         resource: API_RESOURCE,
+        // Best-effort last_used_at stamp: a self-contained task on its OWN connection, deferred past the
+        // response via ctx.waitUntil — never on the auth path, never on the request's authn client.
+        stampLastUsed: waitUntil
+          ? makeApiKeyLastUsedStamper({
+              connectionString: env.HYPERDRIVE_AUTHN.connectionString,
+              waitUntil,
+            })
+          : undefined,
       }),
       resourceMetadataUrl: `${API_RESOURCE}${PRM_PATH}`,
     },
@@ -258,7 +270,7 @@ async function buildDeps(env: Env): Promise<DepsHandle> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     // Public, DB-free routes: served before any tenant deps are built.
     if (request.method === "GET" && url.pathname === PRM_PATH) {
@@ -315,7 +327,7 @@ export default {
     // escaping throw); handle?.close() tolerates buildDeps throwing before it returned a handle.
     let handle: DepsHandle | undefined;
     try {
-      handle = await buildDeps(env);
+      handle = await buildDeps(env, (p) => ctx.waitUntil(p));
       return await handleRequest(request, handle.deps);
     } catch (err) {
       // A binding/connection fault (bad secret, Hyperdrive down) or an unexpected throw surfaces as
