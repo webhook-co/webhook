@@ -23,7 +23,7 @@ export default function TermsPage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Terms of Service" updated="11 July 2026">
+        <LegalDoc title="Terms of Service" updated="13 July 2026">
           <blockquote>
             <strong>In short (this summary isn't the contract, but it's honest):</strong> webhook.co
             is a tool for receiving, inspecting, verifying, replaying, and delivering webhooks,
@@ -322,12 +322,12 @@ export default function TermsPage() {
           </AnchoredHeading>
           <p>
             We may change, add, or remove features of the Service over time. We may also update
-            these Terms. For <strong>material</strong> changes to these Terms, we'll give reasonable
-            advance notice by email or in-app, and post the updated "Last updated" date. Changes
-            aren't retroactive, and if you've signed a separate enterprise agreement, that
-            agreement's change terms control for you. If you keep using the Service after a change
-            takes effect, you accept the updated Terms; if you don't agree, you can stop using the
-            Service and cancel.
+            these Terms. For <strong>material</strong> changes to these Terms, we'll post them here
+            with reasonable advance notice before they take effect, and update the "Last updated"
+            date — so check back periodically. Changes aren't retroactive, and if you've signed a
+            separate enterprise agreement, that agreement's change terms control for you. If you
+            keep using the Service after a change takes effect, you accept the updated Terms; if you
+            don't agree, you can stop using the Service and cancel.
           </p>
 
           <AnchoredHeading id={TERMS_ANCHORS.intellectualProperty}>

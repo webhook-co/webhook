@@ -23,7 +23,7 @@ export default function PrivacyPage() {
         <Nav />
       </header>
       <main id="main">
-        <LegalDoc title="Privacy Policy" updated="12 July 2026">
+        <LegalDoc title="Privacy Policy" updated="13 July 2026">
           <blockquote>
             <strong>In short (this summary isn't the legal text, but it's honest):</strong> This
             policy covers the <strong>hosted</strong> webhook.co service. We play{" "}
@@ -354,8 +354,9 @@ export default function PrivacyPage() {
 
           <AnchoredHeading id={PRIVACY_ANCHORS.changes}>14. Changes to this policy</AnchoredHeading>
           <p>
-            We may update this policy. For material changes we'll give reasonable notice by email or
-            in-app and update the "Last updated" date above.
+            We may update this policy. For material changes we'll post them here with reasonable
+            notice before they take effect and update the "Last updated" date above — so check back
+            periodically.
           </p>
 
           <AnchoredHeading id={PRIVACY_ANCHORS.contact}>15. Contact</AnchoredHeading>
