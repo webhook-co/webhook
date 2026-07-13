@@ -9,6 +9,8 @@
 // idempotent. The per-user slug must be globally unique, so it carries a stable suffix derived from the
 // userId (two different users can't collide).
 
+import { createHash } from "node:crypto";
+
 import {
   bootstrapPersonalOrg,
   createClient,
@@ -41,17 +43,49 @@ function slugify(value: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+/** The name part is capped; the uniqueness suffix never is. See the note on personalOrgSlug. */
+const MAX_BASE = 16;
+const SUFFIX_HEX = 6;
+
 /**
- * A per-user-stable slug: `<name-or-email-or-default>-<userId-suffix>`. The suffix is the full slugified
- * userId, so a collision between two different users is cryptographically improbable (a slug already taken
- * by another user would make the bootstrap throw — bootstrapPersonalOrg conflicts on the org id, not the
- * slug); stability means an idempotent re-run produces the same slug. (The 63-char cap is generous; the
- * base is what gets truncated if a name is very long, never the uniqueness-bearing suffix in practice.)
+ * The uniqueness suffix: a short digest of a domain-separated seed. Deterministic per (user, attempt), so an
+ * idempotent re-run derives the same slug — and it does NOT contain the user id, which is the point.
  */
-export function personalOrgSlug(user: BootstrapUser): string {
-  const base = slugify(user.name ?? "") || slugify(user.email?.split("@")[0] ?? "") || "user";
-  const suffix = slugify(user.id) || "x";
-  return `${base}-${suffix}`.slice(0, 63);
+function slugSuffix(userId: string, attempt: number): string {
+  const seed =
+    attempt === 0 ? `webhook:personal-org:${userId}` : `webhook:personal-org:${userId}#${attempt}`;
+  return createHash("sha256").update(seed).digest("hex").slice(0, SUFFIX_HEX);
+}
+
+/**
+ * A per-user-stable slug: `<name-or-email-or-default>-<digest>` — e.g. `dana-example-a3f19c`.
+ *
+ * This is a URL segment now (`/org/{slug}/…`), so it has two jobs it did not have before: be short, and
+ * carry no identity. The old form was `<name>-<the whole 32-char Better Auth user id>` — around 45
+ * characters, and it put the user's real name AND their auth user id into every teammate's URL bar, every
+ * `Referer`, and every access log. The suffix is now a 6-hex digest of a domain-separated seed instead.
+ *
+ * 🐞 And the old form had a live bug. It was `` `${base}-${suffix}`.slice(0, 63) ``, which keeps the FIRST 63
+ * characters — the base comes first, so it is the UNIQUENESS SUFFIX that gets truncated away, not the base.
+ * (The comment claimed the exact opposite, which is how it survived review.) A display name of 63+ characters
+ * is entirely user-controlled — it comes straight from a Google or GitHub profile — and produced a slug with
+ * NO suffix at all. A second user with the same long name then collided on `orgs.slug`, bootstrap threw, and
+ * `bootstrapForUser` SWALLOWS the throw (deliberately: a bootstrap fault must not break signup). That user
+ * ends up with **no org at all, permanently** — the session-create self-heal re-derives the same slug and
+ * fails identically, forever.
+ *
+ * So: the BASE is capped, before the join. The suffix is never truncated, and the whole thing is bounded by
+ * construction rather than by a slice of the result.
+ *
+ * `attempt` re-derives a different (still stable) suffix, so a genuine collision is retried rather than
+ * bricking the user — see bootstrapForUser.
+ */
+export function personalOrgSlug(user: BootstrapUser, attempt = 0): string {
+  const named = slugify(user.name ?? "").slice(0, MAX_BASE);
+  const emailed = slugify(user.email?.split("@")[0] ?? "").slice(0, MAX_BASE);
+  // Re-trim: slicing a slug can leave a trailing hyphen, which the DB CHECK forbids.
+  const base = (named || emailed).replace(/-+$/, "") || "org";
+  return `${base}-${slugSuffix(user.id, attempt)}`;
 }
 
 /** A human display name for the personal org: the user's name, else their email local-part, else default. */
@@ -62,19 +96,53 @@ export function personalOrgName(user: BootstrapUser): string {
   return local || "Personal";
 }
 
+/** How many fresh suffixes to try before giving up. A collision is already vanishingly unlikely. */
+const MAX_SLUG_ATTEMPTS = 5;
+
+/** A unique-constraint violation on `orgs.slug` — i.e. this slug is taken by a DIFFERENT user's org. */
+function isSlugCollision(error: unknown): boolean {
+  const e = error as { code?: unknown; constraint_name?: unknown } | null;
+  return (
+    !!e &&
+    e.code === "23505" && // unique_violation
+    typeof e.constraint_name === "string" &&
+    e.constraint_name.includes("slug")
+  );
+}
+
 /**
- * Bootstrap one user's personal org on a fresh webhook_app client, then close it. Best-effort: a failure
- * is logged, never thrown — the session-create self-heal retries and bootstrapPersonalOrg is idempotent.
+ * Bootstrap one user's personal org on a fresh webhook_app client, then close it. Best-effort: a failure is
+ * logged, never thrown — a bootstrap fault must not break signup/login. The session-create self-heal retries,
+ * and bootstrapPersonalOrg is idempotent.
+ *
+ * 🔑 That swallow is exactly why a slug collision has to be retried HERE, and cannot be left to the self-heal.
+ * `bootstrapPersonalOrg` conflicts on the org ID, not the slug, so a slug already held by a different user
+ * raises a unique violation and throws — and the derivation is DETERMINISTIC, so the self-heal re-derives the
+ * same slug and fails identically. Forever. A one-in-a-million collision would permanently leave whoever lost
+ * it with no org at all, silently. Retrying with a fresh (still stable) suffix is what makes it survivable.
+ *
+ * Only a slug collision is retried. A db outage is not a slug problem, and hammering it four more times would
+ * just make an incident worse.
  */
 export async function bootstrapForUser(deps: BootstrapDeps, user: BootstrapUser): Promise<void> {
   const client = deps.createClient(deps.tenantConnectionString, { max: 1 });
   try {
     const hasher = deps.makeHasher(deps.credentialPepper);
-    await deps.bootstrap(
-      client,
-      { userId: user.id, slug: personalOrgSlug(user), name: personalOrgName(user) },
-      hasher,
-    );
+    const name = personalOrgName(user);
+
+    for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt++) {
+      try {
+        await deps.bootstrap(
+          client,
+          { userId: user.id, slug: personalOrgSlug(user, attempt), name },
+          hasher,
+        );
+        return;
+      } catch (error) {
+        if (!isSlugCollision(error) || attempt === MAX_SLUG_ATTEMPTS - 1) throw error;
+        deps.log?.("auth.bootstrap_slug_collision", { userId: user.id, attempt });
+      }
+    }
   } catch (error) {
     deps.log?.("auth.bootstrap_failed", { userId: user.id, error: String(error) });
   } finally {
