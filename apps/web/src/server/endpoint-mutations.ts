@@ -30,10 +30,10 @@ import {
 // The endpoint create/rotate/delete orchestration — the same DB-direct seam the credential dashboard uses
 // (mint/revoke), one level up from Lane B's tx-atomic db fns. Each runs under withTenant(orgId) as
 // webhook_app (RLS-scoped by the session orgId); create/rotate mint a >=256-bit ingest token and return
-// the one-time ingest URL; delete is soft. rotate (hard cut) + delete evict the affected token hash from
+// the ingest URL; delete is soft. rotate (hard cut) + delete evict the affected token hash from
 // the engine's KV_CONFIG ingest cache so the old URL stops resolving NOW — best-effort over the durable
 // db stop (the cold-lookup `deleted_at is null` filter + the 300s TTL self-heal), so a KV blip never fails
-// a committed mutation (for rotate that would lose the one-time reveal of the NEW url). It is the session
+// a committed mutation (for rotate that would drop the NEW url from this response). It is the session
 // counterpart of the api/mcp createWriteHandlers seam: that seam gates on a bearer's `endpoints:write`
 // scope, whereas this surface authenticates a SESSION (RLS-org-pinned, any org member may manage), so it
 // binds the raw Lane B fns directly under withTenant rather than the scope-gated handler — but reuses the
@@ -82,7 +82,7 @@ export interface MutateDedupInput {
   readonly dedupConfig: DedupConfig | null;
 }
 
-/** A created or rotated endpoint plus its one-time ingest URL (the token is revealed ONCE). */
+/** A created or rotated endpoint plus its ingest URL (sealed at rest, re-readable later — ADR-0101). */
 export interface MintedEndpoint {
   readonly id: string;
   readonly name: string;
@@ -90,7 +90,7 @@ export interface MintedEndpoint {
   readonly createdAt: Date;
   /** The endpoint's dedup config, or null when it uses the default (off — log every request). */
   readonly dedupConfig: DedupConfig | null;
-  /** `${apex}/<token>` — shown once, never persisted or logged. */
+  /** `${apex}/<token>` — never logged; the token is sealed at rest, so it stays re-readable (ADR-0101). */
   readonly ingestUrl: string;
 }
 
@@ -259,7 +259,8 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
 
 /**
  * Create an endpoint + mint its ingest token + write the `endpoint.created` audit atomically (Lane B), then
- * return the one-time ingest URL. The plaintext is returned ONCE — never SSR'd, persisted, or logged.
+ * return the ingest URL. The plaintext is never SSR'd or logged (it IS re-readable later via the sealed
+ * token — ADR-0101 — but it must not leak into a log or a server-rendered payload).
  */
 export async function createEndpoint(
   input: CreateEndpointInput,
@@ -286,8 +287,8 @@ export async function createEndpoint(
 
 /**
  * Rotate an endpoint's ingest token IN PLACE (hard cutover) + audit, evict the OLD token hash from KV_CONFIG
- * so the old URL dies now, and return the NEW one-time ingest URL. The evict runs AFTER the committed swap
- * and is best-effort (a throw would lose the one-time reveal); the db is the source of truth.
+ * so the old URL dies now, and return the NEW ingest URL. The evict runs AFTER the committed swap
+ * and is best-effort (a throw would drop the new url from this response); the db is the source of truth.
  */
 export async function rotateEndpoint(
   input: MutateEndpointInput,

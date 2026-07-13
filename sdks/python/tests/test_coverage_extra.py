@@ -21,6 +21,7 @@ def _endpoint(**o):
         "name": "n",
         "paused": False,
         "createdAt": TS,
+        "dedupConfig": None,
         **o,
     }
 

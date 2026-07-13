@@ -1,7 +1,11 @@
 # CI for the Python SDK (sdks/python). It lives outside the pnpm/turbo workspace, so it needs its own
 # job: format checks + the full pytest suite (which includes the generated-models drift guard). Uses only
 # GitHub-owned, SHA-pinned actions (the org restricts Actions to GitHub-owned publishers). Path-filtered so
-# it runs only when the Python SDK changes.
+# it runs only when the Python SDK changes — which MUST include the OpenAPI spec: `_generated/models.py` is
+# DERIVED from it, so a spec-only PR can stale the models. It did: the filter was `sdks/python/**` alone, so
+# five spec changes never triggered this job, the drift guard never ran, and the models silently rotted for a
+# week (12 missing schemas, incl. EndpointsRevealIngestUrlResponse). A derived artifact's guard must be
+# triggered by its SOURCE, not only by its own directory.
 name: ci-sdk-python
 
 on:
@@ -9,10 +13,12 @@ on:
     branches: [main]
     paths:
       - "sdks/python/**"
+      - "packages/openapi/src/openapi.json" # the models are generated FROM this — see the header note
       - ".github/workflows/ci-sdk-python.yml"
   pull_request:
     paths:
       - "sdks/python/**"
+      - "packages/openapi/src/openapi.json" # the models are generated FROM this — see the header note
       - ".github/workflows/ci-sdk-python.yml"
 
 permissions:

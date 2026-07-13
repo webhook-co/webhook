@@ -51,7 +51,7 @@ export interface McpEnv {
    */
   PAYLOAD_READER: PayloadReaderRpc;
   /**
-   * The cookieless ingest apex the endpoints.create tool builds its one-time ingest URL from (prod:
+   * The cookieless ingest apex the endpoints.create tool builds its ingest URL from (prod:
    * https://wbhk.my). A plain wrangler `vars` value (NOT a secret, NOT deploy-injected — the overlay
    * carries no `vars`, so it is committed in wrangler.jsonc). Must match api's INGEST_BASE_URL + the
    * engine route apex.

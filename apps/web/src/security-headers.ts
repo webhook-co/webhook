@@ -29,7 +29,7 @@
 
 /**
  * The ingest apex the dashboard's live-events tail connects a WebSocket to — the SAME committed apex the
- * one-time endpoint URL + `getListenWsUrl()` are built on (`INGEST_BASE_URL`, default `https://wbhk.my`).
+ * endpoint ingest URL + `getListenWsUrl()` are built on (`INGEST_BASE_URL`, default `https://wbhk.my`).
  * Read from the BUILD env (this header is baked at `next build` time), so a self-host apex flows through
  * automatically and can't drift from the socket URL. Returns the https + wss origins to allowlist.
  */

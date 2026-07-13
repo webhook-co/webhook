@@ -160,8 +160,9 @@ export function renderEndpoint(e: Endpoint, color: boolean): string {
 }
 
 /**
- * A just-created endpoint, including the one-time ingest URL (which embeds the secret token). The
- * "save this" caveat is printed separately to stderr by the command so stdout stays the record.
+ * A just-created (or just-rotated) endpoint, including the ingest URL (which embeds the secret token).
+ * The URL is sealed at rest and re-readable any time (ADR-0101) — the command prints the where-to-find-it
+ * hint separately to stderr so stdout stays a clean record.
  */
 export function renderCreatedEndpoint(e: CreatedEndpoint, color: boolean): string {
   return block([

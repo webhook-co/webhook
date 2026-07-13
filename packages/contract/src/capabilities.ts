@@ -102,9 +102,11 @@ export const endpointsGet = defineCapability({
 
 // endpoints.create + endpoints.rotate are WRITE capabilities bound on api+cli+mcp (web stays deferred
 // with the dashboard epic). Their output is the standard EndpointSchema PLUS `ingestUrl` — the
-// wbhk.my/<token> URL that embeds the freshly-minted ingest token. The token is a secret shown EXACTLY
-// ONCE: the endpoints table stores only its hash and has no token column, so the URL is unrecoverable
-// after creation/rotation. It is therefore never returned by endpoints.get/list.
+// wbhk.my/<token> URL that embeds the freshly-minted ingest token. The URL is NOT a one-time reveal: the
+// token is SEALED at rest (ADR-0101, migration 0037) and re-readable any time via endpoints.revealIngestUrl
+// (or the dashboard). It is still absent from endpoints.get/list — not because it is unrecoverable, but
+// because it is a bearer credential: a read-only key must never harvest live ingest URLs org-wide, so the
+// reveal is a dedicated write-scoped, audited, rate-limited capability (see endpoints.revealIngestUrl).
 export const CreatedEndpointSchema = EndpointSchema.extend({ ingestUrl: z.url() });
 export type CreatedEndpoint = z.infer<typeof CreatedEndpointSchema>;
 
@@ -147,7 +149,7 @@ export const endpointsDelete = defineCapability({
 
 // endpoints.rotate replaces an endpoint's ingest token (the wbhk.my/<token> secret) IN PLACE (ADR-0076):
 // it mints a NEW token, HARD-cuts over (the old token is evicted immediately and stops resolving), and
-// returns the new one-time ingestUrl — exactly like create's reveal. The endpoint id, name, paused state,
+// returns the new ingestUrl — exactly like create. The endpoint id, name, paused state,
 // captured events, and provider secrets are PRESERVED (unlike delete+recreate). For a leaked/lost URL.
 // NOT idempotent: each call mints a new token (the api-client never blind-retries it), same as create.
 export const endpointsRotate = defineCapability({
@@ -495,8 +497,9 @@ export const endpointsRevokeProviderSecret = defineCapability({
  * A newly-created replay destination PLUS its one-time Standard Webhooks signing secret (S3 Slice 2,
  * ADR-0084). A destination is born with a signing secret so the server can sign its deliveries; the
  * `whsec_` plaintext is revealed EXACTLY ONCE on first creation (configure it in your receiver's verifier)
- * and is never returned again — only the seal is kept. Mirrors the endpoints.create one-time ingestUrl
- * reveal. `signingSecret` is OPTIONAL because create is idempotent: re-registering an existing URL returns
+ * and is never returned again — only the seal is kept. UNLIKE the endpoints.create ingestUrl (sealed at
+ * rest and re-readable — ADR-0101), this one really is one-time: there is no reveal capability for it, so
+ * the only recovery is rotateSigningSecret. `signingSecret` is OPTIONAL because create is idempotent: re-registering an existing URL returns
  * the destination WITHOUT re-revealing (the secret was shown once) — use rotateSigningSecret for a fresh one.
  */
 export const CreatedReplayDestinationSchema = ReplayDestinationSchema.extend({

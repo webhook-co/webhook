@@ -828,7 +828,7 @@ describe("handleRequest — POST /v1/endpoints (endpoints.create)", () => {
     paused: false,
     createdAt: "2026-06-25T00:00:00.000Z",
     dedupConfig: null,
-    ingestUrl: "https://wbhk.my/whep_one_time_secret",
+    ingestUrl: "https://wbhk.my/whep_sealed_secret",
   };
 
   it("dispatches the JSON body to the shared endpoints.create handler and returns the created endpoint", async () => {

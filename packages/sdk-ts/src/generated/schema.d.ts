@@ -64,7 +64,7 @@ export interface paths {
         /** List endpoints */
         get: operations["endpointsList"];
         put?: never;
-        /** Create an endpoint (returns the one-time ingest URL) */
+        /** Create an endpoint (returns its ingest URL) */
         post: operations["endpointsCreate"];
         delete?: never;
         options?: never;
@@ -186,7 +186,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Rotate an endpoint's ingest token (returns a new one-time ingest URL) */
+        /** Rotate an endpoint's ingest token (revokes the old URL, returns the new one) */
         post: operations["endpointsRotate"];
         delete?: never;
         options?: never;

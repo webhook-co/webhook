@@ -8,7 +8,7 @@ import type { Cursor, DedupConfig, Endpoint } from "@webhook-co/shared";
 import { getTenantDb } from "./db";
 
 // The endpoint display shape for the dashboard. Mirrors the db `Endpoint` entity MINUS orgId — no token,
-// hash, or org identifier crosses to the browser (private-by-default; the plaintext is shown ONCE at
+// hash, or org identifier crosses to the browser (private-by-default; the plaintext is revealed only by
 // create/rotate and never stored). Read live via the Lane reads under withTenant(orgId) as webhook_app;
 // RLS (the session orgId) is the tenant backstop, so these queries never filter by org_id themselves and a
 // cross-org id simply isn't visible.

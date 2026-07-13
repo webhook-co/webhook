@@ -192,7 +192,7 @@ const fullEvent = {
 describe("createApiClient.endpointsCreate", () => {
   const created = {
     ...endpoint,
-    ingestUrl: "https://wbhk.my/whep_one_time_secret_token_value_aaaaaaaaaaaa",
+    ingestUrl: "https://wbhk.my/whep_sealed_secret_token_value_aaaaaaaaaaaa",
   };
 
   it("POSTs /v1/endpoints with the name body and parses the created endpoint + ingestUrl", async () => {
@@ -260,7 +260,7 @@ describe("createApiClient.endpointsRotate", () => {
     ingestUrl: "https://wbhk.my/whep_rotated_secret_token_value_bbbbbbbbbbbb",
   };
 
-  it("POSTs /v1/endpoints/:id/rotate and parses the endpoint + new one-time ingestUrl", async () => {
+  it("POSTs /v1/endpoints/:id/rotate and parses the endpoint + the new ingestUrl", async () => {
     const { fetch, calls } = fakeFetch(json(rotated));
     const out = await createApiClient({ baseUrl: BASE, apiKey: KEY, fetch }).endpointsRotate(EP_ID);
     expect(calls[0].url).toBe(`${BASE}/v1/endpoints/${EP_ID}/rotate`);

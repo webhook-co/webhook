@@ -58,7 +58,8 @@ function toItem(m: MintedEndpoint): EndpointItem {
 /**
  * Create an endpoint. Authz is the session + RLS-org-pinning (any org member may manage the org's
  * endpoints — matching the credential dashboard; a per-action role gate is a documented future add). The
- * ingest URL embeds the freshly-minted token and is returned ONCE, only as this action result.
+ * ingest URL embeds the freshly-minted token and is returned as this action result (and is re-readable
+ * afterwards via the endpoint-detail reveal — it is sealed at rest, not a one-time secret; ADR-0101).
  */
 export async function createEndpointAction(input: {
   name: string;
@@ -106,7 +107,7 @@ export async function createEndpointAction(input: {
 
 /**
  * Rotate an endpoint's ingest token — a HARD cutover: the old URL stops resolving immediately. Returns the
- * NEW one-time ingest URL. The id/name/paused/createdAt and the endpoint's captured events are preserved.
+ * NEW ingest URL. The id/name/paused/createdAt and the endpoint's captured events are preserved.
  */
 export async function rotateEndpointAction(endpointId: string): Promise<RotateEndpointResult> {
   const session = await requireOrgAccess();

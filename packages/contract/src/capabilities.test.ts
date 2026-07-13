@@ -294,7 +294,7 @@ describe("endpoints.create", () => {
     expect(endpointsCreate.input.safeParse({}).success).toBe(false);
   });
 
-  it("output is an endpoint plus a one-time ingestUrl", () => {
+  it("output is an endpoint plus its ingestUrl", () => {
     const ok = endpointsCreate.output.safeParse({
       id: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
       orgId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061",
@@ -389,7 +389,7 @@ describe("endpoints.rotate", () => {
     expect(endpointsRotate.errors).toContain("NOT_FOUND");
   });
 
-  it("output is an endpoint plus a fresh one-time ingestUrl (same shape as create)", () => {
+  it("output is an endpoint plus a fresh ingestUrl (same shape as create)", () => {
     const ok = endpointsRotate.output.safeParse({
       id: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060",
       orgId: "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061",

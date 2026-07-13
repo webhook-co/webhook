@@ -20,7 +20,8 @@ from webhook_co import WebhookClient
 
 client = WebhookClient(api_key=os.environ["WEBHOOK_API_KEY"])
 
-# Create an endpoint — the one-time ingest URL is returned once, so capture it now.
+# Create an endpoint. The ingest URL is a credential, but not one-time — it can be re-read any time
+# (POST /v1/endpoints/{id}/reveal-ingest-url, `wbhk endpoints reveal <id>`, or the dashboard).
 endpoint = client.endpoints.create(name="orders-prod")
 print(endpoint.ingest_url)
 

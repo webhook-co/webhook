@@ -156,7 +156,7 @@ export const ROUTES: readonly RouteDef[] = [
     successStatus: 200,
     dispatch: "shared",
     body: true,
-    summary: "Create an endpoint (returns the one-time ingest URL)",
+    summary: "Create an endpoint (returns its ingest URL)",
     buildInput: noInput,
   },
   {
@@ -186,7 +186,7 @@ export const ROUTES: readonly RouteDef[] = [
     successStatus: 200,
     dispatch: "shared",
     body: false,
-    summary: "Rotate an endpoint's ingest token (returns a new one-time ingest URL)",
+    summary: "Rotate an endpoint's ingest token (revokes the old URL, returns the new one)",
     buildInput: pathParam("endpointId", "endpointId"),
   },
   {
