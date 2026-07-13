@@ -28,8 +28,6 @@ try {
   const sitemap = await readFile(outDir + "sitemap.xml", "utf8");
   const locs = extractSitemapLocs(sitemap);
   if (locs.length === 0) failures.push("out/sitemap.xml lists no <loc> — export emitted no pages");
-  // Not `locs.map(pageFileForUrl)` — map passes (element, index), and the index would land in
-  // pageFileForUrl's `host` param, defeating the host-strip. Call it with the URL only.
   pageFiles = locs.map((loc) => pageFileForUrl(loc));
 } catch {
   failures.push("could not read out/sitemap.xml to derive the required page list");

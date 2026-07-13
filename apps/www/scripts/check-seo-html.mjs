@@ -24,6 +24,25 @@ export const HOST = "https://www.webhook.co";
 
 const stripSlash = (u) => (u && u !== "/" ? u.replace(/\/$/, "") : u);
 
+/**
+ * Parse `u` as an absolute URL, or null if it isn't one. Every host comparison below goes through a
+ * parsed origin rather than a string prefix: `https://www.webhook.co.evil.com` *starts with* HOST,
+ * so `startsWith(HOST)` would wave a look-alike origin straight through the canonical gate.
+ */
+const parseAbsolute = (u) => {
+  try {
+    return new URL(u);
+  } catch {
+    return null;
+  }
+};
+
+/** True only when `u` is an absolute URL whose origin IS the canonical origin. */
+export function isCanonicalOrigin(u, host = HOST) {
+  const parsed = parseAbsolute(u);
+  return parsed !== null && parsed.origin === new URL(host).origin;
+}
+
 /** Every `<loc>` in a sitemap.xml, in document order. Pure, so it's testable without a build. */
 export function extractSitemapLocs(xml) {
   return [...xml.matchAll(/<loc>\s*([^<\s]+)\s*<\/loc>/g)].map((m) => m[1]);
@@ -47,11 +66,12 @@ export function isMainModule(moduleUrl, argv1) {
  * Next's `output: "export"` (no trailingSlash) emits FLAT files: `/` → "index.html",
  * `/pricing` → "pricing.html", `/product/verification` → "product/verification.html". Pure.
  */
-export function pageFileForUrl(url, host = HOST) {
-  // Defensive: a caller writing `locs.map(pageFileForUrl)` passes the array index as `host`. A
-  // non-string host would silently defeat the strip below, so fall back to the default.
-  if (typeof host !== "string") host = HOST;
-  const path = stripSlash(url.startsWith(host) ? url.slice(host.length) : url) || "/";
+export function pageFileForUrl(url) {
+  // Map by PATH, never by slicing a host prefix off the front: a look-alike origin
+  // (https://www.webhook.co.evil.com/pricing) survives a prefix-slice as ".evil.com/pricing.html",
+  // a file path outside the export. Whether the origin is OURS is a separate question, and the
+  // canonical rule in checkPage is what answers it.
+  const path = stripSlash(parseAbsolute(url)?.pathname ?? url) || "/";
   return path === "/" ? "index.html" : `${path.replace(/^\//, "")}.html`;
 }
 
@@ -96,7 +116,8 @@ export function checkPage(html, { url, host = HOST, requireOrgLd = false } = {})
   if (canonicals.length !== 1)
     err(`expected exactly one canonical link, found ${canonicals.length}`);
   const canonical = canonicals[0]?.getAttribute("href") ?? "";
-  if (!canonical.startsWith(host)) err(`canonical is not an absolute ${host} URL: "${canonical}"`);
+  if (!isCanonicalOrigin(canonical, host))
+    err(`canonical is not an absolute ${host} URL: "${canonical}"`);
   // Route-aware: the canonical must match THIS page's sitemap URL, not just "some www URL". A page
   // that canonicalises to the homepage (a classic static-export metadata bug) is caught here.
   if (url && stripSlash(canonical) !== stripSlash(url))
