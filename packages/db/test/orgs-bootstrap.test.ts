@@ -514,3 +514,42 @@ describe("readMembershipRole — the role is read IN the org being asked about",
     expect(role).toBeNull();
   });
 });
+
+describe("a slug collision surfaces as a retryable unique violation", () => {
+  // The contract apps/auth's `bootstrapForUser` retry depends on, pinned against a REAL Postgres.
+  //
+  // That retry exists because a slug collision was TERMINAL: bootstrapPersonalOrg conflicts on the org ID,
+  // not the slug, so a slug already held by a different user throws — and bootstrapForUser swallows throws
+  // (a bootstrap fault must not break signup), so the loser silently got no org, forever.
+  //
+  // It recognises the collision by `err.code === "23505" && err.constraint_name.includes("slug")`. Both of
+  // those are assumptions about a library and a schema, and the unit test that covers the retry hands it a
+  // HAND-BUILT error object — so if postgres.js named the field something else, or the constraint were named
+  // something without "slug" in it, that test would still pass while the retry never fired in production and
+  // the bug stayed half-fixed. Only a real Postgres can say. This is that test.
+  it("throws 23505 naming a constraint the retry will recognise", async () => {
+    const slug = `dup-${randomUUID().slice(0, 8)}`;
+    const first = randomUUID();
+    const second = randomUUID();
+
+    await withTenant(
+      app,
+      first,
+      (tx) => tx`insert into orgs (id, slug, name) values (${first}, ${slug}, ${"First"})`,
+    );
+
+    const error = await withTenant(
+      app,
+      second,
+      (tx) => tx`insert into orgs (id, slug, name) values (${second}, ${slug}, ${"Second"})`,
+    ).then(
+      () => null,
+      (e: unknown) => e as { code?: string; constraint_name?: string },
+    );
+
+    expect(error, "a duplicate slug must not be accepted").not.toBeNull();
+    expect(error?.code).toBe("23505"); // unique_violation
+    expect(error?.constraint_name).toBeTypeOf("string");
+    expect(error?.constraint_name).toContain("slug");
+  });
+});

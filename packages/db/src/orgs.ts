@@ -199,6 +199,37 @@ export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]>
   return rows.map((r) => ({ orgId: r.org_id, name: r.name, role: r.role }));
 }
 
+/** A user's display identity — what the signup bootstrap names their personal org after. */
+export interface UserProfile {
+  readonly name: string | null;
+  readonly email: string | null;
+}
+
+/**
+ * The caller's own display name + email, or null if there is no such user.
+ *
+ * webhook_app has **no grant on `"user"`** — Better Auth's global identity table is not row-level-secured (it
+ * has no org column to police), so a plain `select` grant would make tenant isolation depend on every query
+ * author remembering to filter it. `rls.test.ts` asserts the refusal outright. The read is therefore confined
+ * to `current_user_profile()` (migration 0068), a zero-argument SECURITY DEFINER bounded by
+ * `current_app_user()`, exactly like `user_org_directory()`.
+ *
+ * {@link withUser} sets that GUC. `userId` MUST come from a server-authenticated identity — it is the entire
+ * authorization boundary here. An unset GUC yields zero rows rather than the whole table.
+ *
+ * This exists for the signup bootstrap's **self-heal**, which Better Auth hands a bare userId: without it,
+ * the org of a user whose signup bootstrap blipped gets named after nobody, permanently.
+ */
+export async function readUserProfile(app: Sql, userId: string): Promise<UserProfile | null> {
+  const rows = await withUser(
+    app,
+    userId,
+    (tx) => tx<{ name: string | null; email: string | null }[]>`
+      select name, email from current_user_profile()`,
+  );
+  return rows[0] ?? null;
+}
+
 /**
  * The orgs an interactive consent grant may be for (Lane 2.4) — the user's own memberships, personal org
  * first. Replaces the old `getConsentOrg`, which DERIVED the personal org and so could only ever hand back
