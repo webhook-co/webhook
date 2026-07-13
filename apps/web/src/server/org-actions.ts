@@ -52,12 +52,9 @@ export async function deleteOrganization(slug: string, formData: FormData): Prom
   }
 
   const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
-  const app = await getTenantDb();
-  try {
-    await deleteOrgWithAudit(app, { orgId, actor: userActor(userId) }, auditKey);
-  } finally {
-    await app.end({ timeout: 5 }).catch(() => {});
-  }
+  // The REQUEST owns the client now (see server/db.ts): it is shared by every loader in this render and
+  // closed once, after the response. Closing it here would pull the connection out from under the others.
+  await deleteOrgWithAudit(await getTenantDb(), { orgId, actor: userActor(userId) }, auditKey);
 
   // Same attributes as the set — a `__Host-` cookie cleared without `Secure` is rejected by the browser
   // and the session would survive (RFC 6265bis §4.1.3).

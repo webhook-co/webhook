@@ -1,6 +1,6 @@
 import "server-only";
 
-import { listApiKeysForGrant, listStandaloneApiKeys } from "@webhook-co/db/api-keys";
+import { listApiKeysForGrants, listStandaloneApiKeys } from "@webhook-co/db/api-keys";
 import type { Sql } from "@webhook-co/db/client";
 import { listGrants } from "@webhook-co/db/grants";
 
@@ -57,7 +57,17 @@ export type CredentialsResult =
  */
 export interface CredentialReaders {
   listGrants(orgId: string): Promise<readonly Omit<DeviceGrant, "keys">[]>;
-  listApiKeysForGrant(orgId: string, grantId: string): Promise<readonly ApiKeyItem[]>;
+  /**
+   * The keys for ALL the org's grants, in one read, keyed by grant id.
+   *
+   * This replaced a per-grant `listApiKeysForGrant`, which was an N+1 whose `Promise.all` was a fiction: each
+   * call opened its own transaction, and they all queued on the same connection, so they ran strictly
+   * serially. The page cost grew with every device the user had ever authorised.
+   */
+  listApiKeysForGrants(
+    orgId: string,
+    grantIds: readonly string[],
+  ): Promise<ReadonlyMap<string, readonly ApiKeyItem[]>>;
   /** STANDALONE keys only (grant_id IS NULL) — grant-backed keys show under their device, not here. */
   listStandaloneApiKeys(orgId: string): Promise<readonly ApiKeyItem[]>;
 }
@@ -65,7 +75,7 @@ export interface CredentialReaders {
 function boundReaders(app: Sql): CredentialReaders {
   return {
     listGrants: (orgId) => listGrants(app, orgId),
-    listApiKeysForGrant: (orgId, grantId) => listApiKeysForGrant(app, orgId, grantId),
+    listApiKeysForGrants: (orgId, grantIds) => listApiKeysForGrants(app, orgId, grantIds),
     listStandaloneApiKeys: (orgId) => listStandaloneApiKeys(app, orgId),
   };
 }
@@ -73,12 +83,13 @@ function boundReaders(app: Sql): CredentialReaders {
 async function readCredentials(orgId: string, r: CredentialReaders): Promise<CredentialsResult> {
   try {
     const [grants, keys] = await Promise.all([r.listGrants(orgId), r.listStandaloneApiKeys(orgId)]);
-    const devices = await Promise.all(
-      grants.map(async (grant) => ({
-        ...grant,
-        keys: await r.listApiKeysForGrant(orgId, grant.id),
-      })),
+    // ONE read for every grant's keys, not one per grant. `listApiKeysForGrants` returns a bucket for every
+    // id asked for, so a device with no keys is present-and-empty rather than missing.
+    const keysByGrant = await r.listApiKeysForGrants(
+      orgId,
+      grants.map((g) => g.id),
     );
+    const devices = grants.map((grant) => ({ ...grant, keys: keysByGrant.get(grant.id) ?? [] }));
     return { status: "ok", devices, keys };
   } catch {
     return { status: "error" };
@@ -96,10 +107,7 @@ export async function loadCredentials(
   readers?: CredentialReaders,
 ): Promise<CredentialsResult> {
   if (readers) return readCredentials(orgId, readers);
-  const app = await getTenantDb();
-  try {
-    return await readCredentials(orgId, boundReaders(app));
-  } finally {
-    await app.end({ timeout: 5 }).catch(() => {});
-  }
+  // The REQUEST owns the client now (see server/db.ts): it is shared by every loader in this render and
+  // closed once, after the response. Closing it here would pull the connection out from under the others.
+  return readCredentials(orgId, boundReaders(await getTenantDb()));
 }

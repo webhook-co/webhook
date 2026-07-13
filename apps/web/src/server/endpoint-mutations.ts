@@ -251,9 +251,14 @@ async function defaultDeps(): Promise<{ deps: EndpointMutationDeps; close: () =>
       evict: (tokenHash, verb) => evictBestEffort(cache, tokenHash, { verb }),
       apex: () => normalizeIngestApex(getIngestBaseUrl()),
     },
-    close: async () => {
-      await app.end({ timeout: 5 }).catch(() => {});
-    },
+    // Nothing to release. The REQUEST owns the tenant client now (see server/db.ts): it is shared by every
+    // loader and action in the request and closed exactly once, after the response. Closing it here would pull
+    // the connection out from under everything else still using it.
+    //
+    // The seam itself stays, and is not vestigial: its contract is "release whatever THIS deps provider
+    // acquired", and an injected provider already returns a no-op for the same reason. This provider simply no
+    // longer acquires a pool of its own.
+    close: async () => {},
   };
 }
 

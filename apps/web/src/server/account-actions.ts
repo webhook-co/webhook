@@ -47,31 +47,25 @@ export async function deleteAccount(formData: FormData): Promise<void> {
   // classifyOwnedOrgs (2.1b) censuses EVERY org they own, which only became answerable once 2.4a's
   // user_org_directory made "which orgs am I in?" a question the tenant role can ask at all.
   const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
+  // The REQUEST owns the client now (see server/db.ts): it is shared by every loader in this render and
+  // closed once, after the response. Closing it here would pull the connection out from under the others.
   const app = await getTenantDb();
-  try {
-    const { wouldOrphan, soleOwnedSolo } = await classifyOwnedOrgs(app, session.userId);
+  const { wouldOrphan, soleOwnedSolo } = await classifyOwnedOrgs(app, session.userId);
 
-    if (wouldOrphan.length > 0) {
-      // Name them: "transfer ownership" is only actionable if the user knows WHICH org to transfer.
-      const names = wouldOrphan.map((o) => o.name).join(", ");
-      throw new Error(
-        `You're the only owner of an organization that has other members (${names}). Transfer ` +
-          "ownership to another member before deleting your account.",
-      );
-    }
+  if (wouldOrphan.length > 0) {
+    // Name them: "transfer ownership" is only actionable if the user knows WHICH org to transfer.
+    const names = wouldOrphan.map((o) => o.name).join(", ");
+    throw new Error(
+      `You're the only owner of an organization that has other members (${names}). Transfer ` +
+        "ownership to another member before deleting your account.",
+    );
+  }
 
-    // Solo-owned orgs (nobody else in them) are erased WITH the account. Leaving them behind would be an
-    // even more complete orphan than the one above: no owner, no members, nobody to notice — and still
-    // billed.
-    for (const org of soleOwnedSolo) {
-      await deleteOrgWithAudit(
-        app,
-        { orgId: org.orgId, actor: userActor(session.userId) },
-        auditKey,
-      );
-    }
-  } finally {
-    await app.end({ timeout: 5 }).catch(() => {});
+  // Solo-owned orgs (nobody else in them) are erased WITH the account. Leaving them behind would be an
+  // even more complete orphan than the one above: no owner, no members, nobody to notice — and still
+  // billed.
+  for (const org of soleOwnedSolo) {
+    await deleteOrgWithAudit(app, { orgId: org.orgId, actor: userActor(session.userId) }, auditKey);
   }
 
   // 2. Erase the identity — only auth. (webhook_auth) can, so RPC its AccountDeleter entrypoint.

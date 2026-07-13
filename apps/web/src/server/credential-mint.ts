@@ -47,18 +47,17 @@ export async function mintApiKey(
   input: MintApiKeyInput,
   deps: MintApiKeyDeps = defaultDeps,
 ): Promise<CreatedApiKey> {
+  // The REQUEST owns the client now (see server/db.ts): it is shared by every loader and action in this
+  // request and closed once, after the response. Closing it here would pull the connection out from under
+  // the others.
   const app = await deps.getDb();
-  try {
-    const hasher = createCredentialHasherFromBase64(await deps.getPepper());
-    const auditKey = await importAuditKey(b64ToBytes(await deps.getAuditChainKey()));
-    return await deps.createKey(
-      app,
-      { orgId: input.orgId, name: input.name, scopes: input.scopes },
-      hasher,
-      auditKey,
-      input.userId,
-    );
-  } finally {
-    await app.end({ timeout: 5 }).catch(() => {});
-  }
+  const hasher = createCredentialHasherFromBase64(await deps.getPepper());
+  const auditKey = await importAuditKey(b64ToBytes(await deps.getAuditChainKey()));
+  return deps.createKey(
+    app,
+    { orgId: input.orgId, name: input.name, scopes: input.scopes },
+    hasher,
+    auditKey,
+    input.userId,
+  );
 }

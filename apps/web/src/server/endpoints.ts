@@ -113,12 +113,9 @@ export async function loadEndpoints(
   readers?: EndpointReaders,
 ): Promise<EndpointsResult> {
   if (readers) return readEndpoints(orgId, name, readers);
-  const app = await getTenantDb();
-  try {
-    return await readEndpoints(orgId, name, boundReaders(app));
-  } finally {
-    await app.end({ timeout: 5 }).catch(() => {});
-  }
+  // The REQUEST owns the client now (see server/db.ts): it is shared by every loader in this render and
+  // closed once, after the response. Closing it here would pull the connection out from under the others.
+  return readEndpoints(orgId, name, boundReaders(await getTenantDb()));
 }
 
 async function readEndpoints(
@@ -144,12 +141,9 @@ export async function loadEndpoint(
 ): Promise<EndpointResult> {
   if (!isUuid(id)) return { status: "not_found" };
   if (readers) return readEndpoint(orgId, id, readers);
-  const app = await getTenantDb();
-  try {
-    return await readEndpoint(orgId, id, boundReaders(app));
-  } finally {
-    await app.end({ timeout: 5 }).catch(() => {});
-  }
+  // The REQUEST owns the client now (see server/db.ts): it is shared by every loader in this render and
+  // closed once, after the response. Closing it here would pull the connection out from under the others.
+  return readEndpoint(orgId, id, boundReaders(await getTenantDb()));
 }
 
 async function readEndpoint(

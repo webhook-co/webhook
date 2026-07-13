@@ -54,14 +54,22 @@ describe("mintApiKey (web glue)", () => {
       expect.anything(), // audit key (importAuditKey ran for real)
       "u",
     );
-    expect(end).toHaveBeenCalledTimes(1); // pool released
+    // It must NOT close the client. The REQUEST owns it now (server/db.ts): it is shared by every loader and
+    // action in the request and closed once, after the response. A caller closing it would pull the connection
+    // out from under everything else in the same render — so "does not close" is the invariant worth pinning,
+    // and this assertion is the inverse of the one that used to be here.
+    expect(end).not.toHaveBeenCalled();
   });
 
-  it("releases the pool even when the DB write throws", async () => {
+  // The old version of this test asserted the pool was released on the throw path. That was right when this
+  // function OWNED the pool. It no longer does — so releasing it here would now be the bug, and a failed mint
+  // must leave the shared client intact for the rest of the request (which still has a response to render,
+  // including the error state this throw produces).
+  it("leaves the shared client open when the DB write throws, and still surfaces the error", async () => {
     const { deps, end } = makeDeps({ createKey: vi.fn().mockRejectedValue(new Error("db down")) });
     await expect(
       mintApiKey({ orgId: "o", userId: "u", name: "k", scopes: ["events:read"] }, deps),
     ).rejects.toThrow("db down");
-    expect(end).toHaveBeenCalledTimes(1);
+    expect(end).not.toHaveBeenCalled();
   });
 });

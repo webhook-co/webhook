@@ -17,6 +17,23 @@
   "observability": {
     "enabled": true,
   },
+  // Smart Placement — run the Worker NEXT TO THE DATABASE, not next to the user.
+  //
+  // The dashboard is not a static edge app: every page render is several Postgres round trips (the org-access
+  // gate, then the page's own reads) over Hyperdrive to Neon, which lives in ONE region. Left at the default,
+  // the Worker boots at the PoP nearest the user, so each of those round trips crosses the ocean and the
+  // latency is multiplied by the number of queries. The only thing served from the edge would be the HTML —
+  // which we cannot serve until the queries come back anyway.
+  //
+  // Smart Placement inverts that: Cloudflare observes where the subrequests actually go and relocates the
+  // Worker there, so the many DB round trips become local and the single user round trip is the one that
+  // crosses the distance. That is the right trade for a request whose cost is dominated by the database.
+  //
+  // It is a HINT, not a pin: Cloudflare only moves the Worker when it measures an improvement, and falls back
+  // to default placement otherwise. Static assets are unaffected — they are served from the edge regardless.
+  "placement": {
+    "mode": "smart",
+  },
   // Plain (non-secret) var. INGEST_BASE_URL is the cookieless ingest apex the dashboard's endpoint
   // create/rotate actions build the one-time ingest URL from (`${INGEST_BASE_URL}/<token>`), mirroring
   // apps/api. COMMITTED here (NOT deploy-injected): the prod overlay carries account ids/secrets/routes but

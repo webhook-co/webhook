@@ -1,10 +1,10 @@
 import "server-only";
 
-import { listUserOrgs, type MembershipRole } from "@webhook-co/db/orgs";
+import type { MembershipRole } from "@webhook-co/db/orgs";
 import { notFound, permanentRedirect } from "next/navigation";
 import { cache } from "react";
 
-import { withTenantDb } from "./db";
+import { readUserOrgDirectory } from "./org-directory";
 import { verifySession, type Session } from "./session";
 
 // The org-access gate: the ONE place a request proves which org it is acting in, that the caller may act
@@ -70,7 +70,9 @@ const sameSlug = (a: string, b: string): boolean => a.toLowerCase() === b.toLowe
  */
 const resolveOrgAccess = cache(async (slug: string): Promise<OrgAccess> => {
   const session = await verifySession();
-  const orgs = await withTenantDb((app) => listUserOrgs(app, session.userId));
+  // Goes through the per-request memoized directory read, which the org SWITCHER also uses. That sharing is
+  // the point: the switcher used to re-issue this exact query on a second connection, on every page.
+  const orgs = await readUserOrgDirectory(session.userId);
 
   const current = orgs.find((o) => sameSlug(o.slug, slug));
   if (current) {
