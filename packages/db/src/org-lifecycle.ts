@@ -8,6 +8,8 @@ import { withTenant, type Sql } from "./client";
 // deleteOrgWithAudit / isOrgOwner.
 export { personalOrgId } from "./orgs";
 
+import { listUserOrgs } from "./orgs";
+
 /**
  * Thrown when an org delete targets a row that doesn't exist in the caller's RLS context — i.e.
  * the org is already gone. Callers translate this to a 404; the transaction has rolled back, so
@@ -77,6 +79,53 @@ export async function readOrgMembershipCensus(
  */
 export function lastOwnerWouldOrphan(census: OrgMembershipCensus): boolean {
   return census.owners === 1 && census.total > 1;
+}
+
+export interface OwnedOrg {
+  readonly orgId: string;
+  readonly name: string;
+}
+
+export interface OwnedOrgClassification {
+  /**
+   * Orgs this user SOLELY owns that have OTHER members. Deleting their account would leave each of these
+   * with zero owners: unreachable by RLS forever, still billed, and its failure alerts going nowhere. The
+   * caller must REFUSE and tell them to transfer ownership first.
+   */
+  readonly wouldOrphan: OwnedOrg[];
+  /**
+   * Orgs this user solely owns with NOBODY else in them. These are safe to erase alongside the account —
+   * and MUST be, or they'd be left with no members at all (an even more complete orphan: still billed, and
+   * not even a stranded human to notice).
+   */
+  readonly soleOwnedSolo: OwnedOrg[];
+}
+
+/**
+ * Classify every org the user OWNS by what deleting their account would do to it (Lane 2.1b).
+ *
+ * The 2.1 guard could only census the user's PERSONAL org, because RLS made a cross-org "which orgs do I
+ * own?" query impossible for webhook_app — and that was complete only while no shared org could exist. It
+ * isn't anymore: invites are live, an owner may invite ANOTHER OWNER, and an owner may then step down. So a
+ * user can be the sole owner of an org that is NOT their own — and the identity delete in step 2 of
+ * deleteAccount cascades memberships GLOBALLY, orphaning it.
+ *
+ * 2.4a's user_org_directory (via listUserOrgs) is what makes this answerable at all. The per-org census then
+ * runs under each org's OWN tenant context, where RLS lets us see that org's full membership.
+ */
+export async function classifyOwnedOrgs(app: Sql, userId: string): Promise<OwnedOrgClassification> {
+  const owned = (await listUserOrgs(app, userId)).filter((o) => o.role === "owner");
+
+  const wouldOrphan: OwnedOrg[] = [];
+  const soleOwnedSolo: OwnedOrg[] = [];
+  for (const org of owned) {
+    const census = await readOrgMembershipCensus(app, org.orgId);
+    if (census.owners !== 1) continue; // another owner remains — leaving orphans nothing
+    const entry = { orgId: org.orgId, name: org.name };
+    if (census.total > 1) wouldOrphan.push(entry);
+    else soleOwnedSolo.push(entry);
+  }
+  return { wouldOrphan, soleOwnedSolo };
 }
 
 /**
