@@ -63,3 +63,6 @@ internal/
 
 # Local prod-migration config (DATABASE_URL + expected host for unattended apply) — never commit
 scripts/.prod-migrate.env
+
+# Local dev Postgres cluster (scripts/dev-db.sh) — throwaway, never committed.
+.dev-pg/
