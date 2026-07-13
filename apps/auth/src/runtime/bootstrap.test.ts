@@ -291,6 +291,49 @@ describe("bootstrapForUser", () => {
     expect(d.loadUserProfile).not.toHaveBeenCalled();
   });
 
+  // THE recoverability claim, and until now it was only asserted in a comment.
+  //
+  // Exhausting the budget within ONE call still leaves the user with no org. What makes that survivable — the
+  // whole reason retries draw random bytes rather than a deterministic digest — is that the NEXT login draws
+  // a FRESH set of candidates and can therefore succeed. If the candidates were a fixed five-element set, the
+  // self-heal would re-derive the same doomed five forever and the user would stay bricked: the very bug this
+  // lane exists to kill, merely rarer.
+  //
+  // So: exhaust every attempt on call 1, then call again and prove the second call submits slugs the first
+  // one never tried, and lands an org.
+  it("a user who exhausted the budget HEALS on the next login — fresh candidates, not the same doomed set", async () => {
+    const uniq = () =>
+      Object.assign(new Error("duplicate key value violates unique constraint"), {
+        code: "23505",
+        constraint_name: "orgs_slug_key",
+      });
+
+    // Call 1: every attempt collides. The user ends up with no org.
+    const failing = vi.fn(async () => {
+      throw uniq();
+    });
+    const d1 = deps({ bootstrap: failing as unknown as BootstrapDeps["bootstrap"] });
+    await bootstrapForUser(d1, user());
+    const firstRound = failing.mock.calls.map((c) => (c[1] as { slug: string }).slug);
+    expect(firstRound).toHaveLength(MAX_SLUG_ATTEMPTS);
+
+    // Call 2 (the self-heal on their next login): collide once more, then let it through.
+    const healing = vi.fn().mockRejectedValueOnce(uniq()).mockResolvedValueOnce(undefined);
+    const d2 = deps({ bootstrap: healing as unknown as BootstrapDeps["bootstrap"] });
+    await bootstrapForUser(d2, user());
+    const secondRound = healing.mock.calls.map((c) => (c[1] as { slug: string }).slug);
+
+    expect(healing).toHaveBeenCalledTimes(2); // it recovered — an org exists now
+
+    // Attempt 0 is the stable digest, so it legitimately repeats. Every RETRY must be new — that is the
+    // property that makes the brick escapable. If retries were deterministic, `retried` would be a subset of
+    // the first round's retries and this would fail.
+    const firstRetries = new Set(firstRound.slice(1));
+    const retried = secondRound.slice(1);
+    expect(retried.length).toBeGreaterThan(0);
+    for (const slug of retried) expect(firstRetries.has(slug)).toBe(false);
+  });
+
   it("does NOT retry a non-collision fault — a db outage is not a slug problem", async () => {
     const bootstrap = vi.fn(async () => {
       throw new Error("tenant db down");

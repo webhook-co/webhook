@@ -93,7 +93,7 @@ async function hydrate(
     // exists; letting a failed nicety abort it would invert the point. Degrade to the "Personal" fallback —
     // an org with a poor name beats no org — and say so, loudly, because a permission fault here means the
     // definer or its grant has regressed.
-    deps.log?.("auth.bootstrap_profile_unreadable", { userId: user.id, error: String(error) });
+    deps.log?.("auth.bootstrap_profile_unreadable", { userId: user.id, reason: reason(error) });
     return user;
   }
 }
@@ -183,6 +183,25 @@ export function personalOrgName(user: BootstrapUser): string {
  */
 export const MAX_SLUG_ATTEMPTS = 5;
 
+/**
+ * A stable, non-identifying reason for a log line — the Postgres SQLSTATE where there is one, else the error
+ * class. Never the raw message.
+ *
+ * `String(error)` on a driver error dumps its message, and a Postgres error message can carry the offending
+ * VALUE, the query, or schema detail. That is exactly the "raw error dump" the data rule forbids, and it is a
+ * log sink nobody audits. A SQLSTATE (`42501` = insufficient_privilege, `23505` = unique_violation) says
+ * everything an operator needs and discloses nothing.
+ *
+ * The `userId` stays in these lines, deliberately. It is a pseudonymous internal identifier, not personal
+ * data, and it is the only field that makes the line actionable — "somebody, somewhere, has no org" is not an
+ * alert anyone can act on. It is also the established shape of `auth.bootstrap_failed` in this file already.
+ */
+function reason(error: unknown): string {
+  const e = error as { code?: unknown } | null;
+  if (e && typeof e.code === "string") return e.code;
+  return error instanceof Error ? error.name : "unknown";
+}
+
 /** A unique-constraint violation on `orgs.slug` — i.e. this slug is taken by a DIFFERENT user's org. */
 function isSlugCollision(error: unknown): boolean {
   const e = error as { code?: unknown; constraint_name?: unknown } | null;
@@ -231,7 +250,7 @@ export async function bootstrapForUser(deps: BootstrapDeps, user: BootstrapUser)
       }
     }
   } catch (error) {
-    deps.log?.("auth.bootstrap_failed", { userId: user.id, error: String(error) });
+    deps.log?.("auth.bootstrap_failed", { userId: user.id, reason: reason(error) });
   } finally {
     await client.end();
   }
