@@ -9,6 +9,8 @@ import {
 } from "../api-client.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
+import { parseAdvisoryHeader } from "../output/advisory-notice.js";
+import { writeAdvisory } from "../state/advisory-store.js";
 import { announceActiveProfile, resolveProfile, type GlobalFlags } from "../global-flags.js";
 import { bindAuth } from "../oauth/auth-binding.js";
 import { renderJson, type OutputFormat } from "../output/format.js";
@@ -44,7 +46,19 @@ export async function authedClient(
     fetch: ctx.io.fetch,
     env: ctx.process.env,
   });
-  return createApiClient({ baseUrl, apiKey: bearer, fetch: ctx.io.fetch, refreshAuth });
+  return createApiClient({
+    baseUrl,
+    apiKey: bearer,
+    fetch: ctx.io.fetch,
+    refreshAuth,
+    // Cache whatever version advisory the API rides back, so a later run — including `wbhk -v`, which makes
+    // no request at all — can show it without the CLI ever polling npm. Fire-and-forget; a nudge must never
+    // slow down or fail a command.
+    onAdvisory: (header, deprecation) => {
+      const advisory = parseAdvisoryHeader(header, deprecation);
+      if (advisory !== null) void writeAdvisory(ctx.configDir, advisory);
+    },
+  });
 }
 
 /** Validate `--limit`: an integer in the server's accepted 1–200 range (a throw → a usage error). */

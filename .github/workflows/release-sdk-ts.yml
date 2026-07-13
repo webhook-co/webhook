@@ -60,7 +60,15 @@ jobs:
         working-directory: packages/sdk-ts
         env:
           VERSION: ${{ steps.ver.outputs.version }}
-        run: npm version "$VERSION" --no-git-tag-version --allow-same-version
+        run: |
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          # src/version.ts feeds the User-Agent the server reads to decide whether to advise an update.
+          # If it disagreed with package.json the UA would LIE about which version is running, and the
+          # advisory would target the wrong people. version.test.ts asserts they match — stamp BOTH.
+          sed -i.bak -E 's/^export const SDK_VERSION = ".*";$/export const SDK_VERSION = "'"$VERSION"'";/' src/version.ts
+          rm -f src/version.ts.bak
+          grep -q "export const SDK_VERSION = \"$VERSION\";" src/version.ts \
+            || { echo "::error::failed to stamp src/version.ts"; exit 1; }
 
       - name: Smoke the built package (ESM + CJS import)
         working-directory: packages/sdk-ts

@@ -132,6 +132,8 @@ export interface HostProcess {
 export interface AppContext extends ApplicationContext {
   readonly store: CredentialStore;
   readonly colorEnabled: boolean;
+  /** The resolved config/state dir (credentials, telemetry + advisory caches). */
+  readonly configDir: string;
   readonly io: IoSeams;
   /** The resolved home directory — the base for XDG config/state/cache paths (used by `doctor`). */
   readonly homedir: string;
@@ -195,6 +197,7 @@ export function buildContext(
     },
     store,
     colorEnabled: resolveColor(proc),
+    configDir,
     homedir: home,
     platform: proc.platform,
     arch: proc.arch,

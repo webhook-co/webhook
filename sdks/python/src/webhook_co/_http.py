@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 
+from ._advisory import ADVISORY_HEADER, DEPRECATION_HEADER, user_agent
 from ._errors import (
     WebhookErrorCode,
     WebhookUnexpectedResponseError,
@@ -68,10 +69,12 @@ class HttpClient:
         on_debug: Callable[[str], None] | None = None,
         sleep: Callable[[float], None] | None = None,
         rand: Callable[[], float] | None = None,
+        report_advisory: Callable[[str | None, str | None], None] | None = None,
     ) -> None:
         self._base_url = base_url
         self._api_key = api_key
         self._client = http_client
+        self._report_advisory = report_advisory
         self._max_retries = DEFAULT_MAX_RETRIES if max_retries is None else max_retries
         self._timeout_s = timeout_s
         self._refresh_auth = refresh_auth
@@ -108,6 +111,10 @@ class HttpClient:
             headers = {
                 "authorization": f"Bearer {bearer}",
                 "accept": "application/json",
+                # Identify the client + version. This is what lets the server answer with a version
+                # advisory on a response you already asked for, instead of the SDK polling PyPI behind
+                # your back.
+                "user-agent": user_agent(),
             }
             content: bytes | None = None
             if body is not None:
@@ -136,6 +143,14 @@ class HttpClient:
                     attempt += 1
                     continue
                 raise error_from_transport(self._base_url) from None
+
+            # The server rides a version advisory on a response we already asked for. Surface it (at most
+            # once) regardless of status: a client too old to work is precisely the one seeing errors.
+            if self._report_advisory is not None:
+                self._report_advisory(
+                    res.headers.get(ADVISORY_HEADER),
+                    res.headers.get(DEPRECATION_HEADER),
+                )
 
             if res.is_success:
                 return self._parse_success(res)

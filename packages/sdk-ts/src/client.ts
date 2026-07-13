@@ -6,6 +6,7 @@
 import { base64ToBytes } from "./base64.js";
 import { DEFAULT_BASE_URL, resolveBaseUrl } from "./config.js";
 import { WebhookConfigError, WebhookUnexpectedResponseError } from "./errors.js";
+import { makeAdvisoryReporter, type WebhookAdvisory } from "./advisory.js";
 import { createHttpClient, type HttpClient } from "./http.js";
 import { Paginator, type Page } from "./pagination.js";
 import { withQuery, type QueryValue } from "./query.js";
@@ -64,6 +65,16 @@ export interface WebhookClientOptions {
   readonly refreshAuth?: () => Promise<string | null>;
   /** Optional debug sink; receives already-redacted, single-line diagnostics (never the raw key). */
   readonly onDebug?: (line: string) => void;
+  /**
+   * Called AT MOST ONCE if the server reports this SDK version is behind (it rides an advisory header on a
+   * response you already made — the SDK never polls npm on your behalf).
+   *
+   * Give a handler and it is yours to log however you like; give none and the SDK writes a single line to
+   * stderr. Set `silenceAdvisories` to hear nothing at all.
+   */
+  readonly onAdvisory?: (advisory: WebhookAdvisory) => void;
+  /** Suppress version advisories entirely — including the one-time stderr line. */
+  readonly silenceAdvisories?: boolean;
 
   /** @internal Backoff sleep — a test seam. */
   readonly sleep?: (ms: number) => Promise<void>;
@@ -588,6 +599,11 @@ export class WebhookClient {
       timeoutMs: options.timeoutMs,
       refreshAuth: options.refreshAuth,
       onDebug: options.onDebug,
+      // One reporter per client: the advisory fires at most once, not once per request.
+      reportAdvisory: makeAdvisoryReporter({
+        onAdvisory: options.onAdvisory,
+        silent: options.silenceAdvisories,
+      }),
       sleep: options.sleep,
       rand: options.rand,
       timeoutSignal: options.timeoutSignal,

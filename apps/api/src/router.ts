@@ -1,7 +1,13 @@
 import { AuthContextSchema, CapabilityFault, type AuthContext } from "@webhook-co/contract";
 import type { CapabilityHandlers, ReplayHandler } from "@webhook-co/db";
 import { matchRoute, type RouteDef } from "@webhook-co/openapi/routes";
-import { bytesToB64 } from "@webhook-co/shared";
+import {
+  ADVISORY_HEADER,
+  DEPRECATION_HEADER,
+  buildAdvisory,
+  bytesToB64,
+  parseClientUserAgent,
+} from "@webhook-co/shared";
 
 import { authenticate, authorize, type ApiAuthDeps } from "./auth.js";
 import { httpStatusForCapabilityError } from "./http-status.js";
@@ -64,7 +70,35 @@ async function readJsonObjectBody(request: Request): Promise<Record<string, unkn
   return typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
 }
 
+/**
+ * Attach the client version advisory to a response.
+ *
+ * Server-driven, so a library never has to poll a package registry from inside someone's Worker or Lambda:
+ * the SDK identifies itself in its User-Agent and we answer on a response the caller ALREADY asked for —
+ * zero extra requests. Silent unless the caller is one of OUR clients AND is behind; `Deprecation: true` is
+ * reserved for versions below the supported floor (genuinely broken, not merely old).
+ *
+ * Applied to EVERY /v1 response including errors: a broken old client is precisely the one hitting errors,
+ * so advising only on 200s would miss exactly the people who most need to hear it.
+ */
+function withClientAdvisory(request: Request, response: Response): Response {
+  const advisory = buildAdvisory(parseClientUserAgent(request.headers.get("user-agent")));
+  if (advisory === null) return response; // the common case: cost nothing, say nothing
+  const headers = new Headers(response.headers);
+  headers.set(ADVISORY_HEADER, advisory.headerValue);
+  if (advisory.deprecated) headers.set(DEPRECATION_HEADER, "true");
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export async function handleRequest(request: Request, deps: ApiDeps): Promise<Response> {
+  return withClientAdvisory(request, await routeRequest(request, deps));
+}
+
+async function routeRequest(request: Request, deps: ApiDeps): Promise<Response> {
   const url = new URL(request.url);
   const segments = url.pathname.split("/").filter((s) => s.length > 0);
 

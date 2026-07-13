@@ -6,7 +6,7 @@ import {
   type VerifyBearer,
 } from "@webhook-co/contract";
 import type { CapabilityHandlers } from "@webhook-co/db";
-import { b64ToBytes } from "@webhook-co/shared";
+import { b64ToBytes, CLIENT_LATEST } from "@webhook-co/shared";
 import { describe, expect, it } from "vitest";
 
 import { handleRequest, type ApiDeps } from "./router.js";
@@ -908,5 +908,82 @@ describe("handleRequest — POST /v1/endpoints (endpoints.create)", () => {
     await expect(handleRequest(post("/v1/endpoints", { name: "x" }), deps)).rejects.toThrow(
       /endpoints\.create/,
     );
+  });
+});
+
+// The server-driven client advisory: an SDK identifies itself in its User-Agent, and we answer on a response
+// the caller ALREADY asked for. No registry polling from inside someone's Worker/Lambda, no extra request.
+describe("client version advisory", () => {
+  const uaGet = (ua: string | null) => {
+    const headers: Record<string, string> = { authorization: "Bearer whk_ok" };
+    if (ua !== null) headers["user-agent"] = ua;
+    return new Request(`${RESOURCE}/v1/endpoints`, { headers });
+  };
+
+  it("advises a stale client on a response it already asked for", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "endpoints.list": async () => ({ items: [], nextCursor: null }),
+      }),
+    };
+    const res = await handleRequest(uaGet("webhook-co-js/0.0.1 (node/24)"), deps);
+    expect(res.status).toBe(200);
+    const advisory = res.headers.get("x-webhook-advisory");
+    expect(advisory).toContain("current=0.0.1");
+    expect(advisory).toContain("latest=");
+    // 0.0.1 is below the supported floor → the LOUDER signal, not just "an update exists".
+    expect(res.headers.get("deprecation")).toBe("true");
+  });
+
+  it("stays SILENT for a client on the latest version (the common case costs nothing)", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "endpoints.list": async () => ({ items: [], nextCursor: null }),
+      }),
+    };
+    const res = await handleRequest(uaGet(`webhook-co-js/${CLIENT_LATEST["webhook-co-js"]}`), deps);
+    expect(res.headers.get("x-webhook-advisory")).toBeNull();
+    expect(res.headers.get("deprecation")).toBeNull();
+  });
+
+  // curl, a browser, someone's own client — not ours, so we say nothing. We only advise software we shipped.
+  it("stays silent for a user-agent that is not one of ours (and for none at all)", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "endpoints.list": async () => ({ items: [], nextCursor: null }),
+      }),
+    };
+    for (const ua of ["curl/8.4.0", null]) {
+      const res = await handleRequest(uaGet(ua), deps);
+      expect(res.headers.get("x-webhook-advisory")).toBeNull();
+    }
+  });
+
+  // A broken old client is precisely the one hitting errors — advising only on 200s would miss it.
+  it("advises on ERROR responses too, not just successes", async () => {
+    const deps: ApiDeps = { authDeps: authDeps(verify(scoped)), handlers: handlersOf({}) };
+    const res = await handleRequest(
+      new Request(`${RESOURCE}/v1/nope`, {
+        headers: { authorization: "Bearer whk_ok", "user-agent": "webhook-co-go/0.0.1 (go1.22)" },
+      }),
+      deps,
+    );
+    expect(res.status).toBe(404);
+    expect(res.headers.get("x-webhook-advisory")).toContain("current=0.0.1");
+  });
+
+  it("preserves the response body and its other headers", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify(scoped)),
+      handlers: handlersOf({
+        "endpoints.list": async () => ({ items: [], nextCursor: null }),
+      }),
+    };
+    const res = await handleRequest(uaGet("webhook-co-js/0.0.1"), deps);
+    expect(res.headers.get("content-type")).toContain("application/json");
+    expect(await res.json()).toEqual({ items: [], nextCursor: null });
   });
 });

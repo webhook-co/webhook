@@ -7,7 +7,9 @@ import { app } from "./app.js";
 import { runCompletionProposals } from "./commands/completion.js";
 import { resolveConfigDir } from "./config/paths.js";
 import { buildContext } from "./context.js";
+import { renderAdvisoryNotice } from "./output/advisory-notice.js";
 import { normalizeStricliExitCode } from "./output/exit-codes.js";
+import { isStillRelevant, readAdvisory } from "./state/advisory-store.js";
 import { markTelemetryNoticed, readTelemetryState } from "./state/telemetry-store.js";
 import { buildTelemetryEvent, resolveTelemetryEnabled, TELEMETRY_NOTICE } from "./telemetry.js";
 import { VERSION } from "./version.js";
@@ -70,4 +72,27 @@ if (argv[0] !== "__complete") {
     /* telemetry must never affect the command */
   }
 }
+// The server version advisory (see api-client's onAdvisory). Best-effort, and deliberately NOT a network
+// call: the API already told us on a response we asked for, and we cached it. Shown here so even `wbhk -v`
+// — the command you actually run to ask "am I current?", which makes no request at all — can answer.
+//
+// Suppressed for: --output json and any non-TTY (a nudge must never pollute a script's stderr contract),
+// WBHK_NO_UPDATE_CHECK=1, and the completion engine. Stderr only, never stdout.
+if (argv[0] !== "__complete" && process.env.WBHK_NO_UPDATE_CHECK !== "1") {
+  try {
+    const jsonMode = argv.includes("--output") && argv[argv.indexOf("--output") + 1] === "json";
+    if (!jsonMode && process.stderr.isTTY === true) {
+      const configDir = resolveConfigDir(process.env, homedir());
+      const cached = await readAdvisory(configDir);
+      if (cached !== null && isStillRelevant(cached, VERSION)) {
+        process.stderr.write(
+          `\n${renderAdvisoryNotice({ ...cached, message: "" }, ctx.colorEnabled)}\n`,
+        );
+      }
+    }
+  } catch {
+    /* a nudge must never affect the command */
+  }
+}
+
 process.exitCode = exit;

@@ -66,6 +66,7 @@ import {
 } from "@webhook-co/shared";
 import type { z } from "zod";
 
+import { VERSION } from "./version.js";
 import { CliError, InvalidApiUrlError, InvalidTunnelUrlError } from "./errors.js";
 import { EXIT, exitCodeForCapabilityError } from "./output/exit-codes.js";
 import {
@@ -343,6 +344,12 @@ export interface ApiClientDeps {
   /** The per-request timeout signal (default `AbortSignal.timeout(API_TIMEOUT_MS)`; injectable for tests). */
   readonly timeoutSignal?: () => AbortSignal;
   /**
+   * Sink for a server version advisory (`x-webhook-advisory`). Server-driven: the CLI sends its version in
+   * the User-Agent and the API answers on a response we already asked for — no npm poll, no extra request.
+   * Best-effort and non-fatal: a nudge must never fail a command.
+   */
+  readonly onAdvisory?: (header: string, deprecation: string | null) => void;
+  /**
    * Reactive auth hook for an OAuth credential: invoked AT MOST ONCE per request on a `401`, it returns a
    * fresh bearer (the rotated access token) to retry with, or `null` to give up (→ surface the 401). It may
    * throw an `OAuthError` (a dead refresh) which propagates → re-login. Absent for an api-key credential
@@ -400,6 +407,9 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
           headers: {
             authorization: `Bearer ${bearer}`,
             accept: "application/json",
+            // Identify the client + version, so the API can ride a version advisory back on a response we
+            // already asked for. No npm poll, no background request, nothing to hang on a plane.
+            "user-agent": `wbhk-cli/${VERSION} (node/${process.versions.node}; ${process.platform})`,
             ...(opts.body !== undefined ? { "content-type": "application/json" } : {}),
           },
           ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
@@ -414,6 +424,17 @@ export function createApiClient(deps: ApiClientDeps): ApiClient {
         }
         throw new ApiError(undefined, `could not reach the api at ${deps.baseUrl}`);
       }
+      // The server rides a version advisory on a response we already asked for. Surface it regardless of
+      // status: a CLI too old to work is precisely the one seeing errors. Non-fatal by construction.
+      const advisoryHeader = res.headers.get("x-webhook-advisory");
+      if (advisoryHeader !== null && deps.onAdvisory !== undefined) {
+        try {
+          deps.onAdvisory(advisoryHeader, res.headers.get("deprecation"));
+        } catch {
+          /* a nudge must never fail a command */
+        }
+      }
+
       if (res.ok) return res.json();
       // An expired/just-rotated OAuth access token → one silent refresh + retry (an OAuthError from the
       // hook, e.g. a dead refresh, propagates → re-login). No attempt/backoff is consumed by the refresh.

@@ -64,6 +64,22 @@ jobs:
       - run: pnpm --filter @webhook-co/sdk build
       - run: node scripts/sdk-packaged-smoke.mjs
 
+  client-versions-current:
+    name: CLIENT_LATEST matches the registries
+    runs-on: ubuntu-latest
+    needs: install
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: ./.github/actions/setup
+      # CLIENT_LATEST (packages/shared/src/client-advisory.ts) is what the API compares a client's
+      # User-Agent against to decide whether to advise an update. It is a DERIVED fact — the truth lives in
+      # npm / PyPI / GitHub — so a committed copy ROTS, and a rotted copy makes the advisory a silent no-op
+      # (we would tell people on old SDKs that they are current). Guard it from its SOURCE, like the
+      # webhook-go spec-sync job.
+      - run: node scripts/check-client-versions.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   lint:
     name: lint
     runs-on: ubuntu-latest
