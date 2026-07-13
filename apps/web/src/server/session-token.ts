@@ -82,12 +82,22 @@ export async function signSessionToken(
   return `${body}.${signature}`;
 }
 
+/**
+ * A verified session plus the token's own expiry (unix seconds). The expiry is surfaced so a re-mint (the
+ * org switcher re-signs the cookie with a different org) can carry the ORIGINAL deadline forward instead of
+ * silently starting a fresh 7 days — otherwise a user could keep a session alive indefinitely just by
+ * switching orgs.
+ */
+export interface VerifiedSession extends Session {
+  readonly expiresAt: number;
+}
+
 /** Verify + decode a cookie token. Returns the principal, or null on any failure (fail closed). */
 export async function verifySessionToken(
   token: string,
   secret: string,
   nowMs: number = Date.now(),
-): Promise<Session | null> {
+): Promise<VerifiedSession | null> {
   const dot = token.indexOf(".");
   // Need a non-empty body and a non-empty signature, and exactly one separator.
   if (dot <= 0 || dot === token.length - 1 || token.indexOf(".", dot + 1) !== -1) return null;
@@ -118,6 +128,7 @@ export async function verifySessionToken(
   return {
     userId: payload.sub,
     orgId: payload.org,
+    expiresAt: payload.exp,
     user: {
       name: typeof payload.name === "string" ? payload.name : "",
       email: typeof payload.email === "string" ? payload.email : "",

@@ -12,11 +12,14 @@ import * as React from "react";
 export function AppShellClient({
   homeHref,
   sidebar,
+  sidebarTop,
   topBar,
   children,
 }: {
   readonly homeHref?: string;
   readonly sidebar: React.ReactNode;
+  /** Pinned above the nav — the org switcher. */
+  readonly sidebarTop?: React.ReactNode;
   readonly topBar?: React.ReactNode;
   readonly children: React.ReactNode;
 }) {
@@ -26,6 +29,7 @@ export function AppShellClient({
     <AppShell
       homeHref={homeHref}
       sidebar={sidebar}
+      sidebarTop={sidebarTop}
       sidebarOpen={open}
       onSidebarOpenChange={setOpen}
       topBar={
