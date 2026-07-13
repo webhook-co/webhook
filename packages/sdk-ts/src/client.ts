@@ -501,13 +501,34 @@ class TriggersResource {
   }
 
   /**
-   * Wait for a trigger's events, ack-by-cursor (ADR-0106): pass the returned `nextCursor` back to continue,
-   * and read `caughtUp` to tell when you have reached the head. `includeBody` inlines the payload (capped by
-   * `maxBodyBytes`) so an agent doesn't need a second fetch per event.
+   * Wait for a trigger's events — ack-by-cursor (ADR-0106).
+   *
+   * SHORT-poll, not long-poll: it returns immediately with whatever is past `cursor`, so there is no held
+   * connection and no special timeout handling. Drain a backlog by re-calling promptly while `caughtUp` is
+   * false, then poll on your own cadence once caught up.
+   *
+   * `cursor` accepts null so the `nextCursor` of a caught-up page round-trips straight back in:
+   *
+   *     let cursor = null;
+   *     for (;;) {
+   *       const page = await client.triggers.wait(id, { cursor });
+   *       for (const event of page.events) handle(event);
+   *       cursor = page.nextCursor; // null when caught up — safe to pass right back
+   *       if (page.caughtUp) await sleep(1000);
+   *     }
+   *
+   * At-least-once: a crash before you persist `nextCursor` re-reads, never loses — dedup on the event id.
+   * `includeBody` DEFAULTS TO TRUE server-side (pass false for summary-only, skipping the payload fetch);
+   * `maxBodyBytes` clamps the inline body (≤ 64 KiB). `limit` is capped at 200.
    */
   wait(
     triggerId: string,
-    opts: { cursor?: string; limit?: number; includeBody?: boolean; maxBodyBytes?: number } = {},
+    opts: {
+      cursor?: string | null;
+      limit?: number;
+      includeBody?: boolean;
+      maxBodyBytes?: number;
+    } = {},
   ): Promise<TriggersWaitResult> {
     return this.req.get<TriggersWaitResult>(
       withQuery(`/v1/triggers/${enc(triggerId)}/wait`, {

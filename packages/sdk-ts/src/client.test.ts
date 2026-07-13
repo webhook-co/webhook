@@ -394,6 +394,29 @@ describe("events.delete / usage / triggers", () => {
     });
   });
 
+  // The ack-by-cursor loop from the docstring must actually typecheck and run: a caught-up page returns
+  // nextCursor: null, and the contract makes the input nullable so THAT value feeds straight back in. If
+  // null serialised as "null" the server would reject it as a malformed cursor.
+  it("triggers.wait() round-trips a caught-up nextCursor (null) back in without sending cursor=null", async () => {
+    const { client, calls } = make([
+      json(200, { events: [{ id: "ev1" }], nextCursor: "c1", caughtUp: false }),
+      json(200, { events: [], nextCursor: null, caughtUp: true }),
+      json(200, { events: [], nextCursor: null, caughtUp: true }),
+    ]);
+    let cursor: string | null = null;
+    const seen: unknown[] = [];
+    for (let i = 0; i < 3; i++) {
+      const page = await client.triggers.wait("t1", { cursor });
+      seen.push(...page.events);
+      cursor = page.nextCursor; // null once caught up — must be accepted on the next call
+    }
+    expect(seen).toHaveLength(1);
+    // 1st call: no cursor (null start). 2nd: the real cursor. 3rd: null again -> omitted, NOT "cursor=null".
+    expect(new URL(calls[0]!.url).searchParams.has("cursor")).toBe(false);
+    expect(new URL(calls[1]!.url).searchParams.get("cursor")).toBe("c1");
+    expect(calls[2]!.url).not.toContain("cursor");
+  });
+
   it("triggers.wait() sends the cursor/limit/includeBody/maxBodyBytes query params", async () => {
     const { client, calls } = make([json(200, { events: [], nextCursor: null, caughtUp: true })]);
     await client.triggers.wait("t1", {
