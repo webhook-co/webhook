@@ -39,8 +39,6 @@ function specRoutes(): string[] {
 
 /** Routes with no SDK method yet. DELETE an entry as you implement it — never add one without a reason. */
 const EXEMPTIONS: Record<string, string> = {
-  "PATCH /v1/endpoints/{endpointId}": "SDK parity lane task 2 — the transport has no PATCH yet",
-  "POST /v1/endpoints/{endpointId}/reveal-ingest-url": "SDK parity lane task 3",
   "DELETE /v1/events/{eventId}": "SDK parity lane task 4",
   "GET /v1/usage": "SDK parity lane task 4",
   "GET /v1/triggers": "SDK parity lane task 5",
@@ -64,6 +62,14 @@ const CALLS: Record<string, { body: unknown; call: (c: WebhookClient) => Promise
   "GET /v1/endpoints/{endpointId}": { body: {}, call: (c) => c.endpoints.get(ID) },
   "DELETE /v1/endpoints/{endpointId}": { body: {}, call: (c) => c.endpoints.delete(ID) },
   "POST /v1/endpoints/{endpointId}/rotate": { body: {}, call: (c) => c.endpoints.rotate(ID) },
+  "PATCH /v1/endpoints/{endpointId}": {
+    body: {},
+    call: (c) => c.endpoints.update(ID, { dedupConfig: null }),
+  },
+  "POST /v1/endpoints/{endpointId}/reveal-ingest-url": {
+    body: { ingestUrl: null },
+    call: (c) => c.endpoints.revealIngestUrl(ID),
+  },
   "POST /v1/endpoints/{endpointId}/provider-secrets": {
     body: {},
     call: (c) =>

@@ -26,6 +26,8 @@ export type VerificationState = Schemas["VerificationState"];
 
 // Command results
 export type CreatedEndpoint = Schemas["CreatedEndpoint"];
+export type RevealedIngestUrl = Schemas["EndpointsRevealIngestUrlResponse"];
+export type DedupConfig = Schemas["Endpoint"]["dedupConfig"];
 export type DeletedEndpoint = Schemas["DeletedEndpoint"];
 export type AddedProviderSecret = Schemas["AddedProviderSecret"];
 export type RevokedProviderSecret = Schemas["RevokedProviderSecret"];

@@ -50,6 +50,8 @@ export type {
   // Command results
   CreatedEndpoint,
   DeletedEndpoint,
+  RevealedIngestUrl,
+  DedupConfig,
   AddedProviderSecret,
   RevokedProviderSecret,
   CreatedReplayDestination,

@@ -15,6 +15,7 @@ import type {
   AuthContext,
   CreatedEndpoint,
   CreatedReplayDestination,
+  DedupConfig,
   DeletedEndpoint,
   Delivery,
   DeliveryAttempt,
@@ -27,6 +28,7 @@ import type {
   Event as WebhookEvent,
   Provider,
   ProviderSecretSummary,
+  RevealedIngestUrl,
   ReplayDestination,
   ReplayDestinationDeleted,
   ReplayTarget,
@@ -107,6 +109,7 @@ const enc = encodeURIComponent;
 interface Requester {
   get<T>(path: string): Promise<T>;
   post<T>(path: string, body: unknown, idempotent: boolean): Promise<T>;
+  patch<T>(path: string, body: unknown, idempotent: boolean): Promise<T>;
   del<T>(path: string, idempotent: boolean): Promise<T>;
   /** A page-following iterator; `buildPath(cursor)` yields the URL for a given cursor. */
   paginate<T>(buildPath: (cursor: string | undefined) => string): Paginator<T>;
@@ -119,6 +122,8 @@ function makeRequester(http: HttpClient): Requester {
     get,
     post: <T>(path: string, body: unknown, idempotent: boolean): Promise<T> =>
       http.request({ method: "POST", path, body, idempotent }) as Promise<T>,
+    patch: <T>(path: string, body: unknown, idempotent: boolean): Promise<T> =>
+      http.request({ method: "PATCH", path, body, idempotent }) as Promise<T>,
     del: <T>(path: string, idempotent: boolean): Promise<T> =>
       http.request({ method: "DELETE", path, idempotent }) as Promise<T>,
     paginate: <T>(buildPath: (cursor: string | undefined) => string): Paginator<T> =>
@@ -206,6 +211,35 @@ class EndpointsResource {
   /** Soft-delete an endpoint. Idempotent — a re-delete returns the recorded deletedAt. */
   delete(endpointId: string): Promise<DeletedEndpoint> {
     return this.req.del<DeletedEndpoint>(`/v1/endpoints/${enc(endpointId)}`, true);
+  }
+
+  /**
+   * Update an endpoint's dedup config (ADR-0104). Idempotent — it sets the config to a fixed value, so a
+   * transient failure is safe to retry. `dedupConfig: null` RESETS to the default (off — log every request).
+   */
+  update(endpointId: string, input: { dedupConfig: DedupConfig | null }): Promise<Endpoint> {
+    return this.req.patch<Endpoint>(`/v1/endpoints/${enc(endpointId)}`, input, true);
+  }
+
+  /**
+   * Reveal an endpoint's current ingest URL — non-destructive: it does NOT rotate. This is how you recover
+   * a FORGOTTEN url; rotating instead would revoke a live credential and break every sender still posting
+   * to the old one. The token is sealed at rest (ADR-0101), so the URL is re-readable any time — it is NOT
+   * a one-time secret.
+   *
+   * `ingestUrl` is null ONLY for endpoints created before sealed storage (their plaintext is gone — rotate
+   * to mint a fresh, re-readable one).
+   *
+   * Gated on `endpoints:write` (a key that can rotate can already mint a URL, so revealing the current one
+   * is no escalation); every disclosure writes a tamper-evident audit row and is rate-limited. Sent
+   * idempotent=false so a blind retry can't double-audit — the same call the CLI makes.
+   */
+  revealIngestUrl(endpointId: string): Promise<RevealedIngestUrl> {
+    return this.req.post<RevealedIngestUrl>(
+      `/v1/endpoints/${enc(endpointId)}/reveal-ingest-url`,
+      undefined,
+      false,
+    );
   }
 
   /**

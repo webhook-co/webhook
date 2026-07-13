@@ -130,6 +130,40 @@ describe("endpoints", () => {
     expect(calls[0]!.method).toBe("DELETE");
   });
 
+  it("update() PATCHes the dedup config and IS retried (same config → same result)", async () => {
+    const { client, calls } = make([
+      json(502, { error: "TARGET_UNREACHABLE", message: "x" }),
+      json(200, { id: "e1", dedupConfig: null }),
+    ]);
+    await client.endpoints.update("e1", { dedupConfig: null });
+    expect(calls).toHaveLength(2); // idempotent → a transient failure is retried
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/endpoints/e1",
+      method: "PATCH",
+      body: JSON.stringify({ dedupConfig: null }),
+    });
+  });
+
+  // The URL is sealed at rest (ADR-0101) — reveal is how you RECOVER a forgotten one. Rotating instead
+  // would revoke a live credential and break every sender still posting to the old URL.
+  it("revealIngestUrl() POSTs with no body and is NOT retried (a blind retry would double-audit)", async () => {
+    const { client, calls } = make([json(502, { error: "TARGET_UNREACHABLE", message: "x" })]);
+    await expect(client.endpoints.revealIngestUrl("e1")).rejects.toBeInstanceOf(
+      WebhookTargetUnreachableError,
+    );
+    expect(calls).toHaveLength(1); // every disclosure writes a tamper-evident audit row
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/endpoints/e1/reveal-ingest-url",
+      method: "POST",
+      body: undefined,
+    });
+  });
+
+  it("revealIngestUrl() returns a null ingestUrl for an endpoint predating sealed storage", async () => {
+    const { client } = make([json(200, { ingestUrl: null })]);
+    await expect(client.endpoints.revealIngestUrl("e1")).resolves.toEqual({ ingestUrl: null });
+  });
+
   it("rotate() POSTs to /rotate with no body and is not retried", async () => {
     const { client, calls } = make([json(502, { error: "TARGET_UNREACHABLE", message: "x" })]);
     await expect(client.endpoints.rotate("e1")).rejects.toBeInstanceOf(
