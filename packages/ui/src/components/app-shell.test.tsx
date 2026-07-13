@@ -133,3 +133,36 @@ describe("AppNavSection", () => {
     expect(screen.getByText("Account")).toBeInTheDocument();
   });
 });
+
+// AppNavItem `asChild` (Lane 0.2). Without it the sidebar can only emit bare <a> tags — and every nav click
+// is then a FULL DOCUMENT NAVIGATION: the whole app shell torn down, re-fetched and re-rendered, with client
+// state discarded. `asChild` is what lets a router link (next/link) carry the nav styling instead.
+describe("AppNavItem asChild", () => {
+  it("renders the CHILD element, not a wrapper anchor, and keeps the nav semantics", () => {
+    render(
+      <AppNavItem asChild active icon={<svg data-testid="icon" />} count={3}>
+        <a href="/x" data-testid="router-link">
+          Endpoints
+        </a>
+      </AppNavItem>,
+    );
+
+    const link = screen.getByTestId("router-link");
+    // The child IS the element — not nested inside another <a> (which would be invalid HTML and would
+    // defeat the router entirely).
+    expect(link.tagName).toBe("A");
+    expect(document.querySelectorAll("a")).toHaveLength(1);
+
+    // …and it still carries everything the nav item provides.
+    expect(link).toHaveAttribute("aria-current", "page");
+    // The count is announced as its own clause, not glued onto the page name ("Endpoints3").
+    expect(link).toHaveAccessibleName("Endpoints, 3");
+    expect(screen.getByTestId("icon")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument(); // …and still rendered visually
+  });
+
+  it("still renders a plain anchor when asChild is not used", () => {
+    render(<AppNavItem href="/y">Deliveries</AppNavItem>);
+    expect(screen.getByRole("link", { name: "Deliveries" })).toHaveAttribute("href", "/y");
+  });
+});

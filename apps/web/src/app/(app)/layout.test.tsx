@@ -10,7 +10,11 @@ vi.mock("@/server/session", () => ({
 }));
 vi.mock("@/server/auth-actions", () => ({ logout: vi.fn() }));
 // The sidebar (AppNav) is a client component that reads the active route via usePathname.
-vi.mock("next/navigation", () => ({ usePathname: () => "/endpoints" }));
+// The layout now also mounts the ⌘K palette, which routes via useRouter.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/endpoints",
+  useRouter: () => ({ push: vi.fn() }),
+}));
 
 import AppLayout from "./layout";
 
