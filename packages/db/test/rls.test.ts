@@ -1371,7 +1371,11 @@ describe("no unexpected SECURITY DEFINER functions", () => {
    *   - search_path is pinned, so the definer cannot be search-path-hijacked.
    * The properties that make it safe are asserted below — the allowlist entry is not taken on trust.
    */
-  const ALLOWED_SECURITY_DEFINERS = ["org_member_directory", "user_org_directory"];
+  const ALLOWED_SECURITY_DEFINERS = [
+    "current_user_profile",
+    "org_member_directory",
+    "user_org_directory",
+  ];
 
   it("has no SECURITY DEFINER functions beyond the reviewed allowlist", async () => {
     const definers = await owner<{ proname: string }[]>`

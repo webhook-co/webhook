@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, withUser, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { createOrgWithOwner, listUserOrgs } from "../src/orgs";
+import { createOrgWithOwner, listUserOrgs, readUserProfile } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -178,5 +178,65 @@ describe("the user-scoped policies are DENY-BY-DEFAULT", () => {
 
     // …and the sanctioned path still answers the question.
     expect((await listUserOrgs(app, hana)).map((o) => o.orgId).sort()).toEqual([a, b].sort());
+  });
+});
+
+describe("readUserProfile — the ONLY path webhook_app has to an identity", () => {
+  // This exists because of a bug that shipped past a green unit suite.
+  //
+  // The signup bootstrap's self-heal is handed a bare userId, so to name a user's personal org after them it
+  // has to read `"user"`. The first attempt simply ran `select name, email from "user"` on the webhook_app
+  // client — and webhook_app has NO grant on that table, deliberately (it is Better Auth's global identity
+  // table, not row-level-secured, with no org column to police; rls.test.ts asserts the refusal outright). In
+  // production that throws `permission denied`, which would have aborted the bootstrap and left the user with
+  // NO ORG AT ALL — strictly worse than the bug being fixed.
+  //
+  // Every unit test stubbed the loader, so none of them could see it. Only a real Postgres, connecting as the
+  // real role, can. That is what this is.
+  it("returns the caller's own profile under the app role", async () => {
+    const id = `u_prof_${randomUUID().slice(0, 8)}`;
+    await seedUser(id);
+
+    const profile = await readUserProfile(app, id);
+
+    expect(profile).toEqual({ name: id, email: `${id}@acme.test` });
+  });
+
+  it("returns null for a user that does not exist", async () => {
+    expect(await readUserProfile(app, `u_missing_${randomUUID().slice(0, 8)}`)).toBeNull();
+  });
+
+  it("cannot be reached by reading the identity table directly — the grant is absent", async () => {
+    // The whole point of the definer. If this ever stops throwing, the confinement has collapsed and
+    // webhook_app can enumerate every user in the system.
+    await expect(app`select name, email from "user" limit 1`).rejects.toThrow(/permission denied/i);
+  });
+
+  it("yields NOTHING when the user GUC is unset — deny-by-default, not the whole table", async () => {
+    const id = `u_guc_${randomUUID().slice(0, 8)}`;
+    await seedUser(id);
+
+    // Call the function WITHOUT withUser(): current_app_user() is NULL, so `u.id = NULL` matches no row.
+    const rows = await app`select name, email from current_user_profile()`;
+
+    expect(rows.length).toBe(0);
+  });
+
+  it("cannot be pointed at another user — it takes no argument", async () => {
+    const mine = `u_mine_${randomUUID().slice(0, 8)}`;
+    const theirs = `u_theirs_${randomUUID().slice(0, 8)}`;
+    await seedUser(mine);
+    await seedUser(theirs);
+
+    // Scoped to `mine`, the function returns `mine` and only `mine`. There is no argument to smuggle
+    // `theirs` in through: the identity comes from the GUC, which the application sets from a
+    // server-authenticated id.
+    const rows = await withUser(
+      app,
+      mine,
+      (tx) => tx<{ name: string }[]>`select name, email from current_user_profile()`,
+    );
+
+    expect(rows.map((r) => r.name)).toEqual([mine]);
   });
 });
