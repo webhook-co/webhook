@@ -37,15 +37,14 @@ function specRoutes(): string[] {
   return out.sort();
 }
 
-/** Routes with no SDK method yet. DELETE an entry as you implement it — never add one without a reason. */
-const EXEMPTIONS: Record<string, string> = {
-  "DELETE /v1/events/{eventId}": "SDK parity lane task 4",
-  "GET /v1/usage": "SDK parity lane task 4",
-  "GET /v1/triggers": "SDK parity lane task 5",
-  "POST /v1/triggers": "SDK parity lane task 5",
-  "DELETE /v1/triggers/{triggerId}": "SDK parity lane task 5",
-  "GET /v1/triggers/{triggerId}/wait": "SDK parity lane task 5",
-};
+/**
+ * Routes with no SDK method yet. DELETE an entry as you implement it — never add one without a reason.
+ *
+ * EMPTY: the TS SDK now reaches every route in the spec. An entry here means shipping a route the SDK
+ * cannot reach, which is how the reveal gap happened — add one only deliberately, with a follow-up to
+ * remove it.
+ */
+const EXEMPTIONS: Record<string, string> = {};
 
 const ID = "11111111-1111-4111-8111-111111111111";
 
@@ -142,6 +141,26 @@ const CALLS: Record<string, { body: unknown; call: (c: WebhookClient) => Promise
     body: {},
     call: (c) => c.subscriptions.delete(ID),
   },
+  "DELETE /v1/events/{eventId}": { body: {}, call: (c) => c.events.delete(ID) },
+  "GET /v1/usage": {
+    body: {
+      periodStart: "2026-07-01T00:00:00.000Z",
+      periodEnd: null,
+      capKind: "lifetime",
+      events: 0,
+      eventCap: 5000,
+      pausePolicy: "pause",
+      paused: false,
+    },
+    call: (c) => c.usage.get(),
+  },
+  "GET /v1/triggers": { body: { items: [] }, call: (c) => c.triggers.list() },
+  "POST /v1/triggers": { body: {}, call: (c) => c.triggers.create({ endpointId: ID }) },
+  "DELETE /v1/triggers/{triggerId}": { body: {}, call: (c) => c.triggers.revoke(ID) },
+  "GET /v1/triggers/{triggerId}/wait": {
+    body: { events: [], nextCursor: null, caughtUp: true },
+    call: (c) => c.triggers.wait(ID),
+  },
   "POST /v1/audit/verify": { body: {}, call: (c) => c.audit.verify() },
   "GET /v1/whoami": { body: {}, call: (c) => c.whoami() },
 };
@@ -191,6 +210,17 @@ describe("sdk spec coverage (ratchet)", () => {
       (r) => !routes.includes(r),
     );
     expect(stale, `entries naming routes absent from the spec:\n${stale.join("\n")}`).toEqual([]);
+  });
+
+  // An exemption for a route we DO cover is worse than useless: it MASKS the coverage check for that route,
+  // so deleting the method would not fail this suite. (Caught the hard way — a mutation test silently passed
+  // because the route sat in both tables.) An exemption must mean "no method exists", nothing else.
+  it("no route is both covered and exempted (a stale exemption masks a real gap)", () => {
+    const both = Object.keys(CALLS).filter((r) => r in EXEMPTIONS);
+    expect(
+      both,
+      `routes exempted despite having an SDK method — delete the exemption:\n${both.join("\n")}`,
+    ).toEqual([]);
   });
 
   it("every exemption carries a non-empty reason", () => {

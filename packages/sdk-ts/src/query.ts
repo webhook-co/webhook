@@ -2,7 +2,7 @@
 // an array value rides as a REPEATED param (`?provider=a&provider=b`) — the multi-select shape the API
 // reads back with `getAll` — and an empty array contributes nothing.
 
-export type QueryValue = string | number | readonly string[] | undefined;
+export type QueryValue = string | number | boolean | readonly string[] | undefined;
 
 export function withQuery(path: string, params: Record<string, QueryValue>): string {
   const query = new URLSearchParams();

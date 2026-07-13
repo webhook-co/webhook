@@ -335,6 +335,82 @@ describe("events", () => {
   });
 });
 
+describe("events.delete / usage / triggers", () => {
+  it("events.delete() DELETEs and IS retried (re-deleting is a no-op)", async () => {
+    const { client, calls } = make([
+      json(502, { error: "TARGET_UNREACHABLE", message: "x" }),
+      json(200, { id: "ev1", deletedAt: "2026-07-13T00:00:00.000Z" }),
+    ]);
+    await client.events.delete("ev1");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/events/ev1",
+      method: "DELETE",
+    });
+  });
+
+  it("usage.get() GETs /v1/usage", async () => {
+    const { client, calls } = make([
+      json(200, {
+        periodStart: "2026-07-01T00:00:00.000Z",
+        periodEnd: null,
+        capKind: "lifetime",
+        events: 12,
+        eventCap: 5000,
+        pausePolicy: "pause",
+        paused: false,
+      }),
+    ]);
+    const usage = await client.usage.get();
+    expect(usage.events).toBe(12);
+    expect(calls[0]).toMatchObject({ url: "https://api.webhook.co/v1/usage", method: "GET" });
+  });
+
+  it("triggers.create() POSTs the body and is NOT retried (each call mints a trigger)", async () => {
+    const { client, calls } = make([json(502, { error: "TARGET_UNREACHABLE", message: "x" })]);
+    await expect(
+      client.triggers.create({ endpointId: "e1", name: "orders" }),
+    ).rejects.toBeInstanceOf(WebhookTargetUnreachableError);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/triggers",
+      method: "POST",
+      body: JSON.stringify({ endpointId: "e1", name: "orders" }),
+    });
+  });
+
+  it("triggers.list() passes the optional endpointId filter as a query param", async () => {
+    const { client, calls } = make([json(200, { items: [] })]);
+    await client.triggers.list({ endpointId: "e1" });
+    expect(calls[0]!.url).toBe("https://api.webhook.co/v1/triggers?endpointId=e1");
+  });
+
+  it("triggers.revoke() DELETEs and is idempotent", async () => {
+    const { client, calls } = make([json(200, { id: "t1" })]);
+    await client.triggers.revoke("t1");
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/triggers/t1",
+      method: "DELETE",
+    });
+  });
+
+  it("triggers.wait() sends the cursor/limit/includeBody/maxBodyBytes query params", async () => {
+    const { client, calls } = make([json(200, { events: [], nextCursor: null, caughtUp: true })]);
+    await client.triggers.wait("t1", {
+      cursor: "c1",
+      limit: 10,
+      includeBody: true,
+      maxBodyBytes: 4096,
+    });
+    const u = new URL(calls[0]!.url);
+    expect(u.pathname).toBe("/v1/triggers/t1/wait");
+    expect(u.searchParams.get("cursor")).toBe("c1");
+    expect(u.searchParams.get("limit")).toBe("10");
+    expect(u.searchParams.get("includeBody")).toBe("true");
+    expect(u.searchParams.get("maxBodyBytes")).toBe("4096");
+  });
+});
+
 describe("deliveries", () => {
   it("list() threads destination/subscription/status filters", async () => {
     const { client, calls } = make([json(200, { items: [], nextCursor: null })]);

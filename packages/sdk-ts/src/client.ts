@@ -17,6 +17,7 @@ import type {
   CreatedReplayDestination,
   DedupConfig,
   DeletedEndpoint,
+  DeletedEvent,
   Delivery,
   DeliveryAttempt,
   DeliveryStatus,
@@ -29,7 +30,12 @@ import type {
   Provider,
   ProviderSecretSummary,
   RevealedIngestUrl,
+  RevokedTrigger,
   ReplayDestination,
+  Trigger,
+  TriggersList,
+  TriggersWaitResult,
+  Usage,
   ReplayDestinationDeleted,
   ReplayTarget,
   RevokedProviderSecret,
@@ -309,6 +315,17 @@ class EventsResource {
     );
   }
 
+  /**
+   * Permanently delete ONE captured event: its content is redacted immediately and its stored payload body
+   * is purged shortly after, so it can no longer be read or replayed, and it stops appearing in listings.
+   * There is no bulk or filter delete. Idempotent — re-deleting is a no-op, so a retry is safe.
+   *
+   * This does NOT reduce your metered usage: the event was already counted when it was received.
+   */
+  delete(eventId: string): Promise<DeletedEvent> {
+    return this.req.del<DeletedEvent>(`/v1/events/${enc(eventId)}`, true);
+  }
+
   /** Replay a captured event. Idempotency-keyed → safe to retry a transient failure. */
   replay(input: {
     eventId: string;
@@ -453,6 +470,56 @@ class SubscriptionsResource {
   }
 }
 
+class UsageResource {
+  constructor(private readonly req: Requester) {}
+
+  /** The current period's metered usage: events counted, the cap, and whether the org is cap-paused. */
+  get(): Promise<Usage> {
+    return this.req.get<Usage>("/v1/usage");
+  }
+}
+
+/** Agent triggers (ADR-0106): the webhook→agent primitive behind `triggers.wait`. */
+class TriggersResource {
+  constructor(private readonly req: Requester) {}
+
+  /** The org's triggers, optionally narrowed to one endpoint. */
+  list(filters: { endpointId?: string } = {}): Promise<TriggersList> {
+    return this.req.get<TriggersList>(
+      withQuery("/v1/triggers", { endpointId: filters.endpointId }),
+    );
+  }
+
+  /** Create a trigger. NOT idempotent — each call mints a new one, so it is never blind-retried. */
+  create(input: { endpointId: string; name?: string }): Promise<Trigger> {
+    return this.req.post<Trigger>("/v1/triggers", input, false);
+  }
+
+  /** Revoke a trigger. Idempotent. */
+  revoke(triggerId: string): Promise<RevokedTrigger> {
+    return this.req.del<RevokedTrigger>(`/v1/triggers/${enc(triggerId)}`, true);
+  }
+
+  /**
+   * Wait for a trigger's events, ack-by-cursor (ADR-0106): pass the returned `nextCursor` back to continue,
+   * and read `caughtUp` to tell when you have reached the head. `includeBody` inlines the payload (capped by
+   * `maxBodyBytes`) so an agent doesn't need a second fetch per event.
+   */
+  wait(
+    triggerId: string,
+    opts: { cursor?: string; limit?: number; includeBody?: boolean; maxBodyBytes?: number } = {},
+  ): Promise<TriggersWaitResult> {
+    return this.req.get<TriggersWaitResult>(
+      withQuery(`/v1/triggers/${enc(triggerId)}/wait`, {
+        cursor: opts.cursor,
+        limit: opts.limit,
+        includeBody: opts.includeBody,
+        maxBodyBytes: opts.maxBodyBytes,
+      }),
+    );
+  }
+}
+
 class AuditResource {
   constructor(private readonly req: Requester) {}
 
@@ -468,6 +535,8 @@ export class WebhookClient {
   readonly deliveries: DeliveriesResource;
   readonly replayDestinations: ReplayDestinationsResource;
   readonly subscriptions: SubscriptionsResource;
+  readonly usage: UsageResource;
+  readonly triggers: TriggersResource;
   readonly audit: AuditResource;
 
   private readonly http: HttpClient;
@@ -505,6 +574,8 @@ export class WebhookClient {
     this.deliveries = new DeliveriesResource(req);
     this.replayDestinations = new ReplayDestinationsResource(req);
     this.subscriptions = new SubscriptionsResource(req);
+    this.usage = new UsageResource(req);
+    this.triggers = new TriggersResource(req);
     this.audit = new AuditResource(req);
   }
 
