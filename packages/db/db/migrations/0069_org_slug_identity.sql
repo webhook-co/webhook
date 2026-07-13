@@ -187,15 +187,23 @@ create function orgs_slug_not_retired() returns trigger
       select 1 from org_slug_history h
        where h.slug = new.slug and h.org_id is distinct from new.id
     ) then
+      -- ⚠️ The CONSTRAINT option is not decoration. `raise … using errcode = 'unique_violation'` sets SQLSTATE
+      -- 23505 but leaves the error's constraint field EMPTY — and apps/auth's collision retry
+      -- (`isSlugCollision`) fires only when `constraint_name` contains "slug". Without this, a new user whose
+      -- attempt-0 slug happens to equal a RETIRED one gets: trigger raises -> the retry does not recognise it
+      -- -> bootstrapForUser rethrows -> the outer catch SWALLOWS it -> no org. And attempt 0 is deterministic,
+      -- so every later self-heal re-derives the same doomed slug and fails identically. Forever. It is the
+      -- exact brick the retry loop was written to prevent, reintroduced through a different door.
       raise exception 'slug % was retired and can never be reused', new.slug
-        using errcode = 'unique_violation';
+        using errcode = 'unique_violation', constraint = 'orgs_slug_retired';
     end if;
     return new;
   end;
   $$;
 
--- `unique_violation` (23505) deliberately: to every caller this IS a taken slug, and the bootstrap's
--- collision retry already recognises that SQLSTATE. A bespoke error code would make it retry nothing.
+-- `unique_violation` (23505) with a slug-bearing CONSTRAINT name, deliberately: to every caller this IS a
+-- taken slug, and that is exactly the shape the bootstrap's collision retry recognises. A bespoke error code —
+-- or a missing constraint name — would make it retry nothing.
 create trigger orgs_slug_not_retired_trg
   before insert or update of slug on orgs
   for each row execute function orgs_slug_not_retired();
@@ -269,7 +277,10 @@ create function user_org_directory()
            coalesce(
              (select array_agg(h.slug::text order by h.retired_at desc)
                 from org_slug_history h
-               where h.org_id = o.id),
+               -- `h.slug <> o.slug` matters in the reclaim case: an org that renames away and then back has a
+               -- history row for the slug it is CURRENTLY using. Without this, its own current slug would be
+               -- reported as a FORMER one, and the resolver would treat a canonical URL as a stale one.
+               where h.org_id = o.id and h.slug <> o.slug),
              '{}'::text[]
            ),
            o.name,

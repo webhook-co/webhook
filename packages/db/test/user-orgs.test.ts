@@ -282,6 +282,30 @@ describe("the directory resolves a slug — the security keystone of /org/{slug}
     expect(org?.formerSlugs).toContain(first);
   });
 
+  it("an org that RECLAIMS a former slug does not report its own current slug as former", async () => {
+    // The reclaim path leaves a history row for the slug the org is now using again. Without a
+    // `h.slug <> o.slug` filter the directory would report the CURRENT slug as a FORMER one — and the
+    // resolver would then treat a canonical URL as a stale one to redirect away from.
+    const uid = `u_recl_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const original = `boomerang-${randomUUID().slice(0, 6)}`;
+    const away = `elsewhere-${randomUUID().slice(0, 6)}`;
+    const { id } = await createOrgWithOwner(app, {
+      slug: original,
+      name: "Boomerang",
+      ownerUserId: uid,
+    });
+
+    await withTenant(app, id, (tx) => tx`update orgs set slug = ${away} where id = ${id}`);
+    await withTenant(app, id, (tx) => tx`update orgs set slug = ${original} where id = ${id}`); // back
+
+    const org = (await listUserOrgs(app, uid)).find((o) => o.orgId === id);
+
+    expect(org?.slug).toBe(original);
+    expect(org?.formerSlugs).toContain(away);
+    expect(org?.formerSlugs).not.toContain(original); // its OWN current slug is not "former"
+  });
+
   it("does NOT leak a slug you are not a member of — the resolver simply cannot see it", async () => {
     const mine = `u_a_${randomUUID().slice(0, 8)}`;
     const theirs = `u_b_${randomUUID().slice(0, 8)}`;

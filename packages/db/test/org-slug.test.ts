@@ -124,7 +124,20 @@ describe("a retired slug is NEVER recycled", () => {
     const squat = await tryCreateOrg(original);
 
     expect(squat.error).not.toBeNull();
-    expect((squat.error as { code?: string }).code).toBe("23505"); // reads as "taken", which it is
+
+    // 🔑 It must not merely FAIL — it must fail in the shape apps/auth's collision retry recognises.
+    //
+    // `isSlugCollision()` fires only when `code === "23505" && constraint_name.includes("slug")`. And
+    // `raise … using errcode = 'unique_violation'` sets the SQLSTATE but leaves the constraint field EMPTY —
+    // so without an explicit CONSTRAINT option the retry does NOT fire, bootstrapForUser rethrows, the outer
+    // catch SWALLOWS it, and the user gets no org. Attempt 0 is deterministic, so every later self-heal
+    // re-derives the same doomed slug and fails the same way. Forever.
+    //
+    // That is the exact brick the retry loop exists to prevent, reintroduced through a different door — so
+    // this asserts the RETRY PREDICATE itself, not just "an error happened".
+    const e = squat.error as { code?: string; constraint_name?: string };
+    expect(e.code).toBe("23505");
+    expect(e.constraint_name).toContain("slug");
   });
 
   it("lets an org RECLAIM its own former slug — a rename it wants to undo", async () => {
@@ -291,14 +304,37 @@ describe("org_slug_history — the app cannot write it, and that is the point", 
 });
 
 describe("the backfill", () => {
+  // ⚠️ This MUST run as the superuser, not as `owner`.
+  //
+  // `orgs` is FORCE ROW LEVEL SECURITY, so webhook_owner is policed too: with no tenant GUC set it sees ZERO
+  // rows. An assertion of the form "no org violates the CHECK", run on the owner handle, is therefore
+  // VACUOUSLY true — it would pass just as happily against a backfill that updated nothing, which is the very
+  // failure mode it is supposed to catch (and precisely what FORCE RLS would have caused if the migration had
+  // not disabled RLS around the DO block). The superuser bypasses RLS and actually sees the rows.
+  let su: Sql;
+  beforeAll(() => {
+    su = createClient(pg.providerUrl, { max: 1 });
+  });
+  afterAll(async () => {
+    await su?.end({ timeout: 5 }).catch(() => {});
+  });
+
+  it("can actually SEE the orgs — otherwise the assertion below proves nothing", async () => {
+    const [row] = await su<{ n: number }[]>`select count(*)::int as n from orgs`;
+    expect(row!.n).toBeGreaterThan(0);
+
+    // …and the vacuity it guards against, demonstrated: the owner handle sees none of them.
+    const [asOwner] = await owner<{ n: number }[]>`select count(*)::int as n from orgs`;
+    expect(asOwner!.n).toBe(0);
+  });
+
   it("left every existing slug satisfying the new CHECK", async () => {
-    // The CHECK is added AFTER the backfill for exactly this reason: adding it first would validate against
-    // the old ~45-char `<name>-<32-char auth user id>` slugs and abort the migration. If the backfill were
-    // wrong, the migration itself would have failed — but assert it, because a silently-empty backfill (which
-    // is what FORCE RLS would have caused) leaves the constraint trivially satisfied by zero rows.
-    const bad = await owner`
+    const bad = await su<{ slug: string }[]>`
       select slug from orgs
-       where slug !~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$' or slug ~ '^[0-9]+$'`;
-    expect(bad.length).toBe(0);
+       where slug::text !~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'
+          or slug::text ~ '^[0-9]+$'
+          or slug::text <> lower(slug::text)
+          or org_slug_reserved(slug)`;
+    expect(bad.map((r) => r.slug)).toEqual([]);
   });
 });
