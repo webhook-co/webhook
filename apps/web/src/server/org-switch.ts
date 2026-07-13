@@ -1,14 +1,11 @@
 "use server";
 
 import { listUserOrgs } from "@webhook-co/db/orgs";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { withTenantDb } from "./db";
-import { getSessionSecret } from "./env";
-import { SESSION_COOKIE, verifySession } from "./session";
-import { sessionCookieOptions } from "./session-cookie";
-import { signSessionToken, verifySessionToken } from "./session-token";
+import { verifySession } from "./session";
+import { remintSessionForOrg } from "./session-remint";
 
 // The org switcher (Lane 2.7). The session cookie names the acting org, so switching means RE-MINTING it —
 // which is the one place that mutates the session's org, and therefore the one place that could point a
@@ -44,27 +41,11 @@ export async function switchOrgAction(formData: FormData): Promise<void> {
     redirect("/dashboard?org=denied");
   }
 
-  const secret = await getSessionSecret();
-
-  // Carry the CURRENT token's expiry forward. Read it back rather than trusting a fresh TTL — see the note
-  // above. A cookie we can't re-verify means no session at all, so send them to sign in rather than mint.
-  const current = (await cookies()).get(SESSION_COOKIE)?.value;
-  const verified = current ? await verifySessionToken(current, secret) : null;
-  if (!verified) redirect("/dashboard?org=denied");
-
-  const remainingSeconds = verified.expiresAt - Math.floor(Date.now() / 1000);
-  if (remainingSeconds <= 0) redirect("/dashboard?org=denied");
-
-  const token = await signSessionToken(
-    { userId: session.userId, orgId: target, user: session.user },
-    secret,
-    remainingSeconds,
-  );
-
-  (await cookies()).set(SESSION_COOKIE, token, {
-    ...sessionCookieOptions(),
-    maxAge: remainingSeconds,
-  });
+  // The re-mint carries the CURRENT token's expiry forward (never a fresh TTL) and fails closed — see
+  // session-remint.ts. requireOrgAccess re-checks membership on every request after this anyway.
+  if ((await remintSessionForOrg(session, target)) !== "ok") {
+    redirect("/dashboard?org=denied");
+  }
 
   redirect("/dashboard");
 }

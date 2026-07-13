@@ -1,11 +1,14 @@
+import { personalOrgId } from "@webhook-co/db/org-lifecycle";
 import { canGrantRole, MEMBERSHIP_ROLES, type MembershipRole } from "@webhook-co/shared";
 import { PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { TeamManager } from "@/components/team-manager";
 import { createInviteAction, revokeInviteAction } from "@/server/invite-actions";
+import { leaveOrgAction } from "@/server/leave-org";
 import { changeMemberRoleAction, removeMemberAction } from "@/server/member-actions";
 import { loadTeam } from "@/server/team";
+import { verifySession } from "@/server/session";
 
 export const metadata: Metadata = {
   title: "Team · webhook.co",
@@ -17,7 +20,10 @@ function canManageMembers(role: MembershipRole): boolean {
 }
 
 export default async function TeamPage() {
-  const result = await loadTeam();
+  const [result, session] = await Promise.all([loadTeam(), verifySession()]);
+  // You cannot leave your own personal org — there'd be nowhere to go, and the account-delete flow is what
+  // actually erases it. personalOrgId is derived, so this costs no query.
+  const isPersonalOrg = session.orgId === personalOrgId(session.userId);
   const role: MembershipRole = result.status === "ok" ? result.role : "member";
   // The roles this caller may hand out — the same ceiling the server actions enforce. The client only ever
   // sees roles it's allowed to pick; the actions re-check regardless (the picker is UX, not the gate).
@@ -39,6 +45,8 @@ export default async function TeamPage() {
         revokeInvite={revokeInviteAction}
         changeRole={changeMemberRoleAction}
         removeMember={removeMemberAction}
+        leaveOrg={leaveOrgAction}
+        isPersonalOrg={isPersonalOrg}
       />
     </PageContainer>
   );

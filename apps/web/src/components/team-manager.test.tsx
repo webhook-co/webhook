@@ -67,6 +67,8 @@ function renderManager(
     removeMember?: (fd: FormData) => Promise<MemberActionResult>;
     grantableRoles?: readonly ("owner" | "admin" | "member")[];
     canManage?: boolean;
+    leaveOrg?: () => Promise<{ status: "last_owner" | "error" }>;
+    isPersonalOrg?: boolean;
   } = {},
 ) {
   return render(
@@ -80,6 +82,8 @@ function renderManager(
       removeMember={
         opts.removeMember ?? vi.fn(async () => ({ status: "ok" }) as MemberActionResult)
       }
+      leaveOrg={opts.leaveOrg ?? vi.fn(async () => ({ status: "error" }) as const)}
+      isPersonalOrg={opts.isPersonalOrg ?? false}
     />,
   );
 }
@@ -276,5 +280,50 @@ describe("TeamManager — invites", () => {
   it("renders an error state when the load failed", () => {
     renderManager({ status: "error" });
     expect(screen.getByText(/couldn't load/i)).toBeInTheDocument();
+  });
+});
+
+// Leaving (Lane 2.9). Member removal is owner/admin-only AND refuses your own row, so without this an invited
+// teammate had NO WAY OUT of a team — they could be removed, but never leave.
+describe("TeamManager — leaving", () => {
+  it("offers Leave organization in a shared org", () => {
+    renderManager(okResult({ role: "member", userId: "u_bob" }), { canManage: false });
+    expect(screen.getByRole("button", { name: /leave organization/i })).toBeInTheDocument();
+  });
+
+  it("does NOT offer it for your own personal org — that's what deleting the account is for", () => {
+    renderManager(okResult(), { isPersonalOrg: true });
+    expect(screen.queryByRole("button", { name: /leave organization/i })).not.toBeInTheDocument();
+  });
+
+  it("warns that your keys die, then leaves on confirm", async () => {
+    const user = userEvent.setup();
+    // Success REDIRECTS, so the action never returns; a throw stands in for that here.
+    // Stand-in for the redirect: the real action never returns on success.
+    const leaveOrg = vi.fn(async () => new Promise<never>(() => {}));
+    renderManager(okResult({ role: "member", userId: "u_bob" }), {
+      canManage: false,
+      leaveOrg: leaveOrg as never,
+    });
+
+    await user.click(screen.getByRole("button", { name: /leave organization/i }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/api keys and devices/i)).toBeInTheDocument();
+    // The real action redirects (which throws Next's signal); assert only that we asked to leave.
+    await user.click(within(dialog).getByRole("button", { name: /leave organization/i }));
+    await waitFor(() => expect(leaveOrg).toHaveBeenCalledTimes(1));
+  });
+
+  it("tells a SOLE OWNER what to do instead of just refusing", async () => {
+    const user = userEvent.setup();
+    const leaveOrg = vi.fn(async () => ({ status: "last_owner" }) as const);
+    renderManager(okResult(), { leaveOrg });
+
+    await user.click(screen.getByRole("button", { name: /leave organization/i }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /leave organization/i }));
+
+    // Actionable: name the way out (promote someone), not just "you can't".
+    expect(await screen.findByText(/make someone else an owner first/i)).toBeInTheDocument();
   });
 });
