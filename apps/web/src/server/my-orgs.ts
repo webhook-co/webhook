@@ -8,9 +8,16 @@ import { verifySession } from "./session";
 // The orgs the signed-in user may switch between (Lane 2.7). Read for the shell on every gated page, so it
 // stays cheap: one index-served query over the user's own memberships.
 //
-// It gates on verifySession rather than requireOrgAccess deliberately: this read is about the USER, not the
-// current org, and it must still work when the session's org has become unreachable (e.g. they were removed
-// from it) — that's precisely when someone needs the switcher to get back to an org they do belong to.
+// It gates on verifySession rather than requireOrgAccess deliberately, and that is NOT an oversight of the
+// kind ADR-0116 fixed: this read is scoped to the USER, not to an org. `listUserOrgs` answers "which orgs is
+// this user in?" from the user's own memberships (the SECURITY DEFINER directory, ADR-0113); it is not a
+// tenant read and there is no org to prove membership of. Gating it on requireOrgAccess would be circular.
+//
+// Note what this does NOT do any more. It used to be justified as the escape hatch for a removed member —
+// "the switcher is how they get back to an org they do belong to". Since ADR-0116 the (app) layout itself
+// calls requireOrgAccess, so a session naming an org the user has left never renders the shell at all: they
+// are redirected to auth., which re-mints a session for an org they ARE in. That is the recovery path now.
+// The switcher is for choosing among orgs you can already act in, not for digging out of one you cannot.
 
 export interface MyOrgs {
   readonly orgs: readonly UserOrg[];

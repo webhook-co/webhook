@@ -10,7 +10,7 @@ import {
   rotateEndpointAction,
 } from "@/server/endpoint-actions";
 import { loadEndpoints } from "@/server/endpoints";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Endpoints · webhook.co",
@@ -21,7 +21,7 @@ export default async function EndpointsPage({
 }: {
   searchParams: Promise<{ name?: string | string[] }>;
 }) {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const { name } = await searchParams;
   const trimmed = firstParam(name)?.trim();
   const result = await loadEndpoints(session.orgId, trimmed || undefined);

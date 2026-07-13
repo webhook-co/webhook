@@ -5,14 +5,14 @@ import { notFound } from "next/navigation";
 
 import { DeliveryDetail } from "@/components/delivery-detail";
 import { loadDelivery } from "@/server/deliveries";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Delivery · webhook.co",
 };
 
 export default async function DeliveryDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const { id } = await params;
   const result = await loadDelivery(session.orgId, id);
 

@@ -3,10 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { DashboardData } from "@/server/dashboard";
 
-vi.mock("@/server/session", () => ({
-  verifySession: vi.fn(async () => ({
+vi.mock("@/server/org-access", () => ({
+  requireOrgAccess: vi.fn(async () => ({
     userId: "usr_1",
     orgId: "org_1",
+    role: "owner",
     user: { name: "Dana Kessler", email: "dana@acme.co", image: null },
   })),
 }));

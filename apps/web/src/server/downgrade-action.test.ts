@@ -7,8 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const nav = vi.hoisted(() => ({ redirect: vi.fn() }));
 vi.mock("next/navigation", () => nav);
 
-const session = vi.hoisted(() => ({ verifySession: vi.fn() }));
-vi.mock("./session", () => session);
+const session = vi.hoisted(() => ({ requireOrgAccess: vi.fn() }));
+vi.mock("./org-access", () => session);
 
 const planSwitch = vi.hoisted(() => ({ cancelPendingDowngrade: vi.fn(), switchPlan: vi.fn() }));
 vi.mock("./plan-switch", () => planSwitch);
@@ -20,7 +20,7 @@ import { cancelDowngradeAction, switchPlanAction } from "./plan-actions";
 
 beforeEach(() => {
   vi.clearAllMocks();
-  session.verifySession.mockResolvedValue({ orgId: "org-1", userId: "user-1" });
+  session.requireOrgAccess.mockResolvedValue({ orgId: "org-1", userId: "user-1", role: "owner" });
 });
 
 describe("cancelDowngradeAction", () => {

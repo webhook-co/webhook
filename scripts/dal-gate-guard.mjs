@@ -1,24 +1,25 @@
 #!/usr/bin/env node
-// Fails if any server entry point in apps/web (the app. dashboard) can reach tenant data
-// without the Data-Access-Layer gate (verifySession). The dashboard is private (ADR-0023).
-// Wired into the `lint` script and the `dal-gate-guard` CI job.
+// Fails if any server entry point in apps/web (the app. dashboard) can reach tenant data without the
+// Data-Access-Layer gate. The dashboard is private (ADR-0023). Wired into the `lint` script and the
+// `dal-gate-guard` CI job.
 //
-// What it enforces — three classes of server entry point:
+// What it enforces — four classes of server entry point:
 //   1. "use server" modules (server actions) — invoked directly from anywhere, bypassing any
-//      layout; each must call verifySession() or carry a `// dal-gate-allow:` marker.
+//      layout; each must call a gate or carry a `// dal-gate-allow:` marker.
 //   2. route handlers (route.ts) — invoked directly; same rule.
-//   3. page / layout / default / template server components under app/ — these render request
-//      output. Anything UNDER the gated `(app)/` group is covered by `(app)/layout.tsx` (the
-//      render gate, which is asserted to call verifySession). Anything OUTSIDE `(app)/` is not
-//      render-gated, so it must call verifySession() itself or be allow-marked.
+//   3. page / layout / default / template server components INSIDE the gated `(app)/` group — each must
+//      call `requireOrgAccess()` (ADR-0116). The `(app)/layout.tsx` render gate is necessary but NOT
+//      sufficient: Next renders a layout and its page CONCURRENTLY, so the layout's refusal does not
+//      prevent the page's tenant query from having already run. Every page gates for itself.
+//   4. the same, OUTSIDE `(app)/` — not render-gated, so each must gate itself or be allow-marked.
 //
 // Exempt a path with `// dal-gate-allow: <reason>` ONLY when it owns no tenant data: the html
-// shell layout, session-management (logout), and dev/pre-auth bootstrap (mints no identity).
+// shell layout, session-management (logout), dev/pre-auth bootstrap (mints no identity), and pure
+// redirect stubs.
 //
-// Known limitations (grep-level, not a type-checker): it verifies a verifySession() call is
-// PRESENT, not that it runs first/unconditionally on every branch; metadata routes
-// (sitemap/opengraph-image) aren't classified as entries. Don't lean on it to excuse an
-// ungated branch — gate the path.
+// Known limitations (grep-level, not a type-checker): it verifies a gate call is PRESENT, not that it
+// runs first/unconditionally on every branch; metadata routes (sitemap/opengraph-image) aren't
+// classified as entries. Don't lean on it to excuse an ungated branch — gate the path.
 //
 // NON-NEGOTIABLE (AGENTS.md / ADR-0023): don't remove the gate or hand out allow markers to
 // silence this.
@@ -33,10 +34,25 @@ const GATED_GROUP = "apps/web/src/app/(app)/";
 const RENDER_GATE = "apps/web/src/app/(app)/layout.tsx";
 
 // Match an actual CALL to a DAL gate, after stripping comments — so a disabled/commented call or a
-// `{@link …}` mention doesn't count as gating the path. Two gates count: verifySession (identity), and
-// requireOrgAccess (Lane 2.2), which is strictly STRONGER — it calls verifySession, then additionally
-// proves the caller is a current member of the session's org. An action gated by either is gated.
+// `{@link …}` mention doesn't count as gating the path.
+//
+// TWO gates, and they are NOT interchangeable:
+//
+//   verifySession()    proves IDENTITY. It says the cookie is validly signed and un-expired. It says
+//                      NOTHING about whether the caller still belongs to the org the cookie names.
+//   requireOrgAccess() proves identity AND CURRENT MEMBERSHIP, re-read from the database this request.
+//
+// The session is stateless — a signed cookie, 7-day TTL, no revocation store — so the org it names is a
+// claim made at mint time that nothing else ever re-checks. `verifySession` alone therefore trusts that
+// claim forever, and RLS does not save you: RLS proves a query was scoped to the org the query NAMED, not
+// that the caller belongs to it.
+//
+// That is not hypothetical. Every page under `(app)/` and the render gate itself used `verifySession` alone,
+// and the read surface consequently served a removed member their ex-org's endpoints, events and webhook
+// payloads for the remaining life of their cookie. The e2e suite caught it; this guard is what stops it
+// coming back. Inside `(app)/`, only `requireOrgAccess` counts.
 const GATE_CALL = /\b(?:verifySession|requireOrgAccess)\s*\(/;
+const ORG_GATE_CALL = /\brequireOrgAccess\s*\(/;
 const ALLOW_MARKER = /\/\/\s*dal-gate-allow:/;
 
 const ROUTE_FILE = /(?:^|\/)route\.[cm]?[jt]sx?$/;
@@ -76,8 +92,10 @@ for await (const file of walk(APP_WEB_SRC)) {
 
   if (rel === RENDER_GATE) {
     sawRenderGate = true;
-    if (!GATE_CALL.test(stripComments(src))) {
-      violations.push(`${rel}  (render gate)  does not call verifySession()`);
+    if (!ORG_GATE_CALL.test(stripComments(src))) {
+      violations.push(
+        `${rel}  (render gate)  does not call requireOrgAccess() — verifySession() proves identity, not membership`,
+      );
     }
     continue;
   }
@@ -87,6 +105,30 @@ for await (const file of walk(APP_WEB_SRC)) {
   // page/layout/default/template under app/, OUTSIDE the gated group, is not render-gated.
   const isUngatedPageLike =
     PAGE_LIKE.test(rel) && rel.startsWith(APP_DIR) && !rel.startsWith(GATED_GROUP);
+
+  // INSIDE the gated group, EVERY server entry point must prove membership — pages AND route handlers.
+  //
+  // Two reasons this is not just the layout's job. First, the render gate is necessary but not sufficient:
+  // Next renders a layout and its page CONCURRENTLY, so the layout's refusal does not prevent the page's
+  // tenant query from having already run. Second, a route handler has no layout above it at ALL — and the one
+  // route handler in this tree, `endpoints/[id]/events/[eventId]/payload/route.ts`, streams an event's raw
+  // captured webhook body out of R2. It is the single most sensitive read in the app, and it is a `route.ts`,
+  // so a page-only rule would leave precisely it able to regress to identity-only gating with CI still green.
+  //
+  // `requireOrgAccess` is memoized per request (React `cache`), so this costs one membership read for a whole
+  // render, not one per component. (In a route handler or an action there is no RSC request in scope, so
+  // `cache` calls straight through — no memoization, and no possibility of a stale or foreign result either.)
+  const isGatedEntry = rel.startsWith(GATED_GROUP) && (PAGE_LIKE.test(rel) || isRoute);
+
+  if (isGatedEntry) {
+    if (!ORG_GATE_CALL.test(stripComments(src)) && !ALLOW_MARKER.test(src)) {
+      const kind = isRoute ? "gated route handler" : "gated server component";
+      violations.push(
+        `${rel}  (${kind})  does not call requireOrgAccess() and has no \`// dal-gate-allow:\` marker`,
+      );
+    }
+    continue;
+  }
 
   let kind = null;
   if (isUseServer) kind = "server action";
@@ -106,13 +148,15 @@ if (!sawRenderGate) {
 }
 
 if (violations.length > 0) {
-  console.error("✖ Ungated app. data paths — each must call verifySession() (ADR-0023):\n");
+  console.error("✖ Ungated app. data paths (ADR-0023):\n");
   for (const v of violations) console.error(`  ${v}`);
   console.error(
-    "\nGate it (call verifySession() first-line), or add `// dal-gate-allow: <reason>` only if " +
-      "the path owns no tenant data.",
+    "\nGate it first-line — requireOrgAccess() inside (app)/, verifySession() elsewhere — or add\n" +
+      "`// dal-gate-allow: <reason>` only if the path owns no tenant data.",
   );
   process.exit(1);
 }
 
-console.log("✔ DAL gate: every app. server entry point verifies the session.");
+console.log(
+  "✔ DAL gate: every app. server entry point is gated (membership-checked inside (app)/).",
+);

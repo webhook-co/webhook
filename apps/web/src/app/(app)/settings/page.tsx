@@ -12,14 +12,14 @@ import type { Metadata } from "next";
 import { DeleteAccountCard } from "@/components/delete-account-card";
 import { DeleteOrgCard } from "@/components/delete-org-card";
 import { logout } from "@/server/auth-actions";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Settings · webhook.co",
 };
 
 export default async function SettingsPage() {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
 
   return (
     <PageContainer size="narrow" gap="gap-6">

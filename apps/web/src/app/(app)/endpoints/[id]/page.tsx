@@ -19,7 +19,7 @@ import {
   revokeProviderSecretAction,
 } from "@/server/provider-secret-actions";
 import { loadProviderSecrets } from "@/server/provider-secrets";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Endpoint · webhook.co",
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
 export const dynamic = "force-dynamic";
 
 export default async function EndpointDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const { id } = await params;
   // The endpoint detail + its provider (inbound-verification) secrets are independent org+id reads — run
   // them concurrently. The always-shown ingest URL is NOT awaited here: its reveal is a cross-cloud engine

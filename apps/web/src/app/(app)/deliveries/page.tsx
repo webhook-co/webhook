@@ -9,7 +9,7 @@ import {
 } from "@/lib/delivery-filters";
 import { loadMoreDeliveriesAction } from "@/server/delivery-actions";
 import { loadDeliveries } from "@/server/deliveries";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Deliveries · webhook.co",
@@ -20,7 +20,7 @@ export default async function DeliveriesPage({
 }: {
   searchParams: Promise<{ status?: string | string[] }>;
 }) {
-  const session = await verifySession();
+  const session = await requireOrgAccess();
   const sp = await searchParams;
   // The raw URL filter value rides to the client list (and back into the load-more action); the page
   // coerces it to a validated status set for the first DB read. Both paths use the same

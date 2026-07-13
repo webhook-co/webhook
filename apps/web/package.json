@@ -12,7 +12,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:db": "vitest run --config vitest.pg.config.ts"
+    "test:db": "vitest run --config vitest.pg.config.ts",
+    "test:e2e": "playwright test"
   },
   "dependencies": {
     "@webhook-co/contract": "workspace:*",
@@ -29,6 +30,7 @@
   },
   "devDependencies": {
     "@opennextjs/cloudflare": "1.20.1",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4.3.2",
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",

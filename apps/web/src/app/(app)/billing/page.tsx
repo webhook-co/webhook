@@ -11,7 +11,7 @@ import {
   startCheckoutAction,
   switchPlanAction,
 } from "@/server/plan-actions";
-import { verifySession } from "@/server/session";
+import { requireOrgAccess } from "@/server/org-access";
 
 // The dedicated Billing section (WS2). Shows the org's CURRENT plan + status (read from the synced
 // subscription mirror, mapped via billingDisplayFromSubscription), the hosted Customer Portal for
@@ -364,7 +364,7 @@ export default async function BillingPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { orgId, userId } = await verifySession();
+  const { orgId, userId } = await requireOrgAccess();
   const [view, params] = await Promise.all([loadBillingSummary(orgId, userId), searchParams]);
   const errorKey = typeof params.billing === "string" ? params.billing : undefined;
   // hasOwn, not a bare index: `?billing=toString` (untrusted query) would otherwise resolve to a
