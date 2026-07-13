@@ -130,6 +130,40 @@ describe("endpoints", () => {
     expect(calls[0]!.method).toBe("DELETE");
   });
 
+  it("update() PATCHes the dedup config and IS retried (same config → same result)", async () => {
+    const { client, calls } = make([
+      json(502, { error: "TARGET_UNREACHABLE", message: "x" }),
+      json(200, { id: "e1", dedupConfig: null }),
+    ]);
+    await client.endpoints.update("e1", { dedupConfig: null });
+    expect(calls).toHaveLength(2); // idempotent → a transient failure is retried
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/endpoints/e1",
+      method: "PATCH",
+      body: JSON.stringify({ dedupConfig: null }),
+    });
+  });
+
+  // The URL is sealed at rest (ADR-0101) — reveal is how you RECOVER a forgotten one. Rotating instead
+  // would revoke a live credential and break every sender still posting to the old URL.
+  it("revealIngestUrl() POSTs with no body and is NOT retried (a blind retry would double-audit)", async () => {
+    const { client, calls } = make([json(502, { error: "TARGET_UNREACHABLE", message: "x" })]);
+    await expect(client.endpoints.revealIngestUrl("e1")).rejects.toBeInstanceOf(
+      WebhookTargetUnreachableError,
+    );
+    expect(calls).toHaveLength(1); // every disclosure writes a tamper-evident audit row
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/endpoints/e1/reveal-ingest-url",
+      method: "POST",
+      body: undefined,
+    });
+  });
+
+  it("revealIngestUrl() returns a null ingestUrl for an endpoint predating sealed storage", async () => {
+    const { client } = make([json(200, { ingestUrl: null })]);
+    await expect(client.endpoints.revealIngestUrl("e1")).resolves.toEqual({ ingestUrl: null });
+  });
+
   it("rotate() POSTs to /rotate with no body and is not retried", async () => {
     const { client, calls } = make([json(502, { error: "TARGET_UNREACHABLE", message: "x" })]);
     await expect(client.endpoints.rotate("e1")).rejects.toBeInstanceOf(
@@ -298,6 +332,105 @@ describe("events", () => {
       target: { kind: "localhost-tunnel", sessionId: "s1" },
       idempotencyKey: "idem-1",
     });
+  });
+});
+
+describe("events.delete / usage / triggers", () => {
+  it("events.delete() DELETEs and IS retried (re-deleting is a no-op)", async () => {
+    const { client, calls } = make([
+      json(502, { error: "TARGET_UNREACHABLE", message: "x" }),
+      json(200, { id: "ev1", deletedAt: "2026-07-13T00:00:00.000Z" }),
+    ]);
+    await client.events.delete("ev1");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/events/ev1",
+      method: "DELETE",
+    });
+  });
+
+  it("usage.get() GETs /v1/usage", async () => {
+    const { client, calls } = make([
+      json(200, {
+        periodStart: "2026-07-01T00:00:00.000Z",
+        periodEnd: null,
+        capKind: "lifetime",
+        events: 12,
+        eventCap: 5000,
+        pausePolicy: "pause",
+        paused: false,
+      }),
+    ]);
+    const usage = await client.usage.get();
+    expect(usage.events).toBe(12);
+    expect(calls[0]).toMatchObject({ url: "https://api.webhook.co/v1/usage", method: "GET" });
+  });
+
+  it("triggers.create() POSTs the body and is NOT retried (each call mints a trigger)", async () => {
+    const { client, calls } = make([json(502, { error: "TARGET_UNREACHABLE", message: "x" })]);
+    await expect(
+      client.triggers.create({ endpointId: "e1", name: "orders" }),
+    ).rejects.toBeInstanceOf(WebhookTargetUnreachableError);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/triggers",
+      method: "POST",
+      body: JSON.stringify({ endpointId: "e1", name: "orders" }),
+    });
+  });
+
+  it("triggers.list() passes the optional endpointId filter as a query param", async () => {
+    const { client, calls } = make([json(200, { items: [] })]);
+    await client.triggers.list({ endpointId: "e1" });
+    expect(calls[0]!.url).toBe("https://api.webhook.co/v1/triggers?endpointId=e1");
+  });
+
+  it("triggers.revoke() DELETEs and is idempotent", async () => {
+    const { client, calls } = make([json(200, { id: "t1" })]);
+    await client.triggers.revoke("t1");
+    expect(calls[0]).toMatchObject({
+      url: "https://api.webhook.co/v1/triggers/t1",
+      method: "DELETE",
+    });
+  });
+
+  // The ack-by-cursor loop from the docstring must actually typecheck and run: a caught-up page returns
+  // nextCursor: null, and the contract makes the input nullable so THAT value feeds straight back in. If
+  // null serialised as "null" the server would reject it as a malformed cursor.
+  it("triggers.wait() round-trips a caught-up nextCursor (null) back in without sending cursor=null", async () => {
+    const { client, calls } = make([
+      json(200, { events: [{ id: "ev1" }], nextCursor: "c1", caughtUp: false }),
+      json(200, { events: [], nextCursor: null, caughtUp: true }),
+      json(200, { events: [], nextCursor: null, caughtUp: true }),
+    ]);
+    let cursor: string | null = null;
+    const seen: unknown[] = [];
+    for (let i = 0; i < 3; i++) {
+      const page = await client.triggers.wait("t1", { cursor });
+      seen.push(...page.events);
+      cursor = page.nextCursor; // null once caught up — must be accepted on the next call
+    }
+    expect(seen).toHaveLength(1);
+    // 1st call: no cursor (null start). 2nd: the real cursor. 3rd: null again -> omitted, NOT "cursor=null".
+    expect(new URL(calls[0]!.url).searchParams.has("cursor")).toBe(false);
+    expect(new URL(calls[1]!.url).searchParams.get("cursor")).toBe("c1");
+    expect(calls[2]!.url).not.toContain("cursor");
+  });
+
+  it("triggers.wait() sends the cursor/limit/includeBody/maxBodyBytes query params", async () => {
+    const { client, calls } = make([json(200, { events: [], nextCursor: null, caughtUp: true })]);
+    await client.triggers.wait("t1", {
+      cursor: "c1",
+      limit: 10,
+      includeBody: true,
+      maxBodyBytes: 4096,
+    });
+    const u = new URL(calls[0]!.url);
+    expect(u.pathname).toBe("/v1/triggers/t1/wait");
+    expect(u.searchParams.get("cursor")).toBe("c1");
+    expect(u.searchParams.get("limit")).toBe("10");
+    expect(u.searchParams.get("includeBody")).toBe("true");
+    expect(u.searchParams.get("maxBodyBytes")).toBe("4096");
   });
 });
 

@@ -62,7 +62,7 @@ export interface HttpClientConfig {
 
 /** A single request to make. `idempotent` gates whether a transient failure may be retried. */
 export interface RequestSpec {
-  readonly method: "GET" | "POST" | "DELETE";
+  readonly method: "GET" | "POST" | "PATCH" | "DELETE";
   readonly path: string;
   /** A JSON-serialisable body; omitted → no body and no content-type header. */
   readonly body?: unknown;

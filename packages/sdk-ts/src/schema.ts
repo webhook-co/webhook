@@ -26,7 +26,15 @@ export type VerificationState = Schemas["VerificationState"];
 
 // Command results
 export type CreatedEndpoint = Schemas["CreatedEndpoint"];
+export type RevealedIngestUrl = Schemas["EndpointsRevealIngestUrlResponse"];
+export type DedupConfig = Schemas["Endpoint"]["dedupConfig"];
 export type DeletedEndpoint = Schemas["DeletedEndpoint"];
+export type DeletedEvent = Schemas["EventsDeleteResponse"];
+export type Usage = Schemas["UsageGetResponse"];
+export type Trigger = Schemas["TriggersCreateResponse"];
+export type TriggersList = Schemas["TriggersListResponse"];
+export type RevokedTrigger = Schemas["TriggersRevokeResponse"];
+export type TriggersWaitResult = Schemas["TriggersWaitResponse"];
 export type AddedProviderSecret = Schemas["AddedProviderSecret"];
 export type RevokedProviderSecret = Schemas["RevokedProviderSecret"];
 export type CreatedReplayDestination = Schemas["CreatedReplayDestination"];

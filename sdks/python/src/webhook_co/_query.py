@@ -16,6 +16,11 @@ def with_query(path: str, params: dict[str, Any]) -> str:
             continue
         if isinstance(value, (list, tuple)):
             pairs.extend((key, str(v)) for v in value)
+        elif isinstance(value, bool):
+            # MUST be lowercase: the API accepts only "true"/"1"/"false"/"0" and SILENTLY IGNORES anything
+            # else, falling back to the server default. Python's str(False) is "False", so the naive form
+            # would drop an explicit `includeBody=False` and hand back full payload bodies anyway.
+            pairs.append((key, "true" if value else "false"))
         else:
             pairs.append((key, str(value)))
     if not pairs:

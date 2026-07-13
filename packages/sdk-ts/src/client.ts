@@ -15,7 +15,9 @@ import type {
   AuthContext,
   CreatedEndpoint,
   CreatedReplayDestination,
+  DedupConfig,
   DeletedEndpoint,
+  DeletedEvent,
   Delivery,
   DeliveryAttempt,
   DeliveryStatus,
@@ -27,7 +29,13 @@ import type {
   Event as WebhookEvent,
   Provider,
   ProviderSecretSummary,
+  RevealedIngestUrl,
+  RevokedTrigger,
   ReplayDestination,
+  Trigger,
+  TriggersList,
+  TriggersWaitResult,
+  Usage,
   ReplayDestinationDeleted,
   ReplayTarget,
   RevokedProviderSecret,
@@ -107,6 +115,7 @@ const enc = encodeURIComponent;
 interface Requester {
   get<T>(path: string): Promise<T>;
   post<T>(path: string, body: unknown, idempotent: boolean): Promise<T>;
+  patch<T>(path: string, body: unknown, idempotent: boolean): Promise<T>;
   del<T>(path: string, idempotent: boolean): Promise<T>;
   /** A page-following iterator; `buildPath(cursor)` yields the URL for a given cursor. */
   paginate<T>(buildPath: (cursor: string | undefined) => string): Paginator<T>;
@@ -119,6 +128,8 @@ function makeRequester(http: HttpClient): Requester {
     get,
     post: <T>(path: string, body: unknown, idempotent: boolean): Promise<T> =>
       http.request({ method: "POST", path, body, idempotent }) as Promise<T>,
+    patch: <T>(path: string, body: unknown, idempotent: boolean): Promise<T> =>
+      http.request({ method: "PATCH", path, body, idempotent }) as Promise<T>,
     del: <T>(path: string, idempotent: boolean): Promise<T> =>
       http.request({ method: "DELETE", path, idempotent }) as Promise<T>,
     paginate: <T>(buildPath: (cursor: string | undefined) => string): Paginator<T> =>
@@ -209,6 +220,35 @@ class EndpointsResource {
   }
 
   /**
+   * Update an endpoint's dedup config (ADR-0104). Idempotent — it sets the config to a fixed value, so a
+   * transient failure is safe to retry. `dedupConfig: null` RESETS to the default (off — log every request).
+   */
+  update(endpointId: string, input: { dedupConfig: DedupConfig | null }): Promise<Endpoint> {
+    return this.req.patch<Endpoint>(`/v1/endpoints/${enc(endpointId)}`, input, true);
+  }
+
+  /**
+   * Reveal an endpoint's current ingest URL — non-destructive: it does NOT rotate. This is how you recover
+   * a FORGOTTEN url; rotating instead would revoke a live credential and break every sender still posting
+   * to the old one. The token is sealed at rest (ADR-0101), so the URL is re-readable any time — it is NOT
+   * a one-time secret.
+   *
+   * `ingestUrl` is null ONLY for endpoints created before sealed storage (their plaintext is gone — rotate
+   * to mint a fresh, re-readable one).
+   *
+   * Gated on `endpoints:write` (a key that can rotate can already mint a URL, so revealing the current one
+   * is no escalation); every disclosure writes a tamper-evident audit row and is rate-limited. Sent
+   * idempotent=false so a blind retry can't double-audit — the same call the CLI makes.
+   */
+  revealIngestUrl(endpointId: string): Promise<RevealedIngestUrl> {
+    return this.req.post<RevealedIngestUrl>(
+      `/v1/endpoints/${enc(endpointId)}/reveal-ingest-url`,
+      undefined,
+      false,
+    );
+  }
+
+  /**
    * Rotate an endpoint's ingest URL (hard cutover — the old URL stops accepting events immediately, so any
    * sender still posting to it breaks until repointed). For a LEAKED URL: a merely forgotten one can be
    * re-read instead (see `create`). NOT idempotent — never blind-retried.
@@ -273,6 +313,17 @@ class EventsResource {
         since: params.since,
       }),
     );
+  }
+
+  /**
+   * Permanently delete ONE captured event: its content is redacted immediately and its stored payload body
+   * is purged shortly after, so it can no longer be read or replayed, and it stops appearing in listings.
+   * There is no bulk or filter delete. Idempotent — re-deleting is a no-op, so a retry is safe.
+   *
+   * This does NOT reduce your metered usage: the event was already counted when it was received.
+   */
+  delete(eventId: string): Promise<DeletedEvent> {
+    return this.req.del<DeletedEvent>(`/v1/events/${enc(eventId)}`, true);
   }
 
   /** Replay a captured event. Idempotency-keyed → safe to retry a transient failure. */
@@ -419,6 +470,77 @@ class SubscriptionsResource {
   }
 }
 
+class UsageResource {
+  constructor(private readonly req: Requester) {}
+
+  /** The current period's metered usage: events counted, the cap, and whether the org is cap-paused. */
+  get(): Promise<Usage> {
+    return this.req.get<Usage>("/v1/usage");
+  }
+}
+
+/** Agent triggers (ADR-0106): the webhook→agent primitive behind `triggers.wait`. */
+class TriggersResource {
+  constructor(private readonly req: Requester) {}
+
+  /** The org's triggers, optionally narrowed to one endpoint. */
+  list(filters: { endpointId?: string } = {}): Promise<TriggersList> {
+    return this.req.get<TriggersList>(
+      withQuery("/v1/triggers", { endpointId: filters.endpointId }),
+    );
+  }
+
+  /** Create a trigger. NOT idempotent — each call mints a new one, so it is never blind-retried. */
+  create(input: { endpointId: string; name?: string }): Promise<Trigger> {
+    return this.req.post<Trigger>("/v1/triggers", input, false);
+  }
+
+  /** Revoke a trigger. Idempotent. */
+  revoke(triggerId: string): Promise<RevokedTrigger> {
+    return this.req.del<RevokedTrigger>(`/v1/triggers/${enc(triggerId)}`, true);
+  }
+
+  /**
+   * Wait for a trigger's events — ack-by-cursor (ADR-0106).
+   *
+   * SHORT-poll, not long-poll: it returns immediately with whatever is past `cursor`, so there is no held
+   * connection and no special timeout handling. Drain a backlog by re-calling promptly while `caughtUp` is
+   * false, then poll on your own cadence once caught up.
+   *
+   * `cursor` accepts null so the `nextCursor` of a caught-up page round-trips straight back in:
+   *
+   *     let cursor = null;
+   *     for (;;) {
+   *       const page = await client.triggers.wait(id, { cursor });
+   *       for (const event of page.events) handle(event);
+   *       cursor = page.nextCursor; // null when caught up — safe to pass right back
+   *       if (page.caughtUp) await sleep(1000);
+   *     }
+   *
+   * At-least-once: a crash before you persist `nextCursor` re-reads, never loses — dedup on the event id.
+   * `includeBody` DEFAULTS TO TRUE server-side (pass false for summary-only, skipping the payload fetch);
+   * `maxBodyBytes` clamps the inline body (≤ 64 KiB). `limit` is capped at 200.
+   */
+  wait(
+    triggerId: string,
+    opts: {
+      cursor?: string | null;
+      limit?: number;
+      includeBody?: boolean;
+      maxBodyBytes?: number;
+    } = {},
+  ): Promise<TriggersWaitResult> {
+    return this.req.get<TriggersWaitResult>(
+      withQuery(`/v1/triggers/${enc(triggerId)}/wait`, {
+        cursor: opts.cursor,
+        limit: opts.limit,
+        includeBody: opts.includeBody,
+        maxBodyBytes: opts.maxBodyBytes,
+      }),
+    );
+  }
+}
+
 class AuditResource {
   constructor(private readonly req: Requester) {}
 
@@ -434,6 +556,8 @@ export class WebhookClient {
   readonly deliveries: DeliveriesResource;
   readonly replayDestinations: ReplayDestinationsResource;
   readonly subscriptions: SubscriptionsResource;
+  readonly usage: UsageResource;
+  readonly triggers: TriggersResource;
   readonly audit: AuditResource;
 
   private readonly http: HttpClient;
@@ -471,6 +595,8 @@ export class WebhookClient {
     this.deliveries = new DeliveriesResource(req);
     this.replayDestinations = new ReplayDestinationsResource(req);
     this.subscriptions = new SubscriptionsResource(req);
+    this.usage = new UsageResource(req);
+    this.triggers = new TriggersResource(req);
     this.audit = new AuditResource(req);
   }
 
