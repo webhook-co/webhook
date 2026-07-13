@@ -24,7 +24,7 @@ HERE = pathlib.Path(__file__).resolve().parent
 PKG = HERE.parent
 
 # The client script that runs INSIDE the throwaway venv, against the installed wheel.
-CLIENT = r'''
+CLIENT = r"""
 import json, threading, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from webhook_co import WebhookClient
@@ -141,7 +141,7 @@ check("reveal is a POST carrying the bearer",
 srv.shutdown()
 print("\npackaged Python SDK: ALL PASS" if not fails else f"\npackaged Python SDK: {len(fails)} FAILURE(S)")
 sys.exit(1 if fails else 0)
-'''
+"""
 
 
 def main() -> int:
@@ -149,7 +149,16 @@ def main() -> int:
     try:
         print("building the real wheel …")
         subprocess.run(
-            [sys.executable, "-m", "pip", "wheel", "--no-deps", "-w", str(scratch), str(PKG)],
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                "--no-deps",
+                "-w",
+                str(scratch),
+                str(PKG),
+            ],
             check=True,
             stdout=subprocess.DEVNULL,
         )
