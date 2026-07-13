@@ -12,9 +12,11 @@ vi.mock("@webhook-co/db/client", () => ({
 }));
 
 const verifyAuditChain = vi.fn(async () => ({ ok: true, rowsVerified: 1 }));
-vi.mock("@webhook-co/shared", () => ({
-  // The REAL rule, so the gate's behaviour (not a stub) drives the branch.
-  isAuditReaderRole: (r: string) => r === "owner" || r === "admin",
+// PARTIAL mock: stub only verifyAuditChain (it needs WebCrypto + a real key) and keep the REAL
+// isAuditReaderRole. A gate tested against a hand-rolled copy of itself is green and worthless — the real
+// predicate could drift to `true` for a member and every test here would still pass.
+vi.mock("@webhook-co/shared", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@webhook-co/shared")>()),
   verifyAuditChain: (...a: unknown[]) => verifyAuditChain(...a),
 }));
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: async () => ({}) as CryptoKey }));
