@@ -15,6 +15,8 @@
 
 import { timingSafeEqual as nodeTimingSafeEqual } from "node:crypto";
 
+import type { AuditBreakKind } from "@webhook-co/shared";
+
 import type { TenantTx } from "./client";
 
 /** The `aae1` canon version — domain-separates this chain from audit_log's `wha1`. */
@@ -162,6 +164,189 @@ export async function verifyAuthAuditRowHash(
   const computed = await computeAuthAuditRowHash(key, prevHash, entry);
   if (computed.length !== expectedRowHash.length) return false;
   return nodeTimingSafeEqual(computed, expectedRowHash);
+}
+
+// ---- The chain WALKER (Lane 2.10) ------------------------------------------------------------------
+//
+// `aae1` had only a per-ROW verifier (verifyAuthAuditRowHash) — enough to check one entry in isolation, and
+// useless against the attacks a chain exists to detect: a DELETED row leaves a seq gap, a REWRITTEN history
+// leaves a broken link, a FORKED chain leaves a duplicate seq. None of those are visible one row at a time.
+//
+// This mirrors `wha1`'s walker (packages/shared/audit-chain.ts) deliberately, down to the break vocabulary:
+// two tamper-evident chains that reported failure in two different dialects would be two things to learn,
+// and the UI would have to special-case each. Same kinds, same operator-readable `detail`.
+
+/** Reuses wha1's break vocabulary — one dialect for both chains. */
+export type AuthAuditChainResult =
+  | { readonly ok: true; readonly rowsVerified: number }
+  | {
+      readonly ok: false;
+      readonly rowsVerified: number;
+      readonly break: {
+        readonly kind: AuditBreakKind;
+        readonly seq: number;
+        readonly detail: string;
+      };
+    };
+
+function authBroken(
+  kind: AuditBreakKind,
+  seq: number,
+  detail: string,
+  rowsVerified: number,
+): AuthAuditChainResult {
+  return { ok: false, rowsVerified, break: { kind, seq, detail } };
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  return nodeTimingSafeEqual(a, b);
+}
+
+/**
+ * Walk an org's `aae1` chain and return the FIRST break, or `{ ok: true }`. Rows may arrive in any order —
+ * they are sorted by seq first. An empty chain is vacuously valid. The key must be the one the chain was
+ * written with.
+ */
+export async function verifyAuthAuditChain(
+  key: CryptoKey,
+  orgId: string,
+  rows: readonly StoredAuthAuditRow[],
+): Promise<AuthAuditChainResult> {
+  const sorted = [...rows].sort((a, b) => a.seq - b.seq);
+
+  let verified = 0;
+  // seq + rowHash move together (null before genesis, both present after), so they are ONE nullable object —
+  // the type system then rules out setting one without the other.
+  let prev: { seq: number; rowHash: Uint8Array } | null = null;
+
+  for (const row of sorted) {
+    if (row.orgId !== orgId) {
+      return authBroken(
+        "wrong_org",
+        row.seq,
+        `row ${row.seq} belongs to org ${row.orgId}, not ${orgId}`,
+        verified,
+      );
+    }
+
+    if (prev === null) {
+      if (row.seq !== 1) {
+        return authBroken(
+          "bad_genesis_seq",
+          row.seq,
+          `chain must start at seq 1, got ${row.seq}`,
+          0,
+        );
+      }
+      if (row.prevHash !== null) {
+        return authBroken(
+          "bad_genesis_prev_hash",
+          row.seq,
+          "genesis row (seq 1) must have a null prev_hash",
+          0,
+        );
+      }
+    } else {
+      if (row.seq === prev.seq) {
+        return authBroken(
+          "duplicate_seq",
+          row.seq,
+          `duplicate seq ${row.seq} (a forked chain)`,
+          verified,
+        );
+      }
+      if (row.seq !== prev.seq + 1) {
+        return authBroken(
+          "seq_gap",
+          row.seq,
+          `seq jumped from ${prev.seq} to ${row.seq} (a row is missing)`,
+          verified,
+        );
+      }
+      if (row.prevHash === null || !bytesEqual(row.prevHash, prev.rowHash)) {
+        return authBroken(
+          "broken_link",
+          row.seq,
+          `prev_hash of seq ${row.seq} does not match the prior row_hash`,
+          verified,
+        );
+      }
+    }
+
+    const expected = await computeAuthAuditRowHash(key, row.prevHash, row);
+    if (!bytesEqual(expected, row.rowHash)) {
+      return authBroken(
+        "hash_mismatch",
+        row.seq,
+        `row ${row.seq} does not recompute to its stored hash`,
+        verified,
+      );
+    }
+
+    verified += 1;
+    prev = { seq: row.seq, rowHash: row.rowHash };
+  }
+
+  return { ok: true, rowsVerified: verified };
+}
+
+export interface AuthAuditListEntry {
+  readonly seq: number;
+  readonly eventType: AuthAuditEventType;
+  readonly actor: string | null;
+  readonly targetId: string | null;
+  readonly metadata: unknown;
+  readonly createdAt: Date;
+}
+
+export interface AuthAuditListPage {
+  readonly items: AuthAuditListEntry[];
+  readonly nextSeq: number | null;
+}
+
+/**
+ * List an org's auth-audit entries, newest first (Lane 2.10). Keyset on `seq` — the per-org monotonic bigint
+ * with a unique index — so paging can neither skip nor duplicate a row. Index-served; no migration.
+ *
+ * Deliberately does NOT return `ip`/`geo`: they are hashed into the chain (so a verify still covers them),
+ * but they are the most sensitive fields on the row and the dashboard has no use for them. Don't ship PII to
+ * a browser for a list view that never displays it.
+ */
+export async function listAuthAuditEntries(
+  tx: TenantTx,
+  input: { afterSeq?: number | null; limit: number },
+): Promise<AuthAuditListPage> {
+  const limit = Math.max(1, Math.min(200, Math.floor(input.limit)));
+  const after = input.afterSeq ?? null;
+
+  const rows = await tx<
+    {
+      seq: string | number;
+      event_type: AuthAuditEventType;
+      actor: string | null;
+      target_id: string | null;
+      metadata: unknown;
+      created_at: Date;
+    }[]
+  >`
+    select seq, event_type, actor, target_id, metadata, created_at
+      from auth_audit_event
+     ${after === null ? tx`` : tx`where seq < ${after}`}
+     order by seq desc
+     limit ${limit + 1}`;
+
+  const hasMore = rows.length > limit;
+  const page = hasMore ? rows.slice(0, limit) : rows;
+  const items = page.map((r) => ({
+    seq: Number(r.seq),
+    eventType: r.event_type,
+    actor: r.actor,
+    targetId: r.target_id,
+    metadata: r.metadata ?? null,
+    createdAt: r.created_at,
+  }));
+  return { items, nextSeq: hasMore ? (items[items.length - 1]?.seq ?? null) : null };
 }
 
 /** Distinguishes the auth-audit advisory-lock space from audit_log's and any other lock user. */

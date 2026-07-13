@@ -1,12 +1,13 @@
 "use server";
 
 import { readAuditChain } from "@webhook-co/db/audit-append";
+import { readAuthAuditChain, verifyAuthAuditChain } from "@webhook-co/db/auth-audit";
 import { withTenant } from "@webhook-co/db/client";
 import { isAuditReaderRole, verifyAuditChain, type AuditChainResult } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 
-import { loadAudit, type AuditResult } from "./audit";
+import { loadAudit, loadAuthAudit, type AuditResult, type AuthAuditResult } from "./audit";
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
 import { getAuditChainKey } from "./env";
@@ -58,6 +59,46 @@ export async function verifyAuditChainAction(): Promise<VerifyChainResult> {
     return { status: "ok", verification: await verifyAuditChain(key, orgId, rows) };
   } catch (error) {
     logActionError("audit.verify_failed", error);
+    return { status: "error" };
+  }
+}
+
+// ---- The GOVERNANCE chain (aae1) --------------------------------------------------------------------
+// Same role gate, same shape. Two chains, one dialect.
+
+export type LoadMoreAuthAuditResult =
+  { readonly status: "ok"; readonly result: AuthAuditResult } | { readonly status: "forbidden" };
+
+/** The next page of the governance chain. Owner/admin only. */
+export async function loadMoreAuthAuditAction(
+  formData: FormData,
+): Promise<LoadMoreAuthAuditResult> {
+  const { orgId, role } = await requireOrgAccess();
+  if (!isAuditReaderRole(role)) return { status: "forbidden" };
+
+  const afterSeq = Number.parseInt(String(formData.get("afterSeq") ?? ""), 10);
+  if (!Number.isSafeInteger(afterSeq) || afterSeq <= 0) {
+    return { status: "ok", result: { status: "error" } };
+  }
+  return { status: "ok", result: await loadAuthAudit(orgId, afterSeq) };
+}
+
+/**
+ * Recompute the governance chain. Until Lane 2.10 `aae1` had only a per-ROW verifier — which cannot see the
+ * attacks a chain exists to detect (a deleted row's seq gap, a rewritten link, a forked seq). This walks it.
+ */
+export async function verifyAuthAuditChainAction(): Promise<VerifyChainResult> {
+  const { orgId, role } = await requireOrgAccess();
+  if (!isAuditReaderRole(role)) return { status: "forbidden" };
+
+  try {
+    const key = await importAuditKey(b64ToBytes(await getAuditChainKey()));
+    const rows = await withTenantDb((app) =>
+      withTenant(app, orgId, (tx) => readAuthAuditChain(tx, orgId)),
+    );
+    return { status: "ok", verification: await verifyAuthAuditChain(key, orgId, rows) };
+  } catch (error) {
+    logActionError("audit.auth_verify_failed", error);
     return { status: "error" };
   }
 }

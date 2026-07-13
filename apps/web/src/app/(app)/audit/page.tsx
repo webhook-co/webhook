@@ -3,8 +3,13 @@ import { Banner, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { AuditLog } from "@/components/audit-log";
-import { loadAudit } from "@/server/audit";
-import { loadMoreAuditAction, verifyAuditChainAction } from "@/server/audit-actions";
+import { loadAudit, loadAuthAudit } from "@/server/audit";
+import {
+  loadMoreAuditAction,
+  loadMoreAuthAuditAction,
+  verifyAuditChainAction,
+  verifyAuthAuditChainAction,
+} from "@/server/audit-actions";
 import { requireOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
@@ -12,7 +17,7 @@ export const metadata: Metadata = {
 };
 
 export default async function AuditPage() {
-  const { orgId, role } = await requireOrgAccess();
+  const { orgId, userId, role } = await requireOrgAccess();
 
   // Owner/admin only — the same authority the mint ceiling enforces for an `audit:read` key. Without this a
   // member refused a key over the API could read the identical chain here, and the ceiling would be
@@ -29,7 +34,7 @@ export default async function AuditPage() {
     );
   }
 
-  const initial = await loadAudit(orgId);
+  const [initial, initialAuth] = await Promise.all([loadAudit(orgId), loadAuthAudit(orgId)]);
 
   return (
     <PageContainer>
@@ -44,6 +49,10 @@ export default async function AuditPage() {
         initial={initial}
         loadMore={loadMoreAuditAction}
         verifyChain={verifyAuditChainAction}
+        initialAuth={initialAuth}
+        loadMoreAuth={loadMoreAuthAuditAction}
+        verifyAuthChain={verifyAuthAuditChainAction}
+        currentUserId={userId}
       />
     </PageContainer>
   );
