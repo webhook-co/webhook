@@ -2,7 +2,7 @@
   "name": "@webhook-co/root",
   "version": "0.0.0",
   "private": true,
-  "description": "Open-core webhook infrastructure — receive, inspect, replay-to-localhost, and reliably deliver webhooks.",
+  "description": "Open-core webhook infrastructure \u2014 receive, inspect, replay-to-localhost, and reliably deliver webhooks.",
   "license": "Apache-2.0",
   "type": "module",
   "packageManager": "pnpm@10.25.0",
@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "turbo run build",
+    "dev:db": "scripts/dev-db.sh",
     "lint": "eslint . && pnpm run no-skipped-tests && pnpm run no-absolute-type-size && pnpm run no-unverified-claims && pnpm run tsconfig-boundary && pnpm run dal-gate-guard && pnpm run cap-cron-sync-guard && pnpm run deploy-token-pr-guard && pnpm run remote-db-test-guard && pnpm run adr-no-dup && pnpm run test:scripts",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
