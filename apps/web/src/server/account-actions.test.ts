@@ -19,17 +19,15 @@ vi.mock("./session", async () => {
   return { ...actual, verifySession: () => verifySession() };
 });
 
-const isOrgOwner = vi.fn(async () => true);
 const deleteOrgWithAudit = vi.fn(async () => ({ orgId: "org_1", deletedAt: "now" }));
-// Default census: a solo personal org (owner is the only member) — the guard lets deletion proceed.
-const readOrgMembershipCensus = vi.fn(async () => ({ owners: 1, total: 1 }));
+// Default: one solo-owned org (nobody else in it) and nothing that would be orphaned — deletion proceeds.
+const classifyOwnedOrgs = vi.fn(async () => ({
+  wouldOrphan: [] as { orgId: string; name: string }[],
+  soleOwnedSolo: [{ orgId: "personal_usr_1", name: "Personal" }],
+}));
 vi.mock("@webhook-co/db/org-lifecycle", () => ({
-  isOrgOwner: (...a: unknown[]) => isOrgOwner(...a),
   deleteOrgWithAudit: (...a: unknown[]) => deleteOrgWithAudit(...a),
-  personalOrgId: (userId: string) => `personal_${userId}`,
-  readOrgMembershipCensus: (...a: unknown[]) => readOrgMembershipCensus(...a),
-  // The real (pure) guard logic, so the census mock actually drives the branch.
-  lastOwnerWouldOrphan: (c: { owners: number; total: number }) => c.owners === 1 && c.total > 1,
+  classifyOwnedOrgs: (...a: unknown[]) => classifyOwnedOrgs(...a),
 }));
 vi.mock("./db", () => ({ getTenantDb: async () => ({ end: async () => {} }) }));
 const deleteAccountRpc = vi.fn(async () => {});
@@ -76,19 +74,43 @@ describe("deleteAccount", () => {
     expect(cookieStore.delete).not.toHaveBeenCalled();
   });
 
-  it("skips the org delete when the user no longer owns their personal org, but still erases the identity", async () => {
-    isOrgOwner.mockResolvedValueOnce(false);
+  it("skips the org delete when the user owns no org at all, but still erases the identity", async () => {
+    classifyOwnedOrgs.mockResolvedValueOnce({ wouldOrphan: [], soleOwnedSolo: [] });
     await expect(deleteAccount(form("DELETE"))).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
     expect(deleteOrgWithAudit).not.toHaveBeenCalled();
     expect(deleteAccountRpc).toHaveBeenCalledWith("usr_1");
   });
 
-  it("BLOCKS erasure — and erases NOTHING — when the user is the sole owner of an org with other members", async () => {
-    // The last-owner guard: deleting would leave a zero-owner org (unreachable, un-billed-out, alert-less).
-    readOrgMembershipCensus.mockResolvedValueOnce({ owners: 1, total: 3 });
+  it("BLOCKS erasure — and erases NOTHING — when the user solely owns an org with other members", async () => {
+    classifyOwnedOrgs.mockResolvedValueOnce({
+      wouldOrphan: [{ orgId: "org_team", name: "Acme Team" }],
+      soleOwnedSolo: [{ orgId: "personal_usr_1", name: "Personal" }],
+    });
     await expect(deleteAccount(form("DELETE"))).rejects.toThrow(/only owner of an organization/i);
-    expect(deleteOrgWithAudit).not.toHaveBeenCalled();
+    expect(deleteOrgWithAudit).not.toHaveBeenCalled(); // not even the SAFE solo org — nothing is erased
     expect(deleteAccountRpc).not.toHaveBeenCalled(); // identity NOT erased → no orphaned org
     expect(cookieStore.delete).not.toHaveBeenCalled();
+  });
+
+  it("NAMES the org to transfer — 'transfer ownership' is useless if you don't know which one", async () => {
+    classifyOwnedOrgs.mockResolvedValueOnce({
+      wouldOrphan: [{ orgId: "org_team", name: "Acme Team" }],
+      soleOwnedSolo: [],
+    });
+    await expect(deleteAccount(form("DELETE"))).rejects.toThrow(/Acme Team/);
+  });
+
+  it("erases EVERY solo-owned org, not just the personal one (a cross-org orphan is still an orphan)", async () => {
+    // The bug this slice fixes: an owner-invite can leave you the sole owner of an org that is NOT your own.
+    classifyOwnedOrgs.mockResolvedValueOnce({
+      wouldOrphan: [],
+      soleOwnedSolo: [
+        { orgId: "personal_usr_1", name: "Personal" },
+        { orgId: "org_inherited", name: "Inherited Solo" },
+      ],
+    });
+    await expect(deleteAccount(form("DELETE"))).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
+    expect(deleteOrgWithAudit).toHaveBeenCalledTimes(2);
+    expect(deleteAccountRpc).toHaveBeenCalledWith("usr_1");
   });
 });
