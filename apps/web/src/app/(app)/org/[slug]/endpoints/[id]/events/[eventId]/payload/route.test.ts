@@ -11,6 +11,14 @@ const requireOrgAccess = vi.fn(async (slug: string) => ({
   role: "member" as const,
   user: { name: "", email: "", image: null },
 }));
+// The route releases the tenant client BEFORE it starts streaming: its DB work is finished, and leaving the
+// connection to `after()` would hold it open, idle, for the whole download (a slow link pulling a large payload
+// would pin a Postgres connection for as long as it takes them to receive it).
+const releaseTenantDbEarly = vi.fn(async () => {});
+vi.mock("@/server/db", () => ({
+  releaseTenantDbEarly: () => releaseTenantDbEarly(),
+}));
+
 vi.mock("@/server/org-access", () => ({
   requireOrgAccess: (...a: [string, string?]) => requireOrgAccess(...a),
 }));
@@ -57,6 +65,24 @@ describe("GET payload download route", () => {
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(res.headers.get("Content-Length")).toBe("1234");
     expect(res.headers.get("Cache-Control")).toBe("private, no-store");
+  });
+
+  // The whole point of the early release: hold no Postgres connection while bytes trickle out to a slow client.
+  it("releases the tenant DB connection BEFORE it starts streaming", async () => {
+    releaseTenantDbEarly.mockClear();
+    openPayloadForDownload.mockReset();
+    openPayloadForDownload.mockResolvedValueOnce({
+      stream: new ReadableStream(),
+      size: 1234,
+      contentType: "application/json",
+    });
+
+    const res = await call(ENDPOINT_ID, EVENT_ID);
+
+    expect(res.status).toBe(200);
+    // Released, and released before the body was handed over — not left to `after()`, which would not run
+    // until the download had finished.
+    expect(releaseTenantDbEarly).toHaveBeenCalledOnce();
   });
 
   it("does NOT read R2 when the gate refuses a foreign / unknown slug", async () => {

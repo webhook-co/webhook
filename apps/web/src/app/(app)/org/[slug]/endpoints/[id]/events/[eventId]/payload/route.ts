@@ -1,3 +1,4 @@
+import { releaseTenantDbEarly } from "@/server/db";
 import { isUuid } from "@/server/endpoints";
 import { downloadExtension, openPayloadForDownload } from "@/server/payloads";
 import { requireOrgAccess } from "@/server/org-access";
@@ -28,6 +29,17 @@ export async function GET(
   const result = await openPayloadForDownload(session.orgId, id, eventId);
   if (result === "not_found") return notFound();
   if (result === "error") return new Response("Internal Server Error", { status: 500 });
+
+  // Every database read this request will ever do is now finished — what remains is streaming bytes out of R2,
+  // which can take arbitrarily long on a slow link. The tenant client is closed once the RESPONSE finishes
+  // (`after()`), so leaving it to that would hold a Postgres connection open, idle, for the entire duration of
+  // the download; enough concurrent slow downloads would starve the pool for everyone else. Nothing is gained
+  // by holding it, so let it go now.
+  //
+  // Safe here specifically because a route handler renders no layout: this handler is the only consumer of the
+  // client in this request. That is NOT true of a page, which is why this is a deliberate exception rather
+  // than a pattern (see releaseTenantDbEarly + the no-early-db-close guard).
+  await releaseTenantDbEarly();
 
   const ext = downloadExtension(result.contentType);
   return new Response(result.stream, {
