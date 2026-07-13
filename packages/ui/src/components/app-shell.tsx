@@ -1,3 +1,4 @@
+import { Slot } from "@radix-ui/react-slot";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import * as React from "react";
 
@@ -138,6 +139,12 @@ export interface AppNavItemProps extends React.AnchorHTMLAttributes<HTMLAnchorEl
   count?: React.ReactNode;
   /** Marks the current page — sets `aria-current` and the active treatment. */
   active?: boolean;
+  /**
+   * Render the child element instead of a bare `<a>`, keeping the nav styling. This is how a router link
+   * (next/link) gets in: without it the sidebar emits plain anchors and every click is a FULL DOCUMENT
+   * NAVIGATION — the whole app shell torn down and re-fetched on each nav.
+   */
+  asChild?: boolean;
 }
 
 /**
@@ -145,30 +152,58 @@ export interface AppNavItemProps extends React.AnchorHTMLAttributes<HTMLAnchorEl
  * carries `aria-current="page"`, an inverse-ink left rail, and a sunken fill.
  */
 export const AppNavItem = React.forwardRef<HTMLAnchorElement, AppNavItemProps>(
-  ({ icon, count, active, className, children, ...props }, ref) => (
-    <a
-      ref={ref}
-      aria-current={active ? "page" : undefined}
-      className={cn(
-        "relative flex h-9 items-center gap-2.5 rounded-control px-2.5 text-base text-fg-secondary",
-        "transition-colors hover:bg-surface-sunken hover:text-fg",
-        "outline-none focus-visible:shadow-[var(--wh-focus-ring)]",
-        "[&_svg]:size-[1.125rem] [&_svg]:shrink-0",
-        active &&
-          "bg-surface-sunken font-semibold text-fg before:absolute before:bottom-2 before:left-[-12px] before:top-2 before:w-[3px] before:rounded-r-[3px] before:bg-fg before:content-['']",
-        className,
-      )}
-      {...props}
-    >
-      {icon}
-      <span className="flex-1 truncate">{children}</span>
-      {count != null ? (
-        <span className="ml-auto rounded-pill border border-hairline bg-surface-sunken px-1.5 py-px font-mono text-[0.6875rem] tabular-nums text-fg-faint">
-          {count}
-        </span>
-      ) : null}
-    </a>
-  ),
+  ({ icon, count, active, asChild = false, className, children, ...props }, ref) => {
+    const navClass = cn(
+      "relative flex h-9 items-center gap-2.5 rounded-control px-2.5 text-base text-fg-secondary",
+      "transition-colors hover:bg-surface-sunken hover:text-fg",
+      "outline-none focus-visible:shadow-[var(--wh-focus-ring)]",
+      "[&_svg]:size-[1.125rem] [&_svg]:shrink-0",
+      active &&
+        "bg-surface-sunken font-semibold text-fg before:absolute before:bottom-2 before:left-[-12px] before:top-2 before:w-[3px] before:rounded-r-[3px] before:bg-fg before:content-['']",
+      className,
+    );
+
+    /** The item's contents: leading icon, the label, then the trailing count pill. */
+    const contents = (label: React.ReactNode) => (
+      <>
+        {icon}
+        <span className="flex-1 truncate">{label}</span>
+        {count != null ? (
+          <>
+            {/* Left as-is, the pill fuses into the link's accessible name ("Endpoints3"). So the VISUAL pill
+                is hidden from assistive tech and the count is announced as its own clause — "Endpoints, 3".
+                The number is still conveyed, just not glued onto the page name. */}
+            <span
+              aria-hidden="true"
+              className="ml-auto rounded-pill border border-hairline bg-surface-sunken px-1.5 py-px font-mono text-[0.6875rem] tabular-nums text-fg-faint"
+            >
+              {count}
+            </span>
+            <span className="sr-only">{`, ${String(count)}`}</span>
+          </>
+        ) : null}
+      </>
+    );
+
+    // asChild: the caller's element (a router link) BECOMES the nav item. Slot merges our className +
+    // aria-current onto it, and we re-parent the icon/label/count INSIDE it — so the anchor the router
+    // controls is the same anchor the user clicks. Wrapping it instead would nest <a> inside <a> (invalid,
+    // and it would defeat the router).
+    if (asChild && React.isValidElement(children)) {
+      const child = children as React.ReactElement<{ children?: React.ReactNode }>;
+      return (
+        <Slot ref={ref} aria-current={active ? "page" : undefined} className={navClass} {...props}>
+          {React.cloneElement(child, undefined, contents(child.props.children))}
+        </Slot>
+      );
+    }
+
+    return (
+      <a ref={ref} aria-current={active ? "page" : undefined} className={navClass} {...props}>
+        {contents(children)}
+      </a>
+    );
+  },
 );
 AppNavItem.displayName = "AppNavItem";
 

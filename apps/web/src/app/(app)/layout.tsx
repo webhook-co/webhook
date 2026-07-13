@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { AccountMenu } from "@/components/account-menu";
 import { AppNav } from "@/components/app-nav";
 import { AppShellClient } from "@/components/app-shell-client";
+import { CommandPalette } from "@/components/command-palette";
+import { COMMAND_ITEMS } from "@/components/app-nav";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { logout } from "@/server/auth-actions";
 import { loadMyOrgs } from "@/server/my-orgs";
@@ -37,6 +39,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         </>
       }
     >
+      <CommandPalette items={COMMAND_ITEMS} />
       {children}
     </AppShellClient>
   );
