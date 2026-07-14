@@ -25,5 +25,24 @@ export const auth = betterAuth({
     connectionString: process.env.DATABASE_URL ?? "postgres://localhost:5432/placeholder",
   }),
   emailAndPassword: { enabled: true },
+  // Onboarding profile fields, declared HERE so the generator emits them and the CI drift-guard stays green —
+  // rather than hand-adding columns to a Better-Auth-owned table behind the generator's back, which is exactly
+  // what the drift guard exists to catch. camelCase to match the table's existing `emailVerified`/`createdAt`.
+  //
+  //   * firstName / lastName — Google's OAuth profile already returns `given_name`/`family_name` and today they
+  //     are DISCARDED (only the composite `name` survives). The runtime maps them in (mapProfileToUser); this
+  //     is where they live.
+  //   * onboardedAt — null until the user finishes the onboarding screen. It is the SIGNAL that gates the
+  //     screen, so it must be durable state, not inferred: inferring "have they onboarded?" from whether the
+  //     org still bears an auto-generated name is a heuristic that breaks the moment someone legitimately names
+  //     their org "Personal", and re-onboarding a user who already did it is a worse bug than not having the
+  //     field.
+  user: {
+    additionalFields: {
+      firstName: { type: "string", required: false },
+      lastName: { type: "string", required: false },
+      onboardedAt: { type: "date", required: false },
+    },
+  },
   plugins: [apiKey()],
 });
