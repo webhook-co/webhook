@@ -23,7 +23,11 @@ const { createOrgWithOwner, SlugTakenError, InvalidOrgSlugError } = vi.hoisted((
 });
 vi.mock("@webhook-co/db/orgs", () => ({ createOrgWithOwner, SlugTakenError, InvalidOrgSlugError }));
 
-// withTenantDb(fn) → fn(app); the app is unused by the mocked createOrgWithOwner.
+// The free-org cap counter. Defaults to 0 (under the cap) so the happy-path tests proceed.
+const { countOwnedFreeOrgs } = vi.hoisted(() => ({ countOwnedFreeOrgs: vi.fn(async () => 0) }));
+vi.mock("@webhook-co/db/org-lifecycle", () => ({ countOwnedFreeOrgs }));
+
+// withTenantDb(fn) → fn(app); the app is unused by the mocked createOrgWithOwner / counter.
 vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({}) }));
 
 import { createTeamAction } from "./org-create-actions";
@@ -39,6 +43,9 @@ beforeEach(() => {
   // clearAllMocks does NOT clear implementations, so a persistent mockRejectedValue from one test would leak
   // into the next (order-dependent). Reset the create mock's behaviour explicitly each test.
   createOrgWithOwner.mockReset();
+  // Default the cap counter to 0 (under the cap) so every test that isn't about the cap proceeds.
+  countOwnedFreeOrgs.mockReset();
+  countOwnedFreeOrgs.mockResolvedValue(0);
 });
 
 describe("createTeamAction", () => {
@@ -92,5 +99,21 @@ describe("createTeamAction", () => {
     const res = await createTeamAction(form("Acme"));
     expect(res).toMatchObject({ ok: false });
     expect(createOrgWithOwner).toHaveBeenCalledTimes(1); // a db fault is not a collision — no retry
+  });
+
+  it("denies creating another free org at the cap — before any create work", async () => {
+    // A user already owning MAX_FREE_ORGS_PER_USER (2) free orgs cannot create a 3rd. Mutation-check:
+    // the deny must short-circuit BEFORE createOrgWithOwner, so no org is minted and then rejected.
+    countOwnedFreeOrgs.mockResolvedValueOnce(2);
+    const res = await createTeamAction(form("Acme"));
+    expect(res).toEqual({ ok: false, error: expect.stringContaining("free organizations") });
+    expect(createOrgWithOwner).not.toHaveBeenCalled();
+  });
+
+  it("allows creation when under the cap", async () => {
+    countOwnedFreeOrgs.mockResolvedValueOnce(1);
+    createOrgWithOwner.mockResolvedValueOnce({ id: "org_new", slug: "acme-x" });
+    await expect(createTeamAction(form("Acme"))).rejects.toThrow(/^REDIRECT:/);
+    expect(createOrgWithOwner).toHaveBeenCalledTimes(1);
   });
 });

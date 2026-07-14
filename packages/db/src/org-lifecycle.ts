@@ -1,18 +1,20 @@
 import {
+  BILLING_ACTIVE_STATUSES,
   formatAuditActor,
   isLiveSubscriptionStatus,
   type AuditActorInput,
 } from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
-import { withTenant, type Sql } from "./client";
+import { withTenant, type Sql, type TenantTx } from "./client";
 
-// Re-exported through this leaf so the web dashboard (which imports leaf subpaths, not the barrel —
-// Turbopack) can resolve the deterministic personal-org id for account erasure alongside
-// deleteOrgWithAudit / isOrgOwner.
-export { personalOrgId } from "./orgs";
+// personalOrgId is imported for isPersonalOrg's use here AND re-exported through this leaf so the web
+// dashboard (which imports leaf subpaths, not the barrel — Turbopack) can resolve the deterministic
+// personal-org id alongside deleteOrgWithAudit / isOrgOwner. A bare `export … from` re-export would NOT
+// bind the name in this module's scope, so it must be imported to be callable here.
+import { listUserOrgs, personalOrgId } from "./orgs";
 
-import { listUserOrgs } from "./orgs";
+export { personalOrgId };
 
 /**
  * Thrown when an org delete targets a row that doesn't exist in the caller's RLS context — i.e.
@@ -130,6 +132,65 @@ export async function classifyOwnedOrgs(app: Sql, userId: string): Promise<Owned
     else soleOwnedSolo.push(entry);
   }
   return { wouldOrphan, soleOwnedSolo };
+}
+
+/**
+ * Does the current tenant org have a subscription in an ENTITLED status — i.e. is it a PAID org? This
+ * is the single definition of "paid vs Free", the same status set effectiveBillingPeriod uses to pick
+ * the billing-cycle basis over the Free lifetime basis. Callers run it inside the org's tenant context
+ * (RLS pins `billing_subscriptions` to the current org). Shared so the free-org cap and the billing
+ * period can never drift to two different definitions of entitlement.
+ */
+export async function hasEntitledSubscription(tx: TenantTx): Promise<boolean> {
+  const rows = await tx<{ one: number }[]>`
+    select 1 as one from billing_subscriptions
+    where status = any(string_to_array(${BILLING_ACTIVE_STATUSES.join(",")}, ',')) limit 1`;
+  return rows.length > 0;
+}
+
+/**
+ * Count the FREE organizations a user owns, for the free-org creation cap. "Free" = the org has no
+ * entitled subscription (hasEntitledSubscription). Paid orgs are unlimited, so are never counted.
+ *
+ * Attribution counts EVERY org the user owns that is Free — NOT only sole-owned ones. An earlier
+ * version skipped co-owned orgs (to avoid one co-owner's quota consuming another's), but that was a
+ * trivial cap BYPASS: a farmer could add a single throwaway co-owner to every org so `owners !== 1`
+ * and the org counted toward nobody, minting unlimited Free allowances. Counting per-owner closes that
+ * hole; a co-owned org counts toward each owner, which is defensible because ownership is only ever
+ * gained by ACCEPTING an invite. (Downgrade-overflow and the check-then-create race are handled by the
+ * authoritative periodic reconciler, not this best-effort creation-time gate.)
+ *
+ * Runs as webhook_app: listUserOrgs under the user GUC (the only RLS-legal cross-org enumeration, via
+ * user_org_directory), then a per-org entitlement read under each org's OWN tenant context.
+ */
+export async function countOwnedFreeOrgs(app: Sql, userId: string): Promise<number> {
+  const owned = (await listUserOrgs(app, userId)).filter((o) => o.role === "owner");
+
+  let free = 0;
+  for (const org of owned) {
+    const paid = await withTenant(app, org.orgId, (tx) => hasEntitledSubscription(tx));
+    if (!paid) free += 1;
+  }
+  return free;
+}
+
+/**
+ * Is `orgId` a PERSONAL org — the deterministic identity-home org of one of its own owners? Decided
+ * from the org's OWN membership, NOT from who is asking: an org is personal iff some owner `u` has
+ * `personalOrgId(u) === orgId`. Keying the "can't delete the personal org" guard on the caller instead
+ * (orgId === personalOrgId(callerId)) would let a SECOND owner of someone's personal org delete it —
+ * erasing their identity home and re-opening the Free-allowance recycle on their next sign-in. So the
+ * guard must ask this org-centric question. Runs under the org's tenant context (RLS-scoped memberships).
+ */
+export async function isPersonalOrg(app: Sql, orgId: string): Promise<boolean> {
+  const owners = await withTenant(
+    app,
+    orgId,
+    (tx) =>
+      tx<{ userId: string }[]>`
+        select user_id as "userId" from memberships where org_id = ${orgId} and role = 'owner'`,
+  );
+  return owners.some((o) => personalOrgId(o.userId) === orgId);
 }
 
 /**

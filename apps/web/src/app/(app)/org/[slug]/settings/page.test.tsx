@@ -15,6 +15,10 @@ vi.mock("@/server/org-access", () => ({
 }));
 vi.mock("@/server/auth-actions", () => ({ logout: vi.fn() }));
 vi.mock("@/server/org-actions", () => ({ renameOrgAction: vi.fn() }));
+// The page now asks isPersonalOrg (org-centric) whether to render the delete-org card; it needs a db
+// client to do so. Stub both: a bare client, and isPersonalOrg → false (a regular team org shows the card).
+vi.mock("@/server/db", () => ({ getTenantDb: async () => ({}) }));
+vi.mock("@webhook-co/db/org-lifecycle", () => ({ isPersonalOrg: async () => false }));
 
 import SettingsPage from "./page";
 

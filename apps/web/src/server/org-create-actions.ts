@@ -1,8 +1,10 @@
 "use server";
 
+import { countOwnedFreeOrgs } from "@webhook-co/db/org-lifecycle";
 import { createOrgWithOwner, InvalidOrgSlugError, SlugTakenError } from "@webhook-co/db/orgs";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
+import { MAX_FREE_ORGS_PER_USER } from "@webhook-co/shared/plans";
 import { suggestOrgSlug } from "@webhook-co/shared";
 import { redirect } from "next/navigation";
 
@@ -41,6 +43,26 @@ export async function createTeamAction(formData: FormData): Promise<CreateTeamRe
   if (name.length === 0) return { ok: false, error: "Give your team a name." };
   if (name.length > MAX_NAME_LEN) {
     return { ok: false, error: `Keep the name under ${MAX_NAME_LEN} characters.` };
+  }
+
+  // Cap the FREE organizations one user may own (paid orgs are unlimited). The Free allowance is per-org,
+  // so without this a user could mint unlimited free allowance by creating unlimited free orgs. Checked
+  // BEFORE any create work, so we never create an org we'd immediately have to reject. A newly created org
+  // is always Free at birth, so this caps org creation for non-payers at MAX_FREE_ORGS_PER_USER.
+  //
+  // This is a BEST-EFFORT gate, not the authoritative boundary: a check-then-create race (double-submit)
+  // could overshoot, and a paid org downgraded back to Free later leaves a user over the cap — neither is
+  // catchable here. The authoritative enforcement is the periodic free-org-cap reconciler (its own slice),
+  // which re-counts owned Free orgs and disables the overflow. This gate just gives immediate, honest
+  // feedback for the common case instead of silently creating an org the reconciler will later pause.
+  const ownedFreeOrgs = await withTenantDb((app) => countOwnedFreeOrgs(app, session.userId));
+  if (ownedFreeOrgs >= MAX_FREE_ORGS_PER_USER) {
+    return {
+      ok: false,
+      error:
+        `You can own up to ${MAX_FREE_ORGS_PER_USER} free organizations. Upgrade an existing ` +
+        "organization to a paid plan to create another.",
+    };
   }
 
   const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
