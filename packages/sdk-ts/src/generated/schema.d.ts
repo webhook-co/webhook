@@ -497,6 +497,11 @@ export interface components {
             rowsVerified: number;
         };
         AuthContext: {
+            organization?: {
+                id: string;
+                name: string;
+                slug: string;
+            };
             orgId: string;
             scopes: string[];
             userId?: string;

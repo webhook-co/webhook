@@ -271,6 +271,15 @@ class SubscriptionDeleted(BaseModel):
     ]
 
 
+class Organization(BaseModel):
+    model_config = ConfigDict(
+        extra="ignore",
+    )
+    id: Annotated[str, Field(min_length=1)]
+    slug: Annotated[str, Field(min_length=1)]
+    name: Annotated[str, Field(min_length=1)]
+
+
 class AuthContext(BaseModel):
     model_config = ConfigDict(
         extra="ignore",
@@ -278,6 +287,7 @@ class AuthContext(BaseModel):
     org_id: Annotated[str, Field(alias="orgId", min_length=1)]
     user_id: Annotated[str | None, Field(alias="userId")] = None
     scopes: list[str]
+    organization: Organization | None = None
 
 
 class VerificationResult1(BaseModel):

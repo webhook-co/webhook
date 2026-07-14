@@ -3429,6 +3429,29 @@
             "items": {
               "type": "string"
             }
+          },
+          "organization": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "slug": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "slug",
+              "name"
+            ],
+            "additionalProperties": false
           }
         },
         "required": [

@@ -305,16 +305,17 @@ describe("listConsentOrgs + personalOrgId (the /authorize consent-org resolution
   it("resolves the bootstrapped personal org id + display name", async () => {
     const userId = `user_${randomUUID()}`;
     await seedUser(userId);
+    const slug = `s-${userId.slice(5, 13)}`;
     const { orgId } = await bootstrapPersonalOrg(
       app,
-      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Dana's projects" },
+      { userId, slug, name: "Dana's projects" },
       hasher,
     );
     // personalOrgId derives the SAME id bootstrap used — no DB read, no cross-org query.
     expect(personalOrgId(userId)).toBe(orgId);
 
     const resolved = await listConsentOrgs(app, userId);
-    expect(resolved).toEqual([{ orgId, name: "Dana's projects" }]);
+    expect(resolved).toEqual([{ orgId, slug, name: "Dana's projects" }]);
   });
 
   it("lists an INVITED org too — the whole point: a teammate's CLI can land in the team org", async () => {
@@ -322,15 +323,17 @@ describe("listConsentOrgs + personalOrgId (the /authorize consent-org resolution
     // the user's empty personal org. Now both are offered, personal first (the default).
     const userId = `user_${randomUUID()}`;
     await seedUser(userId);
+    const personalSlug = `s-${userId.slice(5, 13)}`;
     const { orgId: personal } = await bootstrapPersonalOrg(
       app,
-      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Dana's projects" },
+      { userId, slug: personalSlug, name: "Dana's projects" },
       hasher,
     );
     const teamOwner = `user_${randomUUID()}`;
     await seedUser(teamOwner);
+    const teamSlug = `t-${randomUUID().slice(0, 8)}`;
     const { id: team } = await createOrgWithOwner(app, {
-      slug: `t-${randomUUID().slice(0, 8)}`,
+      slug: teamSlug,
       name: "Acme Team",
       ownerUserId: teamOwner,
       auditKey: await testAuditKey(),
@@ -343,8 +346,8 @@ describe("listConsentOrgs + personalOrgId (the /authorize consent-org resolution
     );
 
     expect(await listConsentOrgs(app, userId)).toEqual([
-      { orgId: personal, name: "Dana's projects" }, // default: personal org leads
-      { orgId: team, name: "Acme Team" },
+      { orgId: personal, slug: personalSlug, name: "Dana's projects" }, // default: personal org leads
+      { orgId: team, slug: teamSlug, name: "Acme Team" },
     ]);
   });
 
@@ -370,14 +373,16 @@ describe("listConsentOrgs + personalOrgId (the /authorize consent-org resolution
         tx`insert into memberships (org_id, user_id, role) values (${team}, ${userId}, 'member')`,
     );
     // …and only then does the personal org get bootstrapped (the self-heal path).
+    const personalSlug = `s-${userId.slice(5, 13)}`;
     const { orgId: personal } = await bootstrapPersonalOrg(
       app,
-      { userId, slug: `s-${userId.slice(5, 13)}`, name: "Dana's projects" },
+      { userId, slug: personalSlug, name: "Dana's projects" },
       hasher,
     );
 
     const orgs = await listConsentOrgs(app, userId);
-    expect(orgs[0]).toEqual({ orgId: personal, name: "Dana's projects" }); // the DEFAULT is still theirs
+    // the DEFAULT is still theirs
+    expect(orgs[0]).toEqual({ orgId: personal, slug: personalSlug, name: "Dana's projects" });
     expect(orgs.map((o) => o.orgId)).toContain(team);
   });
 
