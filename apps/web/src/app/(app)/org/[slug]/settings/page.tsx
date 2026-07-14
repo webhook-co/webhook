@@ -1,9 +1,11 @@
+import { isPersonalOrg } from "@webhook-co/db/org-lifecycle";
 import { PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 import Link from "next/link";
 
 import { DeleteOrgCard } from "@/components/delete-org-card";
 import { RenameOrgCard } from "@/components/rename-org-card";
+import { getTenantDb } from "@/server/db";
 import { requireOrgAccess } from "@/server/org-access";
 import { renameOrgAction } from "@/server/org-actions";
 
@@ -22,6 +24,10 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
   // Renaming changes the org's public address and retires the old one forever, so it is owner/admin only —
   // enforced server-side in renameOrg; the card is read-only for a plain member.
   const canRename = session.role === "owner" || session.role === "admin";
+  // The personal org can't be deleted (deleteOrganization refuses it, shedding it is Delete-account's job)
+  // — so don't render a dead button. Uses the same ORG-centric check as the server guard (an org is
+  // personal iff one of its owners' personalOrgId equals it), so a co-owner viewing it sees no card either.
+  const personal = await isPersonalOrg(await getTenantDb(), session.orgId);
 
   return (
     <PageContainer size="narrow" gap="gap-6">
@@ -46,7 +52,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
         canRename={canRename}
       />
 
-      <DeleteOrgCard slug={session.slug} />
+      {!personal && <DeleteOrgCard slug={session.slug} />}
     </PageContainer>
   );
 }

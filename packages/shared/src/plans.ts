@@ -53,6 +53,15 @@ export const OVERAGE_PER_MILLION = "€25";
 /** The Free tier's one-time lifetime allowance (events), never resets. Mirrors FREE_EVENT_CAP. */
 export const FREE_EVENT_CAP = 5_000;
 
+/**
+ * The most FREE organizations one user may OWN. PAID orgs are unlimited. Because each org carries its
+ * own one-time Free allowance (the allowance is per-org, by design), unlimited free orgs would let a
+ * single user mint unlimited free allowance (N × FREE_EVENT_CAP). Capping the number of free orgs a
+ * user can own is what keeps the per-org model honest without changing its simple mental model.
+ * A user's personal org always counts as one, so this leaves room for one additional free team.
+ */
+export const MAX_FREE_ORGS_PER_USER = 2;
+
 export const PLANS: readonly Plan[] = [
   {
     id: "free",

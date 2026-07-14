@@ -1,6 +1,6 @@
 "use server";
 
-import { deleteOrgWithAudit } from "@webhook-co/db/org-lifecycle";
+import { deleteOrgWithAudit, isPersonalOrg } from "@webhook-co/db/org-lifecycle";
 import {
   InvalidOrgSlugError,
   renameOrg,
@@ -51,10 +51,22 @@ export async function deleteOrganization(slug: string, formData: FormData): Prom
     throw new Error("only an organization owner can delete the organization");
   }
 
+  // The personal organization is the user's identity home, not a disposable team — it may only be shed
+  // by deleting the account itself (which has its own ceremony). Blocking its deletion also closes a
+  // free-tier abuse loop: bootstrapPersonalOrg re-creates a missing personal org on the next sign-in with
+  // a fresh `orgs.created_at`, re-anchoring the one-time Free lifetime allowance (effectiveBillingPeriod),
+  // so delete + re-login would otherwise reset the 5,000-event allowance indefinitely. The check is
+  // ORG-centric, not caller-centric: an org is personal iff one of ITS OWN owners' personalOrgId equals
+  // it — so a SECOND owner of someone's personal org can't delete it either.
+  const app = await getTenantDb();
+  if (await isPersonalOrg(app, orgId)) {
+    throw new Error("the personal organization cannot be deleted");
+  }
+
   const auditKey = await importAuditKey(b64ToBytes(await getAuditChainKey()));
   // The REQUEST owns the client now (see server/db.ts): it is shared by every loader in this render and
   // closed once, after the response. Closing it here would pull the connection out from under the others.
-  await deleteOrgWithAudit(await getTenantDb(), { orgId, actor: userActor(userId) }, auditKey);
+  await deleteOrgWithAudit(app, { orgId, actor: userActor(userId) }, auditKey);
 
   // Same attributes as the set — a `__Host-` cookie cleared without `Secure` is rejected by the browser
   // and the session would survive (RFC 6265bis §4.1.3).
