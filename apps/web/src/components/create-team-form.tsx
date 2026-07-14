@@ -62,7 +62,7 @@ export function CreateTeamForm({ create }: CreateTeamFormProps) {
           />
           {error ? <Banner tone="danger">{error}</Banner> : null}
           <div className="flex justify-end">
-            <Button type="submit" disabled={!trimmed || pending}>
+            <Button type="submit" loading={pending} disabled={!trimmed || pending}>
               {pending ? "Creating…" : "Create team"}
             </Button>
           </div>
