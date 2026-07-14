@@ -30,8 +30,18 @@ vi.mock("next/server", () => ({
     afterCallbacks.push(cb);
   },
 }));
-// React's `cache()` memoizes per REQUEST. Under vitest there is no request, so stand in with a plain
-// per-module memo — which is exactly the semantics we depend on (same call, same value, computed once).
+// React's `cache()` memoizes against the RENDER PASS: it reads React's async dispatcher, and with no
+// dispatcher it calls straight through and memoizes NOTHING. Vitest has no render pass, so the real `cache()`
+// would dedupe nothing and the sharing tests below could not be written at all.
+//
+// So we stand one in. But be clear-eyed about what that buys and what it does NOT.
+//
+// It lets us assert what happens WHEN the memo is in scope — a page render, which is the case this change
+// exists for and the one that dominates. It CANNOT tell us whether the memo is in scope on some OTHER path,
+// because we are the ones who supplied it. A code review caught me claiming "one client per REQUEST" on the
+// strength of exactly this mock: the mock made the claim unfalsifiable, which is the difference between a test
+// and a decoration. The claim is now the narrower, true one — one client per RENDER — and the un-memoized path
+// is asserted separately, against the REAL `cache()`, at the bottom of this file.
 vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return {

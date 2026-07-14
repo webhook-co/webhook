@@ -1224,6 +1224,38 @@ describe("mint ceiling on a member's FIRST login (not only on renewal)", () => {
       expect(batched.get(orphan)).toEqual([]);
     });
 
+    // The bucket is keyed off what the DATABASE returns, not off what the caller passed. An earlier version
+    // did `byGrant.get(id)?.push(...)` and justified the silent drop with a comment claiming an `= any(...)`
+    // filter made a miss impossible — which was FALSE, because the query matches with `in`, i.e. plain string
+    // equality on the uuid text. A caller whose id differed by so much as a character of case would have had
+    // that device's keys land in no bucket at all, and the page would have shown a device with "no keys" while
+    // its keys were live. A key you cannot see is a key you cannot revoke.
+    it("groups by the database's own grant id, so no device's keys can silently vanish", async () => {
+      const orgId = randomUUID();
+      await seedOrg(orgId);
+      const g = await mintScopedKey(
+        app,
+        {
+          orgId,
+          userId: userOf(orgId),
+          scopes: ["events:read"],
+          audience: API,
+          ttlSeconds: 3600,
+          authMethod: "pkce_loopback",
+        },
+        hasher,
+        auditKey,
+      );
+      if (g.status !== "minted") throw new Error("unreachable");
+
+      // Ask with the SAME id, upper-cased. Postgres matches it (uuid equality is not textual), but the
+      // returned `grant_id` is rendered lower-case — so a caller-keyed bucket would miss and drop the key.
+      const batched = await listApiKeysForGrants(app, orgId, [g.grantId.toUpperCase()]);
+
+      const allKeys = [...batched.values()].flat();
+      expect(allKeys.map((k) => k.id)).toContain(g.keyId);
+    });
+
     it("is a no-op (and hits no database) for an org with no grants", async () => {
       const orgId = randomUUID();
       await seedOrg(orgId);

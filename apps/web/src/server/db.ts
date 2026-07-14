@@ -10,9 +10,28 @@ interface HyperdriveBinding {
 }
 
 /**
- * ONE tenant Postgres client per REQUEST, shared by every loader and action in it. RLS (via the session
- * `orgId`, pinned by `withTenant`) remains the tenant-isolation backstop — this changes the connection's
- * lifecycle, never its authority.
+ * ONE tenant Postgres client per RENDER, shared by every loader in it. RLS (via the session `orgId`, pinned by
+ * `withTenant`) remains the tenant-isolation backstop — this changes the connection's lifecycle, never its
+ * authority.
+ *
+ * ── Read this before believing "one client per request" ─────────────────────────────────────────────────
+ *
+ * React's `cache()` memoizes against the **render pass**: it reads React's async dispatcher, and when there is
+ * no dispatcher it calls straight through and memoizes NOTHING (verified in the shipped React bundle, not
+ * assumed). Next installs that dispatcher for the RSC render — so on a page view, every loader in the tree
+ * genuinely shares one client, which is the case that dominates and the case this exists for.
+ *
+ * A SERVER ACTION body runs before that render. So on the mutation path the memo may not dedupe, and an action
+ * that gates (`requireOrgAccess` -> the directory read) and then writes can end up with more than one client.
+ *
+ * That is worth stating plainly rather than papering over, and it is also NOT a regression: before this, every
+ * caller opened its own client unconditionally, so an action already paid exactly that. Each client still
+ * registers its own `after()` close, so nothing leaks, and no client is ever closed by someone who does not own
+ * it. The win applies to the page renders (the common path, several loaders deep); the mutation path is left
+ * no worse than it was.
+ *
+ * The invariant that actually matters is therefore NOT "there is exactly one client" — it is "NOBODY CLOSES A
+ * CLIENT THEY DID NOT OPEN". That one holds unconditionally, and it is what the tests pin.
  *
  * ── What this replaced, and why it was slow ─────────────────────────────────────────────────────────────
  *
@@ -88,4 +107,32 @@ export async function getTenantDb(): Promise<Sql> {
  */
 export async function withTenantDb<T>(fn: (app: Sql) => Promise<T>): Promise<T> {
   return fn(await requestTenantDb());
+}
+
+/**
+ * Release the request's client EARLY, before the response is finished.
+ *
+ * ── Read the warning before you reach for this ──────────────────────────────────────────────────────────
+ *
+ * Almost nothing should. The normal contract is that you do not close what you did not open, and `after()`
+ * closes it once the response is done — which is what makes the client safe to share across a render in the
+ * first place. Calling this while ANYTHING else in the request still intends to query is precisely the bug the
+ * `no-early-db-close` guard exists to prevent: the connection is torn out from under the other callers.
+ *
+ * ── The one shape where it is right: finish the DB work, then stream for a long time ────────────────────
+ *
+ * A route handler that reads the database and then returns a STREAM (the event-payload download) does not
+ * render a layout, so it is the only consumer of the client — and its database work is completely finished
+ * before the first byte of the body is sent. Left to `after()`, the connection would be held, idle, for the
+ * entire duration of the download: a user on a slow link pulling a large captured payload pins a Postgres
+ * connection for as long as it takes them to receive it, and enough concurrent slow downloads would starve the
+ * pool for everyone else. Nothing is gained by holding it — the query is done.
+ *
+ * Closing twice is harmless: `after()` still fires and postgres.js's `end()` is idempotent.
+ */
+export async function releaseTenantDbEarly(): Promise<void> {
+  const app = await requestTenantDb();
+  // db-close-allow: the ONE legal early close — a streaming route handler whose DB work is finished and whose
+  // response body will take an arbitrarily long time to send. See the doc comment above.
+  await app.end({ timeout: 5 }).catch(() => {});
 }

@@ -305,13 +305,23 @@ export async function listApiKeysForGrants(
   });
 
   for (const row of rows) {
-    // Rows arrive newest-first, and pushing in arrival order preserves that WITHIN each grant's bucket —
-    // so each list matches what the per-grant query would have returned.
+    // Rows arrive newest-first, and pushing in arrival order preserves that WITHIN each grant's bucket — so
+    // each list matches what the per-grant query would have returned.
     //
-    // `?.push` rather than creating the bucket: a grant_id outside `grantIds` cannot come back (the ANY
-    // filter forbids it), so a miss here would mean the database disagreed with the question we asked. Drop
-    // it rather than inventing a bucket the caller never requested.
-    byGrant.get(row.grant_id)?.push(toApiKeyListItem(row));
+    // CREATE the bucket on a miss; never silently drop the row.
+    //
+    // An earlier version did `byGrant.get(id)?.push(...)`, justified by a comment claiming an `= any(...)`
+    // filter made a miss impossible. That justification was FALSE — the query matches with `in`, i.e. plain
+    // string equality on the uuid TEXT. So any caller whose grant id differed from Postgres's rendering by so
+    // much as a character of case would have had that device's keys land in no bucket at all, and the
+    // credentials page would have shown a device with "no keys" while its keys were live. A silent wrong
+    // answer, and a security-adjacent one: a key you cannot see is a key you cannot revoke.
+    //
+    // Keying the bucket off the DATABASE's own value removes the class of bug rather than the instance: the
+    // grouping can no longer disagree with the rows it is grouping, whatever the caller passed in.
+    const bucket = byGrant.get(row.grant_id);
+    if (bucket) bucket.push(toApiKeyListItem(row));
+    else byGrant.set(row.grant_id, [toApiKeyListItem(row)]);
   }
   return byGrant;
 }
