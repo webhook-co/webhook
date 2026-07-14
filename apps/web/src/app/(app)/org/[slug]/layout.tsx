@@ -36,15 +36,30 @@ export default async function OrgLayout({
   const [access, myOrgs] = await Promise.all([requireOrgAccess(slug), loadMyOrgs()]);
 
   return (
+    // NO `homeHref` — and therefore no wordmark. The ORG PICKER takes the top-left corner instead, which is
+    // where every modern SaaS sidebar puts it, and for a reason: "which organization am I in?" is the question
+    // you need answered before any other, while a wordmark answers a question nobody was asking (the user
+    // knows what site they are on). The account menu moves to the bottom-left, out of the toolbar, because
+    // "who am I signed in as" is a fact about the session, not an action on this page.
     <AppShellClient
-      homeHref={`/org/${access.slug}/dashboard`}
       sidebar={<AppNav slug={access.slug} />}
-      sidebarTop={<OrgSwitcher orgs={myOrgs.orgs} currentOrgId={access.orgId} />}
+      sidebarTop={
+        <OrgSwitcher
+          orgs={myOrgs.orgs}
+          currentOrgId={access.orgId}
+          // From the GATE, not from the list: `loadMyOrgs` degrades to [] if its read blips, and the one label
+          // that must always be right is the org you are actually looking at.
+          currentName={access.name}
+          currentSlug={access.slug}
+        />
+      }
+      sidebarFooter={
+        <AccountMenu name={access.user.name} email={access.user.email} onLogout={logout} />
+      }
       topBar={
         <>
           <div className="flex-1" />
           <ThemeToggle />
-          <AccountMenu name={access.user.name} email={access.user.email} onLogout={logout} />
         </>
       }
     >

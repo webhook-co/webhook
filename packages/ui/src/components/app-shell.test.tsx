@@ -40,9 +40,23 @@ describe("AppShell", () => {
     expect(screen.getByRole("banner")).toHaveTextContent("breadcrumbs");
   });
 
-  it("renders the webhook.co lockup", () => {
-    render(<Example />);
-    expect(screen.getByText(/webhook/)).toBeInTheDocument();
+  // The lockup is OPT-IN now: it renders only when a `homeHref` is given. The dashboard deliberately gives
+  // none, because the ORG PICKER takes the top-left corner instead — that corner is the most valuable space in
+  // the shell, and "which organization am I in?" is the question you need answered before any other. A
+  // wordmark there answers a question nobody was asking.
+  //
+  // Kept as a capability rather than deleted, because AppShell is a generic primitive and a surface that DOES
+  // want a wordmark still can.
+  it("renders the webhook.co lockup when a homeHref is given", () => {
+    render(<Example homeHref="/" />);
+    expect(screen.getByRole("link", { name: /webhook\.co home/i })).toBeInTheDocument();
+  });
+
+  it("renders NO lockup without a homeHref, leaving the corner to sidebarTop", () => {
+    render(<Example sidebarTop={<button>Acme Corp</button>} />);
+
+    expect(screen.queryByRole("link", { name: /webhook\.co home/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Acme Corp" })).toBeInTheDocument();
   });
 
   it("renders the sidebarTop and sidebarFooter slots", () => {
