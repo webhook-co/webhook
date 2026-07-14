@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const loadMyOrgs = vi.fn();
 vi.mock("@/server/my-orgs", () => ({ loadMyOrgs: () => loadMyOrgs() }));
+// The landing page now also resolves the onboarding gate; default it to "done" so the existing routing tests
+// exercise the routing, not onboarding (onboarding has its own tests).
+const resolveOnboarding = vi.fn();
+vi.mock("@/server/onboarding", () => ({ resolveOnboarding: () => resolveOnboarding() }));
 vi.mock("next/navigation", () => ({
   redirect: vi.fn((url: string) => {
     throw new Error(`REDIRECT:${url}`);
@@ -16,6 +20,7 @@ const BETA = { orgId: "org_beta", slug: "beta", formerSlugs: [], name: "Beta", r
 
 const run = (myOrgs: unknown, sp: Record<string, string | string[] | undefined> = {}) => {
   loadMyOrgs.mockResolvedValue(myOrgs);
+  resolveOnboarding.mockResolvedValue({ show: false });
   return AppHome({ searchParams: Promise.resolve(sp) });
 };
 
@@ -49,6 +54,22 @@ describe("AppHome (the default-org resolver)", () => {
     await expect(
       run({ orgs: [ALPHA], currentOrgId: "org_alpha" }, { invite: "accepted" }),
     ).rejects.toThrow("REDIRECT:/org/alpha/dashboard?invite=accepted");
+  });
+
+  // The onboarding gate: a fresh signup who has not finished onboarding is sent to /onboarding BEFORE any
+  // dashboard. This is the one route where the gate can run (no org in the URL yet).
+  it("redirects a not-yet-onboarded user to /onboarding, ahead of any dashboard", async () => {
+    resolveOnboarding.mockResolvedValue({
+      show: true,
+      firstName: "Ada",
+      lastName: "",
+      needsOrgName: true,
+      org: null,
+    });
+
+    await expect(AppHome({ searchParams: Promise.resolve({}) })).rejects.toThrow(
+      "REDIRECT:/onboarding",
+    );
   });
 
   it("DROPS an unrecognised ?invite= value — this is a redirect target, not an open passthrough", async () => {

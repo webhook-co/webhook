@@ -151,6 +151,36 @@ export function getConnectedAppsBinding(): ConnectedAppsBinding | undefined {
   return undefined;
 }
 
+/** auth.'s OnboardingProfile WorkerEntrypoint — first/last name + `onboardedAt` live on the identity `user`
+ *  table, which only auth. (webhook_auth) may write, so onboarding reads/completes over this binding. Keyed by
+ *  the SERVER-verified session userId; the write's timestamp is minted auth-side, never caller-supplied. */
+export interface OnboardingProfileBinding {
+  read(userId: string): Promise<OnboardingStateDto | null>;
+  complete(userId: string, firstName: string, lastName: string): Promise<{ completed: boolean }>;
+}
+
+/** The onboarding identity slice as it crosses the binding (Dates as ISO strings). */
+export interface OnboardingStateDto {
+  readonly firstName: string | null;
+  readonly lastName: string | null;
+  readonly name: string;
+  readonly onboardedAtIso: string | null;
+  readonly createdAtIso: string;
+}
+
+/** The bound AUTH_ONBOARDING entrypoint, or undefined when unbound (dev / pre-provision). */
+export function getOnboardingBinding(): OnboardingProfileBinding | undefined {
+  const binding = workerEnv().AUTH_ONBOARDING;
+  if (
+    binding &&
+    typeof (binding as { read?: unknown }).read === "function" &&
+    typeof (binding as { complete?: unknown }).complete === "function"
+  ) {
+    return binding as OnboardingProfileBinding;
+  }
+  return undefined;
+}
+
 /**
  * The `PROVIDER_SECRET_SEALER` Cloudflare service binding — the engine's seal-only `ProviderSecretSealer`
  * WorkerEntrypoint, reachable as a direct RPC (no public HTTP hop). It is **write-only**: it wraps a

@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { loadMyOrgs } from "@/server/my-orgs";
+import { resolveOnboarding } from "@/server/onboarding";
 import { LOGOUT_URL } from "@/server/session";
 
 // dal-gate-allow: owns no tenant data. It reads only the caller's OWN org directory (user-scoped, via the
@@ -28,7 +29,17 @@ export default async function AppHome({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ orgs, currentOrgId }, sp] = await Promise.all([loadMyOrgs(), searchParams]);
+  const [{ orgs, currentOrgId }, sp, onboarding] = await Promise.all([
+    loadMyOrgs(),
+    searchParams,
+    // The onboarding gate lives HERE — the one route with no org in the URL, run right after the session is
+    // established and before we hand the user to any dashboard. `resolveOnboarding` fails open (a new signup
+    // that has not finished onboarding is the only case it flags; everything else, including any read fault,
+    // returns "don't show"), so this can never trap someone short of their dashboard.
+    resolveOnboarding(),
+  ]);
+
+  if (onboarding.show) redirect("/onboarding");
 
   // The hint is untrusted FOR THIS PURPOSE: it may name an org they have since been removed from. It is only
   // ever used to PICK from the directory, never to bypass it.
