@@ -9,6 +9,7 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Combobox,
   CopyButton,
   Dialog,
   DialogClose,
@@ -18,11 +19,31 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   Field,
-  Label,
-  Select,
+  Table,
+  TableBody,
+  TableCell,
+  TableEmpty,
+  TableHead,
+  TableHeader,
+  TableRow,
 } from "@webhook-co/ui";
 import * as React from "react";
+
+/** The row-actions affordance. A `…` menu keeps one column of controls instead of a row of buttons that
+ *  grows every time an action is added — and it is where a user now expects per-row actions to live. */
+const Dots = () => (
+  <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" className="size-4">
+    <circle cx="3.5" cy="8" r="1.25" />
+    <circle cx="8" cy="8" r="1.25" />
+    <circle cx="12.5" cy="8" r="1.25" />
+  </svg>
+);
 
 import type { CreateInviteResult, RevokeInviteResult } from "@/server/invite-actions";
 import type { LeaveOrgResult } from "@/server/leave-org";
@@ -72,6 +93,28 @@ function acceptUrl(acceptPath: string): string {
 
 function roleLabel(role: string): string {
   return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
+/**
+ * An invite's expiry, formatted IDENTICALLY on the server and in the browser.
+ *
+ * A bare `toLocaleDateString()` is a hydration bug, and this component had one: the server (Node) formatted
+ * `21/07/2026` and the browser formatted `21/7/2026`, so React threw away the server HTML and re-rendered the
+ * tree on the client. Nothing in the test suite could see it — jsdom does not hydrate — and it only surfaced
+ * when the page was opened in a real browser.
+ *
+ * Pinning BOTH the locale and the time zone is what makes it deterministic: without an explicit locale each
+ * environment picks its own, and without an explicit zone the same instant can be a different DAY either side
+ * of midnight. `en-GB` + `UTC` gives "21 Jul 2026" everywhere — and spelling the month out sidesteps the
+ * DD/MM-vs-MM/DD ambiguity that a numeric date would carry anyway.
+ */
+function expiryLabel(expiresAt: string | Date): string {
+  return new Date(expiresAt).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 /** Turn a member-action refusal into copy that says what actually happened. */
@@ -273,180 +316,229 @@ export function TeamManager({
   // A demotion (lower privilege = higher rank) kills the member's credentials; a promotion doesn't.
   const isDemotion = roleChange ? rank(roleChange.newRole) > rank(roleChange.member.role) : false;
 
+  /**
+   * ONE table, members and invites together — because they are the same question.
+   *
+   * The page used to be two Cards: "Members" (a <ul>) and "Pending invites" (another <ul>). But nobody comes
+   * to this page asking "who are my members?" and separately "what invites are outstanding?" — they ask WHO
+   * HAS OR IS GETTING ACCESS, and the answer was split across two lists with different shapes and different
+   * controls. An invite is just a member whose status is `Pending`. So it is a row, with a Status column, and
+   * the split disappears.
+   */
+  type Row =
+    | { readonly kind: "member"; readonly key: string; readonly member: OrgMember }
+    | { readonly kind: "invite"; readonly key: string; readonly invite: PendingInvite };
+
+  const rows: readonly Row[] = [
+    ...members.map((m): Row => ({ kind: "member", key: `m:${m.userId}`, member: m })),
+    ...invites.map((i): Row => ({ kind: "invite", key: `i:${i.id}`, invite: i })),
+  ];
+
+  const roleOptions = grantableRoles.map((r) => ({ value: r, label: roleLabel(r) }));
+
   return (
     <div className="flex flex-col gap-6">
-      <Card>
-        <CardHeader>
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex flex-col gap-1.5">
-              <CardTitle>Members</CardTitle>
-              <CardDescription>
-                Everyone with access to this organization. Owners and admins can invite people and
-                manage roles.
-              </CardDescription>
-            </div>
-            {canManage ? (
-              <Dialog
-                open={inviteOpen}
-                onOpenChange={(open) => {
-                  setInviteOpen(open);
-                  if (!open) resetInviteForm();
-                }}
-              >
-                <DialogTrigger asChild>
-                  <Button>Invite teammate</Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <form onSubmit={handleInvite} className="flex flex-col gap-5">
-                    <DialogHeader>
-                      <DialogTitle>Invite a teammate</DialogTitle>
-                      <DialogDescription>
-                        They&apos;ll get a link to join. It only works for the email you enter, and
-                        expires in 7 days.
-                      </DialogDescription>
-                    </DialogHeader>
+      {/* The invite button sits in the PAGE HEADER — top-right, outside the content box. It is the one
+          affirmative action on this page, and burying it inside the card's header made it look like it acted
+          on the card rather than on the org. */}
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <h1 className="text-2xl font-semibold tracking-heading text-fg">Team</h1>
+          <p className="leading-snug text-fg-secondary">
+            Everyone with access to this organization, and the invites waiting to be accepted.
+          </p>
+        </div>
 
-                    <Field
-                      label="Email"
-                      type="email"
-                      placeholder="teammate@company.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      disabled={pending}
-                    />
+        {canManage ? (
+          <Dialog
+            open={inviteOpen}
+            onOpenChange={(open) => {
+              setInviteOpen(open);
+              if (!open) resetInviteForm();
+            }}
+          >
+            <DialogTrigger asChild>
+              <Button>Invite teammate</Button>
+            </DialogTrigger>
+            <DialogContent>
+              <form onSubmit={handleInvite} className="flex flex-col gap-5">
+                <DialogHeader>
+                  <DialogTitle>Invite a teammate</DialogTitle>
+                  <DialogDescription>
+                    They&apos;ll get a link to join. It only works for the email you enter, and
+                    expires in 7 days.
+                  </DialogDescription>
+                </DialogHeader>
 
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="invite-role">Role</Label>
-                      <Select
-                        id="invite-role"
-                        value={inviteRole}
-                        disabled={pending}
-                        onChange={(e) => setInviteRole(e.target.value)}
-                      >
-                        {grantableRoles.map((r) => (
-                          <option key={r} value={r}>
-                            {roleLabel(r)}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
+                <Field
+                  label="Email"
+                  type="email"
+                  placeholder="teammate@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={pending}
+                />
 
-                    {formError ? <Banner tone="danger">{formError}</Banner> : null}
+                {/* Our Combobox, not the native <select> this used to be. The native control renders as the
+                    OS's own widget — a different typeface, a different focus ring, a different popover on
+                    every platform — sitting inside a dialog that is otherwise entirely ours. We already use
+                    this Combobox for picking a provider; a role is the same kind of choice. */}
+                <Combobox
+                  id="invite-role"
+                  label="Role"
+                  options={roleOptions}
+                  value={inviteRole}
+                  disabled={pending}
+                  onChange={setInviteRole}
+                  className="w-full"
+                />
 
-                    <DialogFooter>
-                      <DialogClose asChild>
-                        <Button type="button" variant="secondary">
-                          Cancel
-                        </Button>
-                      </DialogClose>
-                      <Button type="submit" disabled={!canInvite}>
-                        Send invite
-                      </Button>
-                    </DialogFooter>
-                  </form>
-                </DialogContent>
-              </Dialog>
-            ) : null}
-          </div>
-        </CardHeader>
-        <CardContent>
-          <ul className="flex flex-col divide-y divide-hairline">
-            {members.map((m) => {
-              const isYou = m.userId === callerId;
-              const canAct = actionable(m);
-              const selectId = `role-${m.userId}`;
-              return (
-                <li key={m.userId} className="flex items-center justify-between gap-4 py-3">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="flex items-center gap-2">
-                      <span className="truncate font-medium text-fg">{m.name || m.email}</span>
-                      {isYou ? <Badge tone="neutral">You</Badge> : null}
-                    </span>
-                    <span className="truncate text-xs text-fg-secondary">{m.email}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    {canAct ? (
-                      <>
-                        <Label htmlFor={selectId} className="sr-only">
-                          Role for {m.email}
-                        </Label>
-                        <Select
-                          id={selectId}
-                          value={m.role}
-                          onChange={(e) =>
-                            setRoleChange({
-                              member: m,
-                              newRole: e.target.value as MembershipRole,
-                            })
-                          }
-                        >
-                          {grantableRoles.map((r) => (
-                            <option key={r} value={r}>
-                              {roleLabel(r)}
-                            </option>
-                          ))}
-                        </Select>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => {
-                            setDialogError(null);
-                            setRemovingMember(m);
-                          }}
-                        >
-                          Remove
-                        </Button>
-                      </>
-                    ) : (
-                      <Badge tone="neutral">{roleLabel(m.role)}</Badge>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        </CardContent>
-      </Card>
+                {formError ? <Banner tone="danger">{formError}</Banner> : null}
+
+                <DialogFooter>
+                  <DialogClose asChild>
+                    <Button type="button" variant="secondary" disabled={pending}>
+                      Cancel
+                    </Button>
+                  </DialogClose>
+                  <Button type="submit" loading={pending} disabled={!canInvite}>
+                    Send invite
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        ) : null}
+      </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Pending invites</CardTitle>
-          <CardDescription>
-            Invites that haven&apos;t been accepted yet. They expire 7 days after they&apos;re sent.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {invites.length === 0 ? (
-            <p className="text-sm text-fg-secondary">No pending invites.</p>
-          ) : (
-            <ul className="flex flex-col divide-y divide-hairline">
-              {invites.map((invite) => (
-                <li key={invite.id} className="flex items-center justify-between gap-4 py-3">
-                  <div className="flex min-w-0 flex-col gap-1">
-                    <span className="truncate font-medium text-fg">{invite.invitedEmail}</span>
-                    <span className="text-xs text-fg-secondary">
-                      Expires {new Date(invite.expiresAt).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Badge tone="neutral">{roleLabel(invite.role)}</Badge>
-                    {canManage ? (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => {
-                          setDialogError(null);
-                          setRevokingInvite(invite);
-                        }}
-                      >
-                        Revoke
-                      </Button>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
+        <CardContent className="p-0">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Role</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="w-px text-right">
+                  <span className="sr-only">Actions</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.length === 0 ? (
+                <TableRow>
+                  <TableEmpty colSpan={5}>Nobody here yet.</TableEmpty>
+                </TableRow>
+              ) : null}
+
+              {rows.map((row) => {
+                if (row.kind === "invite") {
+                  const invite = row.invite;
+                  return (
+                    <TableRow key={row.key}>
+                      {/* An invited person has no name yet — they have not accepted, so we have never met
+                          them. Saying so is more honest than repeating their email into the Name column. */}
+                      <TableCell className="text-fg-muted">—</TableCell>
+                      <TableCell className="font-medium text-fg">{invite.invitedEmail}</TableCell>
+                      <TableCell>{roleLabel(invite.role)}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <span>
+                            <Badge tone="warn">Pending</Badge>
+                          </span>
+                          <span className="text-xs text-fg-muted">
+                            Expires {expiryLabel(invite.expiresAt)}
+                          </span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {canManage ? (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger
+                              aria-label={`Actions for the invite to ${invite.invitedEmail}`}
+                              className="inline-grid size-8 place-items-center rounded-control text-fg-secondary outline-none transition-colors hover:bg-surface-sunken hover:text-fg focus-visible:shadow-[var(--wh-focus-ring)]"
+                            >
+                              <Dots />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                destructive
+                                onSelect={() => {
+                                  setDialogError(null);
+                                  setRevokingInvite(invite);
+                                }}
+                              >
+                                Revoke invite
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        ) : null}
+                      </TableCell>
+                    </TableRow>
+                  );
+                }
+
+                const m = row.member;
+                const isYou = m.userId === callerId;
+                const canAct = actionable(m);
+                // Only the roles you may grant, and never the one they already hold — an item that changes
+                // nothing is not an action.
+                const otherRoles = grantableRoles.filter((r) => r !== m.role);
+
+                return (
+                  <TableRow key={row.key}>
+                    <TableCell className="font-medium text-fg">
+                      <span className="flex items-center gap-2">
+                        <span className="truncate">{m.name || "—"}</span>
+                        {isYou ? <Badge tone="neutral">You</Badge> : null}
+                      </span>
+                    </TableCell>
+                    <TableCell>{m.email}</TableCell>
+                    <TableCell>{roleLabel(m.role)}</TableCell>
+                    <TableCell>
+                      <Badge tone="ok">Active</Badge>
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {canAct ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger
+                            aria-label={`Actions for ${m.name || m.email}`}
+                            className="inline-grid size-8 place-items-center rounded-control text-fg-secondary outline-none transition-colors hover:bg-surface-sunken hover:text-fg focus-visible:shadow-[var(--wh-focus-ring)]"
+                          >
+                            <Dots />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {otherRoles.map((r) => (
+                              <DropdownMenuItem
+                                key={r}
+                                onSelect={() => {
+                                  setDialogError(null);
+                                  setRoleChange({ member: m, newRole: r });
+                                }}
+                              >
+                                Make {roleLabel(r).toLowerCase()}
+                              </DropdownMenuItem>
+                            ))}
+                            {otherRoles.length > 0 ? <DropdownMenuSeparator /> : null}
+                            <DropdownMenuItem
+                              destructive
+                              onSelect={() => {
+                                setDialogError(null);
+                                setRemovingMember(m);
+                              }}
+                            >
+                              Remove from organization
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
 

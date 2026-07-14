@@ -37,12 +37,9 @@ export default async function TeamPage({ params }: { params: Promise<{ slug: str
 
   return (
     <PageContainer>
-      <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-heading text-fg">Team</h1>
-        <p className="leading-snug text-fg-secondary">
-          The people in your organization and the invites waiting to be accepted.
-        </p>
-      </div>
+      {/* The heading lives INSIDE TeamManager, next to the Invite button it shares a row with. Two components
+          cannot own opposite ends of the same flex row, and the button has to be a client component (it opens
+          a dialog) — so the header goes to the client, rather than the button being marooned in a card. */}
       <TeamManager
         result={result}
         grantableRoles={grantableRoles}
