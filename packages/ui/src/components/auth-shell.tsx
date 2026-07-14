@@ -16,6 +16,11 @@ export interface AuthShellProps {
   side?: "left" | "right";
   /** When set, the lockup links to this href (the brand "home"). */
   homeHref?: string;
+  /**
+   * Center the lockup ABOVE the form card instead of in the top-left bar. Used by onboarding, where the
+   * lockup is the page's focal brand moment rather than a nav anchor. The top bar then carries only `actions`.
+   */
+  centerLockup?: boolean;
   className?: string;
 }
 
@@ -32,6 +37,7 @@ export function AuthShell({
   visual,
   side = "right",
   homeHref,
+  centerLockup = false,
   className,
 }: AuthShellProps) {
   const lockup = homeHref ? (
@@ -57,11 +63,19 @@ export function AuthShell({
           side === "left" ? "min-[880px]:order-2" : "",
         )}
       >
-        <div className="flex items-center justify-between gap-3">
-          {lockup}
+        {/* Top bar: the lockup sits here unless it is centered above the form, in which case only the
+            actions (theme toggle) remain, right-aligned. */}
+        <div
+          className={cn(
+            "flex items-center gap-3",
+            centerLockup ? "justify-end" : "justify-between",
+          )}
+        >
+          {centerLockup ? null : lockup}
           {actions}
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-[22px] py-8">
+          {centerLockup ? <div className="flex w-full justify-center">{lockup}</div> : null}
           <div className="w-full max-w-[366px]">{children}</div>
           {footer ? <div className="w-full max-w-[366px]">{footer}</div> : null}
         </div>

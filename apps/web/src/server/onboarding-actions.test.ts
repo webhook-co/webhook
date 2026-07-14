@@ -270,6 +270,22 @@ describe("completeOnboardingAction — validation and failure mapping", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
+  it("rejects a one-character first name (minimum is two)", async () => {
+    const res = await completeOnboardingAction(form({ firstName: "A", lastName: "Lovelace" }));
+    expect(res).toMatchObject({ ok: false, field: "firstName" });
+    expect((res as { error: string }).error).toMatch(/2 characters/i);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("accepts a missing last name — it is optional", async () => {
+    // firstName ≥ 2, no lastName: onboarding completes (invited path → name only, lands on the team).
+    readUserOrgDirectory.mockResolvedValue([teamOrg]);
+    await expect(completeOnboardingAction(form({ firstName: "Ada" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard",
+    );
+    expect(complete).toHaveBeenCalledWith("usr_1", "Ada", "");
+  });
+
   it("rejects an over-long first name, attributed to the first-name field", async () => {
     const res = await completeOnboardingAction(form({ firstName: "a".repeat(81) }));
     expect(res).toMatchObject({ ok: false, field: "firstName" });

@@ -20,7 +20,7 @@ describe("OnboardingForm", () => {
   it("arrives pre-filled with the mapped name", () => {
     render(<OnboardingForm {...props()} />);
     expect(screen.getByLabelText("First name")).toHaveValue("Ada");
-    expect(screen.getByLabelText("Last name")).toHaveValue("Lovelace");
+    expect(screen.getByLabelText(/last name/i)).toHaveValue("Lovelace");
   });
 
   // An invited teammate already has a real org — they must not be asked to name one.
@@ -94,6 +94,30 @@ describe("OnboardingForm", () => {
     await userEvent.click(screen.getByRole("button", { name: /get started/i }));
 
     expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("requires the first name to be at least two characters (button disabled at one)", async () => {
+    const complete = vi.fn(async () => ({ ok: true as const }));
+    render(<OnboardingForm {...props({ complete, needsOrgName: false })} />);
+
+    const first = screen.getByLabelText("First name");
+    await userEvent.clear(first);
+    await userEvent.type(first, "A");
+    const button = screen.getByRole("button", { name: /get started/i });
+    expect(button).toBeDisabled();
+    await userEvent.type(first, "l"); // now "Al" — two chars
+    expect(button).toBeEnabled();
+  });
+
+  it("does not require a last name — it is optional", async () => {
+    const complete = vi.fn(async () => ({ ok: true as const }));
+    render(<OnboardingForm {...props({ complete, needsOrgName: false })} />);
+
+    await userEvent.clear(screen.getByLabelText(/last name/i));
+    await userEvent.click(screen.getByRole("button", { name: /get started/i }));
+
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect((complete.mock.calls[0][0] as FormData).get("lastName")).toBe("");
   });
 
   // A fresh signup must NAME their org — clearing the pre-filled field must not silently onboard them with the

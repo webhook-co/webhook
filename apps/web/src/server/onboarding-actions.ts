@@ -23,6 +23,8 @@ import { verifySession } from "./session";
 // the verified userId), the org rename is the user's OWN personal org (derived + role re-checked). No URL org.
 
 const MAX_NAME_LEN = 80;
+/** First name is required + at least this long; last name is optional. The client mirrors this. */
+const MIN_FIRST_NAME_LEN = 2;
 
 export type CompleteOnboardingResult =
   | { readonly ok: true }
@@ -65,8 +67,12 @@ export async function completeOnboardingAction(
   const inviteQuery =
     rawInvite && ["accepted", "invalid", "error"].includes(rawInvite) ? `?invite=${rawInvite}` : "";
 
-  if (firstName.length === 0) {
-    return { ok: false, error: "Tell us your first name.", field: "firstName" };
+  if (firstName.length < MIN_FIRST_NAME_LEN) {
+    return {
+      ok: false,
+      error: "Enter your first name (at least 2 characters).",
+      field: "firstName",
+    };
   }
   // Attribute a too-long name to the OFFENDING field — a long last name marked as a first-name error would
   // paint the wrong (valid) field red and send the user to fix the wrong one.

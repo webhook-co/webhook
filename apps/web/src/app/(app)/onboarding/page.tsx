@@ -35,7 +35,7 @@ export default async function OnboardingPage({
   if (!decision.show) redirect(invite ? `/?invite=${invite}` : "/");
 
   return (
-    <AuthShell homeHref="/" actions={<ThemeToggle />}>
+    <AuthShell homeHref="/" centerLockup actions={<ThemeToggle />}>
       <OnboardingForm
         firstName={decision.firstName}
         lastName={decision.lastName}
