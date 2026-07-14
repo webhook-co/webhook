@@ -57,6 +57,12 @@ vi.mock("./invite-email", () => ({
 }));
 // withTenantDb(fn) → fn(app); the db invite fns are mocked, so app is a stub.
 vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({}) }));
+const readInviteCookie = vi.fn(async (): Promise<{ org: string; token: string } | null> => null);
+const clearInviteCookie = vi.fn(async () => {});
+vi.mock("./invite-cookie", () => ({
+  readInviteCookie: () => readInviteCookie(),
+  clearInviteCookie: () => clearInviteCookie(),
+}));
 
 import { acceptInviteAction, createInviteAction, revokeInviteAction } from "./invite-actions";
 
@@ -222,6 +228,43 @@ describe("acceptInviteAction", () => {
       "NEXT_REDIRECT:/org/acme/dashboard?invite=invalid",
     );
     expect(acceptInvite).not.toHaveBeenCalled();
+  });
+
+  it("reads the token from the invite cookie when the form has none (returned new invitee)", async () => {
+    readInviteCookie.mockResolvedValueOnce({ org: "org_x", token: "whinv_cookie" });
+    acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
+    await expect(acceptInviteAction(form({ org: "org_x" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard?invite=accepted",
+    );
+    expect(acceptInvite).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      expect.objectContaining({ orgId: "org_x", token: "whinv_cookie" }),
+    );
+  });
+
+  it("prefers the FORM token over the cookie (never reads the cookie when the URL has it)", async () => {
+    acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
+    await expect(acceptInviteAction(form({ org: "org_x", token: "whinv_url" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard?invite=accepted",
+    );
+    expect(readInviteCookie).not.toHaveBeenCalled();
+    expect(acceptInvite.mock.calls[0]![2]).toMatchObject({ token: "whinv_url" });
+  });
+
+  it("ignores a cookie token whose org does not match this accept", async () => {
+    readInviteCookie.mockResolvedValueOnce({ org: "org_other", token: "whinv_cookie" });
+    await expect(acceptInviteAction(form({ org: "org_x" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard?invite=invalid",
+    );
+    expect(acceptInvite).not.toHaveBeenCalled(); // no usable token → no attempt
+  });
+
+  it("clears the invite cookie after the attempt (accepted or not)", async () => {
+    readInviteCookie.mockResolvedValueOnce({ org: "org_x", token: "whinv_cookie" });
+    acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
+    await expect(acceptInviteAction(form({ org: "org_x" }))).rejects.toThrow(/NEXT_REDIRECT/);
+    expect(clearInviteCookie).toHaveBeenCalledOnce();
   });
 
   // 🔑 A SUCCESSFUL accept must never sign the user out.

@@ -11,6 +11,7 @@ import { redirect } from "next/navigation";
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
 import { getAppBaseUrl, getAuditChainKey, getCredentialPepper, getResendApiKey } from "./env";
+import { clearInviteCookie, readInviteCookie } from "./invite-cookie";
 import { sendInviteEmail } from "./invite-email";
 import { requireOrgAccess } from "./org-access";
 import { LOGOUT_URL, verifySession } from "./session";
@@ -180,7 +181,14 @@ export async function revokeInviteAction(
 export async function acceptInviteAction(formData: FormData): Promise<void> {
   const session = await verifySession();
   const orgId = String(formData.get("org") ?? "");
-  const token = String(formData.get("token") ?? "");
+  // The token comes from the form (an already-signed-in user clicked the link, token in the URL) OR — for a
+  // brand-new invitee who was returned here through login — from the encrypted app-origin invite cookie. The
+  // cookie's org must match this accept's org, so a stale cookie for a different invite is ignored.
+  let token = String(formData.get("token") ?? "");
+  if (!token && orgId) {
+    const cookie = await readInviteCookie();
+    if (cookie && cookie.org === orgId) token = cookie.token;
+  }
 
   let outcome: "accepted" | "invalid" | "error" = "invalid";
   if (orgId && token) {
@@ -201,6 +209,12 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
       outcome = "error";
     }
   }
+
+  // The invite attempt is over (accepted / invalid / error) — retire the one-shot invite cookie so a stale
+  // token can't be replayed on a later submit. A no-op when there was none (the URL-token path). Cleared
+  // BEFORE the redirect, since redirect() throws.
+  await clearInviteCookie();
+
   // Where to land, and the RULE THAT MATTERS: a SUCCESSFUL accept must never sign the user out.
   //
   // The naive version read the directory again to turn the joined org into a slug, and fell back to
