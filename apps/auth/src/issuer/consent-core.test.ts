@@ -53,7 +53,7 @@ function buildDeps(over: Partial<BuildConsentDeps> = {}): {
     ticketTtlSeconds: TICKET_TTL,
     consentPath: "/consent",
     lookupClientName: async () => "webhook CLI",
-    listConsentOrgs: async () => [{ orgId: "org_dana", name: "Dana's projects" }],
+    listConsentOrgs: async () => [{ orgId: "org_dana", slug: "dana", name: "Dana's projects" }],
     signTicket: async (payload) => {
       signed.payload = payload;
       return "TICKET";
@@ -298,6 +298,52 @@ describe("buildConsent", () => {
     const result = await buildConsent(deps, authRequest(), "user_dana", ORIGIN);
     expect(result.kind).toBe("consent");
     expect(signed.payload!.clientName).toBe("cli_wbhk");
+  });
+});
+
+describe("buildConsent — ?organization= hint (pre-selects the default, non-authoritative)", () => {
+  // A user in two orgs; the directory orders the personal org first (the natural default).
+  const multiOrg = () => [
+    { orgId: "org_dana", slug: "dana", name: "Dana's projects" },
+    { orgId: "org_acme", slug: "acme", name: "Acme Team" },
+  ];
+
+  it("moves a hinted MEMBER org to the default (sealed orgId), case-insensitively", async () => {
+    const { deps, signed } = buildDeps({ listConsentOrgs: async () => multiOrg() });
+    const result = await buildConsent(deps, authRequest(), "user_dana", ORIGIN, "ACME");
+    expect(result.kind).toBe("consent");
+    expect(signed.payload!.orgId).toBe("org_acme"); // the hinted org is the pre-selected default
+    expect(signed.payload!.orgName).toBe("Acme Team");
+  });
+
+  it("never changes WHICH orgs are offered — the sealed allowlist is the same set, only reordered", async () => {
+    const { deps, signed } = buildDeps({ listConsentOrgs: async () => multiOrg() });
+    await buildConsent(deps, authRequest(), "user_dana", ORIGIN, "acme");
+    // Same membership as without a hint (org_dana + org_acme), so the decision-time allowlist is unchanged.
+    expect([...signed.payload!.orgs].map((o) => o.id).sort()).toEqual(["org_acme", "org_dana"]);
+  });
+
+  it("ignores an UNKNOWN slug — default stays the personal/first org", async () => {
+    const { deps, signed } = buildDeps({ listConsentOrgs: async () => multiOrg() });
+    await buildConsent(deps, authRequest(), "user_dana", ORIGIN, "does-not-exist");
+    expect(signed.payload!.orgId).toBe("org_dana");
+  });
+
+  it("treats a NON-MEMBER slug identically to an unknown one (no membership oracle)", async () => {
+    // A slug the user is not a member of simply isn't in their list, so it can't match — same output as an
+    // unknown slug. The response is byte-identical either way, so it leaks nothing about org existence.
+    const { deps: d1, signed: s1 } = buildDeps({ listConsentOrgs: async () => multiOrg() });
+    await buildConsent(d1, authRequest(), "user_dana", ORIGIN, "someone-elses-org");
+    const { deps: d2, signed: s2 } = buildDeps({ listConsentOrgs: async () => multiOrg() });
+    await buildConsent(d2, authRequest(), "user_dana", ORIGIN, "also-not-real");
+    expect(s1.payload!.orgId).toBe("org_dana");
+    expect(s2.payload!.orgId).toBe("org_dana");
+  });
+
+  it("no hint → default is the personal/first org (unchanged behaviour)", async () => {
+    const { deps, signed } = buildDeps({ listConsentOrgs: async () => multiOrg() });
+    await buildConsent(deps, authRequest(), "user_dana", ORIGIN);
+    expect(signed.payload!.orgId).toBe("org_dana");
   });
 });
 
@@ -736,7 +782,7 @@ function deviceConsentDeps(over: Partial<BuildDeviceConsentDeps> = {}): {
     ticketTtlSeconds: TICKET_TTL,
     consentPath: "/consent",
     lookupClientName: async () => "webhook CLI",
-    listConsentOrgs: async () => [{ orgId: "org_dana", name: "Dana's projects" }],
+    listConsentOrgs: async () => [{ orgId: "org_dana", slug: "dana", name: "Dana's projects" }],
     signTicket: async (payload) => {
       signed.payload = payload;
       return "TICKET";
@@ -754,6 +800,33 @@ const DEVICE_RECORD = {
   scopes: ["events:read", "events:replay"],
   audience: API,
 };
+
+describe("buildDeviceConsent — ?organization= hint from the device-code record", () => {
+  const multiOrg = () => [
+    { orgId: "org_dana", slug: "dana", name: "Dana's projects" },
+    { orgId: "org_acme", slug: "acme", name: "Acme Team" },
+  ];
+
+  it("pre-selects the hinted member org captured at /device_authorization", async () => {
+    const { deps, signed } = deviceConsentDeps({ listConsentOrgs: async () => multiOrg() });
+    const result = await buildDeviceConsent(
+      deps,
+      { ...DEVICE_RECORD, orgHint: "acme" },
+      "user_dana",
+      ORIGIN,
+    );
+    expect(result.kind).toBe("consent");
+    expect(signed.payload!.orgId).toBe("org_acme");
+    // the offered set is unchanged — only the default moved.
+    expect([...signed.payload!.orgs].map((o) => o.id).sort()).toEqual(["org_acme", "org_dana"]);
+  });
+
+  it("ignores an unknown/non-member hint — default stays the first org", async () => {
+    const { deps, signed } = deviceConsentDeps({ listConsentOrgs: async () => multiOrg() });
+    await buildDeviceConsent(deps, { ...DEVICE_RECORD, orgHint: "nope" }, "user_dana", ORIGIN);
+    expect(signed.payload!.orgId).toBe("org_dana");
+  });
+});
 
 describe("buildDeviceConsent", () => {
   it("seals a device ticket (flow=device_code, userCode) and redirects to the shared consent screen", async () => {

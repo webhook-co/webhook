@@ -23,6 +23,8 @@
 //   - no token material (access/refresh token, auth code, PKCE verifier, opaque token) is ever logged
 //     or echoed back in an error.
 
+import type { OrgIdentity } from "@webhook-co/contract";
+
 /** The frozen `/token` response body — the C↔D contract (lane-c plan §10). Exactly these fields. */
 export interface FrozenTokenBody {
   access_token: string;
@@ -31,6 +33,76 @@ export interface FrozenTokenBody {
   refresh_token: string;
   scope: string;
   resource: string;
+  /**
+   * The bound org's public identity {id, slug, name} — so the CLI can name a login profile after the org it
+   * landed in. OPTIONAL and best-effort: omitted for an older deployment that doesn't resolve it, or when the
+   * org can't be resolved / is degenerate (an empty name that fails the wire schema). A login must never
+   * break because the org label couldn't be built — the client falls back to `whoami`.
+   */
+  organization?: OrgIdentity;
+}
+
+/** Distinct from a legit `null` org row (which means "no such org"): the read didn't finish in time. */
+const ORG_READ_TIMEOUT = Symbol("org_read_timeout");
+
+/**
+ * How long the OPTIONAL org-label read may take before it is abandoned. This read runs AFTER the key +
+ * refresh handle are already minted (and, on refresh, after the presented handle is irreversibly burned), so
+ * a HANG here — not just a rejection — would strand the client on a spent handle and never deliver the token
+ * it already owns. The whole point of the field is to be droppable; bounding the wait keeps "a login never
+ * breaks because the org label couldn't be built" true even under DB-pool exhaustion / a network partition,
+ * where the read stalls rather than erroring. Cosmetic label ⇒ a short ceiling is correct.
+ */
+const ORG_ENRICH_TIMEOUT_MS = 2_000;
+
+/**
+ * Best-effort resolve the bound org's identity for the token-response `organization` field. Never throws AND
+ * never blocks the response: returns undefined when there's no resolver, the read times out, the org row is
+ * missing, the row is degenerate (empty field — e.g. `orgs.name` is `text not null` with no non-empty CHECK),
+ * or the read faults. The field is optional, so a login the user is entitled to must never fail — or hang —
+ * because its org label couldn't be produced. Each drop reason logs a distinct signal so a persistent
+ * org-read outage (fault, timeout, or an RLS regression that returns no rows) is never invisible.
+ */
+export async function resolveOrgForTokenBody(
+  resolve: ((orgId: string) => Promise<OrgIdentity | null>) | undefined,
+  orgId: string,
+  log?: LogFn,
+  timeoutMs: number = ORG_ENRICH_TIMEOUT_MS,
+): Promise<OrgIdentity | undefined> {
+  if (!resolve) return undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const org = await Promise.race([
+      resolve(orgId),
+      new Promise<typeof ORG_READ_TIMEOUT>((resolveRace) => {
+        timer = setTimeout(() => resolveRace(ORG_READ_TIMEOUT), timeoutMs);
+      }),
+    ]);
+    if (org === ORG_READ_TIMEOUT) {
+      // The already-minted token is returned WITHOUT the label rather than waiting on a stalled read.
+      log?.("issuer.token_org_enrich_timeout");
+      return undefined;
+    }
+    if (!org) {
+      // The read succeeded but named no org. Membership was already asserted before the mint, so a null here
+      // is an anomaly (e.g. an RLS/withTenant regression), not the expected forward-compat "no resolver" case
+      // above — so it IS logged.
+      log?.("issuer.token_org_enrich_skipped", { reason: "org_not_found" });
+      return undefined;
+    }
+    // Degenerate row (any empty field). Kept as an inline non-empty check so this core stays import-free
+    // (matching how it name-matches errors rather than importing them); it mirrors the wire schema's min(1).
+    if (!org.id || !org.slug || !org.name) {
+      log?.("issuer.token_org_enrich_skipped", { reason: "invalid_org" });
+      return undefined;
+    }
+    return org;
+  } catch {
+    log?.("issuer.token_org_enrich_failed");
+    return undefined;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** OAuth 2.0 error codes this core emits (RFC 6749 §5.2 / RFC 8707 §2 / RFC 8628 §3.5). */
@@ -150,6 +222,11 @@ export interface AuthCodeDeps {
    * refresh needs no cross-org lookup — ADR-0028); both come from the consent props, never the request.
    */
   issueRefreshToken: (grantId: string, orgId: string, audience: string) => Promise<string>;
+  /**
+   * Best-effort resolve the bound org's {id,slug,name} for the response `organization` field (optional — see
+   * FrozenTokenBody). Never blocks the mint: a null/degenerate/faulting read just omits the label.
+   */
+  resolveOrgIdentity?: (orgId: string) => Promise<OrgIdentity | null>;
   defaultPendingInterval: number;
   log?: LogFn;
 }
@@ -214,6 +291,8 @@ export interface RefreshDeps {
     /** The scopes actually minted (the ceiling may have narrowed them) — reported, never the request. */
     scopes: readonly string[];
   }>;
+  /** Best-effort org-identity resolve for the response `organization` field (optional; see FrozenTokenBody). */
+  resolveOrgIdentity?: (orgId: string) => Promise<OrgIdentity | null>;
   log?: LogFn;
 }
 
@@ -372,6 +451,8 @@ export async function redeemAuthCode(
     scopeCount: scopes.length,
   });
 
+  const organization = await resolveOrgForTokenBody(deps.resolveOrgIdentity, props.orgId, deps.log);
+
   return {
     kind: "token",
     body: {
@@ -385,6 +466,7 @@ export async function redeemAuthCode(
       // the client it holds a scope it does not — which it would then use, and get an undiagnosable 403.
       scope: minted.scopes.join(" "),
       resource: props.audience,
+      ...(organization ? { organization } : {}),
     },
   };
 }
@@ -472,6 +554,8 @@ export async function redeemRefresh(deps: RefreshDeps, req: RefreshRequest): Pro
     scopeCount: scopes.length,
   });
 
+  const organization = await resolveOrgForTokenBody(deps.resolveOrgIdentity, grant.orgId, deps.log);
+
   return {
     kind: "token",
     body: {
@@ -483,6 +567,7 @@ export async function redeemRefresh(deps: RefreshDeps, req: RefreshRequest): Pro
       // DEMOTED user's client learns its token has shrunk, instead of discovering it at the next 403.
       scope: minted.scopes.join(" "),
       resource: grant.audience,
+      ...(organization ? { organization } : {}),
     },
   };
 }

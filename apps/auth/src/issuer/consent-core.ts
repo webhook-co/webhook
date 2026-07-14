@@ -73,7 +73,7 @@ export interface BuildConsentDeps {
    * list is sealed into the ticket as the allowlist the decision validates a picked org against. Empty ⇒ the
    * user has no org, which is a server error (bootstrap should have made one).
    */
-  listConsentOrgs: (userId: string) => Promise<{ orgId: string; name: string }[]>;
+  listConsentOrgs: (userId: string) => Promise<{ orgId: string; slug: string; name: string }[]>;
   /** Seal the authorization state + display fields into a signed, expiring ticket. */
   signTicket: (payload: ConsentTicketPayload) => Promise<string>;
   /** A fresh anti-CSRF nonce for this request. */
@@ -109,6 +109,26 @@ function intersect(requested: readonly string[], allowed: readonly string[]): st
 }
 
 /**
+ * Apply an optional `organization` slug HINT (from `?organization=` on /authorize or /device_authorization):
+ * if it names an org the user belongs to, move that org FIRST so the consent screen pre-selects it. It is a
+ * VIEW HINT ONLY, never authorization:
+ *   - it never changes WHICH orgs are offered — the returned set is exactly the input set, only reordered, so
+ *     the sealed allowlist and the live `isOrgMember` re-check at mint remain the sole security boundary;
+ *   - an unknown slug and a slug for an org the user is NOT in are treated identically (no match → unchanged),
+ *     so it is not a membership oracle;
+ *   - the org that lands in the issued token is still the one the user CONFIRMS, never the hinted default.
+ * Slugs are stored lowercase (citext), so match case-insensitively against the raw query value.
+ */
+function applyOrgHint<T extends { slug: string }>(
+  orgs: readonly T[],
+  hint: string | undefined,
+): readonly T[] {
+  if (!hint) return orgs;
+  const i = orgs.findIndex((o) => o.slug.toLowerCase() === hint.toLowerCase());
+  return i <= 0 ? orgs : [orgs[i]!, ...orgs.slice(0, i), ...orgs.slice(i + 1)];
+}
+
+/**
  * GET /authorize: validate the request, resolve the org + client + scopes + audience, and seal a consent
  * ticket. `userId` is the server-authenticated session user (the mount resolves it; null sessions are sent
  * to login before reaching here). v1 is the interactive loopback-PKCE flow (flow = "pkce_loopback").
@@ -118,6 +138,8 @@ export async function buildConsent(
   request: ConsentAuthRequest,
   userId: string,
   origin: AuthorizeOrigin,
+  /** Optional `?organization=<slug>` hint — pre-selects a member org as the default (see applyOrgHint). */
+  orgHint?: string,
 ): Promise<BuildConsentResult> {
   // The redirect_uri gates whether we can safely bounce errors back. Re-validate it against the policy for
   // THIS client kind — the DCR policy (http loopback / allowlisted-vendor https) for a DCR or first-party
@@ -152,7 +174,9 @@ export async function buildConsent(
     };
   }
 
-  const orgs = await deps.listConsentOrgs(userId);
+  // The hint only reorders which org is the DEFAULT; it never adds or removes an org (the sealed list below
+  // is the allowlist the decision validates against, and the mint re-asserts isOrgMember).
+  const orgs = applyOrgHint(await deps.listConsentOrgs(userId), orgHint);
   const org = orgs[0];
   if (!org) {
     deps.log?.("consent.no_org", { userId });
@@ -219,7 +243,7 @@ export interface BuildDeviceConsentDeps {
    * list is sealed into the ticket as the allowlist the decision validates a picked org against. Empty ⇒ the
    * user has no org, which is a server error (bootstrap should have made one).
    */
-  listConsentOrgs: (userId: string) => Promise<{ orgId: string; name: string }[]>;
+  listConsentOrgs: (userId: string) => Promise<{ orgId: string; slug: string; name: string }[]>;
   signTicket: (payload: ConsentTicketPayload) => Promise<string>;
   newCsrf: () => string;
   nowSeconds: () => number;
@@ -233,6 +257,8 @@ export interface DeviceConsentRecord {
   /** The scopes requested at /device_authorization. */
   scopes: string[];
   audience: string;
+  /** Optional `?organization=<slug>` hint captured at /device_authorization — pre-selects a member org. */
+  orgHint?: string;
 }
 
 export type BuildDeviceConsentResult =
@@ -269,7 +295,7 @@ export async function buildDeviceConsent(
     };
   }
 
-  const orgs = await deps.listConsentOrgs(userId);
+  const orgs = applyOrgHint(await deps.listConsentOrgs(userId), record.orgHint);
   const org = orgs[0];
   if (!org) {
     deps.log?.("consent.device.no_org", { userId });

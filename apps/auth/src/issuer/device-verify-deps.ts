@@ -77,6 +77,7 @@ export async function makeDeviceVerifyDeps(
         clientId: rec.clientId,
         scopes: rec.scopes,
         audience: rec.audience,
+        ...(rec.orgHint ? { orgHint: rec.orgHint } : {}),
       };
     },
     buildDeviceConsent: (record, userId, origin) =>

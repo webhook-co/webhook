@@ -12,8 +12,16 @@
 // true "by construction", and this core re-asserts it at the mint (isOrgMember), exactly like the auth-code
 // path. It also keeps the audience/scope defense-in-depth (never widen past capability, never mint blank).
 
+import type { OrgIdentity } from "@webhook-co/contract";
+
 import type { PollResult } from "./device-store";
-import type { MintInput, MintResult, OAuthErrorCode, RedeemResult } from "./token-core";
+import {
+  resolveOrgForTokenBody,
+  type MintInput,
+  type MintResult,
+  type OAuthErrorCode,
+  type RedeemResult,
+} from "./token-core";
 
 const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -43,6 +51,8 @@ export interface DeviceTokenDeps {
   issueRefreshToken: (grantId: string, orgId: string, audience: string) => Promise<string>;
   /** Compensation: revoke a just-minted grant/key if issuance can't complete. */
   rollbackMint: (grantId: string, orgId: string) => Promise<void>;
+  /** Best-effort org-identity resolve for the response `organization` field (optional; see FrozenTokenBody). */
+  resolveOrgIdentity?: (orgId: string) => Promise<OrgIdentity | null>;
   /** Interval (seconds) advertised on a still-pending org-approval (dormant in v1). */
   defaultPendingInterval: number;
   log?: LogFn;
@@ -158,6 +168,8 @@ export async function redeemDeviceCode(
     scopeCount: scopes.length,
   });
 
+  const organization = await resolveOrgForTokenBody(deps.resolveOrgIdentity, props.orgId, deps.log);
+
   return {
     kind: "token",
     body: {
@@ -168,6 +180,7 @@ export async function redeemDeviceCode(
       // What the key ACTUALLY carries — the ceiling may have narrowed it. See token-core.
       scope: minted.scopes.join(" "),
       resource: props.audience,
+      ...(organization ? { organization } : {}),
     },
   };
 }
