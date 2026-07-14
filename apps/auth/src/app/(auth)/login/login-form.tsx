@@ -110,13 +110,22 @@ export function LoginForm({
     setFormError(null);
     setPending(provider);
     try {
-      // The live action redirects to the provider; the mock resolves without navigating.
+      // Resolves once the browser is on its way to the provider — NOT once it has arrived. See below.
       await actions.continueWith(provider);
     } catch {
+      // ONLY an error clears the pending state.
+      //
+      // This used to be a `finally`, and that was the whole "clicking Sign in with Google does nothing" bug.
+      // `signIn.social` resolves as soon as it has handed off to the browser's navigation — which is BEFORE
+      // the browser has left the page. So the `finally` fired immediately: the buttons re-enabled, the spinner
+      // vanished, and the form snapped back to looking completely idle while the browser was still loading
+      // Google in the background. The user saw a flicker and then nothing, clicked again, and reasonably
+      // concluded it was broken.
+      //
+      // On the success path we now simply LEAVE IT PENDING. The page is on its way out; the last thing the
+      // user should see is the state they put it in. There is nothing to reset, because this document is
+      // about to be replaced.
       setFormError("That didn't work. Please try again.");
-    } finally {
-      // Reset so the non-redirecting mock leaves the form usable; harmless on the live path,
-      // where the redirect has already navigated away.
       setPending(null);
     }
   }
@@ -149,13 +158,26 @@ export function LoginForm({
 
       {formError ? <Banner tone="danger">{formError}</Banner> : null}
 
+      {/* `loading` (not just `disabled`) is the point: a disabled button says "unavailable", a busy one says
+          "heard you, working on it". The glyph is passed as `icon` so the spinner REPLACES it — otherwise the
+          button would show two marks and grow wider at the exact moment the user is looking at it. */}
       <div className="flex flex-col gap-2.5">
-        <Button variant="secondary" disabled={busy} onClick={() => handleProvider("google")}>
-          <GoogleGlyph />
+        <Button
+          variant="secondary"
+          icon={<GoogleGlyph />}
+          loading={pending === "google"}
+          disabled={busy}
+          onClick={() => handleProvider("google")}
+        >
           Continue with Google
         </Button>
-        <Button variant="secondary" disabled={busy} onClick={() => handleProvider("github")}>
-          <GithubGlyph />
+        <Button
+          variant="secondary"
+          icon={<GithubGlyph />}
+          loading={pending === "github"}
+          disabled={busy}
+          onClick={() => handleProvider("github")}
+        >
           Continue with GitHub
         </Button>
       </div>
@@ -179,8 +201,17 @@ export function LoginForm({
           disabled={busy}
         />
         <Captcha key={captchaNonce} onToken={setCaptchaToken} />
-        <Button type="submit" disabled={busy || !captchaToken}>
-          {pending === "magic" ? "Sending…" : "Send magic link"}
+        {/* Two different waits, and the button now names WHICH one it is in.
+            Before, both looked identical: a greyed-out button with the label "Send magic link" and no
+            explanation. The first wait (Turnstile solving, which takes a beat on load) therefore read as a
+            permanently broken control — the user pokes at it and blames us. Saying "Verifying you're human…"
+            costs nothing and removes the mystery entirely. */}
+        <Button type="submit" loading={pending === "magic" || !captchaToken} disabled={busy}>
+          {pending === "magic"
+            ? "Sending…"
+            : !captchaToken
+              ? "Verifying you're human…"
+              : "Send magic link"}
         </Button>
       </form>
 
