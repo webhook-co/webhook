@@ -9,8 +9,11 @@ import { gravatarHash, isAllowedProviderAvatar, resolveAvatarSource } from "./av
 //
 // The allowlist is the whole defence, so it is what gets tested hardest.
 describe("isAllowedProviderAvatar — the SSRF gate", () => {
-  it("allows the provider CDNs we actually use", () => {
-    expect(isAllowedProviderAvatar("https://lh3.googleusercontent.com/a/abc123")).toBe(true);
+  it("allows the provider CDNs we actually use — every Google shard, and GitHub", () => {
+    // Google shards avatars across lh3-lh6; a user whose picture lives on lh5 must not silently lose it.
+    for (const host of ["lh3", "lh4", "lh5", "lh6"]) {
+      expect(isAllowedProviderAvatar(`https://${host}.googleusercontent.com/a/abc123`)).toBe(true);
+    }
     expect(isAllowedProviderAvatar("https://avatars.githubusercontent.com/u/42?v=4")).toBe(true);
   });
 
@@ -71,6 +74,21 @@ describe("resolveAvatarSource", () => {
     });
 
     expect(source).toEqual({ kind: "provider", url: "https://avatars.githubusercontent.com/u/42" });
+  });
+
+  // The route must fetch the CANONICALIZED url, never the raw input — validating one string and fetching a
+  // different one is the parser-differential SSRF shape. So the source carries the re-serialized href.
+  it("returns the canonical URL for the provider, not the raw input", async () => {
+    const source = await resolveAvatarSource({
+      image: "https://lh3.googleusercontent.com/a/ABC?sz=100",
+      email: "dana@acme.co",
+      size: 32,
+    });
+
+    if (source.kind !== "provider") throw new Error("expected a provider source");
+    // Whatever we hand the fetch is a value that has already been through the URL parser.
+    expect(source.url).toBe(new URL(source.url).href);
+    expect(new URL(source.url).hostname).toBe("lh3.googleusercontent.com");
   });
 
   // The important half of the SSRF gate: an image we do NOT trust does not become a fetch. It falls through

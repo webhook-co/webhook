@@ -30,9 +30,19 @@ import "server-only";
  * through to Gravatar, and Gravatar's host is a constant.
  */
 
-/** The only hosts we will fetch a provider avatar from. Exact match, or a subdomain of a listed suffix. */
+/**
+ * The only hosts we will fetch a provider avatar from. EXACT match — not a suffix, so `evil-lh3…` and
+ * `lh3.googleusercontent.com.evil.test` are both out.
+ *
+ * Google shards avatars across `lh3`–`lh6`, so all four are listed — otherwise a user whose picture happens
+ * to live on `lh5` silently falls through to Gravatar. (An earlier comment claimed "subdomain of a listed
+ * suffix", which the code never did; the honest fix is to enumerate the real hosts, not to loosen the match.)
+ */
 const PROVIDER_AVATAR_HOSTS: readonly string[] = [
   "lh3.googleusercontent.com", // Google
+  "lh4.googleusercontent.com",
+  "lh5.googleusercontent.com",
+  "lh6.googleusercontent.com",
   "avatars.githubusercontent.com", // GitHub
 ];
 
@@ -43,18 +53,31 @@ export type AvatarSource =
   | { readonly kind: "gravatar"; readonly url: string }
   | { readonly kind: "none" };
 
-/** Is this a provider avatar URL we are willing to fetch? https only, host on the allowlist, nothing else. */
-export function isAllowedProviderAvatar(raw: string): boolean {
+/**
+ * If this is a provider avatar URL we are willing to fetch, return the RE-SERIALIZED URL; otherwise null.
+ *
+ * Returning `url.href` rather than a boolean is deliberate. The caller must fetch EXACTLY what was validated —
+ * the parsed, canonicalized form — never the raw input string. Validating one string and fetching another is
+ * the classic parser-differential SSRF: it is safe here only because `fetch` happens to use the same WHATWG
+ * parser, and "happens to" is not something a security boundary should rest on. Hand the caller the canonical
+ * URL and the gap cannot exist.
+ */
+export function allowedProviderAvatarUrl(raw: string): string | null {
   let url: URL;
   try {
     url = new URL(raw);
   } catch {
-    return false;
+    return null;
   }
   // http:// is refused even for an allowlisted host: it would let a network-position attacker swap the bytes,
   // and there is no reason for a provider CDN to be served over anything but https.
-  if (url.protocol !== "https:") return false;
-  return PROVIDER_AVATAR_HOSTS.includes(url.hostname);
+  if (url.protocol !== "https:") return null;
+  return PROVIDER_AVATAR_HOSTS.includes(url.hostname) ? url.href : null;
+}
+
+/** Boolean convenience over {@link allowedProviderAvatarUrl}, for tests and readability. */
+export function isAllowedProviderAvatar(raw: string): boolean {
+  return allowedProviderAvatarUrl(raw) !== null;
 }
 
 /**
@@ -86,9 +109,10 @@ export interface AvatarInput {
  * 404, we serve nothing, and the UI falls back to their initials, which are at least about them.
  */
 export async function resolveAvatarSource(input: AvatarInput): Promise<AvatarSource> {
-  if (input.image && isAllowedProviderAvatar(input.image)) {
-    return { kind: "provider", url: input.image };
-  }
+  // The CANONICAL url, not the raw input — the route fetches exactly this, so there is no validated-one /
+  // fetched-another gap to worry about.
+  const provider = input.image ? allowedProviderAvatarUrl(input.image) : null;
+  if (provider) return { kind: "provider", url: provider };
   if (!input.email.includes("@")) return { kind: "none" };
 
   const hash = await gravatarHash(input.email);
