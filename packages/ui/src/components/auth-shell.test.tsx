@@ -55,6 +55,32 @@ describe("AuthShell", () => {
     expect(screen.getByRole("link", { name: "webhook.co home" })).toHaveAttribute("href", "/");
   });
 
+  it("moves the lockup out of the top bar (above the form) when centerLockup is set", () => {
+    render(
+      <AuthShell centerLockup homeHref="/" actions={<button>toggle theme</button>}>
+        <form aria-label="sign in">body</form>
+      </AuthShell>,
+    );
+    const lockup = screen.getByRole("link", { name: "webhook.co home" });
+    const toggle = screen.getByRole("button", { name: "toggle theme" });
+    // Still present, still in the main pane…
+    expect(lockup).toBeInTheDocument();
+    expect(screen.getByRole("main")).toContainElement(lockup);
+    // …but NOT sharing the top bar with the actions — it has moved above the form card.
+    expect(lockup.parentElement).not.toBe(toggle.parentElement);
+  });
+
+  it("keeps the lockup in the top bar (with the actions) by default", () => {
+    render(
+      <AuthShell homeHref="/" actions={<button>toggle theme</button>}>
+        x
+      </AuthShell>,
+    );
+    const lockup = screen.getByRole("link", { name: "webhook.co home" });
+    const toggle = screen.getByRole("button", { name: "toggle theme" });
+    expect(lockup.parentElement).toBe(toggle.parentElement);
+  });
+
   it("reflects the visual side via data-side", () => {
     const { container } = render(
       <AuthShell side="left" visual={<p>v</p>}>

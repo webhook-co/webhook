@@ -270,6 +270,24 @@ describe("completeOnboardingAction — validation and failure mapping", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
+  it("accepts a single-character first name — a legitimate given name (CJK glyph, initial)", async () => {
+    // Required means non-empty, NOT a 2-char floor: single-character given names are real.
+    readUserOrgDirectory.mockResolvedValue([teamOrg]);
+    await expect(completeOnboardingAction(form({ firstName: "伟" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard",
+    );
+    expect(complete).toHaveBeenCalledWith("usr_1", "伟", "");
+  });
+
+  it("accepts a missing last name — it is optional", async () => {
+    // firstName ≥ 2, no lastName: onboarding completes (invited path → name only, lands on the team).
+    readUserOrgDirectory.mockResolvedValue([teamOrg]);
+    await expect(completeOnboardingAction(form({ firstName: "Ada" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard",
+    );
+    expect(complete).toHaveBeenCalledWith("usr_1", "Ada", "");
+  });
+
   it("rejects an over-long first name, attributed to the first-name field", async () => {
     const res = await completeOnboardingAction(form({ firstName: "a".repeat(81) }));
     expect(res).toMatchObject({ ok: false, field: "firstName" });

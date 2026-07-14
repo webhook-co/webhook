@@ -23,6 +23,12 @@ function isRedirectError(err: unknown): boolean {
 
 /** Mirrors the server's cap in onboarding-actions.ts — the client caps input so the server never has to. */
 const MAX_NAME_LEN = 80;
+/**
+ * First name is REQUIRED (non-empty after trim); the last name is optional. Minimum is 1, deliberately: a
+ * single character is a legitimate given name (many CJK given names are one glyph; single-letter names and
+ * initials exist too), so we enforce "present", not a length floor. Mirrored on the server.
+ */
+const MIN_FIRST_NAME_LEN = 1;
 
 export interface OnboardingFormProps {
   readonly firstName: string;
@@ -93,7 +99,7 @@ export function OnboardingForm({
     event.preventDefault();
     setError(null);
     setFieldError(undefined);
-    if (firstName.trim().length === 0) {
+    if (firstName.trim().length < MIN_FIRST_NAME_LEN) {
       setFieldError("firstName");
       setError("Tell us your first name.");
       return;
@@ -140,7 +146,7 @@ export function OnboardingForm({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-heading text-fg">Welcome to webhook.co</h1>
+        <h1 className="text-2xl font-semibold tracking-heading text-fg">Welcome aboard</h1>
         <p className="leading-snug text-fg-secondary">
           {needsOrgName ? "A couple of details and you're in." : "Just your name and you're in."}
         </p>
@@ -158,17 +164,17 @@ export function OnboardingForm({
             autoComplete="given-name"
             maxLength={MAX_NAME_LEN}
             error={fieldError === "firstName" ? " " : undefined}
-            className="flex-1"
+            fieldClassName="flex-1"
           />
           <Field
-            label="Last name"
+            label="Last name (optional)"
             value={lastName}
             onChange={(e) => setLastName(e.target.value)}
             disabled={pending}
             autoComplete="family-name"
             maxLength={MAX_NAME_LEN}
             error={fieldError === "lastName" ? " " : undefined}
-            className="flex-1"
+            fieldClassName="flex-1"
           />
         </div>
 
@@ -208,7 +214,7 @@ export function OnboardingForm({
           type="submit"
           loading={pending}
           disabled={
-            firstName.trim().length === 0 ||
+            firstName.trim().length < MIN_FIRST_NAME_LEN ||
             Boolean(slugError) ||
             (needsOrgName && (orgName.trim().length === 0 || slug.trim().length === 0))
           }
