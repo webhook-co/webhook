@@ -31,6 +31,7 @@ import { augmentAsMetadataResponse } from "./issuer/as-metadata";
 import { guardRegister } from "./issuer/register-guard";
 import type { RateLimitKv } from "./issuer/rate-limit";
 import { deleteAccountRpc } from "./issuer/account-delete-deps";
+import { completeOnboardingRpc, readOnboardingRpc } from "./issuer/onboarding-deps";
 import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
 import { runNotificationDrain } from "./runtime/notify-cron";
@@ -116,6 +117,19 @@ export class SessionExchange extends WorkerEntrypoint {
 export class AccountDeleter extends WorkerEntrypoint {
   async deleteAccount(userId) {
     return deleteAccountRpc(this.env, userId);
+  }
+}
+
+// OnboardingProfile: the web→auth onboarding RPC. Onboarding writes the user's first/last name and stamps
+// `onboardedAt` on the identity table — which only this Worker (webhook_auth) may touch, so apps/web verifies
+// the session and passes its OWN userId over this worker-to-worker binding (never public). A user can only
+// ever read or complete their own onboarding. Delegates to the type-checked handlers.
+export class OnboardingProfile extends WorkerEntrypoint {
+  async read(userId) {
+    return readOnboardingRpc(this.env, userId);
+  }
+  async complete(userId, firstName, lastName) {
+    return completeOnboardingRpc(this.env, { userId, firstName, lastName });
   }
 }
 
