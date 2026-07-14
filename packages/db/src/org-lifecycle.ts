@@ -1,4 +1,8 @@
-import { formatAuditActor, type AuditActorInput } from "@webhook-co/shared";
+import {
+  formatAuditActor,
+  isLiveSubscriptionStatus,
+  type AuditActorInput,
+} from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql } from "./client";
@@ -170,6 +174,27 @@ export async function deleteOrgWithAudit(
     await tx`
       insert into org_deletions (org_id, requested_by)
       values (${input.orgId}, ${requestedBy})`;
+    // Capture the org's live Stripe subscription BEFORE the delete cascades billing_subscriptions
+    // away, and enqueue a cancellation the apps/api cron drains against Stripe. Without this a paying
+    // customer who deletes their account (or a paid org) keeps being charged forever, and the row that
+    // would let anyone reconcile it is gone. Canceling inline is unsafe (this delete is one of a loop of
+    // separate transactions + a cross-worker RPC): a cancel-then-DB-fail would leave a live org with a
+    // canceled subscription, which effectiveBillingPeriod drops to the exhausted Free lifetime basis and
+    // the cap producer then PAUSES the payer's ingest. webhook_app has tenant-scoped SELECT on
+    // billing_subscriptions; only a subscription that still EXISTS at Stripe (isLiveSubscriptionStatus)
+    // needs canceling — a canceled/expired one is a no-op. `on conflict` keeps a re-delete idempotent.
+    // The explicit org_id predicate is defense-in-depth beyond RLS (same reasoning as
+    // readOrgMembershipCensus above): RLS policies are permissive/OR'd, so a future policy must never be
+    // able to widen this read into another tenant's subscription id.
+    const [sub] = await tx<{ stripeSubscriptionId: string; status: string }[]>`
+      select stripe_subscription_id as "stripeSubscriptionId", status
+      from billing_subscriptions where org_id = ${input.orgId}`;
+    if (sub && isLiveSubscriptionStatus(sub.status)) {
+      await tx`
+        insert into org_billing_cancellations (org_id, stripe_subscription_id)
+        values (${input.orgId}, ${sub.stripeSubscriptionId})
+        on conflict (org_id) do nothing`;
+    }
     // Hard-delete: every org_id child cascades; the two WORM audit tables + org_deletions persist.
     const [row] = await tx<{ deletedAt: string }[]>`
       delete from orgs where id = ${input.orgId} returning now()::text as "deletedAt"`;
