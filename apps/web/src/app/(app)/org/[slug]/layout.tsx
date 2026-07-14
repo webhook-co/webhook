@@ -54,7 +54,14 @@ export default async function OrgLayout({
         />
       }
       sidebarFooter={
-        <AccountMenu name={access.user.name} email={access.user.email} onLogout={logout} />
+        <AccountMenu
+          name={access.user.name}
+          email={access.user.email}
+          // Passed explicitly. The menu used to read the slug off the URL, which quietly breaks the moment it
+          // is mounted anywhere without one — as it now is, on /account.
+          orgSlug={access.slug}
+          onLogout={logout}
+        />
       }
       topBar={
         <>
