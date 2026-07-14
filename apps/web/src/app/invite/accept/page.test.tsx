@@ -2,16 +2,12 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getSessionOrNull = vi.fn();
-const loginUrlWithReturn = vi.fn((p: string) => `LOGIN(${p})`);
 vi.mock("@/server/session", () => ({
   getSessionOrNull: () => getSessionOrNull(),
-  loginUrlWithReturn: (p: string) => loginUrlWithReturn(p),
 }));
 
-const setInviteCookie = vi.fn(async () => {});
 const readInviteCookie = vi.fn(async (): Promise<{ org: string; token: string } | null> => null);
 vi.mock("@/server/invite-cookie", () => ({
-  setInviteCookie: (...a: unknown[]) => setInviteCookie(...a),
   readInviteCookie: () => readInviteCookie(),
 }));
 
@@ -38,19 +34,18 @@ beforeEach(() => {
 });
 
 describe("AcceptInvitePage", () => {
-  it("unauthenticated: stashes {org,token} in the cookie and returns through login (token NOT in the path)", async () => {
+  // A Server Component render can't set a cookie, so the unauth branch hands off to the /invite/start route
+  // handler (which stashes the cookie) — forwarding org + token same-origin.
+  it("unauthenticated: hands off to /invite/start with the org and token forwarded", async () => {
     getSessionOrNull.mockResolvedValue(null);
     await expect(call({ org: "X", token: "SECRET" })).rejects.toThrow(
-      "NEXT_REDIRECT:LOGIN(/invite/accept?org=X)",
+      "NEXT_REDIRECT:/invite/start?org=X&token=SECRET",
     );
-    expect(setInviteCookie).toHaveBeenCalledWith({ org: "X", token: "SECRET" });
-    expect(loginUrlWithReturn).toHaveBeenCalledWith("/invite/accept?org=X");
   });
 
-  it("unauthenticated with no token: still returns through login, no cookie set", async () => {
+  it("unauthenticated with no token: hands off to /invite/start with just the org", async () => {
     getSessionOrNull.mockResolvedValue(null);
-    await expect(call({ org: "X" })).rejects.toThrow("NEXT_REDIRECT:LOGIN(/invite/accept?org=X)");
-    expect(setInviteCookie).not.toHaveBeenCalled();
+    await expect(call({ org: "X" })).rejects.toThrow("NEXT_REDIRECT:/invite/start?org=X");
   });
 
   it("signed in with a URL token: renders the Accept form (cookie not consulted)", async () => {

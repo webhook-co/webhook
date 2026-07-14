@@ -109,4 +109,18 @@ describe("GET /auth/callback", () => {
     expect(location.pathname.endsWith("/login")).toBe(true);
     expect(location.searchParams.get("error")).toBe("handoff_failed");
   });
+
+  it("preserves the invitee's `next` across a FAILED redeem (so re-auth returns to the accept page)", async () => {
+    exchangeTicket.mockImplementationOnce(async () => Promise.reject(new Error("exchange down")));
+    const res = await GET(
+      new Request(
+        "https://app.test/auth/callback?ticket=sxt_bad&next=%2Finvite%2Faccept%3Forg%3DX",
+      ),
+    );
+    const location = new URL(res.headers.get("location") ?? "", "https://app.test");
+    expect(location.searchParams.get("error")).toBe("handoff_failed");
+    expect(location.searchParams.get("redirect")).toBe(
+      "/session/handoff?next=%2Finvite%2Faccept%3Forg%3DX",
+    );
+  });
 });

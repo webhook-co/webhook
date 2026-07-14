@@ -10,7 +10,9 @@ import { getSessionSecret } from "@/server/env";
 // HKDF-derived from the existing session secret with a distinct `info` label — no new secret to provision,
 // and no key reused across the session token's HMAC and this AEAD.
 
-const TTL_MS = 15 * 60_000;
+// 60 min: comfortably longer than a slow first-time signup (a distracted user checking their inbox), while
+// still bounding replay of the one-shot stash. The invite itself is separately 7-day + single-use.
+const TTL_MS = 60 * 60_000;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 

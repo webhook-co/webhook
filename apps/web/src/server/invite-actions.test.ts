@@ -260,11 +260,27 @@ describe("acceptInviteAction", () => {
     expect(acceptInvite).not.toHaveBeenCalled(); // no usable token → no attempt
   });
 
-  it("clears the invite cookie after the attempt (accepted or not)", async () => {
+  it("clears the invite cookie it consumed on a terminal outcome (accepted)", async () => {
     readInviteCookie.mockResolvedValueOnce({ org: "org_x", token: "whinv_cookie" });
     acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
     await expect(acceptInviteAction(form({ org: "org_x" }))).rejects.toThrow(/NEXT_REDIRECT/);
     expect(clearInviteCookie).toHaveBeenCalledOnce();
+  });
+
+  it("KEEPS the cookie on a transient error — it's the invitee's only token copy (retry stays possible)", async () => {
+    readInviteCookie.mockResolvedValueOnce({ org: "org_x", token: "whinv_cookie" });
+    acceptInvite.mockRejectedValueOnce(new Error("db blip")); // → outcome "error"
+    await expect(acceptInviteAction(form({ org: "org_x" }))).rejects.toThrow(/NEXT_REDIRECT/);
+    expect(clearInviteCookie).not.toHaveBeenCalled();
+  });
+
+  it("does NOT clear the cookie when the token came from the FORM (may hold an unrelated org's invite)", async () => {
+    // Accepting org_x via a URL token must not wipe a cookie stashed for a DIFFERENT org.
+    acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
+    await expect(acceptInviteAction(form({ org: "org_x", token: "whinv_url" }))).rejects.toThrow(
+      /NEXT_REDIRECT/,
+    );
+    expect(clearInviteCookie).not.toHaveBeenCalled();
   });
 
   // 🔑 A SUCCESSFUL accept must never sign the user out.

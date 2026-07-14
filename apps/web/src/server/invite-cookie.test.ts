@@ -27,9 +27,13 @@ describe("invite cookie seal/open", () => {
     expect(await openInvitePayload(sealed, "other-secret", T0)).toBeNull();
   });
 
-  it("rejects an expired payload (>15 min old)", async () => {
+  it("accepts within the TTL and rejects an expired payload (>60 min old)", async () => {
     const sealed = await sealInvitePayload({ org: "o", token: "t" }, SECRET, T0);
-    expect(await openInvitePayload(sealed, SECRET, T0 + 15 * 60_000 + 1)).toBeNull();
+    expect(await openInvitePayload(sealed, SECRET, T0 + 59 * 60_000)).toEqual({
+      org: "o",
+      token: "t",
+    });
+    expect(await openInvitePayload(sealed, SECRET, T0 + 60 * 60_000 + 1)).toBeNull();
   });
 
   it("rejects garbage input", async () => {

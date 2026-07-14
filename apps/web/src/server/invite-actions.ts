@@ -185,9 +185,13 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
   // brand-new invitee who was returned here through login — from the encrypted app-origin invite cookie. The
   // cookie's org must match this accept's org, so a stale cookie for a different invite is ignored.
   let token = String(formData.get("token") ?? "");
+  let usedCookieToken = false;
   if (!token && orgId) {
     const cookie = await readInviteCookie();
-    if (cookie && cookie.org === orgId) token = cookie.token;
+    if (cookie && cookie.org === orgId) {
+      token = cookie.token;
+      usedCookieToken = true;
+    }
   }
 
   let outcome: "accepted" | "invalid" | "error" = "invalid";
@@ -210,10 +214,13 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
     }
   }
 
-  // The invite attempt is over (accepted / invalid / error) — retire the one-shot invite cookie so a stale
-  // token can't be replayed on a later submit. A no-op when there was none (the URL-token path). Cleared
-  // BEFORE the redirect, since redirect() throws.
-  await clearInviteCookie();
+  // Retire the invite cookie ONLY when we actually consumed it for THIS org AND the outcome is terminal
+  // (accepted, or a definitively-invalid token — retrying neither helps). We deliberately do NOT clear it:
+  //   - on a transient `error` (a DB blip): the cookie is the invitee's only copy of the token, so keep it so
+  //     they can retry the still-valid invite;
+  //   - when the token came from the FORM/URL (usedCookieToken false): an unrelated org's invite may be
+  //     stashed in the cookie, and clearing it would silently destroy that pending invite.
+  if (usedCookieToken && outcome !== "error") await clearInviteCookie();
 
   // Where to land, and the RULE THAT MATTERS: a SUCCESSFUL accept must never sign the user out.
   //

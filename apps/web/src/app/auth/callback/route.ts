@@ -32,6 +32,13 @@ export async function GET(request: Request): Promise<Response> {
   // diagnosis for the user, and never carries the ticket or a raw error.
   const failed = new URL(login);
   failed.searchParams.set("error", "handoff_failed");
+  // Preserve the invitee's return path across a FAILED redeem: /login shows the form (error flag) and, once
+  // they re-authenticate, resumes them to the return path instead of dropping them on `/`. Same-origin
+  // validated; a bad/absent next simply isn't carried.
+  const failNext = sanitizeReturnPath(url.searchParams.get("next"), url.origin);
+  if (failNext) {
+    failed.searchParams.set("redirect", `/session/handoff?next=${encodeURIComponent(failNext)}`);
+  }
 
   if (!ticket) {
     return NextResponse.redirect(login);

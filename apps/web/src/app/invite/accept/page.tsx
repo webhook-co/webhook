@@ -12,8 +12,8 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 
 import { acceptInviteAction } from "@/server/invite-actions";
-import { readInviteCookie, setInviteCookie } from "@/server/invite-cookie";
-import { getSessionOrNull, loginUrlWithReturn } from "@/server/session";
+import { readInviteCookie } from "@/server/invite-cookie";
+import { getSessionOrNull } from "@/server/session";
 
 export const metadata: Metadata = {
   title: "Accept invite · webhook.co",
@@ -39,15 +39,15 @@ export default async function AcceptInvitePage({
   const org = first(sp.org);
   const urlToken = first(sp.token);
 
-  // A brand-new invitee has no session. Instead of the gate's default login bounce (which drops the invite),
-  // stash {org, token} in the encrypted app-origin cookie and build a login URL that returns HERE — but carry
-  // only the org in the return path, never the token (it rides the cookie, never an auth-origin URL). After
-  // signup they land back here, signed in, and accept.
+  // A brand-new invitee has no session. A Server Component render CANNOT set a cookie (Next forbids it), so
+  // hand off to the /invite/start ROUTE HANDLER, which stashes {org, token} in the encrypted cookie and
+  // bounces to login. Forward the token here (same-origin) — it lands in the cookie there, never in an
+  // auth-origin URL.
   if (!session) {
-    if (org && urlToken) await setInviteCookie({ org, token: urlToken });
-    redirect(
-      loginUrlWithReturn(org ? `/invite/accept?org=${encodeURIComponent(org)}` : "/invite/accept"),
-    );
+    const q = new URLSearchParams();
+    if (org) q.set("org", org);
+    if (urlToken) q.set("token", urlToken);
+    redirect(`/invite/start?${q.toString()}`);
   }
 
   // Signed in: the token is in the URL (an already-signed-in user clicked the link directly) or in the cookie
