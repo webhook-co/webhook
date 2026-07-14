@@ -85,11 +85,18 @@ export async function readOnboardingState(
  * indirectly — the same boundary account-deletion crosses by RPC rather than by a SECURITY DEFINER writer).
  *
  * Idempotent by design: onboarding can be re-submitted (a flaky network, a double click), and re-stamping a
- * later `onboardedAt` over an earlier one changes nothing that matters. `name` is left ALONE — Better Auth
- * owns the composite display name; onboarding edits the first/last split, not the provider-given whole.
+ * later `onboardedAt` over an earlier one changes nothing that matters.
  *
- * Empty strings are stored as NULL, not "": an absent last name is absent, not blank, so the two read the
- * same everywhere downstream.
+ * The composite `name` is ALSO updated, to the corrected "first last". This matters: the app renders
+ * `session.user.name` (the account page, the avatar, greetings) — NOT the first/last split — so a user who
+ * fixes GitHub's "Ada L." to "Ada Lovelace", or a magic-link user whose name defaulted to their email
+ * local-part, would otherwise see their correction persisted but invisible everywhere the product shows their
+ * name. `name` is NOT NULL in Better Auth's schema, so we only overwrite it when the composite is non-empty
+ * (coalesce back to the existing name otherwise) — the action already requires a first name, so in practice
+ * it always is.
+ *
+ * Empty strings are stored as NULL, not "", for firstName/lastName: an absent last name is absent, not blank,
+ * so the two read the same everywhere downstream.
  */
 export async function completeOnboarding(
   authClient: Sql,
@@ -97,9 +104,13 @@ export async function completeOnboarding(
 ): Promise<boolean> {
   const first = input.firstName.trim() || null;
   const last = input.lastName.trim() || null;
+  const composite = [first, last].filter(Boolean).join(" ");
   const rows = await authClient<{ id: string }[]>`
     update "user"
-    set "firstName" = ${first}, "lastName" = ${last}, "onboardedAt" = ${input.onboardedAt}
+    set "firstName" = ${first},
+        "lastName" = ${last},
+        "name" = coalesce(nullif(${composite}, ''), "name"),
+        "onboardedAt" = ${input.onboardedAt}
     where "id" = ${input.userId}
     returning "id"`;
   return rows.length > 0;

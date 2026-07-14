@@ -27,6 +27,8 @@ export interface OnboardingFormProps {
   /** Fresh signup → let them name their org. Invited teammate → name only. */
   readonly needsOrgName: boolean;
   readonly defaultOrgName: string;
+  /** A whitelisted invite-status flag to carry onto the post-onboarding landing (e.g. "accepted"). */
+  readonly invite?: string;
   readonly complete: (formData: FormData) => Promise<CompleteOnboardingResult>;
 }
 
@@ -48,6 +50,7 @@ export function OnboardingForm({
   lastName: initialLast,
   needsOrgName,
   defaultOrgName,
+  invite,
   complete,
 }: OnboardingFormProps) {
   const [firstName, setFirstName] = React.useState(initialFirst);
@@ -88,6 +91,11 @@ export function OnboardingForm({
       setError("Give your organization a name.");
       return;
     }
+    if (needsOrgName && slug.trim().length === 0) {
+      setFieldError("orgSlug");
+      setError("Choose a URL for your organization.");
+      return;
+    }
     setPending(true);
     try {
       const fd = new FormData();
@@ -97,6 +105,7 @@ export function OnboardingForm({
         fd.set("orgName", orgName.trim());
         fd.set("orgSlug", slug.trim());
       }
+      if (invite) fd.set("invite", invite);
       const res = await complete(fd);
       // On success the action REDIRECTS (so it never returns here); a returned result is always a failure.
       if (res && !res.ok) {
@@ -183,7 +192,7 @@ export function OnboardingForm({
           disabled={
             firstName.trim().length === 0 ||
             Boolean(slugError) ||
-            (needsOrgName && orgName.trim().length === 0)
+            (needsOrgName && (orgName.trim().length === 0 || slug.trim().length === 0))
           }
         >
           Get started

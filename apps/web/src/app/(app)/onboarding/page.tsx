@@ -19,9 +19,20 @@ export const metadata: Metadata = {
  *
  */
 // dal-gate-allow: user-scoped — resolveOnboarding gates on verifySession; no org data (no org in this URL).
-export default async function OnboardingPage() {
-  const decision = await resolveOnboarding();
-  if (!decision.show) redirect("/");
+export default async function OnboardingPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const [decision, sp] = await Promise.all([resolveOnboarding(), searchParams]);
+  // Carry a whitelisted invite-status flag through onboarding so a brand-new invitee's confirmation survives
+  // (see `/`'s comment). Only known values; never an open passthrough.
+  const rawInvite = typeof sp.invite === "string" ? sp.invite : undefined;
+  const invite =
+    rawInvite && ["accepted", "invalid", "error"].includes(rawInvite) ? rawInvite : undefined;
+
+  // Already onboarded / typed the URL directly → back to `/`, preserving the flag so it is not dropped here.
+  if (!decision.show) redirect(invite ? `/?invite=${invite}` : "/");
 
   return (
     <AuthShell homeHref="/" actions={<ThemeToggle />}>
@@ -30,6 +41,7 @@ export default async function OnboardingPage() {
         lastName={decision.lastName}
         needsOrgName={decision.needsOrgName}
         defaultOrgName={decision.org?.name ?? ""}
+        invite={invite}
         complete={completeOnboardingAction}
       />
     </AuthShell>

@@ -6,7 +6,6 @@ import {
   RenameForbiddenError,
   SlugTakenError,
 } from "@webhook-co/db/orgs";
-import { personalOrgId } from "@webhook-co/db/orgs";
 import { orgSlugErrorMessage, validateOrgSlug, type OrgSlugError } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
@@ -16,6 +15,7 @@ import { withTenantDb } from "./db";
 import { getOnboardingBinding } from "./env";
 import { getAuditChainKey } from "./env";
 import { logActionError } from "./action-log";
+import { classifyMembership } from "./onboarding-logic";
 import { readUserOrgDirectory } from "./org-directory";
 import { verifySession } from "./session";
 
@@ -59,6 +59,11 @@ export async function completeOnboardingAction(
   const lastName = (formData.get("lastName") as string | null)?.trim() ?? "";
   const orgName = (formData.get("orgName") as string | null)?.trim();
   const orgSlug = (formData.get("orgSlug") as string | null)?.trim();
+  // A whitelisted invite-status flag carried through onboarding (from `/?invite=…`), appended to the landing so
+  // a brand-new invitee still gets their confirmation. Whitelisted here too — never an open query passthrough.
+  const rawInvite = (formData.get("invite") as string | null) ?? undefined;
+  const inviteQuery =
+    rawInvite && ["accepted", "invalid", "error"].includes(rawInvite) ? `?invite=${rawInvite}` : "";
 
   if (firstName.length === 0) {
     return { ok: false, error: "Tell us your first name.", field: "firstName" };
@@ -85,46 +90,54 @@ export async function completeOnboardingAction(
   //     cleared the pre-filled field must be told to fill it, not silently onboarded with the machine name the
   //     whole feature exists to replace.
   //
-  // The onboarded check distinguishes "definitely done" from "couldn't tell": a read fault does NOT block the
-  // write (best-effort — the stamp below is still gated), it only skips the replay short-circuit. The redirect
-  // is deliberately OUTSIDE the try: redirect() signals by throwing, and swallowing that here would turn a
-  // successful short-circuit into a logged "read failed".
-  let alreadyOnboarded = false;
+  // Re-read the gate, and FAIL CLOSED on a fault. The org rename below is destructive and irreversible (a
+  // changed slug is retired forever by the never-recycle trigger, and a stale replayed submit could revert an
+  // already-onboarded user's later org-name edit). So without a definite "already onboarded?" answer we must
+  // not proceed — better to ask the user to retry (onboarding is once-off; a read fault is transient) than to
+  // run a destructive write on a guess. The redirect is OUTSIDE the try: redirect() throws to signal, and
+  // catching that here would turn a successful short-circuit into a logged "read failed".
+  let current;
   try {
-    const current = await binding.read(session.userId);
-    alreadyOnboarded = current !== null && current.onboardedAtIso !== null;
+    current = await binding.read(session.userId);
   } catch (error) {
     logActionError("onboarding.recheck_read_failed", error);
+    return { ok: false, error: "We couldn't reach your account just now. Please try again." };
   }
-  if (alreadyOnboarded) redirect("/");
+  if (current !== null && current.onboardedAtIso !== null) redirect("/");
 
-  // Fresh vs invited, from the directory (authoritative) — an invited teammate holds a membership in an org
-  // other than their derived personal one, and must not be asked to (re)name anything.
-  const personal = personalOrgId(session.userId);
+  // Fresh vs invited, from the directory (authoritative) — via the SAME classification the gate uses, so what
+  // the user was shown and what we enforce here can never drift.
   const orgs = await readUserOrgDirectory(session.userId);
-  const invited = orgs.some((o) => o.orgId !== personal);
-  const mine = orgs.find((o) => o.orgId === personal) ?? null;
+  const {
+    personalId: personal,
+    personalOrg: mine,
+    invited,
+  } = classifyMembership(session.userId, orgs);
 
   // Step 1 — rename the personal org for a FRESH signup. An invited teammate skips this entirely; a fresh
   // signup whose personal org is missing (a bootstrap blip) saves their name only.
   let landing = "/";
   if (!invited && mine !== null) {
-    if (orgName === undefined || orgName.length === 0) {
-      // A fresh signup must name their org — an empty field cannot silently keep the machine-generated name.
+    if (orgName === undefined) {
+      // Render/submit RACE: the form rendered in INVITED mode (it sent no org fields at all) but the directory
+      // now classifies this user as fresh — their team membership was revoked between render and submit. Don't
+      // hard-block on a field they were never shown; onboard name-only (they can name the org later in
+      // settings). `undefined` (field absent) is distinct from `""` (fresh-mode field the user cleared).
+      logActionError("onboarding.membership_race", new Error(session.userId));
+    } else if (orgName.length === 0) {
+      // A fresh-mode form with the name cleared cannot silently keep the machine-generated name.
       return { ok: false, error: "Give your organization a name.", field: "orgName" };
-    }
-    if (orgName.length > MAX_NAME_LEN) {
+    } else if (orgName.length > MAX_NAME_LEN) {
       return {
         ok: false,
         error: `Keep the name under ${MAX_NAME_LEN} characters.`,
         field: "orgName",
       };
-    }
-    const slug = orgSlug ?? "";
-    const check = validateOrgSlug(slug);
-    if (!check.ok) return { ok: false, error: orgSlugErrorMessage(check.reason), field: "orgSlug" };
-
-    {
+    } else {
+      const slug = orgSlug ?? "";
+      const check = validateOrgSlug(slug);
+      if (!check.ok)
+        return { ok: false, error: orgSlugErrorMessage(check.reason), field: "orgSlug" };
       // `mine` is non-null here (needsOrgName implies it); the role is re-read from the directory (never
       // trusted from the client), and renameOrg re-checks owner/admin regardless.
       // Resolve the audit key BEFORE opening the pool (fail-closed getAuditChainKey must not strand a pool),
@@ -166,7 +179,7 @@ export async function completeOnboardingAction(
     // "last acting org" hint (or the first membership), which for a just-invited user can still be their empty
     // personal org — dropping them there instead of the team is the opposite of what accepting an invite meant.
     const team = orgs.find((o) => o.orgId !== personal);
-    if (team) landing = `/org/${team.slug}/dashboard`;
+    if (team) landing = `/org/${team.slug}/dashboard${inviteQuery}`;
   } else {
     // No personal org to rename (a bootstrap blip) and not invited. Don't fail onboarding over it — save the
     // name below and let `/` resolve wherever it can.

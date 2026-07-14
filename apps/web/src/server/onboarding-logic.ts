@@ -36,17 +36,22 @@ export type OnboardingDecision =
     };
 
 /**
- * The instant the onboarding columns (migrations 0073/0074) shipped. Any user in the DB whose `createdAt`
- * predates this could only have signed up BEFORE onboarding existed, so a null `onboardedAt` on such a row
- * means "predates the feature", NOT "a fresh signup mid-onboarding".
+ * The ship DATE of the onboarding columns (migrations 0073/0074), at UTC midnight. A user whose `createdAt`
+ * predates this signed up before onboarding existed, so a null `onboardedAt` on such a row means "predates the
+ * feature", NOT "a fresh signup mid-onboarding".
  *
- * This is a BACKSTOP, not the primary mechanism. In prod the deploy migration-guard blocks the web deploy
- * until 0074 has run, and 0074 backfills every existing user's `onboardedAt` — so their gate is already
- * decided by the null-check below. This constant only matters if that ordering is ever broken (0074 skipped
- * or rolled back while this code is live): without it, every pre-existing user would be force-marched through
- * an onboarding screen that offers to rename their real, in-use org. It is exactly the "check the user
- * predates the feature" guard migration 0073's note promised. A genuinely new signup is always created AFTER
- * this instant, so the backstop can never wrongly SKIP onboarding for someone who needs it.
+ * This is a COARSE BACKSTOP, not the primary mechanism, and its bounds are deliberate:
+ *   - The PRIMARY mechanism is migration 0074, which backfills every existing user's `onboardedAt`; the deploy
+ *     migration-guard blocks the web deploy until it has run. So in prod every pre-existing user's gate is
+ *     already decided by the null-check above and this constant is never consulted for them. It only matters
+ *     where that ordering can be broken — 0074 skipped/rolled back in prod, or a non-prod env (dev/CI/preview)
+ *     that ran 0073 but not 0074 (where the "pre-existing users" are ephemeral test fixtures, not real ones).
+ *   - Day-granularity is imperfect ON the ship day: a pre-existing user who signed up earlier the SAME UTC day
+ *     (before the deploy) has `createdAt >= this epoch`, so the backstop does NOT cover them — they fall back
+ *     to 0074. We intentionally do NOT push the epoch later to catch them, because that would make the OTHER
+ *     error possible: a genuinely NEW signup created later the same day would be `< epoch` and get WRONGLY
+ *     skipped past onboarding they actually need. Midnight is the safe bound — it can only ever fail to
+ *     grandfather (recoverable, and covered by 0074), never wrongly skip a real new signup.
  */
 const ONBOARDING_FEATURE_EPOCH_MS = Date.parse("2026-07-14T00:00:00Z");
 
@@ -54,6 +59,33 @@ export interface OnboardingInput {
   readonly userId: string;
   readonly state: OnboardingStateDto | null;
   readonly orgs: readonly UserOrg[];
+}
+
+/** How a user's memberships classify them for onboarding — the ONE definition the gate and the write share. */
+export interface MembershipClassification {
+  /** The user's derived personal org id. */
+  readonly personalId: string;
+  /** Their personal-org membership, or null if it is somehow absent (a bootstrap blip). */
+  readonly personalOrg: UserOrg | null;
+  /** True if they hold a membership in ANY org other than their personal one → they were invited to a team. */
+  readonly invited: boolean;
+}
+
+/**
+ * Classify a user as fresh-vs-invited from their org directory. Shared by the gate (what onboarding SHOWS) and
+ * the action (what it ENFORCES) so the two can never drift — a fresh signup's only membership is their derived
+ * personal org (still machine-named); an invited teammate additionally belongs to the org they were invited to.
+ */
+export function classifyMembership(
+  userId: string,
+  orgs: readonly UserOrg[],
+): MembershipClassification {
+  const personalId = personalOrgId(userId);
+  return {
+    personalId,
+    personalOrg: orgs.find((o) => o.orgId === personalId) ?? null,
+    invited: orgs.some((o) => o.orgId !== personalId),
+  };
 }
 
 export function decideOnboarding(input: OnboardingInput): OnboardingDecision {
@@ -81,9 +113,7 @@ export function decideOnboarding(input: OnboardingInput): OnboardingDecision {
   const lastName = state.lastName ?? split.lastName ?? "";
 
   // Invited?  They hold a membership in an org that is NOT their derived personal one.
-  const personal = personalOrgId(input.userId);
-  const invited = input.orgs.some((o) => o.orgId !== personal);
-  const personalOrg = input.orgs.find((o) => o.orgId === personal) ?? null;
+  const { invited, personalOrg } = classifyMembership(input.userId, input.orgs);
 
   return {
     show: true,

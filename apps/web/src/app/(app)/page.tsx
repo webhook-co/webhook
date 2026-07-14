@@ -39,18 +39,20 @@ export default async function AppHome({
     resolveOnboarding(),
   ]);
 
-  if (onboarding.show) redirect("/onboarding");
+  // Forward a whitelisted status flag if one arrived (e.g. the invite-accept fallback lands here as
+  // `/?invite=accepted` when it couldn't resolve the joined org's slug itself). Only `invite` is carried, and
+  // only its known values — this is a redirect target, not an open query-string passthrough. Computed BEFORE
+  // the onboarding redirect so a brand-new invitee (fresh signup → onboarding) doesn't lose their
+  // invite-accepted confirmation at that hop; it rides through onboarding and onto their dashboard.
+  const invite = typeof sp.invite === "string" ? sp.invite : undefined;
+  const q = invite && ["accepted", "invalid", "error"].includes(invite) ? `?invite=${invite}` : "";
+
+  if (onboarding.show) redirect(`/onboarding${q}`);
 
   // The hint is untrusted FOR THIS PURPOSE: it may name an org they have since been removed from. It is only
   // ever used to PICK from the directory, never to bypass it.
   const target = orgs.find((o) => o.orgId === currentOrgId) ?? orgs[0];
   if (!target) redirect(LOGOUT_URL);
-
-  // Forward a whitelisted status flag if one arrived (e.g. the invite-accept fallback lands here as
-  // `/?invite=accepted` when it couldn't resolve the joined org's slug itself). Only `invite` is carried, and
-  // only its known values — this is a redirect target, not an open query-string passthrough.
-  const invite = typeof sp.invite === "string" ? sp.invite : undefined;
-  const q = invite && ["accepted", "invalid", "error"].includes(invite) ? `?invite=${invite}` : "";
 
   redirect(`/org/${target.slug}/dashboard${q}`);
 }

@@ -189,8 +189,10 @@ describe("onboarding state", () => {
     expect((await readOnboardingState(auth, id))!.lastName).toBeNull();
   });
 
-  it("leaves the composite display name alone — Better Auth owns that", async () => {
-    const id = await seedUser();
+  // The corrected name must reach the composite `name`, because that is what the app renders (account page,
+  // avatar, greeting) — not the first/last split. A user who fixes their name in onboarding must see it.
+  it("updates the composite display name to the corrected first + last", async () => {
+    const id = await seedUser(); // seeded as "Ada Lovelace"
 
     await completeOnboarding(auth, {
       userId: id,
@@ -199,6 +201,30 @@ describe("onboarding state", () => {
       onboardedAt: new Date(),
     });
 
+    expect((await readOnboardingState(auth, id))!.name).toBe("Grace Hopper");
+  });
+
+  it("uses just the first name as the composite when there is no last name", async () => {
+    const id = await seedUser();
+    await completeOnboarding(auth, {
+      userId: id,
+      firstName: "Prince",
+      lastName: "",
+      onboardedAt: new Date(),
+    });
+    expect((await readOnboardingState(auth, id))!.name).toBe("Prince");
+  });
+
+  // `name` is NOT NULL in Better Auth's schema — an all-empty composite must never blank it. (The action
+  // requires a first name, so this is a guard, not a path onboarding takes.)
+  it("preserves the existing name when the composite would be empty", async () => {
+    const id = await seedUser(); // "Ada Lovelace"
+    await completeOnboarding(auth, {
+      userId: id,
+      firstName: "   ",
+      lastName: "",
+      onboardedAt: new Date(),
+    });
     expect((await readOnboardingState(auth, id))!.name).toBe("Ada Lovelace");
   });
 

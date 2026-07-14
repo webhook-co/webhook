@@ -1,7 +1,7 @@
 import { personalOrgId } from "@webhook-co/db/orgs";
 import { describe, expect, it } from "vitest";
 
-import { decideOnboarding } from "./onboarding-logic";
+import { classifyMembership, decideOnboarding } from "./onboarding-logic";
 
 const state = (over: Partial<Parameters<typeof decideOnboarding>[0]["state"] & object> = {}) => ({
   firstName: null,
@@ -124,5 +124,26 @@ describe("decideOnboarding", () => {
       orgs: [personalOrg("u")],
     });
     expect(d.show).toBe(true);
+  });
+});
+
+// The ONE classification the gate and the write share — so what the user is shown and what is enforced agree.
+describe("classifyMembership", () => {
+  it("classifies a sole personal-org member as fresh (not invited)", () => {
+    const c = classifyMembership("u", [personalOrg("u")]);
+    expect(c.invited).toBe(false);
+    expect(c.personalOrg?.orgId).toBe(personalOrgId("u"));
+    expect(c.personalId).toBe(personalOrgId("u"));
+  });
+
+  it("classifies a member of any non-personal org as invited", () => {
+    const c = classifyMembership("u", [personalOrg("u"), teamOrg]);
+    expect(c.invited).toBe(true);
+  });
+
+  it("reports a null personalOrg when the personal membership is absent (bootstrap blip)", () => {
+    const c = classifyMembership("u", [teamOrg]);
+    expect(c.invited).toBe(true);
+    expect(c.personalOrg).toBeNull();
   });
 });

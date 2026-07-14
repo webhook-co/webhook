@@ -113,6 +113,30 @@ describe("OnboardingForm", () => {
     expect(button).toBeEnabled();
   });
 
+  // A non-empty name with a CLEARED URL must also block: an empty slug can't be quietly accepted and rejected
+  // only on the server round-trip.
+  it("blocks submit when the org URL is cleared even though the name is filled", async () => {
+    const complete = vi.fn(async () => ({ ok: true as const }));
+    render(<OnboardingForm {...props({ complete, defaultOrgName: "Acme" })} />);
+
+    const button = screen.getByRole("button", { name: /get started/i });
+    expect(button).toBeEnabled();
+    await userEvent.clear(screen.getByLabelText("Organization URL"));
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("carries a whitelisted invite flag into the submitted form data", async () => {
+    const complete = vi.fn(async () => ({ ok: true as const }));
+    render(<OnboardingForm {...props({ complete, needsOrgName: false, invite: "accepted" })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /get started/i }));
+
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect((complete.mock.calls[0][0] as FormData).get("invite")).toBe("accepted");
+  });
+
   // A successful submit REDIRECTS — the action throws a NEXT_REDIRECT digest. That must propagate (so Next
   // navigates), NOT be caught and shown as "something went wrong". Here we assert the false banner never
   // appears; the re-thrown redirect is the intended control flow.

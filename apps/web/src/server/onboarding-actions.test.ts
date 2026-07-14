@@ -191,19 +191,49 @@ describe("completeOnboardingAction — the gate re-check (replay + empty org nam
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it("proceeds (best-effort) when the re-check read faults — the write is not blocked by a transient read", async () => {
-    // A read fault means "couldn't tell if onboarded", NOT "already onboarded". The action logs and continues
-    // to the write, which is still gated by its own success. The redirect must not be swallowed as an error.
+  it("fails CLOSED when the re-check read faults — never runs the destructive rename on an uncertain read", async () => {
+    // A read fault means "couldn't tell if already onboarded". The rename is destructive and irreversible (a
+    // changed slug is retired forever; a replay could revert a later edit), so we must NOT proceed on a guess.
+    // Return an error and ask the user to retry — nothing is written.
     read.mockRejectedValueOnce(new Error("auth down"));
-    renameOrg.mockResolvedValueOnce({ id: "org_personal", slug: "acme", name: "Acme" });
-    await expect(
-      completeOnboardingAction(form({ firstName: "Ada", orgName: "Acme", orgSlug: "acme" })),
-    ).rejects.toThrow("NEXT_REDIRECT:/org/acme/dashboard");
-    expect(complete).toHaveBeenCalledWith("usr_1", "Ada", "");
+    const res = await completeOnboardingAction(
+      form({ firstName: "Ada", orgName: "Acme", orgSlug: "acme" }),
+    );
+    expect(res).toMatchObject({ ok: false });
+    expect(renameOrg).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
     expect(logActionError).toHaveBeenCalledWith(
       "onboarding.recheck_read_failed",
       expect.any(Error),
     );
+  });
+
+  it("does not hard-block on the org name when the form was invited-mode but the directory now says fresh (race)", async () => {
+    // The form sent NO org fields (it rendered invited-mode), but the directory now shows only the personal
+    // org — the team membership was revoked between render and submit. Onboard name-only rather than demand an
+    // org-name field the user was never shown. `undefined` (absent) is distinct from `""` (cleared).
+    await expect(completeOnboardingAction(form({ firstName: "Ada" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/",
+    );
+    expect(renameOrg).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledWith("usr_1", "Ada", "");
+    expect(logActionError).toHaveBeenCalledWith("onboarding.membership_race", expect.any(Error));
+  });
+});
+
+describe("completeOnboardingAction — invite-status passthrough", () => {
+  it("carries a whitelisted invite flag onto the invited teammate's landing", async () => {
+    readUserOrgDirectory.mockResolvedValue([teamOrg]);
+    await expect(
+      completeOnboardingAction(form({ firstName: "Grace", invite: "accepted" })),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/acme/dashboard?invite=accepted");
+  });
+
+  it("ignores a non-whitelisted invite value (no open query passthrough)", async () => {
+    readUserOrgDirectory.mockResolvedValue([teamOrg]);
+    await expect(
+      completeOnboardingAction(form({ firstName: "Grace", invite: "evil" })),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/acme/dashboard");
   });
 });
 
