@@ -58,7 +58,10 @@ export async function makeSessionHandoffDeps(
       return minted.plaintext;
     },
     loginUrl: (returnTo) => `${LOGIN_PATH}?redirect=${encodeURIComponent(returnTo)}`,
-    appCallbackUrl: (ticket) => `${appBaseUrl}/auth/callback?ticket=${encodeURIComponent(ticket)}`,
+    appCallbackUrl: (ticket, next) =>
+      `${appBaseUrl}/auth/callback?ticket=${encodeURIComponent(ticket)}` +
+      (next ? `&next=${encodeURIComponent(next)}` : ""),
+    appOrigin: new URL(appBaseUrl).origin,
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
 

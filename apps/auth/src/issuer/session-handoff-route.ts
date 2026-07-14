@@ -11,6 +11,8 @@
 // ticket against the victim's session, but the response is a 302 whose Location (the only place the ticket
 // appears) is unreadable cross-origin, so the attacker can't obtain it; the unused ticket simply expires.
 
+import { sanitizeReturnPath } from "@webhook-co/shared";
+
 type LogFn = (event: string, fields?: Record<string, unknown>) => void;
 
 export interface SessionHandoffRouteDeps {
@@ -22,8 +24,10 @@ export interface SessionHandoffRouteDeps {
   mint: (orgId: string, userId: string) => Promise<string>;
   /** Where to sign in (returning here) when there's no session. */
   loginUrl: (returnTo: string) => string;
-  /** Build app.'s callback URL carrying the ticket. */
-  appCallbackUrl: (ticket: string) => string;
+  /** Build app.'s callback URL carrying the ticket, and (optionally) a validated same-origin `next`. */
+  appCallbackUrl: (ticket: string, next?: string | null) => string;
+  /** The app. origin, used to validate the opt-in `next` return path (same-origin only). */
+  appOrigin: string;
   log?: LogFn;
 }
 
@@ -58,6 +62,10 @@ export async function handleSessionHandoff(
 
   const ticket = await deps.mint(org.orgId, userId);
   deps.log?.("session_handoff.minted", { userId, orgId: org.orgId });
+  // Opt-in return path: an invitee's login carries `?next=/invite/accept?org=…` so they land back on the
+  // accept page (not app root) after the handoff. Validate it SAME-ORIGIN against app. — an off-origin or
+  // malformed value is dropped, and app.'s callback re-validates before acting on it (defense in depth).
+  const next = sanitizeReturnPath(new URL(request.url).searchParams.get("next"), deps.appOrigin);
   // no-referrer so the ticket-bearing URL isn't sent as a Referer by app.'s callback page.
-  return redirect(deps.appCallbackUrl(ticket), { "referrer-policy": "no-referrer" });
+  return redirect(deps.appCallbackUrl(ticket, next), { "referrer-policy": "no-referrer" });
 }
