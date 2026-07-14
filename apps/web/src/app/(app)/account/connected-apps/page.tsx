@@ -23,6 +23,7 @@ export const metadata: Metadata = {
  * dal-gate-allow: user-scoped — loadConnectedApps gates on verifySession and is bounded by the userId; there
  * is no org here to prove membership of.
  */
+// dal-gate-allow: user-scoped — loadConnectedApps gates on verifySession, bounded by the userId; no org here.
 export default async function ConnectedAppsPage() {
   const result = await loadConnectedApps();
 
