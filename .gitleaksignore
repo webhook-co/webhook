@@ -20,3 +20,17 @@
 71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:63
 71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:74
 71bb17019c67e56c96d4bc2e433bd79c7a014260:apps/www/src/components/marketing/surfaces/surfaces-tabs.tsx:generic-api-key:85
+
+# The invite-cookie unit test's FIXTURE token. `sealInvitePayload({ org, token }, SECRET, T0)` — the
+# test's own secret is the literal string "test-secret-abc" and the token is a made-up value; the
+# generic-api-key rule fires on the `token:` name plus entropy alone. Nothing here is a credential.
+#
+# ⚠️ This lives on the `feat/invite-return-through-login` branch, NOT on main — but CI checks out with
+# `fetch-depth: 0`, which fetches EVERY ref, and `gitleaks detect --source .` walks all of them. So one
+# unmerged branch's test fixture fails the secret scan on EVERY open PR in the repo, including PRs that
+# do not touch that code. That is why this is suppressed here rather than on the branch that owns it.
+#
+# When that branch squash-merges, its SHA changes and this fingerprint goes stale (see the warning
+# above) — re-derive from the run log at that point, or make the fixture non-entropic
+# (e.g. `token: "tok_test_placeholder"`), which fixes it permanently and is the better end state.
+8616490897d9d74f1a1d6b9f965a13606804ac26:apps/web/src/server/invite-cookie.test.ts:generic-api-key:12
