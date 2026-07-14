@@ -7,6 +7,10 @@ vi.mock("@/server/org-access", () => ({
     orgId: "org_1",
     // The CANONICAL slug the gate resolved from the URL — every link the shell renders is rooted at it.
     slug: "acme",
+    // The org's display NAME, from the same directory read that proved membership. The org picker's trigger
+    // renders it from HERE rather than from the switcher's list, so that a blipped directory read cannot blank
+    // out the one label that must always be right: the org you are looking at.
+    name: "Acme Team",
     role: "owner",
     user: { name: "Dana Kessler", email: "dana@acme.co", image: null },
   })),
@@ -43,7 +47,24 @@ describe("AppLayout (gated dashboard shell)", () => {
     expect(screen.getByRole("link", { name: "Credentials" })).toBeInTheDocument();
     // Team (collaboration) sits in the Account section too.
     expect(screen.getByRole("link", { name: "Team" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Account menu" })).toBeInTheDocument();
+    // The account control moved OUT of the top bar and into the sidebar's bottom-left, where it now shows who
+    // you are signed in as at rest rather than hiding it behind an initials circle.
+    expect(screen.getByRole("button", { name: /account: dana kessler/i })).toBeInTheDocument();
+    // And the org picker took the top-left corner the wordmark used to occupy.
+    expect(screen.getByRole("button", { name: /organization: acme team/i })).toBeInTheDocument();
+  });
+
+  // The founder's call, and the reference pattern (Vercel, Resend, Linear): no wordmark in the sidebar. The
+  // top-left corner is the most valuable real estate in the shell, and "which organization am I in?" is the
+  // question you need answered before any other. A wordmark answers a question nobody was asking — the user
+  // knows what site they are on. So the picker takes the corner, and the lockup goes.
+  it("renders NO wordmark — the org picker takes the top-left corner instead", async () => {
+    render(
+      await AppLayout({ children: <p>page content</p>, params: Promise.resolve({ slug: "acme" }) }),
+    );
+
+    expect(screen.queryByRole("link", { name: /webhook\.co home/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /organization: acme team/i })).toBeInTheDocument();
   });
 
   it("orders the Account section Credentials → Team → Audit log → Settings", async () => {

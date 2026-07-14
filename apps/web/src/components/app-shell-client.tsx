@@ -13,13 +13,16 @@ export function AppShellClient({
   homeHref,
   sidebar,
   sidebarTop,
+  sidebarFooter,
   topBar,
   children,
 }: {
   readonly homeHref?: string;
   readonly sidebar: React.ReactNode;
-  /** Pinned above the nav — the org switcher. */
+  /** The top-left corner — the org picker. (No `homeHref` is passed, so it takes the lockup's place.) */
   readonly sidebarTop?: React.ReactNode;
+  /** Pinned to the sidebar's bottom — the account menu. */
+  readonly sidebarFooter?: React.ReactNode;
   readonly topBar?: React.ReactNode;
   readonly children: React.ReactNode;
 }) {
@@ -30,6 +33,7 @@ export function AppShellClient({
       homeHref={homeHref}
       sidebar={sidebar}
       sidebarTop={sidebarTop}
+      sidebarFooter={sidebarFooter}
       sidebarOpen={open}
       onSidebarOpenChange={setOpen}
       topBar={

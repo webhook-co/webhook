@@ -51,26 +51,41 @@ export function AppShell({
   onSidebarOpenChange,
   className,
 }: AppShellProps) {
+  // The lockup is now OPTIONAL, and the dashboard opts out.
+  //
+  // Every modern SaaS sidebar (Vercel, Resend, Linear) puts the ORG PICKER in the top-left corner — it is the
+  // first thing you look at, because "which workspace am I in?" is the question you need answered before any
+  // other. A wordmark there answers a question nobody was asking: the user knows what site they are on. So the
+  // dashboard hands `sidebarTop` the picker and passes no `homeHref`, and the picker takes the corner.
+  //
+  // Kept as a prop rather than deleted because the shell is a generic primitive; a surface that DOES want a
+  // wordmark still can.
   const lockup = homeHref ? (
-    <a href={homeHref} aria-label="webhook.co home" className="inline-flex w-fit">
-      <Wordmark markSize={26} />
-    </a>
-  ) : (
-    <Wordmark markSize={26} />
-  );
+    <div className="flex h-[3.75rem] flex-shrink-0 items-center px-4">
+      <a href={homeHref} aria-label="webhook.co home" className="inline-flex w-fit">
+        <Wordmark markSize={26} />
+      </a>
+    </div>
+  ) : null;
 
   // The sidebar contents are shared by the fixed desktop rail and the mobile drawer; only
   // one of the two is ever visible (the desktop rail is `display:none` below `md`), so the
   // single "Primary" nav landmark is never duplicated in the accessibility tree.
   const sidebarBody = (
     <>
-      <div className="flex h-[3.75rem] flex-shrink-0 items-center px-4">{lockup}</div>
-      {sidebarTop ? <div className="px-3 pb-2">{sidebarTop}</div> : null}
+      {lockup}
+      {/* `pt-3` when there is no lockup above it, so the picker sits in the corner with breathing room rather
+          than jammed against the top edge. */}
+      {sidebarTop ? (
+        <div className={cn("flex-shrink-0 px-3 pb-2", homeHref ? undefined : "pt-3")}>
+          {sidebarTop}
+        </div>
+      ) : null}
       <nav aria-label="Primary" className="flex flex-1 flex-col gap-0.5 overflow-y-auto px-3 py-1">
         {sidebar}
       </nav>
       {sidebarFooter ? (
-        <div className="mt-auto border-t border-hairline p-3">{sidebarFooter}</div>
+        <div className="mt-auto flex-shrink-0 border-t border-hairline p-3">{sidebarFooter}</div>
       ) : null}
     </>
   );
