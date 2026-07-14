@@ -78,23 +78,14 @@ export async function completeOnboardingAction(
     return { ok: false, error: "Onboarding is temporarily unavailable. Please try again shortly." };
   }
 
-  // Re-check the gate here, authoritatively — never trust the form's mere presence/absence of org fields.
+  // Re-check the gate authoritatively before any write — the REPLAY guard. An already-onboarded user (a
+  // double-submit, a stale/replayed POST) re-invoking this would otherwise re-rename their org and re-stamp
+  // `onboardedAt`; a changed slug is retired forever by the never-recycle trigger, so a replay could silently
+  // rotate their URL and burn the old one. If they are already onboarded, this is a no-op: bounce to `/`.
   //
-  // Two failures this closes, both caught in review:
-  //   * REPLAY — an already-onboarded user (a double-submit, a stale/replayed POST) re-invoking this would
-  //     re-rename their org and re-stamp `onboardedAt`; a changed slug is retired forever by the never-recycle
-  //     trigger, so a replay could silently rotate their URL and burn the old one. If they are already
-  //     onboarded, this is a no-op: bounce to `/`.
-  //   * EMPTY ORG NAME — whether the user needs to name an org is decided by their MEMBERSHIP (fresh signup =
-  //     only their personal org), not by whether the client happened to send an orgName. A fresh signup who
-  //     cleared the pre-filled field must be told to fill it, not silently onboarded with the machine name the
-  //     whole feature exists to replace.
-  //
-  // Re-read the gate, and FAIL CLOSED on a fault. The org rename below is destructive and irreversible (a
-  // changed slug is retired forever by the never-recycle trigger, and a stale replayed submit could revert an
-  // already-onboarded user's later org-name edit). So without a definite "already onboarded?" answer we must
-  // not proceed — better to ask the user to retry (onboarding is once-off; a read fault is transient) than to
-  // run a destructive write on a guess. The redirect is OUTSIDE the try: redirect() throws to signal, and
+  // FAIL CLOSED on a read fault. The org rename below is destructive and irreversible, so without a definite
+  // "already onboarded?" answer we must not proceed on a guess — better to ask the user to retry (onboarding
+  // is once-off; a read fault is transient). The redirect is OUTSIDE the try: redirect() throws to signal, and
   // catching that here would turn a successful short-circuit into a logged "read failed".
   let current;
   try {
