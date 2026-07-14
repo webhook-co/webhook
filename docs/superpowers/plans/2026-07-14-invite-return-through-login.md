@@ -133,10 +133,10 @@ const T0 = 1_000_000;
 
 describe("invite cookie seal/open", () => {
   it("round-trips org + token", async () => {
-    const sealed = await sealInvitePayload({ org: "org_1", token: "whinv_AbC-123" }, SECRET, T0);
+    const sealed = await sealInvitePayload({ org: "org_1", token: "whinv_example_test_value" }, SECRET, T0);
     expect(await openInvitePayload(sealed, SECRET, T0 + 1000)).toEqual({
       org: "org_1",
-      token: "whinv_AbC-123",
+      token: "whinv_example_test_value",
     });
   });
 
