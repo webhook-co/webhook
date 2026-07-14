@@ -20,7 +20,20 @@ const failures = [];
 // (not_found_handling: "404-page"), the headers file, the SEO routes, and the social card.
 // index.html is listed UNCONDITIONALLY (not only when "/" appears in the sitemap) — a homepage that
 // opted out of the sitemap would still have to exist, and "/" 404ing is the worst failure to miss.
-const infra = ["index.html", "404.html", "_headers", "sitemap.xml", "robots.txt", "og.png"];
+// bimi/* are referenced by DNS, not by any page, so nothing else in the build would notice them going
+// missing: `default._bimi.{mail,billing}.webhook.co` carries `l=https://www.webhook.co/bimi/logo.svg`.
+// If that URL 404s, mailbox providers record a BIMI *failure* and the brand logo silently disappears
+// from every inbox — with a fully green build. They are infra, not content.
+const infra = [
+  "index.html",
+  "404.html",
+  "_headers",
+  "sitemap.xml",
+  "robots.txt",
+  "og.png",
+  "bimi/logo.svg",
+  "bimi/apple-branded-mail.png",
+];
 
 // Every page the sitemap advertises must have actually been emitted.
 let pageFiles = [];
@@ -66,6 +79,29 @@ try {
   // wins". The global `script-src 'self'` therefore still blocked challenges.cloudflare.com, the
   // Turnstile script never loaded, and the sandbox's mint button stayed disabled forever. No other
   // check could see it: the a11y/Lighthouse jobs serve out/ WITHOUT applying _headers at all.
+  // The BIMI indicator has the SAME additive-header trap as /play, with a worse blast radius. Workers
+  // Static Assets ALREADY infers `Content-Type: image/svg+xml` from the .svg extension, so pinning it
+  // again without unsetting first ships the header TWICE — which a receiver reads as the invalid media
+  // type `image/svg+xml, image/svg+xml`. With the global `nosniff` that is unrecoverable: the indicator
+  // is rejected as malformed and BIMI returns a *failure*, which is strictly worse than publishing no
+  // BIMI record at all. And no browser test can see it — this file is the only place that can.
+  const bimiBlock = headers.split(/^\/(?=\S)/m).find((b) => b.startsWith("bimi/logo.svg\n"));
+  if (!bimiBlock) {
+    failures.push(
+      "out/_headers has no /bimi/logo.svg block (the BIMI indicator needs a pinned type)",
+    );
+  } else {
+    if (!/^\s*!\s*Content-Type\s*$/im.test(bimiBlock)) {
+      failures.push(
+        "out/_headers /bimi/logo.svg does not UNSET the inherited Content-Type (`! Content-Type`) — " +
+          "two Content-Type headers make the indicator unparseable and turn BIMI into a hard failure",
+      );
+    }
+    if (!/Content-Type:\s*image\/svg\+xml/i.test(bimiBlock)) {
+      failures.push("out/_headers /bimi/logo.svg must set Content-Type: image/svg+xml");
+    }
+  }
+
   const playBlock = headers.split(/^\/(?=\S)/m).find((b) => b.startsWith("play\n"));
   if (!playBlock) {
     failures.push("out/_headers has no /play block (the sandbox needs its own CSP)");

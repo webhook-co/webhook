@@ -39,6 +39,23 @@ export const MTA_STS_POLICY_ID = "168b696a309ca3e1";
 const WELL_KNOWN_PATH = "/.well-known/mta-sts.txt";
 
 /**
+ * The site's security baseline, normally applied by `public/_headers` via Workers Static Assets.
+ *
+ * These responses are the FIRST in this Worker that never reach `env.ASSETS.fetch`, so `_headers` does
+ * not apply to them and the policy host would otherwise sit outside the zone's posture entirely — no
+ * HSTS, no nosniff. Restated here so `mta-sts.webhook.co` matches the rest of the site.
+ *
+ * HSTS is host-scoped with no `includeSubDomains`, matching the `/*` rule in `_headers` (that zone also
+ * fronts api./mcp., and includeSubDomains is sticky and cannot be cleanly walked back).
+ */
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "x-frame-options": "DENY",
+  "strict-transport-security": "max-age=63072000",
+} as const;
+
+/**
  * Returns the MTA-STS response for the policy host, or `null` if this request is not for it (so the
  * caller falls through to the marketing site untouched).
  *
@@ -50,13 +67,14 @@ export function mtaStsResponse(url: URL): Response | null {
   if (url.pathname !== WELL_KNOWN_PATH) {
     return new Response("Not found\n", {
       status: 404,
-      headers: { "content-type": "text/plain; charset=utf-8" },
+      headers: { ...SECURITY_HEADERS, "content-type": "text/plain; charset=utf-8" },
     });
   }
 
   return new Response(MTA_STS_POLICY, {
     status: 200,
     headers: {
+      ...SECURITY_HEADERS,
       // Senders SHOULD validate this is text/plain. A Worker/Pages default of text/html is rejected.
       "content-type": "text/plain; charset=utf-8",
       "cache-control": "public, max-age=600",

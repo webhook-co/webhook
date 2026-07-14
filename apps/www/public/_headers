@@ -47,9 +47,17 @@
 # Referenced by `l=` in default._bimi.{mail,billing}.webhook.co. If this path ever 404s, the logo
 # silently stops rendering. Do not move it without updating those DNS records.
 #
-# Content-Type is pinned on the SVG ONLY. `/bimi/*` also holds apple-branded-mail.png, and a wildcard
-# Content-Type here would mislabel that PNG as image/svg+xml.
+# ⚠️ THE `!` LINE IS LOAD-BEARING — same trap as /play's CSP above. `_headers` rules are ADDITIVE, and
+# Workers Static Assets ALREADY infers `Content-Type: image/svg+xml` from the .svg extension. Setting it
+# again without unsetting first emits the header TWICE, which a receiver sees as the invalid media type
+# `image/svg+xml, image/svg+xml`. Combined with the global `nosniff`, that is unrecoverable: the
+# indicator is rejected as malformed and BIMI returns a *failure* — strictly worse than no BIMI record.
+# Unset, then set, so exactly one Content-Type ships.
+#
+# Pinned on the SVG ONLY: /bimi/* also holds apple-branded-mail.png, and a wildcard Content-Type here
+# would mislabel that PNG as an SVG.
 /bimi/logo.svg
+  ! Content-Type
   Content-Type: image/svg+xml
 
 /bimi/*
