@@ -20,7 +20,7 @@ export const dynamic = "force-dynamic";
 const NO_AVATAR = () =>
   new Response(null, {
     status: 404,
-    headers: { "Cache-Control": "private, max-age=3600" },
+    headers: { "Cache-Control": "private, max-age=3600", Vary: "Cookie" },
   });
 
 /**
@@ -87,12 +87,21 @@ export async function GET(): Promise<Response> {
   return new Response(upstream.body, {
     status: 200,
     headers: {
+      // Echoed from upstream, but only AFTER the check above — and `new Headers()` rejects a CR/LF, so a
+      // header-splitting payload cannot ride out of here in any case.
       "Content-Type": contentType,
       // `nosniff` matters even with the check above: it stops the browser second-guessing the type.
       "X-Content-Type-Options": "nosniff",
-      // PRIVATE: this is one specific user's face, resolved from their session. A shared/proxy cache must
-      // never hand it to the next person through.
+      // The URL is a CONSTANT — `/api/avatar`, no parameters — and the response is ONE SPECIFIC PERSON'S FACE,
+      // resolved from their cookie. That is the exact shape a shared cache gets wrong: same key, different
+      // answers, and the difference lives in a header.
+      //
+      // `private` is the instruction ("browser only, never a shared cache"), and `Vary: Cookie` is the belt to
+      // its braces: it tells any cache that DOES store this that the response is a function of the cookie, so
+      // two users cannot collide on the key even if `private` were ignored. Neither is expensive, and serving
+      // one customer's photograph to another is not a mistake you get to make twice.
       "Cache-Control": "private, max-age=3600",
+      Vary: "Cookie",
     },
   });
 }

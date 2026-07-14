@@ -102,13 +102,28 @@ describe("GET /api/avatar", () => {
     }
   });
 
-  it("marks the response private — it is one specific person's face", async () => {
+  // The URL is a CONSTANT (`/api/avatar`, no parameters) and the response is one specific person's face,
+  // resolved from their cookie. That is precisely the shape a shared cache gets wrong: same key, different
+  // answers, and the difference lives in a header. Serving one customer's photograph to another is not a
+  // mistake you get to make twice.
+  it("cannot be cached across users — private, and Vary on the cookie that distinguishes them", async () => {
     fetchMock.mockResolvedValue(png());
 
     const res = await GET();
 
-    // A shared/proxy cache must never hand this to the next person through.
+    // The instruction: browser only, never a shared cache.
     expect(res.headers.get("cache-control")).toContain("private");
+    // The belt to its braces: a cache that DOES store this is told the response is a function of the cookie,
+    // so two users cannot collide on the key even if `private` were ignored.
+    expect(res.headers.get("vary")).toBe("Cookie");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+  });
+
+  it("varies on the cookie for the no-avatar answer too", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 404 }));
+
+    const res = await GET();
+
+    expect(res.headers.get("vary")).toBe("Cookie");
   });
 });
