@@ -97,14 +97,26 @@ describe("resolveConsentRequest", () => {
 
   it("returns null for a tampered ticket", async () => {
     const ticket = await makeTicket();
-    // Tamper by CHANGING the final character, never by overwriting it with a fixed one. The previous
-    // form (`ticket.slice(0, -2) + "AA"`) was a no-op whenever the ticket already ended in "AA" —
-    // ~0.1% of tickets (measured over 200k base64url-encoded HMAC-SHA256 tags). When that happened the
-    // "tampered" ticket was byte-identical to the real one, verified fine, and the test failed. A ~1-in-
-    // 966 red build that reproduces on nobody's machine.
-    const last = ticket.at(-1)!;
-    const tampered = ticket.slice(0, -1) + (last === "A" ? "B" : "A");
-    expect(tampered).not.toBe(ticket); // the tamper must actually tamper
+
+    // Tamper in the MIDDLE of the MAC, never at its END.
+    //
+    // The ticket is `<base64url(json)>.<base64url(mac)>` and the MAC is HMAC-SHA256 — 32 bytes = 256
+    // bits, which base64url-encodes to 43 chars. 43 * 6 = 258, so the FINAL character carries only 4
+    // significant bits; its low 2 bits are padding and are DISCARDED on decode. Mutating the last
+    // char therefore often decodes to the IDENTICAL MAC and tampers nothing, so the "tampered" ticket
+    // verifies fine and the assertion below fails.
+    //
+    // Measured over 20k random tags: overwriting the last two chars with "AA" (the original form) was
+    // a no-op 0.1% of the time; flipping just the last char is a no-op 6.3% of the time. Flipping a
+    // middle char — which carries all 6 of its bits — is a no-op 0.0% of the time.
+    const dot = ticket.lastIndexOf(".");
+    const mac = ticket.slice(dot + 1);
+    const i = Math.floor(mac.length / 2);
+    const tamperedMac = mac.slice(0, i) + (mac[i] === "A" ? "B" : "A") + mac.slice(i + 1);
+    const tampered = `${ticket.slice(0, dot + 1)}${tamperedMac}`;
+
+    expect(tampered).not.toBe(ticket); // the tamper must actually change the string...
+    expect(tamperedMac).not.toBe(mac); // ...and specifically the MAC
     expect(await resolveConsentRequest(tampered)).toBeNull();
   });
 
