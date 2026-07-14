@@ -57,6 +57,32 @@ describe("GET /auth/callback", () => {
     expect(session?.userId).toBe("usr_dana");
   });
 
+  it("lands on a validated same-origin `next` (the invite return path), not `/`", async () => {
+    exchangeTicket.mockImplementationOnce(async () => ({
+      userId: "usr_dana",
+      orgId: "org_acme",
+      user: { name: "Dana", email: "dana@acme.co", image: null },
+    }));
+    const res = await GET(
+      new Request(
+        "https://app.test/auth/callback?ticket=sxt_abc&next=%2Finvite%2Faccept%3Forg%3DX",
+      ),
+    );
+    expect(res.headers.get("location")).toBe("https://app.test/invite/accept?org=X");
+  });
+
+  it("ignores an off-origin `next` and falls back to `/`", async () => {
+    exchangeTicket.mockImplementationOnce(async () => ({
+      userId: "usr_dana",
+      orgId: "org_acme",
+      user: { name: "Dana", email: "dana@acme.co", image: null },
+    }));
+    const res = await GET(
+      new Request("https://app.test/auth/callback?ticket=sxt_abc&next=%2F%2Fevil.com"),
+    );
+    expect(res.headers.get("location")).toBe("https://app.test/");
+  });
+
   it("redirects to login WITHOUT the error flag when no ticket is present", async () => {
     const res = await GET(new Request("https://app.test/auth/callback"));
     expect(exchangeTicket).not.toHaveBeenCalled();

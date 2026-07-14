@@ -1,3 +1,4 @@
+import { sanitizeReturnPath } from "@webhook-co/shared";
 import { NextResponse } from "next/server";
 import { sessionCookieOptions } from "@/server/session-cookie";
 
@@ -52,8 +53,12 @@ export async function GET(request: Request): Promise<Response> {
     return NextResponse.redirect(failed);
   }
 
-  // Land on the dashboard with a clean URL — the ticket never enters history.
-  const response = NextResponse.redirect(new URL("/", url.origin));
+  // Land on the validated opt-in return path (an invitee's `next=/invite/accept?org=…`) or, by default, the
+  // dashboard `/`. `next` is re-validated same-origin here — the handoff already checked it, but this endpoint
+  // must never redirect off-origin on its own authority. The ticket never enters the final URL (no history
+  // leak); `next` is a non-secret same-origin path.
+  const next = sanitizeReturnPath(url.searchParams.get("next"), url.origin) ?? "/";
+  const response = NextResponse.redirect(new URL(next, url.origin));
   response.cookies.set(SESSION_COOKIE, token, {
     ...sessionCookieOptions(),
     maxAge: SESSION_TTL_SECONDS,
