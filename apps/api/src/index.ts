@@ -16,6 +16,7 @@ import {
   makeApiKeyAuthDeps,
   makeApiKeyLastUsedStamper,
   makeIngestHashEvictor,
+  readOrgIdentity,
   type ReplayHandler,
 } from "@webhook-co/db";
 import {
@@ -206,6 +207,9 @@ async function buildDeps(
       }),
       resourceMetadataUrl: `${API_RESOURCE}${PRM_PATH}`,
     },
+    // whoami enrichment: resolve the bound org's {id,slug,name} over the tenant pool. The org
+    // self-authorizes by id under RLS (readOrgIdentity uses withTenant), so no new grant is needed.
+    resolveOrgIdentity: (orgId) => readOrgIdentity(tenant, orgId),
     // The merged read+write capability-handler map (single-sourced in @webhook-co/db so apps/mcp builds
     // the identical map and the surfaces can't drift). endpoints.create dispatches through this map; its
     // handler validates INGEST_BASE_URL lazily + fail-closed at create time, so a bad create-only var

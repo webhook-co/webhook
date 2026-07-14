@@ -251,6 +251,39 @@ export async function isOrgMember(app: Sql, userId: string, orgId: string): Prom
   return rows.length > 0;
 }
 
+/** An org's public identity — the {id, slug, name} the org-visibility surfaces report to a bound client. */
+export interface OrgIdentity {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+}
+
+/**
+ * The org's public identity {id, slug, name} — what the org-visibility lane threads into the `/token`
+ * response, `/v1/whoami`, MCP whoami, and Connected Apps so a machine credential can report the org it is
+ * bound to.
+ *
+ * `orgId` IS THE AUTHORIZATION BOUNDARY — it MUST come from the authenticated principal, never from request
+ * input. RLS does NOT contain a foreign id here: `withTenant` sets `app.current_org` to whatever `orgId` you
+ * pass, so the FORCE-RLS gate `id = current_org_id()` resolves to `id = <that same id>` and the row matches.
+ * RLS only guarantees this read cannot be WIDENED to a DIFFERENT org in one query (the context is pinned to
+ * the named org); it is not a membership check. Callers therefore pass only an org the principal owns:
+ * `whoami` passes the principal's own `ctx.orgId`; the `/token` mint has already asserted `isOrgMember`
+ * before it reaches here. No SECURITY DEFINER, no new policy, no migration. Null when the id names no org.
+ *
+ * `slug::text`: `slug` is `citext` and the pool runs `fetch_types:false`, so an un-cast citext can
+ * deserialize oddly (see the `former_slugs` note on `listUserOrgs`). The cast pins it to a plain string.
+ */
+export async function readOrgIdentity(app: Sql, orgId: string): Promise<OrgIdentity | null> {
+  const rows = await withTenant(
+    app,
+    orgId,
+    (tx) => tx<{ id: string; slug: string; name: string }[]>`
+      select id, slug::text as slug, name from orgs where id = ${orgId} limit 1`,
+  );
+  return rows[0] ?? null;
+}
+
 /**
  * `userId`'s role IN `orgId` — the ONE org-scoped membership-role read. Null when they aren't a member.
  *
@@ -411,7 +444,7 @@ export async function readUserProfile(app: Sql, userId: string): Promise<UserPro
 export async function listConsentOrgs(
   app: Sql,
   userId: string,
-): Promise<{ orgId: string; name: string }[]> {
+): Promise<{ orgId: string; slug: string; name: string }[]> {
   const orgs = await listUserOrgs(app, userId);
   // Pin the PERSONAL org first, rather than trusting the directory's created_at order to put it there.
   // That order is an assumption, not an invariant: bootstrap self-heals on a LATER session-create, so a user
@@ -424,7 +457,9 @@ export async function listConsentOrgs(
     ...orgs.filter((o) => o.orgId === personal),
     ...orgs.filter((o) => o.orgId !== personal),
   ];
-  return ordered.map((o) => ({ orgId: o.orgId, name: o.name }));
+  // slug rides along so the `?organization=<slug>` consent hint (Lane 2.5) can match a member org by its URL
+  // handle; the sealed allowlist itself only needs id+name, but threading slug here keeps one read.
+  return ordered.map((o) => ({ orgId: o.orgId, slug: o.slug, name: o.name }));
 }
 
 export interface BootstrapPersonalOrgInput {

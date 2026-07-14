@@ -1,4 +1,10 @@
-import { AuthContextSchema, CapabilityFault, type AuthContext } from "@webhook-co/contract";
+import {
+  AuthContextSchema,
+  CapabilityFault,
+  OrganizationSchema,
+  type AuthContext,
+  type OrgIdentity,
+} from "@webhook-co/contract";
 import type { CapabilityHandlers, ReplayHandler } from "@webhook-co/db";
 import { matchRoute, type RouteDef } from "@webhook-co/openapi/routes";
 import {
@@ -48,6 +54,13 @@ export interface ApiDeps {
    * reconfigure egress routing) is un-driftable. Optional in the bag; production wires it, the routes 5xx if absent.
    */
   readonly subscriptions?: CapabilityHandlers;
+  /**
+   * Resolves an org's public identity {id, slug, name} from its id — used ONLY by `whoami` to enrich the
+   * response so a bound client can see which org it acts in. Optional in the bag: production (index.ts)
+   * wires it over the tenant pool; when absent or on a read fault, `whoami` degrades to the base principal
+   * (orgId is still present). It is NOT on the request hot path — verifyBearer never calls it.
+   */
+  readonly resolveOrgIdentity?: (orgId: string) => Promise<OrgIdentity | null>;
 }
 
 function jsonError(code: string, message: string, status: number): Response {
@@ -123,8 +136,30 @@ async function routeRequest(request: Request, deps: ApiDeps): Promise<Response> 
         headers: { "www-authenticate": authn.challenge },
       });
     }
+    // Enrich with the bound org's identity {id,slug,name} so a multi-org caller can see WHICH org this
+    // credential acts in. Best-effort: the principal is already resolved (orgId present), so NEITHER a read
+    // fault NOR a degenerate org row (e.g. an empty `name`, which the wire schema rejects) may take down
+    // `whoami` — this is the surface the CLI validates keys against. Both failure modes log a signal (so a
+    // persistent org-read outage isn't silently dark) and degrade to the base principal. We validate the
+    // resolved row through OrganizationSchema BEFORE merging, so the final parse below can never throw on it.
+    //
+    // Cost: one extra tenant-pool read per whoami. Proportionate — whoami is a low-QPS identity/key-check
+    // surface, not a data path, and the capability routes are untouched. Deliberately NOT cached: slugs are
+    // mutable (a rename retires the old slug, org-URL lane), so a cache would serve a stale slug post-rename.
+    let organization: OrgIdentity | undefined;
+    if (deps.resolveOrgIdentity) {
+      try {
+        const resolved = await deps.resolveOrgIdentity(authn.ctx.orgId);
+        organization = resolved ? OrganizationSchema.parse(resolved) : undefined;
+      } catch (err) {
+        console.log(
+          JSON.stringify({ message: "api.whoami_org_enrich_failed", error: String(err) }),
+        );
+        organization = undefined; // degrade to base identity; orgId is still reported
+      }
+    }
     // Shape the response through the shared schema so it can't drift from the AuthContext contract.
-    return Response.json(AuthContextSchema.parse(authn.ctx));
+    return Response.json(AuthContextSchema.parse({ ...authn.ctx, organization }));
   }
 
   // Authenticate + enforce the capability's scope. Auth rejections return 401/403 with the RFC 6750

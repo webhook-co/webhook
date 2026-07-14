@@ -9,6 +9,7 @@ import {
   buildProtectedResourceMetadata,
   buildWwwAuthenticate,
   extractBearer,
+  OrganizationSchema,
   UnauthenticatedError,
   type AuthContext,
   type BearerAuthzDeps,
@@ -146,6 +147,50 @@ describe("AuthContextSchema", () => {
   it("rejects a principal missing orgId or scopes", () => {
     expect(AuthContextSchema.safeParse({ scopes: [] }).success).toBe(false);
     expect(AuthContextSchema.safeParse({ orgId: "org_1" }).success).toBe(false);
+  });
+
+  it("accepts an optional nested organization {id, slug, name}", () => {
+    const parsed = AuthContextSchema.safeParse({
+      orgId: "org_1",
+      scopes: [],
+      organization: { id: "org_1", slug: "acme", name: "Acme Inc" },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.organization).toEqual({ id: "org_1", slug: "acme", name: "Acme Inc" });
+    }
+  });
+
+  it("keeps organization optional — a principal without it still parses (back-compat)", () => {
+    const parsed = AuthContextSchema.safeParse({ orgId: "org_1", scopes: ["events:read"] });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.organization).toBeUndefined();
+  });
+
+  it("rejects a partial organization (all of id/slug/name required when present)", () => {
+    expect(
+      AuthContextSchema.safeParse({
+        orgId: "org_1",
+        scopes: [],
+        organization: { id: "org_1", slug: "acme" },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("OrganizationSchema", () => {
+  it("accepts a full {id, slug, name}", () => {
+    expect(OrganizationSchema.safeParse({ id: "o1", slug: "acme", name: "Acme" }).success).toBe(
+      true,
+    );
+  });
+
+  it("rejects an empty name — an identity surface validates a resolved org before merging it", () => {
+    // orgs.name is `text not null` with no non-empty CHECK, so a degenerate org can carry name = ''. whoami
+    // parses the resolved row through THIS schema first, so an empty name degrades to base identity rather
+    // than surfacing a name-less org (or 500ing).
+    expect(OrganizationSchema.safeParse({ id: "o1", slug: "acme", name: "" }).success).toBe(false);
+    expect(OrganizationSchema.safeParse({ id: "o1", slug: "", name: "Acme" }).success).toBe(false);
   });
 });
 

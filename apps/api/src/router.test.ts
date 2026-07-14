@@ -622,6 +622,61 @@ describe("handleRequest — GET /v1/whoami (scope-free identity)", () => {
     };
     await expect(handleRequest(get("/v1/whoami"), deps)).rejects.toThrow(/hyperdrive down/);
   });
+
+  it("enriches with organization {id,slug,name} when resolveOrgIdentity is wired", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ orgId: ORG, userId: "usr_1", scopes: ["events:read"] })),
+      handlers: handlersOf({}),
+      resolveOrgIdentity: async (orgId) => ({ id: orgId, slug: "acme", name: "Acme Inc" }),
+    };
+    const res = await handleRequest(get("/v1/whoami"), deps);
+    expect(await res.json()).toEqual({
+      orgId: ORG,
+      userId: "usr_1",
+      scopes: ["events:read"],
+      organization: { id: ORG, slug: "acme", name: "Acme Inc" },
+    });
+  });
+
+  it("degrades to base identity (omits organization) when the org read faults — whoami stays available", async () => {
+    // The principal is already resolved; the nested org object is enrichment. A supplementary read fault
+    // must not take down `whoami` (the CLI's key-validation surface) — orgId is still present.
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ orgId: ORG, scopes: [] })),
+      handlers: handlersOf({}),
+      resolveOrgIdentity: async () => {
+        throw new Error("org read blipped");
+      },
+    };
+    const res = await handleRequest(get("/v1/whoami"), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ orgId: ORG, scopes: [] });
+  });
+
+  it("omits organization when the org id names no org (resolver returns null)", async () => {
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ orgId: ORG, scopes: [] })),
+      handlers: handlersOf({}),
+      resolveOrgIdentity: async () => null,
+    };
+    const res = await handleRequest(get("/v1/whoami"), deps);
+    expect(await res.json()).toEqual({ orgId: ORG, scopes: [] });
+  });
+
+  it("degrades to base identity when the resolved org is degenerate (empty name — must never 500 whoami)", async () => {
+    // orgs.name is `text not null` with NO non-empty CHECK, so an org can hold name = '' (the codebase has
+    // a documented history of name-less orgs). The wire schema requires a non-empty name; validating the
+    // resolved row before merging means such a row degrades to base identity instead of 500ing the CLI's
+    // key-validation surface. Regression for the parse-outside-the-catch defect.
+    const deps: ApiDeps = {
+      authDeps: authDeps(verify({ orgId: ORG, scopes: [] })),
+      handlers: handlersOf({}),
+      resolveOrgIdentity: async (orgId) => ({ id: orgId, slug: "acme", name: "" }),
+    };
+    const res = await handleRequest(get("/v1/whoami"), deps);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ orgId: ORG, scopes: [] });
+  });
 });
 
 describe("handleRequest — GET /v1/events/:id/payload (events.getPayload)", () => {

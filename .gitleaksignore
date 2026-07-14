@@ -23,18 +23,21 @@
 
 # The invite-cookie unit test's FIXTURE token. `sealInvitePayload({ org, token }, SECRET, T0)` — the
 # test's own secret is the literal string "test-secret-abc" and the token is a made-up value; the
-# generic-api-key rule fires on the `token:` name plus entropy alone. Nothing here is a credential.
+# generic-api-key rule fired on the `token:` name plus entropy alone. Nothing here is a credential.
 #
-# ⚠️ This lives on the `feat/invite-return-through-login` branch, NOT on main — but CI checks out with
-# `fetch-depth: 0`, which fetches EVERY ref, and `gitleaks detect --source .` walks all of them. So one
-# unmerged branch's test fixture fails the secret scan on EVERY open PR in the repo, including PRs that
-# do not touch that code. That is why this is suppressed here rather than on the branch that owns it.
-#
-# When that branch squash-merges, its SHA changes and this fingerprint goes stale (see the warning
-# above) — re-derive from the run log at that point, or make the fixture non-entropic
-# (e.g. `token: "tok_test_placeholder"`), which fixes it permanently and is the better end state.
+# The CURRENT tree is now de-entropied (the token is `whinv_example_test_value`, which the rule does not
+# flag), so no inline suppression is needed going forward and a line-shift can't mint a new fingerprint.
+# What remains is the FROZEN occurrence in history, which gitleaks still walks and which cannot be rewritten.
+# The reported commit depends on which refs are reachable in a given checkout: a fresh PR checkout sees the
+# squash of #587 into main (ab468a7); a local clone that still has the pre-merge feature-branch commits sees
+# those (8616490 for the test, ec7c840 for the plan doc). Both sets are listed so the ignore is correct from
+# either history — the same belt-and-suspenders as the surfaces-tabs entries above.
+ab468a7ab46bceb7503a4d2f1bb823bd58b11148:apps/web/src/server/invite-cookie.test.ts:generic-api-key:12
+ab468a7ab46bceb7503a4d2f1bb823bd58b11148:apps/web/src/server/invite-cookie.test.ts:generic-api-key:15
 8616490897d9d74f1a1d6b9f965a13606804ac26:apps/web/src/server/invite-cookie.test.ts:generic-api-key:12
 8616490897d9d74f1a1d6b9f965a13606804ac26:apps/web/src/server/invite-cookie.test.ts:generic-api-key:15
 # ...and the plan document, which simply quotes that same test's code block verbatim.
+ab468a7ab46bceb7503a4d2f1bb823bd58b11148:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:136
+ab468a7ab46bceb7503a4d2f1bb823bd58b11148:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:139
 ec7c840f1a1dd0022714bd51b2d05009f34ac39d:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:136
 ec7c840f1a1dd0022714bd51b2d05009f34ac39d:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:139

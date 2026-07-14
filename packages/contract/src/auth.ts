@@ -9,11 +9,28 @@ import { z } from "zod";
 
 import { CAPABILITY_REGISTRY } from "./capabilities";
 
+/**
+ * An org's public identity — the {id, slug, name} a bound machine credential reports so a multi-org user
+ * can see WHICH org a token/CLI-profile/connected-app acts in. Structurally matches @webhook-co/db's
+ * `readOrgIdentity` result (kept here so the wire contract owns its own shape without a db dependency).
+ */
+export interface OrgIdentity {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+}
+
 export interface AuthContext {
   readonly orgId: string;
   /** Pseudonymous user id when a user principal is present. */
   readonly userId?: string;
   readonly scopes: readonly string[];
+  /**
+   * The bound org's public identity {id, slug, name}, when the surface enriches it (e.g. `whoami` resolves
+   * it from `orgId`). Never part of the request-time principal that `verifyBearer` returns — that stays
+   * `{orgId, scopes, userId?, keyId?}` so the hot path never fetches. This is response-only enrichment.
+   */
+  readonly organization?: OrgIdentity;
   /**
    * The id of the api key that authenticated this request, when the principal is a bearer key.
    *
@@ -32,10 +49,26 @@ export interface AuthContext {
  * Wire schema for an AuthContext — the typed contract for the identity (`whoami`) response, so the
  * server shapes it and the client parses it against ONE definition. Mirrors the AuthContext interface.
  */
+/**
+ * Wire schema for an {@link OrgIdentity} — the bound org's public identity. Exported so a surface enriching
+ * a response (e.g. `whoami`) can validate a resolved org row on its own BEFORE merging it, and degrade
+ * gracefully if the row is degenerate (an org whose `name` is empty — `orgs.name` is `text not null` with no
+ * non-empty CHECK — must not 500 an identity endpoint).
+ */
+export const OrganizationSchema = z.object({
+  id: z.string().min(1),
+  slug: z.string().min(1),
+  name: z.string().min(1),
+});
+
 export const AuthContextSchema = z.object({
   orgId: z.string().min(1),
   userId: z.string().optional(),
   scopes: z.array(z.string()),
+  // Response-only enrichment: the bound org's public identity. Optional so an older server (or a surface
+  // that doesn't resolve it) still produces a valid principal, and so `verifyBearer`'s hot-path context
+  // (which never fetches it) parses unchanged.
+  organization: OrganizationSchema.optional(),
 });
 
 /**
