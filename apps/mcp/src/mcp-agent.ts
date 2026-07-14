@@ -180,16 +180,29 @@ export class WebhookMcp extends McpAgent<McpEnv> {
             isError: true,
           };
         }
-        const result = await buildWhoami(ctx, async (userId) => {
-          try {
-            return await this.env.AUTH_ISSUER.resolveProfile(userId);
-          } catch (err) {
-            // Degrade to base identity (buildWhoami reads null as "not found"), but leave a non-PII
-            // breadcrumb — a persistent auth-RPC outage silently dropping name/email must be diagnosable.
-            this.log("mcp.profile_resolve_failed", { error: String(err) });
-            return null;
-          }
-        });
+        const issuer = this.env.AUTH_ISSUER;
+        // The bound org's {id,slug,name} is resolved on auth. over the AUTH_ISSUER binding (like
+        // resolveProfile), so the DB read stays OFF this worker. The binding is absent in local dev / preview
+        // (no `services` block) — pass NO resolver then, so buildWhoami skips the org read entirely (no error,
+        // no log for the expected no-op). buildWhoami owns the timeout + validation + fault logging.
+        const resolveOrg = issuer?.resolveOrgIdentity
+          ? (orgId: string) => issuer.resolveOrgIdentity(orgId)
+          : undefined;
+        const result = await buildWhoami(
+          ctx,
+          async (userId) => {
+            try {
+              return await this.env.AUTH_ISSUER.resolveProfile(userId);
+            } catch (err) {
+              // Degrade to base identity (buildWhoami reads null as "not found"), but leave a non-PII
+              // breadcrumb — a persistent auth-RPC outage silently dropping name/email must be diagnosable.
+              this.log("mcp.profile_resolve_failed", { error: String(err) });
+              return null;
+            }
+          },
+          resolveOrg,
+          (event, fields) => this.log(event, fields ?? {}),
+        );
         return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
       },
     );

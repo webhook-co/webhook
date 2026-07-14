@@ -89,6 +89,19 @@ describe("principalDigest", () => {
     expect(await principalDigest(ALICE)).not.toBe(await principalDigest(BOB));
   });
 
+  it("IGNORES the response-only `organization` field — adding it to a ctx must not re-key the session", async () => {
+    // whoami now enriches its RESPONSE with the bound org {id,slug,name}. The digest binds the credential's
+    // AUTHORITY (org id + user + scopes + key id), NOT display enrichment — so a ctx that happens to carry the
+    // optional `organization` object must produce the byte-identical digest, or every session would spuriously
+    // re-initialise the moment the field appears. Guards against anyone folding `organization` into the digest.
+    const bare: AuthContext = { orgId: "o", userId: "u", scopes: ["events:read"] };
+    const enriched: AuthContext = {
+      ...bare,
+      organization: { id: "o", slug: "acme", name: "Acme Inc" },
+    };
+    expect(await principalDigest(enriched)).toBe(await principalDigest(bare));
+  });
+
   it("differs for the same org with vs without a user (an org key is a distinct principal)", async () => {
     expect(await principalDigest(ALICE)).not.toBe(await principalDigest(ALICE_ORGKEY));
   });

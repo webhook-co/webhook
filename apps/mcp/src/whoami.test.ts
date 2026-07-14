@@ -47,3 +47,73 @@ describe("buildWhoami", () => {
     expect(result).toEqual({ orgId: "org_1", userId: "usr_1", scopes: ["profile"] });
   });
 });
+
+describe("buildWhoami — bound org identity (tenant identity, always returned when resolvable)", () => {
+  const ORG = { id: "org_1", slug: "acme", name: "Acme Inc" };
+
+  it("includes organization {id,slug,name} when the org resolver is wired — NOT gated on the profile scope", async () => {
+    // org identity is TENANT identity (like orgId), not user PII, so unlike name/email it needs no consent.
+    const ctx: AuthContext = { orgId: "org_1", scopes: [] };
+    const result = await buildWhoami(ctx, resolver, async () => ORG);
+    expect(result).toEqual({ orgId: "org_1", scopes: [], organization: ORG });
+  });
+
+  it("omits organization when no org resolver is wired (forward-compat) — and never logs the no-op", async () => {
+    const log = vi.fn();
+    const ctx: AuthContext = { orgId: "org_1", scopes: [] };
+    expect(await buildWhoami(ctx, resolver, undefined, log)).toEqual({
+      orgId: "org_1",
+      scopes: [],
+    });
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("degrades + logs a distinct reason on null / degenerate / fault — never fails whoami", async () => {
+    const ctx: AuthContext = { orgId: "org_1", scopes: [] };
+
+    const log1 = vi.fn();
+    expect(await buildWhoami(ctx, resolver, async () => null, log1)).toEqual({
+      orgId: "org_1",
+      scopes: [],
+    });
+    expect(log1).toHaveBeenCalledWith("mcp.whoami_org_enrich_skipped", { reason: "org_not_found" });
+
+    const log2 = vi.fn();
+    // empty name fails the shared OrganizationSchema → omitted, logged invalid_org.
+    await buildWhoami(ctx, resolver, async () => ({ id: "org_1", slug: "acme", name: "" }), log2);
+    expect(log2).toHaveBeenCalledWith("mcp.whoami_org_enrich_skipped", { reason: "invalid_org" });
+
+    const log3 = vi.fn();
+    await buildWhoami(
+      ctx,
+      resolver,
+      async () => {
+        throw new Error("tenant pool exhausted");
+      },
+      log3,
+    );
+    expect(log3).toHaveBeenCalledWith("mcp.whoami_org_enrich_failed");
+  });
+
+  it("does NOT hang on a slow/stuck org read — abandons at the timeout and returns the base identity", async () => {
+    const log = vi.fn();
+    const ctx: AuthContext = { orgId: "org_1", scopes: [] };
+    const started = Date.now();
+    // 20ms bound: the never-resolving read is abandoned promptly, well before any MCP transport timeout.
+    const result = await buildWhoami(ctx, resolver, () => new Promise<never>(() => {}), log, 20);
+    expect(result).toEqual({ orgId: "org_1", scopes: [] });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(log).toHaveBeenCalledWith("mcp.whoami_org_enrich_timeout");
+  });
+
+  it("carries both organization AND profile PII when the profile scope is present", async () => {
+    const ctx: AuthContext = { orgId: "org_1", userId: "usr_1", scopes: ["profile"] };
+    const result = await buildWhoami(ctx, resolver, async () => ORG);
+    expect(result).toMatchObject({
+      orgId: "org_1",
+      organization: ORG,
+      name: "Dana Dev",
+      email: "dana@example.com",
+    });
+  });
+});

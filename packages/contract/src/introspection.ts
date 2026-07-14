@@ -6,6 +6,8 @@
 // This lives in @webhook-co/contract (not in either app) because it is the single source of truth both
 // sides depend on: the auth. handler shapes it, the mcp client parses it, against ONE definition.
 
+import type { OrgIdentity } from "./auth";
+
 export interface IntrospectionResult {
   /** Whether the token is currently valid (RFC 7662 `active`). False = unknown/invalid/expired. */
   active: boolean;
@@ -45,4 +47,11 @@ export interface UserProfile {
 export interface TokenIntrospector {
   introspect(token: string): Promise<IntrospectionResult>;
   resolveProfile(userId: string): Promise<UserProfile | null>;
+  /**
+   * The bound org's public identity {id,slug,name} for the `whoami` tool — resolved on auth. (the org
+   * self-authorizes by id under RLS), keeping the DB read off the MCP worker just like `resolveProfile`. The
+   * caller passes the orgId from its OWN introspected principal. Non-PII, so unlike `resolveProfile` it needs
+   * no scope gate. Null when the id names no org.
+   */
+  resolveOrgIdentity(orgId: string): Promise<OrgIdentity | null>;
 }
