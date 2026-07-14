@@ -150,7 +150,7 @@ export async function completeOnboardingAction(
             auditKey,
           }),
         );
-        landing = `/org/${result.slug}/dashboard`;
+        landing = `/org/${result.slug}/dashboard${inviteQuery}`;
       } catch (error) {
         if (error instanceof SlugTakenError) {
           return { ok: false, error: "That URL is already taken. Try another.", field: "orgSlug" };

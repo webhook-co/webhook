@@ -235,6 +235,17 @@ describe("completeOnboardingAction — invite-status passthrough", () => {
       completeOnboardingAction(form({ firstName: "Grace", invite: "evil" })),
     ).rejects.toThrow("NEXT_REDIRECT:/org/acme/dashboard");
   });
+
+  it("carries the invite flag onto a FRESH signup's renamed-org landing too", async () => {
+    // A fresh signup can arrive with a carried flag (e.g. an expired invite → signup → /?invite=invalid). The
+    // rename-branch landing must forward it just like the invited branch, or the notice is dropped.
+    renameOrg.mockResolvedValueOnce({ id: "org_personal", slug: "acme", name: "Acme" });
+    await expect(
+      completeOnboardingAction(
+        form({ firstName: "Ada", orgName: "Acme", orgSlug: "acme", invite: "invalid" }),
+      ),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/acme/dashboard?invite=invalid");
+  });
 });
 
 describe("completeOnboardingAction — the session gate", () => {
