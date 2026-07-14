@@ -23,8 +23,12 @@ function isRedirectError(err: unknown): boolean {
 
 /** Mirrors the server's cap in onboarding-actions.ts — the client caps input so the server never has to. */
 const MAX_NAME_LEN = 80;
-/** First name is required and must be at least this long; the last name is optional. Mirrors the server. */
-const MIN_FIRST_NAME_LEN = 2;
+/**
+ * First name is REQUIRED (non-empty after trim); the last name is optional. Minimum is 1, deliberately: a
+ * single character is a legitimate given name (many CJK given names are one glyph; single-letter names and
+ * initials exist too), so we enforce "present", not a length floor. Mirrored on the server.
+ */
+const MIN_FIRST_NAME_LEN = 1;
 
 export interface OnboardingFormProps {
   readonly firstName: string;
@@ -97,7 +101,7 @@ export function OnboardingForm({
     setFieldError(undefined);
     if (firstName.trim().length < MIN_FIRST_NAME_LEN) {
       setFieldError("firstName");
-      setError("Enter your first name (at least 2 characters).");
+      setError("Tell us your first name.");
       return;
     }
     // A fresh signup must NAME their org — clearing the pre-filled field can't silently keep the machine name

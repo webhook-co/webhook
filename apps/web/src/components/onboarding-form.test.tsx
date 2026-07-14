@@ -96,16 +96,14 @@ describe("OnboardingForm", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it("requires the first name to be at least two characters (button disabled at one)", async () => {
-    const complete = vi.fn(async () => ({ ok: true as const }));
-    render(<OnboardingForm {...props({ complete, needsOrgName: false })} />);
+  it("accepts a single-character first name (required means present, not a 2-char floor)", async () => {
+    render(<OnboardingForm {...props({ needsOrgName: false })} />);
 
     const first = screen.getByLabelText("First name");
-    await userEvent.clear(first);
-    await userEvent.type(first, "A");
     const button = screen.getByRole("button", { name: /get started/i });
-    expect(button).toBeDisabled();
-    await userEvent.type(first, "l"); // now "Al" — two chars
+    await userEvent.clear(first);
+    expect(button).toBeDisabled(); // empty → blocked
+    await userEvent.type(first, "伟"); // one glyph → allowed
     expect(button).toBeEnabled();
   });
 

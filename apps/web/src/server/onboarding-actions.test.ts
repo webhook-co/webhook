@@ -270,11 +270,13 @@ describe("completeOnboardingAction — validation and failure mapping", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it("rejects a one-character first name (minimum is two)", async () => {
-    const res = await completeOnboardingAction(form({ firstName: "A", lastName: "Lovelace" }));
-    expect(res).toMatchObject({ ok: false, field: "firstName" });
-    expect((res as { error: string }).error).toMatch(/2 characters/i);
-    expect(complete).not.toHaveBeenCalled();
+  it("accepts a single-character first name — a legitimate given name (CJK glyph, initial)", async () => {
+    // Required means non-empty, NOT a 2-char floor: single-character given names are real.
+    readUserOrgDirectory.mockResolvedValue([teamOrg]);
+    await expect(completeOnboardingAction(form({ firstName: "伟" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard",
+    );
+    expect(complete).toHaveBeenCalledWith("usr_1", "伟", "");
   });
 
   it("accepts a missing last name — it is optional", async () => {
