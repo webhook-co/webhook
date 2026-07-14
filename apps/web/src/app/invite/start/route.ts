@@ -25,10 +25,15 @@ export async function GET(request: Request): Promise<Response> {
 
   // Only STASH on a genuine top-level navigation (a clicked invite link). This is a state-changing GET, and a
   // `Set-Cookie` from a cross-site subresource (`<img src=/invite/start?org=ATTACKER&token=…>`) IS stored by
-  // the browser (SameSite=Lax restricts sending, not setting) — so without this an attacker could overwrite a
-  // victim's invite cookie cross-site. `Sec-Fetch-Dest: document` marks a navigation; a subresource attack is
-  // image/empty/etc. When the header is absent (a non-Sec-Fetch client, which also can't mount the attack), we
-  // allow it. The redirect below is harmless either way.
+  // the browser (SameSite=Lax restricts sending, not setting) — so without this an attacker could force-set a
+  // victim's invite cookie cross-site. `Sec-Fetch-Dest: document` marks a navigation; the subresource attack is
+  // image/empty/etc, which this blocks on every modern browser.
+  //
+  // A header-ABSENT request is allowed: a legitimate invite click from a very old (pre-Sec-Fetch) browser also
+  // sends no header, and rejecting it would break their signup. The residual is narrow and low-impact — it
+  // needs a pre-2020 browser AND only lets an attacker OVERWRITE a victim's pending-invite cookie (recoverable
+  // from the email; the invite is still valid) or plant an invite the victim would have to navigate to and
+  // click Accept on themselves (no worse than the attacker mailing them the link directly).
   const secFetchDest = request.headers.get("sec-fetch-dest");
   const isTopLevelNav = secFetchDest === null || secFetchDest === "document";
   if (org && token && isTopLevelNav) await setInviteCookie({ org, token });

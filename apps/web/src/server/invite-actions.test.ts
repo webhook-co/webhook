@@ -243,12 +243,13 @@ describe("acceptInviteAction", () => {
     );
   });
 
-  it("prefers the FORM token over the cookie (never reads the cookie when the URL has it)", async () => {
+  it("prefers the FORM token over the cookie fallback", async () => {
+    // The cookie is still read (to decide whether to clear it on success), but the FORM token wins.
+    readInviteCookie.mockResolvedValueOnce({ org: "org_x", token: "whinv_cookie" });
     acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
     await expect(acceptInviteAction(form({ org: "org_x", token: "whinv_url" }))).rejects.toThrow(
       "NEXT_REDIRECT:/org/acme/dashboard?invite=accepted",
     );
-    expect(readInviteCookie).not.toHaveBeenCalled();
     expect(acceptInvite.mock.calls[0]![2]).toMatchObject({ token: "whinv_url" });
   });
 
@@ -283,8 +284,9 @@ describe("acceptInviteAction", () => {
     expect(clearInviteCookie).not.toHaveBeenCalled();
   });
 
-  it("does NOT clear the cookie when the token came from the FORM (may hold an unrelated org's invite)", async () => {
-    // Accepting org_x via a URL token must not wipe a cookie stashed for a DIFFERENT org.
+  it("does NOT clobber a DIFFERENT org's stashed cookie when accepting via a form token", async () => {
+    // Accepting org_x (form token) while a cookie for org_other is stashed must not wipe org_other's invite.
+    readInviteCookie.mockResolvedValueOnce({ org: "org_other", token: "whinv_other" });
     acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });
     await expect(acceptInviteAction(form({ org: "org_x", token: "whinv_url" }))).rejects.toThrow(
       /NEXT_REDIRECT/,

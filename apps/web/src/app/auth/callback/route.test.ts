@@ -94,6 +94,18 @@ describe("GET /auth/callback", () => {
     expect(location).not.toContain("error=handoff_failed");
   });
 
+  it("preserves the invitee's `next` on the NO-ticket branch too (return path not dropped)", async () => {
+    const res = await GET(
+      new Request("https://app.test/auth/callback?next=%2Finvite%2Faccept%3Forg%3DX"),
+    );
+    expect(exchangeTicket).not.toHaveBeenCalled();
+    const location = new URL(res.headers.get("location") ?? "", "https://app.test");
+    expect(location.searchParams.get("redirect")).toBe(
+      "/session/handoff?next=%2Finvite%2Faccept%3Forg%3DX",
+    );
+    expect(location.searchParams.get("error")).toBeNull(); // not a failed redeem — no error flag
+  });
+
   // THE LOOP-BREAKER PRODUCER CONTRACT. auth.'s /login now resumes an already-signed-in user by bouncing to
   // /session/handoff. If this failure redirect were a BARE /login, a live IdP session would bounce right back
   // into the handoff that just failed — login → handoff → ticket → fail → login → … forever. The `error=`

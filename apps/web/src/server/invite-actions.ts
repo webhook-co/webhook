@@ -184,15 +184,14 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
   // The token comes from the form (an already-signed-in user clicked the link, token in the URL) OR — for a
   // brand-new invitee who was returned here through login — from the encrypted app-origin invite cookie. The
   // cookie's org must match this accept's org, so a stale cookie for a different invite is ignored.
+  // Read the stashed invite cookie once (if any) — used both as a token fallback and to decide whether to
+  // retire it on success. It only matters when it belongs to THIS org.
+  const cookie = orgId ? await readInviteCookie() : null;
+  const cookieMatchesOrg = cookie !== null && cookie.org === orgId;
+  // The token normally rides the form (the accept page renders it from the URL or the cookie); fall back to
+  // the cookie only if the form somehow carried none.
   let token = String(formData.get("token") ?? "");
-  let usedCookieToken = false;
-  if (!token && orgId) {
-    const cookie = await readInviteCookie();
-    if (cookie && cookie.org === orgId) {
-      token = cookie.token;
-      usedCookieToken = true;
-    }
-  }
+  if (!token && cookieMatchesOrg) token = cookie.token;
 
   let outcome: "accepted" | "invalid" | "error" = "invalid";
   if (orgId && token) {
@@ -214,14 +213,13 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
     }
   }
 
-  // Retire the invite cookie ONLY when we actually consumed it for THIS org AND the invite was ACCEPTED —
-  // the one genuinely-terminal outcome. We deliberately do NOT clear on:
-  //   - a transient `error` (a DB blip): the cookie is the invitee's only copy of the token — keep it for retry;
-  //   - `invalid`: this CONFLATES a dead token with a still-valid token that merely failed the email match
-  //     (they authenticated with the wrong account). Wiping it would strand a valid invite; a dead token is
-  //     harmless to keep (it just fails again and the 60-min TTL sweeps it);
-  //   - a FORM/URL token (usedCookieToken false): an unrelated org's invite may be stashed — never clobber it.
-  if (usedCookieToken && outcome === "accepted") await clearInviteCookie();
+  // Retire THIS org's stashed cookie ONLY on a genuine ACCEPT. We deliberately do NOT clear on:
+  //   - a transient `error` (a DB blip): the cookie may be the invitee's only copy of the token — keep it;
+  //   - `invalid`: this CONFLATES a dead token with a still-valid token that failed the email match (they
+  //     authenticated with the WRONG account). Wiping it would strand a valid invite; a dead token is harmless
+  //     to keep (it just fails again, and the TTL sweeps it).
+  // The org match ensures we never clobber a DIFFERENT org's stashed invite.
+  if (outcome === "accepted" && cookieMatchesOrg) await clearInviteCookie();
 
   // Where to land, and the RULE THAT MATTERS: a SUCCESSFUL accept must never sign the user out.
   //

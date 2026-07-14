@@ -24,21 +24,22 @@ export async function GET(request: Request): Promise<Response> {
   const ticket = url.searchParams.get("ticket");
   const login = new URL(LOGIN_URL, url.origin);
 
+  // Preserve the invitee's return path across EITHER non-redeem path (no ticket, or a failed redeem): carry a
+  // same-origin-validated `next` so re-authentication resumes them at /invite/accept instead of dropping them
+  // on `/`. A bad/absent next simply isn't carried. Set on `login` first so both branches below inherit it.
+  const nextParam = sanitizeReturnPath(url.searchParams.get("next"), url.origin);
+  if (nextParam) {
+    login.searchParams.set("redirect", `/session/handoff?next=${encodeURIComponent(nextParam)}`);
+  }
+
   // A failed handoff must land on a real sign-in FORM, not silently re-enter the handoff. auth.'s /login now
   // resumes an already-signed-in user by bouncing them to /session/handoff — so a bare redirect back to
   // /login here would loop forever whenever the ticket cannot be redeemed (expired, replayed, exchange down):
-  // login → handoff → ticket → callback fails → login → … This param is the loop breaker; /login shows the
-  // form when it is present. Its VALUE is deliberately generic — it is a signal to our own page, not a
-  // diagnosis for the user, and never carries the ticket or a raw error.
+  // login → handoff → ticket → callback fails → login → … The `error` flag is the loop breaker; /login shows
+  // the form when it is present. Its VALUE is deliberately generic — a signal to our own page, never a ticket
+  // or raw error.
   const failed = new URL(login);
   failed.searchParams.set("error", "handoff_failed");
-  // Preserve the invitee's return path across a FAILED redeem: /login shows the form (error flag) and, once
-  // they re-authenticate, resumes them to the return path instead of dropping them on `/`. Same-origin
-  // validated; a bad/absent next simply isn't carried.
-  const failNext = sanitizeReturnPath(url.searchParams.get("next"), url.origin);
-  if (failNext) {
-    failed.searchParams.set("redirect", `/session/handoff?next=${encodeURIComponent(failNext)}`);
-  }
 
   if (!ticket) {
     return NextResponse.redirect(login);

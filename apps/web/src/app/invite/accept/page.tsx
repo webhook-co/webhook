@@ -54,11 +54,13 @@ export default async function AcceptInvitePage({
   }
 
   // Signed in: the token is in the URL (an already-signed-in user clicked the link directly) or in the cookie
-  // (a returned new invitee). The action re-reads the cookie authoritatively (invite-actions), so we only need
-  // to know whether a token EXISTS to decide what to render.
+  // (a returned new invitee). Render it into the form's hidden field so the SUBMIT carries it — otherwise a
+  // page left open past the cookie's TTL would submit with no token and fail a still-valid invite. This is the
+  // app origin (not auth's), same as the URL path already does, so it adds no auth-origin exposure.
   const cookie = urlToken ? null : await readInviteCookie();
   const cookieToken = cookie && cookie.org === org ? cookie.token : "";
-  const linkComplete = org !== "" && (urlToken !== "" || cookieToken !== "");
+  const effectiveToken = urlToken || cookieToken;
+  const linkComplete = org !== "" && effectiveToken !== "";
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center p-6">
@@ -81,9 +83,7 @@ export default async function AcceptInvitePage({
               </p>
               <form action={acceptInviteAction} className="flex flex-col gap-3">
                 <input type="hidden" name="org" value={org} />
-                {/* Only the URL path (an already-signed-in user) puts the token in the form; the returned-new-
-                    invitee path keeps it in the encrypted cookie, which the action reads server-side. */}
-                {urlToken ? <input type="hidden" name="token" value={urlToken} /> : null}
+                <input type="hidden" name="token" value={effectiveToken} />
                 <Button type="submit">Accept invite</Button>
               </form>
             </>
