@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { ConnectedApp } from "@webhook-co/contract";
+import type {
+  ConnectedApp,
+  OnboardingProfileService,
+  OnboardingStateDto,
+} from "@webhook-co/contract";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 import {
@@ -153,20 +157,12 @@ export function getConnectedAppsBinding(): ConnectedAppsBinding | undefined {
 
 /** auth.'s OnboardingProfile WorkerEntrypoint — first/last name + `onboardedAt` live on the identity `user`
  *  table, which only auth. (webhook_auth) may write, so onboarding reads/completes over this binding. Keyed by
- *  the SERVER-verified session userId; the write's timestamp is minted auth-side, never caller-supplied. */
-export interface OnboardingProfileBinding {
-  read(userId: string): Promise<OnboardingStateDto | null>;
-  complete(userId: string, firstName: string, lastName: string): Promise<{ completed: boolean }>;
-}
+ *  the SERVER-verified session userId; the write's timestamp is minted auth-side, never caller-supplied. The
+ *  wire shape is the single {@link OnboardingProfileService} contract both apps type against. */
+export type OnboardingProfileBinding = OnboardingProfileService;
 
-/** The onboarding identity slice as it crosses the binding (Dates as ISO strings). */
-export interface OnboardingStateDto {
-  readonly firstName: string | null;
-  readonly lastName: string | null;
-  readonly name: string;
-  readonly onboardedAtIso: string | null;
-  readonly createdAtIso: string;
-}
+// Re-exported so onboarding-logic (which types its input on the state slice) keeps a local import path.
+export type { OnboardingStateDto };
 
 /** The bound AUTH_ONBOARDING entrypoint, or undefined when unbound (dev / pre-provision). */
 export function getOnboardingBinding(): OnboardingProfileBinding | undefined {

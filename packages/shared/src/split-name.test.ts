@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { splitName } from "./split-name";
+// The single canonical name-splitter (was duplicated in apps/auth + apps/web before this consolidation).
 
 // GitHub gives a single `name`; this splits it into a first/last GUESS that onboarding lets the user correct.
 // It only has to be reasonable, not right — but it must never THROW or duplicate, because a signup runs it.

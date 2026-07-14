@@ -33,6 +33,23 @@ describe("resolveOnboarding — fails OPEN", () => {
     expect((await resolveOnboarding()).show).toBe(false);
   });
 
+  // The org-directory read is equally fallible and, on /onboarding, the ONLY caller of it — an unguarded throw
+  // would 500 the page instead of degrading. It must fail open too. (The state read succeeds here, so this
+  // isolates the directory read as the throwing one.)
+  it("does not show onboarding when the org-directory read throws", async () => {
+    getOnboardingBinding.mockReturnValue({
+      read: vi.fn().mockResolvedValue({
+        firstName: "Ada",
+        lastName: null,
+        name: "Ada",
+        onboardedAtIso: null,
+        createdAtIso: "2026-07-14T00:00:00.000Z",
+      }),
+    });
+    readUserOrgDirectory.mockRejectedValue(new Error("hyperdrive down"));
+    expect((await resolveOnboarding()).show).toBe(false);
+  });
+
   it("shows onboarding for a not-yet-onboarded fresh signup", async () => {
     // A user whose only org is their personal one (see decideOnboarding tests for the full matrix).
     const { personalOrgId } = await import("@webhook-co/db/orgs");

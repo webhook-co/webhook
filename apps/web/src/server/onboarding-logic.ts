@@ -1,6 +1,7 @@
 import "server-only";
 
 import { personalOrgId, type UserOrg } from "@webhook-co/db/orgs";
+import { splitName } from "@webhook-co/shared";
 
 import type { OnboardingStateDto } from "./env";
 
@@ -34,13 +35,20 @@ export type OnboardingDecision =
       readonly org: { readonly orgId: string; readonly slug: string; readonly name: string } | null;
     };
 
-/** Split a composite display name into a first/last guess — for a magic-link user with no provider profile. */
-function splitDisplayName(name: string): { firstName: string; lastName: string } {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return { firstName: "", lastName: "" };
-  if (parts.length === 1) return { firstName: parts[0]!, lastName: "" };
-  return { firstName: parts[0]!, lastName: parts.slice(1).join(" ") };
-}
+/**
+ * The instant the onboarding columns (migrations 0073/0074) shipped. Any user in the DB whose `createdAt`
+ * predates this could only have signed up BEFORE onboarding existed, so a null `onboardedAt` on such a row
+ * means "predates the feature", NOT "a fresh signup mid-onboarding".
+ *
+ * This is a BACKSTOP, not the primary mechanism. In prod the deploy migration-guard blocks the web deploy
+ * until 0074 has run, and 0074 backfills every existing user's `onboardedAt` — so their gate is already
+ * decided by the null-check below. This constant only matters if that ordering is ever broken (0074 skipped
+ * or rolled back while this code is live): without it, every pre-existing user would be force-marched through
+ * an onboarding screen that offers to rename their real, in-use org. It is exactly the "check the user
+ * predates the feature" guard migration 0073's note promised. A genuinely new signup is always created AFTER
+ * this instant, so the backstop can never wrongly SKIP onboarding for someone who needs it.
+ */
+const ONBOARDING_FEATURE_EPOCH_MS = Date.parse("2026-07-14T00:00:00Z");
 
 export interface OnboardingInput {
   readonly userId: string;
@@ -58,11 +66,19 @@ export function decideOnboarding(input: OnboardingInput): OnboardingDecision {
   // Already onboarded — the common case on every login after the first.
   if (state.onboardedAtIso !== null) return { show: false };
 
+  // Backstop for a broken migration order: a null `onboardedAt` on a row that predates the feature is a
+  // pre-existing user 0074 should have grandfathered, not a fresh signup. Treat them as onboarded rather than
+  // force-marching them through a screen that offers to rename their real org. (In prod the deploy guard makes
+  // this unreachable — 0074 runs first — but it costs nothing and closes the window if that order ever slips.)
+  const createdMs = Date.parse(state.createdAtIso);
+  if (!Number.isNaN(createdMs) && createdMs < ONBOARDING_FEATURE_EPOCH_MS) return { show: false };
+
   // Pre-fill the name. Prefer the provider-mapped first/last; fall back to splitting the composite name for a
-  // magic-link user who has no given/family fields.
-  const split = splitDisplayName(state.name);
-  const firstName = state.firstName ?? split.firstName;
-  const lastName = state.lastName ?? split.lastName;
+  // magic-link user who has no given/family fields. The shared `splitName` returns undefined for empties, so
+  // coerce to "" — these become form field values, which must be strings.
+  const split = splitName(state.name);
+  const firstName = state.firstName ?? split.firstName ?? "";
+  const lastName = state.lastName ?? split.lastName ?? "";
 
   // Invited?  They hold a membership in an org that is NOT their derived personal one.
   const personal = personalOrgId(input.userId);

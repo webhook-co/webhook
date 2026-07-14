@@ -6,6 +6,21 @@ import * as React from "react";
 
 import type { CompleteOnboardingResult } from "@/server/onboarding-actions";
 
+/**
+ * Next signals a server-action redirect by throwing an error carrying a `NEXT_REDIRECT` digest. It is a
+ * control-flow signal, not a failure — it must be re-thrown so the framework performs the navigation. We match
+ * the digest rather than import Next's internal `isRedirectError`, which is not a stable public export.
+ */
+function isRedirectError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "digest" in err &&
+    typeof (err as { digest?: unknown }).digest === "string" &&
+    (err as { digest: string }).digest.startsWith("NEXT_REDIRECT")
+  );
+}
+
 export interface OnboardingFormProps {
   readonly firstName: string;
   readonly lastName: string;
@@ -66,6 +81,13 @@ export function OnboardingForm({
       setError("Tell us your first name.");
       return;
     }
+    // A fresh signup must NAME their org — clearing the pre-filled field can't silently keep the machine name
+    // (the server enforces this too; catching it here saves a round trip and matches the disabled button).
+    if (needsOrgName && orgName.trim().length === 0) {
+      setFieldError("orgName");
+      setError("Give your organization a name.");
+      return;
+    }
     setPending(true);
     try {
       const fd = new FormData();
@@ -81,8 +103,11 @@ export function OnboardingForm({
         setError(res.error);
         setFieldError(res.field);
       }
-    } catch {
-      // A redirect throw is Next's success signal — let it propagate; only a real error lands here.
+    } catch (err) {
+      // The action signals success by throwing a redirect (NEXT_REDIRECT digest). That is NOT an error — it
+      // must propagate so Next performs the navigation. Swallowing it here would show a false failure banner on
+      // a submit that actually succeeded (and already stamped onboardedAt). Only a genuine error lands below.
+      if (isRedirectError(err)) throw err;
       setError("Something went wrong. Please try again.");
     } finally {
       setPending(false);
@@ -155,7 +180,11 @@ export function OnboardingForm({
         <Button
           type="submit"
           loading={pending}
-          disabled={firstName.trim().length === 0 || Boolean(slugError)}
+          disabled={
+            firstName.trim().length === 0 ||
+            Boolean(slugError) ||
+            (needsOrgName && orgName.trim().length === 0)
+          }
         >
           Get started
         </Button>

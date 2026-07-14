@@ -91,4 +91,38 @@ describe("decideOnboarding", () => {
   it("skips onboarding when the identity read is unavailable", () => {
     expect(decideOnboarding({ userId: "u", state: null, orgs: [] }).show).toBe(false);
   });
+
+  // BACKSTOP for a broken migration order (0074 skipped while this code is live). A user created before the
+  // feature shipped, still null on onboardedAt, is a pre-existing user — grandfather them, do not force the
+  // screen. Without this they'd be prompted to rename their real, in-use org.
+  it("grandfathers a user who predates the feature even with a null onboardedAt", () => {
+    const d = decideOnboarding({
+      userId: "u",
+      state: state({ createdAtIso: "2026-06-01T00:00:00.000Z", onboardedAtIso: null }),
+      orgs: [personalOrg("u")],
+    });
+    expect(d.show).toBe(false);
+  });
+
+  // The other side of the boundary: a genuinely NEW signup is created after the epoch, so the backstop must
+  // NOT skip them. (A new signup is always created after the feature shipped, so this direction is safe.)
+  it("still onboards a fresh signup created after the feature epoch", () => {
+    const d = decideOnboarding({
+      userId: "u",
+      state: state({ createdAtIso: "2026-08-01T12:00:00.000Z", onboardedAtIso: null }),
+      orgs: [personalOrg("u")],
+    });
+    expect(d.show).toBe(true);
+  });
+
+  // A malformed timestamp must not silently grandfather (which would WRONGLY skip a real new signup). NaN
+  // fails the comparison, so we fall through to the normal decision — the safe direction.
+  it("does not grandfather on an unparseable createdAt (falls through to normal onboarding)", () => {
+    const d = decideOnboarding({
+      userId: "u",
+      state: state({ createdAtIso: "not-a-date", onboardedAtIso: null }),
+      orgs: [personalOrg("u")],
+    });
+    expect(d.show).toBe(true);
+  });
 });

@@ -59,3 +59,4 @@ export * from "./retention";
 export * from "./stripe-client";
 export * from "./client-advisory";
 export * from "./org-slug";
+export * from "./split-name";

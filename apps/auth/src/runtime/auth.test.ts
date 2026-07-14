@@ -232,6 +232,50 @@ describe("buildAuthConfig", () => {
     expect(c.secret).toBe("test-secret");
     expect(c.trustedOrigins).toContain("https://app.webhook.co");
   });
+
+  // The onboarding pre-fill is LOAD-BEARING on these input flags, and the failure is SILENT. Better Auth runs
+  // mapProfileToUser's output through the same input filter as a client body, dropping any `input: false`
+  // field — so with the name fields at `input: false` the provider's given/family name never persisted and
+  // the pre-fill was dead with no error. These assertions pin the fix so a refactor can't quietly revert it.
+  it("declares firstName/lastName as input:true so mapProfileToUser actually persists them", () => {
+    const fields = (
+      buildAuthConfig(input(), cfgDeps()).user as {
+        additionalFields?: Record<string, { input?: boolean }>;
+      }
+    ).additionalFields;
+    expect(fields?.firstName?.input).toBe(true);
+    expect(fields?.lastName?.input).toBe(true);
+  });
+
+  it("keeps onboardedAt as input:false — the gate flag is never client-settable", () => {
+    const fields = (
+      buildAuthConfig(input(), cfgDeps()).user as {
+        additionalFields?: Record<string, { input?: boolean }>;
+      }
+    ).additionalFields;
+    // input defaults to false in Better Auth, so accept either explicit false or omitted — never true.
+    expect(fields?.onboardedAt?.input).not.toBe(true);
+  });
+
+  it("maps the Google given/family name onto the columns (pre-fill source)", () => {
+    const google = buildAuthConfig(input(), cfgDeps()).socialProviders?.google as {
+      mapProfileToUser?: (p: { given_name?: string; family_name?: string }) => unknown;
+    };
+    expect(google.mapProfileToUser?.({ given_name: "Ada", family_name: "Lovelace" })).toEqual({
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
+  });
+
+  it("splits the GitHub single-name into a first/last guess (corrected on the onboarding screen)", () => {
+    const github = buildAuthConfig(input(), cfgDeps()).socialProviders?.github as {
+      mapProfileToUser?: (p: { name?: string | null }) => unknown;
+    };
+    expect(github.mapProfileToUser?.({ name: "Ada Lovelace" })).toMatchObject({
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
+  });
 });
 
 // The Cloudflare Turnstile captcha gate (defense-in-depth on the public, email-sending magic-link endpoint).

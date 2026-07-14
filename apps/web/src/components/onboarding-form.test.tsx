@@ -92,4 +92,63 @@ describe("OnboardingForm", () => {
 
     expect(complete).not.toHaveBeenCalled();
   });
+
+  // A fresh signup must NAME their org — clearing the pre-filled field must not silently onboard them with the
+  // machine-generated name. The submit is disabled and the action is never called.
+  it("blocks a fresh signup from submitting an empty org name", async () => {
+    const complete = vi.fn(async () => ({ ok: true as const }));
+    render(<OnboardingForm {...props({ complete, defaultOrgName: "" })} />);
+
+    const button = screen.getByRole("button", { name: /get started/i });
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("re-enables submit once the org name is filled in", async () => {
+    render(<OnboardingForm {...props({ defaultOrgName: "" })} />);
+    const button = screen.getByRole("button", { name: /get started/i });
+    expect(button).toBeDisabled();
+    await userEvent.type(screen.getByLabelText("Organization name"), "Acme");
+    expect(button).toBeEnabled();
+  });
+
+  // A successful submit REDIRECTS — the action throws a NEXT_REDIRECT digest. That must propagate (so Next
+  // navigates), NOT be caught and shown as "something went wrong". Here we assert the false banner never
+  // appears; the re-thrown redirect is the intended control flow.
+  it("does not show a false error banner when the action redirects on success", async () => {
+    const redirectErr = Object.assign(new Error("NEXT_REDIRECT"), {
+      digest: "NEXT_REDIRECT;replace;/org/acme/dashboard;307;",
+    });
+    const complete = vi.fn(async () => {
+      throw redirectErr;
+    });
+    // onSubmit RE-THROWS the redirect so Next can navigate — correct in the app (Next catches it), but here it
+    // becomes a floating rejection with no framework to catch it. Swallow exactly that redirect for this test.
+    const swallow = (reason: unknown) => {
+      if (reason !== redirectErr) throw reason;
+    };
+    process.on("unhandledRejection", swallow);
+    try {
+      render(<OnboardingForm {...props({ complete, needsOrgName: false })} />);
+      await userEvent.click(screen.getByRole("button", { name: /get started/i }));
+      await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+      await new Promise((r) => setTimeout(r, 0)); // let the floating rejection settle
+      expect(screen.queryByText(/something went wrong/i)).not.toBeInTheDocument();
+    } finally {
+      process.off("unhandledRejection", swallow);
+    }
+  });
+
+  // A GENUINE error (not a redirect) still surfaces the generic banner.
+  it("shows a generic error when the action throws a non-redirect error", async () => {
+    const complete = vi.fn(async () => {
+      throw new Error("network boom");
+    });
+    render(<OnboardingForm {...props({ complete, needsOrgName: false })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /get started/i }));
+
+    expect(await screen.findByText(/something went wrong/i)).toBeInTheDocument();
+  });
 });

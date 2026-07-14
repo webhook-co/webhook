@@ -37,3 +37,8 @@ export {
   type UserProfile,
 } from "./introspection";
 export { type ConnectedApp, type ConnectedAppsService } from "./connected-apps";
+export {
+  type OnboardingStateDto,
+  type CompleteOnboardingResult,
+  type OnboardingProfileService,
+} from "./onboarding";

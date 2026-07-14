@@ -15,8 +15,20 @@ vi.mock("next/navigation", () => ({
 const verifySession = vi.fn(async () => ({ userId: "usr_1" }));
 vi.mock("./session", () => ({ verifySession: () => verifySession() }));
 
+// The identity state the recheck reads: a NOT-yet-onboarded user (onboardedAt null). Tests that exercise the
+// replay short-circuit override read() to return an onboarded state.
+const NOT_ONBOARDED = {
+  firstName: null as string | null,
+  lastName: null as string | null,
+  name: "Dana",
+  onboardedAtIso: null as string | null,
+  createdAtIso: "2026-07-14T00:00:00.000Z",
+};
 const complete = vi.fn(async () => ({ completed: true }));
-const getOnboardingBinding = vi.fn((): { complete: typeof complete } | undefined => ({ complete }));
+const read = vi.fn(async () => NOT_ONBOARDED);
+const getOnboardingBinding = vi.fn(
+  (): { read: typeof read; complete: typeof complete } | undefined => ({ read, complete }),
+);
 vi.mock("./env", () => ({
   getOnboardingBinding: () => getOnboardingBinding(),
   getAuditChainKey: async () => "AA".repeat(32),
@@ -71,10 +83,19 @@ const form = (fields: Record<string, string>): FormData => {
   return fd;
 };
 
+const teamOrg = {
+  orgId: "org_team",
+  slug: "acme",
+  formerSlugs: [] as string[],
+  name: "Acme",
+  role: "member",
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   verifySession.mockResolvedValue({ userId: "usr_1" });
-  getOnboardingBinding.mockReturnValue({ complete });
+  getOnboardingBinding.mockReturnValue({ read, complete });
+  read.mockResolvedValue(NOT_ONBOARDED);
   complete.mockResolvedValue({ completed: true });
   readUserOrgDirectory.mockResolvedValue([
     { orgId: "org_personal", slug: "dana-a3f19c", formerSlugs: [], name: "dana", role: "owner" },
@@ -120,13 +141,69 @@ describe("completeOnboardingAction — fresh signup (org fields present)", () =>
   });
 });
 
-describe("completeOnboardingAction — invited teammate (no org fields)", () => {
-  it("saves the name only: no rename, and lands on `/` (the default-org resolver)", async () => {
+describe("completeOnboardingAction — invited teammate (membership in a non-personal org)", () => {
+  it("saves the name only and lands on the TEAM they joined — no rename, org fields ignored", async () => {
+    // Invited = holds a membership in an org that is NOT their derived personal one. The action decides this
+    // from the DIRECTORY, not from the presence of org fields, so a stray orgName in the body is ignored. And
+    // they land on the team's dashboard, not `/` (which could resolve to their empty personal org).
+    readUserOrgDirectory.mockResolvedValue([teamOrg]);
     await expect(
-      completeOnboardingAction(form({ firstName: "Grace", lastName: "Hopper" })),
-    ).rejects.toThrow("NEXT_REDIRECT:/");
+      completeOnboardingAction(form({ firstName: "Grace", lastName: "Hopper", orgName: "Evil" })),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/acme/dashboard");
     expect(renameOrg).not.toHaveBeenCalled();
     expect(complete).toHaveBeenCalledWith("usr_1", "Grace", "Hopper");
+  });
+
+  it("lands on the non-personal team even when the personal org is also present in the directory", async () => {
+    readUserOrgDirectory.mockResolvedValue([
+      { orgId: "org_personal", slug: "grace-x", formerSlugs: [], name: "grace", role: "owner" },
+      teamOrg,
+    ]);
+    await expect(completeOnboardingAction(form({ firstName: "Grace" }))).rejects.toThrow(
+      "NEXT_REDIRECT:/org/acme/dashboard",
+    );
+    expect(renameOrg).not.toHaveBeenCalled();
+  });
+});
+
+describe("completeOnboardingAction — the gate re-check (replay + empty org name)", () => {
+  it("is a no-op for an already-onboarded user: bounces to `/` without renaming or re-stamping (replay guard)", async () => {
+    // A double-submit or a stale/replayed POST from an onboarded user must NOT re-rename (a changed slug is
+    // retired forever) or re-stamp. The action re-reads the gate and short-circuits.
+    read.mockResolvedValue({ ...NOT_ONBOARDED, onboardedAtIso: "2026-07-14T00:00:00.000Z" });
+    await expect(
+      completeOnboardingAction(
+        form({ firstName: "Ada", orgName: "Rename Me", orgSlug: "rename-me" }),
+      ),
+    ).rejects.toThrow("NEXT_REDIRECT:/");
+    expect(renameOrg).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("requires a fresh signup to NAME their org — an empty field is rejected, not silently kept as the machine name", async () => {
+    // The whole feature exists to replace the machine slug (dana-a3f19c). A fresh signup who cleared the
+    // pre-filled name must be told to fill it; the server must not skip the rename and onboard them as-is.
+    const res = await completeOnboardingAction(
+      form({ firstName: "Ada", orgName: "", orgSlug: "" }),
+    );
+    expect(res).toMatchObject({ ok: false, field: "orgName" });
+    expect(renameOrg).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("proceeds (best-effort) when the re-check read faults — the write is not blocked by a transient read", async () => {
+    // A read fault means "couldn't tell if onboarded", NOT "already onboarded". The action logs and continues
+    // to the write, which is still gated by its own success. The redirect must not be swallowed as an error.
+    read.mockRejectedValueOnce(new Error("auth down"));
+    renameOrg.mockResolvedValueOnce({ id: "org_personal", slug: "acme", name: "Acme" });
+    await expect(
+      completeOnboardingAction(form({ firstName: "Ada", orgName: "Acme", orgSlug: "acme" })),
+    ).rejects.toThrow("NEXT_REDIRECT:/org/acme/dashboard");
+    expect(complete).toHaveBeenCalledWith("usr_1", "Ada", "");
+    expect(logActionError).toHaveBeenCalledWith(
+      "onboarding.recheck_read_failed",
+      expect.any(Error),
+    );
   });
 });
 

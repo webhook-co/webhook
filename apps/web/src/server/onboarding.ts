@@ -34,6 +34,17 @@ export async function resolveOnboarding(): Promise<OnboardingDecision> {
     return { show: false };
   }
 
-  const orgs = await readUserOrgDirectory(session.userId);
+  // The org-directory read fails open too. On the /onboarding route this is the SOLE caller of it (unlike `/`,
+  // which also runs loadMyOrgs), so an unguarded throw here would reject resolveOnboarding and 500 the page —
+  // the exact "trapped short of the dashboard" outcome this module promises never to cause. Both reads are
+  // equally fallible; both must degrade to "don't show".
+  let orgs;
+  try {
+    orgs = await readUserOrgDirectory(session.userId);
+  } catch (error) {
+    logActionError("onboarding.directory_read_failed", error);
+    return { show: false };
+  }
+
   return decideOnboarding({ userId: session.userId, state, orgs });
 }

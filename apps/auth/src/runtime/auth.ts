@@ -24,7 +24,8 @@ import { captcha } from "better-auth/plugins";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
 
-import { splitName } from "./split-name";
+import { splitName } from "@webhook-co/shared";
+
 import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
 import {
@@ -145,12 +146,21 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     database: deps.database,
     // The runtime must know about the same additionalFields the GENERATOR does (apps/auth/src/auth.ts), or
     // Better Auth silently drops `firstName`/`lastName` on write — the generator config and the runtime config
-    // are two separate objects and both have to agree. `onboardedAt` is set by the app, not by Better Auth, so
-    // it is not `input: true` here; the two name fields ARE mapped from the provider profile below.
+    // are two separate objects and both have to agree.
+    //
+    // `firstName`/`lastName` are `input: true` on purpose, and this is load-bearing: `mapProfileToUser`'s
+    // output for an OAuth signup is run through the SAME input filter as a client sign-up body
+    // (`parseAdditionalUserInputFromProviderProfile` → `parseInputData`), which DROPS any field whose
+    // `input` is false. With `input: false` the provider's given/family name never persisted — the columns
+    // stayed NULL and the pre-fill below was silently dead. `input: true` is safe here: this runtime is
+    // social + magic-link only (no password signup), magic-link's create path writes only email+name, so the
+    // sole client-write vector `input: true` opens is `/update-user` letting a signed-in user edit THEIR OWN
+    // display name — exactly what the onboarding screen already does. `onboardedAt` STAYS `input: false`: it
+    // is the gate flag with trust meaning, written only by the app over the identity RPC, never by a client.
     user: {
       additionalFields: {
-        firstName: { type: "string", required: false, input: false },
-        lastName: { type: "string", required: false, input: false },
+        firstName: { type: "string", required: false, input: true },
+        lastName: { type: "string", required: false, input: true },
         onboardedAt: { type: "date", required: false, input: false },
       },
     },
