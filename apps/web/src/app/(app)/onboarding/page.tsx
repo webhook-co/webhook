@@ -41,6 +41,7 @@ export default async function OnboardingPage({
         lastName={decision.lastName}
         needsOrgName={decision.needsOrgName}
         defaultOrgName={decision.org?.name ?? ""}
+        defaultOrgSlug={decision.org?.slug ?? ""}
         invite={invite}
         complete={completeOnboardingAction}
       />

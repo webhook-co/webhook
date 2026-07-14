@@ -29,7 +29,7 @@ export type CompleteOnboardingResult =
   | {
       readonly ok: false;
       readonly error: string;
-      readonly field?: "firstName" | "orgName" | "orgSlug";
+      readonly field?: "firstName" | "lastName" | "orgName" | "orgSlug";
     };
 
 /**
@@ -68,8 +68,13 @@ export async function completeOnboardingAction(
   if (firstName.length === 0) {
     return { ok: false, error: "Tell us your first name.", field: "firstName" };
   }
-  if (firstName.length > MAX_NAME_LEN || lastName.length > MAX_NAME_LEN) {
+  // Attribute a too-long name to the OFFENDING field — a long last name marked as a first-name error would
+  // paint the wrong (valid) field red and send the user to fix the wrong one.
+  if (firstName.length > MAX_NAME_LEN) {
     return { ok: false, error: `Keep names under ${MAX_NAME_LEN} characters.`, field: "firstName" };
+  }
+  if (lastName.length > MAX_NAME_LEN) {
+    return { ok: false, error: `Keep names under ${MAX_NAME_LEN} characters.`, field: "lastName" };
   }
 
   const binding = getOnboardingBinding();

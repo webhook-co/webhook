@@ -259,9 +259,17 @@ describe("completeOnboardingAction — validation and failure mapping", () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it("rejects an over-long name before any write", async () => {
+  it("rejects an over-long first name, attributed to the first-name field", async () => {
     const res = await completeOnboardingAction(form({ firstName: "a".repeat(81) }));
     expect(res).toMatchObject({ ok: false, field: "firstName" });
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("attributes an over-long LAST name to the last-name field (not firstName)", async () => {
+    const res = await completeOnboardingAction(
+      form({ firstName: "Ada", lastName: "b".repeat(81) }),
+    );
+    expect(res).toMatchObject({ ok: false, field: "lastName" });
     expect(complete).not.toHaveBeenCalled();
   });
 

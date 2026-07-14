@@ -50,6 +50,22 @@ describe("AppHome (the default-org resolver)", () => {
     );
   });
 
+  // An org-less session is signed out BEFORE the onboarding gate — onboarding can't help a user with no
+  // personal org to rename, so the immediate-logout invariant must win over the onboarding redirect. Without
+  // this ordering they'd be marched through a name screen and THEN logged out.
+  it("signs out an org-less session ahead of onboarding — no onboard-then-logout detour", async () => {
+    resolveOnboarding.mockResolvedValue({
+      show: true,
+      firstName: "Ada",
+      lastName: "",
+      needsOrgName: false,
+      org: null,
+    });
+    await expect(run({ orgs: [], currentOrgId: "org_gone" })).rejects.toThrow(
+      `REDIRECT:${LOGOUT_URL}`,
+    );
+  });
+
   it("forwards a known ?invite= flag (the invite-accept fallback lands here to keep its banner)", async () => {
     await expect(
       run({ orgs: [ALPHA], currentOrgId: "org_alpha" }, { invite: "accepted" }),

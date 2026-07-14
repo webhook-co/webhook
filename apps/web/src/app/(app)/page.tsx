@@ -47,12 +47,17 @@ export default async function AppHome({
   const invite = typeof sp.invite === "string" ? sp.invite : undefined;
   const q = invite && ["accepted", "invalid", "error"].includes(invite) ? `?invite=${invite}` : "";
 
-  if (onboarding.show) redirect(`/onboarding${q}`);
-
   // The hint is untrusted FOR THIS PURPOSE: it may name an org they have since been removed from. It is only
   // ever used to PICK from the directory, never to bypass it.
   const target = orgs.find((o) => o.orgId === currentOrgId) ?? orgs[0];
+
+  // An ORG-LESS session (bootstrap failed, or removed from every org) is resolved FIRST — before the
+  // onboarding gate. Such a user has nothing to show and cannot onboard anyway (onboarding renames a personal
+  // org that doesn't exist), so sign them out immediately rather than march them through a name screen and
+  // THEN log them out. This preserves the pre-onboarding immediate-logout invariant for an org-less session.
   if (!target) redirect(LOGOUT_URL);
+
+  if (onboarding.show) redirect(`/onboarding${q}`);
 
   redirect(`/org/${target.slug}/dashboard${q}`);
 }

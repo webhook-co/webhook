@@ -9,6 +9,9 @@ const props = (over: Partial<React.ComponentProps<typeof OnboardingForm>> = {}) 
   lastName: "Lovelace",
   needsOrgName: true,
   defaultOrgName: "Ada Lovelace",
+  // The org's LIVE slug seeds the URL field (a non-empty valid slug, so a fresh-signup form starts submittable);
+  // tests that build the slug from scratch pass "" explicitly.
+  defaultOrgSlug: "acme",
   complete: vi.fn(async () => ({ ok: true as const })),
   ...over,
 });
@@ -45,7 +48,7 @@ describe("OnboardingForm", () => {
   // The "name → URL" pair people expect: the slug follows the name until you touch it, then it is yours.
   it("stops overwriting the slug once the user edits it", async () => {
     const complete = vi.fn(async () => ({ ok: true as const }));
-    render(<OnboardingForm {...props({ complete, defaultOrgName: "" })} />);
+    render(<OnboardingForm {...props({ complete, defaultOrgName: "", defaultOrgSlug: "" })} />);
 
     const slug = screen.getByLabelText("Organization URL");
     await userEvent.type(slug, "my-team");
@@ -125,6 +128,39 @@ describe("OnboardingForm", () => {
     expect(button).toBeDisabled();
     await userEvent.click(button);
     expect(complete).not.toHaveBeenCalled();
+  });
+
+  // [review] On a partial-failure retry the org is already renamed, so its name and slug diverge. The form
+  // must seed the URL from the LIVE slug, not slugify(name) — otherwise an untouched resubmit would rotate the
+  // URL and permanently burn the slug the user chose.
+  it("seeds the URL from the org's live slug (not the name), so an untouched resubmit keeps it", async () => {
+    const complete = vi.fn(async () => ({ ok: true as const }));
+    render(
+      <OnboardingForm
+        {...props({ complete, defaultOrgName: "Acme", defaultOrgSlug: "acme-team" })}
+      />,
+    );
+    expect(screen.getByLabelText("Organization URL")).toHaveValue("acme-team");
+
+    await userEvent.click(screen.getByRole("button", { name: /get started/i }));
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect((complete.mock.calls[0][0] as FormData).get("orgSlug")).toBe("acme-team");
+  });
+
+  // [review] Live validation must match what is SUBMITTED (the trimmed slug) — a trailing space (easy on
+  // paste) must not disable submit with a spurious format error.
+  it("does not block submit on a slug with surrounding whitespace (validates trimmed)", async () => {
+    const complete = vi.fn(async () => ({ ok: true as const }));
+    render(<OnboardingForm {...props({ complete, defaultOrgName: "Acme", defaultOrgSlug: "" })} />);
+
+    const slugField = screen.getByLabelText("Organization URL");
+    await userEvent.type(slugField, "my-org ");
+    const button = screen.getByRole("button", { name: /get started/i });
+    expect(button).toBeEnabled();
+
+    await userEvent.click(button);
+    await waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    expect((complete.mock.calls[0][0] as FormData).get("orgSlug")).toBe("my-org");
   });
 
   it("carries a whitelisted invite flag into the submitted form data", async () => {

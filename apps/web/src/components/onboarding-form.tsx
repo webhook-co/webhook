@@ -21,12 +21,17 @@ function isRedirectError(err: unknown): boolean {
   );
 }
 
+/** Mirrors the server's cap in onboarding-actions.ts — the client caps input so the server never has to. */
+const MAX_NAME_LEN = 80;
+
 export interface OnboardingFormProps {
   readonly firstName: string;
   readonly lastName: string;
   /** Fresh signup → let them name their org. Invited teammate → name only. */
   readonly needsOrgName: boolean;
   readonly defaultOrgName: string;
+  /** The org's ACTUAL current slug — seeds the URL field so a retry doesn't rotate it (see below). */
+  readonly defaultOrgSlug: string;
   /** A whitelisted invite-status flag to carry onto the post-onboarding landing (e.g. "accepted"). */
   readonly invite?: string;
   readonly complete: (formData: FormData) => Promise<CompleteOnboardingResult>;
@@ -50,23 +55,32 @@ export function OnboardingForm({
   lastName: initialLast,
   needsOrgName,
   defaultOrgName,
+  defaultOrgSlug,
   invite,
   complete,
 }: OnboardingFormProps) {
   const [firstName, setFirstName] = React.useState(initialFirst);
   const [lastName, setLastName] = React.useState(initialLast);
   const [orgName, setOrgName] = React.useState(defaultOrgName);
-  const [slug, setSlug] = React.useState(slugifyOrgName(defaultOrgName));
+  // Seed the slug from the org's ACTUAL slug, NOT from slugify(name). On a partial-failure retry the org may
+  // already be renamed, so its name and slug diverge; seeding from the name would pre-fill a slug that differs
+  // from the live one, and the action's `slug !== mine.slug` guard would then rotate the URL and permanently
+  // retire the slug the user chose. Seeding from the live slug means an untouched resubmit is a no-op.
+  const [slug, setSlug] = React.useState(defaultOrgSlug);
   const [slugTouched, setSlugTouched] = React.useState(false);
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [fieldError, setFieldError] = React.useState<
-    "firstName" | "orgName" | "orgSlug" | undefined
+    "firstName" | "lastName" | "orgName" | "orgSlug" | undefined
   >(undefined);
 
   // The live slug validity — the server re-checks authoritatively, but showing it here saves a round trip on
   // an obvious mistake.
-  const slugCheck = needsOrgName && slug ? validateOrgSlug(slug) : { ok: true as const };
+  // Validate the TRIMMED slug — that is exactly what onSubmit sends (`slug.trim()`), so validating the raw
+  // value would block submit on surrounding whitespace (easy on paste) that the server would have accepted.
+  const trimmedSlug = slug.trim();
+  const slugCheck =
+    needsOrgName && trimmedSlug ? validateOrgSlug(trimmedSlug) : { ok: true as const };
   const slugError = !slugCheck.ok ? orgSlugErrorMessage(slugCheck.reason) : null;
 
   function onOrgName(next: string) {
@@ -142,6 +156,7 @@ export function OnboardingForm({
             onChange={(e) => setFirstName(e.target.value)}
             disabled={pending}
             autoComplete="given-name"
+            maxLength={MAX_NAME_LEN}
             error={fieldError === "firstName" ? " " : undefined}
             className="flex-1"
           />
@@ -151,6 +166,8 @@ export function OnboardingForm({
             onChange={(e) => setLastName(e.target.value)}
             disabled={pending}
             autoComplete="family-name"
+            maxLength={MAX_NAME_LEN}
+            error={fieldError === "lastName" ? " " : undefined}
             className="flex-1"
           />
         </div>
@@ -163,6 +180,7 @@ export function OnboardingForm({
               onChange={(e) => onOrgName(e.target.value)}
               disabled={pending}
               placeholder="Acme Inc"
+              maxLength={MAX_NAME_LEN}
               error={fieldError === "orgName" ? " " : undefined}
             />
             <Field
