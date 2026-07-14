@@ -3,6 +3,7 @@
 import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from "@webhook-co/ui";
 import { useState } from "react";
 
+import { SubmitButton } from "@/components/submit-button";
 import { deleteOrganization } from "@/server/org-actions";
 
 /**
@@ -44,9 +45,9 @@ export function DeleteOrgCard({ slug }: { slug: string }) {
               className="w-full max-w-[240px] rounded-control border border-hairline bg-surface px-3 py-2 font-mono text-sm text-fg outline-none focus-visible:shadow-[var(--wh-focus-ring)]"
             />
             <div className="flex gap-2">
-              <Button type="submit" variant="danger" disabled={text !== "DELETE"}>
+              <SubmitButton variant="danger" disabled={text !== "DELETE"}>
                 Permanently delete
-              </Button>
+              </SubmitButton>
               <Button
                 type="button"
                 variant="secondary"

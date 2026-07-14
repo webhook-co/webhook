@@ -35,6 +35,7 @@ export { IconButton, type IconButtonProps } from "./components/icon-button";
 export { Input, Label, type InputProps, type LabelProps } from "./components/input";
 export { Select, type SelectProps } from "./components/select";
 export { Field, type FieldProps } from "./components/field";
+export { Skeleton, SkeletonText } from "./components/skeleton";
 export { Spinner, type SpinnerProps } from "./components/spinner";
 export { Checkbox } from "./components/checkbox";
 export { CopyButton, type CopyButtonProps } from "./components/copy-button";

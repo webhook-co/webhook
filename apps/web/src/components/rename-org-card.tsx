@@ -104,7 +104,7 @@ export function RenameOrgCard({ slug, name, rename, canRename }: RenameOrgCardPr
           {serverError ? <Banner tone="danger">{serverError}</Banner> : null}
           {canRename ? (
             <div className="flex justify-end">
-              <Button type="submit" disabled={!canSubmit}>
+              <Button type="submit" loading={pending} disabled={!canSubmit}>
                 Save changes
               </Button>
             </div>
