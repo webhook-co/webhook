@@ -9,8 +9,11 @@ import {
 } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
+import { redirect } from "next/navigation";
+
 import { acceptInviteAction } from "@/server/invite-actions";
-import { verifySession } from "@/server/session";
+import { readInviteCookie, setInviteCookie } from "@/server/invite-cookie";
+import { getSessionOrNull, loginUrlWithReturn } from "@/server/session";
 
 export const metadata: Metadata = {
   title: "Accept invite · webhook.co",
@@ -32,10 +35,27 @@ export default async function AcceptInvitePage({
 }: {
   searchParams: Promise<{ org?: string | string[]; token?: string | string[] }>;
 }) {
-  const [session, sp] = await Promise.all([verifySession(), searchParams]);
+  const [session, sp] = await Promise.all([getSessionOrNull(), searchParams]);
   const org = first(sp.org);
-  const token = first(sp.token);
-  const linkComplete = org !== "" && token !== "";
+  const urlToken = first(sp.token);
+
+  // A brand-new invitee has no session. Instead of the gate's default login bounce (which drops the invite),
+  // stash {org, token} in the encrypted app-origin cookie and build a login URL that returns HERE — but carry
+  // only the org in the return path, never the token (it rides the cookie, never an auth-origin URL). After
+  // signup they land back here, signed in, and accept.
+  if (!session) {
+    if (org && urlToken) await setInviteCookie({ org, token: urlToken });
+    redirect(
+      loginUrlWithReturn(org ? `/invite/accept?org=${encodeURIComponent(org)}` : "/invite/accept"),
+    );
+  }
+
+  // Signed in: the token is in the URL (an already-signed-in user clicked the link directly) or in the cookie
+  // (a returned new invitee). The action re-reads the cookie authoritatively (invite-actions), so we only need
+  // to know whether a token EXISTS to decide what to render.
+  const cookie = urlToken ? null : await readInviteCookie();
+  const cookieToken = cookie && cookie.org === org ? cookie.token : "";
+  const linkComplete = org !== "" && (urlToken !== "" || cookieToken !== "");
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-md flex-col justify-center p-6">
@@ -58,7 +78,9 @@ export default async function AcceptInvitePage({
               </p>
               <form action={acceptInviteAction} className="flex flex-col gap-3">
                 <input type="hidden" name="org" value={org} />
-                <input type="hidden" name="token" value={token} />
+                {/* Only the URL path (an already-signed-in user) puts the token in the form; the returned-new-
+                    invitee path keeps it in the encrypted cookie, which the action reads server-side. */}
+                {urlToken ? <input type="hidden" name="token" value={urlToken} /> : null}
                 <Button type="submit">Accept invite</Button>
               </form>
             </>
