@@ -114,7 +114,7 @@ export async function completeOnboardingAction(
       // now classifies this user as fresh — their team membership was revoked between render and submit. Don't
       // hard-block on a field they were never shown; onboard name-only (they can name the org later in
       // settings). `undefined` (field absent) is distinct from `""` (fresh-mode field the user cleared).
-      logActionError("onboarding.membership_race", new Error(session.userId));
+      logActionError("onboarding.membership_race", new Error("membership_race"));
     } else if (orgName.length === 0) {
       // A fresh-mode form with the name cleared cannot silently keep the machine-generated name.
       return { ok: false, error: "Give your organization a name.", field: "orgName" };
@@ -174,7 +174,7 @@ export async function completeOnboardingAction(
   } else {
     // No personal org to rename (a bootstrap blip) and not invited. Don't fail onboarding over it — save the
     // name below and let `/` resolve wherever it can.
-    logActionError("onboarding.no_personal_org", new Error(session.userId));
+    logActionError("onboarding.no_personal_org", new Error("no_personal_org"));
   }
 
   // Step 2 — flip the gate LAST. Only now is the user "onboarded".
@@ -182,7 +182,7 @@ export async function completeOnboardingAction(
     const { completed } = await binding.complete(session.userId, firstName, lastName);
     if (!completed) {
       // The user row vanished (raced with a delete). Treat as done rather than looping.
-      logActionError("onboarding.complete_no_row", new Error(session.userId));
+      logActionError("onboarding.complete_no_row", new Error("complete_no_row"));
     }
   } catch (error) {
     logActionError("onboarding.complete_failed", error);
