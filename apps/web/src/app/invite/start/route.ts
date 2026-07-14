@@ -23,7 +23,15 @@ export async function GET(request: Request): Promise<Response> {
   const org = url.searchParams.get("org") ?? "";
   const token = url.searchParams.get("token") ?? "";
 
-  if (org && token) await setInviteCookie({ org, token });
+  // Only STASH on a genuine top-level navigation (a clicked invite link). This is a state-changing GET, and a
+  // `Set-Cookie` from a cross-site subresource (`<img src=/invite/start?org=ATTACKER&token=…>`) IS stored by
+  // the browser (SameSite=Lax restricts sending, not setting) — so without this an attacker could overwrite a
+  // victim's invite cookie cross-site. `Sec-Fetch-Dest: document` marks a navigation; a subresource attack is
+  // image/empty/etc. When the header is absent (a non-Sec-Fetch client, which also can't mount the attack), we
+  // allow it. The redirect below is harmless either way.
+  const secFetchDest = request.headers.get("sec-fetch-dest");
+  const isTopLevelNav = secFetchDest === null || secFetchDest === "document";
+  if (org && token && isTopLevelNav) await setInviteCookie({ org, token });
 
   const dest = loginUrlWithReturn(
     org ? `/invite/accept?org=${encodeURIComponent(org)}` : "/invite/accept",

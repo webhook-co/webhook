@@ -214,13 +214,14 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
     }
   }
 
-  // Retire the invite cookie ONLY when we actually consumed it for THIS org AND the outcome is terminal
-  // (accepted, or a definitively-invalid token — retrying neither helps). We deliberately do NOT clear it:
-  //   - on a transient `error` (a DB blip): the cookie is the invitee's only copy of the token, so keep it so
-  //     they can retry the still-valid invite;
-  //   - when the token came from the FORM/URL (usedCookieToken false): an unrelated org's invite may be
-  //     stashed in the cookie, and clearing it would silently destroy that pending invite.
-  if (usedCookieToken && outcome !== "error") await clearInviteCookie();
+  // Retire the invite cookie ONLY when we actually consumed it for THIS org AND the invite was ACCEPTED —
+  // the one genuinely-terminal outcome. We deliberately do NOT clear on:
+  //   - a transient `error` (a DB blip): the cookie is the invitee's only copy of the token — keep it for retry;
+  //   - `invalid`: this CONFLATES a dead token with a still-valid token that merely failed the email match
+  //     (they authenticated with the wrong account). Wiping it would strand a valid invite; a dead token is
+  //     harmless to keep (it just fails again and the 60-min TTL sweeps it);
+  //   - a FORM/URL token (usedCookieToken false): an unrelated org's invite may be stashed — never clobber it.
+  if (usedCookieToken && outcome === "accepted") await clearInviteCookie();
 
   // Where to land, and the RULE THAT MATTERS: a SUCCESSFUL accept must never sign the user out.
   //

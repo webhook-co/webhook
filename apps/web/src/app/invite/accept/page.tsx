@@ -23,12 +23,15 @@ function first(v: string | string[] | undefined): string {
   return (Array.isArray(v) ? v[0] : v) ?? "";
 }
 
+// dal-gate-allow: reads NO tenant data — it only reads the caller's OWN session (getSessionOrNull) to branch
+// unauth→/invite/start vs render the confirm button, and the org/token come from the invite link. The actual
+// join (acceptInviteAction) gates on verifySession + the invite's own token+verified-email match.
+
 /**
- * The invite-accept confirmation page. Reached from the emailed/shared link (`?org=&token=`). It needs a
- * session — the accepting user is JOINING, not yet a member — and `verifySession()` redirects to sign-in if
- * absent (a signed-in user is the common path; a not-yet-returned `returnTo` through login is a known gap,
- * lanes 1.1 / 2.4). The user confirms with a single button; `acceptInviteAction` matches the invite against
- * their OWN verified email (never anything on this page) and redirects to /dashboard with the outcome.
+ * The invite-accept confirmation page. Reached from the emailed/shared link (`?org=&token=`). An unauthenticated
+ * visitor is handed to the `/invite/start` route handler (which stashes the invite and returns them here through
+ * login); a signed-in visitor confirms with a single button. `acceptInviteAction` matches the invite against
+ * their OWN verified email (never anything on this page) and redirects to the dashboard with the outcome.
  */
 export default async function AcceptInvitePage({
   searchParams,

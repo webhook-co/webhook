@@ -274,6 +274,15 @@ describe("acceptInviteAction", () => {
     expect(clearInviteCookie).not.toHaveBeenCalled();
   });
 
+  it("KEEPS the cookie on 'invalid' — a valid token can fail the email match on the WRONG account (retryable)", async () => {
+    // acceptInvite returns "invalid" for a wrong-account email mismatch too, not only a dead token. Wiping the
+    // cookie here would strand a still-valid invite; the user re-authenticates as the right account and retries.
+    readInviteCookie.mockResolvedValueOnce({ org: "org_x", token: "whinv_cookie" });
+    acceptInvite.mockResolvedValueOnce({ status: "invalid" });
+    await expect(acceptInviteAction(form({ org: "org_x" }))).rejects.toThrow(/NEXT_REDIRECT/);
+    expect(clearInviteCookie).not.toHaveBeenCalled();
+  });
+
   it("does NOT clear the cookie when the token came from the FORM (may hold an unrelated org's invite)", async () => {
     // Accepting org_x via a URL token must not wipe a cookie stashed for a DIFFERENT org.
     acceptInvite.mockResolvedValueOnce({ status: "accepted", role: "member" });

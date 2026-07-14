@@ -45,7 +45,7 @@ async function aesKey(secret: string): Promise<CryptoKey> {
   );
 }
 
-/** Encrypt `{ org, token }` (+ a ~15-min embedded expiry) into a base64url `iv‖ciphertext‖tag`. */
+/** Encrypt `{ org, token }` (+ the TTL_MS embedded expiry) into a base64url `iv‖ciphertext‖tag`. */
 export async function sealInvitePayload(
   payload: { org: string; token: string },
   secret: string,

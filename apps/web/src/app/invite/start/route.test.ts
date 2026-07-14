@@ -29,4 +29,27 @@ describe("GET /invite/start", () => {
       "https://auth.test/login?redirect=HANDOFF(/invite/accept?org=X)",
     );
   });
+
+  // A cross-site subresource (<img>/fetch) must NOT be able to force-set the invite cookie. Only a top-level
+  // navigation (Sec-Fetch-Dest: document, a real clicked invite link) stashes it.
+  it("does NOT set the cookie for a cross-site subresource request", async () => {
+    setInviteCookie.mockClear();
+    const res = await GET(
+      new Request("https://app.test/invite/start?org=X&token=SECRET", {
+        headers: { "sec-fetch-dest": "image" },
+      }),
+    );
+    expect(setInviteCookie).not.toHaveBeenCalled();
+    expect(res.status).toBeGreaterThanOrEqual(300); // still redirects (harmless), just no cookie
+  });
+
+  it("sets the cookie on a top-level navigation (Sec-Fetch-Dest: document)", async () => {
+    setInviteCookie.mockClear();
+    await GET(
+      new Request("https://app.test/invite/start?org=X&token=SECRET", {
+        headers: { "sec-fetch-dest": "document" },
+      }),
+    );
+    expect(setInviteCookie).toHaveBeenCalledWith({ org: "X", token: "SECRET" });
+  });
 });
