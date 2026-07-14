@@ -281,6 +281,37 @@ describe("makeStripeClient hosted flows", () => {
     const p = new URLSearchParams(calls[0].init.body as string);
     expect(p.get("configuration")).toBe("bpc_123");
   });
+
+  it("cancelSubscription DELETEs /v1/subscriptions/:id with auth + version, no body, returns id+status", async () => {
+    const { impl, calls } = fakeFetch({ status: 200, body: { id: "sub_9", status: "canceled" } });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
+    const out = await client.cancelSubscription("sub_9");
+    expect(out).toEqual({ id: "sub_9", status: "canceled" });
+    const { url, init } = calls[0];
+    expect(url).toBe("https://api.stripe.com/v1/subscriptions/sub_9");
+    expect(init.method).toBe("DELETE");
+    expect((init.headers as Record<string, string>).Authorization).toBe(`Bearer ${SECRET}`);
+    expect((init.headers as Record<string, string>)["Stripe-Version"]).toBe(STRIPE_API_VERSION);
+    expect(init.body).toBeUndefined(); // a DELETE carries no body
+  });
+
+  it("cancelSubscription surfaces a StripeError (e.g. resource_missing) for the drain to classify", async () => {
+    const { impl } = fakeFetch({
+      status: 404,
+      body: {
+        error: {
+          message: "No such subscription",
+          type: "invalid_request_error",
+          code: "resource_missing",
+        },
+      },
+    });
+    const client = makeStripeClient({ mode: "test", secretKey: SECRET, fetchImpl: impl });
+    await expect(client.cancelSubscription("sub_gone")).rejects.toMatchObject({
+      status: 404,
+      stripeCode: "resource_missing",
+    });
+  });
 });
 
 describe("makeStripeClient — the mode/key guard is UNSKIPPABLE (it lives in the constructor)", () => {

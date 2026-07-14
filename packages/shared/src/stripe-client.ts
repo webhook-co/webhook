@@ -250,6 +250,14 @@ export interface StripeClient {
    * the SAME parseSubscriptionObject the inbound webhook uses (one definition of what a subscription entitles).
    */
   listSubscriptions(): Promise<Record<string, unknown>[]>;
+  /**
+   * Cancel a subscription IMMEDIATELY (Stripe `DELETE /v1/subscriptions/:id`). Used by the
+   * account/org-deletion cancel drain: the org is already hard-deleted, so there is no paid period
+   * left to honor — an immediate cancel stops the charging at once. Returns the subscription's id +
+   * (now `canceled`) status. Throws StripeError on a non-2xx; the drain treats a `resource_missing`
+   * (already gone at Stripe) as success, so a retry after a partial failure is idempotent.
+   */
+  cancelSubscription(subscriptionId: string): Promise<{ id: string; status: string }>;
 }
 
 /** One Stripe meter-event summary: the value Stripe aggregated over [startTime, endTime). */
@@ -338,6 +346,20 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
     const qs = query ? stripeFormEncode(query) : "";
     const res = await doFetch(`${base}/v1${path}${qs ? `?${qs}` : ""}`, {
       method: "GET",
+      headers: {
+        Authorization: `Bearer ${opts.secretKey}`,
+        "Stripe-Version": STRIPE_API_VERSION,
+      },
+    });
+    return handleResponse<T>(res);
+  }
+
+  // A DELETE carries NO body — the resource id is in the path. Stripe uses DELETE /v1/subscriptions/:id
+  // to cancel a subscription immediately. Reuses handleResponse (so a 404 resource_missing becomes a
+  // typed StripeError the drain can classify as already-gone).
+  async function del<T>(path: string): Promise<T> {
+    const res = await doFetch(`${base}/v1${path}`, {
+      method: "DELETE",
       headers: {
         Authorization: `Bearer ${opts.secretKey}`,
         "Stripe-Version": STRIPE_API_VERSION,
@@ -473,6 +495,10 @@ export function makeStripeClient(opts: StripeClientOptions): StripeClient {
       const raw = await get<RawSchedule>(`/subscription_schedules/${scheduleId}`);
       const phases = mapPhases(raw);
       return { id: raw.id, currentPhase: phases[0] ?? { items: [] }, phases };
+    },
+    async cancelSubscription(subscriptionId) {
+      const raw = await del<{ id: string; status: string }>(`/subscriptions/${subscriptionId}`);
+      return { id: raw.id, status: raw.status };
     },
     async releaseSubscriptionSchedule({ scheduleId, idempotencyKey }) {
       return request<{ id: string }>(

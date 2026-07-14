@@ -34,6 +34,7 @@ import {
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
 
 import { createRemoteReplayHandler } from "./remote-replay.js";
+import { runBillingCancellationCron } from "./billing-cancellation-cron.js";
 import { runRetentionReconcileCron } from "./retention-reconcile-cron.js";
 import { handleRequest, type ApiDeps } from "./router.js";
 import { handleGithubSecretScanning } from "./secret-scanning.js";
@@ -345,16 +346,20 @@ export default {
       await handle?.close();
     }
   },
-  // Hourly retention reconciler (S2b): re-derive each active subscription's entitled window from Stripe and
-  // repair any org stuck BELOW it, so the prune can never delete a paying customer's data on day 8. Dark
-  // until billing is provisioned (the cron self-guards). waitUntil so a slow Stripe list can't hold the
-  // invocation open past its budget while still completing.
+  // Hourly billing crons (both dark until billing is provisioned; each self-guards, waitUntil so a slow
+  // Stripe call can't hold the invocation open past budget while still completing):
+  //  - retention reconciler (S2b): re-derive each active subscription's entitled window from Stripe and
+  //    repair any org stuck BELOW it, so the prune can never delete a paying customer's data on day 8.
+  //  - cancellation drain (0075): cancel the Stripe subscription of any org that was hard-deleted while
+  //    still paying — enqueued by deleteOrgWithAudit, so a deleted customer stops being charged.
+  // Independent + failure-isolated: neither cron can throw, so one faulting can't starve the other.
   async scheduled(
     _controller: ScheduledController,
     env: Env,
     ctx: ExecutionContext,
   ): Promise<void> {
     ctx.waitUntil(runRetentionReconcileCron(env));
+    ctx.waitUntil(runBillingCancellationCron(env));
   },
 } satisfies ExportedHandler<Env>;
 
