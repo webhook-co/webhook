@@ -12,14 +12,7 @@ import {
 import Link from "next/link";
 import * as React from "react";
 
-import { orgHref, useOrgSlug } from "@/lib/org-path";
-
-function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  if (parts.length === 1) return parts[0]!.slice(0, 2).toUpperCase();
-  return (parts[0]![0]! + parts[parts.length - 1]![0]!).toUpperCase();
-}
+import { UserAvatar } from "./user-avatar";
 
 const Dots = () => (
   <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" className="size-4 shrink-0">
@@ -32,6 +25,17 @@ const Dots = () => (
 export interface AccountMenuProps {
   name: string;
   email: string;
+  /**
+   * The org whose settings the menu links to — PASSED IN, not read from the URL.
+   *
+   * It used to call `useOrgSlug()`, which reads `useParams().slug`. That works everywhere the menu lived at
+   * the time (inside `/org/{slug}/…`) and breaks silently the moment it renders anywhere else: on `/account`
+   * there is no slug in the URL, so the hook returns undefined and the link points at `/org/undefined/…`. A
+   * component that only works in one corner of the routing tree is a trap for whoever mounts it in the next
+   * one — so the dependency is now explicit, and a caller with no org (a user who belongs to none) passes
+   * nothing and simply gets no link.
+   */
+  orgSlug?: string;
   /** The logout server action, passed from the gated layout. */
   onLogout: () => void | Promise<void>;
 }
@@ -44,10 +48,7 @@ export interface AccountMenuProps {
  * It used to be a bare initials circle in the top-right corner, which showed you nothing until you clicked it.
  * The name and email are now visible at rest.
  */
-export function AccountMenu({ name, email, onLogout }: AccountMenuProps) {
-  // The org this component is rendered in — read from the URL, which is the source of truth for it.
-  const slug = useOrgSlug();
-
+export function AccountMenu({ name, email, orgSlug, onLogout }: AccountMenuProps) {
   // Logging out was the ONE action in the app with no feedback at all: `onSelect={() => onLogout()}` fired the
   // server action bare, outside any transition, so the menu closed and the page just sat there. And logout is
   // SLOW to *feel* — it is a cross-origin redirect through the auth issuer — so "nothing happened" is exactly
@@ -60,12 +61,7 @@ export function AccountMenu({ name, email, onLogout }: AccountMenuProps) {
         aria-label={`Account: ${name}. Open account menu`}
         className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left outline-none transition-colors hover:bg-surface-sunken focus-visible:shadow-[var(--wh-focus-ring)]"
       >
-        <span
-          aria-hidden="true"
-          className="grid size-[26px] shrink-0 place-items-center rounded-full border border-hairline bg-surface-sunken text-[0.625rem] font-medium text-fg-secondary"
-        >
-          {initials(name)}
-        </span>
+        <UserAvatar name={name} email={email} size={26} />
         <span className="min-w-0 flex-1 truncate text-sm text-fg">{name}</span>
         {/* While the sign-out is in flight the trigger says so — the menu has already closed by then, so this
             is the only surface left that can tell the user their click landed. */}
@@ -82,11 +78,18 @@ export function AccountMenu({ name, email, onLogout }: AccountMenuProps) {
           <span className="block truncate text-xs text-fg-muted">{email}</span>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
-        {/* The user-scoped `/account` surface (profile, connected apps, delete account) lands in the next
-            slice; linking to it before it exists would just be a 404. */}
+        {/* Two DIFFERENT settings, and the menu says which is which. "Account" is you — your profile, the
+            apps you have authorized, your account. "Organization" is this workspace — its name, its members.
+            Collapsing them into one "Settings" is exactly how a user-scoped control ends up filed under an
+            org and read as org-scoped. */}
         <DropdownMenuItem asChild>
-          <Link href={orgHref(slug, "/settings")}>Settings</Link>
+          <Link href="/account">Account settings</Link>
         </DropdownMenuItem>
+        {orgSlug ? (
+          <DropdownMenuItem asChild>
+            <Link href={`/org/${orgSlug}/settings`}>Organization settings</Link>
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem
           destructive
