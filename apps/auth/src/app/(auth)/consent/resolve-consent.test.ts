@@ -97,7 +97,14 @@ describe("resolveConsentRequest", () => {
 
   it("returns null for a tampered ticket", async () => {
     const ticket = await makeTicket();
-    const tampered = `${ticket.slice(0, -2)}AA`;
+    // Tamper by CHANGING the final character, never by overwriting it with a fixed one. The previous
+    // form (`ticket.slice(0, -2) + "AA"`) was a no-op whenever the ticket already ended in "AA" —
+    // ~0.1% of tickets (measured over 200k base64url-encoded HMAC-SHA256 tags). When that happened the
+    // "tampered" ticket was byte-identical to the real one, verified fine, and the test failed. A ~1-in-
+    // 966 red build that reproduces on nobody's machine.
+    const last = ticket.at(-1)!;
+    const tampered = ticket.slice(0, -1) + (last === "A" ? "B" : "A");
+    expect(tampered).not.toBe(ticket); // the tamper must actually tamper
     expect(await resolveConsentRequest(tampered)).toBeNull();
   });
 
