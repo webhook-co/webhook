@@ -130,6 +130,19 @@ describe("completeOnboardingAction — invited teammate (no org fields)", () => 
   });
 });
 
+describe("completeOnboardingAction — the session gate", () => {
+  it("refuses when the session cannot be verified — no rename, no stamp", async () => {
+    // Mutation-check: the action's very first line is verifySession(). If that gate were dropped, a valid
+    // FormData would sail through to the identity write; this asserts a rejected session stops everything.
+    verifySession.mockRejectedValueOnce(new Error("no session"));
+    await expect(
+      completeOnboardingAction(form({ firstName: "Ada", orgName: "Acme", orgSlug: "acme" })),
+    ).rejects.toThrow("no session");
+    expect(renameOrg).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+  });
+});
+
 describe("completeOnboardingAction — validation and failure mapping", () => {
   it("rejects an empty first name BEFORE any binding lookup or write", async () => {
     const res = await completeOnboardingAction(form({ firstName: "  ", lastName: "X" }));
@@ -160,6 +173,19 @@ describe("completeOnboardingAction — validation and failure mapping", () => {
     );
     expect(res).toMatchObject({ ok: false, field: "orgSlug" });
     // The gate must stay closed: a failed rename means the user is still "not onboarded" and simply re-tries.
+    expect(complete).not.toHaveBeenCalled();
+  });
+
+  it("maps a RenameForbiddenError (server-side role gate) to a message and NEVER stamps the gate", async () => {
+    // renameOrg re-checks owner/admin regardless of the role the action passed. If its own gate refuses, the
+    // onboarding stamp must not happen — the same "gate stays closed on a failed rename" invariant, but via
+    // the authorization path rather than the slug path.
+    renameOrg.mockRejectedValueOnce(new RenameForbiddenError());
+    const res = await completeOnboardingAction(
+      form({ firstName: "Ada", orgName: "Acme", orgSlug: "acme" }),
+    );
+    expect(res).toMatchObject({ ok: false });
+    expect((res as { error: string }).error).toMatch(/rename that organization/i);
     expect(complete).not.toHaveBeenCalled();
   });
 
