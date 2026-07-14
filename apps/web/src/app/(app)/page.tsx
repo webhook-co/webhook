@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { loadMyOrgs } from "@/server/my-orgs";
+import { resolveOnboarding } from "@/server/onboarding";
 import { LOGOUT_URL } from "@/server/session";
 
 // dal-gate-allow: owns no tenant data. It reads only the caller's OWN org directory (user-scoped, via the
@@ -28,18 +29,35 @@ export default async function AppHome({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const [{ orgs, currentOrgId }, sp] = await Promise.all([loadMyOrgs(), searchParams]);
+  const [{ orgs, currentOrgId }, sp, onboarding] = await Promise.all([
+    loadMyOrgs(),
+    searchParams,
+    // The onboarding gate lives HERE — the one route with no org in the URL, run right after the session is
+    // established and before we hand the user to any dashboard. `resolveOnboarding` fails open (a new signup
+    // that has not finished onboarding is the only case it flags; everything else, including any read fault,
+    // returns "don't show"), so this can never trap someone short of their dashboard.
+    resolveOnboarding(),
+  ]);
+
+  // Forward a whitelisted status flag if one arrived (e.g. the invite-accept fallback lands here as
+  // `/?invite=accepted` when it couldn't resolve the joined org's slug itself). Only `invite` is carried, and
+  // only its known values — this is a redirect target, not an open query-string passthrough. Computed BEFORE
+  // the onboarding redirect so a brand-new invitee (fresh signup → onboarding) doesn't lose their
+  // invite-accepted confirmation at that hop; it rides through onboarding and onto their dashboard.
+  const invite = typeof sp.invite === "string" ? sp.invite : undefined;
+  const q = invite && ["accepted", "invalid", "error"].includes(invite) ? `?invite=${invite}` : "";
 
   // The hint is untrusted FOR THIS PURPOSE: it may name an org they have since been removed from. It is only
   // ever used to PICK from the directory, never to bypass it.
   const target = orgs.find((o) => o.orgId === currentOrgId) ?? orgs[0];
+
+  // An ORG-LESS session (bootstrap failed, or removed from every org) is resolved FIRST — before the
+  // onboarding gate. Such a user has nothing to show and cannot onboard anyway (onboarding renames a personal
+  // org that doesn't exist), so sign them out immediately rather than march them through a name screen and
+  // THEN log them out. This preserves the pre-onboarding immediate-logout invariant for an org-less session.
   if (!target) redirect(LOGOUT_URL);
 
-  // Forward a whitelisted status flag if one arrived (e.g. the invite-accept fallback lands here as
-  // `/?invite=accepted` when it couldn't resolve the joined org's slug itself). Only `invite` is carried, and
-  // only its known values — this is a redirect target, not an open query-string passthrough.
-  const invite = typeof sp.invite === "string" ? sp.invite : undefined;
-  const q = invite && ["accepted", "invalid", "error"].includes(invite) ? `?invite=${invite}` : "";
+  if (onboarding.show) redirect(`/onboarding${q}`);
 
   redirect(`/org/${target.slug}/dashboard${q}`);
 }

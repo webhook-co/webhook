@@ -71,3 +71,4 @@ scripts/.prod-migrate.env
 apps/web/playwright/.tmp/
 apps/web/playwright-report/
 apps/web/test-results/
+packages/db/db/schema.sql

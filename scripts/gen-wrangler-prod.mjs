@@ -315,6 +315,13 @@ const APPS = {
       // be LIVE with the ConnectedApps entrypoint first (same deploy-ordering note as SessionExchange);
       // apps/web renders "temporarily unavailable" (list) / errors (revoke) when it's unbound (dev/pre-provision).
       { binding: "AUTH_CONNECTED_APPS", service: "webhook-auth", entrypoint: "ConnectedApps" },
+      // AUTH_ONBOARDING (Lane G) — the web→auth binding to auth.'s OnboardingProfile entrypoint, so the
+      // onboarding gate reads/writes `firstName`/`lastName`/`onboardedAt`, which live on the `user` row in
+      // auth.'s identity realm (webhook_auth-owned, unwritable from web's webhook_app role). auth. must be
+      // LIVE with the OnboardingProfile entrypoint first (same deploy-ordering note as SessionExchange);
+      // apps/web fails OPEN when it's unbound (dev / pre-provision): resolveOnboarding returns "don't show",
+      // so the dashboard still renders — onboarding is a nicety, never a gate that can trap a user.
+      { binding: "AUTH_ONBOARDING", service: "webhook-auth", entrypoint: "OnboardingProfile" },
       {
         binding: "PROVIDER_SECRET_SEALER",
         service: "webhook-engine",

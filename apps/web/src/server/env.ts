@@ -1,6 +1,10 @@
 import "server-only";
 
-import type { ConnectedApp } from "@webhook-co/contract";
+import type {
+  ConnectedApp,
+  OnboardingProfileService,
+  OnboardingStateDto,
+} from "@webhook-co/contract";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
 
 import {
@@ -147,6 +151,28 @@ export function getConnectedAppsBinding(): ConnectedAppsBinding | undefined {
     typeof (binding as { revoke?: unknown }).revoke === "function"
   ) {
     return binding as ConnectedAppsBinding;
+  }
+  return undefined;
+}
+
+/** auth.'s OnboardingProfile WorkerEntrypoint — first/last name + `onboardedAt` live on the identity `user`
+ *  table, which only auth. (webhook_auth) may write, so onboarding reads/completes over this binding. Keyed by
+ *  the SERVER-verified session userId; the write's timestamp is minted auth-side, never caller-supplied. The
+ *  wire shape is the single {@link OnboardingProfileService} contract both apps type against. */
+export type OnboardingProfileBinding = OnboardingProfileService;
+
+// Re-exported so onboarding-logic (which types its input on the state slice) keeps a local import path.
+export type { OnboardingStateDto };
+
+/** The bound AUTH_ONBOARDING entrypoint, or undefined when unbound (dev / pre-provision). */
+export function getOnboardingBinding(): OnboardingProfileBinding | undefined {
+  const binding = workerEnv().AUTH_ONBOARDING;
+  if (
+    binding &&
+    typeof (binding as { read?: unknown }).read === "function" &&
+    typeof (binding as { complete?: unknown }).complete === "function"
+  ) {
+    return binding as OnboardingProfileBinding;
   }
   return undefined;
 }

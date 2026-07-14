@@ -24,6 +24,8 @@ import { captcha } from "better-auth/plugins";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
 
+import { splitName } from "@webhook-co/shared";
+
 import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
 import {
@@ -142,9 +144,45 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     // CSRF origin allow-list: this surface + the app it hands off to.
     trustedOrigins: [baseURL, APP_BASE_URL],
     database: deps.database,
+    // The runtime must know about the same additionalFields the GENERATOR does (apps/auth/src/auth.ts), or
+    // Better Auth silently drops `firstName`/`lastName` on write — the generator config and the runtime config
+    // are two separate objects and both have to agree.
+    //
+    // `firstName`/`lastName` are `input: true` on purpose, and this is load-bearing: `mapProfileToUser`'s
+    // output for an OAuth signup is run through the SAME input filter as a client sign-up body
+    // (`parseAdditionalUserInputFromProviderProfile` → `parseInputData`), which DROPS any field whose
+    // `input` is false. With `input: false` the provider's given/family name never persisted — the columns
+    // stayed NULL and the pre-fill below was silently dead. `input: true` is safe here: this runtime is
+    // social + magic-link only (no password signup), magic-link's create path writes only email+name, so the
+    // sole client-write vector `input: true` opens is `/update-user` letting a signed-in user edit THEIR OWN
+    // display name — exactly what the onboarding screen already does. `onboardedAt` STAYS `input: false`: it
+    // is the gate flag with trust meaning, written only by the app over the identity RPC, never by a client.
+    user: {
+      additionalFields: {
+        firstName: { type: "string", required: false, input: true },
+        lastName: { type: "string", required: false, input: true },
+        onboardedAt: { type: "date", required: false, input: false },
+      },
+    },
     socialProviders: {
-      google: { clientId: secrets.googleClientId, clientSecret: secrets.googleClientSecret },
-      github: { clientId: secrets.githubClientId, clientSecret: secrets.githubClientSecret },
+      // Map the provider's given/family name onto our columns. Google returns them directly; GitHub does NOT
+      // (it has only a single free-text `name`), so we split on the first space — "Ada Lovelace" -> Ada /
+      // Lovelace, "Prince" -> Prince / "". It is a guess, and onboarding lets the user correct it, which is
+      // the entire reason onboarding pre-fills rather than assumes. `name` is left to Better Auth's default so
+      // the existing composite-name behaviour is unchanged.
+      google: {
+        clientId: secrets.googleClientId,
+        clientSecret: secrets.googleClientSecret,
+        mapProfileToUser: (profile: { given_name?: string; family_name?: string }) => ({
+          firstName: profile.given_name ?? undefined,
+          lastName: profile.family_name ?? undefined,
+        }),
+      },
+      github: {
+        clientId: secrets.githubClientId,
+        clientSecret: secrets.githubClientSecret,
+        mapProfileToUser: (profile: { name?: string | null }) => splitName(profile.name),
+      },
     },
     // Captcha first (its onRequest gate runs before the magic-link send handler), then magic-link.
     plugins: [...captchaPlugins(baseURL, secrets), magicLink(magicLinkOptions(deps))],
