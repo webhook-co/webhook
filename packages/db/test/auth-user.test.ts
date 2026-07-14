@@ -4,7 +4,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { deleteUserIdentity, getAuthUserProfile } from "../src/auth-user";
+import {
+  completeOnboarding,
+  deleteUserIdentity,
+  getAuthUserProfile,
+  readOnboardingState,
+} from "../src/auth-user";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
@@ -119,5 +124,109 @@ describe("deleteUserIdentity", () => {
 
   it("returns false for a user that does not exist", async () => {
     expect(await deleteUserIdentity(auth, `user_${randomUUID()}`)).toBe(false);
+  });
+});
+
+// Onboarding state + completion. Both run as webhook_auth on the identity realm — webhook_app has no grant on
+// the `user` table (migration 0068), which is exactly why these cross the boundary by RPC rather than a tenant
+// query. Migration 0073 added firstName/lastName/onboardedAt.
+describe("onboarding state", () => {
+  async function seedUser(over: { firstName?: string; lastName?: string } = {}): Promise<string> {
+    const id = `user_${randomUUID()}`;
+    await owner`
+      insert into "user" ("id", "name", "email", "emailVerified", "firstName", "lastName", "updatedAt")
+      values (${id}, ${"Ada Lovelace"}, ${`${id}@e.test`}, ${true},
+              ${over.firstName ?? null}, ${over.lastName ?? null}, now())`;
+    return id;
+  }
+
+  it("reads a fresh user as NOT yet onboarded", async () => {
+    const id = await seedUser({ firstName: "Ada", lastName: "Lovelace" });
+
+    const state = await readOnboardingState(auth, id);
+
+    expect(state).not.toBeNull();
+    expect(state!.onboardedAt).toBeNull();
+    expect(state!.firstName).toBe("Ada");
+    expect(state!.lastName).toBe("Lovelace");
+    expect(state!.createdAt).toBeInstanceOf(Date);
+  });
+
+  it("returns null for a user that does not exist", async () => {
+    expect(await readOnboardingState(auth, `user_${randomUUID()}`)).toBeNull();
+  });
+
+  it("stamps onboardedAt and stores the corrected name in ONE write", async () => {
+    const id = await seedUser();
+    const at = new Date("2026-07-14T00:00:00.000Z");
+
+    const wrote = await completeOnboarding(auth, {
+      userId: id,
+      firstName: "Grace",
+      lastName: "Hopper",
+      onboardedAt: at,
+    });
+
+    expect(wrote).toBe(true);
+    const state = await readOnboardingState(auth, id);
+    expect(state!.firstName).toBe("Grace");
+    expect(state!.lastName).toBe("Hopper");
+    // onboardedAt is now SET — this is the gate flipping from "show onboarding" to "done".
+    expect(state!.onboardedAt).toEqual(at);
+  });
+
+  // An absent last name is absent, not blank — so it reads the same as a user who never had one.
+  it("stores an empty name field as NULL, not an empty string", async () => {
+    const id = await seedUser();
+
+    await completeOnboarding(auth, {
+      userId: id,
+      firstName: "Prince",
+      lastName: "   ",
+      onboardedAt: new Date(),
+    });
+
+    expect((await readOnboardingState(auth, id))!.lastName).toBeNull();
+  });
+
+  it("leaves the composite display name alone — Better Auth owns that", async () => {
+    const id = await seedUser();
+
+    await completeOnboarding(auth, {
+      userId: id,
+      firstName: "Grace",
+      lastName: "Hopper",
+      onboardedAt: new Date(),
+    });
+
+    expect((await readOnboardingState(auth, id))!.name).toBe("Ada Lovelace");
+  });
+
+  it("is idempotent — re-completing just re-stamps and does not error", async () => {
+    const id = await seedUser();
+    await completeOnboarding(auth, {
+      userId: id,
+      firstName: "A",
+      lastName: "B",
+      onboardedAt: new Date(),
+    });
+    const second = await completeOnboarding(auth, {
+      userId: id,
+      firstName: "A",
+      lastName: "B",
+      onboardedAt: new Date(),
+    });
+    expect(second).toBe(true);
+  });
+
+  it("returns false when completing a user that is gone", async () => {
+    expect(
+      await completeOnboarding(auth, {
+        userId: `user_${randomUUID()}`,
+        firstName: "X",
+        lastName: "Y",
+        onboardedAt: new Date(),
+      }),
+    ).toBe(false);
   });
 });

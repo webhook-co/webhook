@@ -24,6 +24,7 @@ import { captcha } from "better-auth/plugins";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { Pool } from "pg";
 
+import { splitName } from "./split-name";
 import { withAccountTokenStripping } from "./account-token-hooks";
 import { makeBootstrapHooks } from "./bootstrap";
 import {
@@ -142,9 +143,36 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     // CSRF origin allow-list: this surface + the app it hands off to.
     trustedOrigins: [baseURL, APP_BASE_URL],
     database: deps.database,
+    // The runtime must know about the same additionalFields the GENERATOR does (apps/auth/src/auth.ts), or
+    // Better Auth silently drops `firstName`/`lastName` on write — the generator config and the runtime config
+    // are two separate objects and both have to agree. `onboardedAt` is set by the app, not by Better Auth, so
+    // it is not `input: true` here; the two name fields ARE mapped from the provider profile below.
+    user: {
+      additionalFields: {
+        firstName: { type: "string", required: false, input: false },
+        lastName: { type: "string", required: false, input: false },
+        onboardedAt: { type: "date", required: false, input: false },
+      },
+    },
     socialProviders: {
-      google: { clientId: secrets.googleClientId, clientSecret: secrets.googleClientSecret },
-      github: { clientId: secrets.githubClientId, clientSecret: secrets.githubClientSecret },
+      // Map the provider's given/family name onto our columns. Google returns them directly; GitHub does NOT
+      // (it has only a single free-text `name`), so we split on the first space — "Ada Lovelace" -> Ada /
+      // Lovelace, "Prince" -> Prince / "". It is a guess, and onboarding lets the user correct it, which is
+      // the entire reason onboarding pre-fills rather than assumes. `name` is left to Better Auth's default so
+      // the existing composite-name behaviour is unchanged.
+      google: {
+        clientId: secrets.googleClientId,
+        clientSecret: secrets.googleClientSecret,
+        mapProfileToUser: (profile: { given_name?: string; family_name?: string }) => ({
+          firstName: profile.given_name ?? undefined,
+          lastName: profile.family_name ?? undefined,
+        }),
+      },
+      github: {
+        clientId: secrets.githubClientId,
+        clientSecret: secrets.githubClientSecret,
+        mapProfileToUser: (profile: { name?: string | null }) => splitName(profile.name),
+      },
     },
     // Captcha first (its onRequest gate runs before the magic-link send handler), then magic-link.
     plugins: [...captchaPlugins(baseURL, secrets), magicLink(magicLinkOptions(deps))],
