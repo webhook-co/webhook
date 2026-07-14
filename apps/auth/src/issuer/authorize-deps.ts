@@ -76,7 +76,7 @@ export async function makeAuthorizeDeps(
     resolveOrigin,
     loginUrl: (returnTo) => `${LOGIN_PATH}?redirect=${encodeURIComponent(returnTo)}`,
 
-    buildConsent: (request, userId, origin) =>
+    buildConsent: (request, userId, origin, orgHint) =>
       buildConsent(
         {
           // RFC 9207: every authorization response (success AND error) is stamped with this.
@@ -98,6 +98,7 @@ export async function makeAuthorizeDeps(
         request,
         userId,
         origin,
+        orgHint,
       ),
 
     decideConsent: (input) =>

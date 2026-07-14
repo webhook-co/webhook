@@ -4,6 +4,7 @@ import { GRANTABLE_SCOPES } from "./oauth-config";
 import {
   redeemAuthCode,
   redeemRefresh,
+  resolveOrgForTokenBody,
   type AuthCodeDeps,
   type ConsentProps,
   type RefreshDeps,
@@ -376,6 +377,120 @@ const consumedAsNonMember = () =>
     audience: API_RESOURCE,
     newRefresh: FAKE_REFRESH,
   }));
+
+describe("token response — bound org identity enrichment (optional, best-effort)", () => {
+  const ORG = { id: "org_1", slug: "acme", name: "Acme Inc" };
+
+  it("auth-code: includes organization {id,slug,name} when the resolver is wired", async () => {
+    const deps = authCodeDeps({ resolveOrgIdentity: vi.fn(async () => ORG) });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result.kind).toBe("token");
+    if (result.kind === "token") expect(result.body.organization).toEqual(ORG);
+    // resolved for the CONSENT-recorded org, never the request.
+    expect(deps.resolveOrgIdentity).toHaveBeenCalledWith("org_1");
+  });
+
+  it("refresh: includes organization for the grant's org", async () => {
+    const deps = refreshDeps({ resolveOrgIdentity: vi.fn(async () => ORG) });
+    const result = await redeemRefresh(deps, refreshReq);
+    expect(result.kind).toBe("token");
+    if (result.kind === "token") expect(result.body.organization).toEqual(ORG);
+    expect(deps.resolveOrgIdentity).toHaveBeenCalledWith("org_1");
+  });
+
+  it("omits organization when no resolver is wired (older deployment / forward-compat)", async () => {
+    const result = await redeemAuthCode(authCodeDeps(), authCodeReq);
+    if (result.kind === "token") expect(result.body.organization).toBeUndefined();
+  });
+
+  it("omits organization for a DEGENERATE org (empty name) — a login must never break on the label", async () => {
+    // orgs.name is `text not null` with no non-empty CHECK, so a real member org can carry name = ''. The
+    // field is optional and validated through OrganizationSchema, so it degrades to omitted rather than
+    // emitting an invalid org (or failing the mint the user is entitled to).
+    const deps = authCodeDeps({
+      resolveOrgIdentity: vi.fn(async () => ({ id: "org_1", slug: "acme", name: "" })),
+    });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result.kind).toBe("token"); // the token is still minted
+    if (result.kind === "token") expect(result.body.organization).toBeUndefined();
+  });
+
+  it("omits organization when the resolver faults — never fails the mint", async () => {
+    const deps = authCodeDeps({
+      resolveOrgIdentity: vi.fn(async () => {
+        throw new Error("org read blipped");
+      }),
+    });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    expect(result.kind).toBe("token");
+    if (result.kind === "token") expect(result.body.organization).toBeUndefined();
+  });
+
+  it("omits organization when the org row is missing (resolver returns null) and LOGS the anomaly", async () => {
+    // Membership is asserted before the mint, so a null org here is an anomaly (e.g. an RLS regression), not
+    // the silent forward-compat 'no resolver' case — it must leave an operator signal.
+    const log = vi.fn();
+    const deps = authCodeDeps({ resolveOrgIdentity: vi.fn(async () => null), log });
+    const result = await redeemAuthCode(deps, authCodeReq);
+    if (result.kind === "token") expect(result.body.organization).toBeUndefined();
+    expect(log).toHaveBeenCalledWith("issuer.token_org_enrich_skipped", {
+      reason: "org_not_found",
+    });
+  });
+});
+
+describe("resolveOrgForTokenBody — the best-effort helper (bounded, never throws)", () => {
+  const ORG = { id: "org_1", slug: "acme", name: "Acme Inc" };
+
+  it("returns the org when the read resolves in time", async () => {
+    expect(await resolveOrgForTokenBody(async () => ORG, "org_1")).toEqual(ORG);
+  });
+
+  it("returns undefined when there is no resolver (forward-compat) — no log", async () => {
+    const log = vi.fn();
+    expect(await resolveOrgForTokenBody(undefined, "org_1", log)).toBeUndefined();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("ABANDONS a hung read at the timeout and logs — the caller's already-minted token is never stalled", async () => {
+    // A never-settling read (pool exhaustion / partition) must not block. Small timeout keeps the test fast
+    // and deterministic: the timer fires long before the never-resolving promise.
+    const log = vi.fn();
+    const started = Date.now();
+    const out = await resolveOrgForTokenBody(() => new Promise<never>(() => {}), "org_1", log, 20);
+    expect(out).toBeUndefined();
+    expect(Date.now() - started).toBeLessThan(1_000); // returned promptly, not hung
+    expect(log).toHaveBeenCalledWith("issuer.token_org_enrich_timeout");
+  });
+
+  it("logs org_not_found for a null row, invalid_org for a degenerate one, and _failed on throw", async () => {
+    const log = vi.fn();
+    expect(await resolveOrgForTokenBody(async () => null, "org_1", log)).toBeUndefined();
+    expect(log).toHaveBeenLastCalledWith("issuer.token_org_enrich_skipped", {
+      reason: "org_not_found",
+    });
+    expect(
+      await resolveOrgForTokenBody(
+        async () => ({ id: "org_1", slug: "acme", name: "" }),
+        "org_1",
+        log,
+      ),
+    ).toBeUndefined();
+    expect(log).toHaveBeenLastCalledWith("issuer.token_org_enrich_skipped", {
+      reason: "invalid_org",
+    });
+    expect(
+      await resolveOrgForTokenBody(
+        async () => {
+          throw new Error("blip");
+        },
+        "org_1",
+        log,
+      ),
+    ).toBeUndefined();
+    expect(log).toHaveBeenLastCalledWith("issuer.token_org_enrich_failed");
+  });
+});
 
 describe("redeemRefresh — silent re-mint", () => {
   // The membership re-check on refresh. Without it, a refresh handle keeps minting fresh access keys for

@@ -21,6 +21,7 @@ import {
   mintKeyForGrant,
   mintRefreshToken,
   mintScopedKey,
+  readOrgIdentity,
   revokeGrant,
   revokeRefreshTokensForGrant,
 } from "@webhook-co/db";
@@ -144,6 +145,10 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
       return minted.plaintext;
     },
 
+    // Best-effort org label for the response body. Self-authorizes by id under RLS (readOrgIdentity uses
+    // withTenant); the core omits it on null/degenerate/fault, so a login is never blocked by this read.
+    resolveOrgIdentity: (orgId) => readOrgIdentity(app, orgId),
+
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
 
@@ -189,6 +194,8 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
     // consumeRefresh; mintKeyForGrant additionally serializes against concurrent revokes (SELECT…FOR UPDATE).
     mintKeyForGrant: (input) => mintKeyForGrant(app, input, hasher, auditKey),
 
+    resolveOrgIdentity: (orgId) => readOrgIdentity(app, orgId),
+
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
 
@@ -223,6 +230,7 @@ export async function makeTokenDeps(env: TokenEnv, requestUrl: string): Promise<
     rollbackMint: async (grantId, orgId) => {
       await revokeGrant(app, { orgId, grantId, reason: "issuance_rollback" }, auditKey);
     },
+    resolveOrgIdentity: (orgId) => readOrgIdentity(app, orgId),
     log: (event, fields) => console.log(JSON.stringify({ message: event, ...fields })),
   };
 

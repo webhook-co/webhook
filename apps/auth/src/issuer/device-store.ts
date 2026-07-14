@@ -51,6 +51,9 @@ export interface DeviceCodeRecord {
   notBefore: number;
   createdAt: number;
   expiresAt: number;
+  /** Optional `?organization=<slug>` hint captured at /device_authorization — pre-selects a member org at
+   * the later /device consent step (carried across because approval happens in a separate request). */
+  orgHint?: string;
   // set at approval:
   orgId?: string;
   userId?: string;
@@ -65,6 +68,8 @@ export interface CreateDeviceCodeInput {
   audience: string;
   ttlSeconds: number;
   interval: number;
+  /** Optional `?organization=<slug>` hint to pre-select a member org at the /device consent step. */
+  orgHint?: string;
 }
 
 export interface CreatedDeviceCode {
@@ -189,6 +194,7 @@ export async function createDeviceCode(
     notBefore: 0,
     createdAt: now,
     expiresAt: now + input.ttlSeconds,
+    ...(input.orgHint ? { orgHint: input.orgHint } : {}),
   };
   const deviceHash = await sha256Hex(deviceCode);
   const userHash = await sha256Hex(userCode);
