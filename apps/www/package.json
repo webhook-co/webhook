@@ -17,7 +17,8 @@
     "test:lighthouse": "lhci autorun",
     "check:export": "node scripts/check-export.mjs",
     "deploy": "wrangler deploy",
-    "deploy:dry": "wrangler deploy --dry-run"
+    "deploy:dry": "wrangler deploy --dry-run",
+    "gen:brand-mail": "node scripts/gen-brand-mail-assets.mjs"
   },
   "dependencies": {
     "@webhook-co/shared": "workspace:*",
@@ -49,6 +50,7 @@
     "axe-core": "^4.12.1",
     "jsdom": "^29.1.1",
     "linkedom": "^0.18.13",
+    "sharp": "^0.35.3",
     "tailwindcss": "^4.3.2",
     "vitest-axe": "^0.1.0"
   }

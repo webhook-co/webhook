@@ -37,3 +37,29 @@
 # static assets to max-age=0; HTML keeps that default so deploys go live immediately.
 /_next/static/*
   Cache-Control: public, max-age=31536000, immutable
+
+# The BIMI indicator. Mailbox providers (Yahoo/AOL, Fastmail, La Poste) fetch this at DELIVERY time,
+# from outside any browser, so it must be unauthenticated, always-up, and correctly typed. Content-Type
+# is set explicitly rather than left to extension inference: `nosniff` is on globally, so a wrong type
+# is not recoverable client-side, and a malformed/mistyped indicator produces a BIMI *failure* result —
+# strictly worse than publishing no BIMI record at all.
+#
+# Referenced by `l=` in default._bimi.{mail,billing}.webhook.co. If this path ever 404s, the logo
+# silently stops rendering. Do not move it without updating those DNS records.
+#
+# ⚠️ THE `!` LINE IS LOAD-BEARING — same trap as /play's CSP above. `_headers` rules are ADDITIVE, and
+# Workers Static Assets ALREADY infers `Content-Type: image/svg+xml` from the .svg extension. Setting it
+# again without unsetting first emits the header TWICE, which a receiver sees as the invalid media type
+# `image/svg+xml, image/svg+xml`. Combined with the global `nosniff`, that is unrecoverable: the
+# indicator is rejected as malformed and BIMI returns a *failure* — strictly worse than no BIMI record.
+# Unset, then set, so exactly one Content-Type ships.
+#
+# Pinned on the SVG ONLY: /bimi/* also holds apple-branded-mail.png, and a wildcard Content-Type here
+# would mislabel that PNG as an SVG.
+/bimi/logo.svg
+  ! Content-Type
+  Content-Type: image/svg+xml
+
+/bimi/*
+  Cache-Control: public, max-age=86400
+  Access-Control-Allow-Origin: *
