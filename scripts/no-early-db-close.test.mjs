@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -19,7 +19,7 @@ function runGuard(files) {
   // The script resolves its target relative to its own location, so run a copy from inside the fake root.
   mkdirSync(join(root, "scripts"), { recursive: true });
   const copied = join(root, "scripts/no-early-db-close.mjs");
-  writeFileSync(copied, execFileSync("cat", [SCRIPT]));
+  copyFileSync(SCRIPT, copied);
   try {
     const stdout = execFileSync("node", [copied], { encoding: "utf8" });
     return { ok: true, output: stdout };
