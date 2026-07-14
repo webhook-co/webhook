@@ -73,18 +73,15 @@ try {
     failures.push("out/_headers is missing Strict-Transport-Security");
   }
 
-  // /play MUST unset the inherited CSP before setting its own. This shipped broken to production:
-  // Cloudflare _headers rules are ADDITIVE, so without the `!` line /play is served with TWO
-  // Content-Security-Policy headers — and a browser enforces their INTERSECTION, not "most specific
-  // wins". The global `script-src 'self'` therefore still blocked challenges.cloudflare.com, the
-  // Turnstile script never loaded, and the sandbox's mint button stayed disabled forever. No other
-  // check could see it: the a11y/Lighthouse jobs serve out/ WITHOUT applying _headers at all.
-  // The BIMI indicator has the SAME additive-header trap as /play, with a worse blast radius. Workers
-  // Static Assets ALREADY infers `Content-Type: image/svg+xml` from the .svg extension, so pinning it
-  // again without unsetting first ships the header TWICE — which a receiver reads as the invalid media
-  // type `image/svg+xml, image/svg+xml`. With the global `nosniff` that is unrecoverable: the indicator
-  // is rejected as malformed and BIMI returns a *failure*, which is strictly worse than publishing no
-  // BIMI record at all. And no browser test can see it — this file is the only place that can.
+  // ── The ADDITIVE-header trap. Cloudflare _headers rules do not override, they ACCUMULATE. Both
+  // checks below exist because of it; the /play one is here because it already shipped broken once.
+
+  // The BIMI indicator has the same trap, with a worse blast radius. Workers Static Assets ALREADY
+  // infers `Content-Type: image/svg+xml` from the .svg extension, so pinning it again without
+  // unsetting first ships the header TWICE — which a receiver reads as the invalid media type
+  // `image/svg+xml, image/svg+xml`. With the global `nosniff` that is unrecoverable: the indicator is
+  // rejected as malformed and BIMI returns a *failure*, strictly worse than publishing no BIMI record
+  // at all. No browser test can see it — the logo is fetched by mailbox providers at delivery time.
   const bimiBlock = headers.split(/^\/(?=\S)/m).find((b) => b.startsWith("bimi/logo.svg\n"));
   if (!bimiBlock) {
     failures.push(
@@ -102,6 +99,12 @@ try {
     }
   }
 
+  // /play MUST unset the inherited CSP before setting its own. This shipped broken to production:
+  // without the `!` line /play is served with TWO Content-Security-Policy headers — and a browser
+  // enforces their INTERSECTION, not "most specific wins". The global `script-src 'self'` therefore
+  // still blocked challenges.cloudflare.com, the Turnstile script never loaded, and the sandbox's mint
+  // button stayed disabled forever. No other check could see it: the a11y/Lighthouse jobs serve out/
+  // WITHOUT applying _headers at all.
   const playBlock = headers.split(/^\/(?=\S)/m).find((b) => b.startsWith("play\n"));
   if (!playBlock) {
     failures.push("out/_headers has no /play block (the sandbox needs its own CSP)");
