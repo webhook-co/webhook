@@ -37,6 +37,7 @@ export interface AuthorizeRouteDeps {
     request: ConsentAuthRequest,
     userId: string,
     origin: AuthorizeOrigin,
+    orgHint?: string,
   ) => Promise<BuildConsentResult>;
   /** Bound consent core (decideConsent + its deps). */
   decideConsent: (input: DecideConsentInput) => Promise<DecideResult>;
@@ -98,7 +99,14 @@ export async function handleAuthorize(
     return redirect(deps.loginUrl(`${here.pathname}${here.search}`));
   }
 
-  const result = await deps.buildConsent(authRequest, userId, deps.resolveOrigin(request));
+  // The `organization` slug hint is read straight off the URL: the provider's parseAuthRequest whitelists a
+  // fixed set of OAuth params and silently drops unknown ones, so it never reaches `authRequest`. It is a
+  // non-authoritative view hint (pre-selects the consent default) — see applyOrgHint. `?? undefined` maps a
+  // present-but-empty `organization=` to "no hint".
+  // `|| undefined` maps both an absent param and a present-but-empty `organization=` to "no hint" (same
+  // idiom as device-authorize-route).
+  const orgHint = new URL(request.url).searchParams.get("organization") || undefined;
+  const result = await deps.buildConsent(authRequest, userId, deps.resolveOrigin(request), orgHint);
   switch (result.kind) {
     case "consent":
     case "redirect":

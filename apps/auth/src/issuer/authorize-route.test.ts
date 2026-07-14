@@ -102,14 +102,32 @@ describe("handleAuthorize (GET /authorize)", () => {
     expect(res.status).toBe(400);
   });
 
-  it("passes the parsed request, session user, and origin into buildConsent", async () => {
+  it("passes the parsed request, session user, and origin into buildConsent (no org hint by default)", async () => {
     const build = vi.fn(async () => ({ kind: "consent" as const, location: "/consent?ticket=T" }));
     const deps = routeDeps({ buildConsent: build });
     await handleAuthorize(deps, new Request("https://auth.webhook.co/authorize"));
-    expect(build).toHaveBeenCalledWith(AUTH_REQUEST, "user_dana", {
-      ip: "203.0.113.7",
-      location: "US",
-    });
+    expect(build).toHaveBeenCalledWith(
+      AUTH_REQUEST,
+      "user_dana",
+      { ip: "203.0.113.7", location: "US" },
+      undefined,
+    );
+  });
+
+  it("forwards the ?organization= slug hint to buildConsent (read off the URL, not the parsed request)", async () => {
+    // parseAuthRequest whitelists OAuth params and drops `organization`, so the handler must read it from the
+    // raw URL. It is a non-authoritative default-pre-selection hint.
+    const build = vi.fn(async () => ({ kind: "consent" as const, location: "/consent?ticket=T" }));
+    const deps = routeDeps({ buildConsent: build });
+    await handleAuthorize(deps, new Request("https://auth.webhook.co/authorize?organization=acme"));
+    expect(build).toHaveBeenCalledWith(AUTH_REQUEST, "user_dana", expect.anything(), "acme");
+  });
+
+  it("treats an empty ?organization= as no hint", async () => {
+    const build = vi.fn(async () => ({ kind: "consent" as const, location: "/consent?ticket=T" }));
+    const deps = routeDeps({ buildConsent: build });
+    await handleAuthorize(deps, new Request("https://auth.webhook.co/authorize?organization="));
+    expect(build).toHaveBeenCalledWith(AUTH_REQUEST, "user_dana", expect.anything(), undefined);
   });
 });
 

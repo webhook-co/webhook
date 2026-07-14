@@ -46,6 +46,31 @@ const REQ = {
   client_id: "cli_wbhk",
 } as const;
 
+describe("redeemDeviceCode — bound org identity enrichment (optional, best-effort)", () => {
+  it("includes organization {id,slug,name} for the approved org when the resolver is wired", async () => {
+    const ORG = { id: "org_1", slug: "acme", name: "Acme Inc" };
+    const resolveOrgIdentity = vi.fn(async () => ORG);
+    const r = await redeemDeviceCode(deps({ resolveOrgIdentity }), REQ);
+    expect(r.kind).toBe("token");
+    if (r.kind === "token") expect(r.body.organization).toEqual(ORG);
+    expect(resolveOrgIdentity).toHaveBeenCalledWith("org_1");
+  });
+
+  it("omits organization for a degenerate org (empty name) — the device login still mints", async () => {
+    const r = await redeemDeviceCode(
+      deps({ resolveOrgIdentity: async () => ({ id: "org_1", slug: "acme", name: "" }) }),
+      REQ,
+    );
+    expect(r.kind).toBe("token");
+    if (r.kind === "token") expect(r.body.organization).toBeUndefined();
+  });
+
+  it("omits organization when unwired (forward-compat)", async () => {
+    const r = await redeemDeviceCode(deps(), REQ);
+    if (r.kind === "token") expect(r.body.organization).toBeUndefined();
+  });
+});
+
 describe("redeemDeviceCode — poll FSM → RFC 8628 §3.5", () => {
   it("maps pending → authorization_pending", async () => {
     const r = await redeemDeviceCode(deps({ poll: async () => ({ kind: "pending" }) }), REQ);

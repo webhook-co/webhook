@@ -34,6 +34,7 @@ export interface DeviceAuthorizeDeps {
     audience: string;
     ttlSeconds: number;
     interval: number;
+    orgHint?: string;
   }) => Promise<{ deviceCode: string; userCode: string; interval: number; expiresIn: number }>;
   log?: LogFn;
 }
@@ -92,12 +93,16 @@ export async function handleDeviceAuthorization(
     return oauthError("invalid_scope", "no permitted scope requested");
   }
 
+  // Non-authoritative `organization` slug hint (form param). Carried on the device-code record so the later
+  // /device consent step can pre-select a member org (applyOrgHint). Empty → no hint.
+  const orgHint = params.get("organization") || undefined;
   const created = await deps.createDeviceCode({
     clientId,
     scopes,
     audience: resource,
     ttlSeconds: deps.ttlSeconds,
     interval: deps.interval,
+    ...(orgHint ? { orgHint } : {}),
   });
 
   deps.log?.("issuer.device.authorized", {

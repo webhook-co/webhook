@@ -66,6 +66,15 @@ describe("createDeviceCode", () => {
     expect(found!.audience).toBe("https://api.webhook.co");
   });
 
+  it("round-trips an orgHint: persisted at create, returned by findByUserCode; absent when not set", async () => {
+    const kv = fakeKv();
+    const withHint = await createDeviceCode(deps(kv), { ...CREATE, orgHint: "acme" });
+    expect((await findByUserCode(deps(kv), withHint.userCode))!.orgHint).toBe("acme");
+
+    const noHint = await createDeviceCode(deps(kv), CREATE);
+    expect((await findByUserCode(deps(kv), noHint.userCode))!.orgHint).toBeUndefined();
+  });
+
   it("does not use ambiguous characters (0/O/1/I/L) in the user code", async () => {
     const kv = fakeKv();
     for (let i = 0; i < 12; i++) {

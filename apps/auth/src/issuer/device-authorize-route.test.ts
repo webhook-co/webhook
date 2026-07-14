@@ -69,6 +69,40 @@ describe("handleDeviceAuthorization", () => {
     });
   });
 
+  it("forwards a form `organization` slug as the orgHint onto the device-code record", async () => {
+    const create = vi.fn(deps().createDeviceCode);
+    await handleDeviceAuthorization(
+      deps({ createDeviceCode: create }),
+      formRequest({
+        client_id: "cli_wbhk",
+        scope: "events:read",
+        resource: API,
+        organization: "acme",
+      }),
+    );
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ orgHint: "acme" }));
+  });
+
+  it("omits orgHint when `organization` is absent or empty (no dangling hint on the record)", async () => {
+    const create = vi.fn(deps().createDeviceCode);
+    await handleDeviceAuthorization(
+      deps({ createDeviceCode: create }),
+      formRequest({ client_id: "cli_wbhk", scope: "events:read", resource: API, organization: "" }),
+    );
+    expect(create).toHaveBeenCalledWith(
+      expect.not.objectContaining({ orgHint: expect.anything() }),
+    );
+    // and with no organization param at all
+    const create2 = vi.fn(deps().createDeviceCode);
+    await handleDeviceAuthorization(
+      deps({ createDeviceCode: create2 }),
+      formRequest({ client_id: "cli_wbhk", scope: "events:read", resource: API }),
+    );
+    expect(create2).toHaveBeenCalledWith(
+      expect.not.objectContaining({ orgHint: expect.anything() }),
+    );
+  });
+
   it("rejects an unknown client (invalid_client) without minting", async () => {
     const create = vi.fn(deps().createDeviceCode);
     const res = await handleDeviceAuthorization(
