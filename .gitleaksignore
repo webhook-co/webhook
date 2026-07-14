@@ -34,3 +34,7 @@
 # above) — re-derive from the run log at that point, or make the fixture non-entropic
 # (e.g. `token: "tok_test_placeholder"`), which fixes it permanently and is the better end state.
 8616490897d9d74f1a1d6b9f965a13606804ac26:apps/web/src/server/invite-cookie.test.ts:generic-api-key:12
+8616490897d9d74f1a1d6b9f965a13606804ac26:apps/web/src/server/invite-cookie.test.ts:generic-api-key:15
+# ...and the plan document, which simply quotes that same test's code block verbatim.
+ec7c840f1a1dd0022714bd51b2d05009f34ac39d:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:136
+ec7c840f1a1dd0022714bd51b2d05009f34ac39d:docs/superpowers/plans/2026-07-14-invite-return-through-login.md:generic-api-key:139
