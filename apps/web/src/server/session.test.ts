@@ -18,7 +18,13 @@ vi.mock("./env", () => ({
 
 import { redirect } from "next/navigation";
 
-import { SESSION_COOKIE, type Session, verifySession } from "./session";
+import {
+  getSessionOrNull,
+  loginUrlWithReturn,
+  SESSION_COOKIE,
+  type Session,
+  verifySession,
+} from "./session";
 import { signSessionToken } from "./session-token";
 
 const principal: Session = {
@@ -75,5 +81,51 @@ describe("verifySession", () => {
     const session = await verifySession();
     expect(session).toMatchObject(principal);
     expect(redirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("getSessionOrNull", () => {
+  beforeEach(() => {
+    cookieStore.get.mockReset();
+    vi.mocked(redirect).mockClear();
+  });
+
+  it("returns null (never redirects) when there is no valid session", async () => {
+    cookieStore.get.mockReturnValue(undefined);
+    expect(await getSessionOrNull()).toBeNull();
+    expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("returns the decoded principal for a valid token", async () => {
+    const token = await signSessionToken(principal, TEST_SECRET, 3600);
+    cookieStore.get.mockReturnValue({ name: SESSION_COOKIE, value: token });
+    expect(await getSessionOrNull()).toMatchObject(principal);
+  });
+});
+
+describe("loginUrlWithReturn", () => {
+  // Better Auth's callbackURL guard for a relative value. The `redirect` param (= the callbackURL after auth's
+  // resolvePostLoginTarget) MUST match, or sign-in 403s INVALID_CALLBACK_URL. This pins the once-encoding
+  // footgun deterministically without a live Better Auth server.
+  const BA_CALLBACK_RE = /^\/(?!\/|\\|%2f|%5c)[\w\-.+/@]*(?:\?[\w\-.+/=&%@]*)?$/;
+
+  it("nests the app path as a once-encoded next inside the handoff target", () => {
+    const u = new URL(loginUrlWithReturn("/invite/accept?org=X"));
+    // URLSearchParams.get decodes once → the value auth's resolvePostLoginTarget receives.
+    const redirectParam = u.searchParams.get("redirect")!;
+    expect(redirectParam).toBe("/session/handoff?next=%2Finvite%2Faccept%3Forg%3DX");
+  });
+
+  it("produces a redirect value that PASSES Better Auth's callbackURL guard (no 403)", () => {
+    const redirectParam = new URL(loginUrlWithReturn("/invite/accept?org=X")).searchParams.get(
+      "redirect",
+    )!;
+    expect(BA_CALLBACK_RE.test(redirectParam)).toBe(true);
+  });
+
+  it("targets the auth-origin login surface", () => {
+    expect(loginUrlWithReturn("/invite/accept?org=X").startsWith("http://auth.test/login?")).toBe(
+      true,
+    );
   });
 });

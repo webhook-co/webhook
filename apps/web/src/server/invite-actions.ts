@@ -11,6 +11,7 @@ import { redirect } from "next/navigation";
 import { logActionError } from "./action-log";
 import { withTenantDb } from "./db";
 import { getAppBaseUrl, getAuditChainKey, getCredentialPepper, getResendApiKey } from "./env";
+import { clearInviteCookie, readInviteCookie } from "./invite-cookie";
 import { sendInviteEmail } from "./invite-email";
 import { requireOrgAccess } from "./org-access";
 import { LOGOUT_URL, verifySession } from "./session";
@@ -180,7 +181,17 @@ export async function revokeInviteAction(
 export async function acceptInviteAction(formData: FormData): Promise<void> {
   const session = await verifySession();
   const orgId = String(formData.get("org") ?? "");
-  const token = String(formData.get("token") ?? "");
+  // The token comes from the form (an already-signed-in user clicked the link, token in the URL) OR — for a
+  // brand-new invitee who was returned here through login — from the encrypted app-origin invite cookie. The
+  // cookie's org must match this accept's org, so a stale cookie for a different invite is ignored.
+  // Read the stashed invite cookie once (if any) — used both as a token fallback and to decide whether to
+  // retire it on success. It only matters when it belongs to THIS org.
+  const cookie = orgId ? await readInviteCookie() : null;
+  const cookieMatchesOrg = cookie !== null && cookie.org === orgId;
+  // The token normally rides the form (the accept page renders it from the URL or the cookie); fall back to
+  // the cookie only if the form somehow carried none.
+  let token = String(formData.get("token") ?? "");
+  if (!token && cookieMatchesOrg) token = cookie.token;
 
   let outcome: "accepted" | "invalid" | "error" = "invalid";
   if (orgId && token) {
@@ -201,6 +212,15 @@ export async function acceptInviteAction(formData: FormData): Promise<void> {
       outcome = "error";
     }
   }
+
+  // Retire THIS org's stashed cookie ONLY on a genuine ACCEPT. We deliberately do NOT clear on:
+  //   - a transient `error` (a DB blip): the cookie may be the invitee's only copy of the token — keep it;
+  //   - `invalid`: this CONFLATES a dead token with a still-valid token that failed the email match (they
+  //     authenticated with the WRONG account). Wiping it would strand a valid invite; a dead token is harmless
+  //     to keep (it just fails again, and the TTL sweeps it).
+  // The org match ensures we never clobber a DIFFERENT org's stashed invite.
+  if (outcome === "accepted" && cookieMatchesOrg) await clearInviteCookie();
+
   // Where to land, and the RULE THAT MATTERS: a SUCCESSFUL accept must never sign the user out.
   //
   // The naive version read the directory again to turn the joined org into a slug, and fell back to

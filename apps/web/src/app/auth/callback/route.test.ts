@@ -57,6 +57,32 @@ describe("GET /auth/callback", () => {
     expect(session?.userId).toBe("usr_dana");
   });
 
+  it("lands on a validated same-origin `next` (the invite return path), not `/`", async () => {
+    exchangeTicket.mockImplementationOnce(async () => ({
+      userId: "usr_dana",
+      orgId: "org_acme",
+      user: { name: "Dana", email: "dana@acme.co", image: null },
+    }));
+    const res = await GET(
+      new Request(
+        "https://app.test/auth/callback?ticket=sxt_abc&next=%2Finvite%2Faccept%3Forg%3DX",
+      ),
+    );
+    expect(res.headers.get("location")).toBe("https://app.test/invite/accept?org=X");
+  });
+
+  it("ignores an off-origin `next` and falls back to `/`", async () => {
+    exchangeTicket.mockImplementationOnce(async () => ({
+      userId: "usr_dana",
+      orgId: "org_acme",
+      user: { name: "Dana", email: "dana@acme.co", image: null },
+    }));
+    const res = await GET(
+      new Request("https://app.test/auth/callback?ticket=sxt_abc&next=%2F%2Fevil.com"),
+    );
+    expect(res.headers.get("location")).toBe("https://app.test/");
+  });
+
   it("redirects to login WITHOUT the error flag when no ticket is present", async () => {
     const res = await GET(new Request("https://app.test/auth/callback"));
     expect(exchangeTicket).not.toHaveBeenCalled();
@@ -66,6 +92,18 @@ describe("GET /auth/callback", () => {
     // A bare visit is not a FAILED handoff — it must not carry the loop-breaker flag, or a signed-in user
     // would be stranded on the form instead of resumed.
     expect(location).not.toContain("error=handoff_failed");
+  });
+
+  it("preserves the invitee's `next` on the NO-ticket branch too (return path not dropped)", async () => {
+    const res = await GET(
+      new Request("https://app.test/auth/callback?next=%2Finvite%2Faccept%3Forg%3DX"),
+    );
+    expect(exchangeTicket).not.toHaveBeenCalled();
+    const location = new URL(res.headers.get("location") ?? "", "https://app.test");
+    expect(location.searchParams.get("redirect")).toBe(
+      "/session/handoff?next=%2Finvite%2Faccept%3Forg%3DX",
+    );
+    expect(location.searchParams.get("error")).toBeNull(); // not a failed redeem — no error flag
   });
 
   // THE LOOP-BREAKER PRODUCER CONTRACT. auth.'s /login now resumes an already-signed-in user by bouncing to
@@ -82,5 +120,19 @@ describe("GET /auth/callback", () => {
     const location = new URL(res.headers.get("location") ?? "", "https://app.test");
     expect(location.pathname.endsWith("/login")).toBe(true);
     expect(location.searchParams.get("error")).toBe("handoff_failed");
+  });
+
+  it("preserves the invitee's `next` across a FAILED redeem (so re-auth returns to the accept page)", async () => {
+    exchangeTicket.mockImplementationOnce(async () => Promise.reject(new Error("exchange down")));
+    const res = await GET(
+      new Request(
+        "https://app.test/auth/callback?ticket=sxt_bad&next=%2Finvite%2Faccept%3Forg%3DX",
+      ),
+    );
+    const location = new URL(res.headers.get("location") ?? "", "https://app.test");
+    expect(location.searchParams.get("error")).toBe("handoff_failed");
+    expect(location.searchParams.get("redirect")).toBe(
+      "/session/handoff?next=%2Finvite%2Faccept%3Forg%3DX",
+    );
   });
 });

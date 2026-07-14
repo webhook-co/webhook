@@ -1,3 +1,4 @@
+import { sanitizeReturnPath } from "@webhook-co/shared";
 import { NextResponse } from "next/server";
 import { sessionCookieOptions } from "@/server/session-cookie";
 
@@ -23,12 +24,20 @@ export async function GET(request: Request): Promise<Response> {
   const ticket = url.searchParams.get("ticket");
   const login = new URL(LOGIN_URL, url.origin);
 
+  // Preserve the invitee's return path across EITHER non-redeem path (no ticket, or a failed redeem): carry a
+  // same-origin-validated `next` so re-authentication resumes them at /invite/accept instead of dropping them
+  // on `/`. A bad/absent next simply isn't carried. Set on `login` first so both branches below inherit it.
+  const nextParam = sanitizeReturnPath(url.searchParams.get("next"), url.origin);
+  if (nextParam) {
+    login.searchParams.set("redirect", `/session/handoff?next=${encodeURIComponent(nextParam)}`);
+  }
+
   // A failed handoff must land on a real sign-in FORM, not silently re-enter the handoff. auth.'s /login now
   // resumes an already-signed-in user by bouncing them to /session/handoff — so a bare redirect back to
   // /login here would loop forever whenever the ticket cannot be redeemed (expired, replayed, exchange down):
-  // login → handoff → ticket → callback fails → login → … This param is the loop breaker; /login shows the
-  // form when it is present. Its VALUE is deliberately generic — it is a signal to our own page, not a
-  // diagnosis for the user, and never carries the ticket or a raw error.
+  // login → handoff → ticket → callback fails → login → … The `error` flag is the loop breaker; /login shows
+  // the form when it is present. Its VALUE is deliberately generic — a signal to our own page, never a ticket
+  // or raw error.
   const failed = new URL(login);
   failed.searchParams.set("error", "handoff_failed");
 
@@ -52,8 +61,12 @@ export async function GET(request: Request): Promise<Response> {
     return NextResponse.redirect(failed);
   }
 
-  // Land on the dashboard with a clean URL — the ticket never enters history.
-  const response = NextResponse.redirect(new URL("/", url.origin));
+  // Land on the validated opt-in return path (an invitee's `next=/invite/accept?org=…`) or, by default, the
+  // dashboard `/`. `next` is re-validated same-origin here — the handoff already checked it, but this endpoint
+  // must never redirect off-origin on its own authority. The ticket never enters the final URL (no history
+  // leak); `next` is a non-secret same-origin path.
+  const next = sanitizeReturnPath(url.searchParams.get("next"), url.origin) ?? "/";
+  const response = NextResponse.redirect(new URL(next, url.origin));
   response.cookies.set(SESSION_COOKIE, token, {
     ...sessionCookieOptions(),
     maxAge: SESSION_TTL_SECONDS,

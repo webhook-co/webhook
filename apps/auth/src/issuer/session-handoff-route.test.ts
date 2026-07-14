@@ -12,8 +12,10 @@ function deps(over: Partial<SessionHandoffRouteDeps> = {}): SessionHandoffRouteD
     resolveOrg: async () => ({ orgId: "org_dana" }),
     mint: async () => "sxt_org_dana_secret",
     loginUrl: (returnTo) => `/login?redirect=${encodeURIComponent(returnTo)}`,
-    appCallbackUrl: (ticket) =>
-      `https://app.webhook.co/auth/callback?ticket=${encodeURIComponent(ticket)}`,
+    appCallbackUrl: (ticket, next) =>
+      `https://app.webhook.co/auth/callback?ticket=${encodeURIComponent(ticket)}` +
+      (next ? `&next=${encodeURIComponent(next)}` : ""),
+    appOrigin: "https://app.webhook.co",
     ...over,
   };
 }
@@ -61,5 +63,28 @@ describe("handleSessionHandoff", () => {
       new Request("https://auth.webhook.co/session/handoff?next=/dash"),
     );
     expect(loginUrl).toHaveBeenCalledWith("/session/handoff?next=/dash");
+  });
+
+  it("reflects a valid same-origin `next` into the app callback URL", async () => {
+    const appCallbackUrl = vi.fn(
+      (t: string, next?: string | null) =>
+        `https://app.webhook.co/auth/callback?ticket=${t}` +
+        (next ? `&next=${encodeURIComponent(next)}` : ""),
+    );
+    const res = await handleSessionHandoff(
+      deps({ appCallbackUrl }),
+      new Request("https://auth.webhook.co/session/handoff?next=%2Finvite%2Faccept%3Forg%3DX"),
+    );
+    expect(appCallbackUrl.mock.calls[0]![1]).toBe("/invite/accept?org=X");
+    expect(res.headers.get("location")).toContain("next=");
+  });
+
+  it("DROPS an off-origin `next` (never reflected)", async () => {
+    const appCallbackUrl = vi.fn((t: string) => `https://app.webhook.co/auth/callback?ticket=${t}`);
+    await handleSessionHandoff(
+      deps({ appCallbackUrl }),
+      new Request("https://auth.webhook.co/session/handoff?next=%2F%2Fevil.com"),
+    );
+    expect(appCallbackUrl.mock.calls[0]![1] ?? null).toBeNull();
   });
 });

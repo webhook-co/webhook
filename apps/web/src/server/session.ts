@@ -51,13 +51,33 @@ export interface Session {
  * `server-only` import keeps it (and the signing secret) out of any client bundle.
  */
 export async function verifySession(): Promise<Session> {
-  const cookie = (await cookies()).get(SESSION_COOKIE);
-  if (!cookie?.value) {
-    redirect(LOGIN_URL);
-  }
-  const session = await verifySessionToken(cookie.value, await getSessionSecret());
+  const session = await getSessionOrNull();
   if (!session) {
     redirect(LOGIN_URL);
   }
   return session;
+}
+
+/**
+ * The non-redirecting read behind {@link verifySession}: returns the verified session principal, or `null`
+ * when there's no valid cookie. For the few surfaces that must BRANCH on auth rather than bounce — the invite
+ * page, which for an unauthenticated visitor stashes the invite and builds its OWN login URL (with a return
+ * path) instead of the gate's default redirect.
+ */
+export async function getSessionOrNull(): Promise<Session | null> {
+  const cookie = (await cookies()).get(SESSION_COOKIE);
+  if (!cookie?.value) return null;
+  return verifySessionToken(cookie.value, await getSessionSecret());
+}
+
+/**
+ * An OPT-IN login URL that returns to an app path after the auth.→app. handoff — the ONLY caller is the invite
+ * page (the shared `verifySession()` gate keeps its no-returnTo default, so no other gated URL leaks into
+ * auth-origin logs). `path` is a RELATIVE app path (e.g. `/invite/accept?org=X`); it rides as a nested `next`
+ * inside the handoff target, encoded EXACTLY ONCE so it survives Better Auth's callbackURL guard (a raw nested
+ * `?` would 403). app.'s callback re-validates it same-origin before acting on it.
+ */
+export function loginUrlWithReturn(path: string): string {
+  const handoffTarget = `/session/handoff?next=${encodeURIComponent(path)}`;
+  return `${LOGIN_URL}?redirect=${encodeURIComponent(handoffTarget)}`;
 }
