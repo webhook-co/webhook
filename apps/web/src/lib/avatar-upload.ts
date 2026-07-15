@@ -25,13 +25,17 @@ function messageFor(status: number): string {
   }
 }
 
+/**
+ * POST a cropped webp to a same-origin upload route. Defaults to the user-avatar route; pass `endpoint` for a
+ * different target (e.g. an org logo). The body/headers/error-mapping are identical across targets.
+ */
 export async function uploadAvatarWebp(
   blob: Blob,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; endpoint?: string } = {},
 ): Promise<UploadResult> {
   let res: Response;
   try {
-    res = await fetch("/api/avatar/upload", {
+    res = await fetch(opts.endpoint ?? "/api/avatar/upload", {
       method: "POST",
       // The session cookie gates the route — it must ride along.
       credentials: "same-origin",
@@ -42,6 +46,32 @@ export async function uploadAvatarWebp(
   } catch {
     // Offline, DNS, aborted-as-network. Never let a rejected fetch bubble as an unhandled crash in the dialog.
     return { ok: false, error: "Upload failed — check your connection and try again." };
+  }
+  if (!res.ok) return { ok: false, error: messageFor(res.status) };
+  return { ok: true };
+}
+
+/** Upload an org logo — same transport, pointed at the org's slug-scoped route. */
+export function uploadOrgLogoWebp(
+  blob: Blob,
+  opts: { slug: string; signal?: AbortSignal },
+): Promise<UploadResult> {
+  return uploadAvatarWebp(blob, {
+    signal: opts.signal,
+    endpoint: `/api/org-logo/${encodeURIComponent(opts.slug)}/upload`,
+  });
+}
+
+/** Remove an org logo (DELETE the same slug-scoped route). Same-origin, cookie-gated, owner/admin only. */
+export async function removeOrgLogo(slug: string): Promise<UploadResult> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/org-logo/${encodeURIComponent(slug)}/upload`, {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
+  } catch {
+    return { ok: false, error: "Couldn't reach the server — check your connection and try again." };
   }
   if (!res.ok) return { ok: false, error: messageFor(res.status) };
   return { ok: true };

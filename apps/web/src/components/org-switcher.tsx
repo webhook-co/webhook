@@ -98,7 +98,7 @@ export function OrgSwitcher({ orgs, currentOrgId, currentName, currentSlug }: Or
         aria-label={`Organization: ${currentName}. Switch organization`}
         className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left outline-none transition-colors hover:bg-surface-sunken focus-visible:shadow-[var(--wh-focus-ring)]"
       >
-        <OrgAvatar name={currentName} size={22} />
+        <OrgAvatar name={currentName} slug={currentSlug} size={22} />
         <span className="min-w-0 flex-1 truncate text-sm font-medium text-fg">{currentName}</span>
         <span className="text-fg-faint">
           <ChevronUpDown />
@@ -119,7 +119,7 @@ export function OrgSwitcher({ orgs, currentOrgId, currentName, currentSlug }: Or
                 // screen-reader user would otherwise hear an identical list with nothing marking where I am.
                 aria-current={isCurrent ? "true" : undefined}
               >
-                <OrgAvatar name={org.name} size={20} />
+                <OrgAvatar name={org.name} slug={org.slug} size={20} />
                 <span className="min-w-0 flex-1 truncate">{org.name}</span>
                 {isCurrent ? (
                   <span className="text-fg">

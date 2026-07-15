@@ -235,6 +235,32 @@ export async function renameOrg(app: Sql, input: RenameOrgInput): Promise<Create
 }
 
 /**
+ * Point an org at its uploaded logo in R2 (or clear it, `null`). App-owned table, so this is a direct
+ * `webhook_app` UPDATE under `withTenant` — RLS `orgs_update` gates it to the pinned org, and no auth RPC is
+ * needed (unlike `user.imageKey`). Authorization (owner/admin only) is the CALLER's responsibility — the
+ * upload route enforces it before calling — mirroring the contract on the other writers in this module.
+ */
+export async function updateOrgImageKey(
+  app: Sql,
+  orgId: string,
+  imageKey: string | null,
+): Promise<void> {
+  await withTenant(app, orgId, async (tx) => {
+    await tx`update orgs set image_key = ${imageKey} where id = ${orgId}`;
+  });
+}
+
+/** Read the org's logo pointer (null = no uploaded logo). Tenant-pinned; caller proves access. */
+export async function getOrgImageKey(app: Sql, orgId: string): Promise<string | null> {
+  const [row] = await withTenant(
+    app,
+    orgId,
+    (tx) => tx<{ image_key: string | null }[]>`select image_key from orgs where id = ${orgId}`,
+  );
+  return row?.image_key ?? null;
+}
+
+/**
  * The tenancy bind for the OAuth issuer: is `userId` a member of `orgId`? The `/token` mint asserts this
  * before minting a key for a consent-recorded org (token-core's `isOrgMember` seam), so a tampered or
  * stale `props.orgId` can never mint into an org the user doesn't belong to. RLS pins the lookup to the

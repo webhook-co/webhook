@@ -100,3 +100,24 @@ const WELL_FORMED_AVATAR_KEY = /^user\/[A-Za-z0-9_-]+\/avatar\.webp$/;
 export function isWellFormedAvatarKey(key: string): boolean {
   return typeof key === "string" && WELL_FORMED_AVATAR_KEY.test(key);
 }
+
+/**
+ * The DETERMINISTIC R2 object key for an organization's uploaded logo — one key per org, overwritten on
+ * re-upload. Lives in the same private bucket as user avatars, namespaced under `org/…` (avatars are `user/…`).
+ * Deterministic (from the org id) so the serve path derives it straight from the resolved org with no extra
+ * DB read, and it reveals nothing about the image content.
+ */
+export function orgLogoR2Key(orgId: string): string {
+  return `org/${orgId}/logo.webp`;
+}
+
+// The PREFIX FENCE for the org-logo orphan sweep. UUID-strict (org ids are real uuids) — same "strict
+// allowlist, never delete anything off-shape" philosophy as WELL_FORMED_PAYLOAD_KEY. The `/logo.webp` leaf
+// keeps it disjoint from the `org/{uuid}/ep/{uuid}/{sha256}` payload keys in the same `org/` namespace.
+const WELL_FORMED_ORG_LOGO_KEY =
+  /^org\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/logo\.webp$/;
+
+/** True when `key` is exactly the `org/{orgId}/logo.webp` org-logo-object shape. */
+export function isWellFormedOrgLogoKey(key: string): boolean {
+  return typeof key === "string" && WELL_FORMED_ORG_LOGO_KEY.test(key);
+}
