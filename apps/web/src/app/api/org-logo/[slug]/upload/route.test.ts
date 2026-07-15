@@ -219,6 +219,20 @@ describe("DELETE /api/org-logo/[slug]/upload (remove)", () => {
     expect(updateOrgImageKey).toHaveBeenCalledWith(expect.anything(), ORG_ID, null);
   });
 
+  it("allows an admin to remove (same gate as POST)", async () => {
+    requireOrgAccess.mockResolvedValue({
+      userId: "u_1",
+      orgId: ORG_ID,
+      slug: SLUG,
+      name: "Acme",
+      role: "admin",
+    });
+    const res = await DELETE(delReq(), ctx());
+    expect(res.status).toBe(200);
+    expect(del).toHaveBeenCalledWith(KEY);
+    expect(updateOrgImageKey).toHaveBeenCalledWith(expect.anything(), ORG_ID, null);
+  });
+
   it("stops (502) and does NOT clear the pointer when the object delete fails (stay consistent)", async () => {
     del.mockRejectedValueOnce(new Error("r2 down"));
     expect((await DELETE(delReq(), ctx())).status).toBe(502);
