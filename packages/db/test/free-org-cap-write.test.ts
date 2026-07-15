@@ -99,6 +99,14 @@ describe("flag / clear grace", () => {
     expect((await orgState(org)).grace).toBeNull();
   });
 
+  it("is idempotent on the deadline — re-flagging keeps the FIRST deadline (the cron re-flags every pass)", async () => {
+    const org = await seedOrg();
+    await flagOrgForFreeCapGrace(reconciler, org, soon);
+    const later = new Date("2027-01-01T00:00:00Z");
+    await flagOrgForFreeCapGrace(reconciler, org, later); // second flag must NOT move the deadline
+    expect((await orgState(org)).grace?.toISOString()).toBe(soon.toISOString());
+  });
+
   it("does NOT flag an already-suspended org (grace is only for the active window)", async () => {
     const org = await seedOrg();
     await suspendOrgForFreeCap(reconciler, org, soon);
@@ -166,5 +174,29 @@ describe("restoreOrgFromFreeCap", () => {
     // It is NOT free_org_cap-suspended, so restore is a no-op and must not touch the 'cap' pause.
     expect(await restoreOrgFromFreeCap(reconciler, org)).toBe(false);
     expect(await pauseState(org)).toEqual({ paused: true, reason: "cap" });
+  });
+
+  it("BOTH caps: suspend overwrites a 'cap' pause → free_org_cap; restore then un-pauses (cap producer re-pauses)", async () => {
+    // Documents the self-healing composition (reviewed, accepted): an org already event-cap-paused is then
+    // free-org-cap-suspended — the pause reason becomes 'free_org_cap' (required for the non-clobber). On
+    // restore the ingest un-pauses even though it may still be over its event cap; the NEXT cap-producer pass
+    // re-pauses it (reason='cap'). Bounded, Free-tier only, no revenue path.
+    const org = await seedOrg();
+    await withTenant(
+      app,
+      org,
+      (tx) => tx`
+        insert into ingest_paused (org_id, paused, reason, since, updated_at)
+        values (${org}, true, 'cap', now(), now())`,
+    );
+
+    await suspendOrgForFreeCap(reconciler, org, soon);
+    // The suspend overwrote the 'cap' reason (necessary so the cap producer won't resume a suspended org).
+    expect(await pauseState(org)).toEqual({ paused: true, reason: "free_org_cap" });
+
+    await restoreOrgFromFreeCap(reconciler, org);
+    // Un-paused here; if still over the event cap, the cap producer re-pauses within one interval.
+    expect(await pauseState(org)).toEqual({ paused: false, reason: null });
+    expect((await orgState(org)).status).toBe("active");
   });
 });
