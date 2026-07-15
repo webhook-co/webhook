@@ -46,7 +46,10 @@ const Dots = () => (
   </svg>
 );
 
+import { useOrgSlug } from "@/lib/org-path";
 import type { CreateInviteResult, RevokeInviteResult } from "@/server/invite-actions";
+
+import { MemberAvatar } from "./member-avatar";
 import type { LeaveOrgResult } from "@/server/leave-org";
 import type { MemberActionResult } from "@/server/member-actions";
 import type { TeamResult } from "@/server/team";
@@ -143,6 +146,8 @@ export function TeamManager({
   leaveOrg,
   isPersonalOrg,
 }: TeamManagerProps) {
+  // The org this team belongs to — from the URL, to build each member's membership-gated avatar URL.
+  const slug = useOrgSlug();
   const ok = result.status === "ok" ? result : null;
   const [members, setMembers] = React.useState<readonly OrgMember[]>(ok?.members ?? []);
   const [invites, setInvites] = React.useState<readonly PendingInvite[]>(ok?.invites ?? []);
@@ -488,6 +493,13 @@ export function TeamManager({
                   <TableRow key={row.key}>
                     <TableCell className="font-medium text-fg">
                       <span className="flex items-center gap-2">
+                        <MemberAvatar
+                          name={m.name}
+                          email={m.email}
+                          slug={slug}
+                          userId={m.userId}
+                          size={28}
+                        />
                         <span className="truncate">{m.name || "—"}</span>
                         {isYou ? <Badge tone="neutral">You</Badge> : null}
                       </span>

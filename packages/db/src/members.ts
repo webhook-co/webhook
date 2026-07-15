@@ -63,11 +63,17 @@ export interface OrgMember {
   readonly email: string;
   readonly role: MembershipRole;
   readonly joinedAt: string;
+  /** The member's OAuth provider avatar URL, if any (allowlist-proxied when served). */
+  readonly image: string | null;
+  /** The member's uploaded-avatar R2 key, if any (served directly from R2). */
+  readonly imageKey: string | null;
 }
 
 /**
  * List an org's members with their identity + role, oldest first. Runs under the org's RLS context with an
  * EXPLICIT org_id predicate (RLS policies are permissive/OR'd — never lean on RLS alone for a scoped read).
+ * `image`/`imageKey` come through the SECURITY DEFINER directory (the `user` table is un-RLS'd) so the Team
+ * page can render each member's face.
  */
 export async function listOrgMembers(app: Sql, orgId: string): Promise<OrgMember[]> {
   const rows = await withTenant(
@@ -75,8 +81,16 @@ export async function listOrgMembers(app: Sql, orgId: string): Promise<OrgMember
     orgId,
     (tx) =>
       tx<
-        { user_id: string; name: string; email: string; role: MembershipRole; joined_at: Date }[]
-      >`select user_id, name, email, role, joined_at from org_member_directory()`,
+        {
+          user_id: string;
+          name: string;
+          email: string;
+          role: MembershipRole;
+          joined_at: Date;
+          image: string | null;
+          image_key: string | null;
+        }[]
+      >`select user_id, name, email, role, joined_at, image, image_key from org_member_directory()`,
   );
   return rows.map((r) => ({
     userId: r.user_id,
@@ -84,6 +98,8 @@ export async function listOrgMembers(app: Sql, orgId: string): Promise<OrgMember
     email: r.email,
     role: r.role,
     joinedAt: r.joined_at.toISOString(),
+    image: r.image,
+    imageKey: r.image_key,
   }));
 }
 
