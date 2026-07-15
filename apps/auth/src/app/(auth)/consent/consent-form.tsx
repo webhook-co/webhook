@@ -1,6 +1,7 @@
 "use client";
 
 import type { ConsentRequest } from "@webhook-co/contract";
+import { describeScope } from "@webhook-co/contract/scope-catalog";
 import { Badge, Banner, Button } from "@webhook-co/ui";
 import * as React from "react";
 
@@ -312,23 +313,25 @@ export function ConsentForm({
             <span className="break-all font-mono text-sm">{request.origin.ip}</span>
           </div>
         </SummaryRow>
+        {/* Consent stays VERBOSE — every scope shown, each spelled out in plain English (title + one-line
+            meaning) alongside its exact machine name. This is the grant screen: nothing about-to-be-granted is
+            ever collapsed behind a click (that would be a dark pattern). The dashboard REVIEW surfaces slim the
+            same scopes into a count, because there access is already granted. */}
         <SummaryRow label="Access">
-          <div className="flex flex-col gap-1.5">
-            <span className="flex flex-wrap gap-1.5">
-              {request.scopes.map((scope) => (
-                <Badge key={scope} tone="neutral" className="font-mono text-xs">
-                  {scope}
-                </Badge>
-              ))}
-            </span>
-            {/* The `profile` scope isn't self-describing like the capability scopes — spell out that it
-                exposes the user's identity, so consent to sharing name/email is informed. */}
-            {request.scopes.includes("profile") ? (
-              <span className="text-xs text-fg-faint">
-                <span className="font-mono">profile</span> shares your name and email with this app.
-              </span>
-            ) : null}
-          </div>
+          <ul className="flex flex-col gap-2">
+            {request.scopes.map((scope) => {
+              const info = describeScope(scope);
+              return (
+                <li key={scope} className="flex flex-col gap-0.5">
+                  <span className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="font-medium text-fg">{info.title}</span>
+                    <span className="font-mono text-xs text-fg-faint">{scope}</span>
+                  </span>
+                  <span className="text-xs text-fg-faint">{info.description}</span>
+                </li>
+              );
+            })}
+          </ul>
         </SummaryRow>
         {/* Both durations: the grant ceiling (a ~90d date) and the per-key TTL (~24h, refreshed). */}
         <SummaryRow label="Authorized until">
