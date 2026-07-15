@@ -64,8 +64,9 @@ export function EmailChangeForm({ currentEmail, start, commit }: EmailChangeForm
     return (
       <div className="flex flex-col gap-2" role="status">
         <Banner tone="ok">
-          Your email is now <span className="font-medium">{committed}</span>. For your security, we
-          signed you out of other sessions.
+          Your email is now <span className="font-medium">{committed}</span>. For your security,
+          we&apos;ve revoked your other sign-ins — you&apos;ll need to sign in again on other
+          devices (any session still active there expires within 7 days).
         </Banner>
       </div>
     );

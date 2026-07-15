@@ -7,6 +7,17 @@ import { NOTIFICATIONS_FROM } from "./urls";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
+/** Escape a value interpolated into an email HTML body — defense-in-depth against a malformed address (or any
+ *  future user string) carrying markup into the outbound message. */
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export interface EmailSenderDeps {
   readonly apiKey: string;
   readonly fetchImpl?: typeof fetch;
@@ -64,7 +75,7 @@ export function sendEmailChangedNotice(
     "If you did NOT, your account may be compromised — contact support@webhook.co right away.",
   ].join("\n");
   const html = [
-    `<p>The email on your webhook.co account was just changed to <strong>${input.newEmail}</strong>.</p>`,
+    `<p>The email on your webhook.co account was just changed to <strong>${escapeHtml(input.newEmail)}</strong>.</p>`,
     "<p>If you made this change, no action is needed.</p>",
     "<p>If you did <strong>not</strong>, your account may be compromised — contact " +
       '<a href="mailto:support@webhook.co">support@webhook.co</a> right away.</p>',

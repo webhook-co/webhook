@@ -55,7 +55,7 @@ describe("EmailChangeForm", () => {
     await waitFor(() => expect(commit).toHaveBeenCalledOnce());
     expect((commit.mock.calls[0][0] as FormData).get("code")).toBe("123456");
     expect(await screen.findByText(/your email is now/i)).toBeInTheDocument();
-    expect(screen.getByText(/signed you out of other sessions/i)).toBeInTheDocument();
+    expect(screen.getByText(/revoked your other sign-ins/i)).toBeInTheDocument();
     expect(refresh).toHaveBeenCalled();
   });
 

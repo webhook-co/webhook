@@ -42,7 +42,7 @@ export default async function AccountSecurityPage() {
           <CardTitle>Email</CardTitle>
           <CardDescription>
             Change the email used for sign-in and account notices. We verify it with a code to your
-            current address, and sign you out of other sessions when it changes.
+            current address, and revoke your other sign-ins when it changes.
           </CardDescription>
         </CardHeader>
         <CardContent>

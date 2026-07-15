@@ -48,9 +48,17 @@ beforeEach(() => vi.clearAllMocks());
 describe("isPlausibleEmail", () => {
   it("accepts a normal address and rejects the obvious junk", () => {
     expect(isPlausibleEmail("a@b.co")).toBe(true);
+    expect(isPlausibleEmail("a.b+tag@sub.example.com")).toBe(true);
     expect(isPlausibleEmail("no-at")).toBe(false);
     expect(isPlausibleEmail("a@b")).toBe(false); // no dot in domain
     expect(isPlausibleEmail("a b@c.co")).toBe(false); // space
+  });
+
+  it("rejects HTML-significant characters (keeps markup out of the identity column + outbound email)", () => {
+    expect(isPlausibleEmail("<img/src=x/onerror=alert(1)>@e.co")).toBe(false);
+    expect(isPlausibleEmail('a"@e.co')).toBe(false);
+    expect(isPlausibleEmail("a'@e.co")).toBe(false);
+    expect(isPlausibleEmail("a>@e.co")).toBe(false);
   });
 });
 
@@ -108,6 +116,20 @@ describe("commitEmailChange", () => {
     expect(ops.purgeVerifications).toHaveBeenCalledWith(["old@e.test", "new@e.test"]);
     expect(ops.deletePending).toHaveBeenCalledWith("u1");
     expect(ops.sendChangedNotice).toHaveBeenCalledWith("old@e.test", "new@e.test");
+  });
+
+  it("still SUCCEEDS if the courtesy notice to the old address fails (best-effort — the change committed)", async () => {
+    const ops = makeOps({
+      sendChangedNotice: vi.fn(async () => {
+        throw new Error("resend 503");
+      }),
+    });
+    const res = await commitEmailChange(ops, { userId: "u1", code: CODE });
+    expect(res.ok).toBe(true); // a mail-send blip must not turn a committed change into a failure
+    // The security steps still ran (they precede the advisory notice).
+    expect(ops.commitEmail).toHaveBeenCalled();
+    expect(ops.deleteAllSessions).toHaveBeenCalled();
+    expect(ops.deletePending).toHaveBeenCalled();
   });
 
   it("refuses when there's no pending change", async () => {

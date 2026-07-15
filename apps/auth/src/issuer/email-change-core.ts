@@ -8,10 +8,12 @@ import type { CommitEmailChangeResult, StartEmailChangeResult } from "@webhook-c
 // code is single-use, short-TTL, HMAC-peppered at rest, and verify FAILS CLOSED on a rate-limit fault so a KV
 // outage can't become an open guessing window.
 
-/** A basic well-formed-email check — one `@`, a dot in the domain, no spaces. The DB (citext unique) + the
- *  provider are the real authorities; this is early UX validation. */
+/** A well-formed-email check — one `@`, a dot in the domain, and NO whitespace or HTML-significant characters
+ *  (`<>"'` `` ` ``). The DB (citext unique) + the provider are the real authorities; this also keeps a malformed
+ *  "email" with markup chars out of the identity column (it would otherwise later land unescaped in an
+ *  outbound email body). */
 export function isPlausibleEmail(email: string): boolean {
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+  return /^[^\s<>"'`@]+@[^\s<>"'`@]+\.[^\s<>"'`@]+$/.test(email);
 }
 
 export interface EmailChangeOps {
@@ -135,13 +137,21 @@ export async function commitEmailChange(
     throw error;
   }
 
-  // Post-commit cleanup — all best-effort-ordered but each matters: revoke every IdP session (no re-mint/
-  // hand-off after this), kill in-flight magic links to BOTH addresses, drop the pending row, notify the OLD
-  // address so a hijack is detectable.
+  // Post-commit cleanup. The security steps run first and LOUD (they throw on failure): revoke every IdP
+  // session (no re-mint/hand-off after this) and kill in-flight magic links to BOTH addresses. They're
+  // retry-safe — the pending row still exists until `deletePending` below, so a failure here surfaces as an
+  // error the user can retry, which re-commits idempotently and re-runs the cleanup.
   await ops.deleteAllSessions(input.userId);
   await ops.purgeVerifications([oldEmail, pending.newEmail]);
   await ops.deletePending(input.userId);
-  await ops.sendChangedNotice(oldEmail, pending.newEmail);
+  // The notice to the OLD address is a COURTESY (hijack detection) — the change already committed. A mail-send
+  // blip must never turn a fully-successful change into a reported failure (which would strand the UI on
+  // `no_pending`), so this one step is best-effort.
+  try {
+    await ops.sendChangedNotice(oldEmail, pending.newEmail);
+  } catch {
+    // swallow — the email is changed; the notice is advisory
+  }
 
   return { ok: true, oldEmail, newEmail: pending.newEmail };
 }
