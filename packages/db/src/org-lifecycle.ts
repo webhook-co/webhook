@@ -12,7 +12,7 @@ import { withTenant, type Sql, type TenantTx } from "./client";
 // dashboard (which imports leaf subpaths, not the barrel — Turbopack) can resolve the deterministic
 // personal-org id alongside deleteOrgWithAudit / isOrgOwner. A bare `export … from` re-export would NOT
 // bind the name in this module's scope, so it must be imported to be callable here.
-import { listUserOrgs, personalOrgId } from "./orgs";
+import { listUserOrgs, personalOrgId, type OrgStatus } from "./orgs";
 
 export { personalOrgId };
 
@@ -172,6 +172,86 @@ export async function countOwnedFreeOrgs(app: Sql, userId: string): Promise<numb
     if (!paid) free += 1;
   }
   return free;
+}
+
+/** One FREE org owned by a user who is over the free-org cap (from {@link findOwnersOverFreeCap}). */
+export interface OverCapFreeOrg {
+  readonly orgId: string;
+  /** The org's birth time — the reconciler keeps the OLDEST `cap` and suspends the rest by default. */
+  readonly createdAt: Date;
+  /** Its current service state, so the reconciler can skip an org already suspended for this reason. */
+  readonly status: OrgStatus;
+  readonly suspendedReason: string | null;
+}
+
+/** A user who owns MORE than the cap allows, with ALL their owned free orgs (oldest-first). */
+export interface OverCapOwner {
+  readonly userId: string;
+  readonly freeOrgs: readonly OverCapFreeOrg[];
+}
+
+/**
+ * The AUTHORITATIVE free-org-cap detector: across ALL users, every owner of more than `cap` FREE orgs, with
+ * each of their owned free orgs (oldest-first). This is the cross-user question the creation-time gate cannot
+ * ask and the per-tenant roles cannot answer.
+ *
+ * Pass the RECONCILER's client (a {@link DB_ROLES.capReconciler} connection): the cross-org read relies on the
+ * role-targeted `..._capreconciler_select` policies (migration 0084) that ONLY that role has. A request-path
+ * (webhook_app) client sees only its own org, so the same query returns nothing for it — the cross-user reach
+ * is confined to this role by RLS, not merely by not calling it.
+ *
+ * "Free" mirrors {@link countOwnedFreeOrgs}/`hasEntitledSubscription` exactly (no ACTIVE-status subscription),
+ * and every owned free org counts (a co-owned one counts for each owner) — the same attribution that closes
+ * the sockpuppet-co-owner bypass. The active-status set comes from `BILLING_ACTIVE_STATUSES` (single source,
+ * passed in via `string_to_array` so it can't drift). Orders each owner's free orgs oldest-first so the
+ * reconciler can keep the oldest `cap` and suspend the rest by default.
+ */
+export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promise<OverCapOwner[]> {
+  const rows = await reconciler<
+    {
+      user_id: string;
+      org_id: string;
+      org_created_at: Date;
+      status: OrgStatus;
+      suspended_reason: string | null;
+    }[]
+  >`
+    with owned_free as (
+      select m.user_id,
+             o.id as org_id,
+             o.created_at as org_created_at,
+             o.status,
+             o.suspended_reason
+        from memberships m
+        join orgs o on o.id = m.org_id
+       where m.role = 'owner'
+         and not exists (
+           select 1 from billing_subscriptions b
+            where b.org_id = o.id
+              and b.status = any(string_to_array(${BILLING_ACTIVE_STATUSES.join(",")}, ','))
+         )
+    )
+    select user_id, org_id, org_created_at, status, suspended_reason
+      from owned_free
+     where user_id in (
+       select user_id from owned_free group by user_id having count(*) > ${cap}
+     )
+     order by user_id, org_created_at asc, org_id asc`;
+
+  // Group by owner, PRESERVING the function's oldest-first ordering (Map keeps insertion order, and the rows
+  // arrive ordered by (user_id, org_created_at)).
+  const byUser = new Map<string, OverCapFreeOrg[]>();
+  for (const r of rows) {
+    const list = byUser.get(r.user_id) ?? [];
+    list.push({
+      orgId: r.org_id,
+      createdAt: r.org_created_at,
+      status: r.status,
+      suspendedReason: r.suspended_reason,
+    });
+    byUser.set(r.user_id, list);
+  }
+  return [...byUser].map(([userId, freeOrgs]) => ({ userId, freeOrgs }));
 }
 
 /**
