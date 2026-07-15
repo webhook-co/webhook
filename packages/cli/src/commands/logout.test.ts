@@ -36,6 +36,8 @@ function memStore(
     list: async () => (cred ? ["default"] : []),
     getApiBaseUrl: async () => baseUrl,
     setApiBaseUrl: async (u) => void (baseUrl = u),
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
 }
 
@@ -130,6 +132,45 @@ describe("wbhk logout", () => {
     const t = makeTestContext({ store, fetch: rec.fetch });
     await run(app, ["logout", "--auth-url", "https://auth.example.test"], t.ctx);
     expect(rec.url()).toBe("https://auth.example.test/revoke");
+    expect(store.erased()).toBe(true);
+  });
+
+  it("targets a specific login via --profile (logout is org-selector-exempt — no --org)", async () => {
+    // logout is profile-only + DESTRUCTIVE, so it deliberately does NOT carry --org (which would over-apply
+    // the strict org selector to a purely-local cleanup). `--profile` names the login to sign out of.
+    const creds: Record<string, StoredCredential | null> = {
+      prod: { apiKey: "whk_prod" },
+      "acme-p": { apiKey: "whk_acme" },
+    };
+    let erasedProfile: string | undefined;
+    const store: CredentialStore = {
+      get: async (p = "default") => creds[p] ?? null,
+      set: async () => undefined,
+      erase: async (p = "default") => void (erasedProfile = p),
+      list: async () => Object.keys(creds),
+      getApiBaseUrl: async () => undefined,
+      setApiBaseUrl: async () => undefined,
+      getActiveProfile: async () => "prod",
+      getOrg: async () => undefined,
+      setOrg: async () => undefined,
+    };
+    const t = makeTestContext({ store, fetch: recordingFetch().fetch });
+    await run(app, ["logout", "--profile", "acme-p"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(erasedProfile).toBe("acme-p"); // the named profile, not the active prod
+  });
+
+  it("works while WBHK_API_KEY + an ambient WBHK_ORG are set (a local cleanup is never bricked)", async () => {
+    // Regression: routing logout through the strict org selector used to hard-fail here. logout is
+    // profile-only, so an unrelated env key / org env never blocks erasing a stored credential.
+    const store = memStore({ apiKey: "whk_local" });
+    const t = makeTestContext({
+      store,
+      fetch: recordingFetch().fetch,
+      env: { WBHK_API_KEY: "whk_env", WBHK_ORG: "acme" },
+    });
+    await run(app, ["logout"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
     expect(store.erased()).toBe(true);
   });
 });

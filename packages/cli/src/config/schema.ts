@@ -48,9 +48,24 @@ export function credentialAccessToken(cred: StoredCredential): string {
   return isOAuthCredential(cred) ? cred.oauth.accessKey : cred.apiKey;
 }
 
+/**
+ * The org a profile's credential is bound to (token = org, fixed at consent). NON-secret display metadata,
+ * captured from the `/token` response at login (or `wbhk whoami`) so `wbhk org list` / `profile list` can
+ * name the org WITHOUT a network call, and so `--org <slug>` can resolve to the right profile locally.
+ */
+export const OrgSchema = z.object({
+  id: z.string().min(1),
+  slug: z.string().min(1),
+  name: z.string().min(1),
+});
+export type Org = z.infer<typeof OrgSchema>;
+
 export const ProfileSchema = z.object({
   apiBaseUrl: z.string().optional(),
   credential: StoredCredentialSchema.optional(),
+  // Additive + OPTIONAL, so it needs NO CONFIG_VERSION bump: a v3 config with or without `org` both parse,
+  // and old/new CLIs stay mutually readable. Lazily backfilled on the next login/whoami if absent.
+  org: OrgSchema.optional(),
 });
 export type Profile = z.infer<typeof ProfileSchema>;
 

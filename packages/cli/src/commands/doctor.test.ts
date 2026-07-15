@@ -110,6 +110,8 @@ describe("wbhk doctor (command)", () => {
       setActiveProfile: async () => undefined,
       getApiBaseUrl: async () => undefined,
       setApiBaseUrl: async () => undefined,
+      getOrg: async () => undefined,
+      setOrg: async () => undefined,
     };
   }
   const reachableFetch = (): typeof fetch =>

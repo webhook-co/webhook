@@ -1,4 +1,5 @@
 import { CAPABILITY_EXIT, EXIT } from "./output/exit-codes.js";
+import { sanitizeControl } from "./output/safe-text.js";
 
 // CLI-level errors carry a stable exit code and a voice-compliant, single-paragraph
 // user message (no stack trace, no ANSI). stricli's determineExitCode + error formatting
@@ -83,6 +84,97 @@ export class InvalidProfileNameError extends CliError {
     super(`invalid profile name: ${value}`);
     this.name = "InvalidProfileNameError";
     this.userMessage = `invalid profile name \`${value}\` — \`__proto__\`, \`constructor\`, and \`prototype\` are reserved. choose another name.`;
+  }
+}
+
+/** `--org <slug>` (or WBHK_ORG) named an org with NO local credential — no profile's stored org matches.
+ *  A usage error (exit 2). We refuse to fall through to the default/active profile: silently targeting a
+ *  DIFFERENT org than the one the user named is the exact "wrong-org write" this selector exists to prevent. */
+export class OrgNotFoundError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage: string;
+  constructor(readonly slug: string) {
+    super(`no local credential for org: ${slug}`);
+    this.name = "OrgNotFoundError";
+    // Sanitize: a slug read from stored (server-origin) org metadata could carry control bytes; the message
+    // is printed raw to the terminal.
+    const s = sanitizeControl(slug);
+    this.userMessage = `no local credential for org \`${s}\` — run \`wbhk login --org ${s}\` to add one.`;
+  }
+}
+
+/** `--org <slug>` (or WBHK_ORG) matched MORE THAN ONE local profile (e.g. the same org logged in under two
+ *  profiles/environments). A usage error (exit 2): we can't know which profile the user meant, and guessing
+ *  could target the wrong one — so name the candidates and let them pick via `--profile`. */
+export class AmbiguousOrgError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage: string;
+  constructor(
+    readonly slug: string,
+    readonly profiles: readonly string[],
+  ) {
+    super(`org ${slug} matches multiple profiles: ${profiles.join(", ")}`);
+    this.name = "AmbiguousOrgError";
+    // Profile names are config-controlled too — sanitize them alongside the slug before printing raw.
+    const names = profiles.map((p) => sanitizeControl(p)).join(", ");
+    this.userMessage =
+      `org \`${sanitizeControl(slug)}\` matches multiple local profiles (${names}) — ` +
+      `disambiguate with \`--profile <name>\`.`;
+  }
+}
+
+/** `--org`/`WBHK_ORG` was used while `WBHK_API_KEY` is set. The env key is the credential (it wins over any
+ *  stored profile) and is bound to a FIXED org server-side, so the local org selector cannot route to it —
+ *  running against the env key's (possibly different) org would silently target the wrong one. A usage error
+ *  (exit 2): refuse explicitly rather than pick. */
+export class OrgSelectorWithEnvKeyError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage =
+    "cannot select an org with `--org`/`WBHK_ORG` while `WBHK_API_KEY` is set — the env key is bound to a " +
+    "fixed org. unset `WBHK_API_KEY` to use profile-based org selection.";
+  constructor() {
+    super("cannot use --org/WBHK_ORG while WBHK_API_KEY is set");
+    this.name = "OrgSelectorWithEnvKeyError";
+  }
+}
+
+/** `login --org <slug>` was given a slug that fails the shared org-slug rules. A usage error (exit 2) — a
+ *  friendly LOCAL rejection before any network call, using the single-sourced per-reason message from
+ *  `@webhook-co/shared` so the CLI, the web app, and the server all say the same thing. */
+export class InvalidOrgSlugError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage: string;
+  constructor(
+    readonly slug: string,
+    reasonMessage: string,
+  ) {
+    super(`invalid org slug: ${slug}`);
+    this.name = "InvalidOrgSlugError";
+    // A slug that FAILED validation is the least-trusted of all — sanitize before printing it back.
+    this.userMessage = `invalid org slug \`${sanitizeControl(slug)}\` — ${reasonMessage}`;
+  }
+}
+
+/** `--org` and `--profile` were BOTH given but disagree — the named profile is NOT bound to the named org.
+ *  A usage error (exit 2): rather than silently pick one, we refuse so the command can't run against an
+ *  unexpected profile/org. `profileOrgSlug` is the profile's ACTUAL bound org (undefined = it has none). */
+export class OrgProfileConflictError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  readonly userMessage: string;
+  constructor(
+    readonly slug: string,
+    readonly requestedProfile: string,
+    readonly profileOrgSlug: string | undefined,
+  ) {
+    const bound =
+      profileOrgSlug !== undefined
+        ? `bound to org \`${sanitizeControl(profileOrgSlug)}\``
+        : "not org-bound";
+    super(`--profile ${requestedProfile} is not bound to org ${slug}`);
+    this.name = "OrgProfileConflictError";
+    this.userMessage =
+      `\`--profile ${sanitizeControl(requestedProfile)}\` is ${bound}, not \`--org ${sanitizeControl(slug)}\` ` +
+      `— they disagree. drop one.`;
   }
 }
 

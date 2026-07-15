@@ -31,6 +31,7 @@ import {
 import { listenCommand } from "./commands/listen.js";
 import { loginCommand } from "./commands/login.js";
 import { logoutCommand } from "./commands/logout.js";
+import { orgRoute } from "./commands/org.js";
 import { profileRoute } from "./commands/profile.js";
 import { replayCommand } from "./commands/replay.js";
 import {
@@ -189,6 +190,7 @@ const root = buildRouteMap({
     logout: logoutCommand,
     whoami: whoamiCommand,
     profile: profileRoute,
+    org: orgRoute,
     doctor: doctorCommand,
     endpoints: endpointsRoute,
     events: eventsRoute,

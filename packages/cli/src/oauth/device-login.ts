@@ -31,6 +31,9 @@ export interface DeviceLoginDeps {
   readonly scope: string;
   /** The target audience (RFC 8707) — the api origin. */
   readonly resource: string;
+  /** Optional org-slug hint (`login --org <slug>`) forwarded to `/device_authorization` as `organization`,
+   *  so the consent screen pre-selects that org. Advisory — the server still binds the org at consent. */
+  readonly organization?: string;
   /** Backoff between polls (real `setTimeout` in prod; instant under test). */
   readonly sleep: (ms: number) => Promise<void>;
   /** Emit the user-facing authorize instructions (stderr in prod). */
@@ -53,6 +56,7 @@ export async function deviceLogin(deps: DeviceLoginDeps): Promise<FrozenTokenBod
       clientId: deps.clientId,
       scope: deps.scope,
       resource: deps.resource,
+      organization: deps.organization,
     },
   );
 

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   CONFIG_VERSION,
+  ConfigFileSchema,
   credentialAccessToken,
   isOAuthCredential,
   migrateConfigShape,
+  OrgSchema,
+  ProfileSchema,
   StoredCredentialSchema,
   type OAuthCredential,
 } from "./schema.js";
@@ -74,5 +77,45 @@ describe("migrateConfigShape", () => {
 
   it("leaves an unknown/future version untouched (so the schema rejects it)", () => {
     expect(migrateConfigShape({ version: 999 })).toEqual({ version: 999 });
+  });
+
+  it("STAYS at CONFIG_VERSION 3 — no v3→v4 rung (org is an additive optional field, not a version bump)", () => {
+    // Bumping the version to add `org` would make a new-CLI config unreadable by any older/pinned CLI whose
+    // `z.literal(3)` throws CorruptConfig — a downgrade-corruption for anyone running two CLI versions. An
+    // optional additive field needs no bump; this guards against a future contributor adding a rung.
+    expect(CONFIG_VERSION).toBe(3);
+    const v3 = { version: 3 as const, profiles: {} };
+    expect(migrateConfigShape(v3)).toEqual(v3); // v3 in → v3 out, untouched
+  });
+});
+
+describe("ProfileSchema.org (additive, optional — no version bump)", () => {
+  it("accepts a profile carrying an org {id,slug,name}", () => {
+    const parsed = ProfileSchema.safeParse({
+      credential: { apiKey: "whk_x" },
+      org: { id: "org_1", slug: "acme", name: "Acme Inc" },
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success)
+      expect(parsed.data.org).toEqual({ id: "org_1", slug: "acme", name: "Acme Inc" });
+  });
+
+  it("accepts a profile WITHOUT org (a pre-org config still parses at version 3)", () => {
+    const parsed = ProfileSchema.safeParse({ credential: { apiKey: "whk_x" } });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.org).toBeUndefined();
+  });
+
+  it("a version-3 config whose profile carries org validates (proving no bump is needed)", () => {
+    const parsed = ConfigFileSchema.safeParse({
+      version: 3,
+      profiles: { acme: { org: { id: "o", slug: "acme", name: "Acme" } } },
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it("OrgSchema rejects empty fields", () => {
+    expect(OrgSchema.safeParse({ id: "o", slug: "acme", name: "" }).success).toBe(false);
+    expect(OrgSchema.safeParse({ id: "", slug: "acme", name: "Acme" }).success).toBe(false);
   });
 });

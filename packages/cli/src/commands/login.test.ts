@@ -2,7 +2,7 @@ import { run } from "@stricli/core";
 import { describe, expect, it } from "vitest";
 
 import { app } from "../app.js";
-import type { StoredCredential } from "../config/schema.js";
+import type { Org, StoredCredential } from "../config/schema.js";
 import type { CredentialStore, SetCredentialOptions } from "../config/store.js";
 import { makeTestContext } from "../context.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
@@ -13,22 +13,39 @@ function memStore(initial: StoredCredential | null = null): {
   current: () => StoredCredential | null;
   baseUrl: () => string | undefined;
   lastSetOpts: () => SetCredentialOptions | undefined;
+  org: () => Org | undefined;
+  orgProfile: () => string | undefined;
+  setProfile: () => string | undefined;
+  activeProfile: () => string | undefined;
 } {
   let cred = initial;
   let baseUrl: string | undefined;
   let lastSetOpts: SetCredentialOptions | undefined;
+  let org: Org | undefined;
+  let orgProfile: string | undefined;
+  let setProfile: string | undefined;
+  let activeProfile: string | undefined;
   return {
     store: {
       get: async () => cred,
-      set: async (c, _profile, opts) => void ((cred = c), (lastSetOpts = opts)),
+      set: async (c, profile, opts) =>
+        void ((cred = c), (lastSetOpts = opts), (setProfile = profile)),
       erase: async () => void (cred = null),
       list: async () => (cred ? ["default"] : []),
       getApiBaseUrl: async () => baseUrl,
       setApiBaseUrl: async (u) => void (baseUrl = u),
+      getOrg: async () => org,
+      setOrg: async (o, profile) => void ((org = o), (orgProfile = profile)),
+      getActiveProfile: async () => activeProfile,
+      setActiveProfile: async (n) => void (activeProfile = n),
     },
     current: () => cred,
     baseUrl: () => baseUrl,
     lastSetOpts: () => lastSetOpts,
+    org: () => org,
+    orgProfile: () => orgProfile,
+    setProfile: () => setProfile,
+    activeProfile: () => activeProfile,
   };
 }
 
@@ -290,6 +307,142 @@ describe("wbhk login --device", () => {
     });
     await run(app, ["login", "--device", "--insecure-storage"], t.ctx);
     expect(m.lastSetOpts()?.allowInsecure).toBe(true);
+  });
+});
+
+const ORG_ACME = { id: "org_acme", slug: "acme", name: "Acme, Inc." };
+
+describe("wbhk login --org", () => {
+  it("persists the org from the /token response, defaults the profile to the slug, and echoes it", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      fetch: deviceRoutingFetch([jsonResponse({ ...TOKEN_BODY, organization: ORG_ACME })]),
+    });
+    await run(app, ["login", "--device", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    // Persisted the ACTUAL org the server returned, under the org-slug-defaulted profile...
+    expect(m.org()).toEqual(ORG_ACME);
+    expect(m.orgProfile()).toBe("acme");
+    // ...and the credential landed under that same defaulted profile.
+    expect(m.setProfile()).toBe("acme");
+    // Echoed the target org (slug + name).
+    expect(t.stdout()).toContain("logged in to acme (Acme, Inc.)");
+  });
+
+  it("forwards the org slug to /authorize as the organization hint (loopback)", async () => {
+    const m = memStore();
+    const h = loopbackHarness();
+    const t = makeTestContext({
+      store: m.store,
+      isInteractive: true,
+      fetch: loopbackRoutingFetch(),
+      openBrowser: h.openBrowser,
+      startLoopbackServer: h.startLoopbackServer,
+    });
+    await run(app, ["login", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(new URL(h.authorizeUrl()).searchParams.get("organization")).toBe("acme");
+  });
+
+  it("rejects a malformed --org slug LOCALLY and sends nothing / stores nothing", async () => {
+    const m = memStore();
+    let called = false;
+    const spyFetch = (async () => {
+      called = true;
+      return jsonResponse(IDENTITY);
+    }) as unknown as typeof fetch;
+    const t = makeTestContext({ store: m.store, stdin: "whk_x", fetch: spyFetch });
+    await run(app, ["login", "--stdin", "--org", "Bad Slug!"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(called).toBe(false); // nothing sent — the slug was rejected before any request
+    expect(m.current()).toBeNull();
+    expect(t.stderr().toLowerCase()).toContain("invalid org slug");
+  });
+
+  it("persists the SERVER's org (not the requested slug) and warns when they differ", async () => {
+    const m = memStore();
+    const returned = { id: "org_globex", slug: "globex", name: "Globex" };
+    const t = makeTestContext({
+      store: m.store,
+      fetch: deviceRoutingFetch([jsonResponse({ ...TOKEN_BODY, organization: returned })]),
+    });
+    await run(app, ["login", "--device", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(m.org()).toEqual(returned); // the actual bound org, never the requested slug
+    expect(t.stderr().toLowerCase()).toContain("requested org");
+    expect(t.stderr()).toContain("globex");
+  });
+
+  it("F2: a first-time `login --device` proceeds even with WBHK_ORG exported (selector NOT consulted)", async () => {
+    const m = memStore(); // no local credential for `acme` yet
+    const t = makeTestContext({
+      store: m.store,
+      env: { WBHK_ORG: "acme" }, // exported — login must NOT try to resolve it (would OrgNotFound)
+      fetch: deviceRoutingFetch([jsonResponse(TOKEN_BODY)]),
+    });
+    await run(app, ["login", "--device"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(m.current()).toMatchObject({ oauth: { authMethod: "device" } });
+  });
+
+  it("F4: api-key `login --org acme` persists the server-identified org (so `--org acme` resolves next)", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      stdin: LONG_FAKE_KEY,
+      // The api-key path has no /token org — it persists the org the server names on whoami.
+      fetch: okFetch({ orgId: "org_1", scopes: ["events:read"], organization: ORG_ACME }),
+    });
+    await run(app, ["login", "--stdin", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(m.current()).toEqual({ apiKey: LONG_FAKE_KEY });
+    expect(m.org()).toEqual(ORG_ACME); // persisted from whoami
+    expect(m.orgProfile()).toBe("acme"); // under the org-slug-defaulted profile
+    expect(m.setProfile()).toBe("acme");
+    expect(t.stdout()).toContain("logged in to acme (Acme, Inc.)");
+  });
+
+  it("C3: an `--org`-derived login also ACTIVATES that profile (a plain follow-up targets it)", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      fetch: deviceRoutingFetch([jsonResponse({ ...TOKEN_BODY, organization: ORG_ACME })]),
+    });
+    await run(app, ["login", "--device", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(m.activeProfile()).toBe("acme"); // now the active profile, not left at default
+  });
+
+  it("C4: api-key `login --org acme` warns when the SERVER's org differs from the requested slug", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      stdin: LONG_FAKE_KEY,
+      fetch: okFetch({
+        orgId: "org_2",
+        scopes: [],
+        organization: { id: "org_2", slug: "globex", name: "Globex" },
+      }),
+    });
+    await run(app, ["login", "--stdin", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(m.org()).toEqual({ id: "org_2", slug: "globex", name: "Globex" });
+    expect(t.stderr().toLowerCase()).toContain("requested org");
+    expect(t.stderr()).toContain("globex");
+  });
+
+  it("C4: api-key `login --org acme` warns when the server omits the org (couldn't capture it)", async () => {
+    const m = memStore();
+    const t = makeTestContext({
+      store: m.store,
+      stdin: LONG_FAKE_KEY,
+      fetch: okFetch({ orgId: "org_1", scopes: [] }), // no organization enrichment
+    });
+    await run(app, ["login", "--stdin", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(m.org()).toBeUndefined(); // nothing to persist
+    expect(t.stderr().toLowerCase()).toContain("could not capture the org");
   });
 });
 

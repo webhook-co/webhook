@@ -2,7 +2,7 @@ import { buildCommand, buildRouteMap } from "@stricli/core";
 
 import { resolveConfigDir } from "../config/paths.js";
 import type { AppContext } from "../context.js";
-import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { displayFlags, resolveGlobals, type DisplayFlags } from "../global-flags.js";
 import { renderJson } from "../output/format.js";
 import { readTelemetryState, setTelemetryEnabled } from "../state/telemetry-store.js";
 import { resolveTelemetryEnabled } from "../telemetry.js";
@@ -22,23 +22,23 @@ async function persist(ctx: AppContext, enabled: boolean): Promise<void> {
   );
 }
 
-const onCommand = buildCommand<GlobalFlags, [], AppContext>({
+const onCommand = buildCommand<DisplayFlags, [], AppContext>({
   async func(this: AppContext) {
     await persist(this, true);
   },
-  parameters: { flags: { ...globalFlags } },
+  parameters: { flags: { ...displayFlags } },
   docs: { brief: "enable anonymous usage telemetry" },
 });
 
-const offCommand = buildCommand<GlobalFlags, [], AppContext>({
+const offCommand = buildCommand<DisplayFlags, [], AppContext>({
   async func(this: AppContext) {
     await persist(this, false);
   },
-  parameters: { flags: { ...globalFlags } },
+  parameters: { flags: { ...displayFlags } },
   docs: { brief: "disable telemetry" },
 });
 
-const statusCommand = buildCommand<GlobalFlags, [], AppContext>({
+const statusCommand = buildCommand<DisplayFlags, [], AppContext>({
   async func(this: AppContext, flags) {
     const { format } = resolveGlobals(this, flags);
     const env = this.process.env ?? {};
@@ -53,7 +53,7 @@ const statusCommand = buildCommand<GlobalFlags, [], AppContext>({
               : "enable with `wbhk telemetry on`.\n"),
     );
   },
-  parameters: { flags: { ...globalFlags } },
+  parameters: { flags: { ...displayFlags } },
   docs: { brief: "show whether telemetry is on or off" },
 });
 

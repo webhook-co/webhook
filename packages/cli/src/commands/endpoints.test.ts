@@ -20,7 +20,15 @@ function loggedInStore(): CredentialStore {
     list: async () => ["default"],
     getApiBaseUrl: async () => baseUrl,
     setApiBaseUrl: async (u) => void (baseUrl = u),
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
+}
+
+/** A logged-in store whose default profile carries a bound org — drives the `targeting org:` banner. */
+function loggedInOrgStore(): CredentialStore {
+  const s = loggedInStore();
+  return { ...s, getOrg: async () => ({ id: "org_1", slug: "acme", name: "Acme, Inc." }) };
 }
 
 function emptyStore(): CredentialStore {
@@ -31,6 +39,8 @@ function emptyStore(): CredentialStore {
     list: async () => [],
     getApiBaseUrl: async () => undefined,
     setApiBaseUrl: async () => undefined,
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
 }
 
@@ -244,6 +254,15 @@ describe("wbhk endpoints create", () => {
     expect(t.stderr().toLowerCase()).toContain("not logged in");
   });
 
+  it("echoes the target org banner (stderr) on a mutating command when the profile is org-bound", async () => {
+    const t = makeTestContext({ store: loggedInOrgStore(), fetch: okFetch(created) });
+    await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    // The org banner rides stderr (stdout stays a clean record); centrally emitted via authedClient.
+    expect(t.stderr()).toContain("targeting org: acme (Acme, Inc.)");
+    expect(t.stdout()).not.toContain("targeting org:");
+  });
+
   it("maps a 429 (per-org soft cap) to the RATE_LIMITED exit code", async () => {
     const t = makeTestContext({ store: loggedInStore(), fetch: statusFetch(429) });
     await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
@@ -384,6 +403,8 @@ describe("global --profile (end to end)", () => {
       list: async () => Object.keys(creds),
       getApiBaseUrl: async () => undefined,
       setApiBaseUrl: async () => undefined,
+      getOrg: async () => undefined,
+      setOrg: async () => undefined,
     };
   }
 
@@ -436,6 +457,135 @@ describe("global --profile (end to end)", () => {
     });
     await run(app, ["endpoints", "list"], t.ctx);
     expect(t.stderr().toLowerCase()).not.toContain("profile");
+  });
+});
+
+describe("global --org selector (authed path, end to end)", () => {
+  // A profile-aware store carrying each profile's bound ORG too, so the selector can be exercised e2e.
+  function orgProfileStore(
+    profiles: Record<string, { key: string; org?: { id: string; slug: string; name: string } }>,
+  ): CredentialStore {
+    return {
+      get: async (p = "default") =>
+        profiles[p] !== undefined ? { apiKey: profiles[p]!.key } : null,
+      set: async () => undefined,
+      erase: async () => undefined,
+      list: async () => Object.keys(profiles),
+      getApiBaseUrl: async () => undefined,
+      setApiBaseUrl: async () => undefined,
+      getOrg: async (p = "default") => profiles[p]?.org,
+      setOrg: async () => undefined,
+    };
+  }
+  const ACME = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+  const GLOBEX = { id: "org_2", slug: "globex", name: "Globex" };
+  const twoOrgs = () =>
+    orgProfileStore({
+      default: { key: "whk_default" },
+      prod: { key: "whk_prod", org: ACME },
+      staging: { key: "whk_staging", org: GLOBEX },
+    });
+  function authCapturingFetch(): { fetch: typeof fetch; auth: () => string | null } {
+    let auth: string | null = null;
+    const fetch = (async (_url: string, init?: { headers?: HeadersInit }) => {
+      auth = new Headers(init?.headers).get("authorization");
+      return json({ items: [], nextCursor: null });
+    }) as unknown as typeof fetch;
+    return { fetch, auth: () => auth };
+  }
+
+  it("F3: `--profile staging` BEATS an ambient WBHK_ORG=acme — uses staging, no conflict error", async () => {
+    const f = authCapturingFetch();
+    const t = makeTestContext({ store: twoOrgs(), env: { WBHK_ORG: "acme" }, fetch: f.fetch });
+    await run(app, ["endpoints", "list", "--profile", "staging"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(f.auth()).toContain("whk_staging"); // never resolved WBHK_ORG's profile (prod)
+  });
+
+  it("WBHK_ORG env (no flags) binds that org's profile", async () => {
+    const f = authCapturingFetch();
+    const t = makeTestContext({ store: twoOrgs(), env: { WBHK_ORG: "acme" }, fetch: f.fetch });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(f.auth()).toContain("whk_prod"); // acme → prod
+    expect(t.stderr()).toContain("targeting org: acme (Acme, Inc.)");
+  });
+
+  it("WBHK_ORG env pointing at a nonexistent org → OrgNotFound (actionable usage error)", async () => {
+    const t = makeTestContext({
+      store: twoOrgs(),
+      env: { WBHK_ORG: "nonexistent" },
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("no local credential for org");
+  });
+
+  it("`--org acme` FLAG + a disagreeing `--profile staging` FLAG → conflict (usage error)", async () => {
+    const t = makeTestContext({
+      store: twoOrgs(),
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list", "--org", "acme", "--profile", "staging"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("disagree");
+  });
+
+  it("`--org acme` FLAG binds acme's profile", async () => {
+    const f = authCapturingFetch();
+    const t = makeTestContext({ store: twoOrgs(), fetch: f.fetch });
+    await run(app, ["endpoints", "list", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(f.auth()).toContain("whk_prod");
+  });
+
+  it("C2: WBHK_API_KEY set + `--org acme` → OrgSelectorWithEnvKeyError (clear message), NOT OrgNotFound", async () => {
+    const t = makeTestContext({
+      store: twoOrgs(),
+      env: { WBHK_API_KEY: "whk_env" },
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    const err = t.stderr().toLowerCase();
+    expect(err).toContain("cannot select an org"); // the env-key refusal, not "no local credential"
+    expect(err).not.toContain("no local credential for org");
+  });
+
+  it("C2: WBHK_API_KEY set + explicit --org=acme → OrgSelectorWithEnvKeyError (explicit selector refused)", async () => {
+    const t = makeTestContext({
+      store: twoOrgs(),
+      env: { WBHK_API_KEY: "whk_env" },
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list", "--org", "acme"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.USAGE);
+    expect(t.stderr().toLowerCase()).toContain("cannot select an org");
+  });
+
+  it("R3: WBHK_API_KEY set + ambient WBHK_ORG (no --org flag) → runs on the env key, WBHK_ORG ignored (not bricked)", async () => {
+    // A leftover WBHK_ORG must NOT hard-fail every authed command when WBHK_API_KEY is the credential.
+    const t = makeTestContext({
+      store: twoOrgs(),
+      env: { WBHK_API_KEY: "whk_env", WBHK_ORG: "acme" },
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+  });
+
+  it("C1/C6: WBHK_API_KEY set, NO org selector → works, and NO `targeting org` banner (env cred)", async () => {
+    // The default profile even carries a bound org — the banner must STILL be suppressed for an env cred,
+    // because the env key's real org is server-determined, not this local profile's.
+    const store = orgProfileStore({ default: { key: "whk_default", org: ACME } });
+    const t = makeTestContext({
+      store,
+      env: { WBHK_API_KEY: "whk_env" },
+      fetch: okFetch({ items: [], nextCursor: null }),
+    });
+    await run(app, ["endpoints", "list"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stderr()).not.toContain("targeting org"); // banner skipped for the env credential
   });
 });
 

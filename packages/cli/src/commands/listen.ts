@@ -33,10 +33,11 @@ import { clearCursor, loadCursor, saveCursor, type CursorLoad } from "../state/c
 import { acquireListenLock, ListenLockedError, type ListenLock } from "../state/listen-lock.js";
 import { colorize } from "../output/color.js";
 import {
+  announceRequestOrg,
   announceActiveProfile,
   globalFlags,
   resolveGlobals,
-  resolveProfile,
+  resolveRequestProfile,
   type GlobalFlags,
 } from "../global-flags.js";
 import { CAPABILITY_EXIT, EXIT } from "../output/exit-codes.js";
@@ -430,10 +431,13 @@ interface ListenFlags extends GlobalFlags {
 
 export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
   async func(this: AppContext, flags, endpointId) {
-    const profile = await resolveProfile(this, flags);
+    // Listen binds a credential for the tunnel/forward api client → the org selector applies (a bad
+    // `--org`/`WBHK_ORG` errors here); a plain listen falls back to profile-only resolution.
+    const { profile, org } = await resolveRequestProfile(this, flags);
     announceActiveProfile(this, profile);
     const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
+    await announceRequestOrg(this, profile, org);
     // Resolve the bearer once (proactively refreshing an OAuth credential at/near expiry) — used for both
     // the tunnel UPGRADE and the --forward api client. The reactive 401 refresh hook is wired into the
     // forward client (HTTP); mid-session refresh over the long-lived tunnel is out of scope here (a fresh
