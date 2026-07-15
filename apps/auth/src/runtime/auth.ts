@@ -214,9 +214,13 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
         // No provider is "trusted" to link WITHOUT a verified incoming email. Empty = the secure default:
         // implicit/explicit linking both require the provider to assert a verified email (google/github do).
         trustedProviders: [],
-        // Only ever implicitly link INTO a local account whose own email is verified — this is Better Auth's
-        // default (requireLocalEmailVerified ?? true) but pinned, so a future config edit can't silently drop
-        // it. It blocks the classic pre-hijack (an unverified local account pre-seeded with a victim's email).
+        // Only ever implicitly link INTO a local account whose own email is verified — blocks the classic
+        // pre-hijack (an unverified local account pre-seeded with a victim's email). This is Better Auth's
+        // default (`?? true`), pinned here for explicitness + the regression test below.
+        // NOTE: this option is @deprecated in better-auth 1.6.23 — it will be removed on the next minor, at
+        // which point the gate becomes UNCONDITIONAL (i.e. permanently `true`). So the secure behaviour is
+        // guaranteed either way; when the upgrade drops the option, just delete this line (and its assertion
+        // in auth.test.ts) — the behaviour does not change. It is NOT a regression.
         requireLocalEmailVerified: true,
         // Let a signed-in user link a provider whose email DIFFERS from their current one — required so a user
         // who changes their email can still re-link Google/GitHub. Safe: /link-social needs the user's own

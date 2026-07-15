@@ -228,10 +228,12 @@ describe("buildAuthConfig", () => {
 
   it("PINS the account-linking policy explicitly (not Better Auth defaults)", () => {
     // Linking is an account-takeover surface and an email-change flow will lean on it, so the policy is
-    // spelled out rather than inherited. This test is the regression pin: a config edit that drops or flips
-    // any of these must fail here. See ADR-0118.
+    // spelled out rather than inherited. This test is the regression pin: a config edit that drops, flips, OR
+    // ADDS a key here must fail — hence toEqual (exact), not toMatchObject (subset). Adding e.g.
+    // `updateUserInfoOnLink: true` (lets a linked provider overwrite local profile fields) must not slip
+    // through unnoticed. See ADR-0118.
     const linking = buildAuthConfig(input(), cfgDeps()).account?.accountLinking;
-    expect(linking).toMatchObject({
+    expect(linking).toEqual({
       enabled: true, // keep verified-email implicit linking on…
       disableImplicitLinking: false, // …explicitly
       trustedProviders: [], // no provider linked without a verified incoming email
