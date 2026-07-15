@@ -33,6 +33,12 @@ import { guardRegister } from "./issuer/register-guard";
 import type { RateLimitKv } from "./issuer/rate-limit";
 import { deleteAccountRpc } from "./issuer/account-delete-deps";
 import {
+  commitEmailChangeRpc,
+  listLoginMethodsRpc,
+  startEmailChangeRpc,
+  unlinkLoginMethodRpc,
+} from "./issuer/email-change-deps";
+import {
   completeOnboardingRpc,
   readOnboardingRpc,
   updateImageKeyRpc,
@@ -164,5 +170,33 @@ export class ConnectedApps extends WorkerEntrypoint {
   }
   async revoke(userId, grantId) {
     return revokeUserConnectedApp(readIntrospectEnv(this.env), userId, grantId);
+  }
+}
+
+// EmailChanger: the web→auth email-change ceremony RPC. The user's email lives on the global identity realm
+// (webhook_auth only), and the step-up OTP hash + session revoke + verification purge all run here. apps/web
+// verifies the session and passes its OWN userId; a user can only ever change their own email. `start` sends
+// a 6-digit code to the user's CURRENT address; `commit` verifies it, writes the new email, revokes every IdP
+// session, purges in-flight magic links for both addresses, and notifies the old address. Runs with
+// HYPERDRIVE_AUTH + RATELIMIT_KV + RESEND_API_KEY + CREDENTIAL_PEPPER. Delegates to the type-checked deps.
+export class EmailChanger extends WorkerEntrypoint {
+  async start(userId, newEmail) {
+    return startEmailChangeRpc(this.env, { userId, newEmail });
+  }
+  async commit(userId, code) {
+    return commitEmailChangeRpc(this.env, { userId, code });
+  }
+}
+
+// LoginMethods: the web→auth social-login management RPC. Lists a user's linked social sign-ins (`account`
+// rows) and unlinks one, with a last-method guard (never leave zero sign-in paths; magic-link always counts).
+// Same identity-realm boundary: apps/web passes its OWN verified userId. Connecting a NEW provider is a
+// browser sign-in (Better Auth's pinned verified-email auto-link handles the linking), not an RPC.
+export class LoginMethods extends WorkerEntrypoint {
+  async list(userId) {
+    return listLoginMethodsRpc(this.env, userId);
+  }
+  async unlink(userId, providerId, accountId) {
+    return unlinkLoginMethodRpc(this.env, { userId, providerId, accountId });
   }
 }

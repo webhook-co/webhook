@@ -37,6 +37,17 @@ export {
   type UserProfile,
 } from "./introspection";
 export { type ConnectedApp, type ConnectedAppsService } from "./connected-apps";
+// Explicit re-exports (not `export *`): apps/auth + apps/web are Turbopack consumers of the email-change /
+// login-methods contracts (the barrel note above).
+export {
+  type EmailChangeService,
+  type StartEmailChangeResult,
+  type CommitEmailChangeResult,
+  type LoginMethod,
+  type LoginMethodsSnapshot,
+  type LoginMethodsService,
+  type UnlinkLoginMethodResult,
+} from "./email-change";
 export {
   type OnboardingStateDto,
   type CompleteOnboardingResult,

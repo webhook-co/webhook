@@ -2,6 +2,8 @@ import "server-only";
 
 import type {
   ConnectedApp,
+  EmailChangeService,
+  LoginMethodsService,
   OnboardingProfileService,
   OnboardingStateDto,
 } from "@webhook-co/contract";
@@ -178,6 +180,37 @@ export function getOnboardingBinding(): OnboardingProfileBinding | undefined {
     typeof (binding as { complete?: unknown }).complete === "function"
   ) {
     return binding as OnboardingProfileBinding;
+  }
+  return undefined;
+}
+
+export type EmailChangeBinding = EmailChangeService;
+export type LoginMethodsBinding = LoginMethodsService;
+
+/** The bound AUTH_EMAIL_CHANGE entrypoint (auth.'s `EmailChanger`), or undefined when unbound (dev /
+ *  pre-provision). Keyed by the SERVER-verified userId. As with getOnboardingBinding, the structural check
+ *  only distinguishes BOUND from UNBOUND — a method-not-found in a deploy window throws at call time. */
+export function getEmailChangeBinding(): EmailChangeBinding | undefined {
+  const binding = workerEnv().AUTH_EMAIL_CHANGE;
+  if (
+    binding &&
+    typeof (binding as { start?: unknown }).start === "function" &&
+    typeof (binding as { commit?: unknown }).commit === "function"
+  ) {
+    return binding as EmailChangeBinding;
+  }
+  return undefined;
+}
+
+/** The bound AUTH_LOGIN_METHODS entrypoint (auth.'s `LoginMethods`), or undefined when unbound. */
+export function getLoginMethodsBinding(): LoginMethodsBinding | undefined {
+  const binding = workerEnv().AUTH_LOGIN_METHODS;
+  if (
+    binding &&
+    typeof (binding as { list?: unknown }).list === "function" &&
+    typeof (binding as { unlink?: unknown }).unlink === "function"
+  ) {
+    return binding as LoginMethodsBinding;
   }
   return undefined;
 }
