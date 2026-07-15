@@ -57,6 +57,10 @@ const TENANT_TABLES = [
   // org_deletions: webhook_app inserts + reads only its own org's jobs (insert `with check`), no
   // UPDATE/DELETE (NO_UPDATE below); the cross-org drain is webhook_purge's.
   { table: "event_payload_purge", col: "org_id" },
+  // Durable Stripe-cancellation job written at org-delete time (migration 0075). Same shape as
+  // org_deletions: webhook_app inserts + reads only its own org's job (insert `with check`), no
+  // UPDATE/DELETE (NO_UPDATE below); the cross-org drain is webhook_billing's.
+  { table: "org_billing_cancellations", col: "org_id" },
 ] as const;
 
 // Better Auth identity tables are GLOBAL (text ids, per-user / api-key), intentionally
@@ -245,6 +249,9 @@ describe("cross-org isolation (every tenant table)", () => {
     // event_payload_purge (0058): identical posture — INSERT+SELECT only for webhook_app, the
     // completion UPDATE is webhook_purge's, no DELETE for anyone.
     "event_payload_purge",
+    // org_billing_cancellations (0075): INSERT+SELECT only for webhook_app; the status/attempts UPDATE
+    // is the cross-org webhook_billing drain's, never a tenant's. No DELETE for anyone.
+    "org_billing_cancellations",
     // org_slug_history (0069): append-only, and that is load-bearing rather than tidy. It is what the
     // never-recycle guard reads, so a tenant that could DELETE its own retired slug could then hand it to a
     // confederate — reopening the takeover the table exists to close. INSERT + SELECT, no UPDATE, no DELETE,
@@ -733,13 +740,16 @@ describe("catalog-driven RLS coverage", () => {
       //  - org_deletions / event_payload_purge (purge jobs): INSERT+SELECT (tenant) + UPDATE
       //    (webhook_purge drains the cursor/status/completion), no DELETE — durable evidence a purge
       //    was requested.
+      //  - org_billing_cancellations (0075): INSERT+SELECT (tenant) + UPDATE (webhook_billing drains
+      //    the status/attempts), no DELETE — durable evidence a cancellation was requested.
       //  - everything else: full CRUD.
       const insertSelectUpdate =
         table === "billing_customers" ||
         table === "billing_subscriptions" ||
         table === "stripe_meter_reports" ||
         table === "org_deletions" ||
-        table === "event_payload_purge";
+        table === "event_payload_purge" ||
+        table === "org_billing_cancellations";
       const insertSelectOnly =
         table === "audit_log" || table === "auth_audit_event" || table === "usage_alerts";
       // org_slug_history (0069): webhook_app gets SELECT and NOTHING ELSE. The table is written exclusively by

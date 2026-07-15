@@ -1,14 +1,20 @@
-import { formatAuditActor, type AuditActorInput } from "@webhook-co/shared";
+import {
+  BILLING_ACTIVE_STATUSES,
+  formatAuditActor,
+  isLiveSubscriptionStatus,
+  type AuditActorInput,
+} from "@webhook-co/shared";
 
 import { appendAuditEntry } from "./audit-append";
-import { withTenant, type Sql } from "./client";
+import { withTenant, type Sql, type TenantTx } from "./client";
 
-// Re-exported through this leaf so the web dashboard (which imports leaf subpaths, not the barrel —
-// Turbopack) can resolve the deterministic personal-org id for account erasure alongside
-// deleteOrgWithAudit / isOrgOwner.
-export { personalOrgId } from "./orgs";
+// personalOrgId is imported for isPersonalOrg's use here AND re-exported through this leaf so the web
+// dashboard (which imports leaf subpaths, not the barrel — Turbopack) can resolve the deterministic
+// personal-org id alongside deleteOrgWithAudit / isOrgOwner. A bare `export … from` re-export would NOT
+// bind the name in this module's scope, so it must be imported to be callable here.
+import { listUserOrgs, personalOrgId } from "./orgs";
 
-import { listUserOrgs } from "./orgs";
+export { personalOrgId };
 
 /**
  * Thrown when an org delete targets a row that doesn't exist in the caller's RLS context — i.e.
@@ -129,6 +135,65 @@ export async function classifyOwnedOrgs(app: Sql, userId: string): Promise<Owned
 }
 
 /**
+ * Does the current tenant org have a subscription in an ENTITLED status — i.e. is it a PAID org? This
+ * is the single definition of "paid vs Free", the same status set effectiveBillingPeriod uses to pick
+ * the billing-cycle basis over the Free lifetime basis. Callers run it inside the org's tenant context
+ * (RLS pins `billing_subscriptions` to the current org). Shared so the free-org cap and the billing
+ * period can never drift to two different definitions of entitlement.
+ */
+export async function hasEntitledSubscription(tx: TenantTx): Promise<boolean> {
+  const rows = await tx<{ one: number }[]>`
+    select 1 as one from billing_subscriptions
+    where status = any(string_to_array(${BILLING_ACTIVE_STATUSES.join(",")}, ',')) limit 1`;
+  return rows.length > 0;
+}
+
+/**
+ * Count the FREE organizations a user owns, for the free-org creation cap. "Free" = the org has no
+ * entitled subscription (hasEntitledSubscription). Paid orgs are unlimited, so are never counted.
+ *
+ * Attribution counts EVERY org the user owns that is Free — NOT only sole-owned ones. An earlier
+ * version skipped co-owned orgs (to avoid one co-owner's quota consuming another's), but that was a
+ * trivial cap BYPASS: a farmer could add a single throwaway co-owner to every org so `owners !== 1`
+ * and the org counted toward nobody, minting unlimited Free allowances. Counting per-owner closes that
+ * hole; a co-owned org counts toward each owner, which is defensible because ownership is only ever
+ * gained by ACCEPTING an invite. (Downgrade-overflow and the check-then-create race are handled by the
+ * authoritative periodic reconciler, not this best-effort creation-time gate.)
+ *
+ * Runs as webhook_app: listUserOrgs under the user GUC (the only RLS-legal cross-org enumeration, via
+ * user_org_directory), then a per-org entitlement read under each org's OWN tenant context.
+ */
+export async function countOwnedFreeOrgs(app: Sql, userId: string): Promise<number> {
+  const owned = (await listUserOrgs(app, userId)).filter((o) => o.role === "owner");
+
+  let free = 0;
+  for (const org of owned) {
+    const paid = await withTenant(app, org.orgId, (tx) => hasEntitledSubscription(tx));
+    if (!paid) free += 1;
+  }
+  return free;
+}
+
+/**
+ * Is `orgId` a PERSONAL org — the deterministic identity-home org of one of its own owners? Decided
+ * from the org's OWN membership, NOT from who is asking: an org is personal iff some owner `u` has
+ * `personalOrgId(u) === orgId`. Keying the "can't delete the personal org" guard on the caller instead
+ * (orgId === personalOrgId(callerId)) would let a SECOND owner of someone's personal org delete it —
+ * erasing their identity home and re-opening the Free-allowance recycle on their next sign-in. So the
+ * guard must ask this org-centric question. Runs under the org's tenant context (RLS-scoped memberships).
+ */
+export async function isPersonalOrg(app: Sql, orgId: string): Promise<boolean> {
+  const owners = await withTenant(
+    app,
+    orgId,
+    (tx) =>
+      tx<{ userId: string }[]>`
+        select user_id as "userId" from memberships where org_id = ${orgId} and role = 'owner'`,
+  );
+  return owners.some((o) => personalOrgId(o.userId) === orgId);
+}
+
+/**
  * Hard-delete an org and all of its Postgres metadata (every `org_id` child table is
  * `ON DELETE CASCADE`), while PRESERVING the two append-only WORM audit trails — `audit_log` and
  * `auth_audit_event` had their `orgs` FK decoupled in migration 0051, so the cascade no longer
@@ -170,6 +235,27 @@ export async function deleteOrgWithAudit(
     await tx`
       insert into org_deletions (org_id, requested_by)
       values (${input.orgId}, ${requestedBy})`;
+    // Capture the org's live Stripe subscription BEFORE the delete cascades billing_subscriptions
+    // away, and enqueue a cancellation the apps/api cron drains against Stripe. Without this a paying
+    // customer who deletes their account (or a paid org) keeps being charged forever, and the row that
+    // would let anyone reconcile it is gone. Canceling inline is unsafe (this delete is one of a loop of
+    // separate transactions + a cross-worker RPC): a cancel-then-DB-fail would leave a live org with a
+    // canceled subscription, which effectiveBillingPeriod drops to the exhausted Free lifetime basis and
+    // the cap producer then PAUSES the payer's ingest. webhook_app has tenant-scoped SELECT on
+    // billing_subscriptions; only a subscription that still EXISTS at Stripe (isLiveSubscriptionStatus)
+    // needs canceling — a canceled/expired one is a no-op. `on conflict` keeps a re-delete idempotent.
+    // The explicit org_id predicate is defense-in-depth beyond RLS (same reasoning as
+    // readOrgMembershipCensus above): RLS policies are permissive/OR'd, so a future policy must never be
+    // able to widen this read into another tenant's subscription id.
+    const [sub] = await tx<{ stripeSubscriptionId: string; status: string }[]>`
+      select stripe_subscription_id as "stripeSubscriptionId", status
+      from billing_subscriptions where org_id = ${input.orgId}`;
+    if (sub && isLiveSubscriptionStatus(sub.status)) {
+      await tx`
+        insert into org_billing_cancellations (org_id, stripe_subscription_id)
+        values (${input.orgId}, ${sub.stripeSubscriptionId})
+        on conflict (org_id) do nothing`;
+    }
     // Hard-delete: every org_id child cascades; the two WORM audit tables + org_deletions persist.
     const [row] = await tx<{ deletedAt: string }[]>`
       delete from orgs where id = ${input.orgId} returning now()::text as "deletedAt"`;

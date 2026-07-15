@@ -55,6 +55,7 @@ export * from "./meter-reporter";
 export * from "./meter-reconcile";
 export * from "./meter-transport-reconcile";
 export * from "./retention-reconcile";
+export * from "./billing-cancellation";
 export * from "./event-delete";
 export * from "./event-payload-purge";
 export * from "./orphan-sweep";

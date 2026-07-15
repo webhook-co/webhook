@@ -25,8 +25,12 @@ const requireOrgAccess = vi.fn(async () => ({
 vi.mock("./org-access", () => ({ requireOrgAccess: () => requireOrgAccess() }));
 
 const deleteOrgWithAudit = vi.fn(async () => ({ orgId: "org_1", deletedAt: "now" }));
+// isPersonalOrg(app, orgId) — default false, so a normal org delete proceeds; the personal-org test
+// overrides it to true. It's an org-centric DB read in production; here it's the seam under test.
+const isPersonalOrg = vi.fn(async () => false);
 vi.mock("@webhook-co/db/org-lifecycle", () => ({
   deleteOrgWithAudit: (...a: unknown[]) => deleteOrgWithAudit(...a),
+  isPersonalOrg: (...a: unknown[]) => isPersonalOrg(...a),
 }));
 const renameOrg = vi.fn();
 const { SlugTakenError, InvalidOrgSlugError, RenameForbiddenError } = vi.hoisted(() => {
@@ -105,6 +109,17 @@ describe("deleteOrganization", () => {
     });
     await expect(deleteOrganization("acme", form("DELETE"))).rejects.toThrow(
       /only an organization owner/,
+    );
+    expect(deleteOrgWithAudit).not.toHaveBeenCalled();
+    expect(cookieStore.delete).not.toHaveBeenCalled();
+  });
+
+  it("refuses to delete a PERSONAL org (org-centric) — shed only by deleting the account", async () => {
+    // The org is personal per its OWN owners (isPersonalOrg true), regardless of who is deleting. The
+    // delete must refuse (and never mint a fresh-allowance recycle path).
+    isPersonalOrg.mockResolvedValueOnce(true);
+    await expect(deleteOrganization("acme", form("DELETE"))).rejects.toThrow(
+      /personal organization cannot be deleted/,
     );
     expect(deleteOrgWithAudit).not.toHaveBeenCalled();
     expect(cookieStore.delete).not.toHaveBeenCalled();
