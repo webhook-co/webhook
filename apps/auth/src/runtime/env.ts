@@ -236,6 +236,14 @@ export function readIntrospectEnv(env: Record<string, unknown>): IntrospectEnv {
   return env as unknown as IntrospectEnv;
 }
 
+// The Connected Apps entrypoint reads the OAUTH_KV grant store (like introspect) AND, best-effort, resolves
+// each grant's bound org from the tenant realm (readOrgIdentity over HYPERDRIVE_TENANT). The tenant binding
+// is optional here so the org ENRICHMENT degrades to omitted if it's ever absent — the app LIST (which needs
+// only OAUTH_KV) never fails for a missing org read.
+export interface ConnectedAppsEnv extends IntrospectEnv {
+  HYPERDRIVE_TENANT?: HyperdriveBinding;
+}
+
 // --- A3d: the /authorize + /consent/decision env slice ---------------------------------------------
 // The consent flow needs: the full Better Auth runtime to resolve the session (so it carries AuthEnv);
 // CONSENT_TICKET_KEY (the 32-byte HMAC secret signing the stateless consent ticket); OAUTH_KV (getOAuthApi

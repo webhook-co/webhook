@@ -99,7 +99,11 @@ export function ConnectedAppsManager({
                 ))}
               </span>
               <span className="pt-0.5 text-xs text-fg-faint">
-                Connected {fmtDate(app.createdAt)}
+                {/* Which org this app can see (token = org). "unknown organization" for a legacy grant
+                    authorized before the org was recorded, or one whose org couldn't be resolved. */}
+                Organization:{" "}
+                {app.org ? `${app.org.name} (${app.org.slug})` : "unknown organization"} · Connected{" "}
+                {fmtDate(app.createdAt)}
               </span>
             </div>
             <Button variant="secondary" onClick={() => setTarget(app)} className="shrink-0">
