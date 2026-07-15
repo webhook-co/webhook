@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const requireOrgAccess = vi.fn();
-vi.mock("@/server/org-access", () => ({ requireOrgAccess: () => requireOrgAccess() }));
+vi.mock("@/server/org-access", () => ({ requireActiveOrgAccess: () => requireOrgAccess() }));
 
 const loadAudit = vi.fn(async () => ({ status: "ok", items: [], nextSeq: null }));
 const loadAuthAudit = vi.fn(async () => ({ status: "ok", items: [], nextSeq: null }));

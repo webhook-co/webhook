@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 
 import { ReplayDestinationsManager } from "@/components/replay-destinations-manager";
 import { loadDestinations } from "@/server/replay-destinations";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Destinations · webhook.co",
@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default async function DestinationsPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const session = await requireOrgAccess(slug, "/destinations");
+  const session = await requireActiveOrgAccess(slug, "/destinations");
   const result = await loadDestinations(session.orgId);
 
   return (

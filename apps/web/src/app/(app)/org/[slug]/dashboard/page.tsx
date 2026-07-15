@@ -20,7 +20,7 @@ import { buildDashboardChart } from "@/lib/dashboard-chart";
 import { deriveAttention } from "@/lib/dashboard-attention";
 import { resolveDashboardWindow } from "@/lib/dashboard-window";
 import { loadDashboard } from "@/server/dashboard";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 /** First value of a possibly-repeated search param (a hand-edited `?range=a&range=b` → array). */
 function first(v: string | string[] | undefined): string | undefined {
@@ -69,7 +69,10 @@ export default async function DashboardPage({
   }>;
 }) {
   const { slug } = await params;
-  const [session, sp] = await Promise.all([requireOrgAccess(slug, "/dashboard"), searchParams]);
+  const [session, sp] = await Promise.all([
+    requireActiveOrgAccess(slug, "/dashboard"),
+    searchParams,
+  ]);
   const inviteOutcome = first(sp.invite);
   const orgOutcome = first(sp.org);
   const window = resolveDashboardWindow(

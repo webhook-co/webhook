@@ -19,7 +19,7 @@ import {
   revokeProviderSecretAction,
 } from "@/server/provider-secret-actions";
 import { loadProviderSecrets } from "@/server/provider-secrets";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Endpoint · webhook.co",
@@ -36,7 +36,7 @@ export default async function EndpointDetailPage({
   params: Promise<{ slug: string; id: string }>;
 }) {
   const { slug, id } = await params;
-  const session = await requireOrgAccess(slug, `/endpoints/${id}`);
+  const session = await requireActiveOrgAccess(slug, `/endpoints/${id}`);
   // The endpoint detail + its provider (inbound-verification) secrets are independent org+id reads — run
   // them concurrently. The always-shown ingest URL is NOT awaited here: its reveal is a cross-cloud engine
   // RPC (a cold Hyperdrive read + a KMS unseal) that used to block the whole page render, so it now streams

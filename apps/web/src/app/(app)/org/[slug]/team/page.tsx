@@ -8,7 +8,7 @@ import { createInviteAction, revokeInviteAction } from "@/server/invite-actions"
 import { leaveOrgAction } from "@/server/leave-org";
 import { changeMemberRoleAction, removeMemberAction } from "@/server/member-actions";
 import { loadTeam } from "@/server/team";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Team · webhook.co",
@@ -21,11 +21,11 @@ function canManageMembers(role: MembershipRole): boolean {
 
 export default async function TeamPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  // Both calls take the SAME (slug, subPath): requireOrgAccess is cache()d on its arguments, so a mismatched
+  // Both calls take the SAME (slug, subPath): requireActiveOrgAccess is cache()d on its arguments, so a mismatched
   // subPath here would miss the cache and issue a second directory read for one render.
   const [result, session] = await Promise.all([
     loadTeam(slug, "/team"),
-    requireOrgAccess(slug, "/team"),
+    requireActiveOrgAccess(slug, "/team"),
   ]);
   // You cannot leave your own personal org — there'd be nowhere to go, and the account-delete flow is what
   // actually erases it. personalOrgId is derived, so this costs no query.

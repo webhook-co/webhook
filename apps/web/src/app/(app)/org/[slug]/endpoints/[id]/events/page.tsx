@@ -17,7 +17,7 @@ import { getListenWsUrl } from "@/server/env";
 import { loadMoreEventsAction } from "@/server/event-actions";
 import { loadEvents } from "@/server/events";
 import { mintListenTicketAction } from "@/server/listen-ticket-actions";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Events · webhook.co",
@@ -41,7 +41,7 @@ export default async function EventsPage({
   const sp = await searchParams;
   // subPath carries the query so a canonicalizing 308 (mis-cased / renamed slug) keeps the reader's filters
   // and cursor — a shared, filtered, paginated events link must survive a rename intact.
-  const session = await requireOrgAccess(slug, `/endpoints/${id}/events${queryString(sp)}`);
+  const session = await requireActiveOrgAccess(slug, `/endpoints/${id}/events${queryString(sp)}`);
   // The raw URL filter values ride to the client list (and back into the load-more action); the page
   // coerces them to instant bounds for the first DB read. Both paths use the same parseEventFilters.
   // provider/status are MULTI-select (repeated params → string[]); firstParam keeps the single-value

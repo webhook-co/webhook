@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 import { AgentTriggersManager, type EndpointOption } from "@/components/agent-triggers-manager";
 import { loadTriggers } from "@/server/agent-triggers";
 import { loadEndpoints } from "@/server/endpoints";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Triggers · webhook.co",
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 
 export default async function TriggersPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const session = await requireOrgAccess(slug, "/triggers");
+  const session = await requireActiveOrgAccess(slug, "/triggers");
   const [triggers, endpoints] = await Promise.all([
     loadTriggers(session.orgId),
     loadEndpoints(session.orgId),

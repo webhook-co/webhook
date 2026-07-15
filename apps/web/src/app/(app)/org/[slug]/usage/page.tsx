@@ -2,7 +2,7 @@ import { Banner, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { loadUsage } from "@/server/usage";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 import type { UsageSummary } from "@webhook-co/shared";
 
 // Billing (current plan, upgrade, portal) lives in its own dedicated /billing section now — this page is
@@ -23,7 +23,7 @@ const fmtDate = (d: Date): string =>
 
 export default async function UsagePage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const session = await requireOrgAccess(slug, "/usage");
+  const session = await requireActiveOrgAccess(slug, "/usage");
   const result = await loadUsage(session.orgId);
 
   return (

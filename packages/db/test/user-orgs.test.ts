@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, withTenant, withUser, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { createOrgWithOwner, listUserOrgs, readUserProfile } from "../src/orgs";
+import { createOrgWithOwner, isOrgSuspended, listUserOrgs, readUserProfile } from "../src/orgs";
 import { testAuditKey } from "./audit-key";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -94,6 +94,56 @@ describe("listUserOrgs", () => {
     const nobody = `u_n_${randomUUID().slice(0, 8)}`;
     await seedUser(nobody);
     expect(await listUserOrgs(app, nobody)).toEqual([]);
+  });
+
+  it("reports a freshly created org as active with no suspension reason", async () => {
+    // The suspend columns (0083) default to active/null at creation; the directory threads them through so the
+    // read gate can tell a live org from a suspended one without a second query.
+    const uid = `u_act_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const org = await seedOrg("Active Org", uid);
+    expect((await listUserOrgs(app, uid)).find((o) => o.orgId === org)).toMatchObject({
+      status: "active",
+      suspendedReason: null,
+    });
+  });
+
+  it("threads status + reason once an org is suspended", async () => {
+    const uid = `u_susp_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const org = await seedOrg("Suspended Org", uid);
+    // The reconciler owns the write path (a later slice); here we simulate the effect under the org's tenant
+    // context (the `orgs` UPDATE policy is `id = current_org_id()`, so it must run inside withTenant).
+    await withTenant(
+      app,
+      org,
+      (tx) => tx`
+        update orgs set status = 'suspended', suspended_reason = 'free_org_cap', suspended_at = now()
+        where id = ${org}`,
+    );
+
+    const seen = (await listUserOrgs(app, uid)).find((o) => o.orgId === org);
+    expect(seen).toMatchObject({ status: "suspended", suspendedReason: "free_org_cap" });
+  });
+});
+
+describe("isOrgSuspended — the outbound-delivery gate reads it under the tenant GUC", () => {
+  it("is false for an active org and true once suspended", async () => {
+    const uid = `u_gate_${randomUUID().slice(0, 8)}`;
+    await seedUser(uid);
+    const org = await seedOrg("Gate Org", uid);
+
+    expect(await withTenant(app, org, (tx) => isOrgSuspended(tx))).toBe(false);
+
+    await withTenant(
+      app,
+      org,
+      (tx) => tx`
+        update orgs set status = 'suspended', suspended_reason = 'free_org_cap', suspended_at = now()
+        where id = ${org}`,
+    );
+
+    expect(await withTenant(app, org, (tx) => isOrgSuspended(tx))).toBe(true);
   });
 });
 

@@ -5,7 +5,7 @@ import { notFound } from "next/navigation";
 
 import { DeliveryDetail } from "@/components/delivery-detail";
 import { loadDelivery } from "@/server/deliveries";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Delivery · webhook.co",
@@ -17,7 +17,7 @@ export default async function DeliveryDetailPage({
   params: Promise<{ slug: string; id: string }>;
 }) {
   const { slug, id } = await params;
-  const session = await requireOrgAccess(slug, `/deliveries/${id}`);
+  const session = await requireActiveOrgAccess(slug, `/deliveries/${id}`);
   const result = await loadDelivery(session.orgId, id);
 
   if (result.status === "not_found") notFound();

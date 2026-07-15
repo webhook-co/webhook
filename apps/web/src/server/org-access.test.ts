@@ -27,7 +27,7 @@ vi.mock("@webhook-co/db/orgs", () => ({
 }));
 vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({}) }));
 
-import { requireOrgAccess } from "./org-access";
+import { requireActiveOrgAccess, requireOrgAccess } from "./org-access";
 import { LOGIN_URL } from "./session";
 
 const ALPHA = {
@@ -36,6 +36,8 @@ const ALPHA = {
   formerSlugs: [] as string[],
   name: "Alpha",
   role: "owner",
+  status: "active",
+  suspendedReason: null,
 };
 const BETA = {
   orgId: "org_beta",
@@ -43,6 +45,17 @@ const BETA = {
   formerSlugs: ["beta-old", "beta-ancient"],
   name: "Beta",
   role: "member",
+  status: "active",
+  suspendedReason: null,
+};
+const SUSPENDED = {
+  orgId: "org_susp",
+  slug: "paused-co",
+  formerSlugs: [] as string[],
+  name: "Paused Co",
+  role: "owner",
+  status: "suspended",
+  suspendedReason: "free_org_cap",
 };
 
 beforeEach(() => {
@@ -145,5 +158,44 @@ describe("requireOrgAccess(slug)", () => {
       expect(access.orgId).toBe("org_beta");
       expect(access.slug).toBe("beta-corp");
     });
+  });
+
+  it("threads the org's status and suspension reason onto the access", async () => {
+    listUserOrgs.mockResolvedValue([SUSPENDED]);
+    const access = await requireOrgAccess("paused-co");
+    expect(access).toMatchObject({ status: "suspended", suspendedReason: "free_org_cap" });
+  });
+});
+
+describe("requireActiveOrgAccess(slug) — the suspend-aware read gate", () => {
+  it("returns access unchanged for an ACTIVE org (no divert)", async () => {
+    const access = await requireActiveOrgAccess("alpha", "/dashboard");
+    expect(access.orgId).toBe("org_alpha");
+    expect(access.status).toBe("active");
+  });
+
+  it("DIVERTS a suspended org's read surface to its /suspended screen", async () => {
+    listUserOrgs.mockResolvedValue([SUSPENDED]);
+    await expect(requireActiveOrgAccess("paused-co", "/dashboard")).rejects.toThrow(
+      "NEXT_REDIRECT:/org/paused-co/suspended",
+    );
+  });
+
+  it("diverts even an action call (no subPath) for a suspended org", async () => {
+    // A server action reaching a suspended org must also stop — a suspended org is read-only, so no write path
+    // may proceed. With no subPath there's no canonicalization redirect, so the suspend redirect is the throw.
+    listUserOrgs.mockResolvedValue([SUSPENDED]);
+    await expect(requireActiveOrgAccess("paused-co")).rejects.toThrow(
+      "NEXT_REDIRECT:/org/paused-co/suspended",
+    );
+  });
+
+  it("canonicalizes BEFORE diverting — a mis-cased suspended slug 308s to the canonical URL first", async () => {
+    // requireActiveOrgAccess delegates the 308 to requireOrgAccess, so a mis-cased/retired slug is corrected
+    // first; the suspension divert then targets the canonical slug on the next request.
+    listUserOrgs.mockResolvedValue([SUSPENDED]);
+    await expect(requireActiveOrgAccess("Paused-CO", "/dashboard")).rejects.toThrow(
+      "NEXT_PERMANENT_REDIRECT:/org/paused-co/dashboard",
+    );
   });
 });

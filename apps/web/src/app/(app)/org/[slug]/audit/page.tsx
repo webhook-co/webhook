@@ -10,7 +10,7 @@ import {
   verifyAuditChainAction,
   verifyAuthAuditChainAction,
 } from "@/server/audit-actions";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Audit log · webhook.co",
@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 export default async function AuditPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   // subPath: a mis-cased or retired slug 308s to the canonical URL with this deep link intact.
-  const { orgId, userId, role, slug: orgSlug } = await requireOrgAccess(slug, "/audit");
+  const { orgId, userId, role, slug: orgSlug } = await requireActiveOrgAccess(slug, "/audit");
 
   // Owner/admin only — the same authority the mint ceiling enforces for an `audit:read` key. Without this a
   // member refused a key over the API could read the identical chain here, and the ceiling would be

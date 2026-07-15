@@ -1,7 +1,7 @@
 import "server-only";
 
-import type { MembershipRole } from "@webhook-co/db/orgs";
-import { notFound, permanentRedirect } from "next/navigation";
+import type { MembershipRole, OrgStatus } from "@webhook-co/db/orgs";
+import { notFound, permanentRedirect, redirect } from "next/navigation";
 import { cache } from "react";
 
 import { readUserOrgDirectory } from "./org-directory";
@@ -54,6 +54,11 @@ export interface OrgAccess extends Session {
   readonly name: string;
   /** The caller's role in `orgId`, read this request. Never null — a non-member never gets here. */
   readonly role: MembershipRole;
+  /** The org's service state, from the SAME directory read that proved membership. `suspended` ⇒ the read
+   *  surfaces divert to the read-only suspension screen (see {@link requireActiveOrgAccess}). */
+  readonly status: OrgStatus;
+  /** Why it's suspended (e.g. `free_org_cap`); null when active. Drives the suspension screen's copy. */
+  readonly suspendedReason: string | null;
 }
 
 /** citext matches case-insensitively; JS `===` does not. Compare the way the database does. */
@@ -82,6 +87,8 @@ const resolveOrgAccess = cache(async (slug: string): Promise<OrgAccess> => {
       slug: current.slug,
       name: current.name,
       role: current.role,
+      status: current.status,
+      suspendedReason: current.suspendedReason,
     };
   }
 
@@ -95,6 +102,8 @@ const resolveOrgAccess = cache(async (slug: string): Promise<OrgAccess> => {
       slug: renamed.slug,
       name: renamed.name,
       role: renamed.role,
+      status: renamed.status,
+      suspendedReason: renamed.suspendedReason,
     };
   }
 
@@ -115,6 +124,29 @@ export const requireOrgAccess = async (slug: string, subPath?: string): Promise<
   // subPath entirely and so never redirect.
   if (subPath !== undefined && access.slug !== slug) {
     permanentRedirect(`/org/${access.slug}${subPath}`);
+  }
+  return access;
+};
+
+/**
+ * Like {@link requireOrgAccess}, but DIVERTS a suspended org's read surfaces to its read-only suspension
+ * screen. Use this on every data/read page (dashboard, endpoints, events, deliveries, usage, triggers,
+ * destinations, team, audit) — a suspended org must not render or mutate its normal surface.
+ *
+ * Settings and Billing deliberately stay on plain {@link requireOrgAccess}: they're the way OUT of suspension
+ * (upgrade to a paid plan, or reassign which Free orgs stay active), so they must remain reachable while
+ * suspended. The `/suspended` screen itself also uses plain `requireOrgAccess`, so the redirect can't loop.
+ *
+ * The canonicalization redirect still runs FIRST (via `requireOrgAccess`): a mis-cased or retired slug 308s to
+ * the true URL before we consider suspension, so the suspension redirect always targets the canonical slug.
+ */
+export const requireActiveOrgAccess = async (
+  slug: string,
+  subPath?: string,
+): Promise<OrgAccess> => {
+  const access = await requireOrgAccess(slug, subPath);
+  if (access.status === "suspended") {
+    redirect(`/org/${access.slug}/suspended`);
   }
   return access;
 };
