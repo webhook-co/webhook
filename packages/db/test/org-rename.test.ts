@@ -7,6 +7,7 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import {
   createOrgWithOwner,
+  getOrgImageKey,
   InvalidOrgSlugError,
   listUserOrgs,
   renameOrg,
@@ -96,6 +97,27 @@ describe("updateOrgImageKey", () => {
       (tx) => tx`update orgs set image_key = ${"tampered"} where id = ${b.orgId}`,
     );
     expect(await readImageKey(b.orgId)).toBeNull();
+  });
+
+  it("getOrgImageKey reads back the pinned org's pointer — null, then the key, then null again", async () => {
+    const { orgId } = await seedTeam(`logo-r-${randomUUID().slice(0, 6)}`);
+    expect(await getOrgImageKey(app, orgId)).toBeNull();
+
+    await updateOrgImageKey(app, orgId, logoKey(orgId));
+    expect(await getOrgImageKey(app, orgId)).toBe(logoKey(orgId));
+
+    await updateOrgImageKey(app, orgId, null);
+    expect(await getOrgImageKey(app, orgId)).toBeNull();
+  });
+
+  it("getOrgImageKey reads each org's OWN pointer, never a neighbour's", async () => {
+    const a = await seedTeam(`logo-ra-${randomUUID().slice(0, 6)}`);
+    const b = await seedTeam(`logo-rb-${randomUUID().slice(0, 6)}`);
+    await updateOrgImageKey(app, a.orgId, logoKey(a.orgId));
+    // B has no logo. Each call pins to its own org (RLS + `where id`), so A sees A's key and B sees null —
+    // one org's pointer never bleeds into the other's read.
+    expect(await getOrgImageKey(app, a.orgId)).toBe(logoKey(a.orgId));
+    expect(await getOrgImageKey(app, b.orgId)).toBeNull();
   });
 });
 
