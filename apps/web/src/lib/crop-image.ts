@@ -58,7 +58,7 @@ export async function getCroppedWebp(imageSrc: string, crop: PixelCrop): Promise
  * It MUST be a `data:` URL, not `URL.createObjectURL` (a `blob:` URL): the app CSP is `img-src 'self' data:`,
  * so a `blob:` source would be blocked and the crop preview would silently show nothing.
  */
-export function fileToDataUrl(file: File): Promise<string> {
+export function fileToDataUrl(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);

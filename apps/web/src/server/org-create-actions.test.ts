@@ -30,7 +30,7 @@ vi.mock("@webhook-co/db/org-lifecycle", () => ({ countOwnedFreeOrgs }));
 // withTenantDb(fn) → fn(app); the app is unused by the mocked createOrgWithOwner / counter.
 vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({}) }));
 
-import { createTeamAction } from "./org-create-actions";
+import { createTeamAction, createTeamReturningSlugAction } from "./org-create-actions";
 
 const form = (name?: string, orgSlug?: string) => {
   const fd = new FormData();
@@ -138,5 +138,47 @@ describe("createTeamAction", () => {
     const res = await createTeamAction(form("Acme", "Nope!!"));
     expect(res).toMatchObject({ ok: false });
     expect(createOrgWithOwner).not.toHaveBeenCalled();
+  });
+});
+
+// The logo-at-create entry point: same create core, but it RETURNS the slug instead of redirecting so the
+// client can upload the cropped logo (which needs the new slug) before navigating. The critical invariants are
+// that it never redirect()s (control must return to the client) and that it surfaces the same failures.
+describe("createTeamReturningSlugAction", () => {
+  it("returns the new slug on success and does NOT redirect", async () => {
+    createOrgWithOwner.mockResolvedValueOnce({ id: "org_new", slug: "acme-a1b2c" });
+    const res = await createTeamReturningSlugAction(form("Acme"));
+    const usedSlug = createOrgWithOwner.mock.calls[0]![1].slug;
+    expect(res).toEqual({ ok: true, slug: usedSlug });
+    expect(nav.redirect).not.toHaveBeenCalled(); // control returns to the client, which navigates itself
+  });
+
+  it("returns the CHOSEN slug verbatim on success", async () => {
+    createOrgWithOwner.mockResolvedValueOnce({ id: "org_new", slug: "widgets" });
+    const res = await createTeamReturningSlugAction(form("Acme", "widgets"));
+    expect(res).toEqual({ ok: true, slug: "widgets" });
+    expect(createOrgWithOwner.mock.calls[0]![1].slug).toBe("widgets");
+  });
+
+  it("is gated on the session — an unauthenticated caller never reaches the DB", async () => {
+    vi.mocked(verifySession).mockRejectedValueOnce(new Error("no session"));
+    await expect(createTeamReturningSlugAction(form("Acme"))).rejects.toThrow(/no session/);
+    expect(createOrgWithOwner).not.toHaveBeenCalled();
+  });
+
+  it("enforces the free-org cap identically — over the cap returns an error, no create, no redirect", async () => {
+    countOwnedFreeOrgs.mockResolvedValueOnce(2);
+    const res = await createTeamReturningSlugAction(form("Acme"));
+    expect(res).toEqual({ ok: false, error: expect.stringContaining("free organizations") });
+    expect(createOrgWithOwner).not.toHaveBeenCalled();
+    expect(nav.redirect).not.toHaveBeenCalled();
+  });
+
+  it("a chosen-slug collision returns a 'taken' error (no redirect, no retry)", async () => {
+    createOrgWithOwner.mockRejectedValueOnce(new SlugTakenError());
+    const res = await createTeamReturningSlugAction(form("Acme", "widgets"));
+    expect(res).toEqual({ ok: false, error: expect.stringMatching(/taken/i) });
+    expect(createOrgWithOwner).toHaveBeenCalledTimes(1);
+    expect(nav.redirect).not.toHaveBeenCalled();
   });
 });

@@ -25,17 +25,22 @@ const MAX_NAME_LEN = 100;
 const MAX_SLUG_ATTEMPTS = 8;
 
 export type CreateTeamResult = { readonly ok: false; readonly error: string };
-// On success this REDIRECTS (throws), so it never returns ok:true — a returned value is always an error the
-// form renders inline.
+// On success `createTeamAction` REDIRECTS (throws), so it never returns ok:true — a returned value is always an
+// error the form renders inline.
+
+/** Like {@link CreateTeamResult} but RETURNS the new slug on success instead of redirecting — for the
+ *  logo-at-create path, where the client must upload the cropped logo (which needs the new slug) BEFORE it
+ *  navigates to the org. */
+export type CreateTeamSlugResult =
+  { readonly ok: true; readonly slug: string } | { readonly ok: false; readonly error: string };
 
 /**
- * Create an organization from a name and (optionally) a chosen URL slug, landing on the new org's dashboard.
- *
- * When the form supplies a slug, we use exactly it — a collision is a real "that URL is taken" error, not
- * something to silently rewrite (that would ignore the user's choice). When no slug is supplied (a non-form
- * caller), we derive it from the name and retry a random suffix on collision, up to a bound.
+ * The shared create core: validate → free-org cap → create (with the chosen slug, or a derived+suffixed one) →
+ * return the slug. NO redirect (the callers decide). When the form supplies a slug, we use exactly it — a
+ * collision is a real "that URL is taken" error, not something to silently rewrite. When no slug is supplied,
+ * we derive it from the name and retry a random suffix on collision, up to a bound.
  */
-export async function createTeamAction(formData: FormData): Promise<CreateTeamResult> {
+async function createOrgForOwner(formData: FormData): Promise<CreateTeamSlugResult> {
   const session = await verifySession();
 
   const nameRaw = formData.get("name");
@@ -134,6 +139,26 @@ export async function createTeamAction(formData: FormData): Promise<CreateTeamRe
     return { ok: false, error: "We couldn't create the organization. Please try again." };
   }
 
-  // Land in the new org. Outside the try/catch — redirect() throws its control signal and must not be caught.
-  redirect(`/org/${slug}/dashboard?created=1`);
+  return { ok: true, slug };
+}
+
+/**
+ * Create an organization and land on its dashboard. The no-logo path: on success it REDIRECTS (throws), so a
+ * returned value is always an error the form renders inline.
+ */
+export async function createTeamAction(formData: FormData): Promise<CreateTeamResult> {
+  const result = await createOrgForOwner(formData);
+  if (!result.ok) return result;
+  // Land in the new org. Outside any try/catch — redirect() throws its control signal and must not be caught.
+  redirect(`/org/${result.slug}/dashboard?created=1`);
+}
+
+/**
+ * The logo-at-create variant: create the org and RETURN its slug (no redirect), so the client can upload the
+ * cropped logo — which needs the new slug — before navigating to the org.
+ */
+export async function createTeamReturningSlugAction(
+  formData: FormData,
+): Promise<CreateTeamSlugResult> {
+  return createOrgForOwner(formData);
 }

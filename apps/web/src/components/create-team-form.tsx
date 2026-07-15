@@ -2,12 +2,24 @@
 
 import { Banner, Button, Card, CardContent, Field } from "@webhook-co/ui";
 import { orgSlugErrorMessage, slugifyOrgName, validateOrgSlug } from "@webhook-co/shared";
-import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useState, useTransition } from "react";
 
-import type { CreateTeamResult } from "@/server/org-create-actions";
+import { uploadOrgLogoWebp } from "@/lib/avatar-upload";
+import { fileToDataUrl } from "@/lib/crop-image";
+import type { CreateTeamResult, CreateTeamSlugResult } from "@/server/org-create-actions";
+
+import { AvatarCropperDialog } from "./avatar-cropper";
+
+// The org is already created by the time we upload the logo, so a slow upload must never trap the user here —
+// bound it and navigate regardless. Generous: a 512×512 webp is tens of KB, so this only trips on a real stall.
+const LOGO_UPLOAD_TIMEOUT_MS = 15_000;
 
 export interface CreateTeamFormProps {
   readonly create: (formData: FormData) => Promise<CreateTeamResult>;
+  /** The return-the-slug variant, used when a logo is chosen: the client uploads the cropped logo (which
+   *  needs the new slug) then navigates. */
+  readonly createReturningSlug: (formData: FormData) => Promise<CreateTeamSlugResult>;
 }
 
 /**
@@ -27,12 +39,26 @@ export interface CreateTeamFormProps {
  * On success the action redirects to the new org, so control never returns; a returned result is an error to
  * render inline.
  */
-export function CreateTeamForm({ create }: CreateTeamFormProps) {
+export function CreateTeamForm({ create, createReturningSlug }: CreateTeamFormProps) {
+  const router = useRouter();
   const [name, setName] = useState("");
   const [slug, setSlug] = useState("");
   const [slugTouched, setSlugTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // The optional logo, cropped client-side into a square webp and held until the org exists — an org has no id
+  // to key its R2 object at until it's created, so we upload AFTER create (see onSubmit). `logoPreview` is a
+  // `data:` URL for the on-page preview (the CSP is `img-src 'self' data:`, so no `blob:` URL).
+  const [logo, setLogo] = useState<Blob | null>(null);
+  const [logoPreview, setLogoPreview] = useState<string | null>(null);
+  const [cropperOpen, setCropperOpen] = useState(false);
+
+  const captureLogo = useCallback(async (blob: Blob) => {
+    setLogo(blob);
+    setLogoPreview(await fileToDataUrl(blob));
+    return { ok: true as const };
+  }, []);
 
   const trimmed = name.trim();
   const trimmedSlug = slug.trim();
@@ -67,8 +93,29 @@ export function CreateTeamForm({ create }: CreateTeamFormProps) {
     // a valid unique slug from the name — the old, always-works behavior.
     if (slugChosen && !slugError) fd.set("orgSlug", trimmedSlug);
     startTransition(async () => {
-      const res = await create(fd);
-      if (res && !res.ok) setError(res.error);
+      // No logo → the plain redirecting create (control never returns on success).
+      if (!logo) {
+        const res = await create(fd);
+        if (res && !res.ok) setError(res.error);
+        return;
+      }
+      // Logo → create returning the slug, upload the cropped logo to it, THEN navigate. A logo-upload failure
+      // is not fatal: the org is created and the logo can still be added from settings, so we navigate anyway.
+      const res = await createReturningSlug(fd);
+      if (!res.ok) {
+        setError(res.error);
+        return;
+      }
+      // Bound the upload so a STALLED connection (accepted-but-never-answers) can't strand the user on this
+      // form after the org already exists — uploadOrgLogoWebp resolves ok:false on abort (it never throws), so
+      // on timeout we simply fall through and navigate, exactly as we do on any other upload failure.
+      // The helper resolves ok:false on failure/abort rather than throwing, but the .catch is belt-and-braces:
+      // nothing about a logo upload should be able to stop us from landing in the org that already exists.
+      await uploadOrgLogoWebp(logo, {
+        slug: res.slug,
+        signal: AbortSignal.timeout(LOGO_UPLOAD_TIMEOUT_MS),
+      }).catch(() => {});
+      router.push(`/org/${res.slug}/dashboard?created=1`);
     });
   };
 
@@ -110,6 +157,58 @@ export function CreateTeamForm({ create }: CreateTeamFormProps) {
             }
             error={slugError ?? undefined}
           />
+
+          {/* Optional logo — cropped now, uploaded after the org is created (it has no id to key R2 until then). */}
+          <div className="flex items-center gap-4">
+            {logoPreview ? (
+              // A local data: URL preview (the cropped webp), not a remote src — a plain <img> is right here.
+              <img
+                src={logoPreview}
+                alt=""
+                width={48}
+                height={48}
+                className="size-12 rounded-[6px] border border-hairline object-cover"
+              />
+            ) : (
+              <div
+                aria-hidden="true"
+                className="grid size-12 place-items-center rounded-[6px] border border-dashed border-hairline text-lg font-medium text-fg-faint"
+              >
+                {trimmed ? trimmed[0]!.toUpperCase() : "?"}
+              </div>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-fg">
+                Logo <span className="font-normal text-fg-faint">(optional)</span>
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setCropperOpen(true)}
+                  disabled={pending}
+                >
+                  {logo ? "Change" : "Add logo"}
+                </Button>
+                {logo ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      setLogo(null);
+                      setLogoPreview(null);
+                    }}
+                    disabled={pending}
+                  >
+                    Remove
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
           {error ? <Banner tone="danger">{error}</Banner> : null}
           <div className="flex justify-end">
             <Button type="submit" loading={pending} disabled={!canSubmit}>
@@ -117,6 +216,18 @@ export function CreateTeamForm({ create }: CreateTeamFormProps) {
             </Button>
           </div>
         </form>
+
+        {/* The shared cropper, with a blob-CAPTURING "upload" — at create-time there's no org yet to POST to,
+            so we hold the cropped webp and upload it once the org exists (onSubmit). */}
+        <AvatarCropperDialog
+          open={cropperOpen}
+          onOpenChange={setCropperOpen}
+          onUploaded={() => setCropperOpen(false)}
+          upload={captureLogo}
+          title="Organization logo"
+          description="Upload a square-ish image, then drag and zoom to frame it."
+          cropShape="rect"
+        />
       </CardContent>
     </Card>
   );

@@ -2,7 +2,7 @@ import { PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { CreateTeamForm } from "@/components/create-team-form";
-import { createTeamAction } from "@/server/org-create-actions";
+import { createTeamAction, createTeamReturningSlugAction } from "@/server/org-create-actions";
 import { verifySession } from "@/server/session";
 
 export const metadata: Metadata = {
@@ -28,7 +28,10 @@ export default async function NewOrgPage() {
           settings.
         </p>
       </div>
-      <CreateTeamForm create={createTeamAction} />
+      <CreateTeamForm
+        create={createTeamAction}
+        createReturningSlug={createTeamReturningSlugAction}
+      />
     </PageContainer>
   );
 }
