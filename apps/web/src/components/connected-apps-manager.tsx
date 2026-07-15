@@ -93,9 +93,11 @@ export function ConnectedAppsManager({
               <span className="break-all font-mono text-sm text-fg-secondary">
                 {app.identityDomain ?? "no verified domain"}
               </span>
-              <span className="pt-0.5">
+              {/* div, not span: ScopeSummary renders a <details> (flow content), which is invalid inside a
+                  phrasing-only <span>. */}
+              <div className="pt-0.5">
                 <ScopeSummary scopes={app.scopes} />
-              </span>
+              </div>
               <span className="pt-0.5 text-xs text-fg-faint">
                 {/* Which org this app can see (token = org). "unknown organization" for a legacy grant
                     authorized before the org was recorded, or one whose org couldn't be resolved. */}
