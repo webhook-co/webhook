@@ -119,6 +119,12 @@ describe("commitEmailChangeAction", () => {
     expect(remintSessionForProfile).toHaveBeenCalled();
   });
 
+  it("still succeeds even if the session re-mint throws (the email already changed)", async () => {
+    remintSessionForProfile.mockRejectedValueOnce(new Error("cookie store down"));
+    const res = await commitEmailChangeAction(form({ code: "123456" }));
+    expect(res.ok).toBe(true); // a re-mint blip must not report a committed change as failed
+  });
+
   it("rejects an empty code without calling the RPC", async () => {
     expect((await commitEmailChangeAction(form({ code: "" }))).ok).toBe(false);
     expect(commit).not.toHaveBeenCalled();

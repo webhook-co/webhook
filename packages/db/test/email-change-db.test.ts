@@ -30,18 +30,47 @@ import { setupHookTimeoutMs } from "./pg-timing";
 let pg: EphemeralPostgres;
 let auth: Sql; // webhook_auth — the identity role the RPC uses
 let owner: Sql; // seeds "user"/"session"/"verification" rows
+let app: Sql; // webhook_app — the tenant role, which must have NO access to the OTP-hash table
 
 beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
   auth = createClient(pg.urlFor({ role: DB_ROLES.auth }));
   owner = createClient(pg.urlFor({ role: DB_ROLES.owner }));
+  app = createClient(pg.urlFor({ role: DB_ROLES.app }));
 }, setupHookTimeoutMs());
 
 afterAll(async () => {
   await auth?.end();
   await owner?.end();
+  await app?.end();
   await pg?.stop();
+});
+
+describe("pending_email_change privileges (OTP hashes are webhook_auth-only)", () => {
+  it("DENIES webhook_app every DML — the tenant/app role can never read or write the OTP hash", async () => {
+    // No grant to webhook_app (0081 grants webhook_auth only), so each of these raises "permission denied".
+    await expect(app`select * from pending_email_change`).rejects.toThrow(/permission denied/i);
+    await expect(
+      app`insert into pending_email_change (user_id, new_email, code_hash, expires_at)
+          values ('u', 'x@e.test', '\\x00', now())`,
+    ).rejects.toThrow(/permission denied/i);
+    await expect(app`update pending_email_change set attempts = 1`).rejects.toThrow(
+      /permission denied/i,
+    );
+    await expect(app`delete from pending_email_change`).rejects.toThrow(/permission denied/i);
+  });
+
+  it("still lets webhook_auth round-trip (the grant is present for the runtime role)", async () => {
+    const u = await seedUser(`priv-${randomUUID().slice(0, 8)}@e.test`);
+    await upsertPendingEmailChange(auth, {
+      userId: u,
+      newEmail: "n@e.test",
+      codeHash: new Uint8Array([1, 2, 3]),
+      expiresAt: new Date(Date.now() + 600_000),
+    });
+    expect((await readPendingEmailChange(auth, u))?.newEmail).toBe("n@e.test");
+  });
 });
 
 async function seedUser(email: string): Promise<string> {

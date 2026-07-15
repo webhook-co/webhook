@@ -65,12 +65,17 @@ export async function commitEmailChangeAction(
 
   // Re-mint THIS browser's cookie with the new email so it's live app-wide immediately (the other IdP sessions
   // were revoked auth-side; other stateless dashboard cookies expire at their own deadline). A re-mint failure
-  // is not fatal — the email already changed; it will reflect on next login.
-  await remintSessionForProfile({
-    name: session.user.name,
-    email: result.newEmail,
-    image: session.user.image,
-  });
+  // is NOT fatal — the email already changed and will reflect on next login — so it must never turn the
+  // committed change into a reported failure (same reasoning as the audit + notice below).
+  try {
+    await remintSessionForProfile({
+      name: session.user.name,
+      email: result.newEmail,
+      image: session.user.image,
+    });
+  } catch (error) {
+    logActionError("email_change.remint", error);
+  }
 
   // Best-effort, PII-free audit to the user's personal-org hash chain: records that user X changed their email
   // at time T (no addresses in metadata). Never fail the change over the audit append.

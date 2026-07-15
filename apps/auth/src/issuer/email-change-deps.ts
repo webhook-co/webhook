@@ -54,6 +54,31 @@ const VERIFY_RULE = { limit: 10, windowSeconds: 900 } as const;
 const OTP_TTL_SECONDS = 600; // 10 minutes
 const MAX_ATTEMPTS = 5;
 
+type RlDeps = { kv: RateLimitKv; nowSeconds: () => number };
+
+/**
+ * The SEND throttle FAILS OPEN — a KV blip must not block a legitimate re-request (the exposure is bounded by
+ * the window + hashed key + write-protected KV). Exported so the fail-open direction is pinned by a test:
+ * swapping it to fail-closed would degrade availability, but swapping VERIFY's fail-closed to fail-open would
+ * reopen OTP guessing — so both catches are load-bearing and tested.
+ */
+export async function rateLimitSendAllowed(deps: RlDeps, userId: string): Promise<boolean> {
+  try {
+    return (await consumeRateLimit(deps, `email-change:send:${userId}`, SEND_RULE)).allowed;
+  } catch {
+    return true;
+  }
+}
+
+/** The VERIFY (guess) throttle FAILS CLOSED — a KV fault must never become an open guessing window. */
+export async function rateLimitVerifyAllowed(deps: RlDeps, userId: string): Promise<boolean> {
+  try {
+    return (await consumeRateLimit(deps, `email-change:verify:${userId}`, VERIFY_RULE)).allowed;
+  } catch {
+    return false;
+  }
+}
+
 function makeOps(
   authClient: ReturnType<typeof createClient>,
   kv: RateLimitKv,
@@ -72,31 +97,13 @@ function makeOps(
     },
     emailInUseByAnother: (email, exceptUserId) =>
       emailInUseByAnother(authClient, { email, exceptUserId }),
-    // Send throttle FAILS OPEN — availability beats a strict limit during a KV blip (bounded window + hashed key).
-    rateLimitSend: async (userId) => {
-      try {
-        return (
-          await consumeRateLimit({ kv, nowSeconds }, `email-change:send:${userId}`, SEND_RULE)
-        ).allowed;
-      } catch {
-        return true;
-      }
-    },
+    rateLimitSend: (userId) => rateLimitSendAllowed({ kv, nowSeconds }, userId),
     generateOtp: () => generateOtp((n) => crypto.getRandomValues(new Uint8Array(n))),
     hashOtp: (userId, code) => hashOtp(pepper, userId, code),
     upsertPending: (input) => upsertPendingEmailChange(authClient, input),
     sendOtpEmail: (to, code) => sendEmailChangeOtp(senderDeps, { to, code }),
     readPending: (userId) => readPendingEmailChange(authClient, userId),
-    // Verify throttle FAILS CLOSED — a KV fault on the guess path must never become an open guessing window.
-    rateLimitVerify: async (userId) => {
-      try {
-        return (
-          await consumeRateLimit({ kv, nowSeconds }, `email-change:verify:${userId}`, VERIFY_RULE)
-        ).allowed;
-      } catch {
-        return false;
-      }
-    },
+    rateLimitVerify: (userId) => rateLimitVerifyAllowed({ kv, nowSeconds }, userId),
     bumpAttempts: (userId) => bumpPendingEmailChangeAttempts(authClient, userId),
     otpMatches,
     commitEmail: async (userId, newEmail) => {
