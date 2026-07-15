@@ -866,4 +866,65 @@ describe("listen command — TUI hand-off (interactive TTY)", () => {
     // The acked cursor rode the tunnel (the loop still acks under the TUI).
     expect(t.sent).toContain(JSON.stringify({ type: "ack", cursor: "c1" }));
   });
+
+  // Drive a TUI listen up to a selected event, press `o`, and return the URLs io.openBrowser saw. Exercises
+  // the REAL wiring in listen.ts (effective-org → resolveSlug → makeOpenEventEffect), not just the pure
+  // pieces — a regression that reverts to `/events/<id>` or trusts the local store org for an env key would
+  // be caught here.
+  async function pressOpenOnListen(opts: {
+    store: CredentialStore;
+    env?: Record<string, string | undefined>;
+  }): Promise<string[]> {
+    const t = fakeTunnel();
+    let keys: RawInputHandlers | undefined;
+    const opened: string[] = [];
+    const { ctx } = makeTestContext({
+      isTTY: true,
+      store: opts.store,
+      env: opts.env,
+      connectWebSocket: t.connect,
+      openBrowser: async (u) => void opened.push(u),
+      startRawInput: (h) => {
+        keys = h;
+        return { close: () => undefined };
+      },
+    });
+    const p = run(app, ["listen", EP], ctx);
+    await tick();
+    t.h().onOpen();
+    t.h().onMessage(encodeServerFrame({ type: "ready", sessionId: "s", watermarkDeltaMs: 5000 }));
+    t.h().onMessage(encodeServerFrame({ type: "event", summary: summary(), cursor: "c1" }));
+    await tick();
+    keys?.onKey("o"); // open the selected event in the dashboard
+    await tick();
+    keys?.onKey("q");
+    await p;
+    return opened;
+  }
+
+  function storeWithOrg(slug: string | undefined): CredentialStore {
+    const store = loggedInStore();
+    store.getOrg = async () =>
+      slug === undefined ? undefined : { id: "org_1", slug, name: "Acme" };
+    return store;
+  }
+
+  it("the `o` key opens the correct /org/<slug>/endpoints/<endpointId>/events/<eventId> deep-link", async () => {
+    const opened = await pressOpenOnListen({ store: storeWithOrg("acme") });
+    expect(opened).toEqual([`https://app.webhook.co/org/acme/endpoints/${EP}/events/${EV}`]);
+  });
+
+  it("the `o` key does NOT open a link (shows guidance) when there is no persisted org", async () => {
+    const opened = await pressOpenOnListen({ store: storeWithOrg(undefined) });
+    expect(opened).toEqual([]);
+  });
+
+  it("under WBHK_API_KEY, the `o` key NEVER opens a link built from the local store org (env-guarded)", async () => {
+    // the local store holds a different org — an env key's real org is server-side, so it must be ignored
+    const opened = await pressOpenOnListen({
+      store: storeWithOrg("wrong-local-org"),
+      env: { WBHK_API_KEY: "whk_env" },
+    });
+    expect(opened).toEqual([]); // no wrong-org 404 link
+  });
 });
