@@ -2,6 +2,12 @@
 
 import * as React from "react";
 
+import {
+  getAvatarVersion,
+  getServerAvatarVersion,
+  subscribeAvatarVersion,
+} from "@/lib/avatar-version";
+
 function initials(name: string, email: string): string {
   const source = name.trim() || email.trim();
   const parts = source.split(/\s+/).filter(Boolean);
@@ -41,6 +47,23 @@ export function UserAvatar({ name, email, size = 26, className }: UserAvatarProp
   const [hasImage, setHasImage] = React.useState(true);
   const ref = React.useRef<HTMLImageElement>(null);
 
+  // Every avatar on the page reads ONE shared version counter. A successful upload bumps it (see
+  // `@/lib/avatar-version`), which re-renders every instance — nav, greeting, this card — with a fresh `?v=` so
+  // they all refetch at once. SSR snapshot is 0, so the server emits the canonical `/api/avatar`.
+  const version = React.useSyncExternalStore(
+    subscribeAvatarVersion,
+    getAvatarVersion,
+    getServerAvatarVersion,
+  );
+
+  // A version bump means a fresh upload just landed — re-attempt the image even if a previous load had 404'd
+  // us down to initials (a user who had no avatar and just added one must see it, not their initials).
+  React.useEffect(() => {
+    if (version) setHasImage(true);
+  }, [version]);
+
+  const src = version ? `/api/avatar?v=${version}` : "/api/avatar";
+
   // `onError` ALONE IS NOT ENOUGH, and this is the whole subtlety of the component.
   //
   // The <img> is SERVER-RENDERED. The browser sees it in the HTML and starts loading it during parse — long
@@ -73,7 +96,7 @@ export function UserAvatar({ name, email, size = 26, className }: UserAvatarProp
         // It would add machinery and change nothing.
         <img
           ref={ref}
-          src="/api/avatar"
+          src={src}
           alt=""
           width={size}
           height={size}

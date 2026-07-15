@@ -1,5 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+
+import { __resetAvatarVersionForTests, bumpAvatarVersion } from "@/lib/avatar-version";
 
 import { UserAvatar } from "./user-avatar";
 
@@ -25,6 +27,9 @@ afterEach(() => {
   delete HTMLImageElement.prototype.complete;
   // @ts-expect-error — ditto.
   delete HTMLImageElement.prototype.naturalWidth;
+  // The shared avatar-version counter only moves forward; reset it so a bump in one test doesn't leak a `?v=`
+  // into the next (whose assertions expect the canonical bare URL).
+  __resetAvatarVersionForTests();
 });
 
 const avatar = () => document.querySelector('img[src="/api/avatar"]');
@@ -41,6 +46,19 @@ describe("UserAvatar", () => {
     // Same-origin. The CSP is `img-src 'self'`, and a hotlinked Gravatar would beacon the user's IP and
     // referring page to a third party on every single page view.
     expect(avatar()).toHaveAttribute("src", "/api/avatar");
+  });
+
+  it("cache-busts every instance with ?v= when the shared version bumps (a fresh upload)", () => {
+    render(<UserAvatar name="Dana Kessler" email="dana@acme.co" />);
+    // Before any upload: the canonical, input-less URL — the serve route (max-age=60) caches it, so the ONLY
+    // way to force the browser off its cached copy right after an upload is to change the URL.
+    expect(avatar()).toHaveAttribute("src", "/api/avatar");
+
+    act(() => bumpAvatarVersion());
+
+    // Now the shared counter moved → this instance (and every other on the page) refetches via a fresh ?v=.
+    expect(document.querySelector('img[src^="/api/avatar?v="]')).not.toBeNull();
+    expect(avatar()).toBeNull(); // no bare /api/avatar — the versioned URL replaced it
   });
 
   it("drops the image when it fails after hydration", () => {

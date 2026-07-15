@@ -2,6 +2,7 @@ import { Card, CardContent, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { DeleteAccountCard } from "@/components/delete-account-card";
+import { EditableAvatar } from "@/components/editable-avatar";
 import { EditableDisplayName } from "@/components/editable-display-name";
 import { updateDisplayNameAction } from "@/server/profile-actions";
 import { verifySession } from "@/server/session";
@@ -31,11 +32,16 @@ export default async function AccountProfilePage() {
       </div>
 
       <Card>
-        <CardContent>
+        {/* CardContent defaults to `pt-0` (it expects a CardHeader above it); this card has none, so restore
+            the top padding or the identity row is cramped against the card's top edge. */}
+        <CardContent className="pt-6">
           <EditableDisplayName
             name={session.user.name}
             email={session.user.email}
             onSave={updateDisplayNameAction}
+            avatar={
+              <EditableAvatar name={session.user.name} email={session.user.email} size={48} />
+            }
           />
         </CardContent>
       </Card>
