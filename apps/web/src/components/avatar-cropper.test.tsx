@@ -73,6 +73,26 @@ describe("AvatarCropperDialog", () => {
     await waitFor(() => expect(onUploaded).toHaveBeenCalledOnce());
   });
 
+  it("uses an injected `upload` transport when given one (the org-logo reuse path)", async () => {
+    const upload = vi.fn(async () => ({ ok: true as const }));
+    render(
+      <AvatarCropperDialog
+        open
+        onOpenChange={onOpenChange}
+        onUploaded={onUploaded}
+        upload={upload}
+      />,
+    );
+    chooseFile();
+    fireEvent.click(await screen.findByRole("button", { name: /save|use photo|upload/i }));
+
+    await waitFor(() => expect(upload).toHaveBeenCalledOnce());
+    // The injected transport got the re-encoded webp; the DEFAULT avatar transport was NOT used.
+    expect((upload.mock.calls[0][0] as Blob).type).toBe("image/webp");
+    expect(uploadAvatarWebp).not.toHaveBeenCalled();
+    await waitFor(() => expect(onUploaded).toHaveBeenCalledOnce());
+  });
+
   it("shows the server's error and does NOT signal success when the upload fails", async () => {
     uploadAvatarWebp.mockResolvedValue({
       ok: false,

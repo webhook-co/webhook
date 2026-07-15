@@ -4,7 +4,9 @@ import {
   avatarR2Key,
   endpointPrefix,
   isWellFormedAvatarKey,
+  isWellFormedOrgLogoKey,
   isWellFormedPayloadKey,
+  orgLogoR2Key,
   payloadR2Key,
   readPayloadKey,
 } from "./r2";
@@ -109,5 +111,25 @@ describe("avatarR2Key + isWellFormedAvatarKey", () => {
     expect(isWellFormedAvatarKey("user/a/b/avatar.webp")).toBe(false); // extra segment
     expect(isWellFormedAvatarKey("org/x/avatar.webp")).toBe(false); // wrong prefix
     expect(isWellFormedAvatarKey("user/a b/avatar.webp")).toBe(false); // illegal char
+  });
+});
+
+describe("orgLogoR2Key + isWellFormedOrgLogoKey", () => {
+  const UUID = "9b5ac09c-b60c-4998-9b95-51dd53dec8da";
+
+  it("builds the deterministic per-org key", () => {
+    expect(orgLogoR2Key(UUID)).toBe(`org/${UUID}/logo.webp`);
+  });
+
+  it("accepts exactly the org-logo shape (UUID-strict) and rejects anything else", () => {
+    expect(isWellFormedOrgLogoKey(`org/${UUID}/logo.webp`)).toBe(true);
+    // UUID-strict: the org id is a real uuid column, so the fence is stricter than the avatar's.
+    expect(isWellFormedOrgLogoKey("org/not-a-uuid/logo.webp")).toBe(false);
+    expect(isWellFormedOrgLogoKey(`org/${UUID}/logo.png`)).toBe(false); // wrong ext
+    expect(isWellFormedOrgLogoKey(`org/${UUID}/avatar.webp`)).toBe(false); // wrong leaf
+    expect(isWellFormedOrgLogoKey(`user/${UUID}/logo.webp`)).toBe(false); // wrong prefix
+    expect(isWellFormedOrgLogoKey(`org/${UUID}/x/logo.webp`)).toBe(false); // extra segment
+    // Must never collide with the payload prefix (also org/{uuid}/…).
+    expect(isWellFormedOrgLogoKey(`org/${UUID}/ep/${UUID}/${"a".repeat(64)}`)).toBe(false);
   });
 });

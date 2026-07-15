@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { uploadAvatarWebp } from "./avatar-upload";
+import { removeOrgLogo, uploadAvatarWebp, uploadOrgLogoWebp } from "./avatar-upload";
 
 const fetchMock = vi.fn();
 
@@ -70,5 +70,48 @@ describe("uploadAvatarWebp", () => {
     await uploadAvatarWebp(webp(), { signal: ctrl.signal });
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     expect(init.signal).toBe(ctrl.signal);
+  });
+
+  it("posts to a custom endpoint when one is given (org logo reuse)", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await uploadAvatarWebp(webp(), { endpoint: "/api/org-logo/acme/upload" });
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/org-logo/acme/upload");
+  });
+});
+
+describe("uploadOrgLogoWebp", () => {
+  it("POSTs to the slug-scoped org-logo route (slug url-encoded)", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const res = await uploadOrgLogoWebp(webp(), { slug: "a b" });
+    expect(res.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/org-logo/a%20b/upload");
+    expect(init.method).toBe("POST");
+    expect(new Headers(init.headers).get("content-type")).toBe("image/webp");
+  });
+});
+
+describe("removeOrgLogo", () => {
+  it("DELETEs the slug-scoped route, same-origin", async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    const res = await removeOrgLogo("acme");
+    expect(res.ok).toBe(true);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/org-logo/acme/upload");
+    expect(init.method).toBe("DELETE");
+    expect(init.credentials).toBe("same-origin");
+  });
+
+  it("maps a failure status to a friendly message", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 403 }));
+    const res = await removeOrgLogo("acme");
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toMatch(/session|sign|refresh/i);
+  });
+
+  it("treats a thrown fetch as a friendly failure", async () => {
+    fetchMock.mockRejectedValue(new Error("offline"));
+    const res = await removeOrgLogo("acme");
+    expect(res.ok).toBe(false);
   });
 });

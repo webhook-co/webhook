@@ -13,7 +13,7 @@ import {
 import dynamic from "next/dynamic";
 import * as React from "react";
 
-import { uploadAvatarWebp } from "@/lib/avatar-upload";
+import { uploadAvatarWebp, type UploadResult } from "@/lib/avatar-upload";
 import { fileToDataUrl, getCroppedWebp, type PixelCrop } from "@/lib/crop-image";
 
 // react-easy-crop is ~client-only and not tiny — load it only when the dialog actually opens, never on the
@@ -37,19 +37,34 @@ const ACCEPT = "image/png,image/jpeg,image/webp";
 export interface AvatarCropperDialogProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  /** Fired after the new avatar is stored — the caller re-renders + cache-busts. */
+  /** Fired after the new image is stored — the caller re-renders + cache-busts. */
   readonly onUploaded: () => void;
+  /** The transport. Defaults to the user-avatar upload; an org logo passes its slug-scoped uploader. */
+  readonly upload?: (blob: Blob, opts: { signal?: AbortSignal }) => Promise<UploadResult>;
+  readonly title?: React.ReactNode;
+  readonly description?: React.ReactNode;
+  /** Crop mask shape. "round" for a face; "rect" (square, slightly rounded) for an org logo. */
+  readonly cropShape?: "round" | "rect";
 }
 
 /**
- * Pick a photo → crop/zoom it to a circle → store it. The heavy lifting (canvas re-encode to a square 512×512
- * webp, EXIF stripped) lives in `@/lib/crop-image`; the transport (raw-webp POST, same-origin) in
- * `@/lib/avatar-upload`. This component is the glue and the UI state machine.
+ * Pick an image → crop/zoom it → store it. The heavy lifting (canvas re-encode to a square 512×512 webp, EXIF
+ * stripped) lives in `@/lib/crop-image`; the transport (raw-webp POST, same-origin) defaults to
+ * `@/lib/avatar-upload` but is injectable (org logos reuse this same dialog). This component is the glue and
+ * the UI state machine.
  *
  * The crop/pinch/zoom TOUCH FEEL is the one thing here that a machine can't sign off — it needs a human on a
  * real device. Everything up to and including "the right bytes reach the server" is covered by tests.
  */
-export function AvatarCropperDialog({ open, onOpenChange, onUploaded }: AvatarCropperDialogProps) {
+export function AvatarCropperDialog({
+  open,
+  onOpenChange,
+  onUploaded,
+  upload = uploadAvatarWebp,
+  title = "Change your photo",
+  description = "Upload a square-ish image, then drag and zoom to frame it. It’s cropped to a circle.",
+  cropShape = "round",
+}: AvatarCropperDialogProps) {
   const [imageSrc, setImageSrc] = React.useState<string | null>(null);
   const [crop, setCrop] = React.useState({ x: 0, y: 0 });
   const [zoom, setZoom] = React.useState(1);
@@ -102,7 +117,7 @@ export function AvatarCropperDialog({ open, onOpenChange, onUploaded }: AvatarCr
     }
     const controller = new AbortController();
     abortRef.current = controller;
-    const res = await uploadAvatarWebp(blob, { signal: controller.signal });
+    const res = await upload(blob, { signal: controller.signal });
     if (res.ok) {
       reset();
       onUploaded();
@@ -116,10 +131,8 @@ export function AvatarCropperDialog({ open, onOpenChange, onUploaded }: AvatarCr
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Change your photo</DialogTitle>
-          <DialogDescription>
-            Upload a square-ish image, then drag and zoom to frame it. It’s cropped to a circle.
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
@@ -132,7 +145,7 @@ export function AvatarCropperDialog({ open, onOpenChange, onUploaded }: AvatarCr
                   crop={crop}
                   zoom={zoom}
                   aspect={1}
-                  cropShape="round"
+                  cropShape={cropShape}
                   showGrid={false}
                   onCropChange={setCrop}
                   onZoomChange={setZoom}

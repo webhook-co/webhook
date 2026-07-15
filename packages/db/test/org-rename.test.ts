@@ -7,11 +7,13 @@ import { createClient, withTenant, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
 import {
   createOrgWithOwner,
+  getOrgImageKey,
   InvalidOrgSlugError,
   listUserOrgs,
   renameOrg,
   RenameForbiddenError,
   SlugTakenError,
+  updateOrgImageKey,
 } from "../src/orgs";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -58,6 +60,66 @@ async function seedTeam(slug: string): Promise<{ orgId: string; ownerId: string 
   });
   return { orgId: id, ownerId };
 }
+
+describe("updateOrgImageKey", () => {
+  const logoKey = (orgId: string) => `org/${orgId}/logo.webp`;
+
+  async function readImageKey(orgId: string): Promise<string | null> {
+    const [row] = await withTenant(
+      app,
+      orgId,
+      (tx) => tx<{ image_key: string | null }[]>`select image_key from orgs where id = ${orgId}`,
+    );
+    return row?.image_key ?? null;
+  }
+
+  it("sets, then clears, the org's logo pointer under the pinned tenant", async () => {
+    const { orgId } = await seedTeam(`logo-${randomUUID().slice(0, 6)}`);
+    expect(await readImageKey(orgId)).toBeNull(); // no logo at creation
+
+    await updateOrgImageKey(app, orgId, logoKey(orgId));
+    expect(await readImageKey(orgId)).toBe(logoKey(orgId));
+
+    await updateOrgImageKey(app, orgId, null); // remove
+    expect(await readImageKey(orgId)).toBeNull();
+  });
+
+  it("only ever touches the pinned org — RLS keeps a stray id from writing another tenant's row", async () => {
+    const a = await seedTeam(`logo-a-${randomUUID().slice(0, 6)}`);
+    const b = await seedTeam(`logo-b-${randomUUID().slice(0, 6)}`);
+
+    // withTenant pins org A; even handed org B's id, RLS (org_id = current_org_id()) matches no row, so B is
+    // untouched and A's logo is unchanged (the UPDATE's WHERE finds nothing under A's tenant).
+    await updateOrgImageKey(app, a.orgId, logoKey(a.orgId));
+    await withTenant(
+      app,
+      a.orgId,
+      (tx) => tx`update orgs set image_key = ${"tampered"} where id = ${b.orgId}`,
+    );
+    expect(await readImageKey(b.orgId)).toBeNull();
+  });
+
+  it("getOrgImageKey reads back the pinned org's pointer — null, then the key, then null again", async () => {
+    const { orgId } = await seedTeam(`logo-r-${randomUUID().slice(0, 6)}`);
+    expect(await getOrgImageKey(app, orgId)).toBeNull();
+
+    await updateOrgImageKey(app, orgId, logoKey(orgId));
+    expect(await getOrgImageKey(app, orgId)).toBe(logoKey(orgId));
+
+    await updateOrgImageKey(app, orgId, null);
+    expect(await getOrgImageKey(app, orgId)).toBeNull();
+  });
+
+  it("getOrgImageKey reads each org's OWN pointer, never a neighbour's", async () => {
+    const a = await seedTeam(`logo-ra-${randomUUID().slice(0, 6)}`);
+    const b = await seedTeam(`logo-rb-${randomUUID().slice(0, 6)}`);
+    await updateOrgImageKey(app, a.orgId, logoKey(a.orgId));
+    // B has no logo. Each call pins to its own org (RLS + `where id`), so A sees A's key and B sees null —
+    // one org's pointer never bleeds into the other's read.
+    expect(await getOrgImageKey(app, a.orgId)).toBe(logoKey(a.orgId));
+    expect(await getOrgImageKey(app, b.orgId)).toBeNull();
+  });
+});
 
 describe("createOrgWithOwner", () => {
   it("creates the org + owner membership and writes an org_created audit row", async () => {
