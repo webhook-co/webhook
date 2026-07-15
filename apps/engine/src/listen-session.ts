@@ -16,6 +16,8 @@ import {
   encodeCursor,
   encodeServerFrame,
   importCursorKey,
+  LISTEN_KEEPALIVE_PING,
+  LISTEN_KEEPALIVE_PONG,
   msToOrderKey,
   orderKeyLagMs,
   parseClientFrame,
@@ -175,8 +177,11 @@ export class ListenSession extends DurableObject<ListenEnv> {
     ctx.blockConcurrencyWhile(async () => {
       this.cursorKey = await importCursorKey(b64ToBytes(await readSecretBinding(env.CURSOR_KEY)));
     });
-    // Protocol ping/pong is auto-answered without waking the DO — a hibernation-friendly keepalive.
-    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    // A `ping` DATA MESSAGE is auto-answered with `pong` without waking the DO — a hibernation-friendly
+    // keepalive the CLI drives on an idle interval. Same shared constants the CLI sends (no drift).
+    ctx.setWebSocketAutoResponse(
+      new WebSocketRequestResponsePair(LISTEN_KEEPALIVE_PING, LISTEN_KEEPALIVE_PONG),
+    );
   }
 
   override async fetch(request: Request): Promise<Response> {
