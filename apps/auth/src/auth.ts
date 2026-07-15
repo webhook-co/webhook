@@ -42,6 +42,9 @@ export const auth = betterAuth({
       firstName: { type: "string", required: false },
       lastName: { type: "string", required: false },
       onboardedAt: { type: "date", required: false },
+      // The R2 object key of the user's uploaded avatar (migration 0078). Distinct from Better Auth's core
+      // `image` (a provider avatar URL, clobbered on each social login).
+      imageKey: { type: "string", required: false },
     },
   },
   plugins: [apiKey()],

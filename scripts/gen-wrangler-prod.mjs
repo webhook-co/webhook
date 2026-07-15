@@ -93,6 +93,7 @@ const TOKEN = {
   "<STRIPE_PORTAL_CONFIGURATION_ID>": process.env.STRIPE_PORTAL_CONFIGURATION_ID ?? "",
   "webhook-payloads-dev": "webhook-payloads-prod",
   "webhook-audit-anchors-dev": "webhook-audit-anchors-prod",
+  "webhook-avatars-dev": "webhook-avatars-prod",
 };
 
 const SHARED = ["CREDENTIAL_PEPPER", "CURSOR_KEY", "AUDIT_CHAIN_HMAC_KEY"];
@@ -285,6 +286,7 @@ const APPS = {
       "<STRIPE_PLANS>",
       "<STRIPE_PORTAL_CONFIGURATION_ID>",
       "webhook-payloads-dev",
+      "webhook-avatars-dev",
     ],
     // AUTH_SESSION_EXCHANGE — the web→auth service binding to auth.'s SessionExchange WorkerEntrypoint, so the
     // app. session handoff redeems its single-use ticket over a private RPC instead of the public

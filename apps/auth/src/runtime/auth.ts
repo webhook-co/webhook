@@ -162,6 +162,10 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
         firstName: { type: "string", required: false, input: true },
         lastName: { type: "string", required: false, input: true },
         onboardedAt: { type: "date", required: false, input: false },
+        // `input: false` like onboardedAt: the avatar pointer is written ONLY by the app over the identity RPC
+        // (after it validated + stored the image in R2), NEVER by a client — a client-settable image key could
+        // point the served avatar at someone else's / an arbitrary R2 object.
+        imageKey: { type: "string", required: false, input: false },
       },
     },
     socialProviders: {

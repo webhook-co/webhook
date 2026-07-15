@@ -12,16 +12,23 @@
 import type {
   CompleteOnboardingResult,
   OnboardingStateDto,
+  UpdateImageKeyResult,
   UpdateNameResult,
 } from "@webhook-co/contract";
 import {
   completeOnboarding,
   createClient,
   readOnboardingState,
+  updateUserImageKey,
   updateUserName,
 } from "@webhook-co/db";
 
-export type { CompleteOnboardingResult, OnboardingStateDto, UpdateNameResult };
+export type {
+  CompleteOnboardingResult,
+  OnboardingStateDto,
+  UpdateImageKeyResult,
+  UpdateNameResult,
+};
 
 /** The minimal env the onboarding RPC needs: the webhook_auth Hyperdrive over the identity realm. */
 export interface OnboardingEnv {
@@ -85,6 +92,24 @@ export async function updateNameRpc(
   const authClient = createClient(env.HYPERDRIVE_AUTH.connectionString, { max: 1 });
   try {
     const updated = await updateUserName(authClient, { userId: input.userId, name: input.name });
+    return { updated };
+  } finally {
+    await authClient.end();
+  }
+}
+
+/** Point (or clear) the user's uploaded-avatar R2 key, as webhook_auth. The route handler has already
+ *  validated + stored the object; this is the identity-realm pointer write. */
+export async function updateImageKeyRpc(
+  env: OnboardingEnv,
+  input: { userId: string; imageKey: string | null },
+): Promise<UpdateImageKeyResult> {
+  const authClient = createClient(env.HYPERDRIVE_AUTH.connectionString, { max: 1 });
+  try {
+    const updated = await updateUserImageKey(authClient, {
+      userId: input.userId,
+      imageKey: input.imageKey,
+    });
     return { updated };
   } finally {
     await authClient.end();

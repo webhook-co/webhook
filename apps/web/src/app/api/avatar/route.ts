@@ -1,4 +1,7 @@
+import { avatarR2Key } from "@webhook-co/shared";
+
 import { resolveAvatarSource } from "@/server/avatar";
+import { getAvatarBucket } from "@/server/avatar-r2";
 import { verifySession } from "@/server/session";
 
 // Fetches an upstream image per request; never statically optimized.
@@ -51,6 +54,30 @@ const NO_AVATAR = () =>
 export async function GET(): Promise<Response> {
   // The gate. Also the ONLY source of input: an avatar is a fact about the caller, not a lookup.
   const session = await verifySession();
+
+  // An UPLOADED avatar wins over the proxied provider image. The key is derived from the (verified) session
+  // userId — no input, no DB read; the bucket is private (Worker-binding only), so no other user's object is
+  // reachable. The stored bytes were validated to be webp on upload, so we FORCE `image/webp` + `nosniff`
+  // (never echo/sniff) — a surprise body can never be active content on our origin.
+  const bucket = await getAvatarBucket();
+  if (bucket) {
+    try {
+      const obj = await bucket.get(avatarR2Key(session.userId));
+      if (obj) {
+        return new Response(await obj.arrayBuffer(), {
+          status: 200,
+          headers: {
+            "Content-Type": "image/webp",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, max-age=3600",
+            Vary: "Cookie",
+          },
+        });
+      }
+    } catch {
+      // R2 hiccup — fall through to the proxied provider image rather than fail the avatar.
+    }
+  }
 
   const source = await resolveAvatarSource({
     image: session.user.image,

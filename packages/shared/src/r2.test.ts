@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { endpointPrefix, isWellFormedPayloadKey, payloadR2Key, readPayloadKey } from "./r2";
+import {
+  avatarR2Key,
+  endpointPrefix,
+  isWellFormedAvatarKey,
+  isWellFormedPayloadKey,
+  payloadR2Key,
+  readPayloadKey,
+} from "./r2";
 
 const org = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const ep = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
@@ -87,5 +94,20 @@ describe("isWellFormedPayloadKey — the orphan-sweep prefix fence (S6c-iii)", (
     expect(isWellFormedPayloadKey(`${good}/extra`)).toBe(false); // trailing segment
     expect(isWellFormedPayloadKey(`prefix/${good}`)).toBe(false); // leading segment
     expect(isWellFormedPayloadKey(undefined as unknown as string)).toBe(false);
+  });
+});
+
+describe("avatarR2Key + isWellFormedAvatarKey", () => {
+  it("builds the deterministic per-user key", () => {
+    expect(avatarR2Key("user_abc-123")).toBe("user/user_abc-123/avatar.webp");
+  });
+
+  it("accepts exactly the avatar shape and rejects anything else (orphan-sweep fence)", () => {
+    expect(isWellFormedAvatarKey("user/user_abc-123/avatar.webp")).toBe(true);
+    expect(isWellFormedAvatarKey("user//avatar.webp")).toBe(false); // empty id
+    expect(isWellFormedAvatarKey("user/x/avatar.png")).toBe(false); // wrong ext
+    expect(isWellFormedAvatarKey("user/a/b/avatar.webp")).toBe(false); // extra segment
+    expect(isWellFormedAvatarKey("org/x/avatar.webp")).toBe(false); // wrong prefix
+    expect(isWellFormedAvatarKey("user/a b/avatar.webp")).toBe(false); // illegal char
   });
 });

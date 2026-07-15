@@ -111,6 +111,13 @@
       "binding": "R2_PROVIDER_ICONS",
       "bucket_name": "webhook-provider-icons",
     },
+    {
+      // Uploaded user avatars (private, per-user, one webp object per user). Env-SPLIT like R2_PAYLOADS —
+      // the `-dev` name here is rewritten to `-prod` by the deploy overlay (token map + placeholders in
+      // gen-wrangler-prod.mjs), NOT env-agnostic like the provider-icons bucket.
+      "binding": "R2_AVATARS",
+      "bucket_name": "webhook-avatars-dev",
+    },
   ],
   // AUTH_SESSION_EXCHANGE — the service binding to auth.'s SessionExchange WorkerEntrypoint, so /auth/callback
   // redeems the A-SX handoff ticket over a direct RPC instead of a public `POST /session/exchange` (the public
