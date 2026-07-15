@@ -58,7 +58,8 @@ export async function evaluateOrgCap(
   const periodUsage = await sumPeriodEventUsage(tx, period, args.now);
   const [limits] = await tx<{ event_cap: string | null; pause_policy: PausePolicy }[]>`
     select event_cap, pause_policy from org_limits`;
-  const [pauseRow] = await tx<{ paused: boolean }[]>`select paused from ingest_paused`;
+  const [pauseRow] = await tx<{ paused: boolean; reason: string | null }[]>`
+    select paused, reason from ingest_paused`;
 
   // No org_limits row → Free default (injected); a row → its own cap/policy (event_cap null = uncapped).
   const eventCap = limits
@@ -72,6 +73,15 @@ export async function evaluateOrgCap(
   const current = pauseRow?.paused ?? false;
   if (want === current) {
     return { transition: null, paused: current, periodUsage, eventCap, pausePolicy, period };
+  }
+
+  // NON-CLOBBER (PR2b): an org paused for `free_org_cap` was disabled by the free-org-cap reconciler, NOT by
+  // event volume. The cap producer reasons only about usage, so on a would-be RESUME (want=false) it must NOT
+  // lift that pause — doing so would silently un-suspend an org the reconciler disabled. Leave it exactly as
+  // the reconciler set it; the reconciler owns the resume when the user restores. (A want=TRUE can't happen
+  // here on a free_org_cap row — it's already paused, so want===current short-circuited above.)
+  if (want === false && pauseRow?.reason === "free_org_cap") {
+    return { transition: null, paused: true, periodUsage, eventCap, pausePolicy, period };
   }
 
   const since = want ? new Date(args.now).toISOString() : null;
