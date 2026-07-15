@@ -153,3 +153,181 @@ export async function updateUserImageKey(
     update "user" set "imageKey" = ${input.imageKey} where "id" = ${input.userId} returning "id"`;
   return rows.length > 0;
 }
+
+// ── Email-change ceremony (PR 8) ─────────────────────────────────────────────────────────────────────────
+// The custom OWASP email-change flow (Better Auth's built-in is not used). All these run as webhook_auth on
+// the identity realm. The OTP HASH lives in `pending_email_change` (0081), readable by webhook_auth ONLY.
+
+/** The new address collides with an existing account (case-insensitively, via the citext `user_email_key`). */
+export class EmailTakenError extends Error {
+  constructor() {
+    super("email already in use");
+    this.name = "EmailTakenError";
+  }
+}
+
+/** A 23505 whose constraint mentions `email` — the citext uniqueness backstop tripping at commit. */
+function isEmailTaken(error: unknown): boolean {
+  const e = error as { code?: unknown; constraint_name?: unknown } | null;
+  return (
+    !!e &&
+    e.code === "23505" &&
+    typeof e.constraint_name === "string" &&
+    e.constraint_name.includes("email")
+  );
+}
+
+/** True if SOME OTHER user already holds this email (citext = case-insensitive). Early check at start-time so
+ *  we don't send an OTP toward a change that can't commit. The commit still re-checks (TOCTOU). */
+export async function emailInUseByAnother(
+  authClient: Sql,
+  input: { email: string; exceptUserId: string },
+): Promise<boolean> {
+  const [row] = await authClient<{ id: string }[]>`
+    select "id" from "user" where "email" = ${input.email} and "id" <> ${input.exceptUserId} limit 1`;
+  return row !== undefined;
+}
+
+/** Upsert the in-flight email change (one per user): store the OTP hash + target + expiry, reset attempts. */
+export async function upsertPendingEmailChange(
+  authClient: Sql,
+  input: { userId: string; newEmail: string; codeHash: Uint8Array; expiresAt: Date },
+): Promise<void> {
+  await authClient`
+    insert into pending_email_change (user_id, new_email, code_hash, expires_at, attempts)
+    values (${input.userId}, ${input.newEmail}, ${Buffer.from(input.codeHash)}, ${input.expiresAt}, 0)
+    on conflict (user_id) do update set
+      new_email = excluded.new_email,
+      code_hash = excluded.code_hash,
+      expires_at = excluded.expires_at,
+      attempts = 0,
+      created_at = now()`;
+}
+
+export interface PendingEmailChange {
+  readonly newEmail: string;
+  readonly codeHash: Buffer;
+  readonly expiresAt: Date;
+  readonly attempts: number;
+}
+
+/** Read the in-flight change for a user (null if none). */
+export async function readPendingEmailChange(
+  authClient: Sql,
+  userId: string,
+): Promise<PendingEmailChange | null> {
+  const [row] = await authClient<
+    { new_email: string; code_hash: Buffer; expires_at: Date; attempts: number }[]
+  >`select new_email, code_hash, expires_at, attempts
+      from pending_email_change where user_id = ${userId} limit 1`;
+  return row
+    ? {
+        newEmail: row.new_email,
+        codeHash: Buffer.from(row.code_hash),
+        expiresAt: row.expires_at,
+        attempts: row.attempts,
+      }
+    : null;
+}
+
+/** Bump the failed-verify counter; returns the NEW count (the verify path locks out after a few misses). */
+export async function bumpPendingEmailChangeAttempts(
+  authClient: Sql,
+  userId: string,
+): Promise<number> {
+  const [row] = await authClient<{ attempts: number }[]>`
+    update pending_email_change set attempts = attempts + 1 where user_id = ${userId} returning attempts`;
+  return row?.attempts ?? 0;
+}
+
+export async function deletePendingEmailChange(authClient: Sql, userId: string): Promise<void> {
+  await authClient`delete from pending_email_change where user_id = ${userId}`;
+}
+
+/**
+ * Commit the change: set the (lowercased) email + mark it verified (the OTP already proved control of the
+ * account, and the address was chosen by the authenticated user). Throws {@link EmailTakenError} on the citext
+ * unique — the TOCTOU backstop against another account taking a case-variant between start and commit.
+ */
+export async function commitEmailChange(
+  authClient: Sql,
+  input: { userId: string; newEmail: string },
+): Promise<boolean> {
+  const email = input.newEmail.toLowerCase();
+  try {
+    const rows = await authClient<{ id: string }[]>`
+      update "user" set "email" = ${email}, "emailVerified" = true
+        where "id" = ${input.userId} returning "id"`;
+    return rows.length > 0;
+  } catch (error) {
+    if (isEmailTaken(error)) throw new EmailTakenError();
+    throw error;
+  }
+}
+
+/**
+ * Revoke the user's IdP sessions — ALL of them. The dashboard runs on a stateless signed cookie that carries
+ * no IdP-session id, so there is no "current" IdP session to keep; the browser doing the change keeps working
+ * on its re-minted cookie until it expires, and no session can be renewed/handed-off after this. Returns the
+ * number of sessions revoked.
+ */
+export async function deleteAllUserSessions(authClient: Sql, userId: string): Promise<number> {
+  const rows = await authClient<{ id: string }[]>`
+    delete from "session" where "userId" = ${userId} returning "id"`;
+  return rows.length;
+}
+
+/**
+ * Kill any in-flight magic-link / email-verification for the given addresses. `verification` is keyed by
+ * `identifier` = the email (no user FK), so on an email change BOTH the old and the new address must be purged
+ * — an outstanding magic link to the OLD address must not survive the change.
+ */
+export async function purgeVerificationsForEmails(
+  authClient: Sql,
+  emails: readonly string[],
+): Promise<void> {
+  if (emails.length === 0) return;
+  await authClient`delete from "verification" where "identifier" in ${authClient(emails as string[])}`;
+}
+
+// ── Login methods (social `account` rows) ────────────────────────────────────────────────────────────────
+
+export interface LoginMethodRow {
+  readonly providerId: string;
+  readonly accountId: string;
+  readonly linkedAt: Date;
+}
+
+/** List a user's linked social sign-ins (rows in `account`), newest first. Read as webhook_auth. */
+export async function listLoginMethods(authClient: Sql, userId: string): Promise<LoginMethodRow[]> {
+  const rows = await authClient<{ providerId: string; accountId: string; createdAt: Date }[]>`
+    select "providerId", "accountId", "createdAt"
+      from "account" where "userId" = ${userId} order by "createdAt" desc`;
+  return rows.map((r) => ({
+    providerId: r.providerId,
+    accountId: r.accountId,
+    linkedAt: r.createdAt,
+  }));
+}
+
+/** How many social sign-ins the user has linked (for the last-method guard). */
+export async function countLoginMethods(authClient: Sql, userId: string): Promise<number> {
+  const [row] = await authClient<{ n: number }[]>`
+    select count(*)::int as n from "account" where "userId" = ${userId}`;
+  return row?.n ?? 0;
+}
+
+/** Remove one linked social sign-in. Returns true if a row was deleted (false if it wasn't there). The
+ *  last-method guard is the CALLER's responsibility — this is the raw delete. */
+export async function unlinkLoginMethod(
+  authClient: Sql,
+  input: { userId: string; providerId: string; accountId: string },
+): Promise<boolean> {
+  const rows = await authClient<{ id: string }[]>`
+    delete from "account"
+      where "userId" = ${input.userId}
+        and "providerId" = ${input.providerId}
+        and "accountId" = ${input.accountId}
+      returning "id"`;
+  return rows.length > 0;
+}

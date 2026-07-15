@@ -111,10 +111,17 @@ export function concatBytes(...arrays: Uint8Array[]): Uint8Array {
  * returned handle — don't re-import per request, and don't retain the raw bytes.
  */
 export function importHmacKey(raw: Uint8Array): Promise<CryptoKey> {
-  return crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, [
-    "sign",
-    "verify",
-  ]);
+  // `as Uint8Array<ArrayBuffer>`: under TS 6's stricter `BufferSource`, a plain `Uint8Array`
+  // (`Uint8Array<ArrayBufferLike>`) isn't assignable because its backing store could in theory be a
+  // SharedArrayBuffer. Our callers always pass a normal ArrayBuffer-backed view; the cast states that
+  // invariant. (Runtime is unaffected — `importKey` accepts any BufferSource.)
+  return crypto.subtle.importKey(
+    "raw",
+    raw as Uint8Array<ArrayBuffer>,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign", "verify"],
+  );
 }
 
 /** The SubtleCrypto digests the verify engine supports (most providers use SHA-256). */

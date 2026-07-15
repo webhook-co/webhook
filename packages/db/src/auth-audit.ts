@@ -38,7 +38,10 @@ export type AuthAuditEventType =
   | "member_role_changed"
   | "member_removed"
   | "org_created"
-  | "org_renamed";
+  | "org_renamed"
+  // A user changed their account email — a security-relevant identity event, written to the user's
+  // personal-org chain (migration 0080 widens the CHECK to match this union).
+  | "email_changed";
 
 /** The hashed control-plane audit fields. seq is the per-org monotonic sequence. */
 export interface AuthAuditEntry {

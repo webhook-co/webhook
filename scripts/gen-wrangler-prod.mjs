@@ -324,6 +324,16 @@ const APPS = {
       // apps/web fails OPEN when it's unbound (dev / pre-provision): resolveOnboarding returns "don't show",
       // so the dashboard still renders — onboarding is a nicety, never a gate that can trap a user.
       { binding: "AUTH_ONBOARDING", service: "webhook-auth", entrypoint: "OnboardingProfile" },
+      // AUTH_EMAIL_CHANGE (PR 8) — the web→auth binding to auth.'s EmailChanger entrypoint, so the email-change
+      // ceremony writes the identity email + revokes sessions + purges verification as webhook_auth (the `user`
+      // table is unwritable from web's webhook_app role). auth. must be LIVE with the EmailChanger entrypoint
+      // first (same deploy-ordering note as SessionExchange); apps/web fails closed (the action returns
+      // "temporarily unavailable") when it's unbound (dev / pre-provision).
+      { binding: "AUTH_EMAIL_CHANGE", service: "webhook-auth", entrypoint: "EmailChanger" },
+      // AUTH_LOGIN_METHODS (PR 8) — the web→auth binding to auth.'s LoginMethods entrypoint, so the security
+      // page lists / unlinks a user's social sign-ins (rows in the identity `account` table). Same
+      // deploy-ordering + fail-closed note as AUTH_EMAIL_CHANGE.
+      { binding: "AUTH_LOGIN_METHODS", service: "webhook-auth", entrypoint: "LoginMethods" },
       {
         binding: "PROVIDER_SECRET_SEALER",
         service: "webhook-engine",
