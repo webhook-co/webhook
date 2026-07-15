@@ -5,7 +5,12 @@ import { createOrgWithOwner, InvalidOrgSlugError, SlugTakenError } from "@webhoo
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { MAX_FREE_ORGS_PER_USER } from "@webhook-co/shared/plans";
-import { suggestOrgSlug } from "@webhook-co/shared";
+import {
+  orgSlugErrorMessage,
+  suggestOrgSlug,
+  validateOrgSlug,
+  type OrgSlugError,
+} from "@webhook-co/shared";
 import { redirect } from "next/navigation";
 
 import { logActionError } from "./action-log";
@@ -29,11 +34,11 @@ export type CreateTeamResult = { readonly ok: false; readonly error: string };
 // form renders inline.
 
 /**
- * Create an organization from a display name, deriving a URL slug and landing on the new org's dashboard.
+ * Create an organization from a name and (optionally) a chosen URL slug, landing on the new org's dashboard.
  *
- * The user supplies a name; we derive the slug (they can change it later in settings). A slug collision — with
- * a live org OR a retired one — is retried with a fresh suffix, up to a bound; exhausting it is a genuine
- * "couldn't find a free URL" error, not a silent failure.
+ * When the form supplies a slug, we use exactly it — a collision is a real "that URL is taken" error, not
+ * something to silently rewrite (that would ignore the user's choice). When no slug is supplied (a non-form
+ * caller), we derive it from the name and retry a random suffix on collision, up to a bound.
  */
 export async function createTeamAction(formData: FormData): Promise<CreateTeamResult> {
   const session = await verifySession();
@@ -43,6 +48,16 @@ export async function createTeamAction(formData: FormData): Promise<CreateTeamRe
   if (name.length === 0) return { ok: false, error: "Give your organization a name." };
   if (name.length > MAX_NAME_LEN) {
     return { ok: false, error: `Keep the name under ${MAX_NAME_LEN} characters.` };
+  }
+
+  // The chosen URL slug (the form always sends one; a direct caller may omit it → derive from the name).
+  // Validate it in TS for a friendly message, but the DB stays the authority (a taken/retired slug still
+  // comes back as SlugTakenError below).
+  const slugRaw = formData.get("orgSlug");
+  const chosenSlug = typeof slugRaw === "string" ? slugRaw.trim() : "";
+  if (chosenSlug) {
+    const check = validateOrgSlug(chosenSlug);
+    if (!check.ok) return { ok: false, error: orgSlugErrorMessage(check.reason) };
   }
 
   // Cap the FREE organizations one user may own (paid orgs are unlimited). The Free allowance is per-org,
@@ -70,6 +85,17 @@ export async function createTeamAction(formData: FormData): Promise<CreateTeamRe
   let slug: string;
   try {
     slug = await withTenantDb(async (app) => {
+      if (chosenSlug) {
+        // The user picked the URL — try exactly it. A collision surfaces as a "taken" error (below); we do
+        // NOT rewrite it to a random suffix, which would silently discard their choice.
+        await createOrgWithOwner(app, {
+          slug: chosenSlug,
+          name,
+          ownerUserId: session.userId,
+          auditKey,
+        });
+        return chosenSlug;
+      }
       for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt++) {
         // A fresh RANDOM candidate each iteration (suggestOrgSlug re-draws its suffix), so a collision retries
         // an independent slug rather than re-deriving the same one.
@@ -95,12 +121,18 @@ export async function createTeamAction(formData: FormData): Promise<CreateTeamRe
     if (error instanceof SlugTakenError) {
       return {
         ok: false,
-        error: "We couldn't find a free URL for that name. Try a different name.",
+        error: chosenSlug
+          ? "That URL is already taken. Try another."
+          : "We couldn't find a free URL for that name. Try a different name.",
       };
     }
     if (error instanceof InvalidOrgSlugError) {
-      // suggestOrgSlug is contracted to produce valid slugs, so this is a bug, not user input — log and show
-      // a generic message rather than leaking the internal reason.
+      // For a user-CHOSEN slug this is their input (e.g. a reserved word validateOrgSlug didn't catch) — show
+      // the actual reason. For a DERIVED slug, suggestOrgSlug is contracted to produce valid slugs, so it is a
+      // bug, not user input: log it and show a generic message rather than leaking the internal reason.
+      if (chosenSlug) {
+        return { ok: false, error: orgSlugErrorMessage(error.reason as OrgSlugError) };
+      }
       logActionError("org.create_invalid_slug", error);
       return { ok: false, error: "That name can't be used. Try a different one." };
     }
