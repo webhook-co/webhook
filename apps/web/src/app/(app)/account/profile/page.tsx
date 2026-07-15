@@ -1,11 +1,4 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-  PageContainer,
-} from "@webhook-co/ui";
+import { Card, CardContent, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { DeleteAccountCard } from "@/components/delete-account-card";
@@ -28,18 +21,15 @@ export default async function AccountProfilePage() {
 
   return (
     <PageContainer size="narrow" gap="gap-6">
+      {/* The page heading IS the "Profile" label — the identity card below carries no redundant title. */}
       <div className="flex flex-col gap-1.5">
         <h1 className="text-2xl font-semibold tracking-heading text-fg">Profile</h1>
         <p className="leading-snug text-fg-secondary">
-          These settings are about you, and apply across every organization you belong to.
+          How you appear to your teammates, across every organization you belong to.
         </p>
       </div>
 
       <Card>
-        <CardHeader>
-          <CardTitle>Profile</CardTitle>
-          <CardDescription>How you appear to your teammates.</CardDescription>
-        </CardHeader>
         <CardContent className="flex items-center gap-4">
           <UserAvatar name={session.user.name} email={session.user.email} size={48} />
           <div className="flex min-w-0 flex-col gap-0.5">

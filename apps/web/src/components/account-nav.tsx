@@ -45,7 +45,7 @@ export function AccountNav() {
           key={item.href}
           asChild
           icon={item.icon}
-          // Exact match: `/account` must not light up while you are on `/account/connected-apps`.
+          // Exact match: `/account/profile` must not light up while you are on `/account/connected-apps`.
           active={pathname === item.href}
         >
           <Link href={item.href}>{item.label}</Link>

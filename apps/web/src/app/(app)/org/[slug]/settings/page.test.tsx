@@ -65,6 +65,9 @@ describe("SettingsPage", () => {
     render(await SettingsPage({ params: Promise.resolve({ slug: "acme" }) }));
 
     // Moving something without saying where is just losing it.
-    expect(screen.getByRole("link", { name: /account/i })).toHaveAttribute("href", "/account");
+    expect(screen.getByRole("link", { name: /account/i })).toHaveAttribute(
+      "href",
+      "/account/profile",
+    );
   });
 });
