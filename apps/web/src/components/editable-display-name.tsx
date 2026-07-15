@@ -2,6 +2,7 @@
 
 import { Banner, Button, Field } from "@webhook-co/ui";
 import { useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { useState, useTransition } from "react";
 
 import { UserAvatar } from "@/components/user-avatar";
@@ -13,6 +14,11 @@ export interface EditableDisplayNameProps {
   readonly email: string;
   /** The server action, injected by the page. Returns ok, or an inline error message. */
   readonly onSave: (formData: FormData) => Promise<UpdateNameResult>;
+  /**
+   * The avatar to render beside the name. The page passes the editable one (`<EditableAvatar>`); default to
+   * the plain read-only avatar so this component stays usable on its own.
+   */
+  readonly avatar?: ReactNode;
 }
 
 /**
@@ -20,7 +26,7 @@ export interface EditableDisplayNameProps {
  * a text field. On save the action re-mints the session cookie, so `router.refresh()` re-renders every surface
  * (this card, the nav, the greeting) with the new name — no re-login needed.
  */
-export function EditableDisplayName({ name, email, onSave }: EditableDisplayNameProps) {
+export function EditableDisplayName({ name, email, onSave, avatar }: EditableDisplayNameProps) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(name);
@@ -54,7 +60,7 @@ export function EditableDisplayName({ name, email, onSave }: EditableDisplayName
   if (!editing) {
     return (
       <div className="flex items-center gap-4">
-        <UserAvatar name={name} email={email} size={48} />
+        {avatar ?? <UserAvatar name={name} email={email} size={48} />}
         <div className="flex min-w-0 flex-col gap-0.5">
           <span className="truncate font-medium text-fg">{name}</span>
           <span className="truncate text-sm text-fg-secondary">{email}</span>

@@ -16,6 +16,13 @@ export interface UserAvatarProps {
   /** Pixels. */
   readonly size?: number;
   readonly className?: string;
+  /**
+   * Cache-bust token. `/api/avatar` takes no input (it reads the session), so the browser can't tell a
+   * freshly re-uploaded avatar from the cached one for up to its max-age. Bump this after an upload and the URL
+   * changes (`?v=`), forcing an immediate refetch. Omit everywhere else — the URL then stays the canonical,
+   * server-renderable `/api/avatar`.
+   */
+  readonly version?: number;
 }
 
 /**
@@ -37,9 +44,17 @@ export interface UserAvatarProps {
  * The initials render UNDERNEATH from the first paint, and the image sits on top once it loads. That ordering
  * is what stops the flicker: there is never a frame with nothing in it.
  */
-export function UserAvatar({ name, email, size = 26, className }: UserAvatarProps) {
+export function UserAvatar({ name, email, size = 26, className, version }: UserAvatarProps) {
   const [hasImage, setHasImage] = React.useState(true);
   const ref = React.useRef<HTMLImageElement>(null);
+
+  // A version bump means a fresh upload just landed — re-attempt the image even if a previous load had 404'd
+  // us down to initials (a user who had no avatar and just added one must see it, not their initials).
+  React.useEffect(() => {
+    if (version) setHasImage(true);
+  }, [version]);
+
+  const src = version ? `/api/avatar?v=${version}` : "/api/avatar";
 
   // `onError` ALONE IS NOT ENOUGH, and this is the whole subtlety of the component.
   //
@@ -73,7 +88,7 @@ export function UserAvatar({ name, email, size = 26, className }: UserAvatarProp
         // It would add machinery and change nothing.
         <img
           ref={ref}
-          src="/api/avatar"
+          src={src}
           alt=""
           width={size}
           height={size}

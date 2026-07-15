@@ -43,6 +43,14 @@ describe("UserAvatar", () => {
     expect(avatar()).toHaveAttribute("src", "/api/avatar");
   });
 
+  it("cache-busts with ?v= when a version is given — so a freshly uploaded avatar shows at once", () => {
+    render(<UserAvatar name="Dana Kessler" email="dana@acme.co" version={7} />);
+    // The serve route is input-less (max-age=60), so the ONLY way to force the browser off its cached copy
+    // right after an upload is to change the URL. A non-zero version does exactly that.
+    expect(document.querySelector('img[src="/api/avatar?v=7"]')).not.toBeNull();
+    expect(avatar()).toBeNull(); // no bare /api/avatar — the versioned URL replaced it
+  });
+
   it("drops the image when it fails after hydration", () => {
     render(<UserAvatar name="Dana Kessler" email="dana@acme.co" />);
 
