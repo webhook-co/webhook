@@ -2,14 +2,41 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+// The form uses the router (for the logo path) and renders the cropper (react-easy-crop). Stub both; capture
+// the cropper's props so a test can drive its blob-capturing `upload`, and spy the router + the logo upload.
+const { push, uploadOrgLogoWebp } = vi.hoisted(() => ({
+  push: vi.fn(),
+  uploadOrgLogoWebp: vi.fn(async () => ({ ok: true as const })),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+
+let cropperProps: { upload: (b: Blob) => Promise<{ ok: true }>; onUploaded: () => void } | null =
+  null;
+vi.mock("./avatar-cropper", () => ({
+  AvatarCropperDialog: (props: NonNullable<typeof cropperProps>) => {
+    cropperProps = props;
+    return null;
+  },
+}));
+vi.mock("@/lib/avatar-upload", () => ({ uploadOrgLogoWebp }));
+vi.mock("@/lib/crop-image", () => ({ fileToDataUrl: async () => "data:image/webp;base64,AAAA" }));
+
 import { CreateTeamForm } from "./create-team-form";
+
+// The logo-path action, injected everywhere; the no-logo tests below never trigger it.
+const returnSlug = vi.fn(async () => ({ ok: true as const, slug: "acme" }));
 
 afterEach(() => vi.clearAllMocks());
 
 describe("CreateTeamForm", () => {
   it("previews the derived URL as you type the name", async () => {
     const user = userEvent.setup();
-    render(<CreateTeamForm create={vi.fn(async () => ({ ok: false as const, error: "" }))} />);
+    render(
+      <CreateTeamForm
+        createReturningSlug={returnSlug}
+        create={vi.fn(async () => ({ ok: false as const, error: "" }))}
+      />,
+    );
 
     await user.type(screen.getByLabelText("Organization name"), "Acme Engineering");
     // The preview shows the slugified base of the name (the server may add a suffix).
@@ -22,7 +49,7 @@ describe("CreateTeamForm", () => {
       error: "We couldn't create the organization.",
     }));
     const user = userEvent.setup();
-    render(<CreateTeamForm create={create} />);
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={create} />);
 
     await user.type(screen.getByLabelText("Organization name"), "  Acme  ");
     await user.click(screen.getByRole("button", { name: "Create organization" }));
@@ -38,7 +65,7 @@ describe("CreateTeamForm", () => {
   it("submits the CHOSEN URL once the user edits the field", async () => {
     const create = vi.fn(async () => ({ ok: false as const, error: "" }));
     const user = userEvent.setup();
-    render(<CreateTeamForm create={create} />);
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={create} />);
 
     await user.type(screen.getByLabelText("Organization name"), "Acme");
     const urlField = screen.getByLabelText("Organization URL");
@@ -57,7 +84,7 @@ describe("CreateTeamForm", () => {
     // slug); requiring the derived slug would trap the user on a URL error they never asked for. It must submit.
     const create = vi.fn(async () => ({ ok: false as const, error: "" }));
     const user = userEvent.setup();
-    render(<CreateTeamForm create={create} />);
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={create} />);
 
     await user.type(screen.getByLabelText("Organization name"), "!!!");
     const button = screen.getByRole("button", { name: "Create organization" });
@@ -75,7 +102,7 @@ describe("CreateTeamForm", () => {
     // surface a validation error or disable submit — the server derives a valid, suffixed slug instead.
     const create = vi.fn(async () => ({ ok: false as const, error: "" }));
     const user = userEvent.setup();
-    render(<CreateTeamForm create={create} />);
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={create} />);
 
     await user.type(screen.getByLabelText("Organization name"), "Hi");
     expect(screen.queryByText(/at least 3 characters/i)).not.toBeInTheDocument();
@@ -89,7 +116,12 @@ describe("CreateTeamForm", () => {
 
   it("the URL tracks the name until you edit the URL, then stops following it", async () => {
     const user = userEvent.setup();
-    render(<CreateTeamForm create={vi.fn(async () => ({ ok: false as const, error: "" }))} />);
+    render(
+      <CreateTeamForm
+        createReturningSlug={returnSlug}
+        create={vi.fn(async () => ({ ok: false as const, error: "" }))}
+      />,
+    );
 
     const nameField = screen.getByLabelText("Organization name");
     const urlField = screen.getByLabelText("Organization URL");
@@ -105,7 +137,7 @@ describe("CreateTeamForm", () => {
   it("disables submit and shows an inline error for an invalid URL", async () => {
     const create = vi.fn();
     const user = userEvent.setup();
-    render(<CreateTeamForm create={create} />);
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={create} />);
 
     await user.type(screen.getByLabelText("Organization name"), "Acme");
     const urlField = screen.getByLabelText("Organization URL");
@@ -118,10 +150,41 @@ describe("CreateTeamForm", () => {
 
   it("keeps the button disabled for an empty / whitespace-only name", async () => {
     const user = userEvent.setup();
-    render(<CreateTeamForm create={vi.fn()} />);
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={vi.fn()} />);
 
     expect(screen.getByRole("button", { name: "Create organization" })).toBeDisabled();
     await user.type(screen.getByLabelText("Organization name"), "   ");
     expect(screen.getByRole("button", { name: "Create organization" })).toBeDisabled();
+  });
+
+  it("with a chosen logo: creates (returning the slug), uploads the logo to it, then navigates", async () => {
+    const create = vi.fn(); // the redirecting path must NOT be used when a logo is present
+    const user = userEvent.setup();
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={create} />);
+
+    await user.type(screen.getByLabelText("Organization name"), "Acme");
+    // Drive the (mocked) cropper's blob-capturing upload — as if the user cropped a logo.
+    const blob = new Blob([new Uint8Array([1])], { type: "image/webp" });
+    await cropperProps!.upload(blob);
+
+    await user.click(screen.getByRole("button", { name: "Create organization" }));
+
+    // The logo path: the RETURN-slug action (not the redirecting one), then upload to the new slug, then push.
+    await waitFor(() => expect(returnSlug).toHaveBeenCalledOnce());
+    expect(create).not.toHaveBeenCalled();
+    await waitFor(() => expect(uploadOrgLogoWebp).toHaveBeenCalledWith(blob, { slug: "acme" }));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/org/acme/dashboard?created=1"));
+  });
+
+  it("navigates even if the post-create logo upload fails (the org exists; logo can be added in settings)", async () => {
+    uploadOrgLogoWebp.mockRejectedValueOnce(new Error("r2 down"));
+    const user = userEvent.setup();
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Organization name"), "Acme");
+    await cropperProps!.upload(new Blob([new Uint8Array([1])], { type: "image/webp" }));
+    await user.click(screen.getByRole("button", { name: "Create organization" }));
+
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/org/acme/dashboard?created=1"));
   });
 });
