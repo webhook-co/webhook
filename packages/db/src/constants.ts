@@ -151,4 +151,17 @@ export const DB_ROLES = {
    * deletion at the 7-day window (defense in depth). NON-OWNER, NOSUPERUSER, NOBYPASSRLS. Password out of band.
    */
   retention: "webhook_retention",
+  /**
+   * The free-org-cap reconciler (PR2b). The authoritative enforcement of the "at most N owned FREE orgs per
+   * user" rule: a cron that, across ALL users, finds owners over the cap (e.g. after a paid org downgrades
+   * back to Free) and suspends the overflow. That question is inherently CROSS-USER — no per-tenant role can
+   * answer it — so the capability is confined to this role via role-targeted
+   * `FOR SELECT TO webhook_capreconciler USING (true)` policies (migration 0084) on memberships / orgs /
+   * billing_subscriptions, with column grants bounding the exposure. webhook_app is NOT given those policies,
+   * so the same detection query returns nothing for it: the request-path role can never enumerate another
+   * user's orgs. NON-OWNER, NOSUPERUSER, NOBYPASSRLS; password injected out of band (source carries none).
+   * Read-only in this slice; a later slice adds its (role-targeted) write on the `orgs` suspend columns and the
+   * `ingest_paused` pause.
+   */
+  capReconciler: "webhook_capreconciler",
 } as const;

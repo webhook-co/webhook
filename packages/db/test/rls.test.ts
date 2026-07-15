@@ -915,6 +915,63 @@ describe("catalog-driven RLS coverage", () => {
     }
   });
 
+  it("the cap-reconciler role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
+    // webhook_capreconciler is the cross-user free-org-cap role (migration 0084): it reads the ownership graph
+    // + entitlement + org service-state across all users via role-targeted SELECT policies + column grants,
+    // and like every other job-path role must never be a superuser, never BYPASSRLS, never own a table.
+    const [role] = await owner<{ rolname: string; super: boolean; bypass: boolean }[]>`
+      select rolname, rolsuper as super, rolbypassrls as bypass
+      from pg_roles where rolname = ${DB_ROLES.capReconciler}`;
+    expect(role).toBeDefined();
+    expect(role.super).toBe(false);
+    expect(role.bypass).toBe(false);
+
+    const ownedByCapReconciler = await owner<{ n: number }[]>`
+      select count(*)::int as n from pg_class
+      where relkind = 'r' and relnamespace = 'public'::regnamespace
+        and pg_get_userbyid(relowner) = ${DB_ROLES.capReconciler}`;
+    expect(ownedByCapReconciler[0]?.n).toBe(0);
+  });
+
+  it("the cap-reconciler holds SELECT on ONLY the detection columns, and no write anywhere", async () => {
+    // Column-level least privilege: it reads the ownership graph, entitlement status, and org identity/state
+    // it needs to find over-cap owners — but NEVER billing identifiers, plan, or org display fields, and holds
+    // no INSERT/UPDATE/DELETE on any of the three tables.
+    const granted = {
+      memberships: ["org_id", "user_id", "role"],
+      billing_subscriptions: ["org_id", "status"],
+      orgs: ["id", "created_at", "status", "suspended_reason"],
+    } as const;
+    for (const [table, cols] of Object.entries(granted)) {
+      for (const c of cols) {
+        const [p] = await owner<{ ok: boolean }[]>`
+          select has_column_privilege(${DB_ROLES.capReconciler}, ${table}, ${c}, 'SELECT') as ok`;
+        expect(p.ok).toBe(true);
+      }
+    }
+    // Exist on these tables but are NOT granted — the reconciler never sees the Stripe identifiers, the plan,
+    // or the org's human-facing name/slug.
+    const forbidden = {
+      billing_subscriptions: ["stripe_subscription_id", "plan"],
+      orgs: ["name", "slug"],
+    } as const;
+    for (const [table, cols] of Object.entries(forbidden)) {
+      for (const c of cols) {
+        const [p] = await owner<{ ok: boolean }[]>`
+          select has_column_privilege(${DB_ROLES.capReconciler}, ${table}, ${c}, 'SELECT') as ok`;
+        expect(p.ok).toBe(false);
+      }
+    }
+    // No write on any of the three tables — this slice only DETECTS; the suspend write is a later slice.
+    for (const t of ["memberships", "billing_subscriptions", "orgs"] as const) {
+      const [p] = await owner<{ any: boolean }[]>`
+        select (has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'INSERT')
+             or has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'UPDATE')
+             or has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'DELETE')) as any`;
+      expect(p.any).toBe(false);
+    }
+  });
+
   it("the notifier role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
     // webhook_notifier is the cross-org notification-drain role (migration 0034): it reads pending intents +
     // the org owner's email across all orgs and flips intents to sent, and like every other job-path role
