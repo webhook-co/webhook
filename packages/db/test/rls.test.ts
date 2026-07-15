@@ -83,6 +83,10 @@ const RLS_EXEMPT = new Set([
   // org-scoped until the handler resolves org from signed metadata, so there is no org_id to RLS on;
   // access is by GRANT to the single webhook_billing writer role only.
   "processed_stripe_events",
+  // In-flight email-change step-up state (0081): user-scoped identity-realm table (no org_id), alongside
+  // user/session/account/verification. Access is by GRANT to the auth runtime role (webhook_auth) ONLY — the
+  // OTP hash it holds must never be readable from the tenant/app role.
+  "pending_email_change",
 ]);
 
 // Deterministic, seed-by-length Buffer for fixture bytea values (NOT random — stable
