@@ -54,6 +54,19 @@ function squareWebp(side: number): Uint8Array {
   return b;
 }
 
+/** A minimal, VALID square PNG (header only — the validator never decodes). Passes shared validation as a
+ *  png, so it exercises the route's webp-ONLY gate specifically. */
+function squarePng(side: number): Uint8Array {
+  const b = new Uint8Array(24);
+  b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0); // PNG signature
+  b.set([0x00, 0x00, 0x00, 0x0d], 8); // IHDR length (13)
+  b.set([0x49, 0x48, 0x44, 0x52], 12); // "IHDR"
+  const dv = new DataView(b.buffer);
+  dv.setUint32(16, side); // width  (big-endian)
+  dv.setUint32(20, side); // height (big-endian)
+  return b;
+}
+
 function req(body: BodyInit | null, headers: Record<string, string> = {}, slug = SLUG): Request {
   return new Request(`${ORIGIN}/api/org-logo/${slug}/upload`, {
     method: "POST",
@@ -136,6 +149,13 @@ describe("POST /api/org-logo/[slug]/upload", () => {
     b[28] = 64 & 0xff;
     b[29] = (64 >> 8) & 0x3f;
     expect((await POST(req(b), ctx())).status).toBe(415);
+  });
+
+  it("rejects a valid square PNG/JPEG (415) — we store + serve one webp, so the webp-only gate matters", async () => {
+    // Passes shared validation (real square png), but the route requires webp specifically.
+    expect((await POST(req(squarePng(128)), ctx())).status).toBe(415);
+    expect(put).not.toHaveBeenCalled();
+    expect(updateOrgImageKey).not.toHaveBeenCalled();
   });
 
   it("stores the webp under the org key and points the org row at it, returning ok", async () => {

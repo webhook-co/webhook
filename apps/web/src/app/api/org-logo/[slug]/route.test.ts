@@ -36,7 +36,11 @@ describe("GET /api/org-logo/[slug]", () => {
 
     const res = await GET(new Request("https://app.test/api/org-logo/acme"), ctx());
 
+    // Probed R2 by the RESOLVED org id (from requireOrgAccess), never the raw URL slug.
+    expect(get).toHaveBeenCalledWith(KEY);
     expect(res.status).toBe(200);
+    // …and actually returned the stored bytes, not an empty 200.
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
     expect(res.headers.get("Content-Type")).toBe("image/webp");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     // Member-gated, so private + Vary on the cookie — never a shared cache across the membership boundary.
