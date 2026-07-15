@@ -27,7 +27,6 @@ const member = (userId: string, over: Partial<{ image: string | null; email: str
   role: "member" as const,
   joinedAt: "2026-01-01",
   image: null,
-  imageKey: null,
   ...over,
 });
 
