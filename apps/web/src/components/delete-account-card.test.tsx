@@ -1,41 +1,51 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/server/account-actions", () => ({ deleteAccount: vi.fn() }));
+const { deleteAccount } = vi.hoisted(() => ({ deleteAccount: vi.fn() }));
+vi.mock("@/server/account-actions", () => ({ deleteAccount }));
 
 import { DeleteAccountCard } from "./delete-account-card";
 
+afterEach(() => vi.clearAllMocks());
+
 describe("DeleteAccountCard", () => {
-  const reveal = () => fireEvent.click(screen.getByRole("button", { name: /^delete account/i }));
-
-  it("hides the type-to-confirm form until the reveal button is clicked", () => {
+  it("the trigger is a plain 'Delete account' — no ellipsis (the modal carries the confirmation)", () => {
     render(<DeleteAccountCard />);
-    expect(screen.queryByLabelText(/to confirm/i)).not.toBeInTheDocument();
-    reveal();
-    expect(screen.getByLabelText(/to confirm/i)).toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "Delete account" });
+    expect(trigger).toBeInTheDocument();
+    // Guard the founder's ask: the old inline reveal used "Delete account…" (U+2026). It must be gone.
+    expect(trigger.textContent).not.toMatch(/…|\.\.\./);
+    // And it's a modal now, not an inline reveal: nothing is shown until the trigger is clicked.
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("keeps the permanent-delete submit disabled until DELETE is typed exactly", () => {
+  it("opens a confirmation modal that gates deletion behind typing DELETE", async () => {
+    const user = userEvent.setup();
     render(<DeleteAccountCard />);
-    reveal();
-    const submit = screen.getByRole("button", { name: /permanently delete my account/i });
-    const input = screen.getByLabelText(/to confirm/i);
 
-    expect(submit).toBeDisabled();
-    fireEvent.change(input, { target: { value: "delete" } });
-    expect(submit).toBeDisabled();
-    fireEvent.change(input, { target: { value: "DELETE" } });
-    expect(submit).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "Delete account" }));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    const confirm = screen.getByRole("button", { name: "Permanently delete my account" });
+    expect(confirm).toBeDisabled();
+    await user.type(screen.getByRole("textbox"), "delete"); // wrong case must NOT enable the most destructive action
+    expect(confirm).toBeDisabled();
+    await user.clear(screen.getByRole("textbox"));
+    await user.type(screen.getByRole("textbox"), "DELETE");
+    expect(confirm).toBeEnabled();
   });
 
-  it("cancel closes the form and resets the typed confirmation", () => {
+  it("submits confirm=DELETE to the deleteAccount server action", async () => {
+    const user = userEvent.setup();
     render(<DeleteAccountCard />);
-    reveal();
-    fireEvent.change(screen.getByLabelText(/to confirm/i), { target: { value: "DELETE" } });
-    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
-    expect(screen.queryByLabelText(/to confirm/i)).not.toBeInTheDocument();
 
-    reveal();
-    expect(screen.getByLabelText(/to confirm/i)).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Delete account" }));
+    await user.type(screen.getByRole("textbox"), "DELETE");
+    await user.click(screen.getByRole("button", { name: "Permanently delete my account" }));
+
+    await waitFor(() => expect(deleteAccount).toHaveBeenCalledOnce());
+    const fd = deleteAccount.mock.calls[0]![0] as FormData;
+    expect(fd.get("confirm")).toBe("DELETE");
   });
 });
