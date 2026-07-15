@@ -56,13 +56,14 @@ async function addOwner(orgId: string, userId: string): Promise<void> {
   );
 }
 
-async function makePaid(orgId: string): Promise<void> {
+async function makeSub(orgId: string, status: string): Promise<void> {
   await admin`
     insert into billing_subscriptions
       (org_id, stripe_subscription_id, plan, status, current_period_start, current_period_end)
-    values (${orgId}, ${"sub_" + orgId.slice(0, 8)}, ${"price_pro"}, ${"active"},
+    values (${orgId}, ${"sub_" + orgId.slice(0, 8)}, ${"price_pro"}, ${status},
             ${"2026-07-01T00:00:00Z"}, ${"2026-08-01T00:00:00Z"})`;
 }
+const makePaid = (orgId: string) => makeSub(orgId, "active");
 
 const CAP = 2;
 
@@ -188,6 +189,29 @@ describe("findOwnersOverFreeCap (role-targeted cross-user detection)", () => {
     const seenB = over.find((o) => o.userId === b)!;
     expect(seenA.freeOrgs.map((o) => o.orgId).sort()).toEqual([...aOrgs].sort());
     expect(seenB.freeOrgs.map((o) => o.orgId).sort()).toEqual([...bOrgs].sort());
+  });
+
+  it("uses the full entitlement matrix: trialing/past_due are PAID; canceled/unpaid/unknown are Free", async () => {
+    // Parity with hasEntitledSubscription/BILLING_ACTIVE_STATUSES: only active/trialing/past_due are entitled
+    // (paid, excluded); every OTHER status counts the org as Free. A user with 2 entitled + 3 non-entitled has
+    // 3 free orgs → over CAP=2, and the returned list is exactly those 3 (the entitled ones never appear).
+    const u = randomUUID();
+    await seedUser(u);
+    const trialing = await seedOrg(u);
+    await makeSub(trialing, "trialing"); // entitled → PAID → excluded
+    const pastDue = await seedOrg(u);
+    await makeSub(pastDue, "past_due"); // entitled → PAID → excluded
+    const canceled = await seedOrg(u);
+    await makeSub(canceled, "canceled"); // not entitled → FREE
+    const unpaid = await seedOrg(u);
+    await makeSub(unpaid, "unpaid"); // not entitled → FREE
+    const unknown = await seedOrg(u);
+    await makeSub(unknown, "incomplete_expired"); // not entitled → FREE
+
+    const res = await findOwnersOverFreeCap(reconciler, CAP);
+    const row = res.find((r) => r.userId === u)!;
+    expect(row.freeOrgs.map((o) => o.orgId).sort()).toEqual([canceled, unpaid, unknown].sort());
+    expect(row.freeOrgs.some((o) => o.orgId === trialing || o.orgId === pastDue)).toBe(false);
   });
 
   it("does not return a user who owns ONLY paid orgs, however many", async () => {
