@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -172,8 +172,54 @@ describe("CreateTeamForm", () => {
     // The logo path: the RETURN-slug action (not the redirecting one), then upload to the new slug, then push.
     await waitFor(() => expect(returnSlug).toHaveBeenCalledOnce());
     expect(create).not.toHaveBeenCalled();
-    await waitFor(() => expect(uploadOrgLogoWebp).toHaveBeenCalledWith(blob, { slug: "acme" }));
+    // Uploaded to the new slug, with a bounded (abortable) signal so a stall can't strand the user.
+    await waitFor(() =>
+      expect(uploadOrgLogoWebp).toHaveBeenCalledWith(blob, {
+        slug: "acme",
+        signal: expect.any(AbortSignal),
+      }),
+    );
     await waitFor(() => expect(push).toHaveBeenCalledWith("/org/acme/dashboard?created=1"));
+  });
+
+  it("in the logo path, a failed create shows an inline error and does NOT upload or navigate", async () => {
+    // The one new error branch the redirect/return-slug split introduces: create itself fails (cap hit, taken
+    // slug). The form must render the error and stay put — no logo upload, no navigation.
+    returnSlug.mockResolvedValueOnce({
+      ok: false as const,
+      error: "That URL is already taken. Try another.",
+    });
+    const user = userEvent.setup();
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Organization name"), "Acme");
+    await cropperProps!.upload(new Blob([new Uint8Array([1])], { type: "image/webp" }));
+    await user.click(screen.getByRole("button", { name: "Create organization" }));
+
+    expect(await screen.findByText(/already taken/i)).toBeInTheDocument();
+    expect(uploadOrgLogoWebp).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("removing a captured logo reverts to the redirecting create path (no upload, no push)", async () => {
+    const create = vi.fn(async () => ({ ok: false as const, error: "" }));
+    const user = userEvent.setup();
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={create} />);
+
+    await user.type(screen.getByLabelText("Organization name"), "Acme");
+    // Wrap the cropper's blob capture in act(): it sets `logo`, and the Remove button is conditional on it.
+    await act(async () => {
+      await cropperProps!.upload(new Blob([new Uint8Array([1])], { type: "image/webp" }));
+    });
+    // A logo is now held → the Remove button appears; clicking it clears the logo.
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await user.click(screen.getByRole("button", { name: "Create organization" }));
+
+    // Back on the plain redirecting path: `create` is used, the return-slug + upload + push are not.
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(returnSlug).not.toHaveBeenCalled();
+    expect(uploadOrgLogoWebp).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
   });
 
   it("navigates even if the post-create logo upload fails (the org exists; logo can be added in settings)", async () => {

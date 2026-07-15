@@ -11,6 +11,10 @@ import type { CreateTeamResult, CreateTeamSlugResult } from "@/server/org-create
 
 import { AvatarCropperDialog } from "./avatar-cropper";
 
+// The org is already created by the time we upload the logo, so a slow upload must never trap the user here —
+// bound it and navigate regardless. Generous: a 512×512 webp is tens of KB, so this only trips on a real stall.
+const LOGO_UPLOAD_TIMEOUT_MS = 15_000;
+
 export interface CreateTeamFormProps {
   readonly create: (formData: FormData) => Promise<CreateTeamResult>;
   /** The return-the-slug variant, used when a logo is chosen: the client uploads the cropped logo (which
@@ -102,7 +106,15 @@ export function CreateTeamForm({ create, createReturningSlug }: CreateTeamFormPr
         setError(res.error);
         return;
       }
-      await uploadOrgLogoWebp(logo, { slug: res.slug }).catch(() => {});
+      // Bound the upload so a STALLED connection (accepted-but-never-answers) can't strand the user on this
+      // form after the org already exists — uploadOrgLogoWebp resolves ok:false on abort (it never throws), so
+      // on timeout we simply fall through and navigate, exactly as we do on any other upload failure.
+      // The helper resolves ok:false on failure/abort rather than throwing, but the .catch is belt-and-braces:
+      // nothing about a logo upload should be able to stop us from landing in the org that already exists.
+      await uploadOrgLogoWebp(logo, {
+        slug: res.slug,
+        signal: AbortSignal.timeout(LOGO_UPLOAD_TIMEOUT_MS),
+      }).catch(() => {});
       router.push(`/org/${res.slug}/dashboard?created=1`);
     });
   };
