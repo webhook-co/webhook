@@ -8,6 +8,15 @@ import { LagSchema } from "./lag";
 // the gapless watermark), at-least-once (the consumer dedups by cursor/id). Lives here in shared so
 // the engine (server) and the CLI (client) bind ONE definition — neither re-declares the frames.
 
+// Application-level keepalive: the engine registers `setWebSocketAutoResponse(ping → pong)`, which answers
+// a `ping` DATA MESSAGE with `pong` WITHOUT waking the hibernated ListenSession DO. A client sends `ping`
+// on an idle interval to keep the tunnel warm + probe liveness; the `pong` it gets back isn't a JSON frame,
+// so `parseServerFrame` returns null and the client skips it (it only matters as inbound activity). These
+// two constants are the ONE source of truth for that pair — the engine's auto-response and the CLI's ping
+// MUST use the same strings, so both import these (never hard-code the literals).
+export const LISTEN_KEEPALIVE_PING = "ping";
+export const LISTEN_KEEPALIVE_PONG = "pong";
+
 /** server→client, first frame after the upgrade: announces the session id + the watermark lag. */
 export const ReadyFrameSchema = z.object({
   type: z.literal("ready"),

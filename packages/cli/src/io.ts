@@ -11,13 +11,14 @@ import { text } from "node:stream/consumers";
 import { bundleFromJSON } from "@sigstore/bundle";
 import { TrustedRoot } from "@sigstore/protobuf-specs";
 import { toSignedEntity, toTrustMaterial, Verifier } from "@sigstore/verify";
-import { SERVICE_NAME } from "@webhook-co/shared";
+import { LISTEN_KEEPALIVE_PING, SERVICE_NAME } from "@webhook-co/shared";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import { WebSocket as WsWebSocket } from "ws";
 
 import { KeychainUnavailableError } from "./config/errors.js";
 import type { KeychainIo } from "./config/keychain-store.js";
 import type { IoSeams, LoopbackServer, RawInputHandlers } from "./context.js";
+import { makeTerminateAction, startTunnelHeartbeat } from "./tunnel-heartbeat.js";
 import {
   attestationApiUrl,
   decodeStatement,
@@ -534,29 +535,71 @@ export function makeRealIo(): IoSeams {
       const proxyUrl = resolveProxy(url, process.env);
       const agent = proxyUrl !== undefined ? new HttpsProxyAgent(proxyUrl) : undefined;
       const ws = new WsWebSocket(url, agent !== undefined ? { headers, agent } : { headers });
-      ws.on("open", () => handlers.onOpen());
-      ws.on("message", (data) => handlers.onMessage(data.toString()));
-      ws.on("close", (code, reason) => handlers.onClose(code, reason.toString()));
-      ws.on("error", (err) =>
-        handlers.onError(err instanceof Error ? err : new Error(String(err))),
-      );
-      // send/close can throw on a non-OPEN socket (a routine drop). Swallow so the throw never escapes
-      // the `ws` event callback as an uncaught exception — the reconnect loop recovers and at-least-once
-      // redelivers any un-acked event. Mirrors the DO's safeSend.
+      // send/close can throw on a non-OPEN socket (a routine drop). Swallow so the throw never escapes a `ws`
+      // callback as an uncaught exception — the reconnect loop recovers and at-least-once redelivers any
+      // un-acked event. One definition, reused by the keepalive ping AND the returned socket (mirrors the
+      // DO's safeSend).
+      const safeSend = (data: string) => {
+        try {
+          ws.send(data);
+        } catch {
+          /* socket not open; reconnect + redelivery recovers */
+        }
+      };
+      const safeClose = () => {
+        try {
+          ws.close();
+        } catch {
+          /* already closing/closed */
+        }
+      };
+      // Application-level keepalive: the DO sends nothing during idle gaps and `ws` has no built-in ping, so
+      // an idle tunnel socket would silently drop / half-open and the next event would stall for the OS TCP
+      // timeout. Send the `ping` DATA MESSAGE the engine auto-answers with `pong` WITHOUT waking the DO
+      // (setWebSocketAutoResponse) to keep the socket warm; the `pong` arrives as a normal message (skipped
+      // by parseServerFrame) and — like any inbound frame — resets liveness; on silence, terminate so the
+      // reconnect loop resumes from the durable cursor. A MONOTONIC clock (performance.now) so a wall-clock
+      // step can't skew the liveness deadline.
+      let heartbeat: { onActivity: () => void; stop: () => void } | undefined;
+      ws.on("open", () => {
+        heartbeat = startTunnelHeartbeat(
+          {
+            setInterval: (fn, ms) => setInterval(fn, ms),
+            clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+            now: () => performance.now(),
+          },
+          {
+            ping: () => safeSend(LISTEN_KEEPALIVE_PING),
+            terminate: makeTerminateAction(
+              () => ws.terminate(),
+              () => {
+                // terminate() threw before it could tear the socket down — best-effort close it so we don't
+                // strand a half-open session on the engine, then synthesize the close so runListen settles.
+                safeClose();
+                handlers.onClose(1006, "heartbeat terminate failed");
+              },
+            ),
+          },
+        );
+        handlers.onOpen();
+      });
+      ws.on("message", (data) => {
+        heartbeat?.onActivity();
+        handlers.onMessage(data.toString());
+      });
+      ws.on("close", (code, reason) => {
+        heartbeat?.stop();
+        handlers.onClose(code, reason.toString());
+      });
+      ws.on("error", (err) => {
+        heartbeat?.stop();
+        handlers.onError(err instanceof Error ? err : new Error(String(err)));
+      });
       return {
-        send: (data: string) => {
-          try {
-            ws.send(data);
-          } catch {
-            /* socket not open; reconnect + redelivery recovers */
-          }
-        },
+        send: safeSend,
         close: () => {
-          try {
-            ws.close();
-          } catch {
-            /* already closing/closed */
-          }
+          heartbeat?.stop();
+          safeClose();
         },
       };
     },
