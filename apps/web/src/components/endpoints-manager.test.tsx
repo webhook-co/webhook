@@ -10,7 +10,14 @@ import { EndpointsManager } from "./endpoints-manager";
 // The component reads its org from the URL (useOrgSlug). Without a router, the hook returns "" and every
 // link renders unprefixed — which is the deliberate fallback (a broken link, never a WRONG-ORG one), but it
 // is not what a page under /org/{slug}/ actually renders. Give it a slug.
-vi.mock("next/navigation", () => ({ useParams: () => ({ slug: "acme" }) }));
+// The manager now embeds EndpointsSearch (the header + search live together, Team pattern), so the search's
+// URL hooks must be mocked here too.
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
+  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  usePathname: () => "/org/acme/endpoints",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 const ep: EndpointItem = {
   id: "ep_1",

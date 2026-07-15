@@ -18,6 +18,7 @@ import {
   DialogTrigger,
   Field,
   Label,
+  PageHeader,
   Table,
   TableBody,
   TableCell,
@@ -46,7 +47,11 @@ import type {
 import type { EndpointItem, EndpointsResult } from "@/server/endpoints";
 
 import { EndpointControls } from "./endpoint-controls";
+import { EndpointsSearch } from "./endpoints-search";
 import { IngestUrlDialog } from "./ingest-url-dialog";
+
+const ENDPOINTS_DESCRIPTION =
+  "Each endpoint gives you a signed webhook URL to receive webhooks. Create one and point your provider at it; rotate or delete it anytime from its page.";
 
 // The create dialog offers the three modes that need no extra input — the `fields` editor lives on the
 // endpoint's detail page (a fresh endpoint has no payloads to pick fields against yet). Labels are the plain,
@@ -111,8 +116,12 @@ export function EndpointsManager({
   const [revealed, setRevealed] = React.useState<{ name: string; ingestUrl: string } | null>(null);
 
   if (initialResult.status !== "ok") {
+    // Keep the page title even when the list fails to load (create isn't offered — nothing loaded to add to).
     return (
-      <Banner tone="danger">We couldn&apos;t load your endpoints. Refresh to try again.</Banner>
+      <div className="flex flex-col gap-6">
+        <PageHeader title="Endpoints" description={ENDPOINTS_DESCRIPTION} />
+        <Banner tone="danger">We couldn&apos;t load your endpoints. Refresh to try again.</Banner>
+      </div>
     );
   }
 
@@ -172,86 +181,88 @@ export function EndpointsManager({
     }
   }
 
+  const createDialog = (
+    <Dialog
+      open={createOpen}
+      onOpenChange={(open) => {
+        setCreateOpen(open);
+        if (!open) resetForm();
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button>Create endpoint</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <form onSubmit={handleCreate} className="flex flex-col gap-5">
+          <DialogHeader>
+            <DialogTitle>Create endpoint</DialogTitle>
+            <DialogDescription>
+              You&apos;ll get a signed webhook URL, viewable any time on the endpoint&apos;s page.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Field
+            label="Endpoint name"
+            placeholder="e.g. Stripe production"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={pending}
+          />
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="create-dedup-mode">Deduplication</Label>
+            <Combobox
+              id="create-dedup-mode"
+              label="Deduplication"
+              options={CREATE_DEDUP_OPTIONS}
+              value={dedupMode}
+              disabled={pending}
+              onChange={(v) => setDedupMode(v as CreateDedupMode)}
+              className="w-full"
+            />
+            <p className="text-fg-secondary">
+              By default we log every request. Optionally collapse repeat deliveries into one event
+              — you can tune this, including matching on specific fields, any time on the
+              endpoint&apos;s page.
+            </p>
+          </div>
+
+          {dedupMode !== "off" ? (
+            <Field
+              label="Deduplication window (seconds)"
+              type="number"
+              inputMode="numeric"
+              min={MIN_DEDUP_WINDOW_SECONDS}
+              max={MAX_DEDUP_WINDOW_SECONDS}
+              hint="Between 60 seconds and 7 days."
+              error={dedupWindowError}
+              value={dedupWindow}
+              onChange={(e) => setDedupWindow(e.target.value)}
+              disabled={pending}
+            />
+          ) : null}
+
+          {formError ? <Banner tone="danger">{formError}</Banner> : null}
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button type="submit" disabled={!canCreate}>
+              Create
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex justify-end">
-        <Dialog
-          open={createOpen}
-          onOpenChange={(open) => {
-            setCreateOpen(open);
-            if (!open) resetForm();
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button>Create endpoint</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <form onSubmit={handleCreate} className="flex flex-col gap-5">
-              <DialogHeader>
-                <DialogTitle>Create endpoint</DialogTitle>
-                <DialogDescription>
-                  You&apos;ll get a signed webhook URL, viewable any time on the endpoint&apos;s
-                  page.
-                </DialogDescription>
-              </DialogHeader>
-
-              <Field
-                label="Endpoint name"
-                placeholder="e.g. Stripe production"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={pending}
-              />
-
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="create-dedup-mode">Deduplication</Label>
-                <Combobox
-                  id="create-dedup-mode"
-                  label="Deduplication"
-                  options={CREATE_DEDUP_OPTIONS}
-                  value={dedupMode}
-                  disabled={pending}
-                  onChange={(v) => setDedupMode(v as CreateDedupMode)}
-                  className="w-full"
-                />
-                <p className="text-fg-secondary">
-                  By default we log every request. Optionally collapse repeat deliveries into one
-                  event — you can tune this, including matching on specific fields, any time on the
-                  endpoint&apos;s page.
-                </p>
-              </div>
-
-              {dedupMode !== "off" ? (
-                <Field
-                  label="Deduplication window (seconds)"
-                  type="number"
-                  inputMode="numeric"
-                  min={MIN_DEDUP_WINDOW_SECONDS}
-                  max={MAX_DEDUP_WINDOW_SECONDS}
-                  hint="Between 60 seconds and 7 days."
-                  error={dedupWindowError}
-                  value={dedupWindow}
-                  onChange={(e) => setDedupWindow(e.target.value)}
-                  disabled={pending}
-                />
-              ) : null}
-
-              {formError ? <Banner tone="danger">{formError}</Banner> : null}
-
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button type="button" variant="secondary">
-                    Cancel
-                  </Button>
-                </DialogClose>
-                <Button type="submit" disabled={!canCreate}>
-                  Create
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
+      <PageHeader title="Endpoints" description={ENDPOINTS_DESCRIPTION} actions={createDialog} />
+      <EndpointsSearch />
 
       <Table>
         <TableHeader>

@@ -72,7 +72,9 @@ export function PageHeader({
           </a>
         )}
         <h1 className="text-2xl font-semibold tracking-heading text-fg">{title}</h1>
-        {description !== undefined && <p className="text-fg-secondary">{description}</p>}
+        {description !== undefined && (
+          <p className="leading-snug text-fg-secondary">{description}</p>
+        )}
       </div>
       {actions !== undefined && <div className="shrink-0">{actions}</div>}
     </div>

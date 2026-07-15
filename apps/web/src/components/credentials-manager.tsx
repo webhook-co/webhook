@@ -14,6 +14,7 @@ import {
   DialogTitle,
   DialogTrigger,
   Field,
+  PageHeader,
 } from "@webhook-co/ui";
 import * as React from "react";
 
@@ -21,6 +22,9 @@ import type { CreateKeyInput, CreateKeyResult, RevokeResult } from "@/server/cre
 import type { ApiKeyItem, CredentialsResult, DeviceGrant } from "@/server/credentials";
 
 import { CredentialsView } from "./credentials-view";
+
+const CREDENTIALS_DESCRIPTION =
+  "The keys and devices authorized for your organization. Revoking a device cascades to the keys minted under it.";
 
 /** What the confirm dialog is currently asking to revoke. */
 type RevokeTarget = { kind: "key"; item: ApiKeyItem } | { kind: "grant"; item: DeviceGrant };
@@ -87,7 +91,13 @@ export function CredentialsManager({
   const [revokeError, setRevokeError] = React.useState<string | null>(null);
 
   if (initialResult.status !== "ok") {
-    return <CredentialsView result={initialResult} />;
+    // Keep the page title on the denied/error state (create isn't offered — CredentialsView renders why).
+    return (
+      <div className="flex flex-col gap-6">
+        <PageHeader title="API keys & devices" description={CREDENTIALS_DESCRIPTION} />
+        <CredentialsView result={initialResult} />
+      </div>
+    );
   }
 
   const canCreate = name.trim() !== "" && selected.size > 0 && !pending;
@@ -179,70 +189,76 @@ export function CredentialsManager({
 
   const revokeMsg = revokeCopy(revoking);
 
+  const createDialog = (
+    <Dialog
+      open={createOpen}
+      onOpenChange={(open) => {
+        setCreateOpen(open);
+        if (!open) resetForm();
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button>Create key</Button>
+      </DialogTrigger>
+      <DialogContent>
+        <form onSubmit={handleCreate} className="flex flex-col gap-5">
+          <DialogHeader>
+            <DialogTitle>Create API key</DialogTitle>
+            <DialogDescription>
+              You&apos;ll see the secret once, right after it&apos;s created.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Field
+            label="Key name"
+            placeholder="e.g. CI deploy"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={pending}
+          />
+
+          <fieldset className="flex flex-col gap-2.5">
+            <legend className="mb-1.5 text-sm font-medium text-fg">Scopes</legend>
+            {scopes.map((scope) => {
+              const id = `scope-${scope}`;
+              return (
+                <label key={scope} htmlFor={id} className="flex items-center gap-2.5">
+                  <Checkbox
+                    id={id}
+                    checked={selected.has(scope)}
+                    onCheckedChange={() => toggleScope(scope)}
+                    disabled={pending}
+                  />
+                  <span className="font-mono text-sm text-fg">{scope}</span>
+                </label>
+              );
+            })}
+          </fieldset>
+
+          {formError ? <Banner tone="danger">{formError}</Banner> : null}
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="secondary">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button type="submit" disabled={!canCreate}>
+              Create
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex justify-end">
-        <Dialog
-          open={createOpen}
-          onOpenChange={(open) => {
-            setCreateOpen(open);
-            if (!open) resetForm();
-          }}
-        >
-          <DialogTrigger asChild>
-            <Button>Create key</Button>
-          </DialogTrigger>
-          <DialogContent>
-            <form onSubmit={handleCreate} className="flex flex-col gap-5">
-              <DialogHeader>
-                <DialogTitle>Create API key</DialogTitle>
-                <DialogDescription>
-                  You&apos;ll see the secret once, right after it&apos;s created.
-                </DialogDescription>
-              </DialogHeader>
-
-              <Field
-                label="Key name"
-                placeholder="e.g. CI deploy"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={pending}
-              />
-
-              <fieldset className="flex flex-col gap-2.5">
-                <legend className="mb-1.5 text-sm font-medium text-fg">Scopes</legend>
-                {scopes.map((scope) => {
-                  const id = `scope-${scope}`;
-                  return (
-                    <label key={scope} htmlFor={id} className="flex items-center gap-2.5">
-                      <Checkbox
-                        id={id}
-                        checked={selected.has(scope)}
-                        onCheckedChange={() => toggleScope(scope)}
-                        disabled={pending}
-                      />
-                      <span className="font-mono text-sm text-fg">{scope}</span>
-                    </label>
-                  );
-                })}
-              </fieldset>
-
-              {formError ? <Banner tone="danger">{formError}</Banner> : null}
-
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button type="button" variant="secondary">
-                    Cancel
-                  </Button>
-                </DialogClose>
-                <Button type="submit" disabled={!canCreate}>
-                  Create
-                </Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
-      </div>
+      <PageHeader
+        title="API keys & devices"
+        description={CREDENTIALS_DESCRIPTION}
+        actions={createDialog}
+      />
 
       <CredentialsView
         result={{ status: "ok", devices, keys }}

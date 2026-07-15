@@ -1,4 +1,4 @@
-import { Banner, Button, PageContainer, PlanCard } from "@webhook-co/ui";
+import { Banner, Button, PageContainer, PageHeader, PlanCard } from "@webhook-co/ui";
 import { planLabel, type BillingDisplay, type PendingPlanChange } from "@webhook-co/shared";
 import { planById } from "@webhook-co/shared/plans";
 import type { Metadata } from "next";
@@ -403,10 +403,7 @@ export default async function BillingPage({
 
   return (
     <PageContainer gap="gap-6">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-display text-fg">Billing</h1>
-        <p className="mt-1 text-fg-secondary">Your plan, payment, and invoices.</p>
-      </div>
+      <PageHeader title="Billing" description="Your plan, payment, and invoices." />
 
       {errorMsg && <Banner tone="danger">{errorMsg}</Banner>}
       {overageStatus && <Banner tone={overageStatus.tone}>{overageStatus.message}</Banner>}
