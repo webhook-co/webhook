@@ -18,13 +18,8 @@ export default async function CredentialsPage({ params }: { params: Promise<{ sl
 
   return (
     <PageContainer>
-      <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-heading text-fg">API keys &amp; devices</h1>
-        <p className="leading-snug text-fg-secondary">
-          The keys and devices authorized for your organization. Revoking a device cascades to the
-          keys minted under it.
-        </p>
-      </div>
+      {/* Header + the "Create key" primary action live inside the manager (Team pattern) — the create dialog
+          owns state the header would otherwise have to lift. */}
       <CredentialsManager
         initialResult={result}
         createKey={createApiKey.bind(null, session.slug)}

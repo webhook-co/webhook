@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { PageContainer } from "@webhook-co/ui";
 
 import { EndpointsManager } from "@/components/endpoints-manager";
-import { EndpointsSearch } from "@/components/endpoints-search";
 import { firstParam } from "@/lib/event-filters";
 import {
   createEndpointAction,
@@ -32,14 +31,9 @@ export default async function EndpointsPage({
 
   return (
     <PageContainer>
-      <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-heading text-fg">Endpoints</h1>
-        <p className="leading-snug text-fg-secondary">
-          Each endpoint gives you a signed webhook URL to receive webhooks. Create one and point
-          your provider at it; rotate or delete it anytime from its page.
-        </p>
-      </div>
-      <EndpointsSearch />
+      {/* Header, search, list, and the Create dialog all live inside the manager — the "Create endpoint"
+          primary action sits in the page header (Team pattern), and the create dialog owns state the header
+          would otherwise have to lift. */}
       <EndpointsManager
         // No `key` remount on filter change — the manager re-syncs its list from initialResult itself,
         // so an ingest URL shown mid-search isn't discarded by a search-debounce navigation.

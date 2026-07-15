@@ -25,6 +25,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
   Field,
+  PageHeader,
   Table,
   TableBody,
   TableCell,
@@ -341,75 +342,72 @@ export function TeamManager({
       {/* The invite button sits in the PAGE HEADER — top-right, outside the content box. It is the one
           affirmative action on this page, and burying it inside the card's header made it look like it acted
           on the card rather than on the org. */}
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <h1 className="text-2xl font-semibold tracking-heading text-fg">Team</h1>
-          <p className="leading-snug text-fg-secondary">
-            Everyone with access to this organization, and the invites waiting to be accepted.
-          </p>
-        </div>
+      <PageHeader
+        title="Team"
+        description="Everyone with access to this organization, and the invites waiting to be accepted."
+        actions={
+          canManage ? (
+            <Dialog
+              open={inviteOpen}
+              onOpenChange={(open) => {
+                setInviteOpen(open);
+                if (!open) resetInviteForm();
+              }}
+            >
+              <DialogTrigger asChild>
+                <Button>Invite teammate</Button>
+              </DialogTrigger>
+              <DialogContent>
+                <form onSubmit={handleInvite} className="flex flex-col gap-5">
+                  <DialogHeader>
+                    <DialogTitle>Invite a teammate</DialogTitle>
+                    <DialogDescription>
+                      They&apos;ll get a link to join. It only works for the email you enter, and
+                      expires in 7 days.
+                    </DialogDescription>
+                  </DialogHeader>
 
-        {canManage ? (
-          <Dialog
-            open={inviteOpen}
-            onOpenChange={(open) => {
-              setInviteOpen(open);
-              if (!open) resetInviteForm();
-            }}
-          >
-            <DialogTrigger asChild>
-              <Button>Invite teammate</Button>
-            </DialogTrigger>
-            <DialogContent>
-              <form onSubmit={handleInvite} className="flex flex-col gap-5">
-                <DialogHeader>
-                  <DialogTitle>Invite a teammate</DialogTitle>
-                  <DialogDescription>
-                    They&apos;ll get a link to join. It only works for the email you enter, and
-                    expires in 7 days.
-                  </DialogDescription>
-                </DialogHeader>
+                  <Field
+                    label="Email"
+                    type="email"
+                    placeholder="teammate@company.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    disabled={pending}
+                  />
 
-                <Field
-                  label="Email"
-                  type="email"
-                  placeholder="teammate@company.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  disabled={pending}
-                />
-
-                {/* Our Combobox, not the native <select> this used to be. The native control renders as the
+                  {/* Our Combobox, not the native <select> this used to be. The native control renders as the
                     OS's own widget — a different typeface, a different focus ring, a different popover on
                     every platform — sitting inside a dialog that is otherwise entirely ours. We already use
                     this Combobox for picking a provider; a role is the same kind of choice. */}
-                <Combobox
-                  id="invite-role"
-                  label="Role"
-                  options={roleOptions}
-                  value={inviteRole}
-                  disabled={pending}
-                  onChange={setInviteRole}
-                  className="w-full"
-                />
+                  <Combobox
+                    id="invite-role"
+                    label="Role"
+                    options={roleOptions}
+                    value={inviteRole}
+                    disabled={pending}
+                    onChange={setInviteRole}
+                    className="w-full"
+                  />
 
-                {formError ? <Banner tone="danger">{formError}</Banner> : null}
+                  {formError ? <Banner tone="danger">{formError}</Banner> : null}
 
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button type="button" variant="secondary" disabled={pending}>
-                      Cancel
+                  <DialogFooter>
+                    <DialogClose asChild>
+                      <Button type="button" variant="secondary" disabled={pending}>
+                        Cancel
+                      </Button>
+                    </DialogClose>
+                    <Button type="submit" loading={pending} disabled={!canInvite}>
+                      Send invite
                     </Button>
-                  </DialogClose>
-                  <Button type="submit" loading={pending} disabled={!canInvite}>
-                    Send invite
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
-        ) : null}
-      </div>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          ) : undefined
+        }
+      />
 
       <Card>
         <CardContent className="p-0">
