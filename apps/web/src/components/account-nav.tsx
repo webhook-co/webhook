@@ -30,7 +30,7 @@ const Plug = () => (
 
 /** The account surface's own nav. It is short, and that is the point — this is not a second product. */
 const NAV = [
-  { href: "/account", label: "Profile", icon: <User /> },
+  { href: "/account/profile", label: "Profile", icon: <User /> },
   { href: "/account/connected-apps", label: "Connected apps", icon: <Plug /> },
 ] as const;
 
@@ -45,7 +45,7 @@ export function AccountNav() {
           key={item.href}
           asChild
           icon={item.icon}
-          // Exact match: `/account` must not light up while you are on `/account/connected-apps`.
+          // Exact match: `/account/profile` must not light up while you are on `/account/connected-apps`.
           active={pathname === item.href}
         >
           <Link href={item.href}>{item.label}</Link>

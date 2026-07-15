@@ -83,7 +83,7 @@ export function AccountMenu({ name, email, orgSlug, onLogout }: AccountMenuProps
             Collapsing them into one "Settings" is exactly how a user-scoped control ends up filed under an
             org and read as org-scoped. */}
         <DropdownMenuItem asChild>
-          <Link href="/account">Account settings</Link>
+          <Link href="/account/profile">Account settings</Link>
         </DropdownMenuItem>
         {orgSlug ? (
           <DropdownMenuItem asChild>

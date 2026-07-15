@@ -38,7 +38,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
         <h1 className="text-2xl font-semibold tracking-heading text-fg">Organization settings</h1>
         <p className="leading-snug text-fg-secondary">
           Settings for {session.name}. Looking for your profile or connected apps?{" "}
-          <Link href="/account" className="text-fg underline underline-offset-4">
+          <Link href="/account/profile" className="text-fg underline underline-offset-4">
             They&apos;re in your account
           </Link>
           .
