@@ -14,7 +14,10 @@ vi.mock("@/server/org-access", () => ({
   })),
 }));
 vi.mock("@/server/auth-actions", () => ({ logout: vi.fn() }));
-vi.mock("@/server/org-actions", () => ({ renameOrgAction: vi.fn() }));
+// DeleteOrgCard now binds deleteOrganization as a form action AT RENDER (via ConfirmDialog), so the mock must
+// export it even though this test never submits — the old inline card only referenced it inside an unrendered
+// branch.
+vi.mock("@/server/org-actions", () => ({ renameOrgAction: vi.fn(), deleteOrganization: vi.fn() }));
 // The page now asks isPersonalOrg (org-centric) whether to render the delete-org card; it needs a db
 // client to do so. Stub both: a bare client, and isPersonalOrg → false (a regular team org shows the card).
 vi.mock("@/server/db", () => ({ getTenantDb: async () => ({}) }));

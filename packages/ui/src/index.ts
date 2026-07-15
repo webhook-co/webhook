@@ -63,6 +63,7 @@ export {
   DialogDescription,
   type DialogContentProps,
 } from "./components/dialog";
+export { ConfirmDialog, type ConfirmDialogProps } from "./components/confirm-dialog";
 export {
   DropdownMenu,
   DropdownMenuTrigger,
