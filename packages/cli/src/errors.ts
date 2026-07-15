@@ -50,6 +50,17 @@ export class MissingInputError extends CliError {
   }
 }
 
+/** `events open` couldn't resolve the target org's dashboard slug — a benign, user-actionable state (an
+ *  older login with no persisted org, or an env credential whose org whoami didn't return), NOT an internal
+ *  fault. A usage exit (2) so a wrapper doesn't treat it as a retryable UNEXPECTED(1). */
+export class OrgUnresolvedError extends CliError {
+  readonly exitCode = EXIT.USAGE;
+  constructor(readonly userMessage: string) {
+    super(userMessage);
+    this.name = "OrgUnresolvedError";
+  }
+}
+
 /** A command needs a credential but none is stored (and none in WBHK_API_KEY). Maps to the same
  *  "not authenticated" exit code as a server 401, so automation branches on one signal. */
 export class NotLoggedInError extends CliError {
