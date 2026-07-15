@@ -80,3 +80,23 @@ const WELL_FORMED_PAYLOAD_KEY =
 export function isWellFormedPayloadKey(key: string): boolean {
   return typeof key === "string" && WELL_FORMED_PAYLOAD_KEY.test(key);
 }
+
+/**
+ * The DETERMINISTIC R2 object key for a user's uploaded avatar — one key per user, overwritten on re-upload.
+ * Deterministic (from the user id) so the serve path derives it straight from the session with NO database
+ * read, and it reveals nothing about the image content (no content-hash → no confirmation oracle). The bucket
+ * is private (Worker-binding access only), so a key for another user is never reachable anyway.
+ */
+export function avatarR2Key(userId: string): string {
+  return `user/${userId}/avatar.webp`;
+}
+
+// The PREFIX FENCE for the avatar orphan sweep — same "strict allowlist, never delete anything off-shape"
+// philosophy as WELL_FORMED_PAYLOAD_KEY. The user-id segment is our own controlled id charset (letters,
+// digits, `_`, `-`).
+const WELL_FORMED_AVATAR_KEY = /^user\/[A-Za-z0-9_-]+\/avatar\.webp$/;
+
+/** True when `key` is exactly the `user/{userId}/avatar.webp` avatar-object shape. */
+export function isWellFormedAvatarKey(key: string): boolean {
+  return typeof key === "string" && WELL_FORMED_AVATAR_KEY.test(key);
+}

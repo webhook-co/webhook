@@ -38,9 +38,16 @@ vi.mock("./env", () => ({
   getSessionSecret: async () => "s".repeat(32),
   getAccountDeleterBinding: () => ({ deleteAccount: deleteAccountRpc }),
 }));
-vi.mock("@webhook-co/shared", () => ({ userActor: (id: string) => ({ kind: "user", id }) }));
+vi.mock("@webhook-co/shared", () => ({
+  userActor: (id: string) => ({ kind: "user", id }),
+  avatarR2Key: (id: string) => `user/${id}/avatar.webp`,
+}));
 vi.mock("@webhook-co/shared/audit", () => ({ importAuditKey: async () => ({}) as CryptoKey }));
 vi.mock("@webhook-co/shared/bytes", () => ({ b64ToBytes: () => new Uint8Array(32) }));
+const deleteAvatar = vi.fn(async () => {});
+const getAvatarBucket = vi.fn(async (): Promise<unknown> => ({ delete: deleteAvatar }));
+vi.mock("./avatar-r2", () => ({ getAvatarBucket: () => getAvatarBucket() }));
+vi.mock("./action-log", () => ({ logActionError: vi.fn() }));
 
 import { deleteAccount } from "./account-actions";
 import { sessionCookieOptions } from "./session-cookie";
@@ -59,6 +66,8 @@ describe("deleteAccount", () => {
     await expect(deleteAccount(form("DELETE"))).rejects.toThrow(`NEXT_REDIRECT:${LOGOUT_URL}`);
 
     expect(deleteAccountRpc).toHaveBeenCalledWith("usr_1");
+    // The uploaded avatar (PII) is erased from R2 too — the identity delete only touches DB rows.
+    expect(deleteAvatar).toHaveBeenCalledWith("user/usr_1/avatar.webp");
     expect(cookieStore.delete).toHaveBeenCalledWith({
       name: SESSION_COOKIE,
       ...sessionCookieOptions(),

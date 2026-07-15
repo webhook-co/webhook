@@ -29,6 +29,12 @@ export interface UpdateNameResult {
   readonly updated: boolean;
 }
 
+/** The result of pointing (or clearing) a user's uploaded-avatar R2 key. */
+export interface UpdateImageKeyResult {
+  /** False if the user row was gone. */
+  readonly updated: boolean;
+}
+
 /**
  * The onboarding RPC seam — a Cloudflare service-binding entrypoint on auth. (OnboardingProfile). The web
  * dashboard types its `env.AUTH_ONBOARDING` against this so the cross-Worker call site is contract-checked.
@@ -47,4 +53,10 @@ export interface OnboardingProfileService {
    * userId; the name is validated/trimmed and a NOT-NULL name is never blanked.
    */
   updateName(userId: string, name: string): Promise<UpdateNameResult>;
+  /**
+   * Point the user's avatar at an uploaded R2 object key (or clear it with null). The caller passes its OWN
+   * verified userId; the route handler has already validated + stored the image. `imageKey` is app-written
+   * only (never client-settable) — this RPC is the single write path.
+   */
+  updateImageKey(userId: string, imageKey: string | null): Promise<UpdateImageKeyResult>;
 }

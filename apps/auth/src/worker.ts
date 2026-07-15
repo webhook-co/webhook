@@ -32,7 +32,12 @@ import { augmentAsMetadataResponse } from "./issuer/as-metadata";
 import { guardRegister } from "./issuer/register-guard";
 import type { RateLimitKv } from "./issuer/rate-limit";
 import { deleteAccountRpc } from "./issuer/account-delete-deps";
-import { completeOnboardingRpc, readOnboardingRpc, updateNameRpc } from "./issuer/onboarding-deps";
+import {
+  completeOnboardingRpc,
+  readOnboardingRpc,
+  updateImageKeyRpc,
+  updateNameRpc,
+} from "./issuer/onboarding-deps";
 import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
 import { runNotificationDrain } from "./runtime/notify-cron";
@@ -141,6 +146,10 @@ export class OnboardingProfile extends WorkerEntrypoint {
   // Post-onboarding display-name edit — same identity-realm boundary, does NOT re-stamp onboardedAt.
   async updateName(userId, name) {
     return updateNameRpc(this.env, { userId, name });
+  }
+  // Point the user's avatar at an uploaded R2 object (or clear it). Same identity-realm boundary.
+  async updateImageKey(userId, imageKey) {
+    return updateImageKeyRpc(this.env, { userId, imageKey });
   }
 }
 

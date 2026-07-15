@@ -138,3 +138,18 @@ export async function updateUserName(
     update "user" set "name" = ${name} where "id" = ${input.userId} returning "id"`;
   return rows.length > 0;
 }
+
+/**
+ * Point a user's avatar at an uploaded R2 object (or clear it with null). Runs as webhook_auth on the identity
+ * realm — `imageKey` is `input: false`, so this app-side RPC write is the ONLY way it's ever set (never a
+ * client). The route handler has already validated + stored the image before calling this. Returns false when
+ * no such user exists.
+ */
+export async function updateUserImageKey(
+  authClient: Sql,
+  input: { userId: string; imageKey: string | null },
+): Promise<boolean> {
+  const rows = await authClient<{ id: string }[]>`
+    update "user" set "imageKey" = ${input.imageKey} where "id" = ${input.userId} returning "id"`;
+  return rows.length > 0;
+}

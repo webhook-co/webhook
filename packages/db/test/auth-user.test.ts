@@ -9,6 +9,7 @@ import {
   deleteUserIdentity,
   getAuthUserProfile,
   readOnboardingState,
+  updateUserImageKey,
   updateUserName,
 } from "../src/auth-user";
 import { setupSchema } from "./migrate";
@@ -300,6 +301,36 @@ describe("updateUserName", () => {
 
   it("returns false for a user that does not exist", async () => {
     expect(await updateUserName(auth, { userId: `user_${randomUUID()}`, name: "Nobody" })).toBe(
+      false,
+    );
+  });
+});
+
+describe("updateUserImageKey", () => {
+  async function seedUser(): Promise<string> {
+    const id = `user_${randomUUID()}`;
+    await owner`
+      insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
+      values (${id}, ${"Pic User"}, ${`${id}@e.test`}, ${true}, now())`;
+    return id;
+  }
+
+  it("sets and clears the avatar pointer (imageKey)", async () => {
+    const id = await seedUser();
+    const key = `user/${id}/avatar.webp`;
+    expect(await updateUserImageKey(auth, { userId: id, imageKey: key })).toBe(true);
+    const [row] = await auth<{ imageKey: string | null }[]>`
+      select "imageKey" from "user" where "id" = ${id}`;
+    expect(row!.imageKey).toBe(key);
+    // Clearing it (avatar removed) writes NULL.
+    await updateUserImageKey(auth, { userId: id, imageKey: null });
+    const [after] = await auth<{ imageKey: string | null }[]>`
+      select "imageKey" from "user" where "id" = ${id}`;
+    expect(after!.imageKey).toBeNull();
+  });
+
+  it("returns false for a user that does not exist", async () => {
+    expect(await updateUserImageKey(auth, { userId: `user_${randomUUID()}`, imageKey: "x" })).toBe(
       false,
     );
   });

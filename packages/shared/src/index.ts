@@ -39,6 +39,7 @@ export * from "./audit-actor";
 export * from "./audit-chain";
 export * from "./audit-anchor";
 export * from "./r2";
+export * from "./image-validate";
 export * from "./envelope";
 export * from "./kms/local";
 export * from "./kms/aws";

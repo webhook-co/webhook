@@ -1,4 +1,8 @@
+import { avatarR2Key } from "@webhook-co/shared";
+
+import { logActionError } from "@/server/action-log";
 import { resolveAvatarSource } from "@/server/avatar";
+import { getAvatarBucket } from "@/server/avatar-r2";
 import { verifySession } from "@/server/session";
 
 // Fetches an upstream image per request; never statically optimized.
@@ -51,6 +55,35 @@ const NO_AVATAR = () =>
 export async function GET(): Promise<Response> {
   // The gate. Also the ONLY source of input: an avatar is a fact about the caller, not a lookup.
   const session = await verifySession();
+
+  // An UPLOADED avatar wins over the proxied provider image. The key is derived from the (verified) session
+  // userId — no input, no DB read; the bucket is private (Worker-binding only), so no other user's object is
+  // reachable. The stored bytes were validated to be webp on upload, so we FORCE `image/webp` + `nosniff`
+  // (never echo/sniff) — a surprise body can never be active content on our origin.
+  const bucket = await getAvatarBucket();
+  if (bucket) {
+    try {
+      const obj = await bucket.get(avatarR2Key(session.userId));
+      if (obj) {
+        return new Response(await obj.arrayBuffer(), {
+          status: 200,
+          headers: {
+            "Content-Type": "image/webp",
+            "X-Content-Type-Options": "nosniff",
+            // Short TTL so a freshly re-uploaded avatar shows within a minute — the URL is input-less, so the
+            // browser can't cache-bust it. (The upload UI slice adds a `?v=` version for INSTANT busting; this
+            // caps the worst case until then.)
+            "Cache-Control": "private, max-age=60",
+            Vary: "Cookie",
+          },
+        });
+      }
+    } catch (error) {
+      // R2 hiccup — fall through to the proxied provider image rather than fail the avatar, but record it: a
+      // persistent fault here means uploaded avatars silently stop showing.
+      logActionError("avatar.r2_get", error);
+    }
+  }
 
   const source = await resolveAvatarSource({
     image: session.user.image,

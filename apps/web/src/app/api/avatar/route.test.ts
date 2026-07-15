@@ -3,6 +3,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const verifySession = vi.fn();
 vi.mock("@/server/session", () => ({ verifySession: () => verifySession() }));
 
+// Default: no R2 binding → the route falls through to the provider proxy (the existing behavior).
+const getAvatarBucket = vi.fn(async (): Promise<unknown> => undefined);
+vi.mock("@/server/avatar-r2", () => ({ getAvatarBucket: () => getAvatarBucket() }));
+
 import { GET } from "./route";
 
 const fetchMock = vi.fn();
@@ -20,9 +24,38 @@ const png = (body = "bytes") =>
 beforeEach(() => {
   vi.clearAllMocks();
   verifySession.mockResolvedValue(SESSION());
+  getAvatarBucket.mockResolvedValue(undefined);
 });
 
 describe("GET /api/avatar", () => {
+  it("serves the UPLOADED avatar from R2 (forced image/webp) and never proxies", async () => {
+    const buf = new Uint8Array([1, 2, 3]).buffer;
+    const get = vi.fn(async (key: string) =>
+      key === "user/usr_1/avatar.webp" ? { arrayBuffer: async () => buf } : null,
+    );
+    getAvatarBucket.mockResolvedValue({ get, put: vi.fn(), delete: vi.fn() });
+
+    const res = await GET();
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toBe("image/webp");
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Cache-Control")).toBe("private, max-age=60");
+    expect(fetchMock).not.toHaveBeenCalled(); // R2 hit wins — no provider proxy
+  });
+
+  it("falls back to the provider proxy when R2 has no uploaded avatar", async () => {
+    const get = vi.fn(async () => null); // R2 miss
+    getAvatarBucket.mockResolvedValue({ get, put: vi.fn(), delete: vi.fn() });
+    verifySession.mockResolvedValue(
+      SESSION({ image: "https://avatars.githubusercontent.com/u/1" }),
+    );
+    fetchMock.mockResolvedValue(png());
+
+    await GET();
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("is gated — it resolves the session before it does anything else", async () => {
     verifySession.mockRejectedValueOnce(new Error("redirect to login"));
     await expect(GET()).rejects.toThrow();

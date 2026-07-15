@@ -3,16 +3,23 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const readOnboardingState = vi.fn();
 const completeOnboarding = vi.fn();
 const updateUserName = vi.fn();
+const updateUserImageKey = vi.fn();
 const end = vi.fn(async () => {});
 const createClient = vi.fn(() => ({ end }));
 vi.mock("@webhook-co/db", () => ({
   readOnboardingState: (...a: unknown[]) => readOnboardingState(...a),
   completeOnboarding: (...a: unknown[]) => completeOnboarding(...a),
   updateUserName: (...a: unknown[]) => updateUserName(...a),
+  updateUserImageKey: (...a: unknown[]) => updateUserImageKey(...a),
   createClient: (...a: unknown[]) => createClient(...a),
 }));
 
-import { completeOnboardingRpc, readOnboardingRpc, updateNameRpc } from "./onboarding-deps";
+import {
+  completeOnboardingRpc,
+  readOnboardingRpc,
+  updateImageKeyRpc,
+  updateNameRpc,
+} from "./onboarding-deps";
 
 const env = { HYPERDRIVE_AUTH: { connectionString: "postgres://auth" } };
 
@@ -104,5 +111,29 @@ describe("updateNameRpc", () => {
     updateUserName.mockResolvedValue(false);
     expect(await updateNameRpc(env, { userId: "x", name: "" })).toEqual({ updated: false });
     expect(end).toHaveBeenCalledOnce();
+  });
+});
+
+describe("updateImageKeyRpc", () => {
+  it("forwards the image key and closes the pool", async () => {
+    updateUserImageKey.mockResolvedValue(true);
+    const res = await updateImageKeyRpc(env, {
+      userId: "usr_1",
+      imageKey: "user/usr_1/avatar.webp",
+    });
+    expect(res).toEqual({ updated: true });
+    expect(updateUserImageKey.mock.calls[0][1]).toEqual({
+      userId: "usr_1",
+      imageKey: "user/usr_1/avatar.webp",
+    });
+    expect(end).toHaveBeenCalledOnce();
+  });
+
+  it("forwards a null (clear avatar) and reports false when the user is gone", async () => {
+    updateUserImageKey.mockResolvedValue(false);
+    expect(await updateImageKeyRpc(env, { userId: "x", imageKey: null })).toEqual({
+      updated: false,
+    });
+    expect(updateUserImageKey.mock.calls[0][1]).toEqual({ userId: "x", imageKey: null });
   });
 });

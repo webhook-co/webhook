@@ -41,5 +41,6 @@ export {
   type OnboardingStateDto,
   type CompleteOnboardingResult,
   type UpdateNameResult,
+  type UpdateImageKeyResult,
   type OnboardingProfileService,
 } from "./onboarding";
