@@ -32,9 +32,10 @@ vi.mock("./db", () => ({ withTenantDb: (fn: (app: unknown) => unknown) => fn({})
 
 import { createTeamAction } from "./org-create-actions";
 
-const form = (name?: string) => {
+const form = (name?: string, orgSlug?: string) => {
   const fd = new FormData();
   if (name !== undefined) fd.set("name", name);
+  if (orgSlug !== undefined) fd.set("orgSlug", orgSlug);
   return fd;
 };
 
@@ -115,5 +116,27 @@ describe("createTeamAction", () => {
     createOrgWithOwner.mockResolvedValueOnce({ id: "org_new", slug: "acme-x" });
     await expect(createTeamAction(form("Acme"))).rejects.toThrow(/^REDIRECT:/);
     expect(createOrgWithOwner).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses the CHOSEN slug exactly (no random suffix) and redirects to it", async () => {
+    createOrgWithOwner.mockResolvedValueOnce({ id: "org_new", slug: "widgets" });
+    await expect(createTeamAction(form("Acme", "widgets"))).rejects.toThrow(
+      "REDIRECT:/org/widgets/dashboard?created=1",
+    );
+    expect(createOrgWithOwner).toHaveBeenCalledTimes(1);
+    expect(createOrgWithOwner.mock.calls[0]![1].slug).toBe("widgets"); // exactly what the user chose
+  });
+
+  it("a chosen-slug collision returns a 'taken' error and does NOT retry with a random suffix", async () => {
+    createOrgWithOwner.mockRejectedValueOnce(new SlugTakenError());
+    const res = await createTeamAction(form("Acme", "widgets"));
+    expect(res).toEqual({ ok: false, error: expect.stringMatching(/taken/i) });
+    expect(createOrgWithOwner).toHaveBeenCalledTimes(1); // the user's choice is honored, not overwritten
+  });
+
+  it("rejects an invalid chosen slug BEFORE the DB, with the real reason", async () => {
+    const res = await createTeamAction(form("Acme", "Nope!!"));
+    expect(res).toMatchObject({ ok: false });
+    expect(createOrgWithOwner).not.toHaveBeenCalled();
   });
 });
