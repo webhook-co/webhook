@@ -32,10 +32,10 @@ export interface TuiInputHandlers {
 
 /** The side effects the action keys trigger, injected so the runner stays host-free. */
 export interface TuiEffects {
-  /** Build the dashboard URL for an event (the `o` key opens it). */
-  dashboardUrl(e: EventSummary): string;
-  /** Open a URL in the browser (best-effort). */
-  openBrowser(url: string): Promise<void>;
+  /** Open the selected event in the dashboard (the `o` key): resolve its deep-link (may hit the network)
+   *  and launch the browser, OR return actionable guidance WITHOUT opening when the link can't be built —
+   *  never a dead 404 link. The `{ok, message}` status line is surfaced like a replay result. */
+  openEvent(e: EventSummary): Promise<{ ok: boolean; message: string }>;
   /** Re-deliver the event to the `--forward` target (the `r` key); undefined when no `--forward` was
    *  given — `r` then just tells the user to set one. */
   replay?: (e: EventSummary) => Promise<{ ok: boolean; message: string }>;
@@ -77,6 +77,7 @@ export function createTui(deps: TuiDeps): TuiController {
   let state: TuiState = initialState(listRows(false));
   let closed = false;
   let replaying = false;
+  let opening = false;
   let resolveFinished!: () => void;
   const finished = new Promise<void>((resolve) => {
     resolveFinished = resolve;
@@ -142,12 +143,23 @@ export function createTui(deps: TuiDeps): TuiController {
   function doOpen(): void {
     const e = selectedEvent(state);
     if (e === undefined) return;
+    if (opening) return; // one in flight — ignore taps until it resolves
+    opening = true;
     state = setStatus(state, `opening ${e.id} in your browser…`);
     render();
-    void effects.openBrowser(effects.dashboardUrl(e)).catch(() => {
-      state = setStatus(state, "could not open the browser");
-      render();
-    });
+    // Wrap the effect call so even a synchronous throw from a contract-violating openEvent becomes a
+    // rejection — the terminal `.then` below still runs and clears `opening`, so the `o` key can't wedge.
+    void Promise.resolve()
+      .then(() => effects.openEvent(e))
+      .then((r) => setStatus(state, r.message))
+      .catch((err: unknown) =>
+        setStatus(state, `could not open: ${err instanceof Error ? err.message : String(err)}`),
+      )
+      .then((next) => {
+        opening = false;
+        state = next;
+        render();
+      });
   }
 
   function dispatch(chunk: string): void {

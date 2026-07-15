@@ -43,8 +43,10 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 
 function effects(over: Partial<TuiEffects> = {}): TuiEffects {
   return {
-    dashboardUrl: (e) => `https://app.webhook.co/events/${e.id}`,
-    openBrowser: vi.fn(async () => {}),
+    openEvent: vi.fn(async (e: EventSummary) => ({
+      ok: true as const,
+      message: `opened ${e.id} in your browser`,
+    })),
     ...over,
   };
 }
@@ -100,18 +102,58 @@ describe("createTui", () => {
     expect(t.writes[t.writes.length - 1]!).toContain("idem-xyz");
   });
 
-  it("opens the selected event in the browser with o", async () => {
+  it("opens the selected event with o and shows the returned status", async () => {
     const t = fakeTerminal();
-    const open = vi.fn(async () => {});
+    const openEvent = vi.fn(async (e: EventSummary) => ({
+      ok: true as const,
+      message: `opened ${e.id}`,
+    }));
     const tui = createTui({
       terminal: t.term,
-      effects: effects({ openBrowser: open }),
+      effects: effects({ openEvent }),
       color: false,
     });
     tui.pushEvent(evt("evt-open"));
     t.key("o");
     await flush();
-    expect(open).toHaveBeenCalledWith("https://app.webhook.co/events/evt-open");
+    expect(openEvent).toHaveBeenCalledWith(expect.objectContaining({ id: "evt-open" }));
+    expect(t.writes[t.writes.length - 1]!).toContain("opened evt-open");
+  });
+
+  it("ignores repeated o presses while an open is in flight (no duplicate browser tabs)", async () => {
+    const t = fakeTerminal();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const openEvent = vi.fn(async (e: EventSummary) => {
+      await gate; // hold the open in flight (mimics the first-press whoami round-trip)
+      return { ok: true as const, message: `opened ${e.id}` };
+    });
+    const tui = createTui({
+      terminal: t.term,
+      effects: effects({ openEvent }),
+      color: false,
+    });
+    tui.pushEvent(evt("evt-open"));
+    t.key("o");
+    t.key("o");
+    t.key("o"); // three rapid taps during the round-trip
+    release();
+    await flush();
+    expect(openEvent).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces guidance (not a dead link) when o can't resolve a dashboard URL", async () => {
+    const t = fakeTerminal();
+    const openEvent = vi.fn(async () => ({ ok: false as const, message: "run `wbhk whoami`" }));
+    const tui = createTui({
+      terminal: t.term,
+      effects: effects({ openEvent }),
+      color: false,
+    });
+    tui.pushEvent(evt("evt-x"));
+    t.key("o");
+    await flush();
+    expect(t.writes[t.writes.length - 1]!).toContain("whoami");
   });
 
   it("replays the selected event with r and shows the result status", async () => {

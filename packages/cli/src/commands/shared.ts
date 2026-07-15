@@ -7,6 +7,7 @@ import {
   type ApiClient,
   type Page,
 } from "../api-client.js";
+import type { Org } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { parseAdvisoryHeader } from "../output/advisory-notice.js";
@@ -14,6 +15,7 @@ import { writeAdvisory } from "../state/advisory-store.js";
 import {
   announceActiveProfile,
   announceRequestOrg,
+  resolveEffectiveOrg,
   resolveRequestProfile,
   type GlobalFlags,
 } from "../global-flags.js";
@@ -25,24 +27,44 @@ import { renderJson, type OutputFormat } from "../output/format.js";
 // hint to stderr, or the {items, nextCursor} envelope as JSON). Keeping this here means every read
 // command resolves auth + the base URL identically (and picks up a sticky stored base URL for free).
 
+/** The resolved authed request context: the ready client plus the (non-secret) profile + EFFECTIVE org it
+ *  targets — the `--org`/`WBHK_ORG` selection, else the profile's persisted org metadata — resolved once
+ *  here so a command (e.g. `events open`, for the dashboard slug) reuses it without re-reading the store.
+ *  `org` is undefined for an env (WBHK_API_KEY) credential (its real org is server-side, not in the local
+ *  store) OR when neither a selector nor any persisted org exists (an older login). `envCredential` lets a
+ *  consumer that still needs the env org's slug fetch it from whoami instead of trusting the local store. */
+export interface AuthedContext {
+  client: ApiClient;
+  profile: string;
+  org?: Org;
+  envCredential: boolean;
+}
+
 /**
- * Resolve the stored credential into a ready API client, or NotLoggedInError when none is stored. The
- * active profile (`--profile`/`WBHK_PROFILE`/persisted/default) is resolved here, so every read command
- * picks up the selected profile's credential + sticky base URL without threading it itself.
+ * Resolve the stored credential into a ready API client PLUS the profile/org it resolved, or
+ * NotLoggedInError when none is stored. `authedClient` is the thin "just the client" wrapper; commands
+ * that also need the bound profile/org (to read local org metadata, say) use this directly. The active
+ * profile (`--profile`/`WBHK_PROFILE`/persisted/default) + org selector are resolved here — the single
+ * place that runs — so every command picks up the selected profile's credential + sticky base URL
+ * identically, and the profile/org banner is announced exactly once.
  */
-export async function authedClient(
+export async function resolveAuthedContext(
   ctx: AppContext,
   flags: GlobalFlags,
-): Promise<ApiClient | NotLoggedInError> {
+): Promise<AuthedContext | NotLoggedInError> {
   // The authed request path — the ONLY place the org selector runs (a stale WBHK_ORG errors HERE with an
   // actionable message, never on a display/discovery command). Precedence + conflict rules in
   // resolveRequestProfile; a bad `--org`/`WBHK_ORG` throws OrgNotFound/Ambiguous, disagreeing flags conflict.
-  const { profile, org } = await resolveRequestProfile(ctx, flags);
+  const { profile, org: selectorOrg } = await resolveRequestProfile(ctx, flags);
   announceActiveProfile(ctx, profile);
   const cred = await ctx.store.get(profile);
   if (cred === null) return new NotLoggedInError();
-  // Echo the org this command targets (token = org) ONCE, centrally — env-credential-guarded (see helper).
-  await announceRequestOrg(ctx, profile, org);
+  // Resolve the EFFECTIVE org once — env-guarded (an env key's org isn't in the local store) and never
+  // throwing — and reuse it for both the banner and the returned context, so a consumer like `events open`
+  // doesn't read the store again. Passing the resolved org means announceRequestOrg won't re-read it.
+  const effective = await resolveEffectiveOrg(ctx, profile, selectorOrg);
+  announceRequestOrg(ctx, effective);
+  const { org, envCredential } = effective;
   const baseUrl = resolveApiBaseUrl({
     flag: flags.apiUrl,
     env: ctx.process.env?.[ENV_API_URL_VAR],
@@ -56,7 +78,7 @@ export async function authedClient(
     fetch: ctx.io.fetch,
     env: ctx.process.env,
   });
-  return createApiClient({
+  const client = createApiClient({
     baseUrl,
     apiKey: bearer,
     fetch: ctx.io.fetch,
@@ -69,6 +91,20 @@ export async function authedClient(
       if (advisory !== null) void writeAdvisory(ctx.configDir, advisory);
     },
   });
+  return { client, profile, org, envCredential };
+}
+
+/**
+ * Resolve the stored credential into a ready API client, or NotLoggedInError when none is stored. The
+ * active profile (`--profile`/`WBHK_PROFILE`/persisted/default) is resolved here, so every read command
+ * picks up the selected profile's credential + sticky base URL without threading it itself.
+ */
+export async function authedClient(
+  ctx: AppContext,
+  flags: GlobalFlags,
+): Promise<ApiClient | NotLoggedInError> {
+  const resolved = await resolveAuthedContext(ctx, flags);
+  return resolved instanceof NotLoggedInError ? resolved : resolved.client;
 }
 
 /** Validate `--limit`: an integer in the server's accepted 1–200 range (a throw → a usage error). */
