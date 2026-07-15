@@ -233,4 +233,22 @@ describe("CreateTeamForm", () => {
 
     await waitFor(() => expect(push).toHaveBeenCalledWith("/org/acme/dashboard?created=1"));
   });
+
+  it("navigates even when the upload RESOLVES ok:false (the real helper's failure shape, not a throw)", async () => {
+    // Production uploadOrgLogoWebp catches its own errors/aborts and RESOLVES { ok: false } — it never throws.
+    // This is the shape a stall/network-failure actually takes, so assert we still navigate on it (not only on
+    // the belt-and-braces .catch that handles a thrown rejection).
+    uploadOrgLogoWebp.mockResolvedValueOnce({ ok: false as const, error: "Upload failed." });
+    const user = userEvent.setup();
+    render(<CreateTeamForm createReturningSlug={returnSlug} create={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Organization name"), "Acme");
+    await cropperProps!.upload(new Blob([new Uint8Array([1])], { type: "image/webp" }));
+    await user.click(screen.getByRole("button", { name: "Create organization" }));
+
+    await waitFor(() => expect(returnSlug).toHaveBeenCalledOnce());
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/org/acme/dashboard?created=1"));
+    // No inline error is shown for a best-effort logo failure — the org exists and we moved on.
+    expect(screen.queryByText(/upload failed/i)).not.toBeInTheDocument();
+  });
 });
