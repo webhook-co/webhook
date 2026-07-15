@@ -2,12 +2,14 @@
 
 import { classifyOwnedOrgs, deleteOrgWithAudit } from "@webhook-co/db/org-lifecycle";
 import { sessionCookieOptions } from "./session-cookie";
-import { userActor } from "@webhook-co/shared";
+import { avatarR2Key, userActor } from "@webhook-co/shared";
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
+import { logActionError } from "./action-log";
+import { getAvatarBucket } from "./avatar-r2";
 import { getTenantDb } from "./db";
 import { getAccountDeleterBinding, getAuditChainKey } from "./env";
 import { LOGOUT_URL, SESSION_COOKIE, verifySession } from "./session";
@@ -74,6 +76,17 @@ export async function deleteAccount(formData: FormData): Promise<void> {
     throw new Error("account erasure is temporarily unavailable");
   }
   await deleter.deleteAccount(session.userId);
+
+  // 2b. Erase the uploaded avatar from R2 — the identity delete only touches DB rows, and the avatar object
+  // is the user's face (PII). It's stored in R2_AVATARS, bound to THIS app (not to auth. where the identity
+  // delete runs), so we delete it here. Best-effort: the identity is already gone, so a transient R2 fault
+  // must not resurrect the account — log it for cleanup rather than failing the erasure.
+  try {
+    const bucket = await getAvatarBucket();
+    if (bucket) await bucket.delete(avatarR2Key(session.userId));
+  } catch (error) {
+    logActionError("account.delete_avatar_r2", error);
+  }
 
   // 3. The account (and this session's tenancy) no longer exists — clear the cookie, return to login.
   // Same attributes as the set — a `__Host-` cookie cleared without `Secure` is rejected by the browser

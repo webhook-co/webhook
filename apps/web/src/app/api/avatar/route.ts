@@ -1,5 +1,6 @@
 import { avatarR2Key } from "@webhook-co/shared";
 
+import { logActionError } from "@/server/action-log";
 import { resolveAvatarSource } from "@/server/avatar";
 import { getAvatarBucket } from "@/server/avatar-r2";
 import { verifySession } from "@/server/session";
@@ -69,13 +70,18 @@ export async function GET(): Promise<Response> {
           headers: {
             "Content-Type": "image/webp",
             "X-Content-Type-Options": "nosniff",
-            "Cache-Control": "private, max-age=3600",
+            // Short TTL so a freshly re-uploaded avatar shows within a minute — the URL is input-less, so the
+            // browser can't cache-bust it. (The upload UI slice adds a `?v=` version for INSTANT busting; this
+            // caps the worst case until then.)
+            "Cache-Control": "private, max-age=60",
             Vary: "Cookie",
           },
         });
       }
-    } catch {
-      // R2 hiccup — fall through to the proxied provider image rather than fail the avatar.
+    } catch (error) {
+      // R2 hiccup — fall through to the proxied provider image rather than fail the avatar, but record it: a
+      // persistent fault here means uploaded avatars silently stop showing.
+      logActionError("avatar.r2_get", error);
     }
   }
 

@@ -40,7 +40,7 @@ describe("GET /api/avatar", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("image/webp");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(res.headers.get("Cache-Control")).toBe("private, max-age=3600");
+    expect(res.headers.get("Cache-Control")).toBe("private, max-age=60");
     expect(fetchMock).not.toHaveBeenCalled(); // R2 hit wins — no provider proxy
   });
 

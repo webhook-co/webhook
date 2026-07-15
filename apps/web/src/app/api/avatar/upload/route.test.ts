@@ -9,9 +9,10 @@ const { verifySession } = vi.hoisted(() => ({
 }));
 vi.mock("@/server/session", () => ({ verifySession }));
 
-const { put, getAvatarBucket } = vi.hoisted(() => {
+const { put, del, getAvatarBucket } = vi.hoisted(() => {
   const put = vi.fn(async () => {});
-  return { put, getAvatarBucket: vi.fn(async () => ({ put, get: vi.fn(), delete: vi.fn() })) };
+  const del = vi.fn(async () => {});
+  return { put, del, getAvatarBucket: vi.fn(async () => ({ put, get: vi.fn(), delete: del })) };
 });
 vi.mock("@/server/avatar-r2", () => ({ getAvatarBucket }));
 
@@ -19,7 +20,11 @@ const { updateImageKey, getOnboardingBinding } = vi.hoisted(() => {
   const updateImageKey = vi.fn(async () => ({ updated: true }));
   return { updateImageKey, getOnboardingBinding: vi.fn(() => ({ updateImageKey })) };
 });
-vi.mock("@/server/env", () => ({ getOnboardingBinding }));
+// getAppBaseUrl drives the same-origin CSRF check; return the test origin so a same-origin request passes.
+vi.mock("@/server/env", () => ({
+  getOnboardingBinding,
+  getAppBaseUrl: () => "https://app.test",
+}));
 vi.mock("@/server/action-log", () => ({ logActionError: vi.fn() }));
 
 import { POST } from "./route";
@@ -52,7 +57,8 @@ function req(body: BodyInit | null, headers: Record<string, string> = {}): Reque
 beforeEach(() => {
   vi.clearAllMocks();
   put.mockResolvedValue(undefined);
-  getAvatarBucket.mockResolvedValue({ put, get: vi.fn(), delete: vi.fn() });
+  del.mockResolvedValue(undefined);
+  getAvatarBucket.mockResolvedValue({ put, get: vi.fn(), delete: del });
   getOnboardingBinding.mockReturnValue({ updateImageKey });
   updateImageKey.mockResolvedValue({ updated: true });
 });
@@ -111,9 +117,11 @@ describe("POST /api/avatar/upload", () => {
     expect(updateImageKey).not.toHaveBeenCalled();
   });
 
-  it("returns 502 when the identity RPC throws (object stored, pointer not set)", async () => {
+  it("rolls back the R2 put (deletes the object) and returns 502 when the identity RPC throws", async () => {
     updateImageKey.mockRejectedValueOnce(new Error("rpc down"));
     expect((await POST(req(squareWebp(128)))).status).toBe(502);
+    // The pointer never got set, so the object must not linger (serving reads R2 by key).
+    expect(del).toHaveBeenCalledWith("user/u_1/avatar.webp");
   });
 
   it("is unavailable (503) when the R2 binding is absent", async () => {

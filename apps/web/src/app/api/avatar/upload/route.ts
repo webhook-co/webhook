@@ -2,7 +2,7 @@ import { avatarR2Key, validateAvatarImage } from "@webhook-co/shared";
 
 import { logActionError } from "@/server/action-log";
 import { getAvatarBucket } from "@/server/avatar-r2";
-import { getOnboardingBinding } from "@/server/env";
+import { getAppBaseUrl, getOnboardingBinding } from "@/server/env";
 import { verifySession } from "@/server/session";
 
 export const dynamic = "force-dynamic";
@@ -28,8 +28,11 @@ function json(status: number, body: unknown): Response {
 export async function POST(request: Request): Promise<Response> {
   // 1) CSRF: route handlers get NO framework CSRF protection (unlike server actions), so enforce same-origin
   //    EXPLICITLY and FIRST — a cross-site form/fetch carries a foreign (or absent) Origin. Fail closed.
+  //    Compare against the KNOWN app origin (getAppBaseUrl), NOT `new URL(request.url).origin`: behind the
+  //    Cloudflare/OpenNext proxy request.url may reconstruct an internal host/scheme, which would 403 every
+  //    legitimate same-origin upload.
   const origin = request.headers.get("origin");
-  if (!origin || origin !== new URL(request.url).origin) {
+  if (!origin || origin !== new URL(getAppBaseUrl()).origin) {
     return json(403, { ok: false, error: "forbidden origin" });
   }
 
@@ -72,18 +75,20 @@ export async function POST(request: Request): Promise<Response> {
     return json(502, { ok: false, error: "We couldn't save your avatar. Please try again." });
   }
 
-  // 6) Point the identity row at it, over the auth RPC (webhook_app can't write `user`). Serving reads R2
-  //    directly, so the avatar already shows — but the pointer must be set so the orphan sweep keeps the
-  //    object. On failure, surface an error (the object is retained by the sweep's safety window; a retry
-  //    re-puts + re-points).
+  // 6) Point the identity row at it, over the auth RPC (webhook_app can't write `user`). The DB pointer and
+  //    the R2 object must stay in lock-step, so on RPC failure ROLL BACK the put — otherwise the object would
+  //    be stored (and, since serving reads R2 by key, live) while `imageKey` stayed null: a divergence with no
+  //    sweep to reconcile it. A clean rollback + error lets the user retry from a consistent state.
   const binding = getOnboardingBinding();
   if (!binding) {
+    await bucket.delete(key).catch(() => {}); // roll back the orphaned object; nothing to serve/track
     return json(503, { ok: false, error: "Avatar uploads are temporarily unavailable." });
   }
   try {
     await binding.updateImageKey(session.userId, key);
   } catch (error) {
     logActionError("avatar.update_image_key_rpc", error);
+    await bucket.delete(key).catch(() => {}); // roll back so R2 and imageKey stay consistent
     return json(502, {
       ok: false,
       error: "We couldn't finish saving your avatar. Please try again.",
