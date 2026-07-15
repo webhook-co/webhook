@@ -15,6 +15,8 @@ function loggedInStore(): CredentialStore {
     list: async () => ["default"],
     getApiBaseUrl: async () => baseUrl,
     setApiBaseUrl: async (u) => void (baseUrl = u),
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
 }
 
@@ -75,6 +77,8 @@ describe("wbhk audit verify", () => {
         list: async () => [],
         getApiBaseUrl: async () => undefined,
         setApiBaseUrl: async () => undefined,
+        getOrg: async () => undefined,
+        setOrg: async () => undefined,
       },
     });
     await run(app, ["audit", "verify"], t.ctx);

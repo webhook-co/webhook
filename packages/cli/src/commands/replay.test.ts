@@ -21,6 +21,8 @@ function loggedInStore(): CredentialStore {
     list: async () => ["default"],
     getApiBaseUrl: async () => undefined,
     setApiBaseUrl: async () => undefined,
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
 }
 function noCredStore(): CredentialStore {

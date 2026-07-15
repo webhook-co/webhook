@@ -47,6 +47,8 @@ function memStore(): CredentialStore & { saved: () => StoredCredential | null } 
     list: async () => [],
     getApiBaseUrl: async () => undefined,
     setApiBaseUrl: async () => {},
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
 }
 

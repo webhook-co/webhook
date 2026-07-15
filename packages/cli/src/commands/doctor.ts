@@ -11,10 +11,10 @@ import { configFilePath, loadConfigFile } from "../config/file-store.js";
 import { resolveCacheDir, resolveConfigDir, resolveStateDir } from "../config/paths.js";
 import type { AppContext } from "../context.js";
 import {
-  globalFlags,
+  displayFlags,
   resolveActiveProfile,
   resolveGlobals,
-  type GlobalFlags,
+  type DisplayFlags,
 } from "../global-flags.js";
 import { colorize, type Color } from "../output/color.js";
 import { EXIT } from "../output/exit-codes.js";
@@ -157,7 +157,7 @@ function renderDoctorText(checks: readonly Check[], color: boolean): string {
     .join("\n");
 }
 
-export const doctorCommand = buildCommand<GlobalFlags, [], AppContext>({
+export const doctorCommand = buildCommand<DisplayFlags, [], AppContext>({
   async func(this: AppContext, flags) {
     const { format, color } = resolveGlobals(this, flags);
     const env = this.process.env ?? {};
@@ -225,6 +225,6 @@ export const doctorCommand = buildCommand<GlobalFlags, [], AppContext>({
     // A failed check is a real problem (corrupt/insecure config, api unreachable) → non-zero for CI.
     if (!summary.ok) this.process.exitCode = EXIT.UNEXPECTED;
   },
-  parameters: { flags: { ...globalFlags } },
+  parameters: { flags: { ...displayFlags } },
   docs: { brief: "run local diagnostics (auth, config, connectivity, clock)" },
 });

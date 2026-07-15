@@ -5,7 +5,7 @@ import { buildCommand } from "@stricli/core";
 
 import type { AppContext } from "../context.js";
 import { CliError } from "../errors.js";
-import { globalFlags, resolveGlobals, type GlobalFlags } from "../global-flags.js";
+import { displayFlags, resolveGlobals, type DisplayFlags } from "../global-flags.js";
 import { EXIT } from "../output/exit-codes.js";
 import { renderJson } from "../output/format.js";
 import { VERSION } from "../version.js";
@@ -258,7 +258,7 @@ async function fetchVerifiedAsset(
   }
 }
 
-interface UpgradeFlags extends GlobalFlags {
+interface UpgradeFlags extends DisplayFlags {
   check?: boolean;
   verifyProvenance?: boolean;
 }
@@ -389,7 +389,7 @@ export const upgradeCommand = buildCommand<UpgradeFlags, [], AppContext>({
   },
   parameters: {
     flags: {
-      ...globalFlags,
+      ...displayFlags,
       check: {
         kind: "boolean",
         optional: true,

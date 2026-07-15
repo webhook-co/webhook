@@ -17,6 +17,13 @@ export const FrozenTokenBodySchema = z.object({
   refresh_token: z.string().min(1), // the rtk_ handle (always rotated on refresh)
   scope: z.string(),
   resource: z.string(),
+  // The org the server bound this credential to at consent (token = org, fixed). OPTIONAL for back-compat
+  // (a pre-org issuer omits it); a plain z.object strips unknowns, so this is purely additive. Fields
+  // mirror OrgSchema (min(1)) so a malformed org — e.g. an empty slug — is a typed parse failure, not a
+  // silently-captured bad org. Persisted via store.setOrg on login (login.ts).
+  organization: z
+    .object({ id: z.string().min(1), slug: z.string().min(1), name: z.string().min(1) })
+    .optional(),
 });
 export type FrozenTokenBody = z.infer<typeof FrozenTokenBodySchema>;
 

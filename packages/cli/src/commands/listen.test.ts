@@ -30,6 +30,8 @@ function loggedInStore(): CredentialStore {
     list: async () => ["default"],
     getApiBaseUrl: async () => undefined,
     setApiBaseUrl: async () => undefined,
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
 }
 
@@ -522,6 +524,8 @@ describe("wbhk listen command (wiring)", () => {
         list: async () => [],
         getApiBaseUrl: async () => undefined,
         setApiBaseUrl: async () => undefined,
+        getOrg: async () => undefined,
+        setOrg: async () => undefined,
       },
     });
     await run(app, ["listen", EP], t.ctx);

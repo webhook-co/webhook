@@ -45,5 +45,12 @@ export function createEnvBackend(
     async setApiBaseUrl() {
       throw new BackendNotWritableError(id);
     },
+    // The env backend carries no org — it's a bare-key override with no profile metadata.
+    async getOrg() {
+      return undefined;
+    },
+    async setOrg() {
+      throw new BackendNotWritableError(id);
+    },
   };
 }

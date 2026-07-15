@@ -21,12 +21,16 @@ export type DeviceAuthorization = z.infer<typeof DeviceAuthorizationSchema>;
 export async function requestDeviceAuthorization(
   deps: OAuthFetch,
   deviceAuthUrl: string,
-  opts: { clientId: string; scope: string; resource: string },
+  opts: { clientId: string; scope: string; resource: string; organization?: string },
 ): Promise<DeviceAuthorization> {
   const res = await postForm(deps, deviceAuthUrl, {
     client_id: opts.clientId,
     scope: opts.scope,
     resource: opts.resource,
+    // Forward the org hint only when requested (`login --org <slug>`); omitted for a bare `login --device`.
+    ...(opts.organization !== undefined && opts.organization !== ""
+      ? { organization: opts.organization }
+      : {}),
   });
   if (!res.ok) {
     const { code, detail } = await readOAuthError(res);

@@ -68,5 +68,13 @@ export function createKeychainBackend(opts: { keychainIo: KeychainIo }): Credent
     async setApiBaseUrl() {
       throw new BackendNotWritableError(id);
     },
+    // The org is non-secret config and lives in the file backend, not the keychain (resolveStore routes
+    // config to a persistsConfig backend) — these never run, but the interface requires them.
+    async getOrg() {
+      return undefined;
+    },
+    async setOrg() {
+      throw new BackendNotWritableError(id);
+    },
   };
 }

@@ -5,7 +5,7 @@ import {
   KeychainUnavailableError,
   SecureStorageRequiredError,
 } from "./errors.js";
-import { DEFAULT_PROFILE, type StoredCredential } from "./schema.js";
+import { DEFAULT_PROFILE, type Org, type StoredCredential } from "./schema.js";
 import { type CredentialBackend, resolveStore } from "./store.js";
 
 /** Minimal in-memory backend for exercising the resolver in isolation (no fs). */
@@ -24,6 +24,7 @@ function memoryBackend(
 ): CredentialBackend {
   const store = new Map<string, StoredCredential>(Object.entries(opts.seed ?? {}));
   const baseUrls = new Map<string, string>();
+  const orgs = new Map<string, Org>();
   let active = opts.activeProfile;
   return {
     id,
@@ -61,8 +62,17 @@ function memoryBackend(
       if (!opts.canWrite) throw new BackendNotWritableError(id);
       baseUrls.set(profile, apiBaseUrl);
     },
+    async getOrg(profile) {
+      return orgs.get(profile);
+    },
+    async setOrg(profile, org) {
+      if (!opts.canWrite) throw new BackendNotWritableError(id);
+      orgs.set(profile, org);
+    },
   };
 }
+
+const ORG: Org = { id: "org_1", slug: "acme", name: "Acme, Inc." };
 
 describe("resolveStore", () => {
   it("reads in precedence order — earlier backends win", async () => {
@@ -219,6 +229,50 @@ describe("resolveStore — sticky apiBaseUrl", () => {
     await expect(store.setApiBaseUrl("https://x.example")).rejects.toBeInstanceOf(
       SecureStorageRequiredError,
     );
+  });
+});
+
+describe("resolveStore — sticky org", () => {
+  it("reads the org in backend precedence order (first defined wins)", async () => {
+    const env = memoryBackend("env", { secure: false, canWrite: false });
+    const file = memoryBackend("file", { secure: false, canWrite: true });
+    await file.setOrg(DEFAULT_PROFILE, ORG);
+    const store = resolveStore([env, file], { requireSecureStorage: false });
+    await expect(store.getOrg()).resolves.toEqual(ORG);
+  });
+
+  it("returns undefined when no backend has an org", async () => {
+    const file = memoryBackend("file", { secure: false, canWrite: true });
+    const store = resolveStore([file], { requireSecureStorage: false });
+    await expect(store.getOrg()).resolves.toBeUndefined();
+  });
+
+  it("persists the org to the first writable CONFIG backend, ignoring the secure-storage policy", async () => {
+    // The org is non-secret config — requireSecureStorage gates the credential, not this.
+    const env = memoryBackend("env", { secure: false, canWrite: false });
+    const file = memoryBackend("file", { secure: false, canWrite: true });
+    const store = resolveStore([env, file], { requireSecureStorage: true });
+    await store.setOrg(ORG);
+    await expect(file.getOrg(DEFAULT_PROFILE)).resolves.toEqual(ORG);
+  });
+
+  it("routes the org write past a secrets-only keychain to the config file", async () => {
+    const keychain = memoryBackend("keychain", {
+      secure: true,
+      canWrite: true,
+      persistsConfig: false,
+    });
+    const file = memoryBackend("file", { secure: false, canWrite: true, persistsConfig: true });
+    const store = resolveStore([keychain, file], { requireSecureStorage: false });
+    await store.setOrg(ORG);
+    await expect(file.getOrg(DEFAULT_PROFILE)).resolves.toEqual(ORG);
+    await expect(keychain.getOrg(DEFAULT_PROFILE)).resolves.toBeUndefined();
+  });
+
+  it("refuses to persist an org when no backend can persist config", async () => {
+    const env = memoryBackend("env", { secure: false, canWrite: false });
+    const store = resolveStore([env], { requireSecureStorage: false });
+    await expect(store.setOrg(ORG)).rejects.toBeInstanceOf(SecureStorageRequiredError);
   });
 });
 

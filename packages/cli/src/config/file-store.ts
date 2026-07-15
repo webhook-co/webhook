@@ -135,5 +135,17 @@ export function createFileBackend(opts: { dir: string } & FsOptions): Credential
       config.profiles[profile] = { ...existing, apiBaseUrl };
       await write(config);
     },
+    async getOrg(profile) {
+      const config = await readOrEmpty();
+      return config.profiles[profile]?.org;
+    },
+    async setOrg(profile, org) {
+      const config = await readOrEmpty();
+      const existing = config.profiles[profile] ?? {};
+      // Spread existing → the org write must never drop the stored credential or apiBaseUrl (and a
+      // credential/base-URL write likewise preserves the org): the anti-corruption invariant.
+      config.profiles[profile] = { ...existing, org };
+      await write(config);
+    },
   };
 }

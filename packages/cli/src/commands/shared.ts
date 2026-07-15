@@ -11,7 +11,12 @@ import type { AppContext } from "../context.js";
 import { NotLoggedInError } from "../errors.js";
 import { parseAdvisoryHeader } from "../output/advisory-notice.js";
 import { writeAdvisory } from "../state/advisory-store.js";
-import { announceActiveProfile, resolveProfile, type GlobalFlags } from "../global-flags.js";
+import {
+  announceActiveProfile,
+  announceRequestOrg,
+  resolveRequestProfile,
+  type GlobalFlags,
+} from "../global-flags.js";
 import { bindAuth } from "../oauth/auth-binding.js";
 import { renderJson, type OutputFormat } from "../output/format.js";
 
@@ -29,10 +34,15 @@ export async function authedClient(
   ctx: AppContext,
   flags: GlobalFlags,
 ): Promise<ApiClient | NotLoggedInError> {
-  const profile = await resolveProfile(ctx, flags);
+  // The authed request path — the ONLY place the org selector runs (a stale WBHK_ORG errors HERE with an
+  // actionable message, never on a display/discovery command). Precedence + conflict rules in
+  // resolveRequestProfile; a bad `--org`/`WBHK_ORG` throws OrgNotFound/Ambiguous, disagreeing flags conflict.
+  const { profile, org } = await resolveRequestProfile(ctx, flags);
   announceActiveProfile(ctx, profile);
   const cred = await ctx.store.get(profile);
   if (cred === null) return new NotLoggedInError();
+  // Echo the org this command targets (token = org) ONCE, centrally — env-credential-guarded (see helper).
+  await announceRequestOrg(ctx, profile, org);
   const baseUrl = resolveApiBaseUrl({
     flag: flags.apiUrl,
     env: ctx.process.env?.[ENV_API_URL_VAR],

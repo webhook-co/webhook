@@ -18,6 +18,8 @@ function loggedInStore(): CredentialStore {
     list: async () => ["default"],
     getApiBaseUrl: async () => baseUrl,
     setApiBaseUrl: async (u) => void (baseUrl = u),
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
 }
 function emptyStore(): CredentialStore {
@@ -28,6 +30,8 @@ function emptyStore(): CredentialStore {
     list: async () => [],
     getApiBaseUrl: async () => undefined,
     setApiBaseUrl: async () => undefined,
+    getOrg: async () => undefined,
+    setOrg: async () => undefined,
   };
 }
 

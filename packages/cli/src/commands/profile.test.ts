@@ -2,6 +2,7 @@ import { run } from "@stricli/core";
 import { describe, expect, it } from "vitest";
 
 import { app } from "../app.js";
+import type { Org } from "../config/schema.js";
 import type { CredentialStore } from "../config/store.js";
 import { makeTestContext } from "../context.js";
 import { EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
@@ -9,9 +10,10 @@ import { EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
 // An in-memory store that actually honors profiles + the active-profile pointer, so the `profile`
 // command family can be driven end-to-end (the inline read-command fakes ignore the profile arg).
 function profileStore(
-  initial: { profiles?: readonly string[]; active?: string } = {},
+  initial: { profiles?: readonly string[]; active?: string; orgs?: Record<string, Org> } = {},
 ): CredentialStore & { peekActive: () => string | undefined } {
   const profiles = new Set<string>(initial.profiles ?? []);
+  const orgs = new Map<string, Org>(Object.entries(initial.orgs ?? {}));
   let active = initial.active;
   return {
     get: async (p = "default") => (profiles.has(p) ? { apiKey: `whk_${p}` } : null),
@@ -22,6 +24,8 @@ function profileStore(
     setActiveProfile: async (n) => void (active = n),
     getApiBaseUrl: async () => undefined,
     setApiBaseUrl: async () => undefined,
+    getOrg: async (p = "default") => orgs.get(p),
+    setOrg: async (o, p = "default") => void orgs.set(p, o),
     peekActive: () => active,
   };
 }
@@ -88,6 +92,25 @@ describe("wbhk profile list", () => {
     const t = makeTestContext({ store });
     await run(app, ["profile", "list", "--output", "json"], t.ctx);
     expect(JSON.parse(t.stdout())).toMatchObject({ active: "default", profiles: ["default"] });
+  });
+
+  it("shows the bound org slug per profile (text) + an orgs map (json)", async () => {
+    const store = profileStore({
+      profiles: ["prod", "staging"],
+      active: "prod",
+      orgs: { prod: { id: "org_1", slug: "acme", name: "Acme, Inc." } },
+    });
+    const t = makeTestContext({ store });
+    await run(app, ["profile", "list"], t.ctx);
+    // prod carries an org → its slug is shown; staging has none → just the name.
+    expect(t.stdout()).toContain("* prod — acme");
+    expect(t.stdout()).toContain("  staging");
+
+    const j = makeTestContext({ store });
+    await run(app, ["profile", "list", "--output", "json"], j.ctx);
+    expect(JSON.parse(j.stdout())).toMatchObject({
+      orgs: { prod: { slug: "acme", name: "Acme, Inc." } },
+    });
   });
 
   it("prints a friendly line when there are no profiles", async () => {

@@ -3,11 +3,11 @@ import { buildCommand, buildRouteMap } from "@stricli/core";
 import type { AppContext } from "../context.js";
 import { InvalidProfileNameError } from "../errors.js";
 import {
-  globalFlags,
+  displayFlags,
   isReservedProfileName,
   resolveActiveProfile,
   resolveGlobals,
-  type GlobalFlags,
+  type DisplayFlags,
 } from "../global-flags.js";
 import { EXIT } from "../output/exit-codes.js";
 import { renderJson } from "../output/format.js";
@@ -19,7 +19,7 @@ import { sanitizeControl } from "../output/safe-text.js";
 // deletes one (clearing the active pointer if it pointed there). Profiles are created implicitly by
 // `login --profile <name>`, so there is no explicit `add` (an empty profile holds nothing) — deferred.
 
-type ProfileFlags = GlobalFlags;
+type ProfileFlags = DisplayFlags;
 
 const nameParam = {
   kind: "tuple",
@@ -44,7 +44,7 @@ export const profileUseCommand = buildCommand<ProfileFlags, [string], AppContext
         : `switched to profile \`${sanitizeControl(name)}\`\n`,
     );
   },
-  parameters: { positional: nameParam, flags: { ...globalFlags } },
+  parameters: { positional: nameParam, flags: { ...displayFlags } },
   docs: { brief: "switch the active profile" },
 });
 
@@ -60,7 +60,7 @@ export const profileCurrentCommand = buildCommand<ProfileFlags, [], AppContext>(
         : `${sanitizeControl(active)} (${source})\n`,
     );
   },
-  parameters: { flags: { ...globalFlags } },
+  parameters: { flags: { ...displayFlags } },
   docs: { brief: "show the active profile and where it's set" },
 });
 
@@ -70,20 +70,34 @@ export const profileListCommand = buildCommand<ProfileFlags, [], AppContext>({
     // The EFFECTIVE active (flag/env/persisted/default) — same resolver `current` uses, so the `*` marker
     // and `profile current` always agree (e.g. WBHK_PROFILE is reflected here too).
     const { name: active } = await resolveActiveProfile(this, flags);
+    // The org each profile's credential is bound to (local metadata) — shown alongside the name so a
+    // profile list doubles as an org list. Absent for a profile with no bound org yet.
+    const orgs: Record<string, { slug: string; name: string }> = {};
+    for (const p of profiles) {
+      const org = await this.store.getOrg(p);
+      if (org !== undefined) orgs[p] = { slug: org.slug, name: org.name };
+    }
     const { format } = resolveGlobals(this, flags);
     if (format === "json") {
-      this.process.stdout.write(`${renderJson({ profiles, active })}\n`);
+      // `profiles` stays a string array (unchanged wire shape); the org metadata rides a sibling `orgs`
+      // map keyed by profile, so a consumer of the old shape is untouched.
+      this.process.stdout.write(`${renderJson({ profiles, active, orgs })}\n`);
       return;
     }
     if (profiles.length === 0) {
       this.process.stdout.write("no profiles yet — run `wbhk login` to create one.\n");
       return;
     }
-    // `* name` for the active profile, `  name` otherwise (a left margin keeps the names aligned).
-    const lines = profiles.map((p) => `${p === active ? "*" : " "} ${sanitizeControl(p)}`);
+    // `* name — slug` for the active profile, `  name` otherwise (a left margin keeps the names aligned);
+    // the ` — slug` suffix appears only when the profile carries a bound org.
+    const lines = profiles.map((p) => {
+      const org = orgs[p];
+      const orgLabel = org !== undefined ? ` — ${sanitizeControl(org.slug)}` : "";
+      return `${p === active ? "*" : " "} ${sanitizeControl(p)}${orgLabel}`;
+    });
     this.process.stdout.write(`${lines.join("\n")}\n`);
   },
-  parameters: { flags: { ...globalFlags } },
+  parameters: { flags: { ...displayFlags } },
   docs: { brief: "list configured profiles" },
 });
 
@@ -107,7 +121,7 @@ export const profileRemoveCommand = buildCommand<ProfileFlags, [string], AppCont
         : `removed profile \`${sanitizeControl(name)}\`\n`,
     );
   },
-  parameters: { positional: nameParam, flags: { ...globalFlags } },
+  parameters: { positional: nameParam, flags: { ...displayFlags } },
   docs: { brief: "delete a profile and its stored credential" },
 });
 

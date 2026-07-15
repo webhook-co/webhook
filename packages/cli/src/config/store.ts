@@ -1,5 +1,5 @@
 import { KeychainUnavailableError, SecureStorageRequiredError } from "./errors.js";
-import { DEFAULT_PROFILE, type StoredCredential } from "./schema.js";
+import { DEFAULT_PROFILE, type Org, type StoredCredential } from "./schema.js";
 
 // A single credential backend (one place a credential can live). Backends compose into a
 // CredentialStore via resolveStore, modeled on the git-style external-credential-helper
@@ -27,6 +27,10 @@ export interface CredentialBackend {
   getApiBaseUrl(profile: string): Promise<string | undefined>;
   /** Persist the per-profile API base URL (a writable backend only). */
   setApiBaseUrl(profile: string, apiBaseUrl: string): Promise<void>;
+  /** The org a profile's credential is bound to (non-secret display metadata), or undefined when unset. */
+  getOrg(profile: string): Promise<Org | undefined>;
+  /** Persist the per-profile bound org (a writable backend only). */
+  setOrg(profile: string, org: Org): Promise<void>;
 }
 
 export interface StoragePolicy {
@@ -65,6 +69,10 @@ export interface CredentialStore {
   getApiBaseUrl(profile?: string): Promise<string | undefined>;
   /** Persist the sticky per-profile API base URL to the first writable backend. */
   setApiBaseUrl(apiBaseUrl: string, profile?: string): Promise<void>;
+  /** The sticky per-profile bound org (read precedence = backend order), or undefined when unset. */
+  getOrg(profile?: string): Promise<Org | undefined>;
+  /** Persist the sticky per-profile bound org to the first writable CONFIG backend. */
+  setOrg(org: Org, profile?: string): Promise<void>;
 }
 
 export function resolveStore(
@@ -176,6 +184,21 @@ export function resolveStore(
       const target = backends.find((b) => b.canWrite && b.persistsConfig);
       if (!target) throw new SecureStorageRequiredError();
       await target.setApiBaseUrl(profile, apiBaseUrl);
+    },
+    async getOrg(profile = DEFAULT_PROFILE) {
+      for (const backend of backends) {
+        const hit = await backend.getOrg(profile);
+        if (hit !== undefined) return hit;
+      }
+      return undefined;
+    },
+    async setOrg(org, profile = DEFAULT_PROFILE) {
+      // The org is non-secret config (token=org display metadata), so it persists to the first writable
+      // CONFIG backend (skipping a secrets-only keychain ahead of the file), exactly like setApiBaseUrl;
+      // the secure-storage policy governs only the CREDENTIAL location.
+      const target = backends.find((b) => b.canWrite && b.persistsConfig);
+      if (!target) throw new SecureStorageRequiredError();
+      await target.setOrg(profile, org);
     },
   };
 }

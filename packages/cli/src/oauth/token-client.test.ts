@@ -61,6 +61,46 @@ describe("exchangeAuthCode", () => {
     ).rejects.toMatchObject({ code: "invalid_grant" });
   });
 
+  it("captures the server-bound organization when the /token body carries one", async () => {
+    const org = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+    const rec = recordingFetch(jsonRes({ ...FROZEN, organization: org }));
+    const body = await exchangeAuthCode({ fetch: rec.fetch }, "https://auth.webhook.co/token", {
+      code: "code_1",
+      codeVerifier: "verifier_1",
+      redirectUri: "http://127.0.0.1:51000/callback",
+      clientId: "client_xyz",
+      resource: "https://api.webhook.co",
+    });
+    expect(body.organization).toEqual(org);
+  });
+
+  it("parses a /token body WITHOUT organization (back-compat — the field is optional)", async () => {
+    const rec = recordingFetch(jsonRes(FROZEN));
+    const body = await exchangeAuthCode({ fetch: rec.fetch }, "https://auth.webhook.co/token", {
+      code: "code_1",
+      codeVerifier: "verifier_1",
+      redirectUri: "http://127.0.0.1:51000/callback",
+      clientId: "client_xyz",
+      resource: "https://api.webhook.co",
+    });
+    expect(body.organization).toBeUndefined();
+  });
+
+  it("rejects a malformed organization (empty slug) — matches OrgSchema min(1)", async () => {
+    const rec = recordingFetch(
+      jsonRes({ ...FROZEN, organization: { id: "org_1", slug: "", name: "Acme" } }),
+    );
+    await expect(
+      exchangeAuthCode({ fetch: rec.fetch }, "https://auth.webhook.co/token", {
+        code: "x",
+        codeVerifier: "y",
+        redirectUri: "http://127.0.0.1/cb",
+        clientId: "c",
+        resource: "https://api.webhook.co",
+      }),
+    ).rejects.toBeInstanceOf(OAuthError);
+  });
+
   it("rejects a malformed (non-FrozenTokenBody) success response", async () => {
     const rec = recordingFetch(jsonRes({ access_token: "whk_x" })); // missing fields
     await expect(

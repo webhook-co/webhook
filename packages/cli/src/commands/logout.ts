@@ -5,9 +5,9 @@ import { isOAuthCredential } from "../config/schema.js";
 import type { AppContext } from "../context.js";
 import {
   announceActiveProfile,
-  globalFlags,
+  displayFlags,
   resolveProfile,
-  type GlobalFlags,
+  type DisplayFlags,
 } from "../global-flags.js";
 import { ENV_AUTH_URL_VAR, oauthEndpoints, resolveAuthBaseUrl } from "../oauth/endpoints.js";
 import { revokeToken } from "../oauth/revoke.js";
@@ -21,12 +21,16 @@ import { revokeToken } from "../oauth/revoke.js";
 
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-interface LogoutFlags extends GlobalFlags {
+interface LogoutFlags extends DisplayFlags {
   authUrl?: string;
 }
 
 export const logoutCommand = buildCommand<LogoutFlags, [], AppContext>({
   async func(this: AppContext, flags) {
+    // logout erases LOCAL state and revokes the selected profile's OWN token — it never acts on org data —
+    // so it resolves PROFILE-ONLY and carries no `--org` (see displayFlags). This keeps it usable while
+    // WBHK_API_KEY / an ambient WBHK_ORG are set (the strict org selector would otherwise hard-fail a purely
+    // local cleanup). Target a specific login with `--profile`.
     const profile = await resolveProfile(this, flags);
     announceActiveProfile(this, profile);
     const cred = await this.store.get(profile);
@@ -69,7 +73,7 @@ export const logoutCommand = buildCommand<LogoutFlags, [], AppContext>({
   },
   parameters: {
     flags: {
-      ...globalFlags,
+      ...displayFlags,
       authUrl: {
         kind: "parsed",
         parse: (value: string) => value,

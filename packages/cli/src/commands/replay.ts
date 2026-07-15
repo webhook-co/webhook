@@ -6,10 +6,11 @@ import { applyEdit, decodeEditableBody, editorFromEnv } from "../edit.js";
 import { NotLoggedInError } from "../errors.js";
 import { forwardToLocalhost, isDelivered, parseForwardTarget } from "../forward.js";
 import {
+  announceRequestOrg,
   announceActiveProfile,
   globalFlags,
   resolveGlobals,
-  resolveProfile,
+  resolveRequestProfile,
   type GlobalFlags,
 } from "../global-flags.js";
 import { bindAuth } from "../oauth/auth-binding.js";
@@ -33,10 +34,13 @@ interface ReplayFlags extends GlobalFlags {
 
 export const replayCommand = buildCommand<ReplayFlags, [string], AppContext>({
   async func(this: AppContext, flags, eventId) {
-    const profile = await resolveProfile(this, flags);
+    // Replay is an authed API-binding command → the org selector applies (a bad `--org`/`WBHK_ORG` errors
+    // here, never silently targets the wrong org); a plain replay falls back to profile-only resolution.
+    const { profile, org } = await resolveRequestProfile(this, flags);
     announceActiveProfile(this, profile);
     const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
+    await announceRequestOrg(this, profile, org);
     const usingDestination = flags.destination !== undefined;
     const usingForward = flags.forward !== undefined;
     if (usingDestination && usingForward) {

@@ -21,6 +21,9 @@ export interface LoopbackLoginDeps {
   readonly scope: string;
   /** The target audience (RFC 8707) — the api origin. */
   readonly resource: string;
+  /** Optional org-slug hint (`login --org <slug>`) forwarded to `/authorize` as `organization`, so the
+   *  consent screen pre-selects that org. Advisory — the server still binds the org at consent. */
+  readonly organization?: string;
   /** Start the loopback redirect server (an io seam; bound to 127.0.0.1 on an ephemeral port). */
   readonly startLoopbackServer: () => Promise<LoopbackServer>;
   /** Best-effort: open the authorize URL in the user's browser (an io seam). */
@@ -38,6 +41,7 @@ function buildAuthorizeUrl(
     state: string;
     scope: string;
     resource: string;
+    organization?: string;
   },
 ): string {
   const url = new URL(authorizeEndpoint);
@@ -49,6 +53,10 @@ function buildAuthorizeUrl(
   url.searchParams.set("state", opts.state);
   url.searchParams.set("scope", opts.scope);
   url.searchParams.set("resource", opts.resource);
+  // Only forward the org hint when one was requested — omit it entirely otherwise (a bare `login`).
+  if (opts.organization !== undefined && opts.organization !== "") {
+    url.searchParams.set("organization", opts.organization);
+  }
   return url.toString();
 }
 
@@ -78,6 +86,7 @@ export async function loopbackLogin(
       state,
       scope: deps.scope,
       resource: deps.resource,
+      organization: deps.organization,
     });
 
     deps.emit(`opening your browser to authorize. if it doesn't open, visit:\n  ${authorizeUrl}\n`);

@@ -2,14 +2,15 @@ import { run } from "@stricli/core";
 import { describe, expect, it } from "vitest";
 
 import { app } from "../app.js";
-import type { StoredCredential } from "../config/schema.js";
+import type { Org, StoredCredential } from "../config/schema.js";
 import type { CredentialStore } from "../config/store.js";
 import { makeTestContext } from "../context.js";
 import { CAPABILITY_EXIT, EXIT, normalizeStricliExitCode } from "../output/exit-codes.js";
 
-function memStore(initial: StoredCredential | null = null): CredentialStore {
+function memStore(initial: StoredCredential | null = null, org?: Org): CredentialStore {
   let cred = initial;
   let baseUrl: string | undefined;
+  let storedOrg = org;
   return {
     get: async () => cred,
     set: async (c) => void (cred = c),
@@ -17,6 +18,8 @@ function memStore(initial: StoredCredential | null = null): CredentialStore {
     list: async () => (cred ? ["default"] : []),
     getApiBaseUrl: async () => baseUrl,
     setApiBaseUrl: async (u) => void (baseUrl = u),
+    getOrg: async () => storedOrg,
+    setOrg: async (o) => void (storedOrg = o),
   };
 }
 
@@ -149,6 +152,106 @@ describe("wbhk whoami", () => {
     await run(app, ["whoami"], t.ctx);
     expect(t.stdout()).not.toContain(ESC);
     expect(t.stdout()).toContain("org_9"); // the visible text survives, only the control bytes go
+  });
+
+  it("prints the locally-bound org slug + name when the profile carries one (text + JSON)", async () => {
+    const org = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+    const t = makeTestContext({
+      store: memStore({ apiKey: "whk_stored_key" }, org),
+      fetch: okFetch({ orgId: "org_1", scopes: ["events:read"] }),
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(t.stdout()).toContain("bound org: acme (Acme, Inc.)");
+
+    const j = makeTestContext({
+      store: memStore({ apiKey: "whk_stored_key" }, org),
+      fetch: okFetch({ orgId: "org_1", scopes: ["events:read"] }),
+    });
+    await run(app, ["whoami", "--output", "json"], j.ctx);
+    expect(JSON.parse(j.stdout())).toMatchObject({ orgId: "org_1", org });
+  });
+
+  it("prefers the SERVER's organization over local metadata and backfills the store (api-key profile)", async () => {
+    // An api-key profile predates local org metadata (getOrg → undefined). The server whoami names the org,
+    // so whoami must display it AND lazily cache it so offline `org list` is accurate.
+    let stored: Org | undefined;
+    const store = memStore({ apiKey: "whk_k" });
+    store.setOrg = async (o) => void (stored = o);
+    store.getOrg = async () => stored;
+    const serverOrg = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+    const t = makeTestContext({
+      store,
+      fetch: okFetch({ orgId: "org_1", scopes: ["events:read"], organization: serverOrg }),
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(t.stdout()).toContain("bound org: acme (Acme, Inc.)");
+    expect(stored).toEqual(serverOrg); // backfilled from the server truth
+  });
+
+  it("does NOT backfill when the local org already matches the server (no redundant write)", async () => {
+    const org = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+    let writes = 0;
+    const store = memStore({ apiKey: "whk_k" }, org);
+    store.setOrg = async () => void writes++;
+    const t = makeTestContext({
+      store,
+      fetch: okFetch({ orgId: "org_1", scopes: ["events:read"], organization: org }),
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(writes).toBe(0);
+  });
+
+  it("F5: displays the server org for a WBHK_API_KEY cred but does NOT backfill it (no phantom file org)", async () => {
+    const org = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+    let setOrgCalled = false;
+    const store: CredentialStore = {
+      ...memStore({ apiKey: "whk_env_key" }),
+      getOrg: async () => undefined,
+      setOrg: async () => void (setOrgCalled = true),
+    };
+    const t = makeTestContext({
+      store,
+      env: { WBHK_API_KEY: "whk_env_key" }, // env-backed credential → backfill must be skipped
+      fetch: okFetch({ orgId: "org_1", scopes: ["events:read"], organization: org }),
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
+    expect(t.stdout()).toContain("bound org: acme (Acme, Inc.)"); // DISPLAYED (server truth)
+    expect(setOrgCalled).toBe(false); // but NEVER written to the file (no phantom `default` profile org)
+  });
+
+  it("L2: never shows the STALE local org for a WBHK_API_KEY cred when the server omits organization", async () => {
+    // The file `default` profile is bound to org acme from a prior login, but the active credential is the
+    // env key (belongs to org globex) and the server whoami omits `organization`. whoami must NOT fall back
+    // to the local acme — the env key's org is server-determined, so showing acme would be a wrong-org lie.
+    const store: CredentialStore = {
+      ...memStore({ apiKey: "whk_env_key" }, { id: "o_acme", slug: "acme", name: "Acme" }),
+    };
+    const t = makeTestContext({
+      store,
+      env: { WBHK_API_KEY: "whk_env_key" },
+      fetch: okFetch({ orgId: "org_globex", scopes: ["events:read"] }), // NO organization field
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(t.stdout()).toContain("org: org_globex");
+    expect(t.stdout()).not.toContain("bound org:"); // the stale local acme is NOT shown
+    expect(t.stdout()).not.toContain("acme");
+  });
+
+  it("backfills the server org onto a STORED (non-env) credential when the local copy is missing", async () => {
+    const org = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+    let saved: Org | undefined;
+    const store: CredentialStore = {
+      ...memStore({ apiKey: "whk_file_key" }),
+      getOrg: async () => undefined,
+      setOrg: async (o) => void (saved = o),
+    };
+    const t = makeTestContext({
+      store, // no WBHK_API_KEY → a stored credential; backfill is allowed
+      fetch: okFetch({ orgId: "org_1", scopes: [], organization: org }),
+    });
+    await run(app, ["whoami"], t.ctx);
+    expect(saved).toEqual(org);
   });
 
   it("surfaces a server 401 (revoked/expired key) as an auth error", async () => {

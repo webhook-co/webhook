@@ -188,6 +188,62 @@ describe("file-store backend", () => {
     await expect(backend.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBe("https://api.self.example");
   });
 
+  it("round-trips the per-profile org and preserves it across a credential write", async () => {
+    const dir = await freshDir();
+    const backend = createFileBackend({ dir, platform: "linux" });
+    const org = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+
+    await expect(backend.getOrg(DEFAULT_PROFILE)).resolves.toBeUndefined();
+
+    await backend.setOrg(DEFAULT_PROFILE, org);
+    await expect(backend.getOrg(DEFAULT_PROFILE)).resolves.toEqual(org);
+
+    // A later credential write must NOT drop the org (anti-corruption).
+    await backend.set(DEFAULT_PROFILE, { apiKey: "whk_after_org" });
+    await expect(backend.getOrg(DEFAULT_PROFILE)).resolves.toEqual(org);
+    await expect(backend.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_after_org" });
+  });
+
+  it("setOrg preserves an already-stored credential and apiBaseUrl (never drops them)", async () => {
+    const dir = await freshDir();
+    const backend = createFileBackend({ dir, platform: "linux" });
+    await backend.set(DEFAULT_PROFILE, { apiKey: "whk_keepme" });
+    await backend.setApiBaseUrl(DEFAULT_PROFILE, "https://api.self.example");
+
+    await backend.setOrg(DEFAULT_PROFILE, { id: "org_2", slug: "globex", name: "Globex" });
+
+    await expect(backend.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_keepme" });
+    await expect(backend.getApiBaseUrl(DEFAULT_PROFILE)).resolves.toBe("https://api.self.example");
+    await expect(backend.getOrg(DEFAULT_PROFILE)).resolves.toEqual({
+      id: "org_2",
+      slug: "globex",
+      name: "Globex",
+    });
+  });
+
+  it("loads a v3 file with no org and reports getOrg → undefined (additive, no version bump)", async () => {
+    const dir = await freshDir();
+    const backend = createFileBackend({ dir, platform: "linux" });
+    await writeFile(
+      configFilePath(dir),
+      JSON.stringify({
+        version: CONFIG_VERSION,
+        profiles: { default: { credential: { apiKey: "whk_no_org" } } },
+      }),
+      { mode: 0o600 },
+    );
+    await expect(backend.getOrg(DEFAULT_PROFILE)).resolves.toBeUndefined();
+    await expect(backend.get(DEFAULT_PROFILE)).resolves.toEqual({ apiKey: "whk_no_org" });
+  });
+
+  it("re-tightens the file to 0600 on a setOrg write", async () => {
+    const dir = await freshDir();
+    const backend = createFileBackend({ dir, platform: "linux" });
+    await backend.setOrg(DEFAULT_PROFILE, { id: "org_1", slug: "acme", name: "Acme" });
+    const fileMode = (await stat(configFilePath(dir))).mode & 0o777;
+    expect(fileMode).toBe(0o600);
+  });
+
   it("refuses to read or modify a pre-existing loose file (the user must fix it first)", async () => {
     const dir = await freshDir();
     await mkdir(dir, { recursive: true, mode: 0o700 });

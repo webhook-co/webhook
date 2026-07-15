@@ -35,4 +35,12 @@ describe("env-store backend", () => {
       backend.setApiBaseUrl(DEFAULT_PROFILE, "https://x.example"),
     ).rejects.toBeInstanceOf(BackendNotWritableError);
   });
+
+  it("carries no org and refuses to persist one (bare-key override, no profile metadata)", async () => {
+    const backend = createEnvBackend({ [ENV_API_KEY_VAR]: "whk_x" });
+    await expect(backend.getOrg(DEFAULT_PROFILE)).resolves.toBeUndefined();
+    await expect(
+      backend.setOrg(DEFAULT_PROFILE, { id: "org_1", slug: "acme", name: "Acme" }),
+    ).rejects.toBeInstanceOf(BackendNotWritableError);
+  });
 });
