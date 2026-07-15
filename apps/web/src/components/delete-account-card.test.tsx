@@ -29,6 +29,9 @@ describe("DeleteAccountCard", () => {
 
     const confirm = screen.getByRole("button", { name: "Permanently delete my account" });
     expect(confirm).toBeDisabled();
+    await user.type(screen.getByRole("textbox"), "delete"); // wrong case must NOT enable the most destructive action
+    expect(confirm).toBeDisabled();
+    await user.clear(screen.getByRole("textbox"));
     await user.type(screen.getByRole("textbox"), "DELETE");
     expect(confirm).toBeEnabled();
   });

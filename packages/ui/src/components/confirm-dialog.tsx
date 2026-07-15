@@ -59,11 +59,25 @@ function ConfirmSubmit({
   );
 }
 
+/** Dismiss the modal once the form action settles. Also a child of the form (it reads `useFormStatus`). The
+ *  delete cards redirect on success so this never fires for them, but it stops a NON-redirecting reuse from
+ *  sitting open with confirm re-enabled — which would let the same destructive action be submitted twice. */
+function CloseOnComplete({ onComplete }: { readonly onComplete: () => void }) {
+  const { pending } = useFormStatus();
+  const wasPending = React.useRef(false);
+  React.useEffect(() => {
+    if (wasPending.current && !pending) onComplete();
+    wasPending.current = pending;
+  }, [pending, onComplete]);
+  return null;
+}
+
 /**
  * A destructive-action confirmation modal: a trigger opens a Radix dialog whose confirm button submits a
  * (server) action. Optionally gates confirm behind typing an exact word (e.g. `DELETE`) that rides along in
- * the FormData for the server to re-check. Replaces the hand-rolled inline "type DELETE" reveals and the
- * one-off `Dialog` + danger-`Button` confirmations scattered across the dashboard.
+ * the FormData for the server to re-check. Intended as the shared replacement for the hand-rolled inline
+ * "type DELETE" reveals and the one-off `Dialog` + danger-`Button` confirmations across the dashboard; so far
+ * the two delete-account/org cards are migrated, with the other bespoke confirmations to follow.
  */
 export function ConfirmDialog({
   trigger,
@@ -83,22 +97,31 @@ export function ConfirmDialog({
   const needsTyped = confirmText != null && confirmText.length > 0;
   const confirmEnabled = !needsTyped || typed === confirmText;
 
+  // Close and clear the typed confirmation. Stable (useCallback) so CloseOnComplete's effect doesn't re-fire
+  // every render. Reopening therefore always starts clean — no stale "DELETE" that would confirm in one click.
+  const close = React.useCallback(() => {
+    setOpen(false);
+    setTyped("");
+  }, []);
+
   function onOpenChange(next: boolean) {
-    setOpen(next);
-    // Reset the typed confirmation on close so a reopened modal starts clean — no stale "DELETE" that would
-    // let a second open confirm with one click.
-    if (!next) setTyped("");
+    if (next) setOpen(true);
+    else close();
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
-      <DialogContent>
+      {/* When no description is supplied, opt out of Radix's aria-describedby requirement explicitly (rather
+          than leaving it dangling and triggering a missing-Description warning). With a description, let Radix
+          wire it from <DialogDescription>. */}
+      <DialogContent {...(description ? {} : { "aria-describedby": undefined })}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           {description ? <DialogDescription>{description}</DialogDescription> : null}
         </DialogHeader>
         <form action={formAction} className="flex flex-col gap-4">
+          <CloseOnComplete onComplete={close} />
           {needsTyped ? (
             <div className="flex flex-col gap-2">
               <label htmlFor={inputId} className="text-sm text-fg-secondary">

@@ -53,6 +53,24 @@ describe("ConfirmDialog", () => {
     await waitFor(() => expect(formAction).toHaveBeenCalledOnce());
   });
 
+  it("closes after the action completes, so a non-redirecting reuse can't double-submit", async () => {
+    const formAction = vi.fn(async () => {}); // resolves without navigating away
+    const user = userEvent.setup();
+    render(
+      <ConfirmDialog
+        trigger={<Button variant="danger">Open remove</Button>}
+        title="Remove destination"
+        formAction={formAction}
+        confirmLabel="Remove"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Open remove" }));
+    await user.click(screen.getByRole("button", { name: "Remove" }));
+    await waitFor(() => expect(formAction).toHaveBeenCalledOnce());
+    // The modal dismisses itself once the action settles — no lingering enabled confirm to click twice.
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
   it("with a confirmText, the confirm button is disabled until the EXACT word is typed", async () => {
     const formAction = vi.fn();
     const user = userEvent.setup();
