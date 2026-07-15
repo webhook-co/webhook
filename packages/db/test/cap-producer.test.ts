@@ -291,6 +291,22 @@ describe("runCapProducer", () => {
     expect(evicted).toContainEqual({ orgId, paused: false });
   });
 
+  it("does NOT resume an org paused for 'free_org_cap' even when it is under the event cap (non-clobber)", async () => {
+    // PR2b: a free_org_cap pause was set by the free-org-cap reconciler, not by event volume. The cap producer
+    // reasons only about usage — on a would-be resume it must LEAVE that pause exactly as the reconciler set
+    // it, or it would silently un-suspend an org the reconciler disabled. No usage this period → the producer
+    // would normally resume, but the free_org_cap reason must stay paused with no transition/eviction.
+    const orgId = await seedOrg("free-cap-nonclobber");
+    await withTenant(app, orgId, async (tx) => {
+      await tx`insert into ingest_paused (org_id, paused, reason, since) values (${orgId}, ${true}, ${"free_org_cap"}, now())`;
+    });
+    const evicted: string[] = [];
+    const result = await run({ onTransition: async (o) => void evicted.push(o) });
+    expect(result.resumedTransitions).toBe(0);
+    expect(evicted).toEqual([]);
+    expect(await pausedState(orgId)).toEqual({ paused: true, reason: "free_org_cap" }); // untouched
+  });
+
   it("is idempotent — no transition (or eviction) when already in the desired state", async () => {
     const orgId = await seedOrg("cap-idempotent");
     await seedUsage(orgId, 150);

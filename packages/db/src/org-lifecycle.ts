@@ -254,6 +254,98 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
   return [...byUser].map(([userId, freeOrgs]) => ({ userId, freeOrgs }));
 }
 
+// ── The free-org-cap reconciler's WRITE side (migration 0085) ────────────────────────────────────────────
+//
+// These run as the RECONCILER client (webhook_capreconciler) and act CROSS-ORG — no withTenant, because the
+// role's role-targeted UPDATE policies (`..._capreconciler_*`) grant it that reach, and there is no tenant GUC
+// to set. Each targets one org by id; the column grants fence the writes to the suspend-lifecycle fields.
+
+/** upsert ingest_paused for one org as the reconciler — reason is always `free_org_cap` on pause. */
+async function setIngestPausedFreeCap(tx: TenantTx, orgId: string, paused: boolean): Promise<void> {
+  if (paused) {
+    await tx`
+      insert into ingest_paused (org_id, paused, reason, since, updated_at)
+      values (${orgId}, true, 'free_org_cap', now(), now())
+      on conflict (org_id) do update
+        set paused = true, reason = 'free_org_cap', since = now(), updated_at = now()`;
+  } else {
+    // Lift ONLY a free_org_cap pause. If the org is ALSO paused for its event cap ('cap'), leave that alone —
+    // the cap producer owns it; touching it would wrongly resume an over-quota org.
+    await tx`
+      update ingest_paused
+         set paused = false, reason = null, since = null, updated_at = now()
+       where org_id = ${orgId} and reason = 'free_org_cap'`;
+  }
+}
+
+/**
+ * Flag an ACTIVE org as over the free-org cap, starting its grace window. Leaves the org active (reads +
+ * delivery + ingest all continue) — this only records the deadline the cron will suspend at if the overage
+ * isn't resolved first. No-op (0 rows) if the org isn't active (already suspended, or gone).
+ */
+export async function flagOrgForFreeCapGrace(
+  reconciler: Sql,
+  orgId: string,
+  graceUntil: Date,
+): Promise<void> {
+  await reconciler`
+    update orgs set free_org_cap_grace_until = ${graceUntil}
+     where id = ${orgId} and status = 'active'`;
+}
+
+/** Clear an org's grace flag — the user resolved the overage (upgraded/deleted/reassigned) in time. */
+export async function clearFreeCapGrace(reconciler: Sql, orgId: string): Promise<void> {
+  await reconciler`update orgs set free_org_cap_grace_until = null where id = ${orgId}`;
+}
+
+/**
+ * Suspend an over-cap org: mark it suspended (gates reads + delivery) AND pause its ingest, atomically. Only
+ * acts on a currently-ACTIVE org (so a re-run never re-stamps suspended_at). Returns true iff it suspended.
+ */
+export async function suspendOrgForFreeCap(
+  reconciler: Sql,
+  orgId: string,
+  restoreDeadline: Date,
+): Promise<boolean> {
+  return reconciler.begin(async (tx) => {
+    const rows = await tx<{ id: string }[]>`
+      update orgs
+         set status = 'suspended',
+             suspended_reason = 'free_org_cap',
+             suspended_at = now(),
+             restore_deadline = ${restoreDeadline},
+             free_org_cap_grace_until = null
+       where id = ${orgId} and status = 'active'
+      returning id`;
+    if (rows.length === 0) return false; // wasn't active → nothing suspended
+    await setIngestPausedFreeCap(tx, orgId, true);
+    return true;
+  });
+}
+
+/**
+ * Restore an org suspended for the free-org cap: back to active, suspend metadata cleared, ingest un-paused
+ * (only the free_org_cap pause — an event-cap pause is left to the cap producer). Only acts on an org
+ * currently suspended FOR free_org_cap. Returns true iff it restored — the caller must then WAKE that org's
+ * delivery DOs (clearing orgs.status alone leaves the held backlog frozen until something pokes them).
+ */
+export async function restoreOrgFromFreeCap(reconciler: Sql, orgId: string): Promise<boolean> {
+  return reconciler.begin(async (tx) => {
+    const rows = await tx<{ id: string }[]>`
+      update orgs
+         set status = 'active',
+             suspended_reason = null,
+             suspended_at = null,
+             restore_deadline = null,
+             free_org_cap_grace_until = null
+       where id = ${orgId} and status = 'suspended' and suspended_reason = 'free_org_cap'
+      returning id`;
+    if (rows.length === 0) return false; // wasn't free_org_cap-suspended → nothing restored
+    await setIngestPausedFreeCap(tx, orgId, false);
+    return true;
+  });
+}
+
 /**
  * Is `orgId` a PERSONAL org — the deterministic identity-home org of one of its own owners? Decided
  * from the org's OWN membership, NOT from who is asking: an org is personal iff some owner `u` has

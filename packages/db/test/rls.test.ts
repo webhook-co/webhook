@@ -933,43 +933,79 @@ describe("catalog-driven RLS coverage", () => {
     expect(ownedByCapReconciler[0]?.n).toBe(0);
   });
 
-  it("the cap-reconciler holds SELECT on ONLY the detection columns, and no write anywhere", async () => {
-    // Column-level least privilege: it reads the ownership graph, entitlement status, and org identity/state
-    // it needs to find over-cap owners — but NEVER billing identifiers, plan, or org display fields, and holds
-    // no INSERT/UPDATE/DELETE on any of the three tables.
-    const granted = {
+  it("the cap-reconciler holds SELECT on ONLY the detection columns, UPDATE on ONLY the suspend columns", async () => {
+    // Column-level least privilege. Reads: the ownership graph, entitlement status, and org identity/state it
+    // needs to find over-cap owners (0084) + the grace column (0085). Writes: ONLY the org suspend-lifecycle
+    // columns + the ingest pause (0085). NEVER billing identifiers, plan, org display fields, and never the
+    // ownership/entitlement tables it only reads.
+    const grantedSelect = {
       memberships: ["org_id", "user_id", "role"],
       billing_subscriptions: ["org_id", "status"],
-      orgs: ["id", "created_at", "status", "suspended_reason"],
+      orgs: ["id", "created_at", "status", "suspended_reason", "free_org_cap_grace_until"],
+      ingest_paused: ["org_id", "paused", "reason"],
     } as const;
-    for (const [table, cols] of Object.entries(granted)) {
+    for (const [table, cols] of Object.entries(grantedSelect)) {
       for (const c of cols) {
         const [p] = await owner<{ ok: boolean }[]>`
           select has_column_privilege(${DB_ROLES.capReconciler}, ${table}, ${c}, 'SELECT') as ok`;
         expect(p.ok).toBe(true);
       }
     }
-    // Exist on these tables but are NOT granted — the reconciler never sees the Stripe identifiers, the plan,
-    // or the org's human-facing name/slug.
-    const forbidden = {
+    // Never granted SELECT — no Stripe identifiers, no plan, no org name/slug.
+    const forbiddenSelect = {
       billing_subscriptions: ["stripe_subscription_id", "plan"],
       orgs: ["name", "slug"],
     } as const;
-    for (const [table, cols] of Object.entries(forbidden)) {
+    for (const [table, cols] of Object.entries(forbiddenSelect)) {
       for (const c of cols) {
         const [p] = await owner<{ ok: boolean }[]>`
           select has_column_privilege(${DB_ROLES.capReconciler}, ${table}, ${c}, 'SELECT') as ok`;
         expect(p.ok).toBe(false);
       }
     }
-    // No write on any of the three tables — this slice only DETECTS; the suspend write is a later slice.
-    for (const t of ["memberships", "billing_subscriptions", "orgs"] as const) {
+    // UPDATE granted ONLY on the org suspend-lifecycle columns…
+    const orgsUpdatable = [
+      "status",
+      "suspended_reason",
+      "suspended_at",
+      "restore_deadline",
+      "free_org_cap_grace_until",
+    ] as const;
+    for (const c of orgsUpdatable) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.capReconciler}, 'orgs', ${c}, 'UPDATE') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    // …NEVER on the org's identity fields (it can suspend an org, never rename or re-slug it).
+    for (const c of ["name", "slug", "region"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.capReconciler}, 'orgs', ${c}, 'UPDATE') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // No INSERT/DELETE on orgs (suspend is an UPDATE only), and NO write at all on the read-only tables.
+    for (const cmd of ["INSERT", "DELETE"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.capReconciler}, 'orgs', ${cmd}) as ok`;
+      expect(p.ok).toBe(false);
+    }
+    for (const t of ["memberships", "billing_subscriptions"] as const) {
       const [p] = await owner<{ any: boolean }[]>`
         select (has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'INSERT')
              or has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'UPDATE')
              or has_table_privilege(${DB_ROLES.capReconciler}, ${t}, 'DELETE')) as any`;
       expect(p.any).toBe(false);
     }
+    // ingest_paused: INSERT + UPDATE granted at the COLUMN level (upsert the pause) — asserted per-column
+    // since a column grant doesn't confer table-level privilege — but NEVER DELETE (a resume flips the flag,
+    // it doesn't remove the audit row).
+    for (const cmd of ["INSERT", "UPDATE"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.capReconciler}, 'ingest_paused', 'paused', ${cmd}) as ok`;
+      expect(p.ok).toBe(true);
+    }
+    const [del] = await owner<{ ok: boolean }[]>`
+      select has_table_privilege(${DB_ROLES.capReconciler}, 'ingest_paused', 'DELETE') as ok`;
+    expect(del.ok).toBe(false);
   });
 
   it("the notifier role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
