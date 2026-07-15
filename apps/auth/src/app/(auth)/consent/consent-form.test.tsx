@@ -72,6 +72,22 @@ describe("ConsentForm", () => {
     expect(screen.getByRole("button", { name: /deny/i })).toBeInTheDocument();
   });
 
+  it("renders the Access row COLLAPSED by default with an honest label (ADR-0120) — full grant still in DOM", () => {
+    const { container } = render(<ConsentForm request={baseRequest} actions={makeActions()} />);
+    // The scope list is a closed <details> (collapsed by default) — the founder's choice per ADR-0120.
+    const details = container.querySelector("details");
+    expect(details).not.toBeNull();
+    expect(details!.hasAttribute("open")).toBe(false);
+    // …with an honest face that names what's being GRANTED (not a bare count).
+    expect(screen.getByText("2 permissions — review before authorizing")).toBeInTheDocument();
+    // …yet every permission (title + exact machine scope) stays in the DOM even collapsed, so assistive tech
+    // reaches the full grant. (Regressing to /events/<id>-style or hiding scopes would fail these.)
+    expect(screen.getByText("events:read")).toBeInTheDocument();
+    expect(screen.getByText("View events")).toBeInTheDocument();
+    expect(screen.getByText("events:replay")).toBeInTheDocument();
+    expect(details).toContainElement(screen.getByText("events:read"));
+  });
+
   it("authorizes the request", async () => {
     const actions = makeActions();
     render(<ConsentForm request={baseRequest} actions={actions} />);
