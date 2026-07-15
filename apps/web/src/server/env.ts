@@ -167,6 +167,11 @@ export type { OnboardingStateDto };
 /** The bound AUTH_ONBOARDING entrypoint, or undefined when unbound (dev / pre-provision). */
 export function getOnboardingBinding(): OnboardingProfileBinding | undefined {
   const binding = workerEnv().AUTH_ONBOARDING;
+  // NOTE: a bound Cloudflare RPC stub is a Proxy that fabricates a callable for ANY property name, so these
+  // typeof checks only distinguish BOUND (a real stub) from UNBOUND (undefined in dev / pre-provision) — they
+  // canNOT detect whether the deployed auth worker actually has a given method. A call to a method the
+  // deployed worker lacks (a web-before-auth deploy window) throws at call time; callers must catch that
+  // rather than rely on this returning undefined.
   if (
     binding &&
     typeof (binding as { read?: unknown }).read === "function" &&

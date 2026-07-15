@@ -23,6 +23,12 @@ export interface CompleteOnboardingResult {
   readonly completed: boolean;
 }
 
+/** The result of a display-name edit. */
+export interface UpdateNameResult {
+  /** False if the user row was gone, or the name was empty (a NOT-NULL name is never blanked). */
+  readonly updated: boolean;
+}
+
 /**
  * The onboarding RPC seam — a Cloudflare service-binding entrypoint on auth. (OnboardingProfile). The web
  * dashboard types its `env.AUTH_ONBOARDING` against this so the cross-Worker call site is contract-checked.
@@ -35,4 +41,10 @@ export interface OnboardingProfileService {
   read(userId: string): Promise<OnboardingStateDto | null>;
   /** Persist the profile name and stamp `onboardedAt` (minted auth-side). */
   complete(userId: string, firstName: string, lastName: string): Promise<CompleteOnboardingResult>;
+  /**
+   * Edit just the display name (the composite `user.name` the app renders). Does NOT touch `onboardedAt` — an
+   * already-onboarded user editing their name must not re-flip the gate. The caller passes its OWN verified
+   * userId; the name is validated/trimmed and a NOT-NULL name is never blanked.
+   */
+  updateName(userId: string, name: string): Promise<UpdateNameResult>;
 }

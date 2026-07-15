@@ -9,10 +9,19 @@
 // AUTHZ: the caller has already verified the session; the binding is worker-to-worker (not public); the userId
 // is the caller's own. So a user can only ever read/complete their OWN onboarding.
 
-import type { CompleteOnboardingResult, OnboardingStateDto } from "@webhook-co/contract";
-import { completeOnboarding, createClient, readOnboardingState } from "@webhook-co/db";
+import type {
+  CompleteOnboardingResult,
+  OnboardingStateDto,
+  UpdateNameResult,
+} from "@webhook-co/contract";
+import {
+  completeOnboarding,
+  createClient,
+  readOnboardingState,
+  updateUserName,
+} from "@webhook-co/db";
 
-export type { CompleteOnboardingResult, OnboardingStateDto };
+export type { CompleteOnboardingResult, OnboardingStateDto, UpdateNameResult };
 
 /** The minimal env the onboarding RPC needs: the webhook_auth Hyperdrive over the identity realm. */
 export interface OnboardingEnv {
@@ -59,6 +68,24 @@ export async function completeOnboardingRpc(
       onboardedAt: new Date(),
     });
     return { completed };
+  } finally {
+    await authClient.end();
+  }
+}
+
+/**
+ * Edit just the display name, as webhook_auth. Unlike completeOnboardingRpc this leaves `onboardedAt` and the
+ * first/last split untouched — it's a post-onboarding identity edit, not a gate flip. The DB helper trims and
+ * refuses to blank the NOT-NULL name.
+ */
+export async function updateNameRpc(
+  env: OnboardingEnv,
+  input: { userId: string; name: string },
+): Promise<UpdateNameResult> {
+  const authClient = createClient(env.HYPERDRIVE_AUTH.connectionString, { max: 1 });
+  try {
+    const updated = await updateUserName(authClient, { userId: input.userId, name: input.name });
+    return { updated };
   } finally {
     await authClient.end();
   }

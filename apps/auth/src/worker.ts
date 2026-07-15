@@ -32,7 +32,7 @@ import { augmentAsMetadataResponse } from "./issuer/as-metadata";
 import { guardRegister } from "./issuer/register-guard";
 import type { RateLimitKv } from "./issuer/rate-limit";
 import { deleteAccountRpc } from "./issuer/account-delete-deps";
-import { completeOnboardingRpc, readOnboardingRpc } from "./issuer/onboarding-deps";
+import { completeOnboardingRpc, readOnboardingRpc, updateNameRpc } from "./issuer/onboarding-deps";
 import { redeemSessionExchangeRpc } from "./issuer/session-exchange-deps";
 import { readIntrospectEnv } from "./runtime/env";
 import { runNotificationDrain } from "./runtime/notify-cron";
@@ -137,6 +137,10 @@ export class OnboardingProfile extends WorkerEntrypoint {
   }
   async complete(userId, firstName, lastName) {
     return completeOnboardingRpc(this.env, { userId, firstName, lastName });
+  }
+  // Post-onboarding display-name edit — same identity-realm boundary, does NOT re-stamp onboardedAt.
+  async updateName(userId, name) {
+    return updateNameRpc(this.env, { userId, name });
   }
 }
 
