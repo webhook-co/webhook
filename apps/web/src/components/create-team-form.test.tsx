@@ -11,7 +11,7 @@ describe("CreateTeamForm", () => {
     const user = userEvent.setup();
     render(<CreateTeamForm create={vi.fn(async () => ({ ok: false as const, error: "" }))} />);
 
-    await user.type(screen.getByLabelText("Team name"), "Acme Engineering");
+    await user.type(screen.getByLabelText("Organization name"), "Acme Engineering");
     // The preview shows the slugified base of the name (the server may add a suffix).
     expect(screen.getByText(/webhook\.co\/org\/acme-engineering/i)).toBeInTheDocument();
   });
@@ -24,8 +24,8 @@ describe("CreateTeamForm", () => {
     const user = userEvent.setup();
     render(<CreateTeamForm create={create} />);
 
-    await user.type(screen.getByLabelText("Team name"), "  Acme  ");
-    await user.click(screen.getByRole("button", { name: "Create team" }));
+    await user.type(screen.getByLabelText("Organization name"), "  Acme  ");
+    await user.click(screen.getByRole("button", { name: "Create organization" }));
 
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect((create.mock.calls[0]![0] as FormData).get("name")).toBe("Acme");
@@ -36,8 +36,8 @@ describe("CreateTeamForm", () => {
     const user = userEvent.setup();
     render(<CreateTeamForm create={vi.fn()} />);
 
-    expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled();
-    await user.type(screen.getByLabelText("Team name"), "   ");
-    expect(screen.getByRole("button", { name: "Create team" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Create organization" })).toBeDisabled();
+    await user.type(screen.getByLabelText("Organization name"), "   ");
+    expect(screen.getByRole("button", { name: "Create organization" })).toBeDisabled();
   });
 });
