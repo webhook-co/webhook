@@ -226,6 +226,21 @@ describe("buildAuthConfig", () => {
     expect(account?.storeAccountCookie).not.toBe(true);
   });
 
+  it("PINS the account-linking policy explicitly (not Better Auth defaults)", () => {
+    // Linking is an account-takeover surface and an email-change flow will lean on it, so the policy is
+    // spelled out rather than inherited. This test is the regression pin: a config edit that drops or flips
+    // any of these must fail here. See ADR-0118.
+    const linking = buildAuthConfig(input(), cfgDeps()).account?.accountLinking;
+    expect(linking).toMatchObject({
+      enabled: true, // keep verified-email implicit linking on…
+      disableImplicitLinking: false, // …explicitly
+      trustedProviders: [], // no provider linked without a verified incoming email
+      requireLocalEmailVerified: true, // never implicitly link into an UNVERIFIED local account (anti-pre-hijack)
+      allowDifferentEmails: true, // a user who changed their email can still re-link their provider
+      allowUnlinkingAll: false, // never strand the last sign-in method
+    });
+  });
+
   it("sets the secret + base URL and trusts the app origin", () => {
     const c = buildAuthConfig(input(), cfgDeps());
     expect(c.baseURL).toBe("https://auth.webhook.co");

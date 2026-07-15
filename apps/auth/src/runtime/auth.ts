@@ -200,6 +200,32 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
     // Explicitly DB-validated sessions: cookieCache off so a revoked session dies immediately (pinned
     // against Better Auth's default of caching for non-stateful instances).
     session: { cookieCache: { enabled: false } },
+    // Account linking, PINNED (not riding Better Auth defaults). Linking is a latent account-takeover
+    // surface, and an email-change flow is about to lean on it — so the policy is spelled out here rather
+    // than inherited. This is behavioural, not schema, so it lives ONLY in the runtime config (unlike
+    // `user.additionalFields`, which must also be in the generator to emit columns); the drift guard is
+    // unaffected.
+    account: {
+      accountLinking: {
+        // Keep implicit verified-email linking ON (the founder's call): signing in with a provider whose
+        // verified email matches an existing account links them, instead of stranding a second identity.
+        enabled: true,
+        disableImplicitLinking: false,
+        // No provider is "trusted" to link WITHOUT a verified incoming email. Empty = the secure default:
+        // implicit/explicit linking both require the provider to assert a verified email (google/github do).
+        trustedProviders: [],
+        // Only ever implicitly link INTO a local account whose own email is verified — this is Better Auth's
+        // default (requireLocalEmailVerified ?? true) but pinned, so a future config edit can't silently drop
+        // it. It blocks the classic pre-hijack (an unverified local account pre-seeded with a victim's email).
+        requireLocalEmailVerified: true,
+        // Let a signed-in user link a provider whose email DIFFERS from their current one — required so a user
+        // who changes their email can still re-link Google/GitHub. Safe: /link-social needs the user's own
+        // session, and implicit sign-in linking stays same-email regardless of this flag.
+        allowDifferentEmails: true,
+        // Never let the last sign-in method be unlinked — that would strand the user out of their account.
+        allowUnlinkingAll: false,
+      },
+    },
   };
 }
 
