@@ -19,6 +19,7 @@ import {
   createClient,
   getActiveSigningSecrets,
   isDestinationOrdered,
+  isOrgSuspended,
   listDueDeliveries,
   markDeliveryDelivered,
   markDeliveryTerminalFailure,
@@ -138,11 +139,17 @@ export class DeliveryDO extends DurableObject<Env> {
   protected async drainOnce(orgId: string, destinationId: string): Promise<Date | null> {
     const tenant = createClient(this.env.HYPERDRIVE_TENANT.connectionString, { max: 1 });
     try {
-      const { due, secrets, ordered } = await withTenant(tenant, orgId, async (tx) => ({
+      const { due, secrets, ordered, suspended } = await withTenant(tenant, orgId, async (tx) => ({
         due: await listDueDeliveries(tx, destinationId, MAX_PER_DRAIN),
         secrets: await getActiveSigningSecrets(tx, destinationId),
         ordered: await isDestinationOrdered(tx, destinationId),
+        suspended: await isOrgSuspended(tx),
       }));
+      // A SUSPENDED org (free-org-cap overflow) holds ALL outbound delivery: return idle (null) so the DO stops
+      // re-arming and the due deliveries stay DURABLY OWED — nothing is dropped or dead-lettered. When the org
+      // is restored the DO is poked again (like enabling a destination) and drains the backlog. Checked before
+      // any POST, so a suspended org never delivers even one held event.
+      if (suspended) return null;
       // The auto-disable trigger (PR3c) records a tamper-evident `replay_destination.disabled` audit row + an
       // owner-notification intent when the DEAD tally crosses the threshold. Build the audit key LAZILY (+
       // FAIL-SOFT): only a dead delivery that crosses the threshold needs it, so an all-success / below-

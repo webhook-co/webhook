@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DashboardData } from "@/server/dashboard";
 
 vi.mock("@/server/org-access", () => ({
-  requireOrgAccess: vi.fn(async () => ({
+  requireActiveOrgAccess: vi.fn(async () => ({
     userId: "usr_1",
     orgId: "org_1",
     slug: "acme",

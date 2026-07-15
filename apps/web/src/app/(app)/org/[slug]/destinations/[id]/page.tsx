@@ -10,7 +10,7 @@ import { loadMoreDeliveriesAction } from "@/server/delivery-actions";
 import { loadDeliveries } from "@/server/deliveries";
 import { isUuid } from "@/server/endpoints";
 import { loadDestinations } from "@/server/replay-destinations";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Destination · webhook.co",
@@ -22,7 +22,7 @@ export default async function DestinationDetailPage({
   params: Promise<{ slug: string; id: string }>;
 }) {
   const { slug, id: rawId } = await params;
-  const session = await requireOrgAccess(slug, `/destinations/${rawId}`);
+  const session = await requireActiveOrgAccess(slug, `/destinations/${rawId}`);
   // A non-uuid can never name a destination (the id column is uuid); treat it as not-found rather than
   // letting it reach a query as a bad cast.
   if (!isUuid(rawId)) notFound();

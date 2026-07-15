@@ -9,7 +9,7 @@ import {
   rotateEndpointAction,
 } from "@/server/endpoint-actions";
 import { loadEndpoints } from "@/server/endpoints";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "Endpoints · webhook.co",
@@ -24,7 +24,7 @@ export default async function EndpointsPage({
 }) {
   const { slug } = await params;
   // subPath: a mis-cased or retired slug 308s to the canonical URL with this deep link intact.
-  const session = await requireOrgAccess(slug, "/endpoints");
+  const session = await requireActiveOrgAccess(slug, "/endpoints");
   const { name } = await searchParams;
   const trimmed = firstParam(name)?.trim();
   const result = await loadEndpoints(session.orgId, trimmed || undefined);

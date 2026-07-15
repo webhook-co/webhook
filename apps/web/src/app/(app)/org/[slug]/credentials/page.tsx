@@ -5,7 +5,7 @@ import type { Metadata } from "next";
 import { CredentialsManager } from "@/components/credentials-manager";
 import { createApiKey, revokeApiKey, revokeGrant } from "@/server/credential-actions";
 import { loadCredentials } from "@/server/credentials";
-import { requireOrgAccess } from "@/server/org-access";
+import { requireActiveOrgAccess } from "@/server/org-access";
 
 export const metadata: Metadata = {
   title: "API keys & devices · webhook.co",
@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default async function CredentialsPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
-  const session = await requireOrgAccess(slug, "/credentials");
+  const session = await requireActiveOrgAccess(slug, "/credentials");
   const result = await loadCredentials(session.orgId);
 
   return (

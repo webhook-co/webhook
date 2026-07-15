@@ -24,6 +24,10 @@ export const MOVED_SEGMENTS: ReadonlySet<string> = new Set([
   "destinations",
   "endpoints",
   "settings",
+  // The read-only suspension screen (PR2b). It postdates the URL move, so no legacy `/suspended` bookmark can
+  // exist — but the drift guard requires every top-level segment be listed, and forwarding a hypothetical old
+  // path to the default org is harmless and consistent.
+  "suspended",
   "team",
   "triggers",
   "usage",

@@ -49,6 +49,27 @@ export async function createOrg(app: Sql, input: CreateOrgInput): Promise<Create
 export type MembershipRole = "owner" | "admin" | "member";
 
 /**
+ * An org's service state (migration 0083).
+ *  - `active`    — normal. The default at creation and the only state most orgs ever have.
+ *  - `suspended` — disabled but NOT deleted: the dashboard is read-only and outbound delivery is held (and,
+ *                  separately, the free-org-cap reconciler pauses ingest via `ingest_paused`). Set by the
+ *                  reconciler when a user exceeds their Free-org allowance; cleared when they restore.
+ */
+export type OrgStatus = "active" | "suspended";
+
+/**
+ * Is the CONTEXT org suspended? Reads under the tenant GUC (RLS scopes `orgs` to the one org `withTenant`
+ * pinned), so it takes no org argument — call it inside a `withTenant(app, orgId, …)`. Used by the outbound
+ * delivery drain to hold a suspended org's deliveries (they stay durably owed until the org is restored).
+ */
+export async function isOrgSuspended(tx: TenantTx): Promise<boolean> {
+  const [row] = await tx<{ status: OrgStatus }[]>`select status from orgs`;
+  // No row ⇒ the tenant GUC does not match a visible org (should never happen inside a valid withTenant); treat
+  // as "not suspended" so a resolver quirk can never silently freeze delivery for a healthy org.
+  return row?.status === "suspended";
+}
+
+/**
  * Add a user to an org with a role, under the org's RLS context. RLS (memberships WITH CHECK
  * org_id = current_org_id(), pinned by withTenant) only guarantees the row lands in the CONTEXT org —
  * it does NOT decide WHETHER the caller may add members. Membership = access control, so the CALLER
@@ -375,6 +396,10 @@ export interface UserOrg {
   readonly name: string;
   /** The caller's role in that org. */
   readonly role: MembershipRole;
+  /** The org's service state. `suspended` ⇒ the read gate diverts to the read-only suspension screen. */
+  readonly status: OrgStatus;
+  /** Why it's suspended (e.g. `free_org_cap`), for the suspension screen + audit. Null when active. */
+  readonly suspendedReason: string | null;
 }
 
 /**
@@ -414,8 +439,10 @@ export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]>
           former_slugs: string;
           name: string;
           role: MembershipRole;
+          status: OrgStatus;
+          suspended_reason: string | null;
         }[]
-      >`select org_id, slug, former_slugs, name, role from user_org_directory()`,
+      >`select org_id, slug, former_slugs, name, role, status, suspended_reason from user_org_directory()`,
   );
   return rows.map((r) => ({
     orgId: r.org_id,
@@ -423,6 +450,8 @@ export async function listUserOrgs(app: Sql, userId: string): Promise<UserOrg[]>
     formerSlugs: r.former_slugs ? r.former_slugs.split(",") : [],
     name: r.name,
     role: r.role,
+    status: r.status,
+    suspendedReason: r.suspended_reason,
   }));
 }
 
