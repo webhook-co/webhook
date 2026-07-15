@@ -5,12 +5,7 @@ import { createOrgWithOwner, InvalidOrgSlugError, SlugTakenError } from "@webhoo
 import { importAuditKey } from "@webhook-co/shared/audit";
 import { b64ToBytes } from "@webhook-co/shared/bytes";
 import { MAX_FREE_ORGS_PER_USER } from "@webhook-co/shared/plans";
-import {
-  orgSlugErrorMessage,
-  suggestOrgSlug,
-  validateOrgSlug,
-  type OrgSlugError,
-} from "@webhook-co/shared";
+import { orgSlugErrorMessage, suggestOrgSlug, validateOrgSlug } from "@webhook-co/shared";
 import { redirect } from "next/navigation";
 
 import { logActionError } from "./action-log";
@@ -127,12 +122,11 @@ export async function createTeamAction(formData: FormData): Promise<CreateTeamRe
       };
     }
     if (error instanceof InvalidOrgSlugError) {
-      // For a user-CHOSEN slug this is their input (e.g. a reserved word validateOrgSlug didn't catch) — show
-      // the actual reason. For a DERIVED slug, suggestOrgSlug is contracted to produce valid slugs, so it is a
-      // bug, not user input: log it and show a generic message rather than leaking the internal reason.
-      if (chosenSlug) {
-        return { ok: false, error: orgSlugErrorMessage(error.reason as OrgSlugError) };
-      }
+      // A CHOSEN slug can't reach here: we already ran the same validateOrgSlug on it above (line ~59) before
+      // the DB, and createOrgWithOwner validates with that identical function — so if ours passed, the DB's did
+      // too. This branch is therefore only the DERIVED path, where suggestOrgSlug is contracted to produce a
+      // valid slug: an InvalidOrgSlugError here is a bug, not user input — log it and show a generic message
+      // rather than leaking the internal reason.
       logActionError("org.create_invalid_slug", error);
       return { ok: false, error: "That name can't be used. Try a different one." };
     }
