@@ -56,6 +56,11 @@ export function AvatarCropperDialog({ open, onOpenChange, onUploaded }: AvatarCr
   const [pixels, setPixels] = React.useState<PixelCrop | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const abortRef = React.useRef<AbortController | null>(null);
+
+  // Cancel any in-flight upload if the dialog unmounts mid-request (e.g. navigation away) — so the network
+  // request actually stops and its resolution doesn't try to touch a gone component.
+  React.useEffect(() => () => abortRef.current?.abort(), []);
 
   const reset = React.useCallback(() => {
     setImageSrc(null);
@@ -95,7 +100,9 @@ export function AvatarCropperDialog({ open, onOpenChange, onUploaded }: AvatarCr
       setError(err instanceof Error ? err.message : "We couldn't process that image.");
       return;
     }
-    const res = await uploadAvatarWebp(blob);
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const res = await uploadAvatarWebp(blob, { signal: controller.signal });
     if (res.ok) {
       reset();
       onUploaded();

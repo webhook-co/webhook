@@ -2,6 +2,12 @@
 
 import * as React from "react";
 
+import {
+  getAvatarVersion,
+  getServerAvatarVersion,
+  subscribeAvatarVersion,
+} from "@/lib/avatar-version";
+
 function initials(name: string, email: string): string {
   const source = name.trim() || email.trim();
   const parts = source.split(/\s+/).filter(Boolean);
@@ -16,13 +22,6 @@ export interface UserAvatarProps {
   /** Pixels. */
   readonly size?: number;
   readonly className?: string;
-  /**
-   * Cache-bust token. `/api/avatar` takes no input (it reads the session), so the browser can't tell a
-   * freshly re-uploaded avatar from the cached one for up to its max-age. Bump this after an upload and the URL
-   * changes (`?v=`), forcing an immediate refetch. Omit everywhere else — the URL then stays the canonical,
-   * server-renderable `/api/avatar`.
-   */
-  readonly version?: number;
 }
 
 /**
@@ -44,9 +43,18 @@ export interface UserAvatarProps {
  * The initials render UNDERNEATH from the first paint, and the image sits on top once it loads. That ordering
  * is what stops the flicker: there is never a frame with nothing in it.
  */
-export function UserAvatar({ name, email, size = 26, className, version }: UserAvatarProps) {
+export function UserAvatar({ name, email, size = 26, className }: UserAvatarProps) {
   const [hasImage, setHasImage] = React.useState(true);
   const ref = React.useRef<HTMLImageElement>(null);
+
+  // Every avatar on the page reads ONE shared version counter. A successful upload bumps it (see
+  // `@/lib/avatar-version`), which re-renders every instance — nav, greeting, this card — with a fresh `?v=` so
+  // they all refetch at once. SSR snapshot is 0, so the server emits the canonical `/api/avatar`.
+  const version = React.useSyncExternalStore(
+    subscribeAvatarVersion,
+    getAvatarVersion,
+    getServerAvatarVersion,
+  );
 
   // A version bump means a fresh upload just landed — re-attempt the image even if a previous load had 404'd
   // us down to initials (a user who had no avatar and just added one must see it, not their initials).

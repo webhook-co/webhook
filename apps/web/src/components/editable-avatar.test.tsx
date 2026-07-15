@@ -21,13 +21,18 @@ vi.mock("./avatar-cropper", () => ({
   },
 }));
 
+import { __resetAvatarVersionForTests } from "@/lib/avatar-version";
+
 import { EditableAvatar } from "./editable-avatar";
 
 beforeEach(() => {
   vi.clearAllMocks();
   cropperProps = null;
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  __resetAvatarVersionForTests(); // onUploaded bumps the shared counter — don't leak it across tests
+});
 
 describe("EditableAvatar", () => {
   it("opens the cropper when the change-photo control is used", () => {

@@ -1,8 +1,10 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { Camera } from "lucide-react";
+import { useRouter } from "next/navigation";
 import * as React from "react";
+
+import { bumpAvatarVersion } from "@/lib/avatar-version";
 
 import { AvatarCropperDialog } from "./avatar-cropper";
 import { UserAvatar } from "./user-avatar";
@@ -15,18 +17,17 @@ export interface EditableAvatarProps {
 
 /**
  * The avatar as an editable control: the face with a small camera badge, which opens the crop dialog. After a
- * new photo is stored, bump a local version so THIS avatar refetches immediately (the serve route is
- * input-less and can't otherwise be cache-busted), and `router.refresh()` so the nav / greeting / other
- * surfaces catch up on the next render.
+ * new photo is stored, `bumpAvatarVersion()` re-renders EVERY avatar on the page (nav, greeting, this card)
+ * with a fresh `?v=` so they all refetch the new image immediately, and `router.refresh()` re-renders the
+ * server components so the name/greeting text (re-minted into the session cookie) also catch up.
  */
 export function EditableAvatar({ name, email, size = 48 }: EditableAvatarProps) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
-  const [version, setVersion] = React.useState(0);
 
   return (
     <div className="relative shrink-0" style={{ width: size, height: size }}>
-      <UserAvatar name={name} email={email} size={size} version={version || undefined} />
+      <UserAvatar name={name} email={email} size={size} />
       <button
         type="button"
         onClick={() => setOpen(true)}
@@ -40,7 +41,7 @@ export function EditableAvatar({ name, email, size = 48 }: EditableAvatarProps) 
         onOpenChange={setOpen}
         onUploaded={() => {
           setOpen(false);
-          setVersion((v) => v + 1);
+          bumpAvatarVersion();
           router.refresh();
         }}
       />
