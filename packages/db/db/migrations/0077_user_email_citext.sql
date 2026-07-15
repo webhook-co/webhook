@@ -21,6 +21,17 @@
 -- identity table owned by webhook_owner; no RLS/GRANT interaction (the webhook_notifier column grant on
 -- (id, email) survives a type change — grants are by column name).
 --
+-- LOCK / REWRITE: because text -> citext isn't binary-coercible, this ALTER TYPE takes an ACCESS EXCLUSIVE
+-- lock and REWRITES the table + rebuilds the unique index, blocking all reads/writes of "user" (login lookup,
+-- signup, whoami enrichment) for its duration. That is acceptable ONLY because "user" is tiny on this
+-- deployment (a handful of identities) so the rewrite is sub-second. If "user" ever grows large, do NOT run
+-- this as a plain ALTER — switch to the add-citext-column / backfill / swap pattern to avoid an auth stall.
+--
+-- We DROP the existing UNIQUE by DISCOVERING its real name rather than assuming "user_email_key": the default
+-- name is what migration 0001 produced, but a prod DB whose constraint was ever recreated/restored under a
+-- different name would abort a hard-coded DROP and block the deploy. The re-add below always uses the
+-- canonical name, so the DOWN can drop it by name deterministically.
+--
 -- PRE-FLIGHT (prod, MANDATORY): the recreated UNIQUE build ABORTS (cleanly, txn rolls back) if two users
 -- collide case-insensitively. Because BA has always lowercased on write, the expected count is ZERO. Confirm
 -- (run as webhook_auth or the owner — webhook_app cannot read "user"):
@@ -29,7 +40,25 @@
 -- If any collide, resolve manually (the identities are distinct accounts — a human must decide) before
 -- applying; do NOT auto-merge users in a migration.
 
-alter table "user" drop constraint "user_email_key";
+do $$
+declare
+  cname text;
+begin
+  -- The single-column UNIQUE constraint on "user"."email", whatever it is named.
+  select con.conname into cname
+  from pg_constraint con
+  join pg_attribute att
+    on att.attrelid = con.conrelid and att.attnum = con.conkey[1]
+  where con.conrelid = '"user"'::regclass
+    and con.contype = 'u'
+    and cardinality(con.conkey) = 1
+    and att.attname = 'email';
+  if cname is null then
+    raise exception 'no single-column UNIQUE constraint found on "user"."email"';
+  end if;
+  execute format('alter table "user" drop constraint %I', cname);
+end $$;
+
 alter table "user" alter column "email" type citext using "email"::citext;
 alter table "user" add constraint "user_email_key" unique ("email");
 
