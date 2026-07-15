@@ -32,7 +32,7 @@ vi.mock("@/server/db", () => ({ withTenantDb }));
 vi.mock("@/server/env", () => ({ getAppBaseUrl: () => "https://app.test" }));
 vi.mock("@/server/action-log", () => ({ logActionError: vi.fn() }));
 
-import { POST } from "./route";
+import { DELETE, POST } from "./route";
 
 const ORIGIN = "https://app.test";
 const SLUG = "acme";
@@ -163,5 +163,51 @@ describe("POST /api/org-logo/[slug]/upload", () => {
   it("is unavailable (503) when the R2 binding is absent", async () => {
     getAvatarBucket.mockResolvedValueOnce(undefined);
     expect((await POST(req(squareWebp(128)), ctx())).status).toBe(503);
+  });
+});
+
+function delReq(headers: Record<string, string> = {}): Request {
+  return new Request(URL_STR, { method: "DELETE", headers: { origin: ORIGIN, ...headers } });
+}
+
+describe("DELETE /api/org-logo/[slug]/upload (remove)", () => {
+  it("rejects a cross-origin request (403) before touching the session", async () => {
+    const r = new Request(URL_STR, {
+      method: "DELETE",
+      headers: { origin: "https://evil.example" },
+    });
+    expect((await DELETE(r, ctx())).status).toBe(403);
+    expect(requireOrgAccess).not.toHaveBeenCalled();
+  });
+
+  it("forbids a non-owner/admin member (403)", async () => {
+    requireOrgAccess.mockResolvedValue({
+      userId: "u_1",
+      orgId: ORG_ID,
+      slug: SLUG,
+      name: "Acme",
+      role: "member",
+    });
+    expect((await DELETE(delReq(), ctx())).status).toBe(403);
+    expect(del).not.toHaveBeenCalled();
+  });
+
+  it("deletes the R2 object THEN clears the pointer, returning ok", async () => {
+    const res = await DELETE(delReq(), ctx());
+    expect(res.status).toBe(200);
+    expect(del).toHaveBeenCalledWith(KEY);
+    expect(updateOrgImageKey).toHaveBeenCalledWith(expect.anything(), ORG_ID, null);
+  });
+
+  it("stops (502) and does NOT clear the pointer when the object delete fails (stay consistent)", async () => {
+    del.mockRejectedValueOnce(new Error("r2 down"));
+    expect((await DELETE(delReq(), ctx())).status).toBe(502);
+    expect(updateOrgImageKey).not.toHaveBeenCalled();
+  });
+
+  it("still returns ok if only the pointer-clear fails (the visible logo is already gone)", async () => {
+    updateOrgImageKey.mockRejectedValueOnce(new Error("db blip"));
+    expect((await DELETE(delReq(), ctx())).status).toBe(200);
+    expect(del).toHaveBeenCalledWith(KEY);
   });
 });
