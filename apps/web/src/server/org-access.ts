@@ -131,7 +131,14 @@ export const requireOrgAccess = async (slug: string, subPath?: string): Promise<
 /**
  * Like {@link requireOrgAccess}, but DIVERTS a suspended org's read surfaces to its read-only suspension
  * screen. Use this on every data/read page (dashboard, endpoints, events, deliveries, usage, triggers,
- * destinations, team, audit) — a suspended org must not render or mutate its normal surface.
+ * destinations, team, audit) — a suspended org must not RENDER its normal read surface.
+ *
+ * SCOPE (deliberate): this gates PAGE READS. Suspension's teeth are elsewhere — outbound delivery is held at
+ * the engine (`DeliveryDO.drainOnce`) and ingest is paused at the edge (`ingest_paused`), so a suspended org
+ * captures and delivers nothing regardless of this gate. Control-plane WRITES (server actions that configure
+ * endpoints, keys, invites) are intentionally NOT blocked here: they only reconfigure a thing that can't run
+ * while suspended, so they cause no metered or delivered effect. A blanket write-path read-only is a possible
+ * future slice, not part of this one.
  *
  * Settings and Billing deliberately stay on plain {@link requireOrgAccess}: they're the way OUT of suspension
  * (upgrade to a paid plan, or reassign which Free orgs stay active), so they must remain reachable while

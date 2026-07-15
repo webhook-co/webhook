@@ -1,6 +1,7 @@
 import { Button, Card, CardContent, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 
 import { requireOrgAccess } from "@/server/org-access";
 
@@ -44,6 +45,13 @@ export default async function SuspendedPage({ params }: { params: Promise<{ slug
   // Plain gate (NOT requireActiveOrgAccess): this is the one read surface a suspended org may see, and gating
   // it on the active check would loop the redirect.
   const access = await requireOrgAccess(slug, "/suspended");
+
+  // If the org ISN'T suspended, there's nothing to show — send the user somewhere real. This covers a stale
+  // bookmark and, more importantly, the just-restored case: an owner sitting on /suspended when the org flips
+  // back to active must not keep seeing the alarming "your org is paused" screen for a healthy org.
+  if (access.status !== "suspended") {
+    redirect(`/org/${access.slug}/dashboard`);
+  }
 
   const { heading, body, cta } = suspensionCopy(access.suspendedReason);
 
