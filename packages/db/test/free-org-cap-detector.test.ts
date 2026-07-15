@@ -12,9 +12,10 @@ import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
 import { setupHookTimeoutMs } from "./pg-timing";
 
 // The AUTHORITATIVE free-org-cap detector (PR2b slice 2): across ALL users, find every owner of more than
-// `cap` FREE orgs. This is the cross-user question the per-tenant roles can't answer — confined to the
-// `owners_over_free_org_cap` SECURITY DEFINER function whose EXECUTE is granted ONLY to webhook_capreconciler.
-// Driven against real Postgres so the definer + the EXECUTE-grant fence run exactly as production does.
+// `cap` FREE orgs. This is the cross-user question the per-tenant roles can't answer — confined to
+// webhook_capreconciler via role-targeted `FOR SELECT TO webhook_capreconciler USING (true)` policies +
+// column grants (migration 0084) on memberships / orgs / billing_subscriptions. Driven against real Postgres
+// so those policies (and the fact webhook_app CANNOT ride them) run exactly as production does.
 
 let pg: EphemeralPostgres;
 let app: Sql; // webhook_app — the request-path role; MUST NOT be able to run the detector
@@ -89,7 +90,7 @@ afterAll(async () => {
   await pg?.stop();
 });
 
-describe("findOwnersOverFreeCap (owners_over_free_org_cap)", () => {
+describe("findOwnersOverFreeCap (role-targeted cross-user detection)", () => {
   it("returns an owner over the cap with ALL their free orgs, oldest-first", async () => {
     const u = randomUUID();
     await seedUser(u);
@@ -169,6 +170,33 @@ describe("findOwnersOverFreeCap (owners_over_free_org_cap)", () => {
     const over = await findOwnersOverFreeCap(reconciler, CAP);
     const seen = over[0]!.freeOrgs.find((o) => o.orgId === third)!;
     expect(seen).toMatchObject({ status: "suspended", suspendedReason: "free_org_cap" });
+  });
+
+  it("groups MULTIPLE over-cap owners in one call, each with only their own free orgs", async () => {
+    // Proves the per-owner grouping: two distinct over-cap users must come back as two rows, and neither's
+    // orgs bleed into the other's.
+    const a = randomUUID();
+    const b = randomUUID();
+    await seedUser(a);
+    await seedUser(b);
+    const aOrgs = [await seedOrg(a), await seedOrg(a), await seedOrg(a)];
+    const bOrgs = [await seedOrg(b), await seedOrg(b), await seedOrg(b)];
+
+    const over = await findOwnersOverFreeCap(reconciler, CAP);
+    expect(over.map((o) => o.userId).sort()).toEqual([a, b].sort());
+    const seenA = over.find((o) => o.userId === a)!;
+    const seenB = over.find((o) => o.userId === b)!;
+    expect(seenA.freeOrgs.map((o) => o.orgId).sort()).toEqual([...aOrgs].sort());
+    expect(seenB.freeOrgs.map((o) => o.orgId).sort()).toEqual([...bOrgs].sort());
+  });
+
+  it("does not return a user who owns ONLY paid orgs, however many", async () => {
+    const u = randomUUID();
+    await seedUser(u);
+    await makePaid(await seedOrg(u));
+    await makePaid(await seedOrg(u));
+    await makePaid(await seedOrg(u)); // 3 orgs, all paid → 0 free → never over the cap
+    expect(await findOwnersOverFreeCap(reconciler, CAP)).toEqual([]);
   });
 
   it("reveals NOTHING to webhook_app — the cross-user reach is confined to the reconciler role by RLS", async () => {
