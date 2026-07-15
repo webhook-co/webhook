@@ -6,8 +6,10 @@ import * as React from "react";
 
 // A debounced, URL-driven name filter for the endpoints list (`?name=`). Typing updates local state
 // immediately (smooth input) and pushes to the URL after a short pause; the server page re-reads the
-// query, re-runs the filtered load, and re-syncs the manager. Kept SEPARATE from the manager so this
-// input keeps focus across the re-render.
+// query, re-runs the filtered load, and the manager re-syncs its list in place. Its own local `value`
+// state keeps the input's focus/caret across that re-sync — the manager re-renders without remounting
+// (it replaced the old page-level `key` remount with an in-render `seededResult` re-sync), so rendering
+// this as a child of the manager is safe.
 
 const DEBOUNCE_MS = 300;
 
