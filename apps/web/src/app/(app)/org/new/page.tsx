@@ -6,7 +6,7 @@ import { createTeamAction } from "@/server/org-create-actions";
 import { verifySession } from "@/server/session";
 
 export const metadata: Metadata = {
-  title: "Create a team · webhook.co",
+  title: "Create an organization · webhook.co",
 };
 
 // `/org/new` — create a new organization.
@@ -16,15 +16,16 @@ export const metadata: Metadata = {
 // it gates on verifySession, NOT requireOrgAccess: you don't belong to the org you're about to create, so
 // there is no membership to check. Any authenticated user may create a team and becomes its owner.
 export default async function NewOrgPage() {
-  await verifySession(); // dal-gate: any signed-in user may create a team
+  await verifySession(); // dal-gate: any signed-in user may create an organization
 
   return (
     <PageContainer size="narrow" gap="gap-6">
       <div className="flex flex-col gap-1.5">
-        <h1 className="text-2xl font-semibold tracking-heading text-fg">Create a team</h1>
+        <h1 className="text-2xl font-semibold tracking-heading text-fg">Create an organization</h1>
         <p className="leading-snug text-fg-secondary">
-          A team is a separate organization with its own endpoints, members, and billing.
-          You&apos;ll be its owner. You can rename it — and change its URL — any time in settings.
+          An organization is a separate workspace with its own endpoints, members, and billing.
+          You&apos;ll be its owner, and you can rename it — or change its URL — any time in
+          settings.
         </p>
       </div>
       <CreateTeamForm create={createTeamAction} />

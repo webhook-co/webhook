@@ -13,7 +13,7 @@ import { withTenantDb } from "./db";
 import { getAuditChainKey } from "./env";
 import { verifySession } from "./session";
 
-// Create a new organization (a "team"). This is the FIRST prod caller of createOrgWithOwner — until now every
+// Create a new organization. This is the FIRST prod caller of createOrgWithOwner — until now every
 // org in the system was a personal org minted by the auth bootstrap.
 //
 // Gated on verifySession, NOT requireOrgAccess: you do not need to belong to an org to create one — the org
@@ -29,7 +29,7 @@ export type CreateTeamResult = { readonly ok: false; readonly error: string };
 // form renders inline.
 
 /**
- * Create a team from a display name, deriving a URL slug and landing on the new org's dashboard.
+ * Create an organization from a display name, deriving a URL slug and landing on the new org's dashboard.
  *
  * The user supplies a name; we derive the slug (they can change it later in settings). A slug collision — with
  * a live org OR a retired one — is retried with a fresh suffix, up to a bound; exhausting it is a genuine
@@ -40,7 +40,7 @@ export async function createTeamAction(formData: FormData): Promise<CreateTeamRe
 
   const nameRaw = formData.get("name");
   const name = typeof nameRaw === "string" ? nameRaw.trim() : "";
-  if (name.length === 0) return { ok: false, error: "Give your team a name." };
+  if (name.length === 0) return { ok: false, error: "Give your organization a name." };
   if (name.length > MAX_NAME_LEN) {
     return { ok: false, error: `Keep the name under ${MAX_NAME_LEN} characters.` };
   }
@@ -105,7 +105,7 @@ export async function createTeamAction(formData: FormData): Promise<CreateTeamRe
       return { ok: false, error: "That name can't be used. Try a different one." };
     }
     logActionError("org.create_failed", error);
-    return { ok: false, error: "We couldn't create the team. Please try again." };
+    return { ok: false, error: "We couldn't create the organization. Please try again." };
   }
 
   // Land in the new org. Outside the try/catch — redirect() throws its control signal and must not be caught.
