@@ -9,6 +9,10 @@ vi.mock("@/server/session", () => ({ verifySession }));
 vi.mock("@/components/delete-account-card", () => ({
   DeleteAccountCard: () => <div>delete-account-card</div>,
 }));
+// The editable name card injects this server action; stub the module so the page render stays pure.
+vi.mock("@/server/profile-actions", () => ({ updateDisplayNameAction: vi.fn() }));
+// EditableDisplayName is a client component that calls useRouter — provide a router.
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 import AccountProfilePage from "./page";
 

@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { getSessionSecret } from "./env";
 import { SESSION_COOKIE, type Session } from "./session";
 import { sessionCookieOptions } from "./session-cookie";
-import { signSessionToken, verifySessionToken } from "./session-token";
+import { signSessionToken, verifySessionToken, type VerifiedSession } from "./session-token";
 
 // Re-mint the session cookie for a DIFFERENT org. Two callers need this — the org switcher and "leave org" —
 // and it exists as one function because of a rule that is easy to get wrong twice:
@@ -21,10 +21,14 @@ import { signSessionToken, verifySessionToken } from "./session-token";
 
 export type RemintOutcome = "ok" | "no_session";
 
-/** Re-issue the session cookie naming `targetOrgId`, preserving the original deadline. */
-export async function remintSessionForOrg(
-  session: Pick<Session, "userId" | "user">,
-  targetOrgId: string,
+/**
+ * The one place the expiry-preservation + fail-closed rules live — both public re-minters route through here so
+ * the security-critical logic ("easy to get wrong twice") exists ONCE. Verifies the current cookie, refuses a
+ * missing/unverifiable/expired session, and re-signs the given claims carrying the ORIGINAL deadline forward
+ * (never a fresh TTL). The caller decides the claims; this never fabricates or extends a lifetime.
+ */
+async function remintWith(
+  buildClaims: (verified: VerifiedSession) => Session,
 ): Promise<RemintOutcome> {
   const secret = await getSessionSecret();
   const jar = await cookies();
@@ -36,11 +40,27 @@ export async function remintSessionForOrg(
   const remainingSeconds = verified.expiresAt - Math.floor(Date.now() / 1000);
   if (remainingSeconds <= 0) return "no_session"; // never revive a dead session
 
-  const token = await signSessionToken(
-    { userId: session.userId, orgId: targetOrgId, user: session.user },
-    secret,
-    remainingSeconds,
-  );
+  const token = await signSessionToken(buildClaims(verified), secret, remainingSeconds);
   jar.set(SESSION_COOKIE, token, { ...sessionCookieOptions(), maxAge: remainingSeconds });
   return "ok";
+}
+
+/** Re-issue the session cookie naming `targetOrgId`, preserving the original deadline. No authorization — the
+ *  caller MUST already have proven the user belongs to `targetOrgId`. */
+export async function remintSessionForOrg(
+  session: Pick<Session, "userId" | "user">,
+  targetOrgId: string,
+): Promise<RemintOutcome> {
+  return remintWith(() => ({ userId: session.userId, orgId: targetOrgId, user: session.user }));
+}
+
+/**
+ * Re-issue the session cookie with an updated user profile (e.g. a display-name edit), keeping the CURRENT org
+ * and the ORIGINAL deadline. `session.user.name` is baked into the signed cookie, so without this a name change
+ * would only show after next login; re-minting makes it live everywhere immediately (nav, avatar, greeting).
+ * Re-mints for the CURRENT session's own user/org (read from the VERIFIED token, not a caller arg), so it can
+ * never retarget another principal.
+ */
+export async function remintSessionForProfile(user: Session["user"]): Promise<RemintOutcome> {
+  return remintWith((verified) => ({ userId: verified.userId, orgId: verified.orgId, user }));
 }

@@ -115,3 +115,26 @@ export async function completeOnboarding(
     returning "id"`;
   return rows.length > 0;
 }
+
+/**
+ * Update just a user's DISPLAY name — the `name` column the whole app renders (`session.user.name`, the
+ * avatar, greetings). Runs as webhook_auth on the identity realm, the same boundary onboarding writes cross.
+ *
+ * Unlike {@link completeOnboarding} this does NOT touch `onboardedAt` (an already-onboarded user editing their
+ * name must not re-stamp the gate) and does NOT rewrite `firstName`/`lastName` — those are onboarding artifacts
+ * that nothing renders after onboarding; leaving them avoids a lossy re-split of a free-form display name.
+ *
+ * `name` is NOT NULL in Better Auth's schema, so an empty/whitespace name is refused (returns false without a
+ * write) — defense in depth behind the action's own non-empty validation, so a bad request can never blank an
+ * identity. Returns false when no such user exists.
+ */
+export async function updateUserName(
+  authClient: Sql,
+  input: { userId: string; name: string },
+): Promise<boolean> {
+  const name = input.name.trim();
+  if (name.length === 0) return false;
+  const rows = await authClient<{ id: string }[]>`
+    update "user" set "name" = ${name} where "id" = ${input.userId} returning "id"`;
+  return rows.length > 0;
+}

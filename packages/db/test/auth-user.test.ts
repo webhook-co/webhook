@@ -9,6 +9,7 @@ import {
   deleteUserIdentity,
   getAuthUserProfile,
   readOnboardingState,
+  updateUserName,
 } from "../src/auth-user";
 import { setupSchema } from "./migrate";
 import { startEphemeralPostgres, type EphemeralPostgres } from "./pg";
@@ -254,5 +255,52 @@ describe("onboarding state", () => {
         onboardedAt: new Date(),
       }),
     ).toBe(false);
+  });
+});
+
+describe("updateUserName", () => {
+  async function seedUser(name: string): Promise<string> {
+    const id = `user_${randomUUID()}`;
+    await owner`
+      insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
+      values (${id}, ${name}, ${`${id}@e.test`}, ${true}, now())`;
+    return id;
+  }
+
+  it("updates the display name (read back via getAuthUserProfile)", async () => {
+    const id = await seedUser("Old Name");
+    expect(await updateUserName(auth, { userId: id, name: "New Name" })).toBe(true);
+    expect((await getAuthUserProfile(auth, id))!.name).toBe("New Name");
+  });
+
+  it("trims surrounding whitespace before storing", async () => {
+    const id = await seedUser("Old");
+    await updateUserName(auth, { userId: id, name: "  Grace Hopper  " });
+    expect((await getAuthUserProfile(auth, id))!.name).toBe("Grace Hopper");
+  });
+
+  it("does NOT touch onboardedAt (an edit must not re-stamp the onboarding gate)", async () => {
+    const id = await seedUser("Ada");
+    const at = new Date("2026-07-14T00:00:00.000Z");
+    await completeOnboarding(auth, {
+      userId: id,
+      firstName: "Ada",
+      lastName: "L",
+      onboardedAt: at,
+    });
+    await updateUserName(auth, { userId: id, name: "Ada Lovelace" });
+    expect((await readOnboardingState(auth, id))!.onboardedAt).toEqual(at); // unchanged
+  });
+
+  it("refuses to blank the NOT-NULL name — empty/whitespace is a no-op that returns false", async () => {
+    const id = await seedUser("Keep Me");
+    expect(await updateUserName(auth, { userId: id, name: "   " })).toBe(false);
+    expect((await getAuthUserProfile(auth, id))!.name).toBe("Keep Me"); // untouched
+  });
+
+  it("returns false for a user that does not exist", async () => {
+    expect(await updateUserName(auth, { userId: `user_${randomUUID()}`, name: "Nobody" })).toBe(
+      false,
+    );
   });
 });

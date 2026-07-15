@@ -2,7 +2,8 @@ import { Card, CardContent, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
 
 import { DeleteAccountCard } from "@/components/delete-account-card";
-import { UserAvatar } from "@/components/user-avatar";
+import { EditableDisplayName } from "@/components/editable-display-name";
+import { updateDisplayNameAction } from "@/server/profile-actions";
 import { verifySession } from "@/server/session";
 
 export const metadata: Metadata = {
@@ -30,12 +31,12 @@ export default async function AccountProfilePage() {
       </div>
 
       <Card>
-        <CardContent className="flex items-center gap-4">
-          <UserAvatar name={session.user.name} email={session.user.email} size={48} />
-          <div className="flex min-w-0 flex-col gap-0.5">
-            <span className="truncate font-medium text-fg">{session.user.name}</span>
-            <span className="truncate text-sm text-fg-secondary">{session.user.email}</span>
-          </div>
+        <CardContent>
+          <EditableDisplayName
+            name={session.user.name}
+            email={session.user.email}
+            onSave={updateDisplayNameAction}
+          />
         </CardContent>
       </Card>
 

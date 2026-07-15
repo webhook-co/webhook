@@ -2,15 +2,17 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const readOnboardingState = vi.fn();
 const completeOnboarding = vi.fn();
+const updateUserName = vi.fn();
 const end = vi.fn(async () => {});
 const createClient = vi.fn(() => ({ end }));
 vi.mock("@webhook-co/db", () => ({
   readOnboardingState: (...a: unknown[]) => readOnboardingState(...a),
   completeOnboarding: (...a: unknown[]) => completeOnboarding(...a),
+  updateUserName: (...a: unknown[]) => updateUserName(...a),
   createClient: (...a: unknown[]) => createClient(...a),
 }));
 
-import { completeOnboardingRpc, readOnboardingRpc } from "./onboarding-deps";
+import { completeOnboardingRpc, readOnboardingRpc, updateNameRpc } from "./onboarding-deps";
 
 const env = { HYPERDRIVE_AUTH: { connectionString: "postgres://auth" } };
 
@@ -84,5 +86,23 @@ describe("completeOnboardingRpc", () => {
     ).toEqual({
       completed: false,
     });
+  });
+});
+
+describe("updateNameRpc", () => {
+  it("forwards the name to the db helper and closes the pool", async () => {
+    updateUserName.mockResolvedValue(true);
+
+    const res = await updateNameRpc(env, { userId: "usr_1", name: "Dana Kessler" });
+
+    expect(res).toEqual({ updated: true });
+    expect(updateUserName.mock.calls[0][1]).toEqual({ userId: "usr_1", name: "Dana Kessler" });
+    expect(end).toHaveBeenCalledOnce(); // never leak the identity-realm pool
+  });
+
+  it("reports updated: false when the write is refused (user gone / empty name)", async () => {
+    updateUserName.mockResolvedValue(false);
+    expect(await updateNameRpc(env, { userId: "x", name: "" })).toEqual({ updated: false });
+    expect(end).toHaveBeenCalledOnce();
   });
 });

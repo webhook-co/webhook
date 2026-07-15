@@ -40,5 +40,6 @@ export { type ConnectedApp, type ConnectedAppsService } from "./connected-apps";
 export {
   type OnboardingStateDto,
   type CompleteOnboardingResult,
+  type UpdateNameResult,
   type OnboardingProfileService,
 } from "./onboarding";
