@@ -480,6 +480,9 @@ describe("decideConsent", () => {
     expect(complete).toHaveBeenCalledWith(
       expect.objectContaining({
         props: expect.objectContaining({ orgId: "org_acme", userId: "user_dana" }),
+        // The authorized org is also recorded on the grant's UNENCRYPTED metadata so Connected Apps can show
+        // which org each grant is bound to (props.orgId is encrypted + not exposed by the grant-listing API).
+        metadata: { orgId: "org_acme" },
       }),
     );
   });
@@ -572,7 +575,8 @@ describe("decideConsent", () => {
       request: authRequest(),
       userId: "user_dana",
       scope: ["events:read", "events:replay"],
-      metadata: {},
+      // The authorized org is recorded on the grant's unencrypted metadata (Connected Apps reads it).
+      metadata: { orgId: "org_dana" },
       props: {
         orgId: "org_dana",
         userId: "user_dana",

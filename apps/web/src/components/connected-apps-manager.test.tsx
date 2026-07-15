@@ -37,6 +37,21 @@ describe("ConnectedAppsManager", () => {
     expect(screen.getByText(/no verified domain/i)).toBeInTheDocument();
   });
 
+  it("shows the bound org (name + slug) each app can see", () => {
+    render(
+      <ConnectedAppsManager
+        initialApps={[app({ org: { id: "org_1", slug: "acme", name: "Acme Inc" } })]}
+        revoke={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/Organization: Acme Inc \(acme\)/)).toBeInTheDocument();
+  });
+
+  it("shows 'unknown org' for a legacy grant with no bound org", () => {
+    render(<ConnectedAppsManager initialApps={[app()]} revoke={vi.fn()} />); // no org
+    expect(screen.getByText(/Organization: unknown organization/)).toBeInTheDocument();
+  });
+
   it("revokes an app through the confirm dialog and removes it from the list", async () => {
     const revoke = vi.fn().mockResolvedValue({ ok: true });
     render(<ConnectedAppsManager initialApps={[app()]} revoke={revoke} />);

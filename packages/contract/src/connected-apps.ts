@@ -7,6 +7,8 @@
 // whk_-key "devices" in auth_grant (the CLI/frozen-/token flow shown on the credentials page). This is the
 // surface for the OAuth apps a user connected an MCP client with.
 
+import type { OrgIdentity } from "./auth";
+
 /** One connected app = one active OAuth grant, projected for display + revoke. */
 export interface ConnectedApp {
   /** The provider grant id — passed back to revoke this app's access. */
@@ -25,6 +27,12 @@ export interface ConnectedApp {
   createdAt: number;
   /** Unix seconds — when the grant expires, if a TTL is set. */
   expiresAt?: number;
+  /**
+   * The org this grant is bound to (token = org), so the dashboard shows WHICH org each connected app can
+   * see. The canonical cross-surface {@link OrgIdentity} shape (same as AuthContext.organization). Absent for
+   * a legacy grant authorized before the org was recorded, or if the org couldn't be resolved ("unknown org").
+   */
+  org?: OrgIdentity;
 }
 
 /**

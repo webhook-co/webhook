@@ -523,7 +523,10 @@ export async function decideConsent(
     request: payload.request,
     userId: payload.userId,
     scope: payload.scopes,
-    metadata: {},
+    // Record the authorized org on the provider grant's UNENCRYPTED metadata (props.orgId is encrypted and
+    // not exposed by the grant-listing API). This is what lets the Connected Apps dashboard show WHICH org
+    // each grant is bound to. It surfaces the already-validated `chosenOrgId` — it does NOT grant anything.
+    metadata: { orgId: chosenOrgId },
     props,
   });
 
