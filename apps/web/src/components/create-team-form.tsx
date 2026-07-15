@@ -74,7 +74,10 @@ export function CreateTeamForm({ create }: CreateTeamFormProps) {
 
   return (
     <Card>
-      <CardContent>
+      {/* CardContent defaults to `pt-0` because it normally sits below a CardHeader that supplies the top
+          padding. This card has NO header (the page h1 is the title), so restore the top padding — otherwise
+          the first field's label is jammed against the card's top edge. twMerge lets pt-6 win over pt-0. */}
+      <CardContent className="pt-6">
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <Field
             label="Organization name"
