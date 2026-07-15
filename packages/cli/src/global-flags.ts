@@ -361,15 +361,37 @@ export function announceActiveOrg(
  *      profile's stored org does not describe it (mirrors whoami's env guard).
  *   2. Otherwise announce the selector-resolved org, else the profile's stored org (nothing if neither).
  */
-export async function announceRequestOrg(
+export function announceRequestOrg(
+  ctx: { readonly process: { readonly stderr: { write(s: string): void } } },
+  resolved: { org?: Org; envCredential: boolean },
+): void {
+  // Takes the ALREADY-resolved org + env-ness (from resolveEffectiveOrg) so it re-derives nothing — no
+  // second isEnvCredential probe, no second store read per command. Env creds don't announce (their real
+  // org is server-side); otherwise announce the resolved org when present.
+  if (resolved.envCredential) return;
+  if (resolved.org !== undefined) announceActiveOrg(ctx, resolved.org);
+}
+
+/**
+ * The org a credential-binding command should treat as its target for LOCAL display / deep-linking (e.g.
+ * the dashboard event URL's slug): the selector-resolved org, else the profile's persisted org — but NEVER
+ * the local store's org for an env (WBHK_API_KEY) credential, whose real org is server-determined, so the
+ * local profile's stored org does NOT describe it (same guard as {@link announceRequestOrg} and whoami;
+ * without it, an env key would build a wrong-org deep-link from an unrelated login's stored org). Also
+ * reports whether the credential is an env key, so a caller that still needs the env org's slug knows it
+ * must ask whoami rather than the (untrusted-for-env) local store. A MISSING config yields `org: undefined`
+ * (a fresh install), but a CORRUPT or insecure-permission config is left to throw its fail-loud, on-voice
+ * ConfigError (exit USAGE) — masking that behind `undefined` would tell the user to "run whoami" instead of
+ * "fix your config", hiding the real, actionable fault.
+ */
+export async function resolveEffectiveOrg(
   ctx: EnvCredentialCtx & {
-    readonly process: { readonly stderr: { write(s: string): void } };
     readonly store: { getOrg(profile: string): Promise<Org | undefined> };
   },
   profile: string,
   selectorOrg?: Org,
-): Promise<void> {
-  if (await isEnvCredential(ctx, profile)) return;
-  const org = selectorOrg ?? (await ctx.store.getOrg(profile));
-  if (org !== undefined) announceActiveOrg(ctx, org);
+): Promise<{ org?: Org; envCredential: boolean }> {
+  if (await isEnvCredential(ctx, profile)) return { envCredential: true };
+  if (selectorOrg) return { org: selectorOrg, envCredential: false };
+  return { org: await ctx.store.getOrg(profile), envCredential: false };
 }

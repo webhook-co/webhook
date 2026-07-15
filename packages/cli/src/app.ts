@@ -26,6 +26,7 @@ import {
   eventsDeleteCommand,
   eventsGetCommand,
   eventsListCommand,
+  eventsOpenCommand,
   eventsPayloadCommand,
 } from "./commands/events.js";
 import { listenCommand } from "./commands/listen.js";
@@ -127,6 +128,7 @@ const eventsRoute = buildRouteMap({
   routes: {
     list: eventsListCommand,
     get: eventsGetCommand,
+    open: eventsOpenCommand,
     payload: eventsPayloadCommand,
     delete: eventsDeleteCommand,
   },

@@ -18,6 +18,7 @@ import {
 } from "../api-client.js";
 import { resolveStateDir } from "../config/paths.js";
 import type { AppContext, ConnectWebSocket, WsSocket } from "../context.js";
+import { makeOpenEventEffect } from "../dashboard-url.js";
 import { NotLoggedInError } from "../errors.js";
 import {
   forwardToLocalhost,
@@ -36,6 +37,7 @@ import {
   announceRequestOrg,
   announceActiveProfile,
   globalFlags,
+  resolveEffectiveOrg,
   resolveGlobals,
   resolveRequestProfile,
   type GlobalFlags,
@@ -433,11 +435,18 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
   async func(this: AppContext, flags, endpointId) {
     // Listen binds a credential for the tunnel/forward api client → the org selector applies (a bad
     // `--org`/`WBHK_ORG` errors here); a plain listen falls back to profile-only resolution.
-    const { profile, org } = await resolveRequestProfile(this, flags);
+    const { profile, org: selectorOrg } = await resolveRequestProfile(this, flags);
     announceActiveProfile(this, profile);
     const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
-    await announceRequestOrg(this, profile, org);
+    // Resolve the EFFECTIVE org once — env-guarded (an env key's org isn't in the local store, so we never
+    // build a wrong-org link from it) and never-throwing — and reuse it for the banner AND the TUI `o`-key
+    // deep-link, so the dashboard slug comes from a purely local value (nothing on the interactive path
+    // blocks on the network). An env-key tail without a local org just shows `o`-key guidance (that
+    // interactive+env combination is vanishingly rare).
+    const effective = await resolveEffectiveOrg(this, profile, selectorOrg);
+    announceRequestOrg(this, effective);
+    const { org } = effective;
     // Resolve the bearer once (proactively refreshing an OAuth credential at/near expiry) — used for both
     // the tunnel UPGRADE and the --forward api client. The reactive 401 refresh hook is wired into the
     // forward client (HTTP); mid-session refresh over the long-lived tunnel is out of scope here (a fresh
@@ -505,6 +514,9 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
       ((e: EventSummary) => Promise<{ ok: boolean; message: string }>) | undefined;
     if (flags.forward !== undefined) {
       parseForwardTarget(flags.forward); // throws InvalidForwardUrlError (usage) on a non-loopback target
+      // The api client is built ONLY on the --forward path (replay + fetch-payload). A plain tunnel tail
+      // needs just the tunnel wss URL + bearer, so it never resolves the api base URL — a malformed
+      // WBHK_API_URL can't abort a tail that doesn't touch the api.
       const apiBaseUrl = resolveApiBaseUrl({
         flag: flags.apiUrl,
         env: this.process.env?.[ENV_API_URL_VAR],
@@ -594,6 +606,13 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
         const dashboardBase = resolveDashboardUrl({
           env: this.process.env?.[ENV_DASHBOARD_URL_VAR],
         });
+        // The `o` key's real deep-link `/org/<slug>/endpoints/<endpointId>/events/<eventId>` (the old
+        // `/events/<id>` form 404s) needs the org slug — taken from the EFFECTIVE org resolved at startup, a
+        // purely local value, so the `o` key never blocks on the network. When there's no org (an older
+        // login), the effect shows `wbhk whoami` guidance instead of opening a broken link.
+        const orgSlug = org?.slug;
+        const resolveSlug = (): Promise<string | undefined> =>
+          Promise.resolve(orgSlug || undefined);
         const terminal: TuiTerminal = {
           write: (s) => this.process.stdout.write(s),
           size: () => this.io.terminalSize(),
@@ -603,10 +622,11 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
           terminal,
           color,
           effects: {
-            // encodeURIComponent the server-controlled id (defense-in-depth: it can't break out of the
-            // dashboard path even if a future id format isn't a bare uuid).
-            dashboardUrl: (e) => `${dashboardBase}/events/${encodeURIComponent(e.id)}`,
-            openBrowser: (url) => this.io.openBrowser(url),
+            openEvent: makeOpenEventEffect({
+              base: dashboardBase,
+              resolveSlug,
+              openBrowser: (url) => this.io.openBrowser(url),
+            }),
             replay: replaySelected,
           },
         });
