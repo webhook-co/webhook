@@ -23,6 +23,7 @@ import { WorkerEntrypoint } from "cloudflare:workers";
 import openNextHandler from "../.open-next/worker.js";
 import { listUserConnectedApps, revokeUserConnectedApp } from "./issuer/connected-apps-handler";
 import { introspect } from "./issuer/introspect-handler";
+import { resolveOrgIdentityRpc } from "./issuer/resolve-org-identity-deps";
 import { resolveProfileRpc } from "./issuer/resolve-profile-deps";
 import { makeIssuerDefaultHandler } from "./issuer/issuer-handler";
 import { nowSeconds } from "./issuer/issuer-constants";
@@ -91,6 +92,12 @@ export class IssuerIntrospect extends WorkerEntrypoint {
   // client can only resolve the profile of the user whose token it holds.
   async resolveProfile(userId) {
     return resolveProfileRpc(this.env, userId);
+  }
+  // resolveOrgIdentity: the bound org's {id,slug,name} for mcp's `whoami` tool. Runs in THIS Worker over
+  // HYPERDRIVE_TENANT (the org self-authorizes by id under RLS), keeping the DB read off the mcp worker like
+  // resolveProfile. Non-PII, so no scope gate. mcp passes the orgId from its OWN introspected principal.
+  async resolveOrgIdentity(orgId) {
+    return resolveOrgIdentityRpc(this.env, orgId);
   }
 }
 
