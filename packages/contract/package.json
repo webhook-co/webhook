@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./capability": "./src/capability.ts",
+    "./scope-catalog": "./src/scope-catalog.ts",
     "./mint-ceiling": "./src/mint-ceiling.ts"
   },
   "scripts": {

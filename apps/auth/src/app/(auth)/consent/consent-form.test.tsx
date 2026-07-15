@@ -56,9 +56,12 @@ describe("ConsentForm", () => {
     expect(screen.getByText(/San Francisco, US/)).toBeInTheDocument();
     expect(screen.getByText(/203\.0\.113\.7/)).toBeInTheDocument();
     expect(screen.getByText("Acme Inc")).toBeInTheDocument();
-    // the requested access (summary, not a checklist)
+    // the requested access (summary, not a checklist) — the exact machine scopes stay visible for auditability
     expect(screen.getByText("events:read")).toBeInTheDocument();
     expect(screen.getByText("events:replay")).toBeInTheDocument();
+    // …AND each is spelled out in plain English, so consent is informed rather than a wall of `resource:verb`.
+    expect(screen.getByText("View events")).toBeInTheDocument();
+    expect(screen.getByText("Replay events")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     // both durations: the grant ceiling (~90d date) AND the per-key TTL (~24h)
     expect(screen.getByText(/2026-09-18/)).toBeInTheDocument();

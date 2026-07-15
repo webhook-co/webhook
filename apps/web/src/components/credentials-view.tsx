@@ -23,6 +23,8 @@ import type { ReactNode } from "react";
 
 import type { ApiKeyItem, CredentialsResult, DeviceGrant, GrantStatus } from "@/server/credentials";
 
+import { ScopeSummary } from "./scope-summary";
+
 export interface CredentialsViewProps {
   result: CredentialsResult;
   /** Revoke a standalone API key. When omitted (read-only contexts) no key affordance renders. */
@@ -51,18 +53,6 @@ function keyStatus(key: ApiKeyItem): { label: string; tone: BadgeProps["tone"] }
   // A revoked key keeps showing (audit trail) but must read as dead, not live. Expiry is
   // conveyed by the Expires column rather than a now-dependent computed status.
   return key.revokedAt ? { label: "revoked", tone: "neutral" } : { label: "active", tone: "ok" };
-}
-
-function Scopes({ scopes }: { scopes: readonly string[] }) {
-  return (
-    <span className="flex flex-wrap gap-1">
-      {scopes.map((s) => (
-        <Badge key={s} tone="neutral" className="font-mono text-xs">
-          {s}
-        </Badge>
-      ))}
-    </span>
-  );
 }
 
 function KeysTable({
@@ -106,7 +96,7 @@ function KeysTable({
                 </TableCell>
                 <TableCell className="font-mono text-sm text-fg-secondary">{k.start}</TableCell>
                 <TableCell>
-                  <Scopes scopes={k.scopes} />
+                  <ScopeSummary scopes={k.scopes} />
                 </TableCell>
                 <TableCell className="font-mono text-sm text-fg-secondary">
                   {fmtDate(k.lastUsedAt)}

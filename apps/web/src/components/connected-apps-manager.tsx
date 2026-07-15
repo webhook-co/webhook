@@ -17,6 +17,8 @@ import * as React from "react";
 
 import type { RevokeConnectedAppResult } from "@/server/connected-apps-actions";
 
+import { ScopeSummary } from "./scope-summary";
+
 function fmtDate(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000);
   return Number.isNaN(d.getTime()) ? "—" : d.toISOString().slice(0, 10);
@@ -91,12 +93,8 @@ export function ConnectedAppsManager({
               <span className="break-all font-mono text-sm text-fg-secondary">
                 {app.identityDomain ?? "no verified domain"}
               </span>
-              <span className="flex flex-wrap gap-1.5 pt-0.5">
-                {app.scopes.map((scope) => (
-                  <Badge key={scope} tone="neutral" className="font-mono text-xs">
-                    {scope}
-                  </Badge>
-                ))}
+              <span className="pt-0.5">
+                <ScopeSummary scopes={app.scopes} />
               </span>
               <span className="pt-0.5 text-xs text-fg-faint">
                 {/* Which org this app can see (token = org). "unknown organization" for a legacy grant
