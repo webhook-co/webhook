@@ -17,13 +17,13 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  ScopeSummary,
   type BadgeProps,
 } from "@webhook-co/ui";
+import { describeScope } from "@webhook-co/contract/scope-catalog";
 import type { ReactNode } from "react";
 
 import type { ApiKeyItem, CredentialsResult, DeviceGrant, GrantStatus } from "@/server/credentials";
-
-import { ScopeSummary } from "./scope-summary";
 
 export interface CredentialsViewProps {
   result: CredentialsResult;
@@ -96,7 +96,7 @@ function KeysTable({
                 </TableCell>
                 <TableCell className="font-mono text-sm text-fg-secondary">{k.start}</TableCell>
                 <TableCell>
-                  <ScopeSummary scopes={k.scopes} />
+                  <ScopeSummary scopes={k.scopes} describe={describeScope} />
                 </TableCell>
                 <TableCell className="font-mono text-sm text-fg-secondary">
                   {fmtDate(k.lastUsedAt)}

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ConnectedApp } from "@webhook-co/contract";
+import { describeScope } from "@webhook-co/contract/scope-catalog";
 import {
   Badge,
   Banner,
@@ -12,12 +13,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  ScopeSummary,
 } from "@webhook-co/ui";
 import * as React from "react";
 
 import type { RevokeConnectedAppResult } from "@/server/connected-apps-actions";
-
-import { ScopeSummary } from "./scope-summary";
 
 function fmtDate(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000);
@@ -96,7 +96,7 @@ export function ConnectedAppsManager({
               {/* div, not span: ScopeSummary renders a <details> (flow content), which is invalid inside a
                   phrasing-only <span>. */}
               <div className="pt-0.5">
-                <ScopeSummary scopes={app.scopes} />
+                <ScopeSummary scopes={app.scopes} describe={describeScope} />
               </div>
               <span className="pt-0.5 text-xs text-fg-faint">
                 {/* Which org this app can see (token = org). "unknown organization" for a legacy grant

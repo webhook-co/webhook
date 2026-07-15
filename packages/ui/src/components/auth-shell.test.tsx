@@ -89,4 +89,26 @@ describe("AuthShell", () => {
     );
     expect(container.querySelector('[data-side="left"]')).not.toBeNull();
   });
+
+  // NOTE: jsdom can't evaluate the cascade, so these assert the WIRING (the classes/structure that drive
+  // the layout), not the rendered pixels — the actual centering still needs a human eyeball.
+  it("logoAlign='center' wires the top bar to justify-center with actions pinned right", () => {
+    const { container } = render(
+      <AuthShell logoAlign="center" actions={<button>toggle</button>}>
+        x
+      </AuthShell>,
+    );
+    const topBar = container.querySelector("main > div");
+    expect(topBar?.className).toContain("justify-center");
+    const pinned = topBar?.querySelector(".absolute.right-0");
+    expect(pinned).not.toBeNull();
+    expect(pinned?.textContent).toContain("toggle");
+  });
+
+  it("default (logoAlign='left') keeps justify-between with inline actions (login/device unchanged)", () => {
+    const { container } = render(<AuthShell actions={<button>toggle</button>}>x</AuthShell>);
+    const topBar = container.querySelector("main > div");
+    expect(topBar?.className).toContain("justify-between");
+    expect(topBar?.querySelector(".absolute.right-0")).toBeNull();
+  });
 });

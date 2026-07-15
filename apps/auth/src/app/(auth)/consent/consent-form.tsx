@@ -2,7 +2,7 @@
 
 import type { ConsentRequest } from "@webhook-co/contract";
 import { describeScope } from "@webhook-co/contract/scope-catalog";
-import { Badge, Banner, Button } from "@webhook-co/ui";
+import { Badge, Banner, Button, ScopeSummary } from "@webhook-co/ui";
 import * as React from "react";
 
 // The consent grant-summary payload Lane C's `/authorize` SSRs into this page — the C↔E consent contract,
@@ -313,25 +313,19 @@ export function ConsentForm({
             <span className="break-all font-mono text-sm">{request.origin.ip}</span>
           </div>
         </SummaryRow>
-        {/* Consent stays VERBOSE — every scope shown, each spelled out in plain English (title + one-line
-            meaning) alongside its exact machine name. This is the grant screen: nothing about-to-be-granted is
-            ever collapsed behind a click (that would be a dark pattern). The dashboard REVIEW surfaces slim the
-            same scopes into a count, because there access is already granted. */}
+        {/* Collapsed-by-default at the founder's explicit request (ADR-0120), which reverses the earlier
+            "consent stays verbose" stance — a shorter grant screen. The trade-off is documented in the ADR:
+            this reuses the SAME accessible ScopeSummary as the dashboard review surfaces (native <details>:
+            every permission's title + exact scope + description stays in the DOM even collapsed, so assistive
+            tech reaches the full grant; one keystroke expands it). The label stays honest about what's being
+            GRANTED, and the unverified-app banner + demoted Authorize button (the real anti-phishing levers)
+            are untouched. */}
         <SummaryRow label="Access">
-          <ul className="flex flex-col gap-2">
-            {request.scopes.map((scope) => {
-              const info = describeScope(scope);
-              return (
-                <li key={scope} className="flex flex-col gap-0.5">
-                  <span className="flex flex-wrap items-baseline gap-x-2">
-                    <span className="font-medium text-fg">{info.title}</span>
-                    <span className="font-mono text-xs text-fg-faint">{scope}</span>
-                  </span>
-                  <span className="text-xs text-fg-faint">{info.description}</span>
-                </li>
-              );
-            })}
-          </ul>
+          <ScopeSummary
+            scopes={request.scopes}
+            describe={describeScope}
+            labelSuffix=" — review before authorizing"
+          />
         </SummaryRow>
         {/* Both durations: the grant ceiling (a ~90d date) and the per-key TTL (~24h, refreshed). */}
         <SummaryRow label="Authorized until">
