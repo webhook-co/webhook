@@ -17,24 +17,21 @@
 // Usage: `node scripts/audit-prod.mjs [--level=critical|high]` (default: critical).
 
 import { execSync } from "node:child_process";
+import { argv } from "node:process";
+import { fileURLToPath } from "node:url";
 
 const BULK_ENDPOINT = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk";
 // npm's bulk endpoint caps the request body; audit chunks the package set. Stay well under any cap.
 const CHUNK_SIZE = 250;
 const SEVERITY_RANK = { info: 0, low: 1, moderate: 2, high: 3, critical: 4 };
 
-const levelArg = process.argv.find((a) => a.startsWith("--level="))?.split("=")[1] ?? "critical";
-const blockingLevel = levelArg === "high" ? "high" : "critical";
-
-/** Collect every PRODUCTION (name → set of versions) pair from the pnpm dependency tree. */
-function collectProdDependencies() {
-  // --prod drops root devDependencies; --depth Infinity includes transitive prod deps. -r covers every
-  // workspace. A `link:`/`file:` workspace dep has a non-semver version and is skipped (nothing to audit).
-  const raw = execSync("pnpm ls -r --prod --depth Infinity --json", {
-    encoding: "utf8",
-    maxBuffer: 256 * 1024 * 1024,
-  });
-  const projects = JSON.parse(raw);
+/**
+ * Collect every PRODUCTION (name → set of versions) pair from parsed `pnpm ls --json` output. Pure, so
+ * it can be unit-tested against fixture JSON. A `link:`/`file:`/workspace dep has a non-semver version
+ * and is skipped (nothing to audit); transitive prod deps nest under `.dependencies`; `optionalDependencies`
+ * are included (they ship if present).
+ */
+export function parseProdTree(projects) {
   const map = new Map();
   const add = (name, version) => {
     if (!version || !/^\d/.test(version)) return; // skip link:/workspace/non-semver
@@ -56,6 +53,42 @@ function collectProdDependencies() {
   return map;
 }
 
+/**
+ * Split a bulk-endpoint advisories object ({name: [{severity, title, url}, ...]}) into the BLOCKING
+ * bucket (severity at/above `blockingLevel`) and the lower-but-notable ADVISORY bucket (>= high but below
+ * the blocking level). Pure — the whole gate decision turns on this, so it is the thing worth testing.
+ */
+export function classifyAdvisories(advisories, blockingLevel) {
+  const blockRank = SEVERITY_RANK[blockingLevel] ?? SEVERITY_RANK.critical;
+  const blocking = [];
+  const advisoryOnly = [];
+  for (const [name, list] of Object.entries(advisories ?? {})) {
+    for (const a of list ?? []) {
+      const rank = SEVERITY_RANK[a.severity] ?? 0;
+      const line = `${name} — ${a.severity} — ${a.title} (${a.url})`;
+      if (rank >= blockRank) blocking.push(line);
+      else if (rank >= SEVERITY_RANK.high) advisoryOnly.push(line);
+    }
+  }
+  return { blocking, advisoryOnly };
+}
+
+/** The requested blocking level from argv (`--level=critical|high`, default critical). */
+export function blockingLevelFromArgv(argv) {
+  const level = argv.find((a) => a.startsWith("--level="))?.split("=")[1] ?? "critical";
+  return level === "high" ? "high" : "critical";
+}
+
+/** Collect every PRODUCTION (name → set of versions) pair from the live pnpm dependency tree. */
+function collectProdDependencies() {
+  // --prod drops root devDependencies; --depth Infinity includes transitive prod deps. -r covers every workspace.
+  const raw = execSync("pnpm ls -r --prod --depth Infinity --json", {
+    encoding: "utf8",
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  return parseProdTree(JSON.parse(raw));
+}
+
 /** POST one chunk of the {name: [versions]} map to the bulk endpoint; returns its advisories object. */
 async function fetchAdvisories(chunkEntries) {
   const body = Object.fromEntries(chunkEntries.map(([name, versions]) => [name, [...versions]]));
@@ -71,6 +104,7 @@ async function fetchAdvisories(chunkEntries) {
 }
 
 async function main() {
+  const blockingLevel = blockingLevelFromArgv(process.argv);
   const deps = collectProdDependencies();
   const entries = [...deps.entries()];
   const advisories = {};
@@ -82,17 +116,7 @@ async function main() {
     }
   }
 
-  const blocking = [];
-  const advisoryOnly = [];
-  const blockRank = SEVERITY_RANK[blockingLevel];
-  for (const [name, list] of Object.entries(advisories)) {
-    for (const a of list) {
-      const rank = SEVERITY_RANK[a.severity] ?? 0;
-      const line = `${name} — ${a.severity} — ${a.title} (${a.url})`;
-      if (rank >= blockRank) blocking.push(line);
-      else if (rank >= SEVERITY_RANK.high) advisoryOnly.push(line);
-    }
-  }
+  const { blocking, advisoryOnly } = classifyAdvisories(advisories, blockingLevel);
 
   console.log(
     `audited ${deps.size} production packages against the npm bulk advisory endpoint: ` +
@@ -109,12 +133,16 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  // A transient network/endpoint fault must FAIL the job, not silently pass — a security gate that
-  // can't reach its data is not a gate. (The whole reason this script exists is that the old endpoint
-  // silently 410'd.) Surface the category and exit non-zero.
-  console.error(
-    `::error::audit could not complete: ${err instanceof Error ? err.message : String(err)}`,
-  );
-  process.exit(2);
-});
+// Run the network audit ONLY when executed directly (`node scripts/audit-prod.mjs`), never on import —
+// the *.test.mjs imports the pure helpers above and must not trigger a live bulk-endpoint call.
+if (argv[1] && fileURLToPath(import.meta.url) === argv[1]) {
+  main().catch((err) => {
+    // A transient network/endpoint fault must FAIL the job, not silently pass — a security gate that
+    // can't reach its data is not a gate. (The whole reason this script exists is that the old endpoint
+    // silently 410'd.) Surface the category and exit non-zero.
+    console.error(
+      `::error::audit could not complete: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    process.exit(2);
+  });
+}
