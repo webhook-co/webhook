@@ -118,6 +118,7 @@ export {
 export { Mark, Wordmark, type MarkProps, type WordmarkProps } from "./components/mark";
 export { ThemeToggle, themeInitScript } from "./components/theme-toggle";
 export { AuthShell, type AuthShellProps } from "./components/auth-shell";
+export { ScopeSummary, type ScopeDescription } from "./components/scope-summary";
 export {
   AppShell,
   AppNavItem,

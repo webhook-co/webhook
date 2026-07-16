@@ -21,6 +21,12 @@ export interface AuthShellProps {
    * lockup is the page's focal brand moment rather than a nav anchor. The top bar then carries only `actions`.
    */
   centerLockup?: boolean;
+  /**
+   * Horizontal placement of the top-bar lockup: `"left"` (default) or `"center"`. When `"center"`, the
+   * lockup is centered in the bar and `actions` (the theme toggle) is pinned to the right — used by the
+   * consent screen. Ignored when {@link centerLockup} moves the lockup above the form entirely.
+   */
+  logoAlign?: "left" | "center";
   className?: string;
 }
 
@@ -38,8 +44,11 @@ export function AuthShell({
   side = "right",
   homeHref,
   centerLockup = false,
+  logoAlign = "left",
   className,
 }: AuthShellProps) {
+  // Center-in-bar only applies when the lockup is IN the top bar (not moved above the form by centerLockup).
+  const centerInBar = logoAlign === "center" && !centerLockup;
   const lockup = homeHref ? (
     <a href={homeHref} aria-label="webhook.co home" className="inline-flex w-fit">
       <Wordmark />
@@ -63,16 +72,25 @@ export function AuthShell({
           side === "left" ? "min-[880px]:order-2" : "",
         )}
       >
-        {/* Top bar: the lockup sits here unless it is centered above the form, in which case only the
-            actions (theme toggle) remain, right-aligned. */}
+        {/* Top bar: the lockup sits here unless it is centered above the form (centerLockup), in which case
+            only the actions (theme toggle) remain, right-aligned. With logoAlign="center" the lockup is
+            centered in the bar and the actions are pinned to the right (absolute) so the lockup stays truly
+            centered regardless of the actions' width. */}
         <div
           className={cn(
-            "flex items-center gap-3",
-            centerLockup ? "justify-end" : "justify-between",
+            "relative flex items-center gap-3",
+            centerLockup ? "justify-end" : centerInBar ? "justify-center" : "justify-between",
           )}
         >
           {centerLockup ? null : lockup}
-          {actions}
+          {actions ? (
+            centerInBar ? (
+              // Out of flow so the lockup stays truly centered; vertically centered against it.
+              <div className="absolute right-0 top-1/2 -translate-y-1/2">{actions}</div>
+            ) : (
+              actions
+            )
+          ) : null}
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-[22px] py-8">
           {centerLockup ? <div className="flex w-full justify-center">{lockup}</div> : null}
