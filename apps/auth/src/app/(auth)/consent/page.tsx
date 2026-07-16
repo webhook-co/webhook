@@ -23,7 +23,7 @@ export default async function ConsentPage({
   const request = await resolveConsentRequest(ticket);
 
   return (
-    <AuthShell homeHref="/" actions={<ThemeToggle />}>
+    <AuthShell homeHref="/" actions={<ThemeToggle />} logoAlign="center">
       {request ? (
         <ConsentActionsClient request={request} />
       ) : (
