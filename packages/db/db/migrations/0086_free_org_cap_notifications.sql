@@ -26,6 +26,14 @@
 --    read org names would erode the least-privilege fence that is the whole point of that role. The grant is
 --    display identity ONLY — not status, not the suspension columns, not created_at — so the notifier still
 --    cannot observe org state, and it gets no write. rls.test.ts pins both the positives and the negatives.
+--
+--    BLAST RADIUS, accepted: listPendingNotifications is the single read behind ALL notification kinds, and
+--    it now joins `orgs` unconditionally — so on a database where this grant is missing but the auth worker
+--    has shipped, the drain throws `permission denied for table orgs`, runNotificationDrain logs + swallows,
+--    and EVERY kind (not just the two new ones) silently stops mailing. This is the same code-ahead-of-schema
+--    hazard every migration in this repo carries, and it is held by the same control: deploy-auth.yml runs the
+--    migration-guard action, which blocks the deploy while HEAD is ahead of the `prod-schema` tag by an
+--    unapplied migration. Sequence this migration ahead of the auth deploy, as usual.
 
 -- Role-targeted, never a bare policy another role could ride. INSERT policies take only WITH CHECK.
 create policy notification_intents_capreconciler_insert on notification_intents

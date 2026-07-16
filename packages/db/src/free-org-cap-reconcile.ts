@@ -44,6 +44,9 @@ export interface FreeOrgCapReconcileResult {
   readonly suspended: number;
   readonly restored: number;
   readonly graceCleared: number;
+  /** Orgs whose enforce/undo step threw and was skipped. Non-zero means the pass was partial — surfaced so a
+   *  deterministic failure (e.g. an unapplied grant) shows up as a counter rather than a silent nothing. */
+  readonly errors: number;
 }
 
 export async function runFreeOrgCapReconcile(
@@ -62,32 +65,49 @@ export async function runFreeOrgCapReconcile(
   let suspended = 0;
   let restored = 0;
   let graceCleared = 0;
+  let errors = 0;
+
+  // PER-ORG ISOLATION (both loops): each org's step is independently try/caught, so one org's failure can't
+  // abort the pass. This is load-bearing for the UNDO loop below — before, a throw while enforcing any single
+  // overflow org (each step now also INSERTs a notification intent, so it depends on a grant on a second
+  // table) propagated out of runFreeOrgCapReconcile and the restore loop never ran. A deterministic failure
+  // there would strand every already-suspended org as suspended FOREVER, including owners who had already
+  // resolved their overage and were waiting to be restored — the worst direction to fail in. Mirrors the
+  // sibling retention prune's partial-failure isolation.
 
   // Enforce each overflow org through the grace → suspend lifecycle. Both writes enqueue their own owner
   // email in-transaction, and both are guarded so a re-run of an already-flagged / already-suspended org
   // neither re-stamps nor re-sends.
   for (const org of overflow.values()) {
     if (org.status === "suspended") continue; // already suspended for the cap → nothing to do
-    if (org.graceUntil === null) {
-      if (await flagOrgForFreeCapGrace(reconciler, org.orgId, new Date(now + graceMs), cap))
-        flagged++;
-    } else if (now >= org.graceUntil.getTime()) {
-      if (await suspendOrgForFreeCap(reconciler, org.orgId, new Date(now + restoreMs), cap))
-        suspended++;
+    try {
+      if (org.graceUntil === null) {
+        if (await flagOrgForFreeCapGrace(reconciler, org.orgId, new Date(now + graceMs), cap))
+          flagged++;
+      } else if (now >= org.graceUntil.getTime()) {
+        if (await suspendOrgForFreeCap(reconciler, org.orgId, new Date(now + restoreMs), cap))
+          suspended++;
+      }
+      // else: still within the grace window → leave it active
+    } catch {
+      errors++; // this org is retried next pass; the rest of the pass — especially the undo loop — proceeds
     }
-    // else: still within the grace window → leave it active
   }
 
   // Reconcile the inverse: orgs we manage that are no longer overflow (owner resolved the overage) → undo.
   for (const managed of await listFreeCapManagedOrgs(reconciler)) {
     if (overflow.has(managed.orgId)) continue; // still overflow → leave as-is
-    if (managed.status === "suspended") {
-      if (await restoreOrgFromFreeCap(reconciler, managed.orgId)) restored++;
-    } else if (managed.graceUntil !== null) {
-      await clearFreeCapGrace(reconciler, managed.orgId);
-      graceCleared++;
+    try {
+      if (managed.status === "suspended") {
+        if (await restoreOrgFromFreeCap(reconciler, managed.orgId)) restored++;
+      } else if (managed.graceUntil !== null) {
+        await clearFreeCapGrace(reconciler, managed.orgId);
+        graceCleared++;
+      }
+    } catch {
+      errors++;
     }
   }
 
-  return { flagged, suspended, restored, graceCleared };
+  return { flagged, suspended, restored, graceCleared, errors };
 }

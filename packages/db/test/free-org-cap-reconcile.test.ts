@@ -175,4 +175,40 @@ describe("runFreeOrgCapReconcile", () => {
     const rerun = await reconcile(T0 + GRACE_MS + 2000);
     expect(rerun).toMatchObject({ flagged: 0, suspended: 0, restored: 0, graceCleared: 0 });
   });
+
+  it("a failing enforce step does NOT strand already-suspended orgs — the undo loop still runs", async () => {
+    // The enforce step now INSERTs a notification intent in-tx, so it depends on a grant on a SECOND table.
+    // Without per-org isolation a throw there escapes runFreeOrgCapReconcile entirely and the restore loop
+    // never executes — so an owner who already resolved their overage would stay suspended forever, every
+    // pass, silently. That is the worst direction for this cron to fail in, hence this test.
+    const victim = await seedUser();
+    await seedOrgAt(victim, "2026-01-01T00:00:00Z");
+    await seedOrgAt(victim, "2026-02-01T00:00:00Z");
+    const overflowOrg = await seedOrgAt(victim, "2026-03-01T00:00:00Z");
+    await reconcile(T0);
+    await reconcile(T0 + GRACE_MS + 1000);
+    expect((await orgState(overflowOrg)).status).toBe("suspended");
+
+    // The owner resolves the overage (delete an org they no longer need) → the overflow org is now restorable.
+    const [{ id: dropped }] = await admin<{ id: string }[]>`
+      select id from orgs where id != ${overflowOrg}
+        and id in (select org_id from memberships where user_id = ${victim}) limit 1`;
+    await admin`delete from orgs where id = ${dropped}`;
+
+    // Meanwhile a DIFFERENT owner is over cap, and enforcing them will throw (intent INSERT revoked).
+    const other = await seedUser();
+    await seedOrgAt(other, "2026-01-01T00:00:00Z");
+    await seedOrgAt(other, "2026-02-01T00:00:00Z");
+    await seedOrgAt(other, "2026-03-01T00:00:00Z");
+    await owner`revoke insert on notification_intents from ${owner(DB_ROLES.capReconciler)}`;
+    try {
+      const pass = await reconcile(T0 + GRACE_MS + 2000);
+      expect(pass.errors).toBeGreaterThan(0); // the other owner's flag threw and was counted
+      expect(pass.restored).toBe(1); // ...and the restore STILL happened
+      expect((await orgState(overflowOrg)).status).toBe("active");
+    } finally {
+      await owner`grant insert (id, org_id, kind, destination_id, context)
+                  on notification_intents to ${owner(DB_ROLES.capReconciler)}`;
+    }
+  });
 });

@@ -60,15 +60,17 @@ const MONTHS = [
 ] as const;
 
 /**
- * Format a date in UTC, e.g. "Jul 30, 2026". Built from explicit getUTC fields rather than Intl/toLocale so
- * it renders identically on workerd + Node (the destination-disabled precedent). Returns null for a value
- * that isn't a usable date — a malformed context must degrade the wording, never throw: a render throw is
- * claimed-but-never-sent, i.e. a silently lost notification.
+ * Format a date in UTC, e.g. "Jul 30, 2026 (UTC)". Built from explicit getUTC fields rather than
+ * Intl/toLocale so it renders identically on workerd + Node (the destination-disabled precedent). The zone is
+ * NAMED because these are deadlines: a bare "Jul 30" is a full calendar day off for a reader far enough west,
+ * who would plan around a date that already passed. Returns null for a value that isn't a usable date — a
+ * malformed context must degrade the wording, never throw: a render throw is claimed-but-never-sent, i.e. a
+ * silently lost notification.
  */
 function formatDay(iso: string): string | null {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return null;
-  return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()}`;
+  return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()} (UTC)`;
 }
 
 /** The org's name for prose, or a neutral stand-in when it couldn't be resolved. */
@@ -89,9 +91,16 @@ function capOf(cap: number): number | null {
   return Number.isInteger(cap) && cap > 0 ? cap : null;
 }
 
-/** "up to 2 organizations" / "its organization limit" when the cap didn't survive the round-trip. */
+/**
+ * "up to 2 free organizations per user" — or a number-less phrase if the cap didn't survive the round-trip.
+ * "per user" is load-bearing: the cap is counted per OWNER, but the email goes to EVERY owner of the org
+ * (the notifier resolves recipients by membership). A co-owner who is not themselves over the cap must not
+ * read a second-person accusation ("you're over the limit") they can neither verify nor fix.
+ */
 function capPhrase(cap: number | null): string {
-  return cap === null ? "a limited number of organizations" : `up to ${cap} organizations`;
+  return cap === null
+    ? "a limited number of free organizations per user"
+    : `up to ${cap} free organizations per user`;
 }
 
 interface Shell {
@@ -188,8 +197,14 @@ ${paras}
 }
 
 /**
- * The warning: this org is the overflow past the free-org cap and will be suspended on `graceUntil`. The org
- * is still FULLY ACTIVE — the email must not imply anything has stopped working yet.
+ * The warning: this org is over the free-org cap and will be suspended on `graceUntil`. The org is still
+ * FULLY ACTIVE — the email must not imply anything has stopped working yet.
+ *
+ * Two claims this copy deliberately does NOT make. It does not call the org "your newest" or "the one" that
+ * will be suspended: the reconciler flags EVERY org past the cap, so a paid→Free downgrade leaving N orgs
+ * over sends N of these, and a reader told theirs is the only one at risk would fix that one and be blindsided
+ * by the rest. And it does not accuse the reader of being over the cap: the count is per-OWNER but the mail
+ * goes to every owner (see {@link capPhrase}).
  */
 export function renderFreeOrgCapWarningEmail(
   ctx: FreeOrgCapWarningContext,
@@ -203,22 +218,33 @@ export function renderFreeOrgCapWarningEmail(
   return render({
     subject: stripControlChars(`Heads up: ${label} will be suspended ${when}`),
     heading: `${label} will be suspended ${when}`,
-    preview: `The free plan covers ${capPhrase(cap)}. You're over that, so ${label} is scheduled to be suspended ${when}.`,
+    preview: `It's over the free plan's limit of ${capPhrase(cap)}. Nothing has changed yet — here's how to keep it.`,
     paragraphs: [
-      `The free plan covers ${capPhrase(cap)}, and you're currently over that. ${label} is your newest free organization, so it's the one scheduled to be suspended ${when}.`,
+      `The free plan covers ${capPhrase(cap)}, and ${label} is over that limit — so it's scheduled to be suspended ${when}.`,
       `Nothing has changed yet. Until then it keeps capturing, delivering, and everything else, exactly as it does today.`,
-      `To keep it: upgrade any of your free organizations to a paid plan, or delete one you're no longer using. Either puts you back under the limit and this cancels itself — you don't need to reply or tell us.`,
+      `The surest fix is to upgrade ${label} to a paid plan: that takes it out of the free count entirely and this cancels itself. Alternatively, whoever owns the free organizations can delete or upgrade a different one to free up a slot — that works too.`,
+      `If more than one organization is over the limit, each one gets its own notice like this. Fixing the org named here won't clear the others.`,
+      `Already sorted it out? Then ignore this — nothing will happen ${when}, and you don't need to reply or tell us.`,
     ],
-    ctaLabel: "Review your organizations",
+    ctaLabel: "Upgrade this organization",
     ctaUrl: orgUrl(org, "/billing"),
-    footer: `You're receiving this because you own a webhook.co organization that's over the free plan's limit. It's a service notification about your account — there's nothing to unsubscribe from.`,
+    footer: `You're receiving this because you're an owner of a webhook.co organization that's over the free plan's limit. It's a service notification about your account — there's nothing to unsubscribe from.`,
   });
 }
 
 /**
- * The suspension: the grace window expired and the org is now suspended. Nothing is deleted — and the copy
- * must not threaten deletion, because nothing in the system deletes a suspended org. `restoreDeadline` is
- * stated as a FLOOR ("at least until X"), which is what it actually is.
+ * The suspension: the grace window expired and the org is now suspended.
+ *
+ * The retention wording is the sharp edge here. `restoreDeadline` bounds how long the ORG can be restored —
+ * it says NOTHING about the events, which keep aging out on the free plan's ordinary retention the whole time
+ * (packages/db/src/retention.ts prunes purely on `received_at`, with no `orgs.status` predicate; the
+ * webhook_retention role's grant on orgs is (id, retention_days) so it cannot even see that an org is
+ * suspended). An earlier draft of this email promised "we're keeping it all until at least <restore
+ * deadline>", which the prune falsifies within a week. Say what is true: config is kept, events age out as
+ * usual, restore sooner to keep more. No retention number is quoted — the plan owns that, and a hardcoded one
+ * here would drift.
+ *
+ * Nor does the copy threaten deletion of the ORG: nothing in the system deletes a suspended org.
  */
 export function renderFreeOrgCapSuspendedEmail(
   ctx: FreeOrgCapSuspendedContext,
@@ -231,17 +257,23 @@ export function renderFreeOrgCapSuspendedEmail(
   return render({
     subject: stripControlChars(`${label} has been suspended`),
     heading: `${label} has been suspended`,
-    preview: `It was over the free plan's limit of ${capPhrase(cap)}. Nothing has been deleted, and you can restore it any time.`,
+    preview: `It was over the free plan's limit of ${capPhrase(cap)}. You can restore it whenever you're ready — here's how.`,
     paragraphs: [
-      `The free plan covers ${capPhrase(cap)}. ${label} was over that limit, and the notice period has now passed, so we've suspended it.`,
-      `What that means: we've stopped capturing new events for this organization, delivery is on hold, and its dashboard is read-only. Everything already captured is untouched — your events, endpoints, and settings are all still there.`,
-      day === null
-        ? `Nothing has been deleted, and nothing will be while it's suspended.`
-        : `Nothing has been deleted, and nothing will be — we're keeping it all until at least ${day} while you decide.`,
-      `To bring it back: upgrade it to a paid plan, or delete a free organization you're no longer using to free up a slot. It restores within the hour, and any events that were held for delivery go out automatically.`,
+      `The free plan covers ${capPhrase(cap)}. ${label} was over that limit and the notice period has now passed, so we've suspended it.`,
+      // Precisely what suspension does: requireActiveOrgAccess redirects every data page to /suspended, so
+      // "read-only dashboard" (an earlier draft) was wrong — the data isn't browsable-but-frozen, it's behind
+      // a notice. Settings and Billing deliberately stay open, because they're the way out.
+      `What that means: we've stopped capturing new events for it, delivery is on hold, and its dashboard now shows a suspension notice in place of your data. Settings and billing stay open, because that's where you fix it.`,
+      `Your endpoints, destinations, settings, and team are all kept — restoring puts them back exactly as they were.${
+        day === null
+          ? ` Events, though, keep aging out on the free plan's usual retention while it's suspended, so the sooner you restore it, the more history you keep.`
+          : ` Events, though, keep aging out on the free plan's usual retention while it's suspended — so the sooner you restore it, the more history you keep. You have until ${day} to restore it.`
+      }`,
+      `To bring it back: upgrade it to a paid plan, or have whoever owns the free organizations delete or upgrade a different one to free up a slot. It comes back within the hour, and any events that were held for delivery go out automatically.`,
+      `Already restored it? Then ignore this — it was queued when we suspended it, and your dashboard is the source of truth.`,
     ],
     ctaLabel: "Restore this organization",
     ctaUrl: orgUrl(org, "/suspended"),
-    footer: `You're receiving this because you own a suspended webhook.co organization. It's a service notification about your account — there's nothing to unsubscribe from.`,
+    footer: `You're receiving this because you're an owner of a suspended webhook.co organization. It's a service notification about your account — there's nothing to unsubscribe from.`,
   });
 }

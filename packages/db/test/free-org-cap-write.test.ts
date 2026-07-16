@@ -181,15 +181,20 @@ describe("free-cap notifications (slice 4) — nothing happens to an org un-anno
     // Atomicity is the whole point: a suspend that commits without its notification is the exact failure
     // this slice exists to prevent. Force the enqueue to fail by removing the table's insert path for the
     // role, and assert the org is still active afterwards.
+    // GRANT/REVOKE runs as `owner` (webhook_owner — the role that ran the migrations and therefore OWNS the
+    // table), NOT `admin`. `admin` is pg.providerUrl: the postgres superuser locally, but only non-inheriting
+    // `neondb_owner` on the nightly's Neon branch, where it owns nothing — so a REVOKE issued as `admin` there
+    // silently no-ops with a WARNING, this assertion flips, and the nightly goes red at 04:00 while every
+    // local and PR run stays green (the #383 pattern). See the `api-key-last-used` grant/revoke test.
     const org = await seedOrg();
-    await admin`revoke insert on notification_intents from ${admin(DB_ROLES.capReconciler)}`;
+    await owner`revoke insert on notification_intents from ${owner(DB_ROLES.capReconciler)}`;
     try {
       await expect(suspendOrgForFreeCap(reconciler, org, soon, CAP)).rejects.toThrow();
       expect((await orgState(org)).status).toBe("active"); // rolled back — not silently suspended
       expect(await pauseState(org)).toBeNull();
     } finally {
-      await admin`grant insert (id, org_id, kind, destination_id, context)
-                  on notification_intents to ${admin(DB_ROLES.capReconciler)}`;
+      await owner`grant insert (id, org_id, kind, destination_id, context)
+                  on notification_intents to ${owner(DB_ROLES.capReconciler)}`;
     }
   });
 
