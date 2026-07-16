@@ -3,13 +3,18 @@
 // the established pattern for transactional mail here.
 //
 // The invite link is a BEARER token: whoever opens it can join the org (if their verified email matches).
-// So, exactly like the magic link: no tracking pixels, no remote images, one explicit link. Tracking is
-// disabled at the Resend domain level anyway — security scanners pre-fetch tracked links and would burn the
-// token before the human clicks.
+// So, exactly like the magic link: no tracking, one explicit link. Tracking is disabled at the Resend domain
+// level — security scanners pre-fetch tracked links and would burn the token before the human clicks.
+//
+// This renders through the shared branded shell, whose only remote asset is our own logo. That is why this
+// no longer claims "no remote images": the logo carries no token and reveals only that some copy of the mail
+// exists. What protects the token is that we never let the link be REWRITTEN — see magic-link.ts.
 //
 // The inviter's email is rendered so the recipient can judge whether they expected this invite (an invite
 // email from an unknown person is a phishing signal, and it arrives from OUR domain). It is user-controlled
-// data, so it is HTML-ESCAPED. The API key is never interpolated into an error message.
+// data, so the shell HTML-ESCAPES it. The API key is never interpolated into an error message.
+
+import { renderBrandedEmail } from "@webhook-co/shared/email-shell";
 
 export interface InviteEmailDeps {
   /** Resend API key (a Secrets Store binding at runtime). */
@@ -31,35 +36,24 @@ export interface InviteEmailMessage {
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const SUBJECT = "You've been invited to a team on webhook.co";
 
-/** Escape the five HTML-significant characters. The invite URL is built by us; `invitedBy` is not. */
-function esc(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function renderHtml(msg: InviteEmailMessage): string {
-  return [
-    `<p><strong>${esc(msg.invitedBy)}</strong> invited you to join their team on webhook.co.</p>`,
-    `<p><a href="${esc(msg.url)}">Accept the invite</a></p>`,
-    `<p>The link expires in 7 days and only works for this email address.</p>`,
-    `<p>If you weren't expecting this, you can ignore this email — nothing happens until you accept.</p>`,
-  ].join("\n");
-}
-
-function renderText(msg: InviteEmailMessage): string {
-  return [
-    `${msg.invitedBy} invited you to join their team on webhook.co.`,
-    "",
-    "Accept the invite:",
-    msg.url,
-    "",
-    "The link expires in 7 days and only works for this email address.",
-    "If you weren't expecting this, you can ignore this email — nothing happens until you accept.",
-  ].join("\n");
+function render(msg: InviteEmailMessage) {
+  return renderBrandedEmail({
+    subject: SUBJECT,
+    heading: "You've been invited",
+    preview: `${msg.invitedBy} invited you to join their team on webhook.co.`,
+    paragraphs: [
+      `${msg.invitedBy} invited you to join their team on webhook.co.`,
+      "The link expires in 7 days and only works for this email address.",
+      "If you weren't expecting this, you can ignore this email — nothing happens until you accept.",
+    ],
+    cta: {
+      label: "Accept the invite",
+      url: msg.url,
+      fallbackNote: "If the button doesn't work, paste this link into your browser:",
+    },
+    footer:
+      "You're receiving this because someone invited this address to a team on webhook.co. There's nothing to unsubscribe from — ignore it and the invite simply expires.",
+  });
 }
 
 /**
@@ -72,6 +66,7 @@ export async function sendInviteEmail(
   message: InviteEmailMessage,
 ): Promise<void> {
   const doFetch = deps.fetchImpl ?? fetch;
+  const email = render(message);
   const res = await doFetch(RESEND_ENDPOINT, {
     method: "POST",
     headers: {
@@ -81,9 +76,9 @@ export async function sendInviteEmail(
     body: JSON.stringify({
       from: deps.from,
       to: message.to,
-      subject: SUBJECT,
-      html: renderHtml(message),
-      text: renderText(message),
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
     }),
   });
 
