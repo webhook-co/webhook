@@ -39,10 +39,16 @@ export default tseslint.config(
       // C1 (ADR-0002): the cached Hyperdrive binding must NEVER serve tenant-scoped
       // reads — its query cache is keyed on SQL+params and is blind to the RLS session
       // GUC, so a cached tenant query could serve one org's rows to another. Every
-      // *value* access to the binding is flagged (this catches both
-      // `createClient(env.HYPERDRIVE_CACHED.connectionString)` and any indirection);
-      // an interface/type declaration of the binding is not a MemberExpression, so it
-      // isn't matched. If a read is genuinely non-tenant/cache-safe, opt in explicitly:
+      // *value* access to the binding is flagged: member access
+      // (`env.HYPERDRIVE_CACHED`), computed access (`env["HYPERDRIVE_CACHED"]`), and
+      // DESTRUCTURING (`const { HYPERDRIVE_CACHED } = env`, incl. a renamed or
+      // string-keyed pattern). The destructure selectors are load-bearing, not
+      // belt-and-braces: a destructure is an ObjectPattern, NOT a MemberExpression, so
+      // the first two selectors miss it entirely — `const { HYPERDRIVE_CACHED } = env;
+      // createClient(HYPERDRIVE_CACHED.connectionString)` passed this rule cleanly until
+      // a code review probed it. An interface/type declaration of the binding is neither
+      // a MemberExpression nor an ObjectPattern, so it still isn't matched.
+      // If a read is genuinely non-tenant/cache-safe, opt in explicitly:
       //   // eslint-disable-next-line no-restricted-syntax -- cache-safe (C1): <reason>
       "no-restricted-syntax": [
         "error",
@@ -53,6 +59,18 @@ export default tseslint.config(
         },
         {
           selector: "MemberExpression[computed=true] > Literal[value='HYPERDRIVE_CACHED']",
+          message:
+            "C1 (ADR-0002): the cached Hyperdrive binding must not serve tenant reads — route tenant reads through packages/db on HYPERDRIVE_TENANT. If genuinely cache-safe (non-tenant), disable this line with a `cache-safe (C1): <reason>` justification.",
+        },
+        {
+          // `const { HYPERDRIVE_CACHED } = env` / `const { HYPERDRIVE_CACHED: x } = env`.
+          selector: "ObjectPattern > Property[key.name='HYPERDRIVE_CACHED']",
+          message:
+            "C1 (ADR-0002): the cached Hyperdrive binding must not serve tenant reads — route tenant reads through packages/db on HYPERDRIVE_TENANT. If genuinely cache-safe (non-tenant), disable this line with a `cache-safe (C1): <reason>` justification.",
+        },
+        {
+          // `const { "HYPERDRIVE_CACHED": x } = env` — a string-keyed pattern.
+          selector: "ObjectPattern > Property > Literal[value='HYPERDRIVE_CACHED']",
           message:
             "C1 (ADR-0002): the cached Hyperdrive binding must not serve tenant reads — route tenant reads through packages/db on HYPERDRIVE_TENANT. If genuinely cache-safe (non-tenant), disable this line with a `cache-safe (C1): <reason>` justification.",
         },

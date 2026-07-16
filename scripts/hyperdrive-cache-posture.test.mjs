@@ -1,0 +1,362 @@
+// Tests for scripts/hyperdrive-cache-posture.mjs — the two-layer guard keeping tenant-scoped reads off a
+// CACHING Hyperdrive pool. Drives the REAL exported decisions (exactly what main()/the lint guard call) plus
+// live assertions over the actual shipped apps/*/wrangler.jsonc, so a real regression is a red build rather
+// than a fixture that agrees with itself.
+//
+// Layer 1 (bindingPlaceholderViolations) is network-free and runs in `lint`: it pins each hyperdrive binding
+// to ITS OWN id placeholder, so a tenant binding can never be re-pointed at the cached pool.
+// Layer 2 (cachePostureViolations) runs at deploy: it resolves the GENERATED overlay's real ids against the
+// Cloudflare API and proves the pool each binding actually resolves to has caching disabled.
+
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import {
+  CACHING_ALLOWED_BINDINGS,
+  bindingPlaceholderViolations,
+  cachePostureViolations,
+  configsByIdFromPages,
+  fetchAllConfigs,
+  hyperdriveBindings,
+} from "./hyperdrive-cache-posture.mjs";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+const off = (name) => ({ name, caching: { disabled: true } });
+const on = (name) => ({ name, caching: { disabled: false } });
+
+// ---------------------------------------------------------------- hyperdriveBindings (text extraction)
+
+test("hyperdriveBindings extracts binding+id pairs and ignores non-hyperdrive bindings", () => {
+  const text = `{
+    "hyperdrive": [
+      { "binding": "HYPERDRIVE_TENANT", "id": "<HYPERDRIVE_TENANT_ID>", "localConnectionString": "postgres://x" },
+      { "binding": "HYPERDRIVE_INGEST", "id": "ff55e308" }
+    ],
+    "kv_namespaces": [{ "binding": "KV_AUTHZ", "id": "<KV_AUTHZ_ID>" }]
+  }`;
+  assert.deepEqual(hyperdriveBindings(text), [
+    { binding: "HYPERDRIVE_TENANT", id: "<HYPERDRIVE_TENANT_ID>" },
+    { binding: "HYPERDRIVE_INGEST", id: "ff55e308" },
+  ]);
+});
+
+// The old implementation scanned with /HYPERDRIVE_[A-Z_]*_ID/ — which excludes digits, so a pool with a
+// numeral in its name was invisible and silently never checked. Any future HYPERDRIVE_METER2 / _V2 must be seen.
+test("hyperdriveBindings sees names containing DIGITS", () => {
+  const text = `{"hyperdrive":[{"binding":"HYPERDRIVE_METER2","id":"<HYPERDRIVE_METER2_ID>"}]}`;
+  assert.deepEqual(hyperdriveBindings(text), [
+    { binding: "HYPERDRIVE_METER2", id: "<HYPERDRIVE_METER2_ID>" },
+  ]);
+});
+
+test("hyperdriveBindings tolerates id-before-binding key order", () => {
+  const text = `{"hyperdrive":[{"id":"abc","binding":"HYPERDRIVE_TENANT"}]}`;
+  assert.deepEqual(hyperdriveBindings(text), [{ binding: "HYPERDRIVE_TENANT", id: "abc" }]);
+});
+
+test("hyperdriveBindings returns [] for a non-string", () => {
+  assert.deepEqual(hyperdriveBindings(null), []);
+});
+
+// REGRESSION (round-2 review, UNDER-match). The first implementation regex'd for flat `{...}` chunks. A brace
+// inside a comment INSIDE a hyperdrive entry broke the chunk and silently dropped the binding from BOTH
+// layers — so a tenant binding re-pointed at the cached pool produced ZERO violations. apps/engine and
+// apps/auth already put prose comments inside these braces, so this was one `${VAR}` away from real.
+test("a brace-bearing comment INSIDE an entry does not hide the binding", () => {
+  const text = `{
+    "hyperdrive": [
+      {
+        // built as \${INGEST_BASE_URL}/<token>; posture: caching: { disabled: true }
+        "binding": "HYPERDRIVE_TENANT",
+        "id": "<HYPERDRIVE_CACHED_ID>",
+      },
+    ],
+  }`;
+  assert.deepEqual(hyperdriveBindings(text), [
+    { binding: "HYPERDRIVE_TENANT", id: "<HYPERDRIVE_CACHED_ID>" },
+  ]);
+  // and the re-pointing is still caught
+  assert.equal(bindingPlaceholderViolations([{ name: "web", text }]).length, 1);
+});
+
+// REGRESSION (round-2 review, OVER-match). apps/mcp + apps/web document deploy-injected bindings as
+// commented-out JSON in exactly the shape the old regex harvested — so a comment could turn `pnpm lint` RED
+// for a binding that does not exist. A comment is a comment.
+test("a commented-out binding is NOT a real binding", () => {
+  const text = `{
+    // "hyperdrive": [{ "binding": "HYPERDRIVE_PURGE", "id": "<HYPERDRIVE_CACHED_ID>" }],
+    "hyperdrive": [{ "binding": "HYPERDRIVE_TENANT", "id": "<HYPERDRIVE_TENANT_ID>" }],
+  }`;
+  assert.deepEqual(hyperdriveBindings(text), [
+    { binding: "HYPERDRIVE_TENANT", id: "<HYPERDRIVE_TENANT_ID>" },
+  ]);
+  assert.deepEqual(bindingPlaceholderViolations([{ name: "mcp", text }]), []);
+});
+
+test("hyperdriveBindings tolerates trailing commas (the configs use them)", () => {
+  const text = `{ "hyperdrive": [{ "binding": "HYPERDRIVE_TENANT", "id": "<HYPERDRIVE_TENANT_ID>", },], }`;
+  assert.deepEqual(hyperdriveBindings(text), [
+    { binding: "HYPERDRIVE_TENANT", id: "<HYPERDRIVE_TENANT_ID>" },
+  ]);
+});
+
+// Reporting bindings from a partial parse is how a guard silently checks less than it claims.
+test("hyperdriveBindings THROWS on unparseable input rather than reporting a partial set", () => {
+  assert.throws(() => hyperdriveBindings(`{ "hyperdrive": [ { "binding": `), /refusing to report/);
+});
+
+test("hyperdriveBindings ignores an entry missing binding or id", () => {
+  const text = `{"hyperdrive":[{"binding":"HYPERDRIVE_X"},{"id":"y"},{"binding":"HYPERDRIVE_Z","id":"z"}]}`;
+  assert.deepEqual(hyperdriveBindings(text), [{ binding: "HYPERDRIVE_Z", id: "z" }]);
+});
+
+// ---------------------------------------------------------------- Layer 1: placeholder pinning (no network)
+
+test("a binding pinned to its OWN placeholder is clean", () => {
+  const text = `{"hyperdrive":[{"binding":"HYPERDRIVE_TENANT","id":"<HYPERDRIVE_TENANT_ID>"}]}`;
+  assert.deepEqual(bindingPlaceholderViolations([{ name: "web", text }]), []);
+});
+
+// THE LEAK, caught at lint time with no API call: re-point the tenant binding at the cached pool's
+// placeholder. gen-wrangler's per-app allow-list permits engine to use BOTH placeholders, so nothing else
+// stops this. Every org-wide browse binds no org_id ⇒ its cache key is identical across orgs ⇒ org A's
+// dashboard would render org B's rows.
+test("a binding pointed at ANOTHER pool's placeholder is a violation", () => {
+  const text = `{"hyperdrive":[{"binding":"HYPERDRIVE_TENANT","id":"<HYPERDRIVE_CACHED_ID>"}]}`;
+  const violations = bindingPlaceholderViolations([{ name: "web", text }]);
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /HYPERDRIVE_TENANT/);
+  assert.match(violations[0], /HYPERDRIVE_CACHED_ID/);
+});
+
+test("HYPERDRIVE_CACHED pinned to its own placeholder is clean (it is a real, allowed pool)", () => {
+  const text = `{"hyperdrive":[{"binding":"HYPERDRIVE_CACHED","id":"<HYPERDRIVE_CACHED_ID>"}]}`;
+  assert.deepEqual(bindingPlaceholderViolations([{ name: "engine", text }]), []);
+});
+
+// A literal id in a committed config is a violation twice over: it dodges the pinning check, and real
+// resource ids must never be committed (no-secrets — gen-wrangler-prod.mjs says so). The fixture below is
+// deliberately NOT a real id: writing one here to test "don't commit real ids" would commit a real id.
+test("a non-placeholder literal id in a COMMITTED config is a violation (no real ids in the repo)", () => {
+  const text = `{"hyperdrive":[{"binding":"HYPERDRIVE_TENANT","id":"not-a-real-id-0000000000000000"}]}`;
+  const violations = bindingPlaceholderViolations([{ name: "web", text }]);
+  assert.equal(violations.length, 1);
+});
+
+// THE REAL DRIFT GUARD — asserts against the SHIPPED configs, so re-pointing any binding in any app goes red
+// in `lint`, with no network and no deploy required. The previous version of this test asserted nothing (its
+// own comment conceded it "held by construction"): the test NAME was the only thing making the claim.
+test("every hyperdrive binding in every SHIPPED wrangler.jsonc is pinned to its own placeholder", async () => {
+  const apps = ["engine", "api", "mcp", "web", "auth"];
+  const configs = await Promise.all(
+    apps.map(async (name) => ({
+      name,
+      text: await readFile(join(ROOT, `apps/${name}/wrangler.jsonc`), "utf8"),
+    })),
+  );
+  const found = configs.flatMap((c) => hyperdriveBindings(c.text));
+  assert.ok(found.length > 0, "expected the shipped configs to declare hyperdrive bindings");
+  assert.ok(
+    found.some((b) => b.binding === "HYPERDRIVE_TENANT"),
+    "the tenant binding must be among them",
+  );
+  assert.deepEqual(bindingPlaceholderViolations(configs), []);
+
+  // A STALE EXEMPTION is the quiet way this guard dies: if CACHING_ALLOWED_BINDINGS ever names a binding the
+  // repo no longer declares (renamed, retired, or a typo), it silently exempts nothing — or worse, shadows a
+  // real name. Every exemption must correspond to a binding that actually exists.
+  for (const allowed of CACHING_ALLOWED_BINDINGS) {
+    assert.ok(
+      found.some((b) => b.binding === allowed),
+      `${allowed} is exempt from the cache-posture check but no shipped wrangler.jsonc declares it — a stale ` +
+        "exemption. Remove it, or fix the name.",
+    );
+  }
+});
+
+// ---------------------------------------------------------------- Layer 2: cache posture (deploy-time)
+
+test("a tenant binding resolving to a caching-disabled pool is clean", () => {
+  const violations = cachePostureViolations({
+    bindings: [{ app: "web", binding: "HYPERDRIVE_TENANT", id: "t1" }],
+    configsById: { t1: off("webhook-prod-tenant") },
+  });
+  assert.deepEqual(violations, []);
+});
+
+test("a tenant binding resolving to a CACHING pool is a violation", () => {
+  const violations = cachePostureViolations({
+    bindings: [{ app: "web", binding: "HYPERDRIVE_TENANT", id: "c1" }],
+    configsById: { c1: on("webhook-prod-cached") },
+  });
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /HYPERDRIVE_TENANT/);
+  assert.match(violations[0], /caching is ENABLED/);
+});
+
+// Selection, enforced at deploy too: even if the placeholder pinning were bypassed (a hand-edited overlay),
+// resolving the binding's ACTUAL id catches it — the id resolves to the cached pool, which reports caching on.
+test("deploy-time selection: TENANT resolving to the cached pool's id is a violation", () => {
+  const violations = cachePostureViolations({
+    bindings: [
+      { app: "web", binding: "HYPERDRIVE_TENANT", id: "c1" },
+      { app: "engine", binding: "HYPERDRIVE_CACHED", id: "c1" },
+    ],
+    configsById: { c1: on("webhook-prod-cached") },
+  });
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /HYPERDRIVE_TENANT/);
+});
+
+test("HYPERDRIVE_CACHED is the ONE binding allowed to cache", () => {
+  const violations = cachePostureViolations({
+    bindings: [{ app: "engine", binding: "HYPERDRIVE_CACHED", id: "c1" }],
+    configsById: { c1: on("webhook-prod-cached") },
+  });
+  assert.deepEqual(violations, []);
+});
+
+test("FAILS CLOSED when a config can't be read", () => {
+  const violations = cachePostureViolations({
+    bindings: [{ app: "web", binding: "HYPERDRIVE_TENANT", id: "missing" }],
+    configsById: {},
+  });
+  assert.equal(violations.length, 1);
+  assert.match(violations[0], /could not be read/);
+});
+
+// Hyperdrive caching is ON by default, so an absent/odd `caching` is the DANGEROUS case, never the benign one.
+test("FAILS CLOSED on a missing or malformed caching field", () => {
+  for (const config of [
+    { name: "x" },
+    { name: "x", caching: {} },
+    { name: "x", caching: null },
+    { name: "x", caching: { disabled: "true" } },
+  ]) {
+    const violations = cachePostureViolations({
+      bindings: [{ app: "web", binding: "HYPERDRIVE_TENANT", id: "t1" }],
+      configsById: { t1: config },
+    });
+    assert.equal(violations.length, 1, `expected a violation for ${JSON.stringify(config)}`);
+  }
+});
+
+test("FAILS CLOSED on a prototype-key id rather than reading Object.prototype as a config", () => {
+  for (const id of ["__proto__", "constructor", "toString"]) {
+    const violations = cachePostureViolations({
+      bindings: [{ app: "web", binding: "HYPERDRIVE_TENANT", id }],
+      configsById: {},
+    });
+    assert.equal(violations.length, 1, `expected a violation for id ${id}`);
+  }
+});
+
+test("FAILS CLOSED when bindings is absent or not an array", () => {
+  assert.equal(cachePostureViolations({}).length, 1);
+  assert.equal(cachePostureViolations({ bindings: null }).length, 1);
+});
+
+test("reports every offending binding, not just the first", () => {
+  const violations = cachePostureViolations({
+    bindings: [
+      { app: "web", binding: "HYPERDRIVE_TENANT", id: "t1" },
+      { app: "engine", binding: "HYPERDRIVE_INGEST", id: "i1" },
+      { app: "auth", binding: "HYPERDRIVE_AUTHN", id: "a1" },
+    ],
+    configsById: { t1: on("tenant"), i1: on("ingest"), a1: off("authn") },
+  });
+  assert.equal(violations.length, 2);
+});
+
+// ---------------------------------------------------------------- pagination
+
+// The Cloudflare list endpoint defaults to per_page=20 and the account is at 16 today. Paging off page 1
+// would drop configs, and every dropped id fails closed — wedging EVERY prod deploy with an error pointing at
+// a leak that does not exist.
+test("configsByIdFromPages merges every page", () => {
+  const byId = configsByIdFromPages([[{ id: "a", name: "one" }], [{ id: "b", name: "two" }]]);
+  assert.deepEqual(Object.keys(byId).sort(), ["a", "b"]);
+});
+
+test("configsByIdFromPages yields a null-prototype map (a config id can never alias Object.prototype)", () => {
+  const byId = configsByIdFromPages([[{ id: "a", name: "one" }]]);
+  assert.equal(Object.getPrototypeOf(byId), null);
+  assert.equal(byId["__proto__"], undefined);
+});
+
+/** A fake CF list endpoint over `pages`, honouring ?page= and reporting total_pages. */
+const fakeCf = (pages, calls = []) =>
+  async function fakeFetch(url) {
+    calls.push(url);
+    const page = Number(new URL(url).searchParams.get("page"));
+    return {
+      ok: true,
+      json: async () => ({
+        success: true,
+        result: pages[page - 1] ?? [],
+        result_info: { page, per_page: 100, total_pages: pages.length },
+      }),
+    };
+  };
+
+// The old fetch read page 1 only, with per_page defaulting to 20 against an account already at 16 configs —
+// the 21st pool would have pushed ids off page 1, and every dropped id fails closed, WEDGING every prod
+// deploy with an error pointing at a leak that does not exist.
+test("fetchAllConfigs follows pagination and merges every page", async () => {
+  const calls = [];
+  const byId = await fetchAllConfigs(
+    "acct",
+    "tok",
+    fakeCf([[{ id: "a" }, { id: "b" }], [{ id: "c" }]], calls),
+  );
+  assert.deepEqual(Object.keys(byId).sort(), ["a", "b", "c"]);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /per_page=100/);
+});
+
+test("fetchAllConfigs stops after the last page (no infinite loop)", async () => {
+  const calls = [];
+  await fetchAllConfigs("acct", "tok", fakeCf([[{ id: "a" }]], calls));
+  assert.equal(calls.length, 1);
+});
+
+test("fetchAllConfigs THROWS on an API error rather than reporting an empty, clean account", async () => {
+  const failing = async () => ({
+    ok: false,
+    status: 403,
+    json: async () => ({
+      success: false,
+      errors: [{ code: 10000, message: "Authentication error" }],
+    }),
+  });
+  await assert.rejects(
+    () => fetchAllConfigs("acct", "tok", failing),
+    /Cloudflare API error \(403\)/,
+  );
+});
+
+// The error text must never carry the bearer token. CF error bodies don't echo it, but pin the shape so a
+// future "include the whole body for debugging" edit can't quietly start leaking the credential into CI logs.
+test("fetchAllConfigs' error text carries only CF's errors array, never the request", async () => {
+  const failing = async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({
+      success: false,
+      errors: [{ message: "bad" }],
+      token: "SHOULD-NOT-APPEAR",
+    }),
+  });
+  await assert.rejects(
+    () => fetchAllConfigs("acct", "SUPER-SECRET-TOKEN", failing),
+    (err) => {
+      assert.doesNotMatch(err.message, /SUPER-SECRET-TOKEN/);
+      assert.doesNotMatch(err.message, /SHOULD-NOT-APPEAR/);
+      return true;
+    },
+  );
+});

@@ -105,6 +105,13 @@ jobs:
         run: pnpm --filter @webhook-co/web build:cf
       - name: Generate prod wrangler config (overlay)
         run: node scripts/gen-wrangler-prod.mjs
+      # Blocks the deploy if any RLS-scoped Hyperdrive pool has query caching enabled. Hyperdrive's cache key
+      # is SQL+params and is BLIND to the RLS org GUC, and the org-wide browse reads bind no org_id — so a
+      # caching tenant pool would serve one org's rows to another. Deploy-path only: it needs the prod token,
+      # which is deliberately empty on a pull_request run (see deploy-token-pr-guard).
+      - name: Hyperdrive cache posture (tenant pools must not cache)
+        if: github.event_name != 'pull_request'
+        run: node scripts/hyperdrive-cache-posture.mjs
       - name: Deploy production (app.webhook.co)
         # main-only: a push to main, or a workflow_dispatch with main selected. Without the ref guard a
         # dispatch from a feature branch would ship unreviewed code straight to prod — keep the gate real.
