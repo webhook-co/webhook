@@ -105,7 +105,7 @@ describe("listOwnedOrgsForCap", () => {
     const org = await seedOrg(uid);
     await admin`
       update orgs set free_org_cap_grace_until = '2026-08-01T00:00:00Z' where id = ${org}`;
-    await setOrgFreeCapKeep(app, org, true);
+    await setOrgFreeCapKeep(app, org, uid, true);
 
     const [v] = await listOwnedOrgsForCap(app, uid);
     expect(v!.keepRequestedAt).toBeInstanceOf(Date);
@@ -122,18 +122,18 @@ describe("setOrgFreeCapKeep", () => {
     const uid = await seedUser();
     const org = await seedOrg(uid);
 
-    await setOrgFreeCapKeep(app, org, true);
+    await setOrgFreeCapKeep(app, org, uid, true);
     expect((await listOwnedOrgsForCap(app, uid))[0]!.keepRequestedAt).toBeInstanceOf(Date);
 
-    await setOrgFreeCapKeep(app, org, false);
+    await setOrgFreeCapKeep(app, org, uid, false);
     expect((await listOwnedOrgsForCap(app, uid))[0]!.keepRequestedAt).toBeNull();
   });
 
   it("is idempotent — re-marking an already-marked org is harmless", async () => {
     const uid = await seedUser();
     const org = await seedOrg(uid);
-    await setOrgFreeCapKeep(app, org, true);
-    await setOrgFreeCapKeep(app, org, true);
+    await setOrgFreeCapKeep(app, org, uid, true);
+    await setOrgFreeCapKeep(app, org, uid, true);
     expect((await listOwnedOrgsForCap(app, uid))[0]!.keepRequestedAt).toBeInstanceOf(Date);
   });
 
@@ -144,7 +144,7 @@ describe("setOrgFreeCapKeep", () => {
     const a = await seedOrg(uid);
     const b = await seedOrg(uid);
 
-    await setOrgFreeCapKeep(app, a, true);
+    await setOrgFreeCapKeep(app, a, uid, true);
 
     const views = await listOwnedOrgsForCap(app, uid);
     expect(views.find((v) => v.orgId === a)!.keepRequestedAt).toBeInstanceOf(Date);
@@ -165,7 +165,7 @@ describe("setOrgFreeCapKeep", () => {
     const myOrg = await seedOrg(mine);
     const theirOrg = await seedOrg(theirs);
 
-    await setOrgFreeCapKeep(app, theirOrg, true); // no error: scoped, not authorized
+    await setOrgFreeCapKeep(app, theirOrg, mine, true); // no error: scoped, not authorized
     expect((await listOwnedOrgsForCap(app, theirs))[0]!.keepRequestedAt).toBeInstanceOf(Date);
     // What RLS DID buy: the blast radius is exactly the named org — my org is untouched.
     expect(

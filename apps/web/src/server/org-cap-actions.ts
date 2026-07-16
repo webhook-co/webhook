@@ -18,6 +18,13 @@ import { verifySession } from "@/server/session";
  * an org id they have no business touching; it only stops them touching a DIFFERENT one at the same time. So
  * the ownership proof is this action's job, and `isOrgOwner` (not mere membership) is the bar: the cap is
  * counted against owners, so only an owner's intent about their own slots is meaningful.
+ *
+ * OWNING THE ORG IS NOT ENOUGH — the mark is also ATTRIBUTED to `session.userId`, and that is a second,
+ * separate security property. An org can have several owners, but the cap is counted PER owner and the mark
+ * is a column on the ORG. So an unattributed mark speaks for every co-owner's slots at once: a co-owner of
+ * your throwaway org (whom `isOrgOwner` correctly lets mark it) could re-rank YOUR list and push a different
+ * org of yours — one they aren't a member of and can't see — into your overflow to be suspended, while their
+ * own list stayed untouched. Recording who asked is what confines a mark's effect to its author's ranking.
  */
 export async function setOrgKeepAction(
   orgId: string,
@@ -33,7 +40,7 @@ export async function setOrgKeepAction(
   }
 
   try {
-    await setOrgFreeCapKeep(app, orgId, keep);
+    await setOrgFreeCapKeep(app, orgId, session.userId, keep);
   } catch (err) {
     console.log(JSON.stringify({ message: "org_cap.keep_failed", error: String(err) }));
     return { ok: false, error: "Couldn't save that just now. Try again." };

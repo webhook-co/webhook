@@ -183,8 +183,11 @@ export interface OwnedOrgCapView {
   /** Paid orgs are unlimited and never at risk — shown, but not selectable and not counted. */
   readonly isFree: boolean;
   readonly status: OrgStatus;
-  /** The owner asked to keep this one through the cap. Null = unmarked. */
+  /** When SOMEONE asked to keep this org through the cap. Null = unmarked. */
   readonly keepRequestedAt: Date | null;
+  /** True iff THIS user is the one who asked. A co-owner's mark does nothing to this user's ranking, so the
+   *  picker must not render it as if this user had ticked it. */
+  readonly keepRequestedByMe: boolean;
   /** Set once the reconciler flags it — the org suspends at this date unless the overage is resolved. */
   readonly graceUntil: Date | null;
 }
@@ -209,10 +212,11 @@ export async function listOwnedOrgsForCap(app: Sql, userId: string): Promise<Own
   for (const org of owned) {
     const row = await withTenant(app, org.orgId, async (tx) => {
       const paid = await hasEntitledSubscription(tx);
-      const [r] = await tx<{ keep: Date | null; grace: Date | null }[]>`
-        select free_org_cap_keep_requested_at as keep, free_org_cap_grace_until as grace
+      const [r] = await tx<{ keep: Date | null; by: string | null; grace: Date | null }[]>`
+        select free_org_cap_keep_requested_at as keep, free_org_cap_keep_requested_by as by,
+               free_org_cap_grace_until as grace
           from orgs where id = ${org.orgId}`;
-      return { paid, keep: r?.keep ?? null, grace: r?.grace ?? null };
+      return { paid, keep: r?.keep ?? null, by: r?.by ?? null, grace: r?.grace ?? null };
     });
     views.push({
       orgId: org.orgId,
@@ -221,6 +225,7 @@ export async function listOwnedOrgsForCap(app: Sql, userId: string): Promise<Own
       isFree: !row.paid,
       status: org.status,
       keepRequestedAt: row.keep,
+      keepRequestedByMe: row.by === userId,
       graceUntil: row.grace,
     });
   }
@@ -239,14 +244,25 @@ export async function listOwnedOrgsForCap(app: Sql, userId: string): Promise<Own
  *
  * The caller MUST have already proven this user owns the org (`isOrgOwner`): RLS proves the write is scoped
  * to the context org, never that the caller may make it.
+ *
+ * `userId` is recorded, not decorative: the cap is per-owner and this column is per-ORG, so a mark with no
+ * author would re-rank every co-owner's list — letting one owner push another owner's unrelated org into the
+ * overflow. `findOwnersOverFreeCap` only honours a mark against its author's own ranking. Unmarking clears
+ * both fields together (a coherence CHECK in 0088 makes half-set unrepresentable).
  */
-export async function setOrgFreeCapKeep(app: Sql, orgId: string, keep: boolean): Promise<void> {
+export async function setOrgFreeCapKeep(
+  app: Sql,
+  orgId: string,
+  userId: string,
+  keep: boolean,
+): Promise<void> {
   await withTenant(
     app,
     orgId,
     (tx) => tx`
       update orgs
-         set free_org_cap_keep_requested_at = ${keep ? new Date() : null}
+         set free_org_cap_keep_requested_at = ${keep ? new Date() : null},
+             free_org_cap_keep_requested_by = ${keep ? userId : null}
        where id = ${orgId}`,
   );
 }
@@ -263,9 +279,12 @@ export interface OverCapFreeOrg {
   readonly graceUntil: Date | null;
   /** When the T-7 reminder was sent for the CURRENT grace window. Null = still owed (or not flagged). */
   readonly remindedAt: Date | null;
-  /** When an owner asked to KEEP this org through the cap (slice 5). Null = unmarked. Marked orgs sort ahead
-   *  of unmarked ones, so they land inside `cap` — but the slice still bounds them. */
+  /** When an owner asked to KEEP this org through the cap (slice 5). Null = unmarked. A mark sorts the org
+   *  ahead of unmarked ones — but ONLY in the ranking of the owner who made it, and the slice still bounds
+   *  it either way. */
   readonly keepRequestedAt: Date | null;
+  /** WHO asked. The reconciler honours a mark only against this user's own list — see findOwnersOverFreeCap. */
+  readonly keepRequestedBy: string | null;
 }
 
 /** A user who owns MORE than the cap allows, with ALL their owned free orgs (oldest-first). */
@@ -290,8 +309,16 @@ export interface OverCapOwner {
  * passed in via `string_to_array` so it can't drift).
  *
  * ORDERING IS THE POLICY. Each owner's free orgs come back ordered so the caller's `.slice(cap)` IS the
- * overflow: KEEP-MARKED first (slice 5's picker — the owner said this one matters), then oldest-first among
- * equals (the original default, unchanged for anyone who never marks anything).
+ * overflow: KEEP-MARKED-BY-THIS-OWNER first (slice 5's picker), then oldest-first among equals (the original
+ * default, unchanged for anyone who never marks anything).
+ *
+ * "BY THIS OWNER" is the security property, not a detail. The mark is a column on `orgs` (ADR-0113 forbids
+ * the per-(user, org) table this would otherwise want), so it is visible to every owner of that org — but the
+ * cap is counted PER OWNER. An unattributed mark would therefore re-rank EVERY owner's list at once: a
+ * co-owner of your throwaway org could mark it and push a different org of yours — one they have no
+ * membership in and cannot see — into your overflow, to be suspended, while their own list stayed untouched.
+ * Matching `keep_requested_by` against the row's `user_id` confines a mark's effect to the ranking of the
+ * person who made it.
  *
  * The mark is a PREFERENCE, re-validated here, never trusted: the slice still cuts at `cap`, so marking every
  * org is exactly equivalent to marking none and the flag cannot be used to escape the cap — only to reorder
@@ -310,6 +337,7 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
       grace_until: Date | null;
       reminded_at: Date | null;
       keep_requested_at: Date | null;
+      keep_requested_by: string | null;
     }[]
   >`
     with owned_free as (
@@ -320,7 +348,8 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
              o.suspended_reason,
              o.free_org_cap_grace_until as grace_until,
              o.free_org_cap_reminded_at as reminded_at,
-             o.free_org_cap_keep_requested_at as keep_requested_at
+             o.free_org_cap_keep_requested_at as keep_requested_at,
+             o.free_org_cap_keep_requested_by as keep_requested_by
         from memberships m
         join orgs o on o.id = m.org_id
        where m.role = 'owner'
@@ -331,13 +360,16 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
          )
     )
     select user_id, org_id, org_created_at, status, suspended_reason, grace_until, reminded_at,
-           keep_requested_at
+           keep_requested_at, keep_requested_by
       from owned_free
      where user_id in (
        select user_id from owned_free group by user_id having count(*) > ${cap}
      )
+     -- "is not distinct from", never a plain "=": equality yields NULL for an unmarked org, and Postgres
+     -- sorts NULLS FIRST under DESC, which would float every UNMARKED org to the front and invert the whole
+     -- policy. This form is null-safe and returns a real boolean for every row.
      order by user_id,
-              (keep_requested_at is not null) desc,
+              (keep_requested_by is not distinct from user_id) desc,
               org_created_at asc,
               org_id asc`;
 
@@ -354,6 +386,7 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
       graceUntil: r.grace_until,
       remindedAt: r.reminded_at,
       keepRequestedAt: r.keep_requested_at,
+      keepRequestedBy: r.keep_requested_by,
     });
     byUser.set(r.user_id, list);
   }

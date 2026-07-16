@@ -26,14 +26,38 @@
 -- never be used to escape the cap — only to reorder who survives it. `orgs_capreconciler_select` (0084)
 -- already grants the reconciler its cross-user reach; this only widens its column grant by one field.
 --
--- Nullable timestamptz rather than boolean: null = unmarked (the default, and today's exact behaviour), and
--- the timestamp records WHEN the owner chose, which the picker shows and a future audit would want.
+-- ATTRIBUTED, and that is load-bearing — not bookkeeping. The mark lives on the org, but the CAP is counted
+-- per owner, so an unattributed mark speaks for EVERY owner's slots at once. That is a cross-tenant hole, not
+-- a quirk: an org can have several owners, so a co-owner of your throwaway org could mark it, re-rank YOUR
+-- list, and push a different org of yours — one they are not a member of and cannot even see — into the
+-- overflow to be suspended. Their own list would be untouched. Recording WHO asked (`..._by`) lets the
+-- reconciler honour a mark only within that user's own ranking, which is the whole of the fix: one owner's
+-- intent can never speak for another's slots. The two columns move together and mean nothing apart.
+--
+-- Nullable rather than boolean: null = unmarked (the default, and today's exact behaviour), and the timestamp
+-- records WHEN the owner chose, which the picker shows and a future audit would want.
 
-alter table orgs add column free_org_cap_keep_requested_at timestamptz;
+alter table orgs
+  add column free_org_cap_keep_requested_at timestamptz,
+  add column free_org_cap_keep_requested_by text references "user" (id) on delete set null;
 
-grant select (free_org_cap_keep_requested_at) on orgs to webhook_capreconciler;
+-- Set together or not at all — a timestamp with no author is exactly the unattributed mark described above,
+-- and would silently fall back to affecting nobody (or, if the sort were ever loosened, everybody).
+alter table orgs
+  add constraint orgs_free_cap_keep_coherent check (
+    (free_org_cap_keep_requested_at is null) = (free_org_cap_keep_requested_by is null)
+  );
+
+-- ON DELETE SET NULL, not CASCADE: a deleted user's mark should stop steering the ranking, not delete the org.
+
+grant select (free_org_cap_keep_requested_at, free_org_cap_keep_requested_by) on orgs
+  to webhook_capreconciler;
 
 -- migrate:down
 
-revoke select (free_org_cap_keep_requested_at) on orgs from webhook_capreconciler;
-alter table orgs drop column free_org_cap_keep_requested_at;
+revoke select (free_org_cap_keep_requested_at, free_org_cap_keep_requested_by) on orgs
+  from webhook_capreconciler;
+alter table orgs drop constraint orgs_free_cap_keep_coherent;
+alter table orgs
+  drop column free_org_cap_keep_requested_at,
+  drop column free_org_cap_keep_requested_by;

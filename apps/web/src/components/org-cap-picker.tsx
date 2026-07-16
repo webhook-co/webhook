@@ -14,6 +14,12 @@ export interface OrgCapPickerOrg {
   readonly isFree: boolean;
   readonly status: "active" | "suspended";
   readonly keepRequestedAt: Date | null;
+  /**
+   * Did THIS user mark it? Not "did anyone". The mark lives on the org and is visible to every co-owner, but
+   * the reconciler only honours it against its author's own ranking — so rendering a co-owner's mark as a
+   * tick would tell you your slot is safe when nothing of the sort is true.
+   */
+  readonly keepRequestedByMe: boolean;
   readonly graceUntil: Date | null;
 }
 
@@ -48,7 +54,7 @@ export function OrgCapPicker({ orgs, cap }: OrgCapPickerProps) {
   const [error, setError] = useState<string | null>(null);
   /** Optimistic marks, keyed by org id — the checkbox must respond before the round-trip. */
   const [marks, setMarks] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(orgs.map((o) => [o.orgId, o.keepRequestedAt !== null])),
+    Object.fromEntries(orgs.map((o) => [o.orgId, o.keepRequestedByMe])),
   );
 
   const free = orgs.filter((o) => o.isFree);

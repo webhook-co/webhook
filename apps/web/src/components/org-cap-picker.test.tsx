@@ -18,6 +18,7 @@ const org = (over: Partial<OrgCapPickerOrg> = {}): OrgCapPickerOrg => ({
   isFree: true,
   status: "active",
   keepRequestedAt: null,
+  keepRequestedByMe: false,
   graceUntil: null,
   ...over,
 });
@@ -77,14 +78,30 @@ describe("OrgCapPicker", () => {
     render(
       <OrgCapPicker
         orgs={[
-          org({ orgId: "a", keepRequestedAt: marked }),
-          org({ orgId: "b", keepRequestedAt: marked }),
-          org({ orgId: "c", keepRequestedAt: marked }),
+          org({ orgId: "a", keepRequestedAt: marked, keepRequestedByMe: true }),
+          org({ orgId: "b", keepRequestedAt: marked, keepRequestedByMe: true }),
+          org({ orgId: "c", keepRequestedAt: marked, keepRequestedByMe: true }),
         ]}
         cap={2}
       />,
     );
     expect(screen.getByText(/We'll keep the 2 oldest of the ones you ticked/i)).toBeInTheDocument();
+  });
+
+  it("does NOT show a CO-OWNER's mark as ticked — it does nothing for this user's ranking", async () => {
+    // The mark is a column on the org, so every co-owner sees it. But the reconciler only honours it against
+    // its author's list. Rendering someone else's mark as your tick would say "this slot is safe" when your
+    // own ranking is entirely unaffected — and the org could still be the one that suspends.
+    render(
+      <OrgCapPicker
+        orgs={[org({ keepRequestedAt: new Date(), keepRequestedByMe: false })]}
+        cap={2}
+      />,
+    );
+    expect(screen.getByRole("checkbox", { name: "Keep Acme" })).toHaveAttribute(
+      "data-state",
+      "unchecked",
+    );
   });
 
   it("never predicts which org will be suspended — it can't know", async () => {

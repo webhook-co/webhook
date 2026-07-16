@@ -28,13 +28,13 @@ beforeEach(() => {
 describe("setOrgKeepAction", () => {
   it("marks an org the caller owns", async () => {
     await expect(setOrgKeepAction("org_1", true)).resolves.toEqual({ ok: true });
-    expect(setOrgFreeCapKeep).toHaveBeenCalledWith({}, "org_1", true);
+    expect(setOrgFreeCapKeep).toHaveBeenCalledWith({}, "org_1", "usr_1", true);
     expect(revalidatePath).toHaveBeenCalledWith("/account/organizations");
   });
 
   it("unmarks too", async () => {
     await expect(setOrgKeepAction("org_1", false)).resolves.toEqual({ ok: true });
-    expect(setOrgFreeCapKeep).toHaveBeenCalledWith({}, "org_1", false);
+    expect(setOrgFreeCapKeep).toHaveBeenCalledWith({}, "org_1", "usr_1", false);
   });
 
   it("REFUSES an org the caller doesn't own — RLS scopes the write, it does not authorize it", async () => {
