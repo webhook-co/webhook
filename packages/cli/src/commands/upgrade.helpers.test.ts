@@ -172,6 +172,21 @@ describe("managedUpgradeHint", () => {
     expect(managedUpgradeHint("homebrew")).toMatch(/brew/);
     expect(managedUpgradeHint("scoop")).toMatch(/scoop/);
   });
+
+  // The hint is a command the user will PASTE. Asserting it merely mentions "npm" is what let it ship
+  // `npm install -g wbhk@latest` — a 404, because we publish the SCOPED package. Pin the real name.
+  it("names the actually-published npm package (not a bare `wbhk`, which 404s)", () => {
+    const hint = managedUpgradeHint("npm");
+    expect(hint).toContain("@webhook-co/cli");
+    // A bare `wbhk@latest`/`-g wbhk` is the 404 we shipped — it must not reappear.
+    expect(hint).not.toMatch(/(?<!\/)\bwbhk@latest\b/);
+    expect(hint).not.toMatch(/-g\s+wbhk\b(?!\/)/);
+  });
+
+  // Homebrew installs via `webhook-co/tap/wbhk`, so the FORMULA is `wbhk` — `brew upgrade wbhk` is correct.
+  it("uses the Homebrew formula name", () => {
+    expect(managedUpgradeHint("homebrew")).toContain("brew upgrade wbhk");
+  });
 });
 
 describe("planUpgrade", () => {

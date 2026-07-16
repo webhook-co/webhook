@@ -134,7 +134,9 @@ export function verifyChecksum(data: Uint8Array, checksumsText: string, name: st
 export function managedUpgradeHint(kind: Exclude<InstallKind, "binary">): string {
   switch (kind) {
     case "npm":
-      return "this wbhk was installed via npm — upgrade with `npm install -g wbhk@latest` (or `npx wbhk@latest`).";
+      // The published package is SCOPED (`@webhook-co/cli`); the bare `wbhk` name is not ours and 404s.
+      // The binary it installs is still `wbhk` — the package name and the command name differ.
+      return "this wbhk was installed via npm — upgrade with `npm install -g @webhook-co/cli@latest` (or `npx @webhook-co/cli@latest`).";
     case "homebrew":
       return "this wbhk was installed via Homebrew — upgrade with `brew upgrade wbhk`.";
     case "scoop":
