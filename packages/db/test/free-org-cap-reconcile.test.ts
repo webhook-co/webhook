@@ -225,8 +225,13 @@ describe("runFreeOrgCapReconcile", () => {
       expect(fail!.fields.orgId).toEqual(expect.any(String));
       expect(String(fail!.fields.error)).toMatch(/permission denied/i);
 
-      // Partial failure must NOT escalate — the restore that succeeded is valid work.
-      expect(isTotalFreeOrgCapFailure(pass)).toBe(false);
+      // The ENFORCE loop is totally broken here (every flag threw), so this MUST escalate even though the
+      // undo loop succeeded. An earlier version pooled both loops into one attempted/errors ratio and scored
+      // this "partial" — meaning a rolled-back 0086 grant would leave the cap 100% unenforced every hour, and
+      // any single successful restore would hide it. The loops are judged independently.
+      expect(pass.enforce).toEqual({ attempted: 1, errors: 1 });
+      expect(pass.undo).toEqual({ attempted: 1, errors: 0 });
+      expect(isTotalFreeOrgCapFailure(pass)).toBe(true);
     } finally {
       await owner`grant insert (id, org_id, kind, destination_id, context)
                   on notification_intents to ${owner(DB_ROLES.capReconciler)}`;
@@ -246,6 +251,14 @@ describe("runFreeOrgCapReconcile", () => {
       const pass = await reconcile(T0);
       expect(pass).toMatchObject({ flagged: 0, attempted: 1, errors: 1 });
       expect(isTotalFreeOrgCapFailure(pass)).toBe(true);
+      // A partial failure WITHIN a loop still must not escalate — only an all-failed loop does.
+      expect(
+        isTotalFreeOrgCapFailure({
+          ...pass,
+          enforce: { attempted: 2, errors: 1 },
+          undo: { attempted: 0, errors: 0 },
+        }),
+      ).toBe(false);
     } finally {
       await owner`grant insert (id, org_id, kind, destination_id, context)
                   on notification_intents to ${owner(DB_ROLES.capReconciler)}`;
@@ -257,6 +270,8 @@ describe("runFreeOrgCapReconcile", () => {
     await seedOrgAt(uid, "2026-01-01T00:00:00Z"); // under the cap → nothing to do
     const pass = await reconcile(T0);
     expect(pass).toMatchObject({ attempted: 0, errors: 0 });
+    expect(pass.enforce).toEqual({ attempted: 0, errors: 0 });
+    expect(pass.undo).toEqual({ attempted: 0, errors: 0 });
     expect(isTotalFreeOrgCapFailure(pass)).toBe(false); // must not alert on a healthy quiet hour
   });
 });

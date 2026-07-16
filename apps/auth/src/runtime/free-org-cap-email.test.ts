@@ -89,10 +89,13 @@ describe("renderFreeOrgCapSuspendedEmail", () => {
   it("states NO restore deadline — orgs.restore_deadline is written but read by nothing", () => {
     // restoreOrgFromFreeCap gates only on status + reason; no prune consults restore_deadline. So a
     // cap-suspended org can be restored forever. A stated deadline is one an owner who missed it reads as
-    // "too late, don't bother" — a fabricated loss.
+    // "too late, don't bother" — a fabricated loss. The copy simply doesn't raise the subject: it makes no
+    // deadline claim in EITHER direction, since 0083 reserves the column for a future hard-delete slice and a
+    // "there's no deadline" promise would have to be walked back the day that ships.
     const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);
-    expect(e.text).not.toMatch(/you have until|before .{0,20}\(UTC\)|expires|deadline to restore/i);
-    expect(e.text).toContain("you can restore it whenever you're ready — there's no deadline");
+    expect(e.text).not.toMatch(/you have until|expires|deadline|restore by/i);
+    // The only time-pressure it states is the real one.
+    expect(e.text).toContain("the sooner you restore it, the more history you keep");
   });
 
   it("never threatens deletion of the org — no code path deletes a suspended org", () => {
@@ -110,9 +113,23 @@ describe("renderFreeOrgCapSuspendedEmail", () => {
     expect(e.text).toContain("upgrade it to a paid plan"); // the remedy every recipient CAN act on
   });
 
-  it("links the CTA at the org's suspended screen (where the restore CTA lives)", () => {
+  it("labels the CTA for what it actually does — /suspended has no restore control on it", () => {
+    // The label promises a restore, so it must land somewhere that restores. /suspended is an informational
+    // notice; the reader would have to find a second button. Same standard as the warning email's CTA.
     const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);
-    expect(e.html).toContain("https://app.webhook.co/org/acme-inc/suspended");
+    expect(e.html).toContain("https://app.webhook.co/org/acme-inc/billing");
+    expect(e.html).toContain("Upgrade to restore");
+    expect(e.html).not.toContain("/org/acme-inc/suspended");
+  });
+
+  it("makes NO promise about restore timing or held deliveries — both were false", () => {
+    // "restores within the hour": the restore lands on this cron's pass, but the held backlog is re-woken by a
+    // SEPARATE hourly cron with no ordering between them. "held deliveries go out automatically": the
+    // retention prune cascade-deletes delivery_attempts with their events, so on a free org they may simply
+    // be gone. Retention is the only real time-pressure and the copy states that instead.
+    const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);
+    expect(e.text).not.toMatch(/within the hour|go(ing)? out automatically|held for delivery/i);
+    expect(e.text).toContain("the sooner you restore it, the more history you keep");
   });
 
   it("tolerates being stale — the org may have been restored between enqueue and drain", () => {
@@ -149,7 +166,7 @@ describe("free-org-cap emails — the org name is user-controlled", () => {
     const traversal: EmailOrg = { name: "Acme", slug: "../../evil" };
     const e = renderFreeOrgCapSuspendedEmail(SUSPEND, traversal);
     expect(e.html).not.toContain("/org/../../evil/");
-    expect(e.html).toContain("https://app.webhook.co/org/..%2F..%2Fevil/suspended");
+    expect(e.html).toContain("https://app.webhook.co/org/..%2F..%2Fevil/billing");
   });
 });
 
@@ -189,6 +206,21 @@ describe("free-org-cap emails — a malformed context degrades, never throws", (
     expect(e.subject).toBe("Heads up: Acme Inc will be suspended soon");
     expect(e.html).not.toContain("Invalid Date");
     expect(e.html).not.toContain("NaN");
+  });
+
+  it("renders a valid email from a NULL context — the drain claims first, so refusing loses it forever", () => {
+    for (const e of [
+      renderFreeOrgCapWarningEmail(null, ORG),
+      renderFreeOrgCapSuspendedEmail(null, ORG),
+    ]) {
+      expect(e.subject).toContain("Acme Inc");
+      expect(e.html).toContain("a limited number of free organizations per user");
+      expect(e.html).not.toContain("undefined");
+      expect(e.html).not.toContain("NaN");
+    }
+    expect(renderFreeOrgCapWarningEmail(null, ORG).subject).toBe(
+      "Heads up: Acme Inc will be suspended soon",
+    );
   });
 
   it("describes the limit without a number when the cap is unusable", () => {

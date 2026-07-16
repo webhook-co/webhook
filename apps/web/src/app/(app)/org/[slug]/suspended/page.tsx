@@ -31,8 +31,21 @@ export const metadata: Metadata = {
 // There is also no restore deadline to state: `orgs.restore_deadline` is written by the reconciler and read by
 // nothing, so restoration is available indefinitely.
 
-/** Reason-specific copy. Unknown reasons fall back to a generic message so a new reason never dead-ends. */
-function suspensionCopy(reason: string | null): { heading: string; body: string; cta: string } {
+/**
+ * Reason-specific copy. Unknown reasons fall back to a generic message so a new reason never dead-ends.
+ *
+ * `detail` is part of the SWITCH, not rendered unconditionally below it: the free-cap facts ("no deadline",
+ * "aging out on the free plan's retention") are true only for THIS reason. `restore_deadline` is reserved by
+ * 0083 for a future hard-delete slice, and retention is plan-specific — so the first non-cap reason to ship
+ * (a paid org suspended for non-payment, exactly what restore_deadline was designed for) would inherit a
+ * no-deadline promise that is false for it. Each reason states its own facts.
+ */
+function suspensionCopy(reason: string | null): {
+  heading: string;
+  body: string;
+  detail: (orgName: string) => string;
+  cta: string;
+} {
   switch (reason) {
     case "free_org_cap":
       return {
@@ -42,6 +55,10 @@ function suspensionCopy(reason: string | null): { heading: string; body: string;
           "outbound delivery are held, and its data isn't reachable while it's suspended. Upgrade this " +
           "organization to a paid plan to restore it, or free up a slot by upgrading or removing another " +
           "free organization owned by the same person.",
+        detail: (orgName) =>
+          `${orgName}'s endpoints, destinations, settings, and team are all kept, and restoring puts them ` +
+          `back. Events are the one thing that doesn't wait: they keep aging out on the free plan's usual ` +
+          `retention while it's suspended, so the sooner you restore it, the more history you keep.`,
         cta: "Upgrade to restore",
       };
     default:
@@ -50,6 +67,8 @@ function suspensionCopy(reason: string | null): { heading: string; body: string;
         body:
           "It's been paused — inbound capture and outbound delivery are held, and its data isn't reachable " +
           "while it's suspended. Visit billing to restore it.",
+        detail: (orgName) =>
+          `${orgName}'s endpoints, destinations, settings, and team are all kept, and restoring puts them back.`,
         cta: "Go to billing",
       };
   }
@@ -68,7 +87,7 @@ export default async function SuspendedPage({ params }: { params: Promise<{ slug
     redirect(`/org/${access.slug}/dashboard`);
   }
 
-  const { heading, body, cta } = suspensionCopy(access.suspendedReason);
+  const { heading, body, detail, cta } = suspensionCopy(access.suspendedReason);
 
   return (
     <PageContainer size="narrow" gap="gap-6">
@@ -78,13 +97,7 @@ export default async function SuspendedPage({ params }: { params: Promise<{ slug
       </div>
       <Card>
         <CardContent className="flex flex-col items-start gap-4 pt-6">
-          <p className="text-sm text-fg-secondary">
-            {access.name}&apos;s endpoints, destinations, settings, and team are all kept —
-            restoring puts them back exactly as they were, and there&apos;s no deadline to do it by.
-            Events are the one thing that doesn&apos;t wait: they keep aging out on the free
-            plan&apos;s usual retention while it&apos;s suspended, so the sooner you restore it, the
-            more history you keep.
-          </p>
+          <p className="text-sm text-fg-secondary">{detail(access.name)}</p>
           <div className="flex gap-2">
             <Button asChild>
               <Link href={`/org/${access.slug}/billing`}>{cta}</Link>

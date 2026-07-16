@@ -1615,7 +1615,11 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
 
 /** Grace between first flagging an over-cap Free org and suspending it — the owner's window to resolve. */
 const FREE_ORG_CAP_GRACE_MS = 14 * 24 * 60 * 60 * 1000;
-/** Restore window written onto a suspended org (informational for the UI; no hard-delete lives here). */
+/**
+ * Window stamped onto a suspended org's `restore_deadline`. Write-only today — nothing reads that column, so
+ * this bounds nothing and restoration never expires. 0083 reserved it for a later hard-delete slice; until
+ * that ships, no surface may present it as a deadline.
+ */
 const FREE_ORG_CAP_RESTORE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**

@@ -206,7 +206,7 @@ describe("drainNotifications — api_key_revoked (secret-scanning owner alert)",
 
 describe("drainNotifications — free-org-cap family", () => {
   const WARN_CTX = { graceUntilIso: "2026-07-30T00:00:00Z", cap: 2 };
-  const SUSPEND_CTX = { restoreDeadlineIso: "2026-08-29T00:00:00Z", cap: 2 };
+  const SUSPEND_CTX = { cap: 2 };
 
   it("routes a free_org_cap_warning intent to the warning renderer and sends it", async () => {
     const p = pending({ kind: "free_org_cap_warning", destinationId: null, context: WARN_CTX });
@@ -229,12 +229,15 @@ describe("drainNotifications — free-org-cap family", () => {
   });
 
   for (const kind of ["free_org_cap_warning", "free_org_cap_suspended"] as const) {
-    it(`claims but does NOT send a ${kind} with no context (the date is the whole email)`, async () => {
+    it(`STILL sends a ${kind} with no context — degraded beats silent`, async () => {
+      // Opposite of usage_threshold/api_key_revoked above, deliberately. The drain claims before rendering,
+      // so returning null here loses the notice forever with no retry — and this family exists precisely so a
+      // suspension is never a surprise. The renderers degrade the wording instead.
       const p = pending({ kind, destinationId: null, context: null });
       const { deps: d, sends } = deps([p]);
       const r = await drainNotifications(d);
-      expect(r).toMatchObject({ claimed: 1, sent: 0, skipped: 1 });
-      expect(sends).toEqual([]); // cleared, never left pending to retry-loop
+      expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+      expect(sends).toEqual(["owner@example.test"]);
     });
   }
 

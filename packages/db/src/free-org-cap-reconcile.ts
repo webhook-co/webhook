@@ -37,7 +37,13 @@ export interface FreeOrgCapReconcileOptions {
   readonly cap: number;
   /** Grace window (ms) between first flagging an overflow org and suspending it. */
   readonly graceMs: number;
-  /** Restore window (ms) written onto a suspended org's `restore_deadline` (informational for the UI/retention). */
+  /**
+   * Window (ms) stamped onto a suspended org's `restore_deadline`. WRITE-ONLY as of today: nothing reads that
+   * column — `restoreOrgFromFreeCap` gates on status + reason alone, no prune consults it, and neither user
+   * surface cites it — so it bounds nothing and no deadline is enforced. 0083 reserved it for "a later slice
+   * hard-deletes past it"; until that slice exists, do not describe it as informational-for-the-UI (it isn't
+   * surfaced) and do not let copy present it as an expiry.
+   */
   readonly restoreMs: number;
   /**
    * Structured sink for per-org failures. REQUIRED, not optional: without it a swallowed error takes the org
@@ -52,24 +58,39 @@ export interface FreeOrgCapReconcileResult {
   readonly suspended: number;
   readonly restored: number;
   readonly graceCleared: number;
-  /** Orgs whose enforce/undo step threw and was skipped. Each is also `log`ged with its id + reason. */
+  /** Orgs whose step threw and was skipped, across both loops. Each is also `log`ged with its id + reason. */
   readonly errors: number;
-  /** Orgs the pass ATTEMPTED to act on (enforce + undo). `errors === attempted && attempted > 0` is a total
-   *  outage — see {@link isTotalFreeOrgCapFailure}, which the caller must escalate on. */
+  /** Orgs this pass tried to act on, across both loops. */
   readonly attempted: number;
+  /**
+   * Per-loop attempted/errors, kept SEPARATE because the two loops fail independently and pooling them hides
+   * an outage: with one ratio, a deterministic total ENFORCE failure (a regressed 0086 grant → every
+   * enqueue throws) is scored "partial" on any hour where a single unrelated restore succeeds, and never
+   * escalates. See {@link isTotalFreeOrgCapFailure}.
+   */
+  readonly enforce: { readonly attempted: number; readonly errors: number };
+  readonly undo: { readonly attempted: number; readonly errors: number };
 }
 
 /**
- * Did EVERY org this pass tried to act on fail? The caller throws on this so the cron's error path fires and
- * alerting sees it (the retention prune's `isTotalRetentionFailure` precedent).
+ * Did EVERY org in EITHER loop fail? The caller throws on this so the cron's error path fires and alerting
+ * sees it (the retention prune's `isTotalRetentionFailure` precedent).
  *
  * Why this exists: per-org isolation stops one bad org aborting the pass, but on its own it converts a
  * DETERMINISTIC failure — a regressed grant, a rolled-back migration — into an INFO line shaped exactly like a
- * healthy no-op pass, while the cap goes 100% unenforced every hour, forever. A partial failure deliberately
- * does NOT escalate: the healthy orgs' work is valid, and each failure is logged individually.
+ * healthy no-op pass, while the cap goes 100% unenforced every hour, forever.
+ *
+ * Why PER-LOOP rather than pooled: the enforce loop (flag/suspend) and the undo loop (restore/clear) depend on
+ * different grants and fail independently. A pooled ratio lets a healthy undo loop mask a totally broken
+ * enforce loop — the exact scenario this function exists to catch. Each loop is judged on its own.
+ *
+ * A partial failure within a loop deliberately does NOT escalate: the healthy orgs' work is valid and each
+ * failure is logged individually. A loop that attempted nothing is not a failure.
  */
 export function isTotalFreeOrgCapFailure(r: FreeOrgCapReconcileResult): boolean {
-  return r.attempted > 0 && r.errors === r.attempted;
+  const total = (l: { attempted: number; errors: number }) =>
+    l.attempted > 0 && l.errors === l.attempted;
+  return total(r.enforce) || total(r.undo);
 }
 
 export async function runFreeOrgCapReconcile(
@@ -88,8 +109,8 @@ export async function runFreeOrgCapReconcile(
   let suspended = 0;
   let restored = 0;
   let graceCleared = 0;
-  let errors = 0;
-  let attempted = 0;
+  const enforce = { attempted: 0, errors: 0 };
+  const undo = { attempted: 0, errors: 0 };
 
   // PER-ORG ISOLATION (both loops): each org's step is independently try/caught, so one org's failure can't
   // abort the pass. This is load-bearing for the UNDO loop below — before, a throw while enforcing any single
@@ -106,7 +127,7 @@ export async function runFreeOrgCapReconcile(
     if (org.status === "suspended") continue; // already suspended for the cap → nothing to do
     const due = org.graceUntil === null || now >= org.graceUntil.getTime();
     if (!due) continue; // still within the grace window → leave it active, and don't count it as attempted
-    attempted++;
+    enforce.attempted++;
     try {
       if (org.graceUntil === null) {
         if (await flagOrgForFreeCapGrace(reconciler, org.orgId, new Date(now + graceMs), cap))
@@ -117,7 +138,7 @@ export async function runFreeOrgCapReconcile(
         suspended++;
       }
     } catch (e) {
-      errors++; // this org is retried next pass; the rest of the pass — especially the undo loop — proceeds
+      enforce.errors++; // retried next pass; the rest of the pass — especially the undo loop — proceeds
       log("free_org_cap.enforce_failed", {
         orgId: org.orgId,
         phase: org.graceUntil === null ? "flag" : "suspend",
@@ -130,7 +151,7 @@ export async function runFreeOrgCapReconcile(
   for (const managed of await listFreeCapManagedOrgs(reconciler)) {
     if (overflow.has(managed.orgId)) continue; // still overflow → leave as-is
     if (managed.status !== "suspended" && managed.graceUntil === null) continue; // nothing to undo
-    attempted++;
+    undo.attempted++;
     try {
       if (managed.status === "suspended") {
         if (await restoreOrgFromFreeCap(reconciler, managed.orgId)) restored++;
@@ -139,7 +160,7 @@ export async function runFreeOrgCapReconcile(
         graceCleared++;
       }
     } catch (e) {
-      errors++;
+      undo.errors++;
       log("free_org_cap.undo_failed", {
         orgId: managed.orgId,
         phase: managed.status === "suspended" ? "restore" : "clear_grace",
@@ -148,5 +169,14 @@ export async function runFreeOrgCapReconcile(
     }
   }
 
-  return { flagged, suspended, restored, graceCleared, errors, attempted };
+  return {
+    flagged,
+    suspended,
+    restored,
+    graceCleared,
+    errors: enforce.errors + undo.errors,
+    attempted: enforce.attempted + undo.attempted,
+    enforce,
+    undo,
+  };
 }

@@ -64,10 +64,24 @@ describe("SuspendedPage", () => {
     expect(copy).not.toMatch(/nothing has been deleted/i);
     expect(copy).not.toMatch(/events.{0,30}(are preserved|preserved)/i);
     expect(copy).not.toMatch(/stays exactly as you left it/i);
+    expect(copy).not.toMatch(/deadline|you have until|restore by/i);
     // What it says instead — matching the suspended email verbatim in substance.
     expect(copy).toMatch(/isn't reachable while it's suspended/i);
-    expect(copy).toMatch(/there's no deadline/i);
     expect(copy).toMatch(/keep aging out on the free plan's usual retention/i);
+    expect(copy).toMatch(/the sooner you restore it, the more history you keep/i);
+  });
+
+  it("keeps the free-cap-specific facts OUT of the generic reason branch", async () => {
+    // Retention and the no-deadline fact are true only for free_org_cap. restore_deadline is reserved by 0083
+    // for a future hard-delete slice, and retention is plan-specific — so the first non-cap reason to ship (a
+    // paid org suspended for non-payment, exactly what restore_deadline was designed for) must not inherit
+    // free-plan claims that are false for it.
+    requireOrgAccess.mockResolvedValue(access({ suspendedReason: "some_future_reason" }));
+    const { container } = render(await SuspendedPage({ params }));
+    const copy = container.textContent ?? "";
+
+    expect(copy).not.toMatch(/free plan|retention|aging out|deadline/i);
+    expect(copy).toMatch(/endpoints, destinations, settings, and team are all kept/i);
   });
 
   it("falls back to generic copy for an unknown suspension reason (never dead-ends)", async () => {

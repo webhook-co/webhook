@@ -219,12 +219,16 @@ ${paras}
  * goes to every owner (see {@link capPhrase}).
  */
 export function renderFreeOrgCapWarningEmail(
-  ctx: FreeOrgCapWarningContext,
+  ctx: FreeOrgCapWarningContext | null,
   org: EmailOrg,
 ): RenderedEmail {
   const label = orgLabel(org);
-  const day = formatDay(ctx.graceUntilIso);
-  const cap = capOf(ctx.cap);
+  // A null/unreadable context DEGRADES ("soon", "a limited number") rather than blocking the send. The drain
+  // claims before rendering, so a renderer that refuses is a notification lost forever with no retry — and
+  // this family exists precisely so a suspension is never a surprise. destination_disabled sets the same
+  // precedent by passing a null context straight through.
+  const day = ctx === null ? null : formatDay(ctx.graceUntilIso);
+  const cap = ctx === null ? null : capOf(ctx.cap);
   const when = day === null ? "soon" : `on ${day}`;
 
   return render({
@@ -265,11 +269,13 @@ export function renderFreeOrgCapWarningEmail(
  * whenever you're ready. The real urgency is the event retention above, and the copy puts it there.
  */
 export function renderFreeOrgCapSuspendedEmail(
-  ctx: FreeOrgCapSuspendedContext,
+  ctx: FreeOrgCapSuspendedContext | null,
   org: EmailOrg,
 ): RenderedEmail {
   const label = orgLabel(org);
-  const cap = capOf(ctx.cap);
+  // Degrades on a null context — see the warning renderer. `cap` is a nice-to-have here (it only shapes one
+  // phrase), so refusing to send a suspension notice over a missing number would be absurd.
+  const cap = ctx === null ? null : capOf(ctx.cap);
 
   return render({
     subject: stripControlChars(`${sentenceStart(label)} has been suspended`),
@@ -281,16 +287,25 @@ export function renderFreeOrgCapSuspendedEmail(
       // "read-only dashboard" (an earlier draft) was wrong — the data isn't browsable-but-frozen, it's behind
       // a notice. Settings and Billing deliberately stay open, because they're the way out.
       `What that means: we've stopped capturing new events for it, delivery is on hold, and its dashboard now shows a suspension notice in place of your data. Settings and billing stay open, because that's where you fix it.`,
-      `Its endpoints, destinations, settings, and team are all kept, and you can restore it whenever you're ready — there's no deadline. Events are the one thing that doesn't wait: they keep aging out on the free plan's usual retention while it's suspended, so the sooner you restore it, the more history you keep.`,
+      // Deliberately says nothing about WHEN a restore takes effect or what happens to held deliveries. Both
+      // were claimed by an earlier draft and both were false: the restore is applied by this cron, but the
+      // held backlog is re-woken by a SEPARATE hourly cron with no ordering between them (so "within the
+      // hour" was wrong), and those held delivery_attempts are cascade-deleted with their events by the
+      // retention prune anyway (so "they go out automatically" was wrong in the other direction). Retention is
+      // the one time-pressure that is real, and it's stated — that's enough.
+      `Its endpoints, destinations, settings, and team are all kept, and restoring puts them back. Events are the one thing that doesn't wait: they keep aging out on the free plan's usual retention while it's suspended, so the sooner you restore it, the more history you keep.`,
       // The remedy a co-owner can actually act on comes FIRST and is the only instruction. The cap is counted
       // per-owner, so telling every recipient to "delete a different org to free up a slot" invites a co-owner
       // who is not the over-cap user to destroy an unrelated org for no effect — the suspension is driven by
       // someone else's count and would re-apply on the next pass.
-      `To bring it back, upgrade it to a paid plan: that takes it out of the free count and it restores within the hour, with any events held for delivery going out automatically. It can also come back if the owner whose free organizations are over the limit frees up a slot themselves.`,
+      `To bring it back, upgrade it to a paid plan — that takes it out of the free count. It can also come back if the owner whose free organizations are over the limit frees up a slot themselves.`,
       `Already restored it? Then ignore this — it was queued when we suspended it, and your dashboard is the source of truth.`,
     ],
-    ctaLabel: "Restore this organization",
-    ctaUrl: orgUrl(org, "/suspended"),
+    // Points at BILLING, not /suspended: the label promises a restore, and /suspended is an informational
+    // notice with no restore control on it — the reader would have to find a second button to do the thing
+    // this one offered. The warning email is held to the same standard.
+    ctaLabel: "Upgrade to restore",
+    ctaUrl: orgUrl(org, "/billing"),
     footer: `You're receiving this because you're an owner of a suspended webhook.co organization. It's a service notification about your account — there's nothing to unsubscribe from.`,
   });
 }
