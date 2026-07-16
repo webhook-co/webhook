@@ -25,7 +25,8 @@ managed install at its own updater.
 
 2. **Source-aware.** `detectInstallKind(execPath)` classifies the install: a node/bun runtime execPath → the
    npm/dev install; a Cellar / Scoop path → that manager; otherwise a standalone binary. Managed installs
-   get the right "upgrade with `npm i -g wbhk@latest` / `brew upgrade wbhk` / `scoop update wbhk`" hint and
+   get the right "upgrade with `npm i -g @webhook-co/cli@latest` / `brew upgrade wbhk` / `scoop update wbhk`"
+   hint (npm = the SCOPED package per ADR-0066; the unscoped `wbhk` 404s) and
    are **never** self-replaced (their manager owns the file). Only a standalone binary self-updates.
 
 3. **Fail-closed integrity, then atomic replace.** For a binary install: fetch `/releases`, pick the newest

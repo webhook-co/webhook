@@ -52,7 +52,9 @@ published as-is: it's `private`, and it depends on `@webhook-co/contract` / `@we
 ## consequences
 
 - A tagged release builds a node-runnable npm package; once `NPM_TOKEN` is set, it publishes with provenance.
-  `npx wbhk` / `npm i -g wbhk` work on any Node ≥ 20 host, no binary download, no Gatekeeper friction.
+  `npx @webhook-co/cli` / `npm i -g @webhook-co/cli` work on any Node ≥ 20 host, no binary download, no
+  Gatekeeper friction. (The unscoped `wbhk` is **not ours** — npm 403'd it, per decision 2 — so any doc or
+  hint that says `npm i -g wbhk` is a 404 waiting to happen. The installed *command* is still `wbhk`.)
 - The published package is self-contained (zero deps) — bigger bundle (~475 kB gzipped, incl. a sourcemap for
   debuggable stack traces) but no install-time resolution surface.
 - The generated `packages/cli/npm/` is gitignored (a build artifact).

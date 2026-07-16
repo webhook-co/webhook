@@ -194,7 +194,7 @@ describe("wbhk upgrade — non-install paths", () => {
     await run(app, ["upgrade"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
     expect(rec.calls).toHaveLength(0);
-    expect(t.stdout()).toContain("npm install -g wbhk@latest");
+    expect(t.stdout()).toContain("npm install -g @webhook-co/cli@latest");
   });
 
   it("reports no published release yet", async () => {
