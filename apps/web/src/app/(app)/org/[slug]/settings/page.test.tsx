@@ -24,7 +24,8 @@ vi.mock("@/server/db", () => ({ getTenantDb: async () => ({}) }));
 vi.mock("@webhook-co/db/org-lifecycle", () => ({ isPersonalOrg: async () => false }));
 // The page also reads the org's logo pointer (to decide the Remove control); no logo in this fixture.
 vi.mock("@webhook-co/db", () => ({ getOrgImageKey: async () => null }));
-// LogoOrgCard is a client component that reads useRouter; provide a stub so the server-render test mounts it.
+// RenameOrgCard now folds in OrgLogoControl (a client component that reads useRouter) — stub it so the
+// server-render test mounts. (This used to be for the separate LogoOrgCard, which no longer exists.)
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 
 import SettingsPage from "./page";

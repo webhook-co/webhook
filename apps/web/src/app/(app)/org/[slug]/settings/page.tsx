@@ -5,7 +5,6 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { DeleteOrgCard } from "@/components/delete-org-card";
-import { LogoOrgCard } from "@/components/logo-org-card";
 import { RenameOrgCard } from "@/components/rename-org-card";
 import { getTenantDb } from "@/server/db";
 import { requireOrgAccess } from "@/server/org-access";
@@ -49,18 +48,14 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
         </p>
       </div>
 
+      {/* One "Organization" section: logo, name, URL. The logo used to be its own card stacked underneath,
+          which read as a separate thing to configure rather than part of what the org IS. */}
       <RenameOrgCard
         slug={session.slug}
         name={session.name}
         rename={renameOrgAction.bind(null, session.slug)}
         canRename={canRename}
-      />
-
-      <LogoOrgCard
-        slug={session.slug}
-        name={session.name}
         hasLogo={hasLogo}
-        canManage={canRename}
       />
 
       {!personal && <DeleteOrgCard slug={session.slug} />}

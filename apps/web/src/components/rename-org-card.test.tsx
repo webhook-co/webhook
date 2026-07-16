@@ -1,8 +1,33 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/navigation", () => ({ useParams: () => ({ slug: "acme" }) }));
+// The card now renders the logo control (the logo folded INTO this section), which calls useRouter to
+// refresh after an upload — so the navigation mock has to carry it too.
+// The logo tile renders an <img> against /api/org/... — stub it, same as the deleted logo-org-card test did,
+// so we can assert it is PRESENT for a read-only member. It renders its `name` so we can also assert WHICH
+// name it was given: a stub that swallows props can't tell a live value from a stale one.
+vi.mock("./org-avatar", () => ({
+  OrgAvatar: ({ name }: { name: string }) => <div data-testid="org-avatar">{name}</div>,
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
+
+const { removeOrgLogo, uploadOrgLogoWebp } = vi.hoisted(() => ({
+  removeOrgLogo: vi.fn(async () => ({ ok: true as const })),
+  uploadOrgLogoWebp: vi.fn(async () => ({ ok: true as const })),
+}));
+vi.mock("@/lib/avatar-upload", () => ({ removeOrgLogo, uploadOrgLogoWebp }));
+vi.mock("@/lib/org-logo-version", () => ({ orgLogoVersion: { bump: vi.fn() } }));
+
+// The real cropper is a canvas/file-picker dialog with no headless success path. Stub it down to the one
+// thing this card cares about: a control that fires `onUploaded`, i.e. "an upload just succeeded".
+vi.mock("./avatar-cropper", () => ({
+  AvatarCropperDialog: ({ onUploaded }: { onUploaded: () => void }) => (
+    <button type="button" onClick={onUploaded}>
+      simulate upload
+    </button>
+  ),
+}));
 
 import { RenameOrgCard } from "./rename-org-card";
 
@@ -11,10 +36,18 @@ const props = (over: Partial<Parameters<typeof RenameOrgCard>[0]> = {}) => ({
   name: "Acme",
   rename: vi.fn(async () => ({ ok: false as const, error: "" })),
   canRename: true,
+  hasLogo: false,
   ...over,
 });
 
-afterEach(() => vi.clearAllMocks());
+// resetAllMocks, NOT clearAllMocks: clearAllMocks wipes calls but LEAVES implementations, so a single
+// `removeOrgLogo.mockResolvedValue({ok:false})` in one test silently persists into every test after it —
+// an order-dependent failure that passes today and breaks whenever a case is added or reordered.
+afterEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  removeOrgLogo.mockResolvedValue({ ok: true });
+  uploadOrgLogoWebp.mockResolvedValue({ ok: true });
+});
 
 describe("RenameOrgCard", () => {
   it("shows a live validation error for a bad slug and disables save", async () => {
@@ -70,6 +103,22 @@ describe("RenameOrgCard", () => {
     expect(screen.getByLabelText("URL")).toBeDisabled();
   });
 
+  it("calls the tenant an ORGANIZATION in the slug hint — 'team' means the people page only", async () => {
+    // Standing rule: "organization" is the tenant; "Team" is the members surface, exclusively. This hint sits
+    // one line under a CardDescription that says "Your organization's logo, name, and URL", and produces the
+    // identical sentence create-team-form renders as "Your organization will live at…". Two surfaces
+    // describing the same object must not disagree about what the object is called.
+    const user = userEvent.setup();
+    render(<RenameOrgCard {...props()} />);
+    await user.clear(screen.getByLabelText("URL"));
+    await user.type(screen.getByLabelText("URL"), "acme-new");
+
+    expect(
+      screen.getByText(/your organization will live at webhook\.co\/org\/acme-new/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/your team will live at/i)).toBeNull();
+  });
+
   it("lowercases slug input as you type (the DB is case-sensitive on the URL)", async () => {
     const user = userEvent.setup();
     render(<RenameOrgCard {...props()} />);
@@ -77,5 +126,86 @@ describe("RenameOrgCard", () => {
     await user.clear(url);
     await user.type(url, "ACME-New");
     expect(url).toHaveValue("acme-new");
+  });
+});
+
+describe("RenameOrgCard — the logo lives IN this section", () => {
+  it("renders the logo control alongside the fields, not as a separate section", async () => {
+    render(<RenameOrgCard {...props()} />);
+    // One "Organization" section that owns all three: logo, name, URL.
+    expect(screen.getByRole("button", { name: /upload logo/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    expect(screen.getByLabelText("URL")).toBeInTheDocument();
+  });
+
+  it("offers Remove only when a logo exists", async () => {
+    const { rerender } = render(<RenameOrgCard {...props({ hasLogo: true })} />);
+    expect(screen.getByRole("button", { name: /change logo/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^remove$/i })).toBeInTheDocument();
+
+    rerender(<RenameOrgCard {...props({ hasLogo: false })} />);
+    expect(screen.getByRole("button", { name: /upload logo/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^remove$/i })).toBeNull();
+  });
+
+  it("clicking a logo control never fires the rename — even with unsaved edits pending", async () => {
+    // Two tautologies deep. Asserting `type="button"` proved nothing (Button renders `type={type ?? "button"}`
+    // unconditionally). Replacing it with a click on a PRISTINE card proved nothing either: nothing had
+    // changed, so `canSubmit` was false and `onSubmit` returned at its guard before `rename` was reachable —
+    // it would have passed with the control nested in the form and typed `submit`, the exact regression it
+    // claims to catch. The form has to be DIRTY for the assertion to mean anything.
+    const rename = vi.fn(async () => ({ ok: false as const, error: "" }));
+    const user = userEvent.setup();
+    render(<RenameOrgCard {...props({ rename })} />);
+
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Acme Corp"); // now canSubmit === true
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: /upload logo/i }));
+    expect(rename).not.toHaveBeenCalled();
+  });
+
+  it("the logo tile shows the SAVED name while you type — its hue must not fight the switcher", async () => {
+    // Deliberate, and the reverse of an earlier attempt here. OrgAvatar hashes this name into the tile's
+    // background hue, so passing the live `nameValue` re-colours the tile on every keystroke and leaves it a
+    // different colour from the SAME org's tile in the sidebar switcher (which renders the saved name) until
+    // Save. Chasing a live monogram bought a two-colour org; the tile showing saved identity beside an
+    // unsaved edit is both correct and stable.
+    const user = userEvent.setup();
+    render(<RenameOrgCard {...props()} />);
+    expect(screen.getByTestId("org-avatar")).toHaveTextContent("Acme");
+
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Beta");
+    expect(screen.getByTestId("org-avatar")).toHaveTextContent("Acme"); // still the saved name
+  });
+
+  it("clears a stale logo error once a later upload succeeds", async () => {
+    // The error banner is delegated up to this card and rendered full-width under both columns, so a failed
+    // Remove leaves a loud red banner. If a subsequent successful upload doesn't clear it, the user ends up
+    // looking at their visibly-updated new logo with "failed" still sitting beneath it. router.refresh()
+    // re-reads the server but does not reset client state, so nothing else clears it.
+    const user = userEvent.setup();
+    removeOrgLogo.mockResolvedValue({ ok: false, error: "Could not remove the logo." });
+    render(<RenameOrgCard {...props({ hasLogo: true })} />);
+
+    await user.click(screen.getByRole("button", { name: /^remove$/i }));
+    expect(await screen.findByText(/could not remove the logo/i)).toBeInTheDocument();
+
+    // The cropper dialog is stubbed to expose its onUploaded — fire the success path directly.
+    await user.click(screen.getByRole("button", { name: /simulate upload/i }));
+    await waitFor(() => expect(screen.queryByText(/could not remove the logo/i)).toBeNull());
+  });
+
+  it("hides the logo CONTROLS for a member but still SHOWS the logo — read-only, not absent", async () => {
+    // Both halves. The deleted logo-org-card test asserted the positive one too, and dropping it unpins the
+    // invariant: everything else in that canManage branch is role-gated, so folding the avatar inside it is
+    // the obvious "tidy-up" — and it would leave a member's Organization card showing a name and a URL and no
+    // logo at all, which is not read-only, it's missing.
+    render(<RenameOrgCard {...props({ canRename: false, hasLogo: true })} />);
+    expect(screen.queryByRole("button", { name: /change logo/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^remove$/i })).toBeNull();
+    expect(screen.getByTestId("org-avatar")).toBeInTheDocument();
   });
 });

@@ -1,5 +1,6 @@
 import { Card, CardContent, PageContainer } from "@webhook-co/ui";
 import type { Metadata } from "next";
+import Link from "next/link";
 
 import { DeleteAccountCard } from "@/components/delete-account-card";
 import { EditableAvatar } from "@/components/editable-avatar";
@@ -34,7 +35,7 @@ export default async function AccountProfilePage() {
       <Card>
         {/* CardContent defaults to `pt-0` (it expects a CardHeader above it); this card has none, so restore
             the top padding or the identity row is cramped against the card's top edge. */}
-        <CardContent className="pt-6">
+        <CardContent className="flex flex-col gap-4 pt-6">
           <EditableDisplayName
             name={session.user.name}
             email={session.user.email}
@@ -43,6 +44,27 @@ export default async function AccountProfilePage() {
               <EditableAvatar name={session.user.name} email={session.user.email} size={48} />
             }
           />
+          {/* The card shows your email next to an "Edit" button that only edits your NAME — which reads as a
+              broken control rather than a deliberate scope. Say where it went rather than leave the reader
+              poking at it.
+
+              And say it ACCURATELY: the ceremony sends a 6-digit code to your CURRENT address (see
+              email-change-core's `sendOtpEmail(profile.email, code)` and the contract's "OTP to the user's
+              CURRENT email"). The new address is never contacted before the write. A draft here claimed "we
+              verify the new address before it takes effect", which is exactly backwards and dangerous: it
+              tells you a typo will be caught, so you paste the code from the inbox you DO own and the account
+              moves to one you don't — with every other session revoked behind you. The sibling security page
+              already words this correctly; match it. */}
+          <p className="border-t border-hairline pt-4 text-xs text-fg-faint">
+            Your email is used to sign in, so it changes over on{" "}
+            <Link
+              href="/account/security"
+              className="text-fg-secondary underline underline-offset-2 hover:text-fg"
+            >
+              Login &amp; security
+            </Link>
+            {" — we send a code to your current address to confirm it's you."}
+          </p>
         </CardContent>
       </Card>
 
