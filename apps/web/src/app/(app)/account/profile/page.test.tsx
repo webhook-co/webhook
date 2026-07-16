@@ -36,9 +36,21 @@ describe("account/profile page", () => {
     render(await AccountProfilePage());
     const link = screen.getByRole("link", { name: /login & security/i });
     expect(link).toHaveAttribute("href", "/account/security");
-    expect(
-      screen.getByText(/we verify the new address before it takes effect/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/we send a code to your current address/i)).toBeInTheDocument();
+  });
+
+  it("must NOT claim the NEW address is verified — the OTP goes to the CURRENT one", async () => {
+    // email-change-core does `sendOtpEmail(profile.email, code)` and the contract says "OTP to the user's
+    // CURRENT email"; the new address is never contacted before the write. A draft here promised "we verify
+    // the new address before it takes effect", which inverts that and is actively dangerous: it tells you a
+    // typo will be caught, so you paste the code from the inbox you DO own and the account moves to one you
+    // don't — every other session revoked behind you. The first version of this test asserted the false
+    // sentence, which is why the copy shipped.
+    render(await AccountProfilePage());
+    const copy = document.body.textContent ?? "";
+    expect(copy).not.toMatch(
+      /verify the new address|confirm the new address|check the new address/i,
+    );
   });
 
   it("gates on the session — the page must call verifySession (a mocked gate is only tested if we assert it ran)", async () => {

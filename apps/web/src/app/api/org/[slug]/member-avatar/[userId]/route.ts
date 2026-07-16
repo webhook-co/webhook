@@ -31,16 +31,25 @@ export async function GET(
   const target = members.find((m) => m.userId === userId);
   if (!target) return noAvatarResponse(); // not a co-member → reveal nothing
 
+  // An HOUR for OTHER people's faces, but serveAvatar's 60s default for your own.
+  //
+  // "Nothing here is yours" was wrong, and I wrote it: the Team page renders the caller's OWN row through
+  // MemberAvatar too (team-manager badges it "You"). MemberAvatar deliberately carries no `?v=` cache-bust —
+  // unlike UserAvatar — so an hour-long cache on that row has nothing to bust it: upload a new avatar, watch
+  // it update correctly on /account/profile (that route keeps the 60s default), then find your own face stale
+  // on Team for an hour, unfixable by anything short of a hard reload. The 60s default exists for exactly
+  // this case; it just has to be applied per-ROW, not per-route.
+  //
+  // For everyone else the hour is the point: at 60s the Team page refetched every member on essentially every
+  // load, and each refetch pays requireOrgAccess AND a full listOrgMembers before it reaches R2. The cost is
+  // that a co-member's newly-uploaded avatar can take up to an hour to appear for you — the same trade
+  // serveAvatar's provider-proxy path already makes at the same TTL.
+  const isSelf = userId === access.userId;
+
   return serveAvatar({
     r2Key: avatarR2Key(userId),
     image: target.image,
     email: target.email,
-    // An HOUR, not serveAvatar's 60s default. That default exists so YOUR OWN re-upload appears without a
-    // hard refresh; nothing here is yours. At 60s the Team page refetched every member on essentially every
-    // load, and each refetch pays requireOrgAccess AND a full listOrgMembers before it reaches R2 — an N+1 of
-    // member-list queries, once per face, per refresh. That was the multi-second avatar delay. The cost is
-    // that a co-member's newly-uploaded avatar can take up to an hour to appear for you, which is exactly the
-    // trade the provider-proxy path in serveAvatar already makes at the same TTL.
-    maxAge: 3600,
+    ...(isSelf ? {} : { maxAge: 3600 }),
   });
 }

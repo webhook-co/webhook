@@ -59,6 +59,8 @@ export function RenameOrgCard({ slug, name, rename, canRename, hasLogo }: Rename
   const [nameValue, setNameValue] = useState(name);
   const [slugValue, setSlugValue] = useState(slug);
   const [serverError, setServerError] = useState<string | null>(null);
+  // The logo control's failures surface HERE, full-width below both columns — see OrgLogoControl.onError.
+  const [logoError, setLogoError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   const { error: slugError, hint: slugHintText } = slugHint(slugValue, slug);
@@ -96,7 +98,13 @@ export function RenameOrgCard({ slug, name, rename, canRename, hasLogo }: Rename
             squeezed to a sliver beside a 72px tile. */}
         <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
           <div className="shrink-0">
-            <OrgLogoControl slug={slug} name={name} hasLogo={hasLogo} canManage={canRename} />
+            <OrgLogoControl
+              slug={slug}
+              name={name}
+              hasLogo={hasLogo}
+              canManage={canRename}
+              onError={setLogoError}
+            />
           </div>
           <form onSubmit={onSubmit} className="flex min-w-0 flex-1 flex-col gap-4">
             <Field
@@ -126,6 +134,11 @@ export function RenameOrgCard({ slug, name, rename, canRename, hasLogo }: Rename
             ) : null}
           </form>
         </div>
+        {logoError ? (
+          <div className="mt-4">
+            <Banner tone="danger">{logoError}</Banner>
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );

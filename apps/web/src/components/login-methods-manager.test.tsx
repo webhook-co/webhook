@@ -84,8 +84,54 @@ describe("LoginMethodsManager", () => {
     // exists, signing in with the provider IS the link — the pinned verified-email auto-link does it. A
     // button that only said "Connect" and then explained you have to sign out would be worse than saying so.
     render(<LoginMethodsManager initialMethods={[]} hasMagicLink disconnect={disconnect} />);
-    expect(screen.getByText(/sign in with Google using this email/i)).toBeInTheDocument();
-    expect(screen.getByText(/sign in with GitHub using this email/i)).toBeInTheDocument();
+    // "sign out and" is load-bearing, not filler: /login bounces an already-signed-in user to
+    // /session/handoff, so "sign in with GitHub" attempted from THIS page silently returns you to the
+    // dashboard and reads as broken. Dropping those two words turns a procedure into a dead end.
+    expect(
+      screen.getByText(/sign out and sign back in with Google using this email/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/sign out and sign back in with GitHub using this email/i),
+    ).toBeInTheDocument();
+  });
+
+  it("renders EVERY linked account — a second row for one provider must never be swallowed", () => {
+    // listLoginMethods returns every `account` row with NO provider filter, and a user CAN hold two of the
+    // same provider (link google:a@x, change email to b@y, sign in with a second Google verified at b@y →
+    // the pinned auto-link writes a second google row; the (providerId, accountId) unique index doesn't stop
+    // that). Rendering "one row per offered provider + find()" kept the newest and silently dropped the
+    // older — leaving a fully working sign-in path with no control able to remove it, on the page whose one
+    // job is to enumerate exactly those.
+    const two: LoginMethod[] = [
+      { providerId: "google", accountId: "g-1", linkedAt: 1_700_000_000 },
+      { providerId: "google", accountId: "g-2", linkedAt: 1_700_200_000 },
+    ];
+    render(<LoginMethodsManager initialMethods={two} hasMagicLink disconnect={disconnect} />);
+    expect(screen.getAllByText("Google")).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /disconnect/i })).toHaveLength(2);
+  });
+
+  it("renders a linked provider we don't offer — it's still a way in", () => {
+    // Anything added to the issuer later would otherwise stay invisible until someone edited the array.
+    render(
+      <LoginMethodsManager
+        initialMethods={[{ providerId: "gitlab", accountId: "gl-1", linkedAt: 1_700_000_000 }]}
+        hasMagicLink
+        disconnect={disconnect}
+      />,
+    );
+    expect(screen.getByText("gitlab")).toBeInTheDocument(); // raw id beats not showing it at all
+    expect(screen.getByRole("button", { name: /disconnect/i })).toBeInTheDocument();
+  });
+
+  it("disconnect still targets the exact provider+accountId, not just the provider", async () => {
+    const two: LoginMethod[] = [
+      { providerId: "google", accountId: "g-1", linkedAt: 1_700_000_000 },
+      { providerId: "google", accountId: "g-2", linkedAt: 1_700_200_000 },
+    ];
+    render(<LoginMethodsManager initialMethods={two} hasMagicLink disconnect={disconnect} />);
+    fireEvent.click(screen.getAllByRole("button", { name: /disconnect/i })[1]!);
+    await waitFor(() => expect(disconnect).toHaveBeenCalledWith("google", "g-2"));
   });
 
   it("mentions the magic link only when it's actually available", () => {

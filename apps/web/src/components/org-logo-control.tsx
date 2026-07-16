@@ -1,6 +1,6 @@
 "use client";
 
-import { Banner, Button } from "@webhook-co/ui";
+import { Button } from "@webhook-co/ui";
 import { useRouter } from "next/navigation";
 import * as React from "react";
 
@@ -13,6 +13,13 @@ import { OrgAvatar } from "./org-avatar";
 export interface OrgLogoControlProps {
   readonly slug: string;
   readonly name: string;
+  /**
+   * Where a failure is reported. The control does NOT render its own Banner: it lives in a `shrink-0` column
+   * beside the identity fields, and a Banner's max-content width is the entire error sentence — so rendering
+   * one here widens that column to the width of "Only an owner or admin can change the logo." and squeezes
+   * Name/URL into a sliver. The consumer surfaces it full-width, below both columns.
+   */
+  readonly onError: (message: string | null) => void;
   /** Whether the org currently has an uploaded logo — drives the Remove control. */
   readonly hasLogo: boolean;
   /** Owner/admin only; a plain member sees the logo read-only (the server re-checks regardless). */
@@ -31,11 +38,10 @@ export interface OrgLogoControlProps {
  * adjacent column — which also matches the semantics, since uploading is its own immediate action and is not
  * part of "Save changes".
  */
-export function OrgLogoControl({ slug, name, hasLogo, canManage }: OrgLogoControlProps) {
+export function OrgLogoControl({ slug, name, hasLogo, canManage, onError }: OrgLogoControlProps) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
   const [removing, setRemoving] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
 
   const upload = React.useCallback(
     (blob: Blob, opts: { signal?: AbortSignal }) =>
@@ -51,14 +57,14 @@ export function OrgLogoControl({ slug, name, hasLogo, canManage }: OrgLogoContro
 
   async function onRemove() {
     setRemoving(true);
-    setError(null);
+    onError(null);
     const res = await removeOrgLogo(slug);
     setRemoving(false);
     if (res.ok) {
       orgLogoVersion.bump();
       router.refresh();
     } else {
-      setError(res.error);
+      onError(res.error);
     }
   }
 
@@ -84,8 +90,6 @@ export function OrgLogoControl({ slug, name, hasLogo, canManage }: OrgLogoContro
           ) : null}
         </div>
       ) : null}
-      {error ? <Banner tone="danger">{error}</Banner> : null}
-
       <AvatarCropperDialog
         open={open}
         onOpenChange={setOpen}

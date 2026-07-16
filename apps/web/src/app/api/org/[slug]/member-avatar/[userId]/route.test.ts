@@ -32,7 +32,12 @@ const member = (userId: string, over: Partial<{ image: string | null; email: str
 
 beforeEach(() => {
   vi.clearAllMocks();
-  requireOrgAccess.mockResolvedValue({ orgId: ORG_ID, slug: "acme", role: "member" });
+  requireOrgAccess.mockResolvedValue({
+    orgId: ORG_ID,
+    slug: "acme",
+    role: "member",
+    userId: "u_caller",
+  });
   listOrgMembers.mockResolvedValue([member("u_target"), member("u_other")]);
 });
 
@@ -56,6 +61,19 @@ describe("GET /api/org/[slug]/member-avatar/[userId]", () => {
       email: "t@e.test",
       maxAge: 3600,
     });
+  });
+
+  it("keeps the SHORT default for the caller's OWN row — the Team page renders it too", async () => {
+    // "Nothing here is yours" was wrong: team-manager renders the caller's own row through MemberAvatar
+    // (badged "You"), and MemberAvatar carries no ?v= cache-bust. An hour-long cache there has nothing to
+    // bust it — upload a new avatar, see it right on /account/profile, then find your own face stale on Team
+    // for an hour, unfixable short of a hard reload. The 60s default exists for exactly this; it just has to
+    // apply per-ROW.
+    listOrgMembers.mockResolvedValue([member("u_caller")]);
+    await GET(req(), ctx("acme", "u_caller"));
+    expect(serveAvatar).toHaveBeenCalledWith(
+      expect.not.objectContaining({ maxAge: expect.anything() }),
+    );
   });
 
   it("asks for a REAL cache TTL — serveAvatar's 60s default made the Team page an N+1 per refresh", async () => {

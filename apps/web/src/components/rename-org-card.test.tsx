@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The card now renders the logo control (the logo folded INTO this section), which calls useRouter to
 // refresh after an upload — so the navigation mock has to carry it too.
+// The logo tile renders an <img> against /api/org/... — stub it, same as the deleted logo-org-card test did,
+// so we can assert it is PRESENT for a read-only member.
+vi.mock("./org-avatar", () => ({ OrgAvatar: () => <div data-testid="org-avatar" /> }));
 vi.mock("next/navigation", () => ({
   useParams: () => ({ slug: "acme" }),
   useRouter: () => ({ refresh: vi.fn() }),
@@ -113,9 +116,14 @@ describe("RenameOrgCard — the logo lives IN this section", () => {
     expect(screen.getByRole("button", { name: /upload logo/i })).toHaveAttribute("type", "button");
   });
 
-  it("hides the logo controls for a member — read-only, same gate as renaming", async () => {
+  it("hides the logo CONTROLS for a member but still SHOWS the logo — read-only, not absent", async () => {
+    // Both halves. The deleted logo-org-card test asserted the positive one too, and dropping it unpins the
+    // invariant: everything else in that canManage branch is role-gated, so folding the avatar inside it is
+    // the obvious "tidy-up" — and it would leave a member's Organization card showing a name and a URL and no
+    // logo at all, which is not read-only, it's missing.
     render(<RenameOrgCard {...props({ canRename: false, hasLogo: true })} />);
     expect(screen.queryByRole("button", { name: /change logo/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^remove$/i })).toBeNull();
+    expect(screen.getByTestId("org-avatar")).toBeInTheDocument();
   });
 });

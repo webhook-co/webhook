@@ -45,9 +45,16 @@ export default async function AccountProfilePage() {
             }
           />
           {/* The card shows your email next to an "Edit" button that only edits your NAME — which reads as a
-              broken control rather than a deliberate scope. Changing an email is a verified ceremony (a code
-              to the current address, other sessions revoked), so it lives on Login & security and cannot
-              sensibly be an inline field here. Say where it went rather than leave the reader poking at it. */}
+              broken control rather than a deliberate scope. Say where it went rather than leave the reader
+              poking at it.
+
+              And say it ACCURATELY: the ceremony sends a 6-digit code to your CURRENT address (see
+              email-change-core's `sendOtpEmail(profile.email, code)` and the contract's "OTP to the user's
+              CURRENT email"). The new address is never contacted before the write. A draft here claimed "we
+              verify the new address before it takes effect", which is exactly backwards and dangerous: it
+              tells you a typo will be caught, so you paste the code from the inbox you DO own and the account
+              moves to one you don't — with every other session revoked behind you. The sibling security page
+              already words this correctly; match it. */}
           <p className="border-t border-hairline pt-4 text-xs text-fg-faint">
             Your email is used to sign in, so it changes over on{" "}
             <Link
@@ -56,7 +63,7 @@ export default async function AccountProfilePage() {
             >
               Login &amp; security
             </Link>
-            {" — we verify the new address before it takes effect."}
+            {" — we send a code to your current address to confirm it's you."}
           </p>
         </CardContent>
       </Card>
