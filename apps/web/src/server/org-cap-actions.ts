@@ -42,7 +42,17 @@ export async function setOrgKeepAction(
   try {
     await setOrgFreeCapKeep(app, orgId, session.userId, keep);
   } catch (err) {
-    console.log(JSON.stringify({ message: "org_cap.keep_failed", error: String(err) }));
+    // `err.name` + orgId, never String(err): the only statement this wraps is a parameterized
+    // `update orgs set … where id = $2`, so a raw message carries nothing useful an operator needs — but it
+    // is a driver-shaped string from a tenant-scoped write, and this log line is the wrong place to find out
+    // that assumption was wrong. The org id is ours and non-secret; the class of failure is what's actionable.
+    console.log(
+      JSON.stringify({
+        message: "org_cap.keep_failed",
+        orgId,
+        error: err instanceof Error ? err.name : "unknown",
+      }),
+    );
     return { ok: false, error: "Couldn't save that just now. Try again." };
   }
 

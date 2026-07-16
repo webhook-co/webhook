@@ -109,7 +109,32 @@ describe("listOwnedOrgsForCap", () => {
 
     const [v] = await listOwnedOrgsForCap(app, uid);
     expect(v!.keepRequestedAt).toBeInstanceOf(Date);
+    expect(v!.keepRequestedByMe).toBe(true); // I marked it
     expect(v!.graceUntil?.toISOString()).toBe("2026-08-01T00:00:00.000Z");
+  });
+
+  it("reports a CO-OWNER's mark as marked-but-NOT-BY-ME — the two must never collapse", async () => {
+    // `keepRequestedByMe` is `row.by === userId`, and that comparison is the whole reason the picker can't
+    // mislead. Collapse it to `Boolean(row.by)` — the obvious "simplification" — and a co-owner's mark
+    // renders as YOUR tick: "this org is protected" when your own ranking is completely unaffected by it,
+    // because the reconciler only honours a mark against its author's list. Nothing else fails on that
+    // regression: the UI tests mock the prop, so this is the only place it can be caught.
+    const me = await seedUser();
+    const coOwner = await seedUser();
+    const shared = await seedOrg(me, "Shared");
+    await admin`
+      insert into memberships (org_id, user_id, role) values (${shared}, ${coOwner}, ${"owner"})`;
+
+    // The co-owner marks it — legitimate: they own it too.
+    await setOrgFreeCapKeep(app, shared, coOwner, true);
+
+    const [mine] = await listOwnedOrgsForCap(app, me);
+    expect(mine!.keepRequestedAt).toBeInstanceOf(Date); // someone marked it…
+    expect(mine!.keepRequestedByMe).toBe(false); // …but not me, so it does nothing for my ranking
+
+    // And it reads as theirs to them.
+    const [theirs] = await listOwnedOrgsForCap(app, coOwner);
+    expect(theirs!.keepRequestedByMe).toBe(true);
   });
 
   it("shows NOTHING for a user with no orgs (never throws on the empty case)", async () => {
