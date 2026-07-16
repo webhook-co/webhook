@@ -941,7 +941,15 @@ describe("catalog-driven RLS coverage", () => {
     const grantedSelect = {
       memberships: ["org_id", "user_id", "role"],
       billing_subscriptions: ["org_id", "status"],
-      orgs: ["id", "created_at", "status", "suspended_reason", "free_org_cap_grace_until"],
+      orgs: [
+        "id",
+        "created_at",
+        "status",
+        "suspended_reason",
+        "free_org_cap_grace_until",
+        "free_org_cap_reminded_at",
+        "free_org_cap_keep_requested_at",
+      ],
       ingest_paused: ["org_id", "paused", "reason"],
     } as const;
     for (const [table, cols] of Object.entries(grantedSelect)) {
@@ -971,6 +979,13 @@ describe("catalog-driven RLS coverage", () => {
       "free_org_cap_grace_until",
       "free_org_cap_reminded_at",
     ] as const;
+    // …and NOT on the keep mark: that is the OWNER's statement of intent (set by the picker under webhook_app
+    // per-org RLS). The suspension engine reads it to order the overflow and must never be able to rewrite
+    // the choice it is acting on.
+    const [keepUpd] = await owner<{ ok: boolean }[]>`
+      select has_column_privilege(${DB_ROLES.capReconciler}, 'orgs', 'free_org_cap_keep_requested_at',
+                                  'UPDATE') as ok`;
+    expect(keepUpd.ok).toBe(false);
     for (const c of orgsUpdatable) {
       const [p] = await owner<{ ok: boolean }[]>`
         select has_column_privilege(${DB_ROLES.capReconciler}, 'orgs', ${c}, 'UPDATE') as ok`;
