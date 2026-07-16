@@ -271,7 +271,6 @@ export interface FreeCapManagedOrg {
   readonly orgId: string;
   readonly status: OrgStatus;
   readonly graceUntil: Date | null;
-  readonly remindedAt: Date | null;
 }
 
 /**
@@ -281,25 +280,15 @@ export interface FreeCapManagedOrg {
  * it must be restored (if suspended) or un-flagged (if in grace).
  */
 export async function listFreeCapManagedOrgs(reconciler: Sql): Promise<FreeCapManagedOrg[]> {
-  const rows = await reconciler<
-    {
-      org_id: string;
-      status: OrgStatus;
-      grace_until: Date | null;
-      reminded_at: Date | null;
-    }[]
-  >`
-    select id as org_id, status, free_org_cap_grace_until as grace_until,
-           free_org_cap_reminded_at as reminded_at
+  // No `reminded_at` here on purpose: the undo loop decides on status + grace alone, and carrying a field
+  // its consumer never reads would invite the next reader to assume reminded-ness gates an undo. It doesn't.
+  // `OverCapFreeOrg.remindedAt` — which enforcePhase actually consumes — is the only place it belongs.
+  const rows = await reconciler<{ org_id: string; status: OrgStatus; grace_until: Date | null }[]>`
+    select id as org_id, status, free_org_cap_grace_until as grace_until
       from orgs
      where (status = 'suspended' and suspended_reason = 'free_org_cap')
         or free_org_cap_grace_until is not null`;
-  return rows.map((r) => ({
-    orgId: r.org_id,
-    status: r.status,
-    graceUntil: r.grace_until,
-    remindedAt: r.reminded_at,
-  }));
+  return rows.map((r) => ({ orgId: r.org_id, status: r.status, graceUntil: r.grace_until }));
 }
 
 // ── The free-org-cap reconciler's WRITE side (migration 0085) ────────────────────────────────────────────
@@ -381,8 +370,16 @@ export async function flagOrgForFreeCapGrace(
   cap: number,
 ): Promise<boolean> {
   return reconciler.begin(async (tx) => {
+    // Clears `free_org_cap_reminded_at` as it OPENS the window, not just on the paths that close one.
+    // Reminded-ness belongs to a grace window, and this is where a window begins — so resetting it here is
+    // what actually makes the invariant hold, rather than relying on every closer remembering to. Without
+    // it, any writer that nulls `grace_until` alone (an ops fix-up, a future lifecycle path) strands a
+    // stamped `reminded_at`, and the org's NEXT grace window silently skips its reminder — leaving that
+    // owner one notice on an at-most-once pipeline, which is the exact failure this slice exists to prevent.
     const rows = await tx<{ id: string }[]>`
-      update orgs set free_org_cap_grace_until = ${graceUntil}
+      update orgs
+         set free_org_cap_grace_until = ${graceUntil},
+             free_org_cap_reminded_at = null
        where id = ${orgId} and status = 'active' and free_org_cap_grace_until is null
       returning id`;
     if (rows.length === 0) return false; // already flagged, or not active → don't re-warn

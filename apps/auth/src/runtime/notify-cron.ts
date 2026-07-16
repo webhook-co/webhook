@@ -10,15 +10,20 @@
 // logged (`notify.send_failed`) and NOT retried — the destination is already disabled + visible in the
 // dashboard, so a missed courtesy email is preferable to the double-send an un-claim/retry would risk.
 //
-// ⚠️ That last justification does NOT hold for the free_org_cap family (PR2b slice 4). Those are not courtesy
-// notes about a state the dashboard already shows: the WARNING is the only notice a user gets before their org
-// is suspended 14 days later, and there is no in-dashboard surface announcing a pending suspension during
-// grace. One Resend 5xx therefore loses it permanently and the suspension arrives unannounced — the exact
-// outcome that family exists to prevent. The two kinds have opposite loss tolerances while sharing one
-// pipeline. Slice 4b (the plan's T-7-day reminder) gives the notice redundancy; until it lands, do not treat
-// this pipeline as a guarantee of notice. worker.ts
-// (tsc-excluded for its generated-handler import) calls runNotificationDrain from a thin scheduled(), mirroring
-// runAuthExpirySweep — so the real logic stays here, type-checked + tested. Errors are logged, never thrown.
+// ⚠️ That last justification does NOT hold for the free_org_cap family. Those are not courtesy notes about a
+// state the dashboard already shows: the WARNING is the only notice a user gets before their org is suspended
+// 14 days later, and no in-dashboard surface announces a pending suspension during grace. One Resend 5xx
+// loses it permanently and the suspension arrives unannounced — the exact outcome that family exists to
+// prevent. The two families have opposite loss tolerances while sharing one pipeline.
+//
+// This pipeline is therefore NOT a guarantee of notice, and the cap family does not treat it as one: slice 4b
+// answers it OUTSIDE this file, by sending a second independent notice (free_org_cap_reminder) partway
+// through the grace window, so no single send failure can swallow the warning. If you make the cap family
+// depend on a single send again, that redundancy is what you are removing.
+//
+// worker.ts (tsc-excluded for its generated-handler import) calls runNotificationDrain from a thin
+// scheduled(), mirroring runAuthExpirySweep — so the real logic stays here, type-checked + tested. Errors are
+// logged, never thrown.
 
 import {
   createClient,

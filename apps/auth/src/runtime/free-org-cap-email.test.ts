@@ -62,7 +62,7 @@ describe("renderFreeOrgCapWarningEmail", () => {
       const reminder = renderFreeOrgCapWarningEmail(WARN, ORG, "reminder");
 
       expect(reminder.subject).toBe("Reminder: Acme Inc will be suspended on Jul 30, 2026 (UTC)");
-      expect(reminder.text).toContain("A follow-up on the notice we sent earlier");
+      expect(reminder.text).toContain("Acme Inc is still over the free plan's limit");
       // Same deadline, same remedy, same CTA — a reader who MISSED the first needs the whole message, not a
       // diff. That's the entire point: it's a redundant copy, not an escalation.
       expect(reminder.html).toContain("Jul 30, 2026 (UTC)");
@@ -72,7 +72,22 @@ describe("renderFreeOrgCapWarningEmail", () => {
       expect(reminder.text).toContain("Nothing has changed yet");
       // And it must not imply the deadline moved or that this is a new problem.
       expect(reminder.subject).not.toContain("Heads up");
-      expect(initial.text).not.toContain("A follow-up on the notice we sent earlier");
+      expect(initial.text).not.toContain("is still over the free plan's limit");
+    });
+
+    it("NEVER claims the earlier notice was delivered — this email exists because it may not have been", () => {
+      // The drain marks an intent 'sent' BEFORE the Resend call, so 'sent' records an attempt, not a
+      // delivery. "A follow-up on the notice we sent earlier" is therefore deterministically false for the
+      // exact reader slice 4b was built for (a warning lost to a 5xx) — it sends them hunting their spam for
+      // an email that does not exist, or reads as "you ignored us". It's also false for an owner ADDED during
+      // the grace window, since recipients are re-resolved from current membership at drain time.
+      const e = renderFreeOrgCapWarningEmail(WARN, ORG, "reminder");
+      expect(e.text).not.toMatch(
+        /we sent earlier|as we (told|said|mentioned)|follow-up on the notice/i,
+      );
+      expect(e.text).not.toMatch(/reminded you|our previous email|didn't hear back/i);
+      // "still over" is true for every recipient regardless of what landed.
+      expect(e.text).toContain("is still over the free plan's limit");
     });
 
     it("still degrades to a dateless notice when the context is unusable", () => {
@@ -102,8 +117,8 @@ describe("renderFreeOrgCapSuspendedEmail", () => {
 
   it("does NOT promise event retention — the free-plan prune ignores suspension entirely", () => {
     // retention.ts prunes on received_at with no orgs.status predicate, and webhook_retention's grant on orgs
-    // is (id, retention_days) — it cannot even see suspension. A promise to keep events until the restore
-    // deadline is falsified within a week on the free plan's 7-day retention.
+    // is (id, retention_days) — it cannot even see suspension. A promise to keep events "until <date>" is
+    // falsified within a week on the free plan's 7-day retention.
     const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);
     expect(e.text).not.toMatch(/nothing has been deleted|keeping it all|until at least/i);
     expect(e.text).not.toMatch(/events.{0,40}(are all still there|untouched|preserved)/i);
@@ -112,10 +127,10 @@ describe("renderFreeOrgCapSuspendedEmail", () => {
     expect(e.text).toContain("the sooner you restore it, the more history you keep");
   });
 
-  it("states NO restore deadline — orgs.restore_deadline is written but read by nothing", () => {
-    // restoreOrgFromFreeCap gates only on status + reason; no prune consults restore_deadline. So a
-    // cap-suspended org can be restored forever. A stated deadline is one an owner who missed it reads as
-    // "too late, don't bother" — a fabricated loss. The copy simply doesn't raise the subject: it makes no
+  it("states NO restore deadline — restoration never expires", () => {
+    // restoreOrgFromFreeCap gates only on status + reason, and 0087 dropped the restore_deadline column
+    // outright, so a cap-suspended org can be restored forever. A stated deadline is one an owner who missed
+    // it reads as "too late, don't bother" — a fabricated loss. The copy simply doesn't raise the subject: it makes no
     // deadline claim in EITHER direction, since 0083 reserves the column for a future hard-delete slice and a
     // "there's no deadline" promise would have to be walked back the day that ships.
     const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);

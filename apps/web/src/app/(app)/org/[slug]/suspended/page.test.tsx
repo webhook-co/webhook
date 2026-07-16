@@ -55,7 +55,7 @@ describe("SuspendedPage", () => {
     //    frozen-but-browsable, so "read-only" sends the owner hunting for events they cannot open.
     //  - "nothing has been deleted" / "events are preserved": retention.ts prunes on received_at with no
     //    orgs.status predicate, so a suspended free org's history ages away while this reassures them.
-    //  - a restore deadline: orgs.restore_deadline is written and read by nothing — restoration never expires.
+    //  - a restore deadline: 0087 dropped the column; restoration never expires.
     requireOrgAccess.mockResolvedValue(access({}));
     const { container } = render(await SuspendedPage({ params }));
     const copy = container.textContent ?? "";
@@ -72,10 +72,9 @@ describe("SuspendedPage", () => {
   });
 
   it("keeps the free-cap-specific facts OUT of the generic reason branch", async () => {
-    // Retention and the no-deadline fact are true only for free_org_cap. restore_deadline is reserved by 0083
-    // for a future hard-delete slice, and retention is plan-specific — so the first non-cap reason to ship (a
-    // paid org suspended for non-payment, exactly what restore_deadline was designed for) must not inherit
-    // free-plan claims that are false for it.
+    // These facts are true only for free_org_cap: retention is plan-specific, and a future suspension reason
+    // may well carry a real deadline (a paid org suspended for non-payment is the obvious one). The first
+    // non-cap reason to ship must not inherit free-cap claims that are false for it.
     requireOrgAccess.mockResolvedValue(access({ suspendedReason: "some_future_reason" }));
     const { container } = render(await SuspendedPage({ params }));
     const copy = container.textContent ?? "";

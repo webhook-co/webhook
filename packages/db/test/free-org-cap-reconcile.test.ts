@@ -23,6 +23,7 @@ let reconciler: Sql;
 const CAP = 2;
 const GRACE_MS = 14 * 24 * 3600_000;
 const REMINDER_MS = 7 * 24 * 3600_000;
+const MIN_LEAD_MS = 24 * 3600_000;
 const DAY = 24 * 3600_000;
 const T0 = Date.parse("2026-07-01T00:00:00Z");
 
@@ -63,6 +64,7 @@ const reconcile = (now: number) =>
     cap: CAP,
     graceMs: GRACE_MS,
     reminderMs: REMINDER_MS,
+    minReminderLeadMs: MIN_LEAD_MS,
     log: (message, fields) => logged.push({ message, fields }),
   });
 
@@ -260,8 +262,8 @@ describe("runFreeOrgCapReconcile", () => {
       // undo loop succeeded. An earlier version pooled both loops into one attempted/errors ratio and scored
       // this "partial" — meaning a rolled-back 0086 grant would leave the cap 100% unenforced every hour, and
       // any single successful restore would hide it. The loops are judged independently.
-      expect(pass.enforce).toEqual({ attempted: 1, errors: 1 });
-      expect(pass.undo).toEqual({ attempted: 1, errors: 0 });
+      expect(pass.phases.flag).toEqual({ attempted: 1, errors: 1 });
+      expect(pass.phases.undo).toEqual({ attempted: 1, errors: 0 });
       expect(isTotalFreeOrgCapFailure(pass)).toBe(true);
     } finally {
       await owner`grant insert (id, org_id, kind, destination_id, context)
@@ -282,12 +284,16 @@ describe("runFreeOrgCapReconcile", () => {
       const pass = await reconcile(T0);
       expect(pass).toMatchObject({ flagged: 0, attempted: 1, errors: 1 });
       expect(isTotalFreeOrgCapFailure(pass)).toBe(true);
-      // A partial failure WITHIN a loop still must not escalate — only an all-failed loop does.
+      // A partial failure WITHIN a phase still must not escalate — only an all-failed phase does.
       expect(
         isTotalFreeOrgCapFailure({
           ...pass,
-          enforce: { attempted: 2, errors: 1 },
-          undo: { attempted: 0, errors: 0 },
+          phases: {
+            flag: { attempted: 2, errors: 1 },
+            remind: { attempted: 0, errors: 0 },
+            suspend: { attempted: 0, errors: 0 },
+            undo: { attempted: 0, errors: 0 },
+          },
         }),
       ).toBe(false);
     } finally {
@@ -301,8 +307,8 @@ describe("runFreeOrgCapReconcile", () => {
     await seedOrgAt(uid, "2026-01-01T00:00:00Z"); // under the cap → nothing to do
     const pass = await reconcile(T0);
     expect(pass).toMatchObject({ attempted: 0, errors: 0 });
-    expect(pass.enforce).toEqual({ attempted: 0, errors: 0 });
-    expect(pass.undo).toEqual({ attempted: 0, errors: 0 });
+    expect(pass.phases.flag).toEqual({ attempted: 0, errors: 0 });
+    expect(pass.phases.undo).toEqual({ attempted: 0, errors: 0 });
     expect(isTotalFreeOrgCapFailure(pass)).toBe(false); // must not alert on a healthy quiet hour
   });
 });

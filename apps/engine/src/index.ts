@@ -1622,6 +1622,12 @@ const FREE_ORG_CAP_GRACE_MS = 14 * 24 * 60 * 60 * 1000;
  * would be suspended in silence — the one outcome this whole family exists to prevent.
  */
 const FREE_ORG_CAP_REMINDER_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * The reminder's floor: never send one with less than this long to act. A second notice landing an hour
+ * before the suspension email implies time that isn't there — worse than sending nothing and letting the
+ * suspension notice speak for itself. Reachable when the cron gaps across the reminder window.
+ */
+const FREE_ORG_CAP_MIN_REMINDER_LEAD_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Free-org-cap reconcile (PR2b slice 3b). Across ALL users, enforce the "at most N owned FREE orgs" rule the
@@ -1640,6 +1646,7 @@ async function runFreeOrgCapCron(env: Env): Promise<void> {
       cap: MAX_FREE_ORGS_PER_USER,
       graceMs: FREE_ORG_CAP_GRACE_MS,
       reminderMs: FREE_ORG_CAP_REMINDER_MS,
+      minReminderLeadMs: FREE_ORG_CAP_MIN_REMINDER_LEAD_MS,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
     console.log(JSON.stringify({ message: "free-org-cap reconcile", ...result }));
@@ -1649,7 +1656,9 @@ async function runFreeOrgCapCron(env: Env): Promise<void> {
     // line shaped exactly like a healthy pass. A PARTIAL failure does not throw — the healthy orgs' work is
     // valid and each failure was logged individually. Same shape as the retention prune above.
     if (isTotalFreeOrgCapFailure(result)) {
-      throw new Error(`free-org-cap reconcile: all ${result.attempted} orgs failed`);
+      throw new Error(
+        `free-org-cap reconcile: a phase wholly failed — ${JSON.stringify(result.phases)}`,
+      );
     }
   } finally {
     await sql.end();

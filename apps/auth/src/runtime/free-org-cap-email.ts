@@ -253,8 +253,15 @@ export function renderFreeOrgCapWarningEmail(
     heading: `${sentenceStart(label)} will be suspended ${when}`,
     preview: `It's over the free plan's limit of ${capPhrase(cap)}. Nothing has changed yet — here's how to keep it.`,
     paragraphs: [
+      // The reminder's opening must NOT reference the earlier notice. This email exists precisely BECAUSE
+      // that one may never have arrived: the drain marks an intent 'sent' before the Resend call, so 'sent'
+      // records an attempt, not a delivery. "A follow-up on the notice we sent earlier" would therefore be
+      // read, by the exact person this slice was built for, as "you ignored us" — and would send them
+      // hunting their spam folder for an email that does not exist. Recipients are also re-resolved from
+      // current membership at drain time, so an owner ADDED during the grace window never got the first one
+      // either. "Still over" is true for every recipient regardless of what landed.
       reminder
-        ? `A follow-up on the notice we sent earlier: the free plan covers ${capPhrase(cap)}, ${label} is still over that limit, and it's still scheduled to be suspended ${when}.`
+        ? `${sentenceStart(label)} is still over the free plan's limit of ${capPhrase(cap)}, so it's still scheduled to be suspended ${when}.`
         : `The free plan covers ${capPhrase(cap)}, and ${label} is over that limit — so it's scheduled to be suspended ${when}.`,
       `Nothing has changed yet. Until then it keeps capturing, delivering, and everything else, exactly as it does today.`,
       // Only ONE instruction, and it's the one every recipient can actually act on. The cap is counted
@@ -282,10 +289,12 @@ export function renderFreeOrgCapWarningEmail(
  * only at send time. What is durably true: config is kept, events age out as usual, restore sooner to keep
  * more. No retention number is quoted — the plan owns that and a hardcoded one here would drift.
  *
- * NO DEADLINE. `orgs.restore_deadline` is written and read by NOTHING, so a cap-suspended org can be restored
- * at any time, forever. A draft promised "you have until <date> to restore it" — a deadline the system does
- * not enforce, and the kind an owner who missed it reads as "too late, don't bother". Say the true thing:
- * whenever you're ready. The real urgency is the event retention above, and the copy puts it there.
+ * NO DEADLINE. There isn't one: a cap-suspended org can be restored at any time, forever. 0083 carried an
+ * `orgs.restore_deadline` column for a hard-delete slice that was never built; nothing read it, and a draft
+ * of this email turned it into "you have until <date> to restore it" — a deadline the system did not enforce,
+ * and the kind an owner who missed it reads as "too late, don't bother". 0087 dropped the column. The copy
+ * doesn't raise deadlines in EITHER direction (a "there's no deadline" promise would have to be walked back
+ * the day a hard-delete ships). The real urgency is the event retention above, and the copy puts it there.
  */
 export function renderFreeOrgCapSuspendedEmail(
   ctx: FreeOrgCapSuspendedContext | null,

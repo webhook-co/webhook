@@ -22,8 +22,25 @@
 -- The reminder's own kind (`free_org_cap_reminder`) needs no schema change — `notification_intents.kind` is
 -- deliberately unconstrained (0032).
 
+-- EXPAND→CONTRACT, deliberately waived (data.mdc forbids a drop in the release that stops writing the
+-- column). The rule's hazard is the still-deployed old code writing a column the migration just removed.
+-- That cannot happen here: the ONLY writer of restore_deadline is suspendOrgForFreeCap, reachable only from
+-- runFreeOrgCapReconcile, reachable only from runFreeOrgCapCron — which returns immediately while
+-- HYPERDRIVE_CAPRECONCILER is unset. The whole cap engine is dark and stays dark until after this deploy, so
+-- no deployed code path touches the column in the migrate-then-deploy window. If the cron were live, this
+-- would need to be two releases.
 alter table orgs drop column restore_deadline;
 alter table orgs add column free_org_cap_reminded_at timestamptz;
+
+-- Coherence, mirroring 0083's `orgs_suspension_coherent`: reminded-ness is a property OF a grace window, so
+-- "reminded but not in a window" is made unrepresentable rather than left to convention across four writers.
+-- Load-bearing: a stranded `reminded_at` makes the org's NEXT grace window skip its reminder silently,
+-- leaving that owner a single notice on an at-most-once pipeline — and `reminded: 0` looks identical to a
+-- quiet pass, so nothing would surface it.
+alter table orgs
+  add constraint orgs_free_cap_reminder_coherent check (
+    free_org_cap_reminded_at is null or free_org_cap_grace_until is not null
+  );
 
 -- The reconciler reads it to decide whether the reminder is still owed, and stamps it when it sends. Same
 -- role-targeted policies as 0084/0085 — this only widens the existing column grants.
@@ -34,6 +51,7 @@ grant update (free_org_cap_reminded_at) on orgs to webhook_capreconciler;
 
 revoke select (free_org_cap_reminded_at) on orgs from webhook_capreconciler;
 revoke update (free_org_cap_reminded_at) on orgs from webhook_capreconciler;
+alter table orgs drop constraint orgs_free_cap_reminder_coherent;
 alter table orgs drop column free_org_cap_reminded_at;
 
 -- Restore 0083's column AND 0085's grant on it, so up→down leaves the exact pre-0087 state (0085's own down

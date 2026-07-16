@@ -28,17 +28,17 @@ export const metadata: Metadata = {
 //     is (id, retention_days) — it cannot even see suspension), so on the free plan's window a suspended org's
 //     history ages away while the owner sits on this reassurance. Config is kept; events are not.
 //
-// There is also no restore deadline to state: `orgs.restore_deadline` is written by the reconciler and read by
-// nothing, so restoration is available indefinitely.
+// There is also no restore deadline to state: restoration is available indefinitely. (0083 carried an
+// `orgs.restore_deadline` column for a hard-delete slice that was never built; nothing read it, it produced
+// two rounds of false copy, and 0087 dropped it.)
 
 /**
  * Reason-specific copy. Unknown reasons fall back to a generic message so a new reason never dead-ends.
  *
- * `detail` is part of the SWITCH, not rendered unconditionally below it: the free-cap facts ("no deadline",
- * "aging out on the free plan's retention") are true only for THIS reason. `restore_deadline` is reserved by
- * 0083 for a future hard-delete slice, and retention is plan-specific — so the first non-cap reason to ship
- * (a paid org suspended for non-payment, exactly what restore_deadline was designed for) would inherit a
- * no-deadline promise that is false for it. Each reason states its own facts.
+ * `detail` is part of the SWITCH, not rendered unconditionally below it: its facts (restoration never
+ * expires; events aging out on the free plan's retention) are true only for THIS reason. Retention is
+ * plan-specific, and a future suspension reason may well carry a real deadline — a paid org suspended for
+ * non-payment is the obvious one. Each reason states its own facts.
  */
 function suspensionCopy(reason: string | null): {
   heading: string;

@@ -94,11 +94,11 @@ export interface FreeOrgCapWarningContext {
  * the org was actually suspended (reads gated, ingest paused, delivery held). See
  * {@link FreeOrgCapWarningContext} for why no org name/slug is carried.
  *
- * Deliberately does NOT carry `orgs.restore_deadline`. That column is written by `suspendOrgForFreeCap` and
- * read by NOTHING — `restoreOrgFromFreeCap` gates only on status + reason, and no prune consults it — so an
- * org suspended for the cap can be restored at any time, forever. An email stating "you have until <date> to
- * restore it" would be a deadline the system does not enforce, which is how an owner who missed it decides
- * restoration is impossible and never comes back. If a real deadline is ever introduced, add it here then.
+ * Carries NO restore deadline, because there is none: a cap-suspended org can be restored at any time,
+ * forever. 0083 shipped an `orgs.restore_deadline` column for a hard-delete slice that was never built;
+ * nothing ever read it, and it produced two rounds of false copy ("we're keeping it until <date>", then "you
+ * have until <date>") before 0087 dropped it. If a real deadline is ever introduced, add it here WITH its
+ * reader — a date in a row that nothing enforces is worse than no date at all.
  */
 export interface FreeOrgCapSuspendedContext {
   /** How many free orgs a user may own. */
