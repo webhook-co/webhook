@@ -152,9 +152,13 @@ export interface LoginMethodsManagerProps {
  * verified email (required — `trustedProviders` is empty) and the local account is verified (it always is:
  * magic-link sets emailVerified on create and sign-in, and our email-change writes it true).
  *
- * Hence the copy below says "using this email" — that is the actual constraint, not a hedge. A provider whose
- * email DIFFERS does not link and does not error: it creates a separate account. That case is what a Connect
- * button would exist for, and it is deferred — see internal/build-plans/connect-social-login-slice.md.
+ * Hence the copy below says "using this email" — that is the actual constraint, not a hedge, and same-email is
+ * now the policy on EVERY path: ADR-0121 turned `allowDifferentEmails` off, so even the explicit /link-social
+ * route refuses a provider whose email doesn't match.
+ *
+ * A provider whose email DIFFERS therefore does not link and does not error — it creates a separate account.
+ * That is a known trap, it is pre-existing, and it is tracked on its own; a Connect button would NOT fix it
+ * without reopening ADR-0121 first. See internal/build-plans/connect-social-login-slice.md.
  *
  * The server enforces a last-method guard, so disconnecting can never strand you.
  */

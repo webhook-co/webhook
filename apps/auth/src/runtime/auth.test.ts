@@ -238,10 +238,21 @@ describe("buildAuthConfig", () => {
       disableImplicitLinking: false, // …explicitly
       trustedProviders: [], // no provider linked without a verified incoming email
       requireLocalEmailVerified: true, // never implicitly link into an UNVERIFIED local account (anti-pre-hijack)
-      allowDifferentEmails: true, // a user who changed their email can still re-link their provider
+      allowDifferentEmails: false, // linking is SAME-EMAIL only, explicit path included (ADR-0121)
       allowUnlinkingAll: false, // never strand the last sign-in method
       updateUserInfoOnLink: false, // a linked provider must never overwrite the user's own name/avatar
     });
+  });
+
+  it("refuses a different-email link on the EXPLICIT path too — same-email is the whole policy (ADR-0121)", () => {
+    // Sign-in linking is same-email by CONSTRUCTION, not by this flag: handleOAuthUserInfo never reads it,
+    // and findOAuthUser locates the user BY email so a match is structural. The flag is read only on the
+    // explicit /link-social paths (callback.mjs:98, account.mjs:151). It was `true`, which meant the block
+    // enforced same-email on the path users actually take while permitting different-email on a path only a
+    // hand-crafted POST could reach — a divergence that looked deliberate but was just an unexercised option
+    // with no UI. Same-email everywhere is the intended policy; pin it so the two paths cannot drift apart.
+    const linking = buildAuthConfig(input(), cfgDeps()).account?.accountLinking;
+    expect(linking?.allowDifferentEmails).toBe(false);
   });
 
   it("pins updateUserInfoOnLink OFF explicitly — the default is not load-bearing", () => {
