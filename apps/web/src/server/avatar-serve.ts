@@ -12,11 +12,14 @@ import { getAvatarBucket } from "@/server/avatar-r2";
  * "This person has no avatar" — the NORMAL answer for most users, not an error. 404 (NOT 204): a `<img>` that
  * receives a 204 renders the broken-image glyph in Chrome and never fires `error`, so the initials fallback
  * never runs. A 404 fires `error`, the `<img>` unmounts, and the initials underneath remain.
+ *
+ * `maxAge` follows the same rule as `serveAvatar`'s, and for the same reason: this 404 is what a first-time
+ * uploader's own row is caching, so a long default here strands them behind their own stale absence.
  */
-export function noAvatarResponse(): Response {
+export function noAvatarResponse(maxAge = 60): Response {
   return new Response(null, {
     status: 404,
-    headers: { "Cache-Control": "private, max-age=3600", Vary: "Cookie" },
+    headers: { "Cache-Control": `private, max-age=${maxAge}`, Vary: "Cookie" },
   });
 }
 
@@ -37,15 +40,21 @@ export async function serveAvatar(input: {
   /** Rendered size hint for the upstream fetch (2x is requested for retina). */
   size?: number;
   /**
-   * `max-age` (seconds) for an UPLOADED (R2) avatar. Defaults to 60 for `/api/avatar`, whose SSR URL carries
-   * no `?v=` — that short window is what makes your own re-upload appear without a hard refresh.
+   * `max-age` (seconds) for EVERY exit below — the uploaded object, the proxied provider image, and the
+   * no-avatar 404 alike. Defaults to 60 for `/api/avatar`, whose SSR URL carries no `?v=` — that short window
+   * is what makes your own re-upload appear without a hard refresh.
+   *
+   * It must reach all three or it doesn't do its job. A user's FIRST upload transitions them from the 404 (or
+   * from the provider proxy) to an R2 object, so those are exactly the responses a fresh upload has to
+   * invalidate. Honouring it on the R2-hit branch alone would only help someone who ALREADY had an uploaded
+   * avatar and replaced it — the rarest of the three transitions.
    *
    * A co-member's avatar has no such requirement and pays dearly for the default: the URL is input-less per
    * identity, so a 60s TTL means essentially every Team-page load refetches EVERY member — and each refetch
    * re-runs requireOrgAccess AND a full listOrgMembers before it even reaches R2. Ten members, ten member-list
    * queries, on every refresh. That is the visible delay. Callers serving OTHER people's faces should pass a
    * real TTL; the cost is that their newly-uploaded avatar takes up to that long to appear on your page,
-   * which for someone else's face is a fine trade and already what the provider-proxy path below assumes.
+   * which for someone else's face is a fine trade.
    */
   maxAge?: number;
 }): Promise<Response> {
@@ -77,7 +86,7 @@ export async function serveAvatar(input: {
     email: input.email,
     size: input.size ?? 64,
   });
-  if (source.kind === "none") return noAvatarResponse();
+  if (source.kind === "none") return noAvatarResponse(input.maxAge);
 
   let upstream: Response;
   try {
@@ -85,15 +94,15 @@ export async function serveAvatar(input: {
     // redirect on a provider CDN would otherwise walk straight through the allowlist.
     upstream = await fetch(source.url, { redirect: "manual", headers: { accept: "image/*" } });
   } catch {
-    return noAvatarResponse(); // upstream down / DNS / timeout — an avatar must never fail a page
+    return noAvatarResponse(input.maxAge); // upstream down / DNS / timeout — an avatar must never fail a page
   }
-  if (!upstream.ok || !upstream.body) return noAvatarResponse();
+  if (!upstream.ok || !upstream.body) return noAvatarResponse(input.maxAge);
 
   const contentType = upstream.headers.get("content-type") ?? "";
   // Serve ONLY what an <img> can safely render. `text/html` / `image/svg+xml` would be active content on our
   // OWN ORIGIN — refuse rather than sniff.
   if (!/^image\/(png|jpeg|gif|webp|avif)$/.test(contentType.split(";")[0]!.trim())) {
-    return noAvatarResponse();
+    return noAvatarResponse(input.maxAge);
   }
 
   return new Response(upstream.body, {
@@ -101,7 +110,7 @@ export async function serveAvatar(input: {
     headers: {
       "Content-Type": contentType,
       "X-Content-Type-Options": "nosniff",
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": `private, max-age=${input.maxAge ?? 60}`,
       Vary: "Cookie",
     },
   });

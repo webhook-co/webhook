@@ -24,7 +24,8 @@ import type { RenameOrgResult } from "@/server/org-actions";
 function slugHint(slug: string, current: string): { error?: string; hint?: string } {
   if (slug === current) return {};
   const res = validateOrgSlug(slug);
-  if (res.ok) return { hint: `Your team will live at webhook.co/org/${slug}` };
+  // "organization" — the tenant. "Team" is the people/members page and nothing else.
+  if (res.ok) return { hint: `Your organization will live at webhook.co/org/${slug}` };
   return { error: orgSlugErrorMessage(res.reason) };
 }
 
@@ -44,8 +45,8 @@ export interface RenameOrgCardProps {
  *
  * The logo used to be a whole separate card stacked underneath, which read as a second thing to configure
  * rather than part of what the organization IS. It now sits in a narrow column beside the fields it belongs
- * with. It is a SIBLING of the <form>, not inside it: the logo uploads immediately (it is not part of "Save
- * changes"), and its buttons would otherwise default to `type="submit"` and fire the rename.
+ * with. It is a SIBLING of the <form>, not inside it, because uploading is its own immediate action and is
+ * not part of "Save changes".
  *
  * The slug is validated LIVE with the same `validateOrgSlug` the server and the DB use, so the user knows
  * before submitting; the server re-validates and the DB is the final authority (a slug taken by another org,
@@ -97,10 +98,14 @@ export function RenameOrgCard({ slug, name, rename, canRename, hasLogo }: Rename
         {/* Narrow logo column, wide fields column — stacked on a narrow viewport so the fields never get
             squeezed to a sliver beside a 72px tile. */}
         <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
-          <div className="shrink-0">
+          {/* The testid is the handle for the layout e2e: this column's geometry (beside the fields on a
+              wide viewport, stacked above them on a phone) is the invariant jsdom cannot see. */}
+          <div className="shrink-0" data-testid="org-logo-column">
             <OrgLogoControl
               slug={slug}
-              name={name}
+              // The LIVE value, not the server prop: the tile sits beside the Name field, so its generated
+              // monogram must follow what you're typing rather than freeze until Save.
+              name={nameValue}
               hasLogo={hasLogo}
               canManage={canRename}
               onError={setLogoError}

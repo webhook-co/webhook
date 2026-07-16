@@ -33,10 +33,9 @@ export interface OrgLogoControlProps {
  * configure when it is simply part of what an organization IS — alongside its name and its URL. Extracting the
  * control lets the settings page put it beside those fields instead of below them.
  *
- * MUST NOT be rendered inside a `<form>`: its buttons carry no `type`, so inside one they would default to
- * `submit` and fire the rename. The settings card deliberately places this as a sibling of the form, in the
- * adjacent column — which also matches the semantics, since uploading is its own immediate action and is not
- * part of "Save changes".
+ * Uploading is its own immediate action, not part of any surrounding "Save changes" — which is why the
+ * settings card renders this as a sibling of its <form> rather than inside it, while create-team-form does
+ * nest it (there, capturing the crop IS part of creating).
  */
 export function OrgLogoControl({ slug, name, hasLogo, canManage, onError }: OrgLogoControlProps) {
   const router = useRouter();
@@ -51,6 +50,10 @@ export function OrgLogoControl({ slug, name, hasLogo, canManage, onError }: OrgL
 
   function onUploaded() {
     setOpen(false);
+    // A success has to retract whatever we last reported. The error lives in the CONSUMER (see onError), and
+    // router.refresh() re-reads the server without resetting client state — so nothing else clears it, and a
+    // failed Remove would leave a red banner sitting under the new logo the user can plainly see.
+    onError(null);
     orgLogoVersion.bump(); // refreshes every OrgAvatar on the page (this one + the switcher)
     router.refresh(); // re-reads the server, so Remove appears/disappears
   }

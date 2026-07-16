@@ -15,7 +15,11 @@ const OFFERED = [
   { id: "github", label: "GitHub" },
 ] as const;
 
-const PROVIDER_LABELS: Record<string, string> = { google: "Google", github: "GitHub" };
+// Derived from OFFERED, never a second hand-maintained copy: adding a provider to one list and forgetting the
+// other would render the same provider as "GitLab" on an unlinked row and raw "gitlab" on a linked one.
+const PROVIDER_LABELS: Record<string, string> = Object.fromEntries(
+  OFFERED.map((p) => [p.id, p.label]),
+);
 const providerLabel = (id: string) => PROVIDER_LABELS[id] ?? id;
 const methodKey = (m: LoginMethod) => `${m.providerId}:${m.accountId}`;
 
@@ -25,11 +29,22 @@ type Row =
       readonly key: string;
       readonly label: string;
       readonly method: LoginMethod;
+      /**
+       * The opaque provider account id, but ONLY when this provider has more than one linked account — the
+       * sole thing that tells two otherwise byte-identical rows apart. `null` on the common path, where it
+       * would just be noise.
+       */
+      readonly discriminator: string | null;
     }
   | { readonly kind: "empty"; readonly key: string; readonly label: string };
 
 /**
- * EVERY linked account gets a row, plus a placeholder for each offered provider with none.
+ * One FIXED slot per offered provider, in OFFERED order, holding either its linked account(s) or a "not
+ * connected" placeholder — then any linked provider we don't offer.
+ *
+ * Slots must not depend on link state. Appending the placeholders last meant disconnecting Google re-rendered
+ * the list as GitHub, Google: the row you just clicked jumps position, and the Disconnect now under your
+ * cursor belongs to the account you did NOT touch — one stray click from removing the wrong way in.
  *
  * Emphatically not "one row per offered provider, find the matching method". `listLoginMethods` returns every
  * `account` row for the user with NO provider filter, and nothing stops a user having two of the same
@@ -41,21 +56,36 @@ type Row =
  * invisible until someone remembered to edit the array above.
  */
 function rows(methods: readonly LoginMethod[]): Row[] {
-  const linked: Row[] = methods.map((m) => ({
-    kind: "linked",
-    key: methodKey(m),
-    label: providerLabel(m.providerId),
-    method: m,
-  }));
-  const empties: Row[] = OFFERED.filter((p) => !methods.some((m) => m.providerId === p.id)).map(
-    (p) => ({ kind: "empty", key: `empty:${p.id}`, label: p.label }),
-  );
-  // Offered-provider order first (google, github), then anything else linked, then the placeholders.
-  const rank = (label: string) => {
-    const i = OFFERED.findIndex((p) => p.label === label);
-    return i === -1 ? OFFERED.length : i;
-  };
-  return [...linked.sort((a, b) => rank(a.label) - rank(b.label)), ...empties];
+  const count = (id: string) => methods.filter((m) => m.providerId === id).length;
+  // Oldest first, accountId as the tiebreak: a stable order that never depends on the server's row order.
+  const linkedFor = (id: string): Row[] =>
+    methods
+      .filter((m) => m.providerId === id)
+      .slice()
+      .sort((a, b) => a.linkedAt - b.linkedAt || a.accountId.localeCompare(b.accountId))
+      .map((m) => ({
+        kind: "linked" as const,
+        key: methodKey(m),
+        label: providerLabel(m.providerId),
+        method: m,
+        discriminator: count(m.providerId) > 1 ? m.accountId : null,
+      }));
+
+  const out: Row[] = [];
+  for (const p of OFFERED) {
+    const linked = linkedFor(p.id);
+    out.push(
+      ...(linked.length
+        ? linked
+        : [{ kind: "empty" as const, key: `empty:${p.id}`, label: p.label }]),
+    );
+  }
+  const offered = new Set<string>(OFFERED.map((p) => p.id));
+  const extras = [...new Set(methods.map((m) => m.providerId))]
+    .filter((id) => !offered.has(id))
+    .sort();
+  for (const id of extras) out.push(...linkedFor(id));
+  return out;
 }
 
 function fmtDate(unixSeconds: number): string {
@@ -112,11 +142,15 @@ export function LoginMethodsManager({
               <span className="font-medium text-fg">{row.label}</span>
               <span className="text-xs text-fg-faint">
                 {row.kind === "linked" ? (
-                  fmtDate(row.method.linkedAt) ? (
-                    `Connected ${fmtDate(row.method.linkedAt)}`
-                  ) : (
-                    "Connected"
-                  )
+                  [
+                    fmtDate(row.method.linkedAt)
+                      ? `Connected ${fmtDate(row.method.linkedAt)}`
+                      : "Connected",
+                    // Only present when this provider has a second account — see Row.discriminator.
+                    row.discriminator,
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")
                 ) : (
                   // "Sign out and" is load-bearing, not filler: /login bounces an already-signed-in user
                   // straight to /session/handoff, so "sign in with GitHub" attempted from THIS page silently
@@ -135,6 +169,14 @@ export function LoginMethodsManager({
                 onClick={() => onDisconnect(row.method)}
                 loading={pendingKey === row.key}
                 disabled={pendingKey !== null}
+                // A bare "Disconnect" is announced identically for two Google rows, so a screen-reader user
+                // cannot tell which sign-in path they're about to remove. Name the account whenever there's
+                // more than one to choose between.
+                aria-label={
+                  row.discriminator
+                    ? `Disconnect ${row.label} (${row.discriminator})`
+                    : `Disconnect ${row.label}`
+                }
               >
                 Disconnect
               </Button>

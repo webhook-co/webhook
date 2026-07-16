@@ -6,6 +6,11 @@ import type { LoginMethod } from "@webhook-co/contract";
 import { LoginMethodsManager } from "./login-methods-manager";
 
 const disconnect = vi.fn();
+
+/** The provider label of each row, in render order — the row's IDENTITY, without its state or date. */
+const rowLabels = () =>
+  screen.getAllByRole("listitem").map((li) => li.querySelector("span span")?.textContent);
+
 const methods: LoginMethod[] = [
   { providerId: "google", accountId: "g-1", linkedAt: 1_700_000_000 },
   { providerId: "github", accountId: "gh-1", linkedAt: 1_700_100_000 },
@@ -109,6 +114,55 @@ describe("LoginMethodsManager", () => {
     render(<LoginMethodsManager initialMethods={two} hasMagicLink disconnect={disconnect} />);
     expect(screen.getAllByText("Google")).toHaveLength(2);
     expect(screen.getAllByRole("button", { name: /disconnect/i })).toHaveLength(2);
+  });
+
+  it("keeps every provider in a FIXED slot — a row must never move when you disconnect it", async () => {
+    // The row you just acted on jumping position under your cursor is the bug: whatever Disconnect lands
+    // where your pointer already is belongs to an account you did NOT touch, one click away from removing the
+    // wrong way into your account. `rows()` appending placeholders last made the slot depend on link state, so
+    // disconnecting Google re-rendered the list as GitHub, Google. Slots follow OFFERED order, always.
+    render(<LoginMethodsManager initialMethods={methods} hasMagicLink disconnect={disconnect} />);
+    expect(rowLabels()).toEqual(["Google", "GitHub"]);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /disconnect/i })[0]!);
+    await waitFor(() => expect(disconnect).toHaveBeenCalledWith("google", "g-1"));
+    // Google is now a placeholder, but it is STILL first.
+    await waitFor(() => expect(rowLabels()).toEqual(["Google", "GitHub"]));
+  });
+
+  it("puts a GitHub-only user's rows in OFFERED order too — link state must not reorder", () => {
+    render(
+      <LoginMethodsManager initialMethods={[methods[1]!]} hasMagicLink disconnect={disconnect} />,
+    );
+    expect(rowLabels()).toEqual(["Google", "GitHub"]); // NOT GitHub-first because it happens to be linked
+  });
+
+  it("makes two accounts of the SAME provider tellable apart — by sight and to a screen reader", async () => {
+    // Both rows rendering is the fix; both rows being IDENTICAL is the new bug. Label is "Google" twice and
+    // fmtDate slices to a day, so a same-day pair is byte-identical — and the only accessible name on either
+    // button is "Disconnect". Dana can't tell which Google she's removing and may drop the one she uses,
+    // leaving the stale one: the exact inverse of why she opened the page. accountId is the ONLY discriminator
+    // LoginMethod carries, so it has to surface — but only when it's actually needed to disambiguate.
+    const two: LoginMethod[] = [
+      { providerId: "google", accountId: "g-1", linkedAt: 1_700_000_000 },
+      { providerId: "google", accountId: "g-2", linkedAt: 1_700_000_100 }, // same DAY on purpose
+    ];
+    render(<LoginMethodsManager initialMethods={two} hasMagicLink disconnect={disconnect} />);
+
+    expect(screen.getByText(/g-1/)).toBeInTheDocument();
+    expect(screen.getByText(/g-2/)).toBeInTheDocument();
+    // The button a screen reader announces must say WHICH account it removes.
+    const first = screen.getByRole("button", { name: "Disconnect Google (g-1)" });
+    expect(screen.getByRole("button", { name: "Disconnect Google (g-2)" })).toBeInTheDocument();
+    fireEvent.click(first);
+    await waitFor(() => expect(disconnect).toHaveBeenCalledWith("google", "g-1"));
+  });
+
+  it("does NOT show the opaque accountId when there's nothing to disambiguate", () => {
+    // It's noise on the common path — one Google, one GitHub. It earns its place only when two rows collide.
+    render(<LoginMethodsManager initialMethods={methods} hasMagicLink disconnect={disconnect} />);
+    expect(screen.queryByText(/g-1/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Disconnect Google" })).toBeInTheDocument();
   });
 
   it("renders a linked provider we don't offer — it's still a way in", () => {

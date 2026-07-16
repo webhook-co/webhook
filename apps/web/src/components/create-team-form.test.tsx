@@ -262,14 +262,17 @@ describe("CreateTeamForm — logo sits WITH the identity fields, not below them"
   });
 
   it("the logo buttons never submit the form — only 'Create organization' does", async () => {
-    // They live INSIDE the <form> here (unlike settings), because capturing the crop IS part of creating.
-    // That makes the explicit type the only thing standing between "Add logo" and an accidental submit.
-    render(<CreateTeamForm createReturningSlug={vi.fn()} create={vi.fn()} />);
-    expect(screen.getByRole("button", { name: /add logo/i })).toHaveAttribute("type", "button");
-    expect(screen.getByRole("button", { name: /create organization/i })).toHaveAttribute(
-      "type",
-      "submit",
-    );
+    // The logo control lives INSIDE the <form> here (unlike settings), because capturing the crop IS part of
+    // creating — so "does Add logo submit?" is a real question on this surface. Asserting `type="button"`
+    // wouldn't answer it: the shared Button renders `type={type ?? "button"}`, so that attribute holds by
+    // construction and the assertion passes no matter what. Click it and assert nothing was created.
+    const user = userEvent.setup();
+    const create = vi.fn();
+    render(<CreateTeamForm createReturningSlug={vi.fn()} create={create} />);
+
+    await user.type(screen.getByLabelText("Organization name"), "Acme");
+    await user.click(screen.getByRole("button", { name: /add logo/i }));
+    expect(create).not.toHaveBeenCalled();
   });
 
   it("falls back to the name's initial in the empty logo tile, and tracks the name", async () => {
