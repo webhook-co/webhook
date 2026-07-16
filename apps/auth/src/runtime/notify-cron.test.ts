@@ -229,7 +229,7 @@ describe("drainNotifications — free-org-cap family", () => {
       send: async (_to, email) => void subjects.push(email.subject),
     });
     expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
-    expect(subjects).toEqual(["Reminder: Acme Inc will be suspended on Jul 30, 2026 (UTC)"]);
+    expect(subjects).toEqual(["Still scheduled: Acme Inc will be suspended on Jul 30, 2026 (UTC)"]);
   });
 
   it("routes a free_org_cap_warning to the SAME renderer with the initial framing", async () => {

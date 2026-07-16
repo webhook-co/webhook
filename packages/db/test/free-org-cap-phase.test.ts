@@ -99,8 +99,16 @@ describe("runFreeOrgCapReconcile — interval guards", () => {
 
 describe("isTotalFreeOrgCapFailure", () => {
   const zero = { attempted: 0, errors: 0 };
-  const r = (over: Partial<Record<"flag" | "remind" | "suspend" | "undo", typeof zero>>) => {
-    const phases = { flag: zero, remind: zero, suspend: zero, undo: zero, ...over };
+  type Phase = "flag" | "remind" | "suspend" | "restore" | "clear_grace";
+  const r = (over: Partial<Record<Phase, typeof zero>>) => {
+    const phases = {
+      flag: zero,
+      remind: zero,
+      suspend: zero,
+      restore: zero,
+      clear_grace: zero,
+      ...over,
+    };
     const all = Object.values(phases);
     return {
       flagged: 0,
@@ -121,10 +129,21 @@ describe("isTotalFreeOrgCapFailure", () => {
   it("is false for a healthy pass, and for a PARTIAL failure within a phase", () => {
     expect(
       isTotalFreeOrgCapFailure(
-        r({ flag: { attempted: 3, errors: 0 }, undo: { attempted: 2, errors: 0 } }),
+        r({ flag: { attempted: 3, errors: 0 }, restore: { attempted: 2, errors: 0 } }),
       ),
     ).toBe(false);
     expect(isTotalFreeOrgCapFailure(r({ flag: { attempted: 3, errors: 2 } }))).toBe(false);
+  });
+
+  it("escalates a dead RESTORE phase even while clear_grace is healthy — the worst failure direction", () => {
+    // A regressed ingest_paused grant kills every restore (it writes that table) while every clear_grace
+    // succeeds (orgs only). Pooling them as one "undo" scored this partial and never escalated, leaving a
+    // customer who just PAID to lift their suspension suspended indefinitely behind `errors: 1`.
+    expect(
+      isTotalFreeOrgCapFailure(
+        r({ restore: { attempted: 2, errors: 2 }, clear_grace: { attempted: 5, errors: 0 } }),
+      ),
+    ).toBe(true);
   });
 
   it("is TRUE when ANY ONE phase wholly failed, however healthy the others are", () => {
@@ -140,12 +159,12 @@ describe("isTotalFreeOrgCapFailure", () => {
     ).toBe(true);
     expect(
       isTotalFreeOrgCapFailure(
-        r({ flag: { attempted: 3, errors: 3 }, undo: { attempted: 1, errors: 0 } }),
+        r({ flag: { attempted: 3, errors: 3 }, restore: { attempted: 1, errors: 0 } }),
       ),
     ).toBe(true);
     expect(
       isTotalFreeOrgCapFailure(
-        r({ undo: { attempted: 2, errors: 2 }, flag: { attempted: 1, errors: 0 } }),
+        r({ restore: { attempted: 2, errors: 2 }, flag: { attempted: 1, errors: 0 } }),
       ),
     ).toBe(true);
   });

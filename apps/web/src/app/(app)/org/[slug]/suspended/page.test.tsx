@@ -66,7 +66,10 @@ describe("SuspendedPage", () => {
     expect(copy).not.toMatch(/stays exactly as you left it/i);
     expect(copy).not.toMatch(/deadline|you have until|restore by/i);
     // What it says instead — matching the suspended email verbatim in substance.
-    expect(copy).toMatch(/isn't reachable while it's suspended/i);
+    // Scoped to THIS dashboard, not "unreachable": requireActiveOrgAccess gates apps/web page reads only —
+    // the REST API, CLI and MCP never read orgs.status and serve the org's events normally.
+    expect(copy).toMatch(/this dashboard shows this notice in place of its data/i);
+    expect(copy).not.toMatch(/data isn't reachable|data is unreachable/i);
     expect(copy).toMatch(/keep aging out on the free plan's usual retention/i);
     expect(copy).toMatch(/the sooner you restore it, the more history you keep/i);
   });

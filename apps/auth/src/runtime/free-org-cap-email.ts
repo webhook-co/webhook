@@ -245,9 +245,13 @@ export function renderFreeOrgCapWarningEmail(
   const reminder = variant === "reminder";
 
   return render({
+    // The SUBJECT carries the same constraint as the opening line, and is read FIRST. "Reminder:" asserts a
+    // prior notice exactly as "a follow-up on the notice we sent earlier" did — and is false for the same two
+    // readers (a warning lost to a 5xx; an owner added mid-grace). "Still scheduled" distinguishes the second
+    // notice from the first without claiming the first arrived.
     subject: stripControlChars(
       reminder
-        ? `Reminder: ${label} will be suspended ${when}`
+        ? `Still scheduled: ${label} will be suspended ${when}`
         : `Heads up: ${label} will be suspended ${when}`,
     ),
     heading: `${sentenceStart(label)} will be suspended ${when}`,

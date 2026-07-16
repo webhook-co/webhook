@@ -263,7 +263,7 @@ describe("runFreeOrgCapReconcile", () => {
       // this "partial" — meaning a rolled-back 0086 grant would leave the cap 100% unenforced every hour, and
       // any single successful restore would hide it. The loops are judged independently.
       expect(pass.phases.flag).toEqual({ attempted: 1, errors: 1 });
-      expect(pass.phases.undo).toEqual({ attempted: 1, errors: 0 });
+      expect(pass.phases.restore).toEqual({ attempted: 1, errors: 0 });
       expect(isTotalFreeOrgCapFailure(pass)).toBe(true);
     } finally {
       await owner`grant insert (id, org_id, kind, destination_id, context)
@@ -292,7 +292,8 @@ describe("runFreeOrgCapReconcile", () => {
             flag: { attempted: 2, errors: 1 },
             remind: { attempted: 0, errors: 0 },
             suspend: { attempted: 0, errors: 0 },
-            undo: { attempted: 0, errors: 0 },
+            restore: { attempted: 0, errors: 0 },
+            clear_grace: { attempted: 0, errors: 0 },
           },
         }),
       ).toBe(false);
@@ -308,7 +309,7 @@ describe("runFreeOrgCapReconcile", () => {
     const pass = await reconcile(T0);
     expect(pass).toMatchObject({ attempted: 0, errors: 0 });
     expect(pass.phases.flag).toEqual({ attempted: 0, errors: 0 });
-    expect(pass.phases.undo).toEqual({ attempted: 0, errors: 0 });
+    expect(pass.phases.restore).toEqual({ attempted: 0, errors: 0 });
     expect(isTotalFreeOrgCapFailure(pass)).toBe(false); // must not alert on a healthy quiet hour
   });
 });

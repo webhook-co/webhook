@@ -20,9 +20,11 @@ export const metadata: Metadata = {
 // COPY, two things this page previously got wrong — it must stay in step with the cap emails
 // (apps/auth/src/runtime/free-org-cap-email.ts), whose CTA lands the reader right here:
 //
-//  1. NOT "read-only". `requireActiveOrgAccess` REDIRECTS every data page to this screen; the data isn't
-//     browsable-but-frozen, it's unreachable. Saying "read-only" sends the owner hunting for events they
-//     cannot open.
+//  1. NOT "read-only", and NOT "unreachable" either. `requireActiveOrgAccess` REDIRECTS every data page here,
+//     so the data isn't browsable-but-frozen — but its SCOPE is apps/web page reads ONLY. The REST API, the
+//     CLI and MCP never consult `orgs.status` and serve the org's events normally. So "its data isn't
+//     reachable" is as false as "read-only" was, in the opposite direction: it would send an owner to support
+//     over a recovery path that works. Say what is true — THIS dashboard shows this notice instead.
 //  2. NOT "nothing has been deleted / events are preserved". The ORG is never deleted, but retention.ts
 //     prunes EVENTS purely on `received_at` with no `orgs.status` predicate (webhook_retention's grant on orgs
 //     is (id, retention_days) — it cannot even see suspension), so on the free plan's window a suspended org's
@@ -52,9 +54,9 @@ function suspensionCopy(reason: string | null): {
         heading: "This organization is suspended",
         body:
           "It's over the free plan's per-user organization limit, so it's been paused — inbound capture and " +
-          "outbound delivery are held, and its data isn't reachable while it's suspended. Upgrade this " +
-          "organization to a paid plan to restore it, or free up a slot by upgrading or removing another " +
-          "free organization owned by the same person.",
+          "outbound delivery are held, and this dashboard shows this notice in place of its data. Upgrade " +
+          "this organization to a paid plan to restore it, or free up a slot by upgrading or removing " +
+          "another free organization owned by the same person.",
         detail: (orgName) =>
           `${orgName}'s endpoints, destinations, settings, and team are all kept, and restoring puts them ` +
           `back. Events are the one thing that doesn't wait: they keep aging out on the free plan's usual ` +
@@ -65,8 +67,8 @@ function suspensionCopy(reason: string | null): {
       return {
         heading: "This organization is suspended",
         body:
-          "It's been paused — inbound capture and outbound delivery are held, and its data isn't reachable " +
-          "while it's suspended. Visit billing to restore it.",
+          "It's been paused — inbound capture and outbound delivery are held, and this dashboard shows this " +
+          "notice in place of its data. Visit billing to restore it.",
         detail: (orgName) =>
           `${orgName}'s endpoints, destinations, settings, and team are all kept, and restoring puts them back.`,
         cta: "Go to billing",

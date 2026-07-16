@@ -61,7 +61,9 @@ describe("renderFreeOrgCapWarningEmail", () => {
       const initial = renderFreeOrgCapWarningEmail(WARN, ORG, "initial");
       const reminder = renderFreeOrgCapWarningEmail(WARN, ORG, "reminder");
 
-      expect(reminder.subject).toBe("Reminder: Acme Inc will be suspended on Jul 30, 2026 (UTC)");
+      expect(reminder.subject).toBe(
+        "Still scheduled: Acme Inc will be suspended on Jul 30, 2026 (UTC)",
+      );
       expect(reminder.text).toContain("Acme Inc is still over the free plan's limit");
       // Same deadline, same remedy, same CTA — a reader who MISSED the first needs the whole message, not a
       // diff. That's the entire point: it's a redundant copy, not an escalation.
@@ -92,7 +94,7 @@ describe("renderFreeOrgCapWarningEmail", () => {
 
     it("still degrades to a dateless notice when the context is unusable", () => {
       const e = renderFreeOrgCapWarningEmail(null, ORG, "reminder");
-      expect(e.subject).toBe("Reminder: Acme Inc will be suspended soon");
+      expect(e.subject).toBe("Still scheduled: Acme Inc will be suspended soon");
       expect(e.html).not.toContain("Invalid Date");
     });
   });

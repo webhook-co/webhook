@@ -74,15 +74,21 @@ export interface FreeOrgCapReconcileResult {
   /** Orgs this pass tried to act on, across every phase. */
   readonly attempted: number;
   /**
-   * attempted/errors PER PHASE, never pooled. The phases touch different tables and grants and so fail
-   * independently — `suspend` alone reaches `ingest_paused`, `flag`/`remind`/`suspend` all reach
-   * `notification_intents`, `undo` reaches neither — and any pooled ratio lets a healthy phase mask a wholly
-   * broken one. That is not hypothetical: pooling enforce+undo let one successful restore hide a dead flag
-   * loop, and then pooling remind+suspend into "enforce" re-created it a level down (a reminder is due on
-   * ~168 hourly passes per org versus one for its suspend, so remind successes would swamp the suspend
-   * ratio and a total suspend outage would score "partial" forever). See {@link isTotalFreeOrgCapFailure}.
+   * attempted/errors PER PHASE, never pooled — because the phases touch different tables and grants and so
+   * fail independently:
+   *   flag / remind  → `orgs` + `notification_intents`
+   *   suspend        → those PLUS `ingest_paused`
+   *   restore        → `orgs` + `ingest_paused`   (NOT notification_intents)
+   *   clear_grace    → `orgs` only
+   * Any pooled ratio lets a healthy phase mask a wholly broken one, and this has now bitten three times:
+   * pooling enforce+undo let one successful restore hide a dead flag loop; pooling remind+suspend into
+   * "enforce" re-created it a level down (a reminder is due on ~168 hourly passes per org versus one for its
+   * suspend, so remind successes swamp the ratio); and pooling restore+clear_grace hid the worst one of all —
+   * a regressed `ingest_paused` grant kills every restore while clear_grace sails on, so a customer who just
+   * PAID to lift their suspension stays suspended, hour after hour, behind `errors: 1`.
+   * See {@link isTotalFreeOrgCapFailure}.
    */
-  readonly phases: Readonly<Record<EnforcePhase | "undo", PhaseCounters>>;
+  readonly phases: Readonly<Record<ReconcilePhase, PhaseCounters>>;
 }
 
 export interface PhaseCounters {
@@ -90,8 +96,12 @@ export interface PhaseCounters {
   readonly errors: number;
 }
 
-/** The work an ACTIVE overflow org can be owed. `undo` (restore/clear) is tracked alongside these. */
+/** The work an ACTIVE overflow org can be owed. */
 export type EnforcePhase = "flag" | "remind" | "suspend";
+
+/** Every phase the pass counts. The two UNDO steps are separate phases, not one: they touch different tables
+ *  (restore also writes `ingest_paused`; clear_grace touches only `orgs`) and so fail independently. */
+export type ReconcilePhase = EnforcePhase | "restore" | "clear_grace";
 
 /**
  * Did EVERY org in ANY ONE phase fail? The caller throws on this so the cron's error path fires and alerting
@@ -106,6 +116,12 @@ export type EnforcePhase = "flag" | "remind" | "suspend";
  *
  * A partial failure within a phase deliberately does NOT escalate: the healthy orgs' work is valid and each
  * failure is logged individually. A phase that attempted nothing is not a failure.
+ *
+ * ACCEPTED NOISE: with the denominators this small, a phase that attempted ONE org and failed it scores
+ * "total" — so a single transient error can page. That is the deliberate trade. The alternative is a minimum
+ * denominator, which re-introduces masking for exactly the small-N case that is most common here (a suspend
+ * is due for one org on one pass out of ~336). A rare false page costs an operator a minute; a missed
+ * deterministic outage costs a paying customer their suspended org, indefinitely, in silence.
  */
 export function isTotalFreeOrgCapFailure(r: FreeOrgCapReconcileResult): boolean {
   return Object.values(r.phases).some((p) => p.attempted > 0 && p.errors === p.attempted);
@@ -167,11 +183,12 @@ export async function runFreeOrgCapReconcile(
   let suspended = 0;
   let restored = 0;
   let graceCleared = 0;
-  const phases: Record<EnforcePhase | "undo", { attempted: number; errors: number }> = {
+  const phases: Record<ReconcilePhase, { attempted: number; errors: number }> = {
     flag: { attempted: 0, errors: 0 },
     remind: { attempted: 0, errors: 0 },
     suspend: { attempted: 0, errors: 0 },
-    undo: { attempted: 0, errors: 0 },
+    restore: { attempted: 0, errors: 0 },
+    clear_grace: { attempted: 0, errors: 0 },
   };
 
   // PER-ORG ISOLATION (both loops): each org's step is independently try/caught, so one org's failure can't
@@ -209,21 +226,22 @@ export async function runFreeOrgCapReconcile(
   for (const managed of await listFreeCapManagedOrgs(reconciler)) {
     if (overflow.has(managed.orgId)) continue; // still overflow → leave as-is
     if (managed.status !== "suspended" && managed.graceUntil === null) continue; // nothing to undo
-    phases.undo.attempted++;
+    // RESTORE and CLEAR_GRACE are counted apart, not as one "undo": restore also writes `ingest_paused`,
+    // clear_grace touches only `orgs`. A regressed ingest_paused grant therefore kills every restore while
+    // every clear_grace succeeds — and pooling them would score that "partial" and never escalate, leaving
+    // owners who already resolved their overage suspended indefinitely. Worst direction to fail in.
+    const phase: ReconcilePhase = managed.status === "suspended" ? "restore" : "clear_grace";
+    phases[phase].attempted++;
     try {
-      if (managed.status === "suspended") {
+      if (phase === "restore") {
         if (await restoreOrgFromFreeCap(reconciler, managed.orgId)) restored++;
       } else {
         await clearFreeCapGrace(reconciler, managed.orgId);
         graceCleared++;
       }
     } catch (e) {
-      phases.undo.errors++;
-      log("free_org_cap.undo_failed", {
-        orgId: managed.orgId,
-        phase: managed.status === "suspended" ? "restore" : "clear_grace",
-        error: String(e),
-      });
+      phases[phase].errors++;
+      log("free_org_cap.undo_failed", { orgId: managed.orgId, phase, error: String(e) });
     }
   }
 
