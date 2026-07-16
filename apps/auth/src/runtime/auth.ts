@@ -226,10 +226,19 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
         // guaranteed either way; when the upgrade drops the option, just delete this line (and its assertion
         // in auth.test.ts) — the behaviour does not change. It is NOT a regression.
         requireLocalEmailVerified: true,
-        // Let a signed-in user link a provider whose email DIFFERS from their current one — required so a user
-        // who changes their email can still re-link Google/GitHub. Safe: /link-social needs the user's own
-        // session, and implicit sign-in linking stays same-email regardless of this flag.
-        allowDifferentEmails: true,
+        // SAME-EMAIL ONLY, on every path (ADR-0121). A provider can only attach to an account whose email it
+        // matches.
+        //
+        // This flag governs the EXPLICIT /link-social paths alone (better-auth reads it at
+        // api/routes/callback.mjs:98 and api/routes/account.mjs:151, plus the generic-oauth plugin we don't
+        // install). Implicit sign-in linking never consults it and is same-email by CONSTRUCTION —
+        // `findOAuthUser` locates the user BY email, so a match is structural, not configured.
+        //
+        // It was previously `true`, reserved for "a user who changed their email can re-link their provider".
+        // That capability has no surface: there is no UI for /link-social, so the flag only ever widened what
+        // a hand-crafted POST could do — enforcing same-email on the path users take while permitting
+        // different-email on one they can't reach. Same-email is the policy we want; say so once, here.
+        allowDifferentEmails: false,
         // Never let the last sign-in method be unlinked — that would strand the user out of their account.
         allowUnlinkingAll: false,
         // A linked provider must NEVER overwrite the profile the user set here. When true,

@@ -1,6 +1,10 @@
 # ADR-0118: Account-linking policy, pinned; and a unique identity index on `account`
 
-- **Status:** Accepted
+> **Superseded (partial), 2026-07-16 by [ADR-0121](0121-same-email-only-account-linking.md):**
+> `allowDifferentEmails` is now `false` — linking is same-email only. Everything else here stands: the pinned
+> block, every other option, and the `(providerId, accountId)` unique index.
+
+- **Status:** Accepted (partially superseded — see above)
 - **Date:** 2026-07-15
 - **Relates to:** ADR-0008 (role model / RLS), ADR-0010 (auth runtime), ADR-0061-era account-token stripping
 
@@ -37,7 +41,7 @@ Two latent weaknesses sat under the identity tables, both harmless today but loa
 | `disableImplicitLinking` | `false` | The explicit companion to `enabled` — implicit linking stays on, on purpose. |
 | `trustedProviders` | `[]` | No provider is trusted to link *without* asserting a verified incoming email. Empty is the secure choice; Google and GitHub both provide `email_verified`. |
 | `requireLocalEmailVerified` | `true` | Only implicitly link **into** a local account whose own email is verified. This is Better Auth's default, pinned so it can't be silently dropped — it is what blocks the pre-hijack. This runtime is social + magic-link only, and magic-link always verifies, so it costs legitimate users nothing. |
-| `allowDifferentEmails` | `true` | Let a *signed-in* user link a provider whose email differs from their current one — required so a user who changes their email can re-link Google/GitHub. Safe: `/link-social` needs the user's own session, and implicit sign-in linking stays same-email regardless. |
+| `allowDifferentEmails` | ~~`true`~~ → **`false`** | **Superseded 2026-07-16 by [ADR-0121](0121-same-email-only-account-linking.md): linking is same-email only.** The original rationale ("let a signed-in user link a provider whose email differs — required so a user who changes their email can re-link") was factually accurate but reserved a capability with no surface: the flag is read only on the explicit `/link-social` paths, which have no UI, while implicit sign-in linking is same-email by construction and never reads it. |
 | `allowUnlinkingAll` | `false` | Never allow the last sign-in method to be unlinked — that would strand the user out of their own account. |
 
 It lives **only** in the runtime config, not the generator (`apps/auth/src/auth.ts`): linking is behavioural,
