@@ -26,6 +26,7 @@ import {
   reconcileStripeTransport,
   type MeterSummaryReader,
   runCapProducer,
+  isTotalFreeOrgCapFailure,
   runFreeOrgCapReconcile,
   runMeterReporter,
   enqueueAutoDeliveries,
@@ -1634,8 +1635,17 @@ async function runFreeOrgCapCron(env: Env): Promise<void> {
       cap: MAX_FREE_ORGS_PER_USER,
       graceMs: FREE_ORG_CAP_GRACE_MS,
       restoreMs: FREE_ORG_CAP_RESTORE_MS,
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
     console.log(JSON.stringify({ message: "free-org-cap reconcile", ...result }));
+    // Escalate a TOTAL outage (every org the pass touched threw) by throwing — the scheduled() catch then
+    // emits the "free-org-cap cron failed" error line that alerting keys on. Without this, a deterministic
+    // failure (a regressed grant, a rolled-back 0086) leaves the cap 100% unenforced every hour behind an INFO
+    // line shaped exactly like a healthy pass. A PARTIAL failure does not throw — the healthy orgs' work is
+    // valid and each failure was logged individually. Same shape as the retention prune above.
+    if (isTotalFreeOrgCapFailure(result)) {
+      throw new Error(`free-org-cap reconcile: all ${result.attempted} orgs failed`);
+    }
   } finally {
     await sql.end();
   }

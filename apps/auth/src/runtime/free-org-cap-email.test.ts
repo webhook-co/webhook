@@ -8,7 +8,7 @@ import {
 
 const ORG: EmailOrg = { name: "Acme Inc", slug: "acme-inc" };
 const WARN = { graceUntilIso: "2026-07-30T09:15:00Z", cap: 2 };
-const SUSPEND = { restoreDeadlineIso: "2026-08-29T09:15:00Z", cap: 2 };
+const SUSPEND = { cap: 2 };
 
 describe("renderFreeOrgCapWarningEmail", () => {
   it("names the org and states the suspend date — with its timezone — in the subject, body, and text", () => {
@@ -80,17 +80,34 @@ describe("renderFreeOrgCapSuspendedEmail", () => {
     // deadline is falsified within a week on the free plan's 7-day retention.
     const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);
     expect(e.text).not.toMatch(/nothing has been deleted|keeping it all|until at least/i);
-    expect(e.text).not.toMatch(/events.{0,40}(are all still there|untouched)/i);
+    expect(e.text).not.toMatch(/events.{0,40}(are all still there|untouched|preserved)/i);
     // What it says instead: config kept, events age out as usual, restore sooner to keep more.
     expect(e.text).toContain("keep aging out on the free plan's usual retention");
     expect(e.text).toContain("the sooner you restore it, the more history you keep");
-    // The restore DEADLINE is about the org, not the data — and is still stated.
-    expect(e.text).toContain("You have until Aug 29, 2026 (UTC) to restore it");
+  });
+
+  it("states NO restore deadline — orgs.restore_deadline is written but read by nothing", () => {
+    // restoreOrgFromFreeCap gates only on status + reason; no prune consults restore_deadline. So a
+    // cap-suspended org can be restored forever. A stated deadline is one an owner who missed it reads as
+    // "too late, don't bother" — a fabricated loss.
+    const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);
+    expect(e.text).not.toMatch(/you have until|before .{0,20}\(UTC\)|expires|deadline to restore/i);
+    expect(e.text).toContain("you can restore it whenever you're ready — there's no deadline");
   });
 
   it("never threatens deletion of the org — no code path deletes a suspended org", () => {
     const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);
     expect(e.text).not.toMatch(/will be deleted|permanently removed|deleted after|erased/i);
+  });
+
+  it("does not instruct a co-owner to delete an unrelated org — the cap is another user's count", () => {
+    // Every OWNER gets this mail, but the cap is per-owner: nothing a co-owner deletes changes the over-cap
+    // user's slice, so "delete a different one to free up a slot" costs them an org for no effect.
+    const e = renderFreeOrgCapSuspendedEmail(SUSPEND, ORG);
+    expect(e.text).not.toMatch(
+      /delete or upgrade a different one|delete one you're no longer using/i,
+    );
+    expect(e.text).toContain("upgrade it to a paid plan"); // the remedy every recipient CAN act on
   });
 
   it("links the CTA at the org's suspended screen (where the restore CTA lives)", () => {
@@ -149,6 +166,19 @@ describe("free-org-cap emails — a malformed context degrades, never throws", (
     }
   });
 
+  it("keeps the neutral fallback GRAMMATICAL both sentence-initial and mid-sentence", () => {
+    // This is the exact path the notifier's LEFT JOIN exists to serve, so it must not read as broken.
+    const e = renderFreeOrgCapWarningEmail(WARN, { name: null, slug: null });
+    expect(e.html).toContain("One of your organizations will be suspended"); // sentence-initial → capitalized
+    expect(e.text).toContain("upgrade one of your organizations to a paid plan"); // mid-sentence → lowercase
+    expect(e.text).not.toContain("and One of your organizations is over that limit");
+  });
+
+  it("does not capitalize a real org name the user deliberately lower-cased", () => {
+    const e = renderFreeOrgCapSuspendedEmail(SUSPEND, { name: "acme", slug: "acme" });
+    expect(e.subject).toBe("acme has been suspended");
+  });
+
   it("falls back to the dashboard root when the slug is missing", () => {
     const e = renderFreeOrgCapWarningEmail(WARN, { name: "Acme", slug: null });
     expect(e.html).toContain(`href="https://app.webhook.co"`);
@@ -161,19 +191,16 @@ describe("free-org-cap emails — a malformed context degrades, never throws", (
     expect(e.html).not.toContain("NaN");
   });
 
-  it("drops the restore deadline rather than rendering a broken one", () => {
-    const e = renderFreeOrgCapSuspendedEmail({ restoreDeadlineIso: "", cap: 2 }, ORG);
-    expect(e.text).not.toMatch(/You have until/);
-    expect(e.text).toContain("keep aging out on the free plan's usual retention"); // still honest
-    expect(e.html).not.toContain("Invalid Date");
-  });
-
   it("describes the limit without a number when the cap is unusable", () => {
     for (const cap of [0, -1, 1.5, Number.NaN] as number[]) {
-      const e = renderFreeOrgCapWarningEmail({ ...WARN, cap }, ORG);
-      expect(e.html).toContain("a limited number of free organizations per user");
-      expect(e.html).not.toContain("up to ");
-      expect(e.html).not.toContain("NaN");
+      for (const e of [
+        renderFreeOrgCapWarningEmail({ ...WARN, cap }, ORG),
+        renderFreeOrgCapSuspendedEmail({ cap }, ORG),
+      ]) {
+        expect(e.html).toContain("a limited number of free organizations per user");
+        expect(e.html).not.toContain("up to ");
+        expect(e.html).not.toContain("NaN");
+      }
     }
   });
 });

@@ -4,7 +4,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { createClient, type Sql } from "../src/client";
 import { DB_ROLES } from "../src/constants";
-import { runFreeOrgCapReconcile } from "../src/free-org-cap-reconcile";
+import { isTotalFreeOrgCapFailure, runFreeOrgCapReconcile } from "../src/free-org-cap-reconcile";
 import { createOrgWithOwner } from "../src/orgs";
 import { testAuditKey } from "./audit-key";
 import { setupSchema } from "./migrate";
@@ -52,8 +52,18 @@ async function orgState(orgId: string) {
   return r!;
 }
 
+/** Per-org failures logged by the pass under test — asserted, not discarded (an `errors` count with no id or
+ *  reason is useless to an operator, which is the whole point of the `log` dep). */
+let logged: Array<{ message: string; fields: Record<string, unknown> }> = [];
+
 const reconcile = (now: number) =>
-  runFreeOrgCapReconcile(reconciler, { now, cap: CAP, graceMs: GRACE_MS, restoreMs: RESTORE_MS });
+  runFreeOrgCapReconcile(reconciler, {
+    now,
+    cap: CAP,
+    graceMs: GRACE_MS,
+    restoreMs: RESTORE_MS,
+    log: (message, fields) => logged.push({ message, fields }),
+  });
 
 beforeAll(async () => {
   pg = await startEphemeralPostgres();
@@ -202,13 +212,51 @@ describe("runFreeOrgCapReconcile", () => {
     await seedOrgAt(other, "2026-03-01T00:00:00Z");
     await owner`revoke insert on notification_intents from ${owner(DB_ROLES.capReconciler)}`;
     try {
+      logged = [];
       const pass = await reconcile(T0 + GRACE_MS + 2000);
       expect(pass.errors).toBeGreaterThan(0); // the other owner's flag threw and was counted
       expect(pass.restored).toBe(1); // ...and the restore STILL happened
       expect((await orgState(overflowOrg)).status).toBe("active");
+
+      // The failure is DIAGNOSABLE: swallowing it into a bare counter would leave an operator with
+      // `errors: 1` and no org id and no reason.
+      const fail = logged.find((l) => l.message === "free_org_cap.enforce_failed");
+      expect(fail).toBeDefined();
+      expect(fail!.fields.orgId).toEqual(expect.any(String));
+      expect(String(fail!.fields.error)).toMatch(/permission denied/i);
+
+      // Partial failure must NOT escalate — the restore that succeeded is valid work.
+      expect(isTotalFreeOrgCapFailure(pass)).toBe(false);
     } finally {
       await owner`grant insert (id, org_id, kind, destination_id, context)
                   on notification_intents to ${owner(DB_ROLES.capReconciler)}`;
     }
+  });
+
+  it("a TOTAL failure is escalatable — otherwise an unenforced cap looks like a healthy no-op pass", async () => {
+    // Per-org isolation alone converts a DETERMINISTIC failure (regressed grant, rolled-back migration) into
+    // an INFO line shaped exactly like a clean pass, while the cap goes 100% unenforced every hour forever.
+    // isTotalFreeOrgCapFailure is what the engine cron throws on so alerting fires.
+    const uid = await seedUser();
+    await seedOrgAt(uid, "2026-01-01T00:00:00Z");
+    await seedOrgAt(uid, "2026-02-01T00:00:00Z");
+    await seedOrgAt(uid, "2026-03-01T00:00:00Z");
+    await owner`revoke insert on notification_intents from ${owner(DB_ROLES.capReconciler)}`;
+    try {
+      const pass = await reconcile(T0);
+      expect(pass).toMatchObject({ flagged: 0, attempted: 1, errors: 1 });
+      expect(isTotalFreeOrgCapFailure(pass)).toBe(true);
+    } finally {
+      await owner`grant insert (id, org_id, kind, destination_id, context)
+                  on notification_intents to ${owner(DB_ROLES.capReconciler)}`;
+    }
+  });
+
+  it("an all-quiet pass is NOT a total failure (nothing attempted ≠ everything failed)", async () => {
+    const uid = await seedUser();
+    await seedOrgAt(uid, "2026-01-01T00:00:00Z"); // under the cap → nothing to do
+    const pass = await reconcile(T0);
+    expect(pass).toMatchObject({ attempted: 0, errors: 0 });
+    expect(isTotalFreeOrgCapFailure(pass)).toBe(false); // must not alert on a healthy quiet hour
   });
 });

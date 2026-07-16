@@ -93,10 +93,14 @@ export interface FreeOrgCapWarningContext {
  * The snapshot on a `free_org_cap_suspended` intent (PR2b slice 4): written when the grace window expired and
  * the org was actually suspended (reads gated, ingest paused, delivery held). See
  * {@link FreeOrgCapWarningContext} for why no org name/slug is carried.
+ *
+ * Deliberately does NOT carry `orgs.restore_deadline`. That column is written by `suspendOrgForFreeCap` and
+ * read by NOTHING — `restoreOrgFromFreeCap` gates only on status + reason, and no prune consults it — so an
+ * org suspended for the cap can be restored at any time, forever. An email stating "you have until <date> to
+ * restore it" would be a deadline the system does not enforce, which is how an owner who missed it decides
+ * restoration is impossible and never comes back. If a real deadline is ever introduced, add it here then.
  */
 export interface FreeOrgCapSuspendedContext {
-  /** How long the org can still be restored by resolving the overage — the email's "act by" date. */
-  readonly restoreDeadlineIso: string;
   /** How many free orgs a user may own. */
   readonly cap: number;
 }

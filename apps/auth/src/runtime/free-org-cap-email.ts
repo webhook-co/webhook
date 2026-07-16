@@ -24,9 +24,8 @@ export interface FreeOrgCapWarningContext {
   readonly cap: number;
 }
 
-/** Mirror of packages/db FreeOrgCapSuspendedContext. */
+/** Mirror of packages/db FreeOrgCapSuspendedContext. No restore deadline — nothing enforces one. */
 export interface FreeOrgCapSuspendedContext {
-  readonly restoreDeadlineIso: string;
   readonly cap: number;
 }
 
@@ -73,10 +72,23 @@ function formatDay(iso: string): string | null {
   return `${MONTHS[at.getUTCMonth()]} ${at.getUTCDate()}, ${at.getUTCFullYear()} (UTC)`;
 }
 
-/** The org's name for prose, or a neutral stand-in when it couldn't be resolved. */
+/**
+ * The org's name for prose. Falls back to a neutral stand-in when it couldn't be resolved — and the fallback
+ * has to read correctly BOTH sentence-initial ("<X> has been suspended") and mid-sentence ("upgrade <X> to a
+ * paid plan"), which is why it's a lowercase noun phrase rather than a capitalized one. `sentenceStart()`
+ * capitalizes it where a sentence opens with it.
+ */
+const UNNAMED_ORG = "one of your organizations";
+
 function orgLabel(org: EmailOrg): string {
   const name = org.name?.trim();
-  return name && name !== "" ? name : "One of your organizations";
+  return name && name !== "" ? name : UNNAMED_ORG;
+}
+
+/** Capitalize the fallback label when it opens a sentence. A real org name is returned untouched — a user who
+ *  lower-cased their own org's name meant it. */
+function sentenceStart(label: string): string {
+  return label === UNNAMED_ORG ? "One of your organizations" : label;
 }
 
 /** Deep-link into the org, falling back to the dashboard root when the slug is unknown. */
@@ -217,12 +229,16 @@ export function renderFreeOrgCapWarningEmail(
 
   return render({
     subject: stripControlChars(`Heads up: ${label} will be suspended ${when}`),
-    heading: `${label} will be suspended ${when}`,
+    heading: `${sentenceStart(label)} will be suspended ${when}`,
     preview: `It's over the free plan's limit of ${capPhrase(cap)}. Nothing has changed yet — here's how to keep it.`,
     paragraphs: [
       `The free plan covers ${capPhrase(cap)}, and ${label} is over that limit — so it's scheduled to be suspended ${when}.`,
       `Nothing has changed yet. Until then it keeps capturing, delivering, and everything else, exactly as it does today.`,
-      `The surest fix is to upgrade ${label} to a paid plan: that takes it out of the free count entirely and this cancels itself. Alternatively, whoever owns the free organizations can delete or upgrade a different one to free up a slot — that works too.`,
+      // Only ONE instruction, and it's the one every recipient can actually act on. The cap is counted
+      // per-owner, so "delete a different org to free up a slot" pointed at every owner invites a co-owner who
+      // is not the over-cap user to destroy an unrelated org for no effect — nothing they own changes the
+      // other owner's count, and this org stays scheduled.
+      `To keep it, upgrade ${label} to a paid plan: that takes it out of the free count entirely and this cancels itself. It can also stand down if the owner whose free organizations are over the limit frees up a slot themselves.`,
       `If more than one organization is over the limit, each one gets its own notice like this. Fixing the org named here won't clear the others.`,
       `Already sorted it out? Then ignore this — nothing will happen ${when}, and you don't need to reply or tell us.`,
     ],
@@ -235,41 +251,42 @@ export function renderFreeOrgCapWarningEmail(
 /**
  * The suspension: the grace window expired and the org is now suspended.
  *
- * The retention wording is the sharp edge here. `restoreDeadline` bounds how long the ORG can be restored —
- * it says NOTHING about the events, which keep aging out on the free plan's ordinary retention the whole time
- * (packages/db/src/retention.ts prunes purely on `received_at`, with no `orgs.status` predicate; the
- * webhook_retention role's grant on orgs is (id, retention_days) so it cannot even see that an org is
- * suspended). An earlier draft of this email promised "we're keeping it all until at least <restore
- * deadline>", which the prune falsifies within a week. Say what is true: config is kept, events age out as
- * usual, restore sooner to keep more. No retention number is quoted — the plan owns that, and a hardcoded one
- * here would drift.
+ * Two claims this copy is careful about, both because an earlier draft got them backwards.
  *
- * Nor does the copy threaten deletion of the ORG: nothing in the system deletes a suspended org.
+ * RETENTION. The org is never deleted, but its EVENTS are not preserved: retention.ts prunes purely on
+ * `received_at` with no `orgs.status` predicate, and the webhook_retention role's grant on orgs is
+ * (id, retention_days) — it cannot even see that an org is suspended. So "nothing has been deleted" is true
+ * only at send time. What is durably true: config is kept, events age out as usual, restore sooner to keep
+ * more. No retention number is quoted — the plan owns that and a hardcoded one here would drift.
+ *
+ * NO DEADLINE. `orgs.restore_deadline` is written and read by NOTHING, so a cap-suspended org can be restored
+ * at any time, forever. A draft promised "you have until <date> to restore it" — a deadline the system does
+ * not enforce, and the kind an owner who missed it reads as "too late, don't bother". Say the true thing:
+ * whenever you're ready. The real urgency is the event retention above, and the copy puts it there.
  */
 export function renderFreeOrgCapSuspendedEmail(
   ctx: FreeOrgCapSuspendedContext,
   org: EmailOrg,
 ): RenderedEmail {
   const label = orgLabel(org);
-  const day = formatDay(ctx.restoreDeadlineIso);
   const cap = capOf(ctx.cap);
 
   return render({
-    subject: stripControlChars(`${label} has been suspended`),
-    heading: `${label} has been suspended`,
+    subject: stripControlChars(`${sentenceStart(label)} has been suspended`),
+    heading: `${sentenceStart(label)} has been suspended`,
     preview: `It was over the free plan's limit of ${capPhrase(cap)}. You can restore it whenever you're ready — here's how.`,
     paragraphs: [
-      `The free plan covers ${capPhrase(cap)}. ${label} was over that limit and the notice period has now passed, so we've suspended it.`,
+      `The free plan covers ${capPhrase(cap)}. ${sentenceStart(label)} was over that limit and the notice period has now passed, so we've suspended it.`,
       // Precisely what suspension does: requireActiveOrgAccess redirects every data page to /suspended, so
       // "read-only dashboard" (an earlier draft) was wrong — the data isn't browsable-but-frozen, it's behind
       // a notice. Settings and Billing deliberately stay open, because they're the way out.
       `What that means: we've stopped capturing new events for it, delivery is on hold, and its dashboard now shows a suspension notice in place of your data. Settings and billing stay open, because that's where you fix it.`,
-      `Your endpoints, destinations, settings, and team are all kept — restoring puts them back exactly as they were.${
-        day === null
-          ? ` Events, though, keep aging out on the free plan's usual retention while it's suspended, so the sooner you restore it, the more history you keep.`
-          : ` Events, though, keep aging out on the free plan's usual retention while it's suspended — so the sooner you restore it, the more history you keep. You have until ${day} to restore it.`
-      }`,
-      `To bring it back: upgrade it to a paid plan, or have whoever owns the free organizations delete or upgrade a different one to free up a slot. It comes back within the hour, and any events that were held for delivery go out automatically.`,
+      `Its endpoints, destinations, settings, and team are all kept, and you can restore it whenever you're ready — there's no deadline. Events are the one thing that doesn't wait: they keep aging out on the free plan's usual retention while it's suspended, so the sooner you restore it, the more history you keep.`,
+      // The remedy a co-owner can actually act on comes FIRST and is the only instruction. The cap is counted
+      // per-owner, so telling every recipient to "delete a different org to free up a slot" invites a co-owner
+      // who is not the over-cap user to destroy an unrelated org for no effect — the suspension is driven by
+      // someone else's count and would re-apply on the next pass.
+      `To bring it back, upgrade it to a paid plan: that takes it out of the free count and it restores within the hour, with any events held for delivery going out automatically. It can also come back if the owner whose free organizations are over the limit frees up a slot themselves.`,
       `Already restored it? Then ignore this — it was queued when we suspended it, and your dashboard is the source of truth.`,
     ],
     ctaLabel: "Restore this organization",

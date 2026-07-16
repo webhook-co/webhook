@@ -134,13 +134,16 @@ describe("free-cap notifications (slice 4) — nothing happens to an org un-anno
     expect(intents[0]!.context).toEqual({ graceUntilIso: soon.toISOString(), cap: CAP });
   });
 
-  it("a suspend enqueues a pending SUSPENDED intent carrying the restore deadline + cap", async () => {
+  it("a suspend enqueues a pending SUSPENDED intent carrying the cap — and NO restore deadline", async () => {
     const org = await seedOrg();
     await suspendOrgForFreeCap(reconciler, org, soon, CAP);
     const intents = await intentsFor(org);
     expect(intents).toHaveLength(1);
     expect(intents[0]).toMatchObject({ kind: "free_org_cap_suspended", status: "pending" });
-    expect(intents[0]!.context).toEqual({ restoreDeadlineIso: soon.toISOString(), cap: CAP });
+    // restore_deadline is still STAMPED on the org (below) but deliberately kept out of the notification:
+    // nothing reads that column, so an email citing it would state a deadline the system doesn't enforce.
+    expect(intents[0]!.context).toEqual({ cap: CAP });
+    expect((await orgState(org)).restore?.toISOString()).toBe(soon.toISOString());
   });
 
   it("a re-flag does NOT re-warn — the cron re-flags every pass for the whole grace window", async () => {

@@ -30,13 +30,13 @@ const params = Promise.resolve({ slug: "acme" });
 beforeEach(() => vi.clearAllMocks());
 
 describe("SuspendedPage", () => {
-  it("renders the read-only suspension screen for a free-org-cap suspended org", async () => {
+  it("renders the suspension screen for a free-org-cap suspended org", async () => {
     requireOrgAccess.mockResolvedValue(access({}));
     render(await SuspendedPage({ params }));
 
     expect(screen.getByRole("heading", { name: /suspended/i })).toBeInTheDocument();
-    // free_org_cap copy names the free-organization limit and offers the upgrade path.
-    expect(screen.getByText(/free-organization limit/i)).toBeInTheDocument();
+    // free_org_cap copy names the limit and offers the upgrade path.
+    expect(screen.getByText(/organization limit/i)).toBeInTheDocument();
     // The way out: billing (upgrade) + settings both link to the canonical org URL.
     expect(screen.getByRole("link", { name: /upgrade to restore/i })).toHaveAttribute(
       "href",
@@ -46,6 +46,28 @@ describe("SuspendedPage", () => {
       "href",
       "/org/acme/settings",
     );
+  });
+
+  it("tells the truth about suspension — no 'read-only', no preserved-events promise, no deadline", async () => {
+    // This screen is where the cap emails' CTA lands, so it must agree with them. Three claims it used to
+    // make and must never make again:
+    //  - "read-only": requireActiveOrgAccess REDIRECTS every data page here; the data is unreachable, not
+    //    frozen-but-browsable, so "read-only" sends the owner hunting for events they cannot open.
+    //  - "nothing has been deleted" / "events are preserved": retention.ts prunes on received_at with no
+    //    orgs.status predicate, so a suspended free org's history ages away while this reassures them.
+    //  - a restore deadline: orgs.restore_deadline is written and read by nothing — restoration never expires.
+    requireOrgAccess.mockResolvedValue(access({}));
+    const { container } = render(await SuspendedPage({ params }));
+    const copy = container.textContent ?? "";
+
+    expect(copy).not.toMatch(/read-only/i);
+    expect(copy).not.toMatch(/nothing has been deleted/i);
+    expect(copy).not.toMatch(/events.{0,30}(are preserved|preserved)/i);
+    expect(copy).not.toMatch(/stays exactly as you left it/i);
+    // What it says instead — matching the suspended email verbatim in substance.
+    expect(copy).toMatch(/isn't reachable while it's suspended/i);
+    expect(copy).toMatch(/there's no deadline/i);
+    expect(copy).toMatch(/keep aging out on the free plan's usual retention/i);
   });
 
   it("falls back to generic copy for an unknown suspension reason (never dead-ends)", async () => {

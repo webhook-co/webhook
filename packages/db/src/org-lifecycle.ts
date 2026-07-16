@@ -403,10 +403,9 @@ export async function suspendOrgForFreeCap(
       returning id`;
     if (rows.length === 0) return false; // wasn't active → nothing suspended
     await setIngestPausedFreeCap(tx, orgId, true);
-    await enqueueFreeCapIntent(tx, orgId, "free_org_cap_suspended", {
-      restoreDeadlineIso: restoreDeadline.toISOString(),
-      cap,
-    });
+    // No restoreDeadline in the context: nothing reads orgs.restore_deadline, so the email must not present
+    // it as an expiry. See FreeOrgCapSuspendedContext.
+    await enqueueFreeCapIntent(tx, orgId, "free_org_cap_suspended", { cap });
     return true;
   });
 }
