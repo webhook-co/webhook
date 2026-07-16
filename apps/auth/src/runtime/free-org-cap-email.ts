@@ -14,7 +14,9 @@
 // stripControlChars as well. `org.slug` reaches a URL PATH, so it is encodeURIComponent'd rather than
 // HTML-escaped (slugs are validated at creation, but this renderer must not depend on that).
 
-import { escapeHtml as esc, stripControlChars } from "./email-html";
+import { renderBrandedEmail, type RenderedEmail } from "@webhook-co/shared/email-shell";
+
+import { stripControlChars } from "./email-html";
 import { APP_BASE_URL } from "./urls";
 
 /** Mirror of packages/db FreeOrgCapWarningContext — kept local so this DOM-typed app doesn't import the
@@ -45,13 +47,7 @@ export interface EmailOrg {
  */
 export type WarningVariant = "initial" | "reminder";
 
-export interface RenderedEmail {
-  readonly subject: string;
-  readonly html: string;
-  readonly text: string;
-}
-
-const LOGO_URL = "https://www.webhook.co/logo.png";
+export type { RenderedEmail };
 
 const MONTHS = [
   "Jan",
@@ -125,99 +121,6 @@ function capPhrase(cap: number | null): string {
     : `up to ${cap} free organizations per user`;
 }
 
-interface Shell {
-  readonly subject: string;
-  readonly heading: string;
-  readonly preview: string;
-  /** Body paragraphs, in order. Plain text — escaped by the shell. */
-  readonly paragraphs: readonly string[];
-  readonly ctaLabel: string;
-  readonly ctaUrl: string;
-  readonly footer: string;
-}
-
-/** The shared chrome: centered logo + wordmark, heading, body paragraphs, one dark CTA, footer. */
-function render(shell: Shell): RenderedEmail {
-  const paras = shell.paragraphs
-    .map(
-      (p) =>
-        `<tr>
-              <td style="padding:12px 32px 0 32px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:24px; color:#3f3f46;">${esc(p)}</td>
-            </tr>`,
-    )
-    .join("\n");
-
-  const html = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <title>${esc(shell.subject)}</title>
-  </head>
-  <body style="margin:0; padding:0; background-color:#f4f4f5;">
-    <div style="display:none; max-height:0; overflow:hidden; opacity:0;">${esc(shell.preview)}</div>
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f4f4f5" style="background-color:#f4f4f5;">
-      <tr>
-        <td align="center" style="padding:32px 16px;">
-          <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px; max-width:600px; background-color:#ffffff; border:1px solid #e4e4e7; border-radius:12px;">
-            <tr>
-              <td align="center" style="padding:28px 32px 22px 32px;">
-                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
-                  <tr>
-                    <td style="padding-right:9px; vertical-align:middle;">
-                      <img src="${LOGO_URL}" width="28" height="28" alt="webhook.co" style="display:block; width:28px; height:28px; border:0; border-radius:6px;" />
-                    </td>
-                    <td style="vertical-align:middle; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:20px; line-height:24px; letter-spacing:-0.01em; color:#18181b;">
-                      <span style="font-weight:600;">webhook</span><span style="font-weight:400; color:#a1a1aa;">.co</span>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top:1px solid #f4f4f5; font-size:0; line-height:0;">&nbsp;</td></tr></table></td>
-            </tr>
-            <tr>
-              <td style="padding:22px 32px 0 32px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:20px; font-weight:600; line-height:28px; color:#18181b;">${esc(shell.heading)}</td>
-            </tr>
-${paras}
-            <tr>
-              <td style="padding:24px 32px 4px 32px;">
-                <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                  <tr>
-                    <td bgcolor="#18181b" style="background-color:#18181b; border-radius:8px;">
-                      <a href="${esc(shell.ctaUrl)}" style="display:inline-block; padding:11px 20px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:14px; font-weight:600; line-height:20px; color:#ffffff; text-decoration:none;">${esc(shell.ctaLabel)}</a>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:24px 32px 0 32px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td style="border-top:1px solid #e4e4e7; font-size:0; line-height:0;">&nbsp;</td></tr></table></td>
-            </tr>
-            <tr>
-              <td style="padding:16px 32px 28px 32px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:13px; line-height:20px; color:#71717a;">${esc(shell.footer)}</td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`;
-
-  const text = [
-    shell.heading,
-    "",
-    ...shell.paragraphs.flatMap((p) => [p, ""]),
-    `${shell.ctaLabel}: ${shell.ctaUrl}`,
-    "",
-    shell.footer,
-  ].join("\n");
-
-  return { subject: shell.subject, html, text };
-}
-
 /**
  * The warning: this org is over the free-org cap and will be suspended on `graceUntil`. The org is still
  * FULLY ACTIVE — the email must not imply anything has stopped working yet.
@@ -244,7 +147,7 @@ export function renderFreeOrgCapWarningEmail(
 
   const reminder = variant === "reminder";
 
-  return render({
+  return renderBrandedEmail({
     // The SUBJECT carries the same constraint as the opening line, and is read FIRST. "Reminder:" asserts a
     // prior notice exactly as "a follow-up on the notice we sent earlier" did — and is false for the same two
     // readers (a warning lost to a 5xx; an owner added mid-grace). "Still scheduled" distinguishes the second
@@ -276,8 +179,7 @@ export function renderFreeOrgCapWarningEmail(
       `If more than one organization is over the limit, each one gets its own notice like this. Fixing the org named here won't clear the others.`,
       `Already sorted it out? Then ignore this — nothing will happen ${when}, and you don't need to reply or tell us.`,
     ],
-    ctaLabel: "Upgrade this organization",
-    ctaUrl: orgUrl(org, "/billing"),
+    cta: { label: "Upgrade this organization", url: orgUrl(org, "/billing") },
     footer: `You're receiving this because you're an owner of a webhook.co organization that's over the free plan's limit. It's a service notification about your account — there's nothing to unsubscribe from.`,
   });
 }
@@ -309,7 +211,7 @@ export function renderFreeOrgCapSuspendedEmail(
   // phrase), so refusing to send a suspension notice over a missing number would be absurd.
   const cap = ctx === null ? null : capOf(ctx.cap);
 
-  return render({
+  return renderBrandedEmail({
     subject: stripControlChars(`${sentenceStart(label)} has been suspended`),
     heading: `${sentenceStart(label)} has been suspended`,
     preview: `It was over the free plan's limit of ${capPhrase(cap)}. You can restore it whenever you're ready — here's how.`,
@@ -336,8 +238,7 @@ export function renderFreeOrgCapSuspendedEmail(
     // Points at BILLING, not /suspended: the label promises a restore, and /suspended is an informational
     // notice with no restore control on it — the reader would have to find a second button to do the thing
     // this one offered. The warning email is held to the same standard.
-    ctaLabel: "Upgrade to restore",
-    ctaUrl: orgUrl(org, "/billing"),
+    cta: { label: "Upgrade to restore", url: orgUrl(org, "/billing") },
     footer: `You're receiving this because you're an owner of a suspended webhook.co organization. It's a service notification about your account — there's nothing to unsubscribe from.`,
   });
 }

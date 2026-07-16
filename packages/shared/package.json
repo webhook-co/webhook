@@ -10,6 +10,7 @@
     "./kv-cache": "./src/kv-cache.ts",
     "./audit": "./src/audit.ts",
     "./bytes": "./src/bytes.ts",
+    "./email-shell": "./src/email-shell.ts",
     "./plans": "./src/plans.ts"
   },
   "scripts": {

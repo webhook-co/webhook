@@ -54,6 +54,30 @@ describe("sendMagicLinkEmail", () => {
     expect(raw.toLowerCase()).not.toContain("tracking");
   });
 
+  it("renders the branded shell — logo, text wordmark, and a dark CTA to the link", async () => {
+    const fetchImpl = okFetch();
+    await sendMagicLinkEmail({ apiKey: "k", from: FROM, fetchImpl }, { to: "u@e.com", url: LINK });
+
+    const body = JSON.parse((fetchImpl.mock.calls[0][1] as RequestInit).body as string);
+    expect(body.html).toContain('src="https://www.webhook.co/logo.png"');
+    // The wordmark is text, so a client blocking the remote logo still shows the brand.
+    expect(body.html).toContain(">webhook</span>");
+    expect(body.html).toContain("background-color:#18181b");
+    expect(body.html).toContain(`href="${LINK}"`);
+  });
+
+  // A button can fail to render or fail to click (plain-text clients, aggressive rewriters). The one thing
+  // this email exists to deliver must survive that, so the raw URL is also present as selectable text.
+  it("echoes the raw link as copy-paste text, not only inside the button", async () => {
+    const fetchImpl = okFetch();
+    await sendMagicLinkEmail({ apiKey: "k", from: FROM, fetchImpl }, { to: "u@e.com", url: LINK });
+
+    const body = JSON.parse((fetchImpl.mock.calls[0][1] as RequestInit).body as string);
+    expect(
+      body.html.match(new RegExp(LINK.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "g")).length,
+    ).toBe(2);
+  });
+
   it("throws on a non-2xx Resend response WITHOUT leaking the api key", async () => {
     const fetchImpl = vi.fn(async () => new Response("bad request", { status: 422 }));
     const call = () =>

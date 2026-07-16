@@ -1,22 +1,19 @@
+import { renderBrandedEmail } from "@webhook-co/shared/email-shell";
+
 import { NOTIFICATIONS_FROM } from "./urls";
 
 // Resend senders for the email-change ceremony — the step-up OTP (to the CURRENT address) and the
 // after-the-fact security notice (to the OLD address). Same shape as the magic-link sender: a plain Resend
-// REST POST, no tracking pixels / remote images (scanners pre-fetch and would burn the code), and the API key
-// never appears in an error message.
+// REST POST, the shared branded shell, and an API key that never appears in an error message.
+//
+// Tracking stays off at the Resend domain level. The shell's only remote asset is our own logo, which
+// carries no code and reveals nothing but the mail's existence — see magic-link.ts for the full reasoning
+// behind dropping the previous "no remote images" claim.
+//
+// The OTP mail deliberately has NO button: a code is typed back into a screen the user already has open, so
+// there is nothing here to click, and a link would only teach the habit this ceremony guards against.
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
-
-/** Escape a value interpolated into an email HTML body — defense-in-depth against a malformed address (or any
- *  future user string) carrying markup into the outbound message. */
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
 
 export interface EmailSenderDeps {
   readonly apiKey: string;
@@ -47,19 +44,19 @@ export function sendEmailChangeOtp(
   deps: EmailSenderDeps,
   input: { to: string; code: string },
 ): Promise<void> {
-  const subject = "Your webhook.co verification code";
-  const text = [
-    `Your verification code is ${input.code}.`,
-    "",
-    "Enter it on the email-change screen to confirm your new address. It expires in 10 minutes.",
-    "If you didn't request this, you can ignore this email — your address hasn't changed.",
-  ].join("\n");
-  const html = [
-    `<p>Your verification code is <strong style="font-size:20px;letter-spacing:2px">${input.code}</strong>.</p>`,
-    "<p>Enter it on the email-change screen to confirm your new address. It expires in 10 minutes.</p>",
-    "<p>If you didn't request this, you can ignore this email — your address hasn't changed.</p>",
-  ].join("");
-  return send(deps, { to: input.to, subject, html, text });
+  const email = renderBrandedEmail({
+    subject: "Your webhook.co verification code",
+    heading: "Your verification code",
+    preview: "Enter this code to confirm your new email address. It expires in 10 minutes.",
+    code: input.code,
+    paragraphs: [
+      "Enter this code on the email-change screen to confirm your new address. It expires in 10 minutes.",
+      "If you didn't request this, you can ignore this email — your address hasn't changed.",
+    ],
+    footer:
+      "You're receiving this because someone asked to change the email on your webhook.co account. It's a security email — there's nothing to unsubscribe from.",
+  });
+  return send(deps, { to: input.to, ...email });
 }
 
 /** The after-the-fact notice, to the OLD address — so a hijack is detectable by the person who held it. */
@@ -67,18 +64,19 @@ export function sendEmailChangedNotice(
   deps: EmailSenderDeps,
   input: { to: string; newEmail: string },
 ): Promise<void> {
-  const subject = "Your webhook.co email was changed";
-  const text = [
-    `The email on your webhook.co account was just changed to ${input.newEmail}.`,
-    "",
-    "If you made this change, no action is needed.",
-    "If you did NOT, your account may be compromised — contact support@webhook.co right away.",
-  ].join("\n");
-  const html = [
-    `<p>The email on your webhook.co account was just changed to <strong>${escapeHtml(input.newEmail)}</strong>.</p>`,
-    "<p>If you made this change, no action is needed.</p>",
-    "<p>If you did <strong>not</strong>, your account may be compromised — contact " +
-      '<a href="mailto:support@webhook.co">support@webhook.co</a> right away.</p>',
-  ].join("");
-  return send(deps, { to: input.to, subject, html, text });
+  // `newEmail` is attacker-controlled in the exact scenario this email exists to expose. The shell escapes
+  // every string it renders, so it reaches the body as inert text.
+  const email = renderBrandedEmail({
+    subject: "Your webhook.co email was changed",
+    heading: "Your email was changed",
+    preview: `The address on your account is now ${input.newEmail}.`,
+    paragraphs: [
+      `The email on your webhook.co account was just changed to ${input.newEmail}.`,
+      "If you made this change, there's nothing to do.",
+      "If you didn't, your account may be compromised — contact support@webhook.co right away and we'll help you get it back.",
+    ],
+    footer:
+      "You're receiving this at your previous address because the email on the account changed. It's a security email — there's nothing to unsubscribe from.",
+  });
+  return send(deps, { to: input.to, ...email });
 }

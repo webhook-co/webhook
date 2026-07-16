@@ -41,13 +41,29 @@ describe("sendInviteEmail", () => {
     const body = JSON.parse(
       String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body),
     );
-    // The invariant that matters: it can never become a TAG or break out of an ATTRIBUTE. So no raw `<`
-    // and no raw `"` survive from the user-controlled value. (The literal text "onerror=" surviving as
-    // inert prose is harmless — it is the angle brackets and quotes that would make it executable.)
-    expect(body.html).not.toContain("<img");
-    expect(body.html).not.toContain('onerror="');
-    expect(body.html).toContain("&lt;img");
-    expect(body.html).toContain("&quot;");
+    // The invariant that matters: it can never become a TAG or break out of an ATTRIBUTE. (The literal text
+    // "onerror=" surviving as inert prose is harmless — it is the angle brackets and quotes that would make
+    // it executable.)
+    //
+    // This pins the PAYLOAD, not the document. It used to assert the html contained no "<img" at all, which
+    // was a valid proxy only while the email had no images of its own; the branded shell now carries a logo
+    // <img>, so a document-wide assertion would fail on our own markup while proving nothing about the
+    // injected value. Naming the payload is strictly stronger — it survives the shell gaining more markup.
+    expect(body.html).not.toContain('<img src=x onerror="alert(1)">');
+    expect(body.html).not.toContain('onerror="alert(1)"');
+    expect(body.html).toContain("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;");
+  });
+
+  it("renders the branded shell — logo, text wordmark, and a dark CTA to the invite", async () => {
+    const fetchImpl = okFetch();
+    await sendInviteEmail({ apiKey: "re_key", from: "invites@mail.webhook.co", fetchImpl }, MSG);
+    const body = JSON.parse(
+      String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body),
+    );
+    expect(body.html).toContain('src="https://www.webhook.co/logo.png"');
+    // The wordmark is text, so a client blocking the remote logo still shows the brand.
+    expect(body.html).toContain(">webhook</span>");
+    expect(body.html).toContain("background-color:#18181b");
   });
 
   it("throws on a non-2xx WITHOUT leaking the api key", async () => {

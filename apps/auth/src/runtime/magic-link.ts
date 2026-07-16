@@ -3,6 +3,17 @@
 // mail.webhook.co. Tracking is disabled at the Resend domain level — email security scanners pre-fetch
 // tracked links and would burn the single-use token before the user clicks — so the send carries no
 // tracking flags. The API key is never interpolated into an error message.
+//
+// This used to render as bare <p> tags, described here as "no remote images / tracking pixels". It now uses
+// the shared branded shell, which loads a logo from our own domain — so the "no remote images" half of that
+// claim is gone, deliberately. What it was protecting still holds: what burns a single-use token is a
+// scanner FOLLOWING the link, which is why tracking (i.e. link REWRITING) stays off. Fetching a static logo
+// reveals only that some copy of the mail exists — never the token — and the token appears in no image URL.
+//
+// The link is also echoed under the button as plain text: a rewritten or unrendered button must never be
+// the only way to reach the one thing this email exists to deliver.
+
+import { renderBrandedEmail } from "@webhook-co/shared/email-shell";
 
 export interface MagicLinkSenderDeps {
   /** Resend API key (a Secrets-Store secret at runtime). */
@@ -21,23 +32,23 @@ export interface MagicLinkMessage {
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const SUBJECT = "Your webhook.co sign-in link";
 
-function renderHtml(url: string): string {
-  // Intentionally plain: one explicit link, no remote images / tracking pixels.
-  return [
-    `<p>Click the link below to sign in to webhook.co. It expires in a few minutes and can be used once.</p>`,
-    `<p><a href="${url}">Sign in to webhook.co</a></p>`,
-    `<p>If you didn't request this, you can ignore this email.</p>`,
-  ].join("\n");
-}
-
-function renderText(url: string): string {
-  return [
-    "Sign in to webhook.co using the link below. It expires in a few minutes and can be used once.",
-    "",
-    url,
-    "",
-    "If you didn't request this, you can ignore this email.",
-  ].join("\n");
+function render(url: string) {
+  return renderBrandedEmail({
+    subject: SUBJECT,
+    heading: "Sign in to webhook.co",
+    preview: "Your single-use sign-in link — it expires in a few minutes.",
+    paragraphs: [
+      "Click the button below to sign in. The link expires in a few minutes and can be used once.",
+      "If you didn't request this, you can ignore this email — nobody can sign in without the link.",
+    ],
+    cta: {
+      label: "Sign in to webhook.co",
+      url,
+      fallbackNote: "If the button doesn't work, paste this link into your browser:",
+    },
+    footer:
+      "You're receiving this because someone asked for a sign-in link for this address. It's a one-time security email — there's nothing to unsubscribe from.",
+  });
 }
 
 /**
@@ -49,6 +60,7 @@ export async function sendMagicLinkEmail(
   message: MagicLinkMessage,
 ): Promise<void> {
   const doFetch = deps.fetchImpl ?? fetch;
+  const email = render(message.url);
   const res = await doFetch(RESEND_ENDPOINT, {
     method: "POST",
     headers: {
@@ -58,9 +70,9 @@ export async function sendMagicLinkEmail(
     body: JSON.stringify({
       from: deps.from,
       to: message.to,
-      subject: SUBJECT,
-      html: renderHtml(message.url),
-      text: renderText(message.url),
+      subject: email.subject,
+      html: email.html,
+      text: email.text,
     }),
   });
 
