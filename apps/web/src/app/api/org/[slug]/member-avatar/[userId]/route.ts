@@ -29,7 +29,10 @@ export async function GET(
   const app = await getTenantDb();
   const members = await listOrgMembers(app, access.orgId);
   const target = members.find((m) => m.userId === userId);
-  if (!target) return noAvatarResponse(); // not a co-member → reveal nothing
+  // Not a co-member → reveal nothing. The TTL is NOT incidental: it must equal the one a co-member WITHOUT
+  // an avatar gets below (serveAvatar's 404 exit, at the same 3600), or the two 404s differ by Cache-Control
+  // alone and the difference answers "is this person in your org?" for any userId you care to probe.
+  if (!target) return noAvatarResponse(3600);
 
   // An HOUR for OTHER people's faces, but serveAvatar's 60s default for your own.
   //

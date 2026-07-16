@@ -103,9 +103,14 @@ export function RenameOrgCard({ slug, name, rename, canRename, hasLogo }: Rename
           <div className="shrink-0" data-testid="org-logo-column">
             <OrgLogoControl
               slug={slug}
-              // The LIVE value, not the server prop: the tile sits beside the Name field, so its generated
-              // monogram must follow what you're typing rather than freeze until Save.
-              name={nameValue}
+              // The SAVED name, deliberately — not the live `nameValue`. OrgAvatar derives the generated
+              // tile's HUE from this name by hash, so feeding it each keystroke re-colours the tile through
+              // unrelated colours and lands it on one that disagrees with the same org's tile in the sidebar
+              // switcher, which still shows the saved name's hue. Two colours for one org, on one screen,
+              // defeating the point of a colour that answers "which org am I in?" at a glance. The tile
+              // showing saved identity next to an unsaved edit is correct: until you Save, the org IS still
+              // called this.
+              name={name}
               hasLogo={hasLogo}
               canManage={canRename}
               onError={setLogoError}

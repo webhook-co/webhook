@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The card now renders the logo control (the logo folded INTO this section), which calls useRouter to
 // refresh after an upload — so the navigation mock has to carry it too.
@@ -40,7 +40,14 @@ const props = (over: Partial<Parameters<typeof RenameOrgCard>[0]> = {}) => ({
   ...over,
 });
 
-afterEach(() => vi.clearAllMocks());
+// resetAllMocks, NOT clearAllMocks: clearAllMocks wipes calls but LEAVES implementations, so a single
+// `removeOrgLogo.mockResolvedValue({ok:false})` in one test silently persists into every test after it —
+// an order-dependent failure that passes today and breaks whenever a case is added or reordered.
+afterEach(() => vi.resetAllMocks());
+beforeEach(() => {
+  removeOrgLogo.mockResolvedValue({ ok: true });
+  uploadOrgLogoWebp.mockResolvedValue({ ok: true });
+});
 
 describe("RenameOrgCard", () => {
   it("shows a live validation error for a bad slug and disables save", async () => {
@@ -141,29 +148,37 @@ describe("RenameOrgCard — the logo lives IN this section", () => {
     expect(screen.queryByRole("button", { name: /^remove$/i })).toBeNull();
   });
 
-  it("clicking a logo control never fires the rename", async () => {
-    // Asserting `type="button"` here proved nothing: the shared Button renders `type={type ?? "button"}`
-    // unconditionally, so that attribute is guaranteed no matter where the control sits — the test passed by
-    // construction and would have passed had it been nested in the form. Assert the BEHAVIOUR instead: no
-    // logo interaction may submit the rename, whatever the tree shape.
+  it("clicking a logo control never fires the rename — even with unsaved edits pending", async () => {
+    // Two tautologies deep. Asserting `type="button"` proved nothing (Button renders `type={type ?? "button"}`
+    // unconditionally). Replacing it with a click on a PRISTINE card proved nothing either: nothing had
+    // changed, so `canSubmit` was false and `onSubmit` returned at its guard before `rename` was reachable —
+    // it would have passed with the control nested in the form and typed `submit`, the exact regression it
+    // claims to catch. The form has to be DIRTY for the assertion to mean anything.
     const rename = vi.fn(async () => ({ ok: false as const, error: "" }));
     const user = userEvent.setup();
     render(<RenameOrgCard {...props({ rename })} />);
+
+    await user.clear(screen.getByLabelText("Name"));
+    await user.type(screen.getByLabelText("Name"), "Acme Corp"); // now canSubmit === true
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+
     await user.click(screen.getByRole("button", { name: /upload logo/i }));
     expect(rename).not.toHaveBeenCalled();
   });
 
-  it("the logo tile tracks the name you're TYPING, not the one the server last saved", async () => {
-    // The tile sits directly beside the Name field and the card calls the two 'one thing' — so a generated
-    // monogram frozen on the old name while you retype it reads as a broken control. create-team-form already
-    // tracks the live value; these two surfaces were restructured to be the same shape and must behave alike.
+  it("the logo tile shows the SAVED name while you type — its hue must not fight the switcher", async () => {
+    // Deliberate, and the reverse of an earlier attempt here. OrgAvatar hashes this name into the tile's
+    // background hue, so passing the live `nameValue` re-colours the tile on every keystroke and leaves it a
+    // different colour from the SAME org's tile in the sidebar switcher (which renders the saved name) until
+    // Save. Chasing a live monogram bought a two-colour org; the tile showing saved identity beside an
+    // unsaved edit is both correct and stable.
     const user = userEvent.setup();
     render(<RenameOrgCard {...props()} />);
     expect(screen.getByTestId("org-avatar")).toHaveTextContent("Acme");
 
     await user.clear(screen.getByLabelText("Name"));
     await user.type(screen.getByLabelText("Name"), "Beta");
-    expect(screen.getByTestId("org-avatar")).toHaveTextContent("Beta");
+    expect(screen.getByTestId("org-avatar")).toHaveTextContent("Acme"); // still the saved name
   });
 
   it("clears a stale logo error once a later upload succeeds", async () => {

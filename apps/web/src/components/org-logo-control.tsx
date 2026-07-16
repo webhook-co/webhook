@@ -33,9 +33,8 @@ export interface OrgLogoControlProps {
  * configure when it is simply part of what an organization IS — alongside its name and its URL. Extracting the
  * control lets the settings page put it beside those fields instead of below them.
  *
- * Uploading is its own immediate action, not part of any surrounding "Save changes" — which is why the
- * settings card renders this as a sibling of its <form> rather than inside it, while create-team-form does
- * nest it (there, capturing the crop IS part of creating).
+ * Uploading is its own immediate action, not part of any surrounding "Save changes" — which is why
+ * RenameOrgCard, its only consumer, renders this as a sibling of its <form> rather than inside it.
  */
 export function OrgLogoControl({ slug, name, hasLogo, canManage, onError }: OrgLogoControlProps) {
   const router = useRouter();

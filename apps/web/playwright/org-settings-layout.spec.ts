@@ -65,8 +65,10 @@ test("the columns STACK on a narrow viewport — the logo above the fields, neve
 });
 
 test("the page never scrolls sideways at a phone width", async ({ page }) => {
-  // A `shrink-0` column that refuses to stack shows up here first: the card overflows its viewport and the
-  // whole document gains a horizontal scrollbar.
+  // A general responsive guard, and no more than that. It does NOT catch a failure to stack: the fields
+  // column carries `min-w-0`, so a `shrink-0` tile refusing to stack squeezes the fields rather than pushing
+  // the document wider — the two tests above are what cover that. What this does catch is the class of
+  // regression min-w-0 cannot absorb: a fixed-width child, an unbreakable string, a stray negative margin.
   const { users, orgs } = world();
   await signIn(page, users.dana.id, orgs.alpha.id);
   await page.setViewportSize({ width: 390, height: 844 });

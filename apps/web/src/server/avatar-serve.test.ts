@@ -59,7 +59,7 @@ describe("serveAvatar cache TTL", () => {
 
   it("defaults the PROVIDER-PROXY image to 60s — the other path a first upload must invalidate", async () => {
     resolveAvatarSource.mockResolvedValue({
-      kind: "proxy",
+      kind: "provider",
       url: "https://avatars.githubusercontent.com/u/1",
     });
     vi.stubGlobal(
@@ -76,7 +76,7 @@ describe("serveAvatar cache TTL", () => {
 
   it("honours a caller's TTL on the provider proxy", async () => {
     resolveAvatarSource.mockResolvedValue({
-      kind: "proxy",
+      kind: "provider",
       url: "https://avatars.githubusercontent.com/u/1",
     });
     vi.stubGlobal(
@@ -86,6 +86,26 @@ describe("serveAvatar cache TTL", () => {
           new Response("bytes", { status: 200, headers: { "content-type": "image/png" } }),
       ),
     );
+    expect(cache(await serveAvatar({ ...IDENTITY, maxAge: 3600 }))).toBe("private, max-age=3600");
+  });
+
+  it("applies the same TTL rule to the GRAVATAR exit — the other real AvatarSource variant", async () => {
+    // AvatarSource is exactly `provider | gravatar | none` (avatar.ts). Both non-`none` variants reach the
+    // same proxy code path, so pin gravatar too rather than assume "provider covers it" — an earlier draft of
+    // this file mocked a `{kind:"proxy"}` that the union does not contain, which exercised the branch only by
+    // accident and asserted nothing about a shape production can actually produce.
+    resolveAvatarSource.mockResolvedValue({
+      kind: "gravatar",
+      url: "https://gravatar.com/avatar/abc",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("bytes", { status: 200, headers: { "content-type": "image/png" } }),
+      ),
+    );
+    expect(cache(await serveAvatar(IDENTITY))).toBe("private, max-age=60");
     expect(cache(await serveAvatar({ ...IDENTITY, maxAge: 3600 }))).toBe("private, max-age=3600");
   });
 });

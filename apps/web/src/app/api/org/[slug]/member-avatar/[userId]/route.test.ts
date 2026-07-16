@@ -94,6 +94,28 @@ describe("GET /api/org/[slug]/member-avatar/[userId]", () => {
     expect(noAvatarResponse).toHaveBeenCalled();
   });
 
+  it("gives the stranger-404 the SAME TTL a co-member-without-an-avatar gets — no membership oracle", async () => {
+    // Both answers are a 404 with no body; Cache-Control is the only field that could separate them, so it
+    // must not. A 60s stranger-404 beside a 3600s member-404 turns this route into "is <userId> in your org?"
+    // for any id an attacker cares to probe — a membership disclosure from a route whose own comment is
+    // "reveal nothing". They were byte-identical until noAvatarResponse gained a 60s default.
+    listOrgMembers.mockResolvedValue([member("someone_else")]);
+    await GET(req(), ctx("acme", "u_target"));
+    expect(noAvatarResponse).toHaveBeenCalledWith(3600);
+
+    // …and that 3600 is exactly what a co-member with no avatar resolves to, via serveAvatar's own 404 exit.
+    vi.clearAllMocks();
+    requireOrgAccess.mockResolvedValue({
+      orgId: ORG_ID,
+      slug: "acme",
+      role: "member",
+      userId: "u_caller",
+    });
+    listOrgMembers.mockResolvedValue([member("u_target")]);
+    await GET(req(), ctx("acme", "u_target"));
+    expect(serveAvatar).toHaveBeenCalledWith(expect.objectContaining({ maxAge: 3600 }));
+  });
+
   it("uses the RESOLVED org id from requireOrgAccess for the membership lookup (not the raw slug)", async () => {
     await GET(req(), ctx("acme", "u_target"));
     expect(listOrgMembers).toHaveBeenCalledWith(expect.anything(), ORG_ID);

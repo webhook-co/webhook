@@ -30,21 +30,33 @@ type Row =
       readonly label: string;
       readonly method: LoginMethod;
       /**
-       * The opaque provider account id, but ONLY when this provider has more than one linked account — the
-       * sole thing that tells two otherwise byte-identical rows apart. `null` on the common path, where it
-       * would just be noise.
+       * The opaque provider account id, present ONLY when this provider has more than one linked account.
+       * `null` on the common path, where it would just be noise.
+       *
+       * It is not much: the user cannot map "g-1" to an inbox, so it proves the rows are DIFFERENT without
+       * saying which is which. The genuinely useful discriminator — the provider account's email — is not on
+       * `LoginMethod` and putting it there is a contract change plus a new read (its own slice). Until then
+       * this row also widens its timestamp to the minute, which is what a human can actually act on; the id
+       * stays because two same-minute links would otherwise still collide, and it keeps the accessible name
+       * unique.
        */
       readonly discriminator: string | null;
     }
   | { readonly kind: "empty"; readonly key: string; readonly label: string };
 
 /**
- * One FIXED slot per offered provider, in OFFERED order, holding either its linked account(s) or a "not
- * connected" placeholder — then any linked provider we don't offer.
+ * One slot per offered provider, in OFFERED order, holding either its linked account(s) or a "not connected"
+ * placeholder — then any linked provider we don't offer.
  *
- * Slots must not depend on link state. Appending the placeholders last meant disconnecting Google re-rendered
- * the list as GitHub, Google: the row you just clicked jumps position, and the Disconnect now under your
- * cursor belongs to the account you did NOT touch — one stray click from removing the wrong way in.
+ * What this guarantees, exactly: providers never REORDER relative to each other. Appending the placeholders
+ * last made a provider's rank depend on its link state, so disconnecting Google re-rendered the list as
+ * GitHub, Google — Google leapfrogged a provider it had been above, and the Disconnect that landed under the
+ * cursor belonged to an account the user never touched.
+ *
+ * What it does NOT guarantee: that no row ever moves. A provider holding two accounts occupies two rows, so
+ * removing one of them still shifts everything below it up by a row — unavoidable when a list gets shorter,
+ * and not the same defect as a reorder. Do not restate this as "rows never move"; that claim is false and was
+ * written here once already.
  *
  * Emphatically not "one row per offered provider, find the matching method". `listLoginMethods` returns every
  * `account` row for the user with NO provider filter, and nothing stops a user having two of the same
@@ -56,20 +68,19 @@ type Row =
  * invisible until someone remembered to edit the array above.
  */
 function rows(methods: readonly LoginMethod[]): Row[] {
-  const count = (id: string) => methods.filter((m) => m.providerId === id).length;
   // Oldest first, accountId as the tiebreak: a stable order that never depends on the server's row order.
-  const linkedFor = (id: string): Row[] =>
-    methods
+  const linkedFor = (id: string): Row[] => {
+    const mine = methods
       .filter((m) => m.providerId === id)
-      .slice()
-      .sort((a, b) => a.linkedAt - b.linkedAt || a.accountId.localeCompare(b.accountId))
-      .map((m) => ({
-        kind: "linked" as const,
-        key: methodKey(m),
-        label: providerLabel(m.providerId),
-        method: m,
-        discriminator: count(m.providerId) > 1 ? m.accountId : null,
-      }));
+      .sort((a, b) => a.linkedAt - b.linkedAt || a.accountId.localeCompare(b.accountId));
+    return mine.map((m) => ({
+      kind: "linked" as const,
+      key: methodKey(m),
+      label: providerLabel(m.providerId),
+      method: m,
+      discriminator: mine.length > 1 ? m.accountId : null,
+    }));
+  };
 
   const out: Row[] = [];
   for (const p of OFFERED) {
@@ -91,6 +102,27 @@ function rows(methods: readonly LoginMethod[]): Row[] {
 function fmtDate(unixSeconds: number): string {
   const d = new Date(unixSeconds * 1000);
   return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+
+/**
+ * Date + time (UTC), for a row that has a same-provider sibling. Two accounts of one provider are commonly
+ * linked on the same DAY — the exact case the date alone renders byte-identical — so the minute is the first
+ * thing a human can actually use to tell "the one I added just now" from "the old one".
+ */
+function fmtDateTime(unixSeconds: number): string {
+  const d = new Date(unixSeconds * 1000);
+  if (Number.isNaN(d.getTime())) return "";
+  const iso = d.toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
+}
+
+/**
+ * The row's secondary line. A lone account gets the date; one with a same-provider sibling gets the minute
+ * and its account id, because that pair is what has to be told apart. See Row.discriminator.
+ */
+function connectedLine(linkedAt: number, discriminator: string | null): string {
+  const when = discriminator ? fmtDateTime(linkedAt) : fmtDate(linkedAt);
+  return [when ? `Connected ${when}` : "Connected", discriminator].filter(Boolean).join(" · ");
 }
 
 export interface LoginMethodsManagerProps {
@@ -142,15 +174,7 @@ export function LoginMethodsManager({
               <span className="font-medium text-fg">{row.label}</span>
               <span className="text-xs text-fg-faint">
                 {row.kind === "linked" ? (
-                  [
-                    fmtDate(row.method.linkedAt)
-                      ? `Connected ${fmtDate(row.method.linkedAt)}`
-                      : "Connected",
-                    // Only present when this provider has a second account — see Row.discriminator.
-                    row.discriminator,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")
+                  connectedLine(row.method.linkedAt, row.discriminator)
                 ) : (
                   // "Sign out and" is load-bearing, not filler: /login bounces an already-signed-in user
                   // straight to /session/handoff, so "sign in with GitHub" attempted from THIS page silently

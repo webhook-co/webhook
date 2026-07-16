@@ -130,6 +130,25 @@ describe("LoginMethodsManager", () => {
     await waitFor(() => expect(rowLabels()).toEqual(["Google", "GitHub"]));
   });
 
+  it("keeps providers in OFFERED order even when one holds TWO accounts", async () => {
+    // The case the fixed-slot claim was written for and never covered. Both Googles sit in Google's slot,
+    // above GitHub; disconnecting one leaves the other in place and GitHub still last. Rows below a removed
+    // row DO shift up — a list got shorter — but no provider may overtake another.
+    const three: LoginMethod[] = [
+      { providerId: "google", accountId: "g-1", linkedAt: 1_700_000_000 },
+      { providerId: "google", accountId: "g-2", linkedAt: 1_700_000_100 },
+      { providerId: "github", accountId: "gh-1", linkedAt: 1_700_100_000 },
+    ];
+    render(<LoginMethodsManager initialMethods={three} hasMagicLink disconnect={disconnect} />);
+    expect(rowLabels()).toEqual(["Google", "Google", "GitHub"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect Google (g-2)" }));
+    await waitFor(() => expect(disconnect).toHaveBeenCalledWith("google", "g-2"));
+    await waitFor(() => expect(rowLabels()).toEqual(["Google", "GitHub"]));
+    // The surviving Google keeps its slot above GitHub, and sheds the now-pointless discriminator.
+    expect(screen.queryByText(/g-1/)).toBeNull();
+  });
+
   it("puts a GitHub-only user's rows in OFFERED order too — link state must not reorder", () => {
     render(
       <LoginMethodsManager initialMethods={[methods[1]!]} hasMagicLink disconnect={disconnect} />,
