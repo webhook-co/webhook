@@ -73,9 +73,41 @@ export interface ApiKeyRevokedContext {
   readonly source: "github_secret_scanning";
 }
 
+/**
+ * The snapshot on a `free_org_cap_warning` intent (PR2b slice 4): written by the cap reconciler when an org
+ * is flagged as the overflow past the free-org cap, starting its grace window. The org is still fully active
+ * at this point — this is the warning, not the suspension.
+ *
+ * Note what is ABSENT: the org's name and slug. Unlike the webhook_app-produced kinds, the producer here is
+ * webhook_capreconciler, whose grant cannot read `orgs.name`/`orgs.slug` — so display identity cannot be
+ * snapshotted and is resolved by the notifier at render time instead (migration 0086).
+ */
+export interface FreeOrgCapWarningContext {
+  /** When the org suspends if the overage isn't resolved first — the deadline the email must state. */
+  readonly graceUntilIso: string;
+  /** How many free orgs a user may own. The email explains the rule, so it must not hardcode the number. */
+  readonly cap: number;
+}
+
+/**
+ * The snapshot on a `free_org_cap_suspended` intent (PR2b slice 4): written when the grace window expired and
+ * the org was actually suspended (reads gated, ingest paused, delivery held). See
+ * {@link FreeOrgCapWarningContext} for why no org name/slug is carried.
+ */
+export interface FreeOrgCapSuspendedContext {
+  /** How long the org can still be restored by resolving the overage — the email's "act by" date. */
+  readonly restoreDeadlineIso: string;
+  /** How many free orgs a user may own. */
+  readonly cap: number;
+}
+
 /** The jsonb `context` on an intent — a union across the notification families, discriminated by `kind`. */
 export type NotificationIntentContext =
-  NotificationContext | UsageThresholdContext | ApiKeyRevokedContext;
+  | NotificationContext
+  | UsageThresholdContext
+  | ApiKeyRevokedContext
+  | FreeOrgCapWarningContext
+  | FreeOrgCapSuspendedContext;
 
 export interface NotificationIntentInput {
   readonly orgId: string;

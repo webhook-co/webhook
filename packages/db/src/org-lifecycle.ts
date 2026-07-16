@@ -7,6 +7,7 @@ import {
 
 import { appendAuditEntry } from "./audit-append";
 import { withTenant, type Sql, type TenantTx } from "./client";
+import type { FreeOrgCapSuspendedContext, FreeOrgCapWarningContext } from "./delivery";
 
 // personalOrgId is imported for isPersonalOrg's use here AND re-exported through this leaf so the web
 // dashboard (which imports leaf subpaths, not the barrel — Turbopack) can resolve the deterministic
@@ -319,24 +320,59 @@ async function setIngestPausedFreeCap(tx: TenantTx, orgId: string, paused: boole
 }
 
 /**
- * Flag an ACTIVE, not-yet-flagged org as over the free-org cap, starting its grace window. Leaves the org
- * active (reads + delivery + ingest all continue) — this only records the deadline the cron will suspend at
- * if the overage isn't resolved first.
+ * Enqueue a free-org-cap notification intent AS THE RECONCILER (PR2b slice 4, migration 0086).
+ *
+ * Not {@link insertNotificationIntent}: that one takes a TenantTx (it runs under webhook_app's per-org RLS
+ * and reads back the new id via RETURNING). The reconciler is tenant-GUC-less and, by design, holds INSERT on
+ * notification_intents but NOT SELECT — so RETURNING would be a permission error, and the id is unused here
+ * anyway. `status` is likewise ungranted: the row can only ever be born 'pending' via the column default,
+ * which is exactly the property that stops this path from minting a pre-'sent' (i.e. silenced) notification.
+ */
+async function enqueueFreeCapIntent(
+  tx: TenantTx,
+  orgId: string,
+  kind: "free_org_cap_warning" | "free_org_cap_suspended",
+  context: FreeOrgCapWarningContext | FreeOrgCapSuspendedContext,
+): Promise<void> {
+  await tx`
+    insert into notification_intents (id, org_id, kind, destination_id, context)
+    values (${crypto.randomUUID()}, ${orgId}, ${kind}, ${null},
+            ${tx.json(context as unknown as Record<string, string | number | null>)})`;
+}
+
+/**
+ * Flag an ACTIVE, not-yet-flagged org as over the free-org cap, starting its grace window, and warn its
+ * owners. Leaves the org active (reads + delivery + ingest all continue) — this only records the deadline the
+ * cron will suspend at if the overage isn't resolved first.
  *
  * IDEMPOTENT ON THE DEADLINE: the `free_org_cap_grace_until is null` guard means re-flagging an
  * already-flagged org is a NO-OP — the FIRST flag's deadline stands. This is load-bearing: the 3b cron's
  * natural query is "flag everything currently over cap", so it re-flags the same org every pass; without this
  * guard each pass would push the deadline forward and suspension would never fire. To reset a deadline, clear
  * it first ({@link clearFreeCapGrace}) then flag. Also a no-op (0 rows) if the org isn't active.
+ *
+ * The warning intent is enqueued IN THE SAME tx as the flag, and ONLY when the flag actually took (the
+ * `returning id` guard) — so the re-flag no-op cannot re-send the warning every hour for the whole grace
+ * window, and a flag can never commit un-announced.
  */
 export async function flagOrgForFreeCapGrace(
   reconciler: Sql,
   orgId: string,
   graceUntil: Date,
-): Promise<void> {
-  await reconciler`
-    update orgs set free_org_cap_grace_until = ${graceUntil}
-     where id = ${orgId} and status = 'active' and free_org_cap_grace_until is null`;
+  cap: number,
+): Promise<boolean> {
+  return reconciler.begin(async (tx) => {
+    const rows = await tx<{ id: string }[]>`
+      update orgs set free_org_cap_grace_until = ${graceUntil}
+       where id = ${orgId} and status = 'active' and free_org_cap_grace_until is null
+      returning id`;
+    if (rows.length === 0) return false; // already flagged, or not active → don't re-warn
+    await enqueueFreeCapIntent(tx, orgId, "free_org_cap_warning", {
+      graceUntilIso: graceUntil.toISOString(),
+      cap,
+    });
+    return true;
+  });
 }
 
 /** Clear an org's grace flag — the user resolved the overage (upgraded/deleted/reassigned) in time. */
@@ -345,13 +381,15 @@ export async function clearFreeCapGrace(reconciler: Sql, orgId: string): Promise
 }
 
 /**
- * Suspend an over-cap org: mark it suspended (gates reads + delivery) AND pause its ingest, atomically. Only
- * acts on a currently-ACTIVE org (so a re-run never re-stamps suspended_at). Returns true iff it suspended.
+ * Suspend an over-cap org: mark it suspended (gates reads + delivery), pause its ingest, AND tell its owners
+ * — atomically. Only acts on a currently-ACTIVE org (so a re-run never re-stamps suspended_at, nor re-sends
+ * the email). Returns true iff it suspended.
  */
 export async function suspendOrgForFreeCap(
   reconciler: Sql,
   orgId: string,
   restoreDeadline: Date,
+  cap: number,
 ): Promise<boolean> {
   return reconciler.begin(async (tx) => {
     const rows = await tx<{ id: string }[]>`
@@ -365,6 +403,10 @@ export async function suspendOrgForFreeCap(
       returning id`;
     if (rows.length === 0) return false; // wasn't active → nothing suspended
     await setIngestPausedFreeCap(tx, orgId, true);
+    await enqueueFreeCapIntent(tx, orgId, "free_org_cap_suspended", {
+      restoreDeadlineIso: restoreDeadline.toISOString(),
+      cap,
+    });
     return true;
   });
 }

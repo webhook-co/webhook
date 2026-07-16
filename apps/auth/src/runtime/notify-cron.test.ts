@@ -21,6 +21,8 @@ function pending(over: Partial<PendingNotification> = {}): PendingNotification {
     ownerEmails: ["owner@example.test"],
     context: CTX,
     createdAt: new Date("2026-07-01T14:32:00Z"),
+    orgName: "Acme Inc",
+    orgSlug: "acme-inc",
     ...over,
   };
 }
@@ -199,6 +201,56 @@ describe("drainNotifications — api_key_revoked (secret-scanning owner alert)",
     const r = await drainNotifications(d);
     expect(r).toMatchObject({ claimed: 1, sent: 2 });
     expect(sends).toEqual(["a@x.test", "b@x.test"]);
+  });
+});
+
+describe("drainNotifications — free-org-cap family", () => {
+  const WARN_CTX = { graceUntilIso: "2026-07-30T00:00:00Z", cap: 2 };
+  const SUSPEND_CTX = { restoreDeadlineIso: "2026-08-29T00:00:00Z", cap: 2 };
+
+  it("routes a free_org_cap_warning intent to the warning renderer and sends it", async () => {
+    const p = pending({ kind: "free_org_cap_warning", destinationId: null, context: WARN_CTX });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(sends).toEqual(["owner@example.test"]);
+  });
+
+  it("routes a free_org_cap_suspended intent to the suspended renderer and sends it", async () => {
+    const p = pending({
+      kind: "free_org_cap_suspended",
+      destinationId: null,
+      context: SUSPEND_CTX,
+    });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(sends).toEqual(["owner@example.test"]);
+  });
+
+  for (const kind of ["free_org_cap_warning", "free_org_cap_suspended"] as const) {
+    it(`claims but does NOT send a ${kind} with no context (the date is the whole email)`, async () => {
+      const p = pending({ kind, destinationId: null, context: null });
+      const { deps: d, sends } = deps([p]);
+      const r = await drainNotifications(d);
+      expect(r).toMatchObject({ claimed: 1, sent: 0, skipped: 1 });
+      expect(sends).toEqual([]); // cleared, never left pending to retry-loop
+    });
+  }
+
+  it("still sends when the org's display identity is unresolvable (renders a neutral name)", async () => {
+    // The org join is LEFT: an unresolvable org must degrade the wording, never drop the notification.
+    const p = pending({
+      kind: "free_org_cap_suspended",
+      destinationId: null,
+      context: SUSPEND_CTX,
+      orgName: null,
+      orgSlug: null,
+    });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(sends).toEqual(["owner@example.test"]);
   });
 });
 

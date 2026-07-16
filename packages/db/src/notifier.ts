@@ -27,6 +27,14 @@ export interface PendingNotification {
   readonly context: NotificationIntentContext | null;
   /** When the intent was queued — i.e. when the destination was disabled (the email's "paused" time). */
   readonly createdAt: Date;
+  /**
+   * The org's display name, for emails that must NAME the org they're about (migration 0086). Null only if
+   * the org row is somehow unreadable — the join is LEFT for the same reason the owner join is (never drop an
+   * intent from the drain over a missing row); renderers degrade to a generic phrase.
+   */
+  readonly orgName: string | null;
+  /** The org's URL slug, for deep-linking the email's CTA at the right org. Null under the same condition. */
+  readonly orgSlug: string | null;
   /** Every owner of the org (an org can have several) — the email is sent to all of them. */
   readonly ownerEmails: string[];
 }
@@ -35,15 +43,17 @@ export interface PendingNotification {
 export const DEFAULT_NOTIFY_LIMIT = 100;
 
 /**
- * The notifier's hot read: pending intents resolved to each org's OWNER email(s), oldest first. Cross-org via
- * the webhook_notifier role's role-targeted SELECT policies (notification_intents + memberships) plus a table
- * grant on the global, RLS-exempt `user` identity table for the address. The email links to the dashboard by
- * destination id, so no destination URL / delivery content is read.
+ * The notifier's hot read: pending intents resolved to each org's OWNER email(s) + the org's display
+ * identity, oldest first. Cross-org via the webhook_notifier role's role-targeted SELECT policies
+ * (notification_intents + memberships + orgs) plus a column grant on the global, RLS-exempt `user` identity
+ * table for the address. The email links to the dashboard by destination id, so no destination URL / delivery
+ * content is read, and the `orgs` grant is display identity only — never org state (migration 0086).
  *
- * The owner join is a LEFT JOIN on purpose: an intent whose org has NO resolvable owner (e.g. the sole
- * owner's account was deleted, cascading the membership away) is still returned — with an EMPTY `ownerEmails`
- * — so the drain can claim + clear it instead of leaving it to accumulate in the pending index forever. The
- * caller sends nothing for an empty recipient list.
+ * BOTH the owner and org joins are LEFT JOINs on purpose: an intent whose org has NO resolvable owner (e.g.
+ * the sole owner's account was deleted, cascading the membership away) is still returned — with an EMPTY
+ * `ownerEmails` — so the drain can claim + clear it instead of leaving it to accumulate in the pending index
+ * forever. The caller sends nothing for an empty recipient list. Same reasoning for the org: a missing name
+ * degrades the email's wording, it never drops the intent.
  */
 export async function listPendingNotifications(
   sql: Sql,
@@ -61,10 +71,13 @@ export async function listPendingNotifications(
       destination_id: string | null;
       context: NotificationIntentContext | null;
       created_at: Date;
+      org_name: string | null;
+      org_slug: string | null;
       email: string | null;
     }[]
   >`
-    select ni.id, ni.org_id, ni.kind, ni.destination_id, ni.context, ni.created_at, u.email
+    select ni.id, ni.org_id, ni.kind, ni.destination_id, ni.context, ni.created_at,
+           o.name as org_name, o.slug as org_slug, u.email
     from (
       select id, org_id, kind, destination_id, context, created_at
       from notification_intents
@@ -72,6 +85,7 @@ export async function listPendingNotifications(
       order by created_at
       limit ${limit}
     ) ni
+    left join orgs o on o.id = ni.org_id
     left join memberships m on m.org_id = ni.org_id and m.role = 'owner'
     left join "user" u on u.id = m.user_id
     order by ni.created_at, ni.id, u.email`;
@@ -88,6 +102,8 @@ export async function listPendingNotifications(
         destinationId: r.destination_id,
         context: r.context,
         createdAt: r.created_at,
+        orgName: r.org_name,
+        orgSlug: r.org_slug,
         ownerEmails: [],
       };
       byIntent.set(r.id, entry);

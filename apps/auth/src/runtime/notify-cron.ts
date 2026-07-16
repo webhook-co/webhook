@@ -26,6 +26,12 @@ import {
   type DestinationDisabledContext,
 } from "./destination-disabled-email";
 import { readNotifyEnv, type NotifyEnv } from "./env";
+import {
+  renderFreeOrgCapSuspendedEmail,
+  renderFreeOrgCapWarningEmail,
+  type FreeOrgCapSuspendedContext,
+  type FreeOrgCapWarningContext,
+} from "./free-org-cap-email";
 import { NOTIFICATIONS_FROM } from "./urls";
 import { renderUsageThresholdEmail, type UsageThresholdContext } from "./usage-threshold-email";
 
@@ -61,6 +67,18 @@ function renderIntent(p: PendingNotification): RenderedEmail | null {
     // REQUIRES its snapshot: without the key's name/start the owner can't tell which key we killed.
     if (!p.context) return null;
     return renderApiKeyRevokedEmail(p.context as ApiKeyRevokedContext);
+  }
+  // The free-org-cap family (PR2b slice 4). Unlike the kinds above, the org's display identity is NOT in the
+  // context — webhook_capreconciler can't read orgs.name/slug, so the notifier's join resolves it (0086) and
+  // it's passed alongside. Both REQUIRE their snapshot: the whole point of each email is the date it carries.
+  const org = { name: p.orgName, slug: p.orgSlug };
+  if (p.kind === "free_org_cap_warning") {
+    if (!p.context) return null;
+    return renderFreeOrgCapWarningEmail(p.context as FreeOrgCapWarningContext, org);
+  }
+  if (p.kind === "free_org_cap_suspended") {
+    if (!p.context) return null;
+    return renderFreeOrgCapSuspendedEmail(p.context as FreeOrgCapSuspendedContext, org);
   }
   return null;
 }

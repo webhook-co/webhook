@@ -1008,6 +1008,28 @@ describe("catalog-driven RLS coverage", () => {
     expect(del.ok).toBe(false);
   });
 
+  it("the cap reconciler can ENQUEUE a notification intent but never read, re-open, or delete one", async () => {
+    // 0086: a suspension the user is never told about is the worst version of this feature, so the reconciler
+    // enqueues its own warning/suspended intents IN THE SAME tx as the flag/suspend write. It gets INSERT and
+    // nothing else — it must not be able to read other orgs' intents (the notifier's job), un-send one, or
+    // clear the backlog.
+    for (const c of ["id", "org_id", "kind", "destination_id", "context"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.capReconciler}, 'notification_intents', ${c}, 'INSERT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    // Deliberately NOT granted `status` — the reconciler cannot mint an already-'sent' intent and thereby
+    // suppress its own notification. The column default ('pending') is the only value it can produce.
+    const [status] = await owner<{ ok: boolean }[]>`
+      select has_column_privilege(${DB_ROLES.capReconciler}, 'notification_intents', 'status', 'INSERT') as ok`;
+    expect(status.ok).toBe(false);
+    for (const cmd of ["SELECT", "UPDATE", "DELETE"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_table_privilege(${DB_ROLES.capReconciler}, 'notification_intents', ${cmd}) as ok`;
+      expect(p.ok).toBe(false);
+    }
+  });
+
   it("the notifier role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {
     // webhook_notifier is the cross-org notification-drain role (migration 0034): it reads pending intents +
     // the org owner's email across all orgs and flips intents to sent, and like every other job-path role
@@ -1063,6 +1085,39 @@ describe("catalog-driven RLS coverage", () => {
              or has_table_privilege(${DB_ROLES.notifier}, ${t}, 'DELETE')) as any`;
       expect(p.any).toBe(false);
     }
+  });
+
+  it("the notifier reads ONLY the org's display identity — never its state, billing, or lifecycle columns", async () => {
+    // 0086 widened the notifier onto `orgs` so an email can NAME the org it is about. The producer of a
+    // free-org-cap intent is webhook_capreconciler, whose own grant deliberately excludes orgs.name/slug —
+    // so the name cannot be snapshotted into `context` the way the webhook_app-produced kinds do, and the
+    // notifier must resolve it at render time. This grant is the narrowest thing that closes that gap:
+    // display identity only, on a role that already reads every owner's email address.
+    for (const c of ["id", "name", "slug"] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.notifier}, 'orgs', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(true);
+    }
+    // Everything else on orgs stays fenced — the notifier renders emails, it does not observe org state.
+    for (const c of [
+      "status",
+      "suspended_reason",
+      "suspended_at",
+      "restore_deadline",
+      "free_org_cap_grace_until",
+      "created_at",
+      "image_key",
+    ] as const) {
+      const [p] = await owner<{ ok: boolean }[]>`
+        select has_column_privilege(${DB_ROLES.notifier}, 'orgs', ${c}, 'SELECT') as ok`;
+      expect(p.ok).toBe(false);
+    }
+    // And it can never write an org.
+    const [w] = await owner<{ any: boolean }[]>`
+      select (has_table_privilege(${DB_ROLES.notifier}, 'orgs', 'INSERT')
+           or has_table_privilege(${DB_ROLES.notifier}, 'orgs', 'UPDATE')
+           or has_table_privilege(${DB_ROLES.notifier}, 'orgs', 'DELETE')) as any`;
+    expect(w.any).toBe(false);
   });
 
   it("the meter role is non-owner, non-superuser, no BYPASSRLS, and owns no tables", async () => {

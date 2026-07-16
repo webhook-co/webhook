@@ -56,6 +56,13 @@ async function pauseState(orgId: string) {
   return r ?? null;
 }
 
+/** Every notification intent queued for the org, oldest first (admin bypasses RLS). */
+async function intentsFor(orgId: string) {
+  return admin<{ kind: string; status: string; context: Record<string, unknown> | null }[]>`
+    select kind, status, context from notification_intents
+     where org_id = ${orgId} order by created_at, kind`;
+}
+
 beforeAll(async () => {
   pg = await startEphemeralPostgres();
   await setupSchema(pg);
@@ -81,11 +88,13 @@ afterAll(async () => {
 });
 
 const soon = new Date("2026-08-01T00:00:00Z");
+/** The free-org cap the reconciler was told to enforce — snapshotted into each notification's context. */
+const CAP = 2;
 
 describe("flag / clear grace", () => {
   it("flags an ACTIVE org with a grace deadline, leaving it active", async () => {
     const org = await seedOrg();
-    await flagOrgForFreeCapGrace(reconciler, org, soon);
+    await flagOrgForFreeCapGrace(reconciler, org, soon, CAP);
     const s = await orgState(org);
     expect(s.status).toBe("active"); // still active during grace
     expect(s.grace?.toISOString()).toBe(soon.toISOString());
@@ -94,33 +103,112 @@ describe("flag / clear grace", () => {
 
   it("clears a grace flag", async () => {
     const org = await seedOrg();
-    await flagOrgForFreeCapGrace(reconciler, org, soon);
+    await flagOrgForFreeCapGrace(reconciler, org, soon, CAP);
     await clearFreeCapGrace(reconciler, org);
     expect((await orgState(org)).grace).toBeNull();
   });
 
   it("is idempotent on the deadline — re-flagging keeps the FIRST deadline (the cron re-flags every pass)", async () => {
     const org = await seedOrg();
-    await flagOrgForFreeCapGrace(reconciler, org, soon);
+    await flagOrgForFreeCapGrace(reconciler, org, soon, CAP);
     const later = new Date("2027-01-01T00:00:00Z");
-    await flagOrgForFreeCapGrace(reconciler, org, later); // second flag must NOT move the deadline
+    await flagOrgForFreeCapGrace(reconciler, org, later, CAP); // second flag must NOT move the deadline
     expect((await orgState(org)).grace?.toISOString()).toBe(soon.toISOString());
   });
 
   it("does NOT flag an already-suspended org (grace is only for the active window)", async () => {
     const org = await seedOrg();
-    await suspendOrgForFreeCap(reconciler, org, soon);
-    await flagOrgForFreeCapGrace(reconciler, org, soon); // no-op: not active
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
+    await flagOrgForFreeCapGrace(reconciler, org, soon, CAP); // no-op: not active
     expect((await orgState(org)).grace).toBeNull();
+  });
+});
+
+describe("free-cap notifications (slice 4) — nothing happens to an org un-announced", () => {
+  it("a flag enqueues a pending WARNING intent carrying the deadline + cap", async () => {
+    const org = await seedOrg();
+    await flagOrgForFreeCapGrace(reconciler, org, soon, CAP);
+    const intents = await intentsFor(org);
+    expect(intents).toHaveLength(1);
+    expect(intents[0]).toMatchObject({ kind: "free_org_cap_warning", status: "pending" });
+    expect(intents[0]!.context).toEqual({ graceUntilIso: soon.toISOString(), cap: CAP });
+  });
+
+  it("a suspend enqueues a pending SUSPENDED intent carrying the restore deadline + cap", async () => {
+    const org = await seedOrg();
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
+    const intents = await intentsFor(org);
+    expect(intents).toHaveLength(1);
+    expect(intents[0]).toMatchObject({ kind: "free_org_cap_suspended", status: "pending" });
+    expect(intents[0]!.context).toEqual({ restoreDeadlineIso: soon.toISOString(), cap: CAP });
+  });
+
+  it("a re-flag does NOT re-warn — the cron re-flags every pass for the whole grace window", async () => {
+    const org = await seedOrg();
+    expect(await flagOrgForFreeCapGrace(reconciler, org, soon, CAP)).toBe(true);
+    expect(await flagOrgForFreeCapGrace(reconciler, org, soon, CAP)).toBe(false);
+    expect(await flagOrgForFreeCapGrace(reconciler, org, soon, CAP)).toBe(false);
+    expect(await intentsFor(org)).toHaveLength(1); // one warning, not three
+  });
+
+  it("a re-suspend does NOT re-notify", async () => {
+    const org = await seedOrg();
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
+    const kinds = (await intentsFor(org)).map((i) => i.kind);
+    expect(kinds).toEqual(["free_org_cap_suspended"]);
+  });
+
+  it("a flag that no-ops (org not active) enqueues NOTHING", async () => {
+    const org = await seedOrg();
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
+    await flagOrgForFreeCapGrace(reconciler, org, soon, CAP); // no-op: not active
+    const kinds = (await intentsFor(org)).map((i) => i.kind);
+    expect(kinds).toEqual(["free_org_cap_suspended"]); // no stray warning
+  });
+
+  it("the full lifecycle warns ONCE then suspends ONCE, in order", async () => {
+    const org = await seedOrg();
+    await flagOrgForFreeCapGrace(reconciler, org, soon, CAP);
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
+    expect((await intentsFor(org)).map((i) => i.kind)).toEqual([
+      "free_org_cap_warning",
+      "free_org_cap_suspended",
+    ]);
+  });
+
+  it("the intent is written in the SAME tx as the suspend — a failed enqueue rolls the suspend back", async () => {
+    // Atomicity is the whole point: a suspend that commits without its notification is the exact failure
+    // this slice exists to prevent. Force the enqueue to fail by removing the table's insert path for the
+    // role, and assert the org is still active afterwards.
+    const org = await seedOrg();
+    await admin`revoke insert on notification_intents from ${admin(DB_ROLES.capReconciler)}`;
+    try {
+      await expect(suspendOrgForFreeCap(reconciler, org, soon, CAP)).rejects.toThrow();
+      expect((await orgState(org)).status).toBe("active"); // rolled back — not silently suspended
+      expect(await pauseState(org)).toBeNull();
+    } finally {
+      await admin`grant insert (id, org_id, kind, destination_id, context)
+                  on notification_intents to ${admin(DB_ROLES.capReconciler)}`;
+    }
+  });
+
+  it("the reconciler cannot mint a pre-'sent' intent (no status grant) — it can't silence itself", async () => {
+    // status is ungranted, so the only value the role can produce is the column default.
+    await expect(
+      reconciler`
+        insert into notification_intents (id, org_id, kind, destination_id, status)
+        values (${randomUUID()}, ${randomUUID()}, 'free_org_cap_suspended', null, 'sent')`,
+    ).rejects.toThrow(/permission denied/i);
   });
 });
 
 describe("suspendOrgForFreeCap", () => {
   it("suspends an active org and pauses its ingest, atomically; returns true", async () => {
     const org = await seedOrg();
-    await flagOrgForFreeCapGrace(reconciler, org, soon);
+    await flagOrgForFreeCapGrace(reconciler, org, soon, CAP);
 
-    expect(await suspendOrgForFreeCap(reconciler, org, soon)).toBe(true);
+    expect(await suspendOrgForFreeCap(reconciler, org, soon, CAP)).toBe(true);
 
     const s = await orgState(org);
     expect(s.status).toBe("suspended");
@@ -132,9 +220,9 @@ describe("suspendOrgForFreeCap", () => {
 
   it("is idempotent — a second call on an already-suspended org returns false, no re-stamp", async () => {
     const org = await seedOrg();
-    await suspendOrgForFreeCap(reconciler, org, soon);
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
     const first = await orgState(org);
-    expect(await suspendOrgForFreeCap(reconciler, org, new Date("2027-01-01T00:00:00Z"))).toBe(
+    expect(await suspendOrgForFreeCap(reconciler, org, new Date("2027-01-01T00:00:00Z"), CAP)).toBe(
       false,
     );
     // restore_deadline unchanged (no re-stamp).
@@ -145,7 +233,7 @@ describe("suspendOrgForFreeCap", () => {
 describe("restoreOrgFromFreeCap", () => {
   it("restores a free_org_cap-suspended org and un-pauses its ingest; returns true", async () => {
     const org = await seedOrg();
-    await suspendOrgForFreeCap(reconciler, org, soon);
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
 
     expect(await restoreOrgFromFreeCap(reconciler, org)).toBe(true);
 
@@ -190,7 +278,7 @@ describe("restoreOrgFromFreeCap", () => {
         values (${org}, true, 'cap', now(), now())`,
     );
 
-    await suspendOrgForFreeCap(reconciler, org, soon);
+    await suspendOrgForFreeCap(reconciler, org, soon, CAP);
     // The suspend overwrote the 'cap' reason (necessary so the cap producer won't resume a suspended org).
     expect(await pauseState(org)).toEqual({ paused: true, reason: "free_org_cap" });
 

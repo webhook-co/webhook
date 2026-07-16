@@ -14,9 +14,9 @@ import {
 // so it real-PG tests directly.
 //
 // The lifecycle of an overflow org, least-harm and never a surprise:
-//   active, unflagged   → FLAG a grace deadline (a later slice emails the owner "restore by <date>").
+//   active, unflagged   → FLAG a grace deadline + email the owners "suspends on <date>" (slice 4).
 //   active, in grace    → wait (nothing happens until the deadline).
-//   active, past grace   → SUSPEND (reads + delivery held, ingest paused) with a restore window.
+//   active, past grace   → SUSPEND (reads + delivery held, ingest paused) + email, with a restore window.
 //   suspended            → leave it (the owner must upgrade/delete/reassign to resolve).
 // And the inverse: an org the reconciler MANAGES whose owner is no longer over the cap (resolved the overage)
 // is RESTORED (if suspended) or un-flagged (if only in grace).
@@ -63,14 +63,17 @@ export async function runFreeOrgCapReconcile(
   let restored = 0;
   let graceCleared = 0;
 
-  // Enforce each overflow org through the grace → suspend lifecycle.
+  // Enforce each overflow org through the grace → suspend lifecycle. Both writes enqueue their own owner
+  // email in-transaction, and both are guarded so a re-run of an already-flagged / already-suspended org
+  // neither re-stamps nor re-sends.
   for (const org of overflow.values()) {
     if (org.status === "suspended") continue; // already suspended for the cap → nothing to do
     if (org.graceUntil === null) {
-      await flagOrgForFreeCapGrace(reconciler, org.orgId, new Date(now + graceMs));
-      flagged++;
+      if (await flagOrgForFreeCapGrace(reconciler, org.orgId, new Date(now + graceMs), cap))
+        flagged++;
     } else if (now >= org.graceUntil.getTime()) {
-      if (await suspendOrgForFreeCap(reconciler, org.orgId, new Date(now + restoreMs))) suspended++;
+      if (await suspendOrgForFreeCap(reconciler, org.orgId, new Date(now + restoreMs), cap))
+        suspended++;
     }
     // else: still within the grace window → leave it active
   }

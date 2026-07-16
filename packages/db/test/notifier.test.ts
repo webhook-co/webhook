@@ -26,18 +26,22 @@ let owner: Sql; // seeds the global identity `user` rows (ungranted to webhook_a
 let notifier: Sql;
 
 /** Seed an org with an OWNER membership (+ the owner's identity email) and return its ids. */
-async function seedOrgWithOwner(email: string): Promise<{ orgId: string; endpointId: string }> {
+async function seedOrgWithOwner(
+  email: string,
+  orgName = "Org",
+): Promise<{ orgId: string; endpointId: string; slug: string; name: string }> {
   const orgId = randomUUID();
   const userId = `user_${randomUUID()}`;
+  const slug = "o-" + randomUUID().slice(0, 8);
   await owner`
     insert into "user" ("id", "name", "email", "emailVerified", "updatedAt")
     values (${userId}, ${"Owner"}, ${email}, ${true}, now())`;
   await withTenant(app, orgId, async (tx) => {
-    await tx`insert into orgs (id, slug, name) values (${orgId}, ${"o-" + randomUUID().slice(0, 8)}, ${"Org"})`;
+    await tx`insert into orgs (id, slug, name) values (${orgId}, ${slug}, ${orgName})`;
     await tx`insert into memberships (org_id, user_id, role) values (${orgId}, ${userId}, ${"owner"})`;
   });
   const endpointId = (await createEndpoint(app, { orgId, name: "ep" }, hasher)).id;
-  return { orgId, endpointId };
+  return { orgId, endpointId, slug, name: orgName };
 }
 
 /** Queue a pending destination-disabled intent for an org. Returns the intent id + destination id. */
@@ -84,6 +88,17 @@ describe("listPendingNotifications", () => {
       ownerEmails: ["owner-a@example.test"],
     });
     expect(rows[0]!.createdAt).toBeInstanceOf(Date);
+  });
+
+  it("resolves the org's display identity so an email can name the org it is about", async () => {
+    // 0086. The free-org-cap kinds are produced by webhook_capreconciler, which cannot read orgs.name/slug —
+    // so unlike the webhook_app-produced kinds they cannot snapshot the name into `context`. The notifier
+    // resolves it at render time instead.
+    const { orgId, slug } = await seedOrgWithOwner("named@example.test", "Acme Inc");
+    await seedIntent(orgId);
+    const rows = await pendingFor(orgId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ orgName: "Acme Inc", orgSlug: slug });
   });
 
   it("returns the engine's context snapshot (jsonb round-trips as an object, not a string)", async () => {
