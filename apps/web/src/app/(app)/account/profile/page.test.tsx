@@ -28,6 +28,19 @@ describe("account/profile page", () => {
     expect(screen.getAllByText("Profile")).toHaveLength(1);
   });
 
+  it("says where to change the email, and links there — the Edit button only edits the NAME", async () => {
+    // Without this, the card shows your email beside an "Edit" that pointedly won't touch it, which reads as
+    // a broken control rather than a deliberate scope. The email change is a verified ceremony (code to the
+    // current address, other sessions revoked) so it can't be an inline field here — but silence about that
+    // just leaves the reader poking at the wrong button.
+    render(await AccountProfilePage());
+    const link = screen.getByRole("link", { name: /login & security/i });
+    expect(link).toHaveAttribute("href", "/account/security");
+    expect(
+      screen.getByText(/we verify the new address before it takes effect/i),
+    ).toBeInTheDocument();
+  });
+
   it("gates on the session — the page must call verifySession (a mocked gate is only tested if we assert it ran)", async () => {
     render(await AccountProfilePage());
     expect(verifySession).toHaveBeenCalled();

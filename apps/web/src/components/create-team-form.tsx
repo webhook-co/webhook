@@ -125,87 +125,91 @@ export function CreateTeamForm({ create, createReturningSlug }: CreateTeamFormPr
           padding. This card has NO header (the page h1 is the title), so restore the top padding — otherwise
           the first field's label is jammed against the card's top edge. twMerge lets pt-6 win over pt-0. */}
       <CardContent className="pt-6">
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <Field
-            label="Organization name"
-            placeholder="e.g. Acme Engineering"
-            value={name}
-            onChange={(e) => onName(e.target.value)}
-            disabled={pending}
-            maxLength={100}
-            autoFocus
-            hint="You can change the name and the URL later."
-          />
-          <Field
-            label="Organization URL"
-            value={slug}
-            onChange={(e) => {
-              setSlugTouched(true);
-              setSlug(e.target.value);
-            }}
-            disabled={pending}
-            spellCheck={false}
-            autoCapitalize="none"
-            // The URL preview lives in the hint (the codebase pattern) — one source with the server's copy.
-            // Chosen → the exact URL you'll get; untouched → the derived stem + a note that we keep it unique.
-            hint={
-              slugError
-                ? undefined
-                : slugChosen
-                  ? `Your organization will live at webhook.co/org/${trimmedSlug}`
-                  : `Your URL will be webhook.co/org/${previewBase || "…"}${previewBase ? "-…" : ""} — edit to choose your own.`
-            }
-            error={slugError ?? undefined}
-          />
-
-          {/* Optional logo — cropped now, uploaded after the org is created (it has no id to key R2 until then). */}
-          <div className="flex items-center gap-4">
-            {logoPreview ? (
-              // A local data: URL preview (the cropped webp), not a remote src — a plain <img> is right here.
-              <img
-                src={logoPreview}
-                alt=""
-                width={48}
-                height={48}
-                className="size-12 rounded-[6px] border border-hairline object-cover"
-              />
-            ) : (
-              <div
-                aria-hidden="true"
-                className="grid size-12 place-items-center rounded-[6px] border border-dashed border-hairline text-lg font-medium text-fg-faint"
-              >
-                {trimmed ? trimmed[0]!.toUpperCase() : "?"}
-              </div>
-            )}
-            <div className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-fg">
-                Logo <span className="font-normal text-fg-faint">(optional)</span>
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setCropperOpen(true)}
-                  disabled={pending}
+        <form onSubmit={onSubmit} className="flex flex-col gap-6">
+          {/* Logo left (narrow), identity right (wide) — the same shape as org settings, because it is the
+              same thing: an organization IS its logo + name + URL, not a form with an attachment stapled
+              underneath. Stacks on a narrow viewport so the fields never get squeezed beside the tile. */}
+          <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
+            <div className="flex shrink-0 flex-col items-start gap-3">
+              {logoPreview ? (
+                // A local data: URL preview (the cropped webp), not a remote src — a plain <img> is right here.
+                <img
+                  src={logoPreview}
+                  alt=""
+                  width={72}
+                  height={72}
+                  className="size-[4.5rem] rounded-[6px] border border-hairline object-cover"
+                />
+              ) : (
+                <div
+                  aria-hidden="true"
+                  className="grid size-[4.5rem] place-items-center rounded-[6px] border border-dashed border-hairline text-2xl font-medium text-fg-faint"
                 >
-                  {logo ? "Change" : "Add logo"}
-                </Button>
-                {logo ? (
+                  {trimmed ? trimmed[0]!.toUpperCase() : "?"}
+                </div>
+              )}
+              <div className="flex flex-col items-start gap-1">
+                <span className="text-xs text-fg-faint">Logo (optional)</span>
+                <div className="flex gap-2">
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="secondary"
                     size="sm"
-                    onClick={() => {
-                      setLogo(null);
-                      setLogoPreview(null);
-                    }}
+                    onClick={() => setCropperOpen(true)}
                     disabled={pending}
                   >
-                    Remove
+                    {logo ? "Change" : "Add logo"}
                   </Button>
-                ) : null}
+                  {logo ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setLogo(null);
+                        setLogoPreview(null);
+                      }}
+                      disabled={pending}
+                    >
+                      Remove
+                    </Button>
+                  ) : null}
+                </div>
               </div>
+            </div>
+
+            <div className="flex min-w-0 flex-1 flex-col gap-4">
+              <Field
+                label="Organization name"
+                placeholder="e.g. Acme Engineering"
+                value={name}
+                onChange={(e) => onName(e.target.value)}
+                disabled={pending}
+                maxLength={100}
+                autoFocus
+                hint="You can change the name and the URL later."
+              />
+              <Field
+                label="Organization URL"
+                value={slug}
+                onChange={(e) => {
+                  setSlugTouched(true);
+                  setSlug(e.target.value);
+                }}
+                disabled={pending}
+                spellCheck={false}
+                autoCapitalize="none"
+                // The URL preview lives in the hint (the codebase pattern) — one source with the server's copy.
+                // Chosen → the exact URL you'll get; untouched → the derived stem + a note that we keep it unique.
+                hint={
+                  slugError
+                    ? undefined
+                    : slugChosen
+                      ? `Your organization will live at webhook.co/org/${trimmedSlug}`
+                      : `Your URL will be webhook.co/org/${previewBase || "…"}${previewBase ? "-…" : ""} — edit to choose your own.`
+                }
+                error={slugError ?? undefined}
+              />
             </div>
           </div>
 

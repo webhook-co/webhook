@@ -36,6 +36,18 @@ export async function serveAvatar(input: {
   email: string;
   /** Rendered size hint for the upstream fetch (2x is requested for retina). */
   size?: number;
+  /**
+   * `max-age` (seconds) for an UPLOADED (R2) avatar. Defaults to 60 for `/api/avatar`, whose SSR URL carries
+   * no `?v=` — that short window is what makes your own re-upload appear without a hard refresh.
+   *
+   * A co-member's avatar has no such requirement and pays dearly for the default: the URL is input-less per
+   * identity, so a 60s TTL means essentially every Team-page load refetches EVERY member — and each refetch
+   * re-runs requireOrgAccess AND a full listOrgMembers before it even reaches R2. Ten members, ten member-list
+   * queries, on every refresh. That is the visible delay. Callers serving OTHER people's faces should pass a
+   * real TTL; the cost is that their newly-uploaded avatar takes up to that long to appear on your page,
+   * which for someone else's face is a fine trade and already what the provider-proxy path below assumes.
+   */
+  maxAge?: number;
 }): Promise<Response> {
   const bucket = await getAvatarBucket();
   if (bucket) {
@@ -47,8 +59,9 @@ export async function serveAvatar(input: {
           headers: {
             "Content-Type": "image/webp",
             "X-Content-Type-Options": "nosniff",
-            // Short TTL so a freshly re-uploaded avatar shows within a minute — the URL is input-less per identity.
-            "Cache-Control": "private, max-age=60",
+            // See `maxAge`: 60s by default so YOUR own re-upload shows without a hard refresh (the SSR
+            // `/api/avatar` URL carries no `?v=`); callers serving someone else's face pass a real TTL.
+            "Cache-Control": `private, max-age=${input.maxAge ?? 60}`,
             Vary: "Cookie",
           },
         });

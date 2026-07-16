@@ -35,5 +35,12 @@ export async function GET(
     r2Key: avatarR2Key(userId),
     image: target.image,
     email: target.email,
+    // An HOUR, not serveAvatar's 60s default. That default exists so YOUR OWN re-upload appears without a
+    // hard refresh; nothing here is yours. At 60s the Team page refetched every member on essentially every
+    // load, and each refetch pays requireOrgAccess AND a full listOrgMembers before it reaches R2 — an N+1 of
+    // member-list queries, once per face, per refresh. That was the multi-second avatar delay. The cost is
+    // that a co-member's newly-uploaded avatar can take up to an hour to appear for you, which is exactly the
+    // trade the provider-proxy path in serveAvatar already makes at the same TTL.
+    maxAge: 3600,
   });
 }

@@ -54,7 +54,18 @@ describe("GET /api/org/[slug]/member-avatar/[userId]", () => {
       r2Key: "user/u_target/avatar.webp",
       image: "https://avatars.githubusercontent.com/u/1",
       email: "t@e.test",
+      maxAge: 3600,
     });
+  });
+
+  it("asks for a REAL cache TTL — serveAvatar's 60s default made the Team page an N+1 per refresh", async () => {
+    // serveAvatar defaults to 60s so YOUR OWN re-upload appears without a hard refresh. Nothing here is
+    // yours, and at 60s every Team-page load refetched every member — each refetch paying requireOrgAccess
+    // AND a full listOrgMembers before it even reached R2. That was the multi-second avatar delay. This is a
+    // header, so nothing else would fail if it silently regressed to the default.
+    listOrgMembers.mockResolvedValue([member("u_target")]);
+    await GET(req(), ctx("acme", "u_target"));
+    expect(serveAvatar).toHaveBeenCalledWith(expect.objectContaining({ maxAge: 3600 }));
   });
 
   it("404s (never serves) when the target is NOT a co-member — can't fetch a stranger's face", async () => {

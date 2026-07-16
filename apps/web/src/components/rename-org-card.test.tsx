@@ -2,7 +2,12 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("next/navigation", () => ({ useParams: () => ({ slug: "acme" }) }));
+// The card now renders the logo control (the logo folded INTO this section), which calls useRouter to
+// refresh after an upload — so the navigation mock has to carry it too.
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
+  useRouter: () => ({ refresh: vi.fn() }),
+}));
 
 import { RenameOrgCard } from "./rename-org-card";
 
@@ -11,6 +16,7 @@ const props = (over: Partial<Parameters<typeof RenameOrgCard>[0]> = {}) => ({
   name: "Acme",
   rename: vi.fn(async () => ({ ok: false as const, error: "" })),
   canRename: true,
+  hasLogo: false,
   ...over,
 });
 
@@ -77,5 +83,39 @@ describe("RenameOrgCard", () => {
     await user.clear(url);
     await user.type(url, "ACME-New");
     expect(url).toHaveValue("acme-new");
+  });
+});
+
+describe("RenameOrgCard — the logo lives IN this section", () => {
+  it("renders the logo control alongside the fields, not as a separate section", async () => {
+    render(<RenameOrgCard {...props()} />);
+    // One "Organization" section that owns all three: logo, name, URL.
+    expect(screen.getByRole("button", { name: /upload logo/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Name")).toBeInTheDocument();
+    expect(screen.getByLabelText("URL")).toBeInTheDocument();
+  });
+
+  it("offers Remove only when a logo exists", async () => {
+    const { rerender } = render(<RenameOrgCard {...props({ hasLogo: true })} />);
+    expect(screen.getByRole("button", { name: /change logo/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^remove$/i })).toBeInTheDocument();
+
+    rerender(<RenameOrgCard {...props({ hasLogo: false })} />);
+    expect(screen.getByRole("button", { name: /upload logo/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^remove$/i })).toBeNull();
+  });
+
+  it("the logo buttons must NOT submit the rename form", async () => {
+    // They sit in the adjacent column as siblings of the <form>, but a Button with no explicit type defaults
+    // to submit INSIDE one — so if this ever gets nested, clicking "Upload logo" would silently fire a
+    // rename. Pin the type rather than rely on the tree shape staying as it is.
+    render(<RenameOrgCard {...props()} />);
+    expect(screen.getByRole("button", { name: /upload logo/i })).toHaveAttribute("type", "button");
+  });
+
+  it("hides the logo controls for a member — read-only, same gate as renaming", async () => {
+    render(<RenameOrgCard {...props({ canRename: false, hasLogo: true })} />);
+    expect(screen.queryByRole("button", { name: /change logo/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^remove$/i })).toBeNull();
   });
 });

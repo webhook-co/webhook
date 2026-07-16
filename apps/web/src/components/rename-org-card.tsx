@@ -13,6 +13,8 @@ import {
 import { orgSlugErrorMessage, validateOrgSlug } from "@webhook-co/shared";
 import { useState, useTransition } from "react";
 
+import { OrgLogoControl } from "./org-logo-control";
+
 import type { RenameOrgResult } from "@/server/org-actions";
 
 /**
@@ -33,10 +35,17 @@ export interface RenameOrgCardProps {
   readonly rename: (formData: FormData) => Promise<RenameOrgResult>;
   /** Whether the caller may rename at all (owner/admin). A member sees the card read-only. */
   readonly canRename: boolean;
+  /** Whether the org currently has an uploaded logo — drives the logo column's Remove control. */
+  readonly hasLogo: boolean;
 }
 
 /**
- * Rename the org — its display name and its URL slug.
+ * The org's identity: its logo, its display name, and its URL slug — one section, because they are one thing.
+ *
+ * The logo used to be a whole separate card stacked underneath, which read as a second thing to configure
+ * rather than part of what the organization IS. It now sits in a narrow column beside the fields it belongs
+ * with. It is a SIBLING of the <form>, not inside it: the logo uploads immediately (it is not part of "Save
+ * changes"), and its buttons would otherwise default to `type="submit"` and fire the rename.
  *
  * The slug is validated LIVE with the same `validateOrgSlug` the server and the DB use, so the user knows
  * before submitting; the server re-validates and the DB is the final authority (a slug taken by another org,
@@ -46,7 +55,7 @@ export interface RenameOrgCardProps {
  * A plain member sees the current values but cannot edit: renaming changes the org's public address and
  * retires the old one forever, so it is owner/admin only, enforced server-side in `renameOrg`.
  */
-export function RenameOrgCard({ slug, name, rename, canRename }: RenameOrgCardProps) {
+export function RenameOrgCard({ slug, name, rename, canRename, hasLogo }: RenameOrgCardProps) {
   const [nameValue, setNameValue] = useState(name);
   const [slugValue, setSlugValue] = useState(slug);
   const [serverError, setServerError] = useState<string | null>(null);
@@ -78,38 +87,45 @@ export function RenameOrgCard({ slug, name, rename, canRename }: RenameOrgCardPr
         <CardTitle>Organization</CardTitle>
         <CardDescription>
           {canRename
-            ? "Change your team's name and its URL. Renaming the URL keeps the old one working — links to it keep resolving."
-            : "Your team's name and URL. Only an owner or admin can change these."}
+            ? "Your organization's logo, name, and URL. Renaming the URL keeps the old one working — links to it keep resolving."
+            : "Your organization's logo, name, and URL. Only an owner or admin can change these."}
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <Field
-            label="Name"
-            value={nameValue}
-            onChange={(e) => setNameValue(e.target.value)}
-            disabled={!canRename || pending}
-            maxLength={100}
-          />
-          <Field
-            label="URL"
-            value={slugValue}
-            onChange={(e) => setSlugValue(e.target.value.toLowerCase())}
-            disabled={!canRename || pending}
-            hint={slugHintText ?? `webhook.co/org/${slug}`}
-            error={slugError}
-            spellCheck={false}
-            autoCapitalize="none"
-          />
-          {serverError ? <Banner tone="danger">{serverError}</Banner> : null}
-          {canRename ? (
-            <div className="flex justify-end">
-              <Button type="submit" loading={pending} disabled={!canSubmit}>
-                Save changes
-              </Button>
-            </div>
-          ) : null}
-        </form>
+        {/* Narrow logo column, wide fields column — stacked on a narrow viewport so the fields never get
+            squeezed to a sliver beside a 72px tile. */}
+        <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
+          <div className="shrink-0">
+            <OrgLogoControl slug={slug} name={name} hasLogo={hasLogo} canManage={canRename} />
+          </div>
+          <form onSubmit={onSubmit} className="flex min-w-0 flex-1 flex-col gap-4">
+            <Field
+              label="Name"
+              value={nameValue}
+              onChange={(e) => setNameValue(e.target.value)}
+              disabled={!canRename || pending}
+              maxLength={100}
+            />
+            <Field
+              label="URL"
+              value={slugValue}
+              onChange={(e) => setSlugValue(e.target.value.toLowerCase())}
+              disabled={!canRename || pending}
+              hint={slugHintText ?? `webhook.co/org/${slug}`}
+              error={slugError}
+              spellCheck={false}
+              autoCapitalize="none"
+            />
+            {serverError ? <Banner tone="danger">{serverError}</Banner> : null}
+            {canRename ? (
+              <div className="flex justify-end">
+                <Button type="submit" loading={pending} disabled={!canSubmit}>
+                  Save changes
+                </Button>
+              </div>
+            ) : null}
+          </form>
+        </div>
       </CardContent>
     </Card>
   );
