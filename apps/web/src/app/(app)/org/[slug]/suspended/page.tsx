@@ -9,32 +9,68 @@ export const metadata: Metadata = {
   title: "Organization suspended · webhook.co",
 };
 
-// The read-only suspension screen. Every DATA/READ page for a suspended org diverts here (via
+// The suspension screen. Every DATA/READ page for a suspended org diverts here (via
 // `requireActiveOrgAccess`); Settings and Billing stay reachable so the user can act. This page itself gates
 // on plain `requireOrgAccess` — so it renders for a suspended org and the divert can't loop — and it is
-// purely informational (no writes), which is what "read-only while suspended" means.
+// purely informational (no writes).
 //
 // If the org ISN'T suspended, there's nothing to show: send the user to the dashboard. That keeps the URL
 // meaningful (someone who bookmarked /suspended, or whose org was just restored, lands somewhere real).
+//
+// COPY, two things this page previously got wrong — it must stay in step with the cap emails
+// (apps/auth/src/runtime/free-org-cap-email.ts), whose CTA lands the reader right here:
+//
+//  1. NOT "read-only", and NOT "unreachable" either. `requireActiveOrgAccess` REDIRECTS every data page here,
+//     so the data isn't browsable-but-frozen — but its SCOPE is apps/web page reads ONLY. The REST API, the
+//     CLI and MCP never consult `orgs.status` and serve the org's events normally. So "its data isn't
+//     reachable" is as false as "read-only" was, in the opposite direction: it would send an owner to support
+//     over a recovery path that works. Say what is true — THIS dashboard shows this notice instead.
+//  2. NOT "nothing has been deleted / events are preserved". The ORG is never deleted, but retention.ts
+//     prunes EVENTS purely on `received_at` with no `orgs.status` predicate (webhook_retention's grant on orgs
+//     is (id, retention_days) — it cannot even see suspension), so on the free plan's window a suspended org's
+//     history ages away while the owner sits on this reassurance. Config is kept; events are not.
+//
+// There is also no restore deadline to state: restoration is available indefinitely. (0083 carried an
+// `orgs.restore_deadline` column for a hard-delete slice that was never built; nothing read it, it produced
+// two rounds of false copy, and 0087 dropped it.)
 
-/** Reason-specific copy. Unknown reasons fall back to a generic message so a new reason never dead-ends. */
-function suspensionCopy(reason: string | null): { heading: string; body: string; cta: string } {
+/**
+ * Reason-specific copy. Unknown reasons fall back to a generic message so a new reason never dead-ends.
+ *
+ * `detail` is part of the SWITCH, not rendered unconditionally below it: its facts (restoration never
+ * expires; events aging out on the free plan's retention) are true only for THIS reason. Retention is
+ * plan-specific, and a future suspension reason may well carry a real deadline — a paid org suspended for
+ * non-payment is the obvious one. Each reason states its own facts.
+ */
+function suspensionCopy(reason: string | null): {
+  heading: string;
+  body: string;
+  detail: (orgName: string) => string;
+  cta: string;
+} {
   switch (reason) {
     case "free_org_cap":
       return {
         heading: "This organization is suspended",
         body:
-          "It's over your free-organization limit, so it's been paused — inbound capture and outbound " +
-          "delivery are held, and its data is read-only. Nothing has been deleted. Upgrade this organization " +
-          "to a paid plan to restore it, or free up a slot by upgrading or removing another free organization.",
+          "It's over the free plan's per-user organization limit, so it's been paused — inbound capture and " +
+          "outbound delivery are held, and this dashboard shows this notice in place of its data. Upgrade " +
+          "this organization to a paid plan to restore it, or free up a slot by upgrading or removing " +
+          "another free organization owned by the same person.",
+        detail: (orgName) =>
+          `${orgName}'s endpoints, destinations, settings, and team are all kept, and restoring puts them ` +
+          `back. Events are the one thing that doesn't wait: they keep aging out on the free plan's usual ` +
+          `retention while it's suspended, so the sooner you restore it, the more history you keep.`,
         cta: "Upgrade to restore",
       };
     default:
       return {
         heading: "This organization is suspended",
         body:
-          "It's been paused — inbound capture and outbound delivery are held, and its data is read-only. " +
-          "Nothing has been deleted. Visit billing to restore it.",
+          "It's been paused — inbound capture and outbound delivery are held, and this dashboard shows this " +
+          "notice in place of its data. Visit billing to restore it.",
+        detail: (orgName) =>
+          `${orgName}'s endpoints, destinations, settings, and team are all kept, and restoring puts them back.`,
         cta: "Go to billing",
       };
   }
@@ -53,7 +89,7 @@ export default async function SuspendedPage({ params }: { params: Promise<{ slug
     redirect(`/org/${access.slug}/dashboard`);
   }
 
-  const { heading, body, cta } = suspensionCopy(access.suspendedReason);
+  const { heading, body, detail, cta } = suspensionCopy(access.suspendedReason);
 
   return (
     <PageContainer size="narrow" gap="gap-6">
@@ -63,10 +99,7 @@ export default async function SuspendedPage({ params }: { params: Promise<{ slug
       </div>
       <Card>
         <CardContent className="flex flex-col items-start gap-4 pt-6">
-          <p className="text-sm text-fg-secondary">
-            {access.name} stays exactly as you left it while suspended. Restore it whenever
-            you&apos;re ready — its endpoints, events, and settings are preserved.
-          </p>
+          <p className="text-sm text-fg-secondary">{detail(access.name)}</p>
           <div className="flex gap-2">
             <Button asChild>
               <Link href={`/org/${access.slug}/billing`}>{cta}</Link>

@@ -8,9 +8,22 @@
 // CLAIM-THEN-SEND (single-flight): each intent is claimed (markNotificationSent) BEFORE the email is sent, so
 // under two overlapping cron passes exactly one claims + sends → at-most-once. A send failure after a claim is
 // logged (`notify.send_failed`) and NOT retried — the destination is already disabled + visible in the
-// dashboard, so a missed courtesy email is preferable to the double-send an un-claim/retry would risk. worker.ts
-// (tsc-excluded for its generated-handler import) calls runNotificationDrain from a thin scheduled(), mirroring
-// runAuthExpirySweep — so the real logic stays here, type-checked + tested. Errors are logged, never thrown.
+// dashboard, so a missed courtesy email is preferable to the double-send an un-claim/retry would risk.
+//
+// ⚠️ That last justification does NOT hold for the free_org_cap family. Those are not courtesy notes about a
+// state the dashboard already shows: the WARNING is the only notice a user gets before their org is suspended
+// 14 days later, and no in-dashboard surface announces a pending suspension during grace. One Resend 5xx
+// loses it permanently and the suspension arrives unannounced — the exact outcome that family exists to
+// prevent. The two families have opposite loss tolerances while sharing one pipeline.
+//
+// This pipeline is therefore NOT a guarantee of notice, and the cap family does not treat it as one: slice 4b
+// answers it OUTSIDE this file, by sending a second independent notice (free_org_cap_reminder) partway
+// through the grace window, so no single send failure can swallow the warning. If you make the cap family
+// depend on a single send again, that redundancy is what you are removing.
+//
+// worker.ts (tsc-excluded for its generated-handler import) calls runNotificationDrain from a thin
+// scheduled(), mirroring runAuthExpirySweep — so the real logic stays here, type-checked + tested. Errors are
+// logged, never thrown.
 
 import {
   createClient,
@@ -26,6 +39,12 @@ import {
   type DestinationDisabledContext,
 } from "./destination-disabled-email";
 import { readNotifyEnv, type NotifyEnv } from "./env";
+import {
+  renderFreeOrgCapSuspendedEmail,
+  renderFreeOrgCapWarningEmail,
+  type FreeOrgCapSuspendedContext,
+  type FreeOrgCapWarningContext,
+} from "./free-org-cap-email";
 import { NOTIFICATIONS_FROM } from "./urls";
 import { renderUsageThresholdEmail, type UsageThresholdContext } from "./usage-threshold-email";
 
@@ -42,9 +61,13 @@ export interface RenderedEmail {
 /**
  * Render the email for a pending intent by its `kind`, or null if it isn't sendable (an unknown kind, or a
  * context-requiring kind with no snapshot). `p.context` is the discriminated jsonb union; each case casts to
- * its family's shape (structurally identical to the db type). destination_disabled degrades gracefully on a
- * null context; usage_threshold and api_key_revoked REQUIRE their snapshot (no usable email without the
- * numbers / without knowing which key died).
+ * its family's shape (structurally identical to the db type).
+ *
+ * Whether a null context blocks the send is a per-family CALL, because returning null here is not a retry —
+ * the drain has already claimed the intent, so null means "never sent, ever":
+ *   - destination_disabled / free_org_cap_*  → DEGRADE. The notice matters more than its detail.
+ *   - usage_threshold / api_key_revoked      → REQUIRE. No usable email without the numbers, or without
+ *                                              knowing which key died.
  */
 function renderIntent(p: PendingNotification): RenderedEmail | null {
   if (p.kind === "destination_disabled") {
@@ -61,6 +84,29 @@ function renderIntent(p: PendingNotification): RenderedEmail | null {
     // REQUIRES its snapshot: without the key's name/start the owner can't tell which key we killed.
     if (!p.context) return null;
     return renderApiKeyRevokedEmail(p.context as ApiKeyRevokedContext);
+  }
+  // The free-org-cap family (PR2b slice 4). Unlike the kinds above, the org's display identity is NOT in the
+  // context — webhook_capreconciler can't read orgs.name/slug, so the notifier's join resolves it (0086) and
+  // it's passed alongside. NEITHER requires its snapshot: both renderers degrade a null context to weaker
+  // wording ("suspended soon", "a limited number of free organizations"). That is deliberate and opposite to
+  // usage_threshold/api_key_revoked above — the drain claims BEFORE rendering, so a renderer that returns null
+  // loses the notification permanently with no retry, and this family's entire reason to exist is that a
+  // suspension is never a surprise. A vaguer email beats silence; destination_disabled degrades the same way.
+  const org = { name: p.orgName, slug: p.orgSlug };
+  if (p.kind === "free_org_cap_warning" || p.kind === "free_org_cap_reminder") {
+    // Same renderer, same context shape, same deadline: the reminder is a deliberate second COPY of the
+    // notice (slice 4b), not a different message — see WarningVariant.
+    return renderFreeOrgCapWarningEmail(
+      (p.context as FreeOrgCapWarningContext | null) ?? null,
+      org,
+      p.kind === "free_org_cap_reminder" ? "reminder" : "initial",
+    );
+  }
+  if (p.kind === "free_org_cap_suspended") {
+    return renderFreeOrgCapSuspendedEmail(
+      (p.context as FreeOrgCapSuspendedContext | null) ?? null,
+      org,
+    );
   }
   return null;
 }

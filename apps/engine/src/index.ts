@@ -26,6 +26,7 @@ import {
   reconcileStripeTransport,
   type MeterSummaryReader,
   runCapProducer,
+  isTotalFreeOrgCapFailure,
   runFreeOrgCapReconcile,
   runMeterReporter,
   enqueueAutoDeliveries,
@@ -1614,8 +1615,19 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
 
 /** Grace between first flagging an over-cap Free org and suspending it — the owner's window to resolve. */
 const FREE_ORG_CAP_GRACE_MS = 14 * 24 * 60 * 60 * 1000;
-/** Restore window written onto a suspended org (informational for the UI; no hard-delete lives here). */
-const FREE_ORG_CAP_RESTORE_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * How long before the grace deadline the SECOND notice (the T-7 reminder) goes out. Must be < the grace
+ * window. It exists for redundancy, not nagging: the notify drain is at-most-once (an intent is claimed
+ * pending→sent before the Resend call), so a single 5xx would otherwise lose the only warning and the org
+ * would be suspended in silence — the one outcome this whole family exists to prevent.
+ */
+const FREE_ORG_CAP_REMINDER_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * The reminder's floor: never send one with less than this long to act. A second notice landing an hour
+ * before the suspension email implies time that isn't there — worse than sending nothing and letting the
+ * suspension notice speak for itself. Reachable when the cron gaps across the reminder window.
+ */
+const FREE_ORG_CAP_MIN_REMINDER_LEAD_MS = 24 * 60 * 60 * 1000;
 
 /**
  * Free-org-cap reconcile (PR2b slice 3b). Across ALL users, enforce the "at most N owned FREE orgs" rule the
@@ -1633,9 +1645,21 @@ async function runFreeOrgCapCron(env: Env): Promise<void> {
       now: Date.now(),
       cap: MAX_FREE_ORGS_PER_USER,
       graceMs: FREE_ORG_CAP_GRACE_MS,
-      restoreMs: FREE_ORG_CAP_RESTORE_MS,
+      reminderMs: FREE_ORG_CAP_REMINDER_MS,
+      minReminderLeadMs: FREE_ORG_CAP_MIN_REMINDER_LEAD_MS,
+      log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
     console.log(JSON.stringify({ message: "free-org-cap reconcile", ...result }));
+    // Escalate a TOTAL outage (every org the pass touched threw) by throwing — the scheduled() catch then
+    // emits the "free-org-cap cron failed" error line that alerting keys on. Without this, a deterministic
+    // failure (a regressed grant, a rolled-back 0086) leaves the cap 100% unenforced every hour behind an INFO
+    // line shaped exactly like a healthy pass. A PARTIAL failure does not throw — the healthy orgs' work is
+    // valid and each failure was logged individually. Same shape as the retention prune above.
+    if (isTotalFreeOrgCapFailure(result)) {
+      throw new Error(
+        `free-org-cap reconcile: a phase wholly failed — ${JSON.stringify(result.phases)}`,
+      );
+    }
   } finally {
     await sql.end();
   }

@@ -21,6 +21,8 @@ function pending(over: Partial<PendingNotification> = {}): PendingNotification {
     ownerEmails: ["owner@example.test"],
     context: CTX,
     createdAt: new Date("2026-07-01T14:32:00Z"),
+    orgName: "Acme Inc",
+    orgSlug: "acme-inc",
     ...over,
   };
 }
@@ -199,6 +201,92 @@ describe("drainNotifications — api_key_revoked (secret-scanning owner alert)",
     const r = await drainNotifications(d);
     expect(r).toMatchObject({ claimed: 1, sent: 2 });
     expect(sends).toEqual(["a@x.test", "b@x.test"]);
+  });
+});
+
+describe("drainNotifications — free-org-cap family", () => {
+  const WARN_CTX = { graceUntilIso: "2026-07-30T00:00:00Z", cap: 2 };
+  const SUSPEND_CTX = { cap: 2 };
+
+  it("routes a free_org_cap_warning intent to the warning renderer and sends it", async () => {
+    const p = pending({ kind: "free_org_cap_warning", destinationId: null, context: WARN_CTX });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(sends).toEqual(["owner@example.test"]);
+  });
+
+  it("routes a free_org_cap_reminder through the WARNING renderer, reframed as a reminder", async () => {
+    // The reminder is a deliberate second copy of the same notice (slice 4b) — same context, same deadline,
+    // different opening line. Proven by the subject, which is the only kind-dispatch signal available here.
+    const subjects: string[] = [];
+    const list = [
+      pending({ kind: "free_org_cap_reminder", destinationId: null, context: WARN_CTX }),
+    ];
+    const r = await drainNotifications({
+      listPending: async () => list,
+      claim: async () => true,
+      send: async (_to, email) => void subjects.push(email.subject),
+    });
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(subjects).toEqual(["Still scheduled: Acme Inc will be suspended on Jul 30, 2026 (UTC)"]);
+  });
+
+  it("routes a free_org_cap_warning to the SAME renderer with the initial framing", async () => {
+    const subjects: string[] = [];
+    const list = [
+      pending({ kind: "free_org_cap_warning", destinationId: null, context: WARN_CTX }),
+    ];
+    await drainNotifications({
+      listPending: async () => list,
+      claim: async () => true,
+      send: async (_to, email) => void subjects.push(email.subject),
+    });
+    expect(subjects).toEqual(["Heads up: Acme Inc will be suspended on Jul 30, 2026 (UTC)"]);
+  });
+
+  it("routes a free_org_cap_suspended intent to the suspended renderer and sends it", async () => {
+    const p = pending({
+      kind: "free_org_cap_suspended",
+      destinationId: null,
+      context: SUSPEND_CTX,
+    });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(sends).toEqual(["owner@example.test"]);
+  });
+
+  for (const kind of [
+    "free_org_cap_warning",
+    "free_org_cap_reminder",
+    "free_org_cap_suspended",
+  ] as const) {
+    it(`STILL sends a ${kind} with no context — degraded beats silent`, async () => {
+      // Opposite of usage_threshold/api_key_revoked above, deliberately. The drain claims before rendering,
+      // so returning null here loses the notice forever with no retry — and this family exists precisely so a
+      // suspension is never a surprise. The renderers degrade the wording instead.
+      const p = pending({ kind, destinationId: null, context: null });
+      const { deps: d, sends } = deps([p]);
+      const r = await drainNotifications(d);
+      expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+      expect(sends).toEqual(["owner@example.test"]);
+    });
+  }
+
+  it("still sends when the org's display identity is unresolvable (renders a neutral name)", async () => {
+    // The org join is LEFT: an unresolvable org must degrade the wording, never drop the notification.
+    const p = pending({
+      kind: "free_org_cap_suspended",
+      destinationId: null,
+      context: SUSPEND_CTX,
+      orgName: null,
+      orgSlug: null,
+    });
+    const { deps: d, sends } = deps([p]);
+    const r = await drainNotifications(d);
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(sends).toEqual(["owner@example.test"]);
   });
 });
 
