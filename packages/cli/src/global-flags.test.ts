@@ -10,11 +10,11 @@ import {
   OrgSelectorWithEnvKeyError,
 } from "./errors.js";
 import {
-  announceActiveOrg,
   hasEnvApiKey,
   isEnvCredential,
   resolveActiveProfile,
   resolveColorFlag,
+  resolveEffectiveOrg,
   resolveGlobals,
   resolveOrgSlugToProfile,
   resolveProfile,
@@ -287,26 +287,91 @@ describe("resolveRequestProfile — WBHK_API_KEY short-circuits the org selector
   });
 });
 
-describe("announceActiveOrg", () => {
-  it("writes a sanitized `targeting org:` banner to stderr and NOTHING to stdout", () => {
-    const err: string[] = [];
-    const out: string[] = [];
-    const ctx = {
-      process: {
-        stderr: { write: (s: string) => void err.push(s) },
-        stdout: { write: (s: string) => void out.push(s) },
+// resolveEffectiveOrg decides which org a command treats as its target for LOCAL display + deep-linking
+// (the dashboard event URL's slug). It was previously covered only INDIRECTLY, through the `targeting org`
+// banner's tests — so removing that banner would have dropped these invariants' coverage while they stay
+// load-bearing for the deep-link. Pinned directly here instead.
+describe("resolveEffectiveOrg", () => {
+  const ACME: Org = { id: "org_1", slug: "acme", name: "Acme, Inc." };
+  const OTHER: Org = { id: "org_2", slug: "other", name: "Other Co" };
+
+  /** A store whose getOrg records that it was consulted — the env case must never reach it. */
+  function makeCtx(opts: {
+    env?: Record<string, string | undefined>;
+    storeOrg?: Org;
+    source?: string;
+    reads?: string[];
+  }) {
+    return {
+      process: { env: opts.env ?? {} },
+      store: {
+        getWithSource: async () => (opts.source !== undefined ? { source: opts.source } : null),
+        getOrg: async (profile: string) => {
+          opts.reads?.push(profile);
+          return opts.storeOrg;
+        },
       },
     };
-    announceActiveOrg(ctx, { id: "org_1", slug: "acme", name: "Acme, Inc." });
-    expect(err.join("")).toBe("targeting org: acme (Acme, Inc.)\n");
-    expect(out.join("")).toBe("");
+  }
+
+  // THE guard. An env key's real org is server-determined, so the local store's org (left by some unrelated
+  // login) does not describe it — trusting it built a WRONG-ORG dashboard deep-link.
+  it("WBHK_API_KEY → envCredential, no org, and NEVER reads the local store", async () => {
+    const reads: string[] = [];
+    const ctx = makeCtx({ env: { WBHK_API_KEY: "whk_live_x" }, storeOrg: ACME, reads });
+    await expect(resolveEffectiveOrg(ctx, "default")).resolves.toEqual({ envCredential: true });
+    expect(reads).toEqual([]); // the store's org must not even be consulted
   });
 
-  it("sanitizes control bytes in the slug/name (no terminal-escape injection)", () => {
-    const err: string[] = [];
-    const ctx = { process: { stderr: { write: (s: string) => void err.push(s) } } };
-    announceActiveOrg(ctx, { id: "org_1", slug: "acme", name: "Evil" });
-    expect(err.join("")).not.toContain("");
-    expect(err.join("")).not.toContain("");
+  it("an env-SOURCED credential (getWithSource → 'env') gets the same guard", async () => {
+    const reads: string[] = [];
+    const ctx = makeCtx({ source: "env", storeOrg: ACME, reads });
+    await expect(resolveEffectiveOrg(ctx, "default")).resolves.toEqual({ envCredential: true });
+    expect(reads).toEqual([]);
+  });
+
+  it("an env key ignores even an explicit selector org (its org is server-side)", async () => {
+    const ctx = makeCtx({ env: { WBHK_API_KEY: "whk_live_x" }, storeOrg: ACME });
+    await expect(resolveEffectiveOrg(ctx, "default", OTHER)).resolves.toEqual({
+      envCredential: true,
+    });
+  });
+
+  it("a selector org wins over the profile's stored org", async () => {
+    const ctx = makeCtx({ storeOrg: ACME });
+    await expect(resolveEffectiveOrg(ctx, "default", OTHER)).resolves.toEqual({
+      org: OTHER,
+      envCredential: false,
+    });
+  });
+
+  it("falls back to the profile's stored org when there's no selector", async () => {
+    const ctx = makeCtx({ storeOrg: ACME });
+    await expect(resolveEffectiveOrg(ctx, "default")).resolves.toEqual({
+      org: ACME,
+      envCredential: false,
+    });
+  });
+
+  it("a fresh install (no stored org) yields no org rather than throwing", async () => {
+    const ctx = makeCtx({});
+    await expect(resolveEffectiveOrg(ctx, "default")).resolves.toEqual({
+      org: undefined,
+      envCredential: false,
+    });
+  });
+
+  // A CORRUPT config must stay fail-loud: masking it as `no org` would send the user to `whoami` instead of
+  // telling them to fix the real, actionable fault.
+  it("propagates a corrupt-config throw instead of masking it as `no org`", async () => {
+    const ctx = {
+      process: { env: {} },
+      store: {
+        getOrg: async () => {
+          throw new Error("config is corrupt");
+        },
+      },
+    };
+    await expect(resolveEffectiveOrg(ctx, "default")).rejects.toThrow(/corrupt/);
   });
 });
