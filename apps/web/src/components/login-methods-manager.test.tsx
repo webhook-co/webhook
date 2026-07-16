@@ -84,10 +84,11 @@ describe("LoginMethodsManager", () => {
   });
 
   it("says how to connect an unlinked provider, per row, naming that provider", () => {
-    // Not a "Connect" button: linking needs Better Auth's linkSocial on the AUTH origin, and there is no such
-    // route (and /login bounces a signed-in user to /session/handoff, so it can't be borrowed). Until that
-    // exists, signing in with the provider IS the link — the pinned verified-email auto-link does it. A
-    // button that only said "Connect" and then explained you have to sign out would be worse than saying so.
+    // Not a "Connect" button — and NOT because linking is unavailable. /api/auth/link-social is mounted and
+    // live; an earlier version of this comment said otherwise and was wrong. What's missing is a page on the
+    // auth origin that calls it, which the dashboard can't stand in for (host-only auth cookie → a
+    // cross-origin fetch would need CORS apps/auth doesn't configure). Signing in with the provider IS the
+    // link, deliberately: implicit linking is SAME-EMAIL only and that's the intended policy.
     render(<LoginMethodsManager initialMethods={[]} hasMagicLink disconnect={disconnect} />);
     // "sign out and" is load-bearing, not filler: /login bounces an already-signed-in user to
     // /session/handoff, so "sign in with GitHub" attempted from THIS page silently returns you to the

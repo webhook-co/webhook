@@ -240,7 +240,24 @@ describe("buildAuthConfig", () => {
       requireLocalEmailVerified: true, // never implicitly link into an UNVERIFIED local account (anti-pre-hijack)
       allowDifferentEmails: true, // a user who changed their email can still re-link their provider
       allowUnlinkingAll: false, // never strand the last sign-in method
+      updateUserInfoOnLink: false, // a linked provider must never overwrite the user's own name/avatar
     });
+  });
+
+  it("pins updateUserInfoOnLink OFF explicitly — the default is not load-bearing", () => {
+    // The block above already fails if someone ADDS `updateUserInfoOnLink: true` (toEqual is exact). What it
+    // cannot see is better-auth CHANGING THE DEFAULT: `applyUpdateUserInfoOnLink` gates on
+    // `accountLinking?.updateUserInfoOnLink !== true`, so an upstream flip to default-true would clobber
+    // profiles while our config object — and therefore that assertion — stayed byte-identical and green.
+    //
+    // What it would clobber is not hypothetical: it does
+    // `updateUser(userId, { name, image, ...additionalUserFields })` with the PROVIDER's values, and this
+    // surface ships an editable display name and an avatar upload. Connect Google, lose the name you typed.
+    // (An uploaded avatar survives — resolveAvatarSource prefers the R2 image_key over the provider `image`
+    // — but the name does not.) Pinning it false costs nothing and makes the block's "PINNED (not riding
+    // Better Auth defaults)" claim true of every key, which it was not.
+    const linking = buildAuthConfig(input(), cfgDeps()).account?.accountLinking;
+    expect(linking?.updateUserInfoOnLink).toBe(false);
   });
 
   it("sets the secret + base URL and trusts the app origin", () => {

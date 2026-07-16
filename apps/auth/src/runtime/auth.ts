@@ -232,6 +232,17 @@ export function buildAuthConfig(input: AuthConfigInput, deps: AuthConfigDeps): A
         allowDifferentEmails: true,
         // Never let the last sign-in method be unlinked — that would strand the user out of their account.
         allowUnlinkingAll: false,
+        // A linked provider must NEVER overwrite the profile the user set here. When true,
+        // `applyUpdateUserInfoOnLink` runs on every successful link and does
+        // `updateUser(userId, { name, image, ... })` with the PROVIDER's values — so connecting Google would
+        // silently replace the display name the user typed on /account/profile. (Their uploaded avatar
+        // survives: resolveAvatarSource prefers the R2 image_key over the provider `image`. The name doesn't.)
+        //
+        // `false` is also Better Auth's current default, so this line changes no behaviour today. It is here
+        // because the default is not load-bearing: the regression test's `toEqual` pins THIS OBJECT, so an
+        // upstream flip to default-true would clobber profiles with every assertion still green. Pinning it
+        // is what makes this block's "PINNED (not riding Better Auth defaults)" claim true of every key.
+        updateUserInfoOnLink: false,
       },
     },
   };
