@@ -216,6 +216,35 @@ describe("drainNotifications — free-org-cap family", () => {
     expect(sends).toEqual(["owner@example.test"]);
   });
 
+  it("routes a free_org_cap_reminder through the WARNING renderer, reframed as a reminder", async () => {
+    // The reminder is a deliberate second copy of the same notice (slice 4b) — same context, same deadline,
+    // different opening line. Proven by the subject, which is the only kind-dispatch signal available here.
+    const subjects: string[] = [];
+    const list = [
+      pending({ kind: "free_org_cap_reminder", destinationId: null, context: WARN_CTX }),
+    ];
+    const r = await drainNotifications({
+      listPending: async () => list,
+      claim: async () => true,
+      send: async (_to, email) => void subjects.push(email.subject),
+    });
+    expect(r).toMatchObject({ claimed: 1, sent: 1, skipped: 0, failed: 0 });
+    expect(subjects).toEqual(["Reminder: Acme Inc will be suspended on Jul 30, 2026 (UTC)"]);
+  });
+
+  it("routes a free_org_cap_warning to the SAME renderer with the initial framing", async () => {
+    const subjects: string[] = [];
+    const list = [
+      pending({ kind: "free_org_cap_warning", destinationId: null, context: WARN_CTX }),
+    ];
+    await drainNotifications({
+      listPending: async () => list,
+      claim: async () => true,
+      send: async (_to, email) => void subjects.push(email.subject),
+    });
+    expect(subjects).toEqual(["Heads up: Acme Inc will be suspended on Jul 30, 2026 (UTC)"]);
+  });
+
   it("routes a free_org_cap_suspended intent to the suspended renderer and sends it", async () => {
     const p = pending({
       kind: "free_org_cap_suspended",
@@ -228,7 +257,11 @@ describe("drainNotifications — free-org-cap family", () => {
     expect(sends).toEqual(["owner@example.test"]);
   });
 
-  for (const kind of ["free_org_cap_warning", "free_org_cap_suspended"] as const) {
+  for (const kind of [
+    "free_org_cap_warning",
+    "free_org_cap_reminder",
+    "free_org_cap_suspended",
+  ] as const) {
     it(`STILL sends a ${kind} with no context — degraded beats silent`, async () => {
       // Opposite of usage_threshold/api_key_revoked above, deliberately. The drain claims before rendering,
       // so returning null here loses the notice forever with no retry — and this family exists precisely so a

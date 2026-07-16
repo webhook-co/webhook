@@ -35,6 +35,16 @@ export interface EmailOrg {
   readonly slug: string | null;
 }
 
+/**
+ * Which of the two pre-suspension notices this is (slice 4b). Both say the same thing about the same deadline
+ * — that is the POINT, not duplication: the notify drain is at-most-once (an intent is claimed pending→sent
+ * BEFORE the Resend call), so a single 5xx on the `initial` send would otherwise lose the only warning and the
+ * org would be suspended in silence. The `reminder` is a second, independently-sent copy so no single send
+ * failure can swallow the notice. It only reframes the opening line — everything else is deliberately
+ * identical, because a reader who missed the first one needs the whole message, not a diff.
+ */
+export type WarningVariant = "initial" | "reminder";
+
 export interface RenderedEmail {
   readonly subject: string;
   readonly html: string;
@@ -221,6 +231,7 @@ ${paras}
 export function renderFreeOrgCapWarningEmail(
   ctx: FreeOrgCapWarningContext | null,
   org: EmailOrg,
+  variant: WarningVariant = "initial",
 ): RenderedEmail {
   const label = orgLabel(org);
   // A null/unreadable context DEGRADES ("soon", "a limited number") rather than blocking the send. The drain
@@ -231,12 +242,20 @@ export function renderFreeOrgCapWarningEmail(
   const cap = ctx === null ? null : capOf(ctx.cap);
   const when = day === null ? "soon" : `on ${day}`;
 
+  const reminder = variant === "reminder";
+
   return render({
-    subject: stripControlChars(`Heads up: ${label} will be suspended ${when}`),
+    subject: stripControlChars(
+      reminder
+        ? `Reminder: ${label} will be suspended ${when}`
+        : `Heads up: ${label} will be suspended ${when}`,
+    ),
     heading: `${sentenceStart(label)} will be suspended ${when}`,
     preview: `It's over the free plan's limit of ${capPhrase(cap)}. Nothing has changed yet — here's how to keep it.`,
     paragraphs: [
-      `The free plan covers ${capPhrase(cap)}, and ${label} is over that limit — so it's scheduled to be suspended ${when}.`,
+      reminder
+        ? `A follow-up on the notice we sent earlier: the free plan covers ${capPhrase(cap)}, ${label} is still over that limit, and it's still scheduled to be suspended ${when}.`
+        : `The free plan covers ${capPhrase(cap)}, and ${label} is over that limit — so it's scheduled to be suspended ${when}.`,
       `Nothing has changed yet. Until then it keeps capturing, delivering, and everything else, exactly as it does today.`,
       // Only ONE instruction, and it's the one every recipient can actually act on. The cap is counted
       // per-owner, so "delete a different org to free up a slot" pointed at every owner invites a co-owner who

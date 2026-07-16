@@ -1616,11 +1616,12 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
 /** Grace between first flagging an over-cap Free org and suspending it — the owner's window to resolve. */
 const FREE_ORG_CAP_GRACE_MS = 14 * 24 * 60 * 60 * 1000;
 /**
- * Window stamped onto a suspended org's `restore_deadline`. Write-only today — nothing reads that column, so
- * this bounds nothing and restoration never expires. 0083 reserved it for a later hard-delete slice; until
- * that ships, no surface may present it as a deadline.
+ * How long before the grace deadline the SECOND notice (the T-7 reminder) goes out. Must be < the grace
+ * window. It exists for redundancy, not nagging: the notify drain is at-most-once (an intent is claimed
+ * pending→sent before the Resend call), so a single 5xx would otherwise lose the only warning and the org
+ * would be suspended in silence — the one outcome this whole family exists to prevent.
  */
-const FREE_ORG_CAP_RESTORE_MS = 30 * 24 * 60 * 60 * 1000;
+const FREE_ORG_CAP_REMINDER_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Free-org-cap reconcile (PR2b slice 3b). Across ALL users, enforce the "at most N owned FREE orgs" rule the
@@ -1638,7 +1639,7 @@ async function runFreeOrgCapCron(env: Env): Promise<void> {
       now: Date.now(),
       cap: MAX_FREE_ORGS_PER_USER,
       graceMs: FREE_ORG_CAP_GRACE_MS,
-      restoreMs: FREE_ORG_CAP_RESTORE_MS,
+      reminderMs: FREE_ORG_CAP_REMINDER_MS,
       log: (message, fields) => console.log(JSON.stringify({ message, ...fields })),
     });
     console.log(JSON.stringify({ message: "free-org-cap reconcile", ...result }));

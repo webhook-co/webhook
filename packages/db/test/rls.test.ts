@@ -968,8 +968,8 @@ describe("catalog-driven RLS coverage", () => {
       "status",
       "suspended_reason",
       "suspended_at",
-      "restore_deadline",
       "free_org_cap_grace_until",
+      "free_org_cap_reminded_at",
     ] as const;
     for (const c of orgsUpdatable) {
       const [p] = await owner<{ ok: boolean }[]>`
@@ -1103,8 +1103,8 @@ describe("catalog-driven RLS coverage", () => {
       "status",
       "suspended_reason",
       "suspended_at",
-      "restore_deadline",
       "free_org_cap_grace_until",
+      "free_org_cap_reminded_at",
       "created_at",
       "image_key",
     ] as const) {

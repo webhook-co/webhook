@@ -55,6 +55,32 @@ describe("renderFreeOrgCapWarningEmail", () => {
     const e = renderFreeOrgCapWarningEmail(WARN, ORG);
     expect(e.text).toMatch(/Already sorted it out\? Then ignore this/i);
   });
+
+  describe('the "reminder" variant (slice 4b)', () => {
+    it("reframes the opening and subject, and nothing else", () => {
+      const initial = renderFreeOrgCapWarningEmail(WARN, ORG, "initial");
+      const reminder = renderFreeOrgCapWarningEmail(WARN, ORG, "reminder");
+
+      expect(reminder.subject).toBe("Reminder: Acme Inc will be suspended on Jul 30, 2026 (UTC)");
+      expect(reminder.text).toContain("A follow-up on the notice we sent earlier");
+      // Same deadline, same remedy, same CTA — a reader who MISSED the first needs the whole message, not a
+      // diff. That's the entire point: it's a redundant copy, not an escalation.
+      expect(reminder.html).toContain("Jul 30, 2026 (UTC)");
+      expect(reminder.html).toContain("Upgrade this organization");
+      expect(reminder.html).toContain("https://app.webhook.co/org/acme-inc/billing");
+      expect(reminder.text).toContain("each one gets its own notice");
+      expect(reminder.text).toContain("Nothing has changed yet");
+      // And it must not imply the deadline moved or that this is a new problem.
+      expect(reminder.subject).not.toContain("Heads up");
+      expect(initial.text).not.toContain("A follow-up on the notice we sent earlier");
+    });
+
+    it("still degrades to a dateless notice when the context is unusable", () => {
+      const e = renderFreeOrgCapWarningEmail(null, ORG, "reminder");
+      expect(e.subject).toBe("Reminder: Acme Inc will be suspended soon");
+      expect(e.html).not.toContain("Invalid Date");
+    });
+  });
 });
 
 describe("renderFreeOrgCapSuspendedEmail", () => {

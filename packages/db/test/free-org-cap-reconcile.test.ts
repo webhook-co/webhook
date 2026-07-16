@@ -22,7 +22,8 @@ let reconciler: Sql;
 
 const CAP = 2;
 const GRACE_MS = 14 * 24 * 3600_000;
-const RESTORE_MS = 30 * 24 * 3600_000;
+const REMINDER_MS = 7 * 24 * 3600_000;
+const DAY = 24 * 3600_000;
 const T0 = Date.parse("2026-07-01T00:00:00Z");
 
 async function seedUser(): Promise<string> {
@@ -61,7 +62,7 @@ const reconcile = (now: number) =>
     now,
     cap: CAP,
     graceMs: GRACE_MS,
-    restoreMs: RESTORE_MS,
+    reminderMs: REMINDER_MS,
     log: (message, fields) => logged.push({ message, fields }),
   });
 
@@ -120,6 +121,36 @@ describe("runFreeOrgCapReconcile", () => {
     const s = await orgState(c);
     expect(s.status).toBe("suspended");
     expect(s.reason).toBe("free_org_cap");
+  });
+
+  it("sends the T-7 reminder once inside the reminder window, then suspends at the deadline", async () => {
+    const uid = await seedUser();
+    await seedOrgAt(uid, "2026-01-01T00:00:00Z");
+    await seedOrgAt(uid, "2026-02-01T00:00:00Z");
+    const c = await seedOrgAt(uid, "2026-03-01T00:00:00Z");
+
+    expect(await reconcile(T0)).toMatchObject({ flagged: 1, reminded: 0 });
+    // Early in grace: nothing owed.
+    expect(await reconcile(T0 + DAY)).toMatchObject({ flagged: 0, reminded: 0, suspended: 0 });
+    // Inside the reminder window: exactly one reminder…
+    expect(await reconcile(T0 + GRACE_MS - REMINDER_MS)).toMatchObject({ reminded: 1 });
+    // …and the cron re-asking every hour after that must not re-send it.
+    expect(await reconcile(T0 + GRACE_MS - REMINDER_MS + DAY)).toMatchObject({ reminded: 0 });
+    expect((await orgState(c)).status).toBe("active"); // a reminder never suspends
+
+    expect(await reconcile(T0 + GRACE_MS + 1000)).toMatchObject({ suspended: 1 });
+  });
+
+  it("suspends rather than reminds an org whose deadline passed while the reminder never went out", async () => {
+    // The cron can be delayed, or the reminder can throw for a whole window. Nudging someone about a deadline
+    // that is already behind them ("you have until <past date>") is worse than useless.
+    const uid = await seedUser();
+    await seedOrgAt(uid, "2026-01-01T00:00:00Z");
+    await seedOrgAt(uid, "2026-02-01T00:00:00Z");
+    await seedOrgAt(uid, "2026-03-01T00:00:00Z");
+    await reconcile(T0); // flags, never reminds
+    const late = await reconcile(T0 + GRACE_MS + DAY); // first pass after a long gap
+    expect(late).toMatchObject({ reminded: 0, suspended: 1 });
   });
 
   it("restores a suspended org once the owner is no longer over the cap (resolved the overage)", async () => {

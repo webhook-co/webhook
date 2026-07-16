@@ -88,10 +88,13 @@ function renderIntent(p: PendingNotification): RenderedEmail | null {
   // loses the notification permanently with no retry, and this family's entire reason to exist is that a
   // suspension is never a surprise. A vaguer email beats silence; destination_disabled degrades the same way.
   const org = { name: p.orgName, slug: p.orgSlug };
-  if (p.kind === "free_org_cap_warning") {
+  if (p.kind === "free_org_cap_warning" || p.kind === "free_org_cap_reminder") {
+    // Same renderer, same context shape, same deadline: the reminder is a deliberate second COPY of the
+    // notice (slice 4b), not a different message — see WarningVariant.
     return renderFreeOrgCapWarningEmail(
       (p.context as FreeOrgCapWarningContext | null) ?? null,
       org,
+      p.kind === "free_org_cap_reminder" ? "reminder" : "initial",
     );
   }
   if (p.kind === "free_org_cap_suspended") {

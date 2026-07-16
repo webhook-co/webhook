@@ -185,6 +185,8 @@ export interface OverCapFreeOrg {
   readonly suspendedReason: string | null;
   /** Its grace deadline, if flagged — the reconciler suspends once `now >= graceUntil`. Null = not flagged. */
   readonly graceUntil: Date | null;
+  /** When the T-7 reminder was sent for the CURRENT grace window. Null = still owed (or not flagged). */
+  readonly remindedAt: Date | null;
 }
 
 /** A user who owns MORE than the cap allows, with ALL their owned free orgs (oldest-first). */
@@ -218,6 +220,7 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
       status: OrgStatus;
       suspended_reason: string | null;
       grace_until: Date | null;
+      reminded_at: Date | null;
     }[]
   >`
     with owned_free as (
@@ -226,7 +229,8 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
              o.created_at as org_created_at,
              o.status,
              o.suspended_reason,
-             o.free_org_cap_grace_until as grace_until
+             o.free_org_cap_grace_until as grace_until,
+             o.free_org_cap_reminded_at as reminded_at
         from memberships m
         join orgs o on o.id = m.org_id
        where m.role = 'owner'
@@ -236,7 +240,7 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
               and b.status = any(string_to_array(${BILLING_ACTIVE_STATUSES.join(",")}, ','))
          )
     )
-    select user_id, org_id, org_created_at, status, suspended_reason, grace_until
+    select user_id, org_id, org_created_at, status, suspended_reason, grace_until, reminded_at
       from owned_free
      where user_id in (
        select user_id from owned_free group by user_id having count(*) > ${cap}
@@ -254,6 +258,7 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
       status: r.status,
       suspendedReason: r.suspended_reason,
       graceUntil: r.grace_until,
+      remindedAt: r.reminded_at,
     });
     byUser.set(r.user_id, list);
   }
@@ -266,6 +271,7 @@ export interface FreeCapManagedOrg {
   readonly orgId: string;
   readonly status: OrgStatus;
   readonly graceUntil: Date | null;
+  readonly remindedAt: Date | null;
 }
 
 /**
@@ -275,12 +281,25 @@ export interface FreeCapManagedOrg {
  * it must be restored (if suspended) or un-flagged (if in grace).
  */
 export async function listFreeCapManagedOrgs(reconciler: Sql): Promise<FreeCapManagedOrg[]> {
-  const rows = await reconciler<{ org_id: string; status: OrgStatus; grace_until: Date | null }[]>`
-    select id as org_id, status, free_org_cap_grace_until as grace_until
+  const rows = await reconciler<
+    {
+      org_id: string;
+      status: OrgStatus;
+      grace_until: Date | null;
+      reminded_at: Date | null;
+    }[]
+  >`
+    select id as org_id, status, free_org_cap_grace_until as grace_until,
+           free_org_cap_reminded_at as reminded_at
       from orgs
      where (status = 'suspended' and suspended_reason = 'free_org_cap')
         or free_org_cap_grace_until is not null`;
-  return rows.map((r) => ({ orgId: r.org_id, status: r.status, graceUntil: r.grace_until }));
+  return rows.map((r) => ({
+    orgId: r.org_id,
+    status: r.status,
+    graceUntil: r.grace_until,
+    remindedAt: r.reminded_at,
+  }));
 }
 
 // ── The free-org-cap reconciler's WRITE side (migration 0085) ────────────────────────────────────────────
@@ -331,7 +350,7 @@ async function setIngestPausedFreeCap(tx: TenantTx, orgId: string, paused: boole
 async function enqueueFreeCapIntent(
   tx: TenantTx,
   orgId: string,
-  kind: "free_org_cap_warning" | "free_org_cap_suspended",
+  kind: "free_org_cap_warning" | "free_org_cap_reminder" | "free_org_cap_suspended",
   context: FreeOrgCapWarningContext | FreeOrgCapSuspendedContext,
 ): Promise<void> {
   await tx`
@@ -375,9 +394,56 @@ export async function flagOrgForFreeCapGrace(
   });
 }
 
-/** Clear an org's grace flag — the user resolved the overage (upgraded/deleted/reassigned) in time. */
+/**
+ * Clear an org's grace flag — the user resolved the overage (upgraded/deleted/reassigned) in time.
+ *
+ * Clears `free_org_cap_reminded_at` alongside it: reminded-ness is a property OF a grace window, not of the
+ * org. Leaving it set would mean an org that goes over cap again months later gets its warning but never its
+ * T-7 reminder — silently losing half the notice redundancy, in the case (a repeat offender) where it matters
+ * most. The two fields are set and cleared together, always.
+ */
 export async function clearFreeCapGrace(reconciler: Sql, orgId: string): Promise<void> {
-  await reconciler`update orgs set free_org_cap_grace_until = null where id = ${orgId}`;
+  await reconciler`
+    update orgs set free_org_cap_grace_until = null, free_org_cap_reminded_at = null
+     where id = ${orgId}`;
+}
+
+/**
+ * The T-7 reminder (slice 4b): a SECOND notice partway through the grace window, for an org still flagged and
+ * still not reminded. Stamps `free_org_cap_reminded_at` and enqueues the reminder intent atomically.
+ *
+ * Why this exists at all: the warning rides an at-most-once drain (claimed pending→sent BEFORE the Resend
+ * call), so a single 5xx loses it forever and the org is suspended in silence. Two independently-sent notices
+ * mean no single send failure can swallow the notice entirely. It is redundancy, not nagging.
+ *
+ * FIRES EXACTLY ONCE per grace window: the `free_org_cap_reminded_at is null` guard makes the cron's natural
+ * "remind everything in the reminder window" query idempotent — same shape, and same reason, as the flag's
+ * `free_org_cap_grace_until is null` guard. Also a no-op if the org isn't active or isn't flagged (a
+ * suspension or a resolved overage both overtake the reminder).
+ */
+export async function remindOrgForFreeCap(
+  reconciler: Sql,
+  orgId: string,
+  cap: number,
+): Promise<boolean> {
+  return reconciler.begin(async (tx) => {
+    const rows = await tx<{ grace: Date }[]>`
+      update orgs set free_org_cap_reminded_at = now()
+       where id = ${orgId}
+         and status = 'active'
+         and free_org_cap_grace_until is not null
+         and free_org_cap_reminded_at is null
+      returning free_org_cap_grace_until as grace`;
+    const grace = rows[0]?.grace;
+    if (grace === undefined) return false; // not active / not flagged / already reminded → don't re-send
+    // The deadline comes from the ROW, not the caller: the reminder must state the deadline the suspend will
+    // actually act on, and the flag that set it may have been many passes ago.
+    await enqueueFreeCapIntent(tx, orgId, "free_org_cap_reminder", {
+      graceUntilIso: grace.toISOString(),
+      cap,
+    });
+    return true;
+  });
 }
 
 /**
@@ -388,23 +454,22 @@ export async function clearFreeCapGrace(reconciler: Sql, orgId: string): Promise
 export async function suspendOrgForFreeCap(
   reconciler: Sql,
   orgId: string,
-  restoreDeadline: Date,
   cap: number,
 ): Promise<boolean> {
   return reconciler.begin(async (tx) => {
+    // No restore deadline is stamped: 0087 dropped that column. A cap-suspended org can be restored at any
+    // time — nothing expires it — and the emails say so by saying nothing.
     const rows = await tx<{ id: string }[]>`
       update orgs
          set status = 'suspended',
              suspended_reason = 'free_org_cap',
              suspended_at = now(),
-             restore_deadline = ${restoreDeadline},
-             free_org_cap_grace_until = null
+             free_org_cap_grace_until = null,
+             free_org_cap_reminded_at = null
        where id = ${orgId} and status = 'active'
       returning id`;
     if (rows.length === 0) return false; // wasn't active → nothing suspended
     await setIngestPausedFreeCap(tx, orgId, true);
-    // No restoreDeadline in the context: nothing reads orgs.restore_deadline, so the email must not present
-    // it as an expiry. See FreeOrgCapSuspendedContext.
     await enqueueFreeCapIntent(tx, orgId, "free_org_cap_suspended", { cap });
     return true;
   });
@@ -427,8 +492,8 @@ export async function restoreOrgFromFreeCap(reconciler: Sql, orgId: string): Pro
          set status = 'active',
              suspended_reason = null,
              suspended_at = null,
-             restore_deadline = null,
-             free_org_cap_grace_until = null
+             free_org_cap_grace_until = null,
+             free_org_cap_reminded_at = null
        where id = ${orgId} and status = 'suspended' and suspended_reason = 'free_org_cap'
       returning id`;
     if (rows.length === 0) return false; // wasn't free_org_cap-suspended → nothing restored

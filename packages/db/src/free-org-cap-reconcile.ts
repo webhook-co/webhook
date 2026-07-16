@@ -4,6 +4,7 @@ import {
   findOwnersOverFreeCap,
   flagOrgForFreeCapGrace,
   listFreeCapManagedOrgs,
+  remindOrgForFreeCap,
   restoreOrgFromFreeCap,
   suspendOrgForFreeCap,
   type OverCapFreeOrg,
@@ -15,11 +16,13 @@ import {
 //
 // The lifecycle of an overflow org, least-harm and never a surprise:
 //   active, unflagged   → FLAG a grace deadline + email the owners "suspends on <date>" (slice 4).
-//   active, in grace    → wait (nothing happens until the deadline).
+//   active, in grace    → wait; then at T-`reminderMs` REMIND once (slice 4b) — a second, independently-sent
+//                         notice, because the drain is at-most-once and one lost warning = a silent suspend.
 //   active, past grace   → SUSPEND (reads + delivery held, ingest paused) + email the owners.
 //   suspended            → leave it (the owner must upgrade/delete/reassign to resolve).
-// Suspension is NOT an expiry: `restore_deadline` is stamped but read by nothing, so a suspended org can be
-// restored at any time, forever — which is what the emails and the /suspended screen say.
+// Suspension is NOT an expiry: a suspended org can be restored at any time, forever. 0083 carried a
+// `restore_deadline` column for a hard-delete slice that was never built; nothing ever read it, and it
+// produced two rounds of false copy before 0087 dropped it. Do not reintroduce a deadline without its reader.
 // And the inverse: an org the reconciler MANAGES whose owner is no longer over the cap (resolved the overage)
 // is RESTORED (if suspended) or un-flagged (if only in grace).
 //
@@ -38,13 +41,11 @@ export interface FreeOrgCapReconcileOptions {
   /** Grace window (ms) between first flagging an overflow org and suspending it. */
   readonly graceMs: number;
   /**
-   * Window (ms) stamped onto a suspended org's `restore_deadline`. WRITE-ONLY as of today: nothing reads that
-   * column — `restoreOrgFromFreeCap` gates on status + reason alone, no prune consults it, and neither user
-   * surface cites it — so it bounds nothing and no deadline is enforced. 0083 reserved it for "a later slice
-   * hard-deletes past it"; until that slice exists, do not describe it as informational-for-the-UI (it isn't
-   * surfaced) and do not let copy present it as an expiry.
+   * How long BEFORE the grace deadline to send the reminder — the "T-7" in a 14-day window. Not a second
+   * deadline: it only picks when the second notice goes out. Must be < graceMs, or the reminder fires on the
+   * same pass as the flag and buys no redundancy.
    */
-  readonly restoreMs: number;
+  readonly reminderMs: number;
   /**
    * Structured sink for per-org failures. REQUIRED, not optional: without it a swallowed error takes the org
    * id and the reason with it, and `errors: N` alone gives an operator nothing to act on. Mirrors the
@@ -55,6 +56,8 @@ export interface FreeOrgCapReconcileOptions {
 
 export interface FreeOrgCapReconcileResult {
   readonly flagged: number;
+  /** T-7 reminders sent this pass (slice 4b) — the second, independent notice before a suspension. */
+  readonly reminded: number;
   readonly suspended: number;
   readonly restored: number;
   readonly graceCleared: number;
@@ -93,11 +96,31 @@ export function isTotalFreeOrgCapFailure(r: FreeOrgCapReconcileResult): boolean 
   return total(r.enforce) || total(r.undo);
 }
 
+/**
+ * What (if anything) an ACTIVE overflow org is owed right now. Pure, so the lifecycle's ordering is testable
+ * without a database. Null = in grace with the reminder not yet due — leave it alone.
+ *
+ * The order matters: `suspend` outranks `remind`, so an org whose deadline has already passed is suspended
+ * rather than reminded about a deadline that is behind it (reachable whenever the cron is delayed or the
+ * reminder send failed for a whole window).
+ */
+export function enforcePhase(
+  org: Pick<OverCapFreeOrg, "graceUntil" | "remindedAt">,
+  now: number,
+  reminderMs: number,
+): "flag" | "remind" | "suspend" | null {
+  if (org.graceUntil === null) return "flag";
+  const deadline = org.graceUntil.getTime();
+  if (now >= deadline) return "suspend";
+  if (org.remindedAt === null && now >= deadline - reminderMs) return "remind";
+  return null;
+}
+
 export async function runFreeOrgCapReconcile(
   reconciler: Sql,
   opts: FreeOrgCapReconcileOptions,
 ): Promise<FreeOrgCapReconcileResult> {
-  const { now, cap, graceMs, restoreMs, log } = opts;
+  const { now, cap, graceMs, reminderMs, log } = opts;
 
   // The overflow set: for every over-cap owner, the orgs BEYOND the oldest `cap` (the ones to disable).
   const overflow = new Map<string, OverCapFreeOrg>();
@@ -106,6 +129,7 @@ export async function runFreeOrgCapReconcile(
   }
 
   let flagged = 0;
+  let reminded = 0;
   let suspended = 0;
   let restored = 0;
   let graceCleared = 0;
@@ -125,25 +149,21 @@ export async function runFreeOrgCapReconcile(
   // neither re-stamps nor re-sends.
   for (const org of overflow.values()) {
     if (org.status === "suspended") continue; // already suspended for the cap → nothing to do
-    const due = org.graceUntil === null || now >= org.graceUntil.getTime();
-    if (!due) continue; // still within the grace window → leave it active, and don't count it as attempted
+    const phase = enforcePhase(org, now, reminderMs);
+    if (phase === null) continue; // in grace, reminder not yet due → nothing to do, nothing attempted
     enforce.attempted++;
     try {
-      if (org.graceUntil === null) {
+      if (phase === "flag") {
         if (await flagOrgForFreeCapGrace(reconciler, org.orgId, new Date(now + graceMs), cap))
           flagged++;
-      } else if (
-        await suspendOrgForFreeCap(reconciler, org.orgId, new Date(now + restoreMs), cap)
-      ) {
+      } else if (phase === "remind") {
+        if (await remindOrgForFreeCap(reconciler, org.orgId, cap)) reminded++;
+      } else if (await suspendOrgForFreeCap(reconciler, org.orgId, cap)) {
         suspended++;
       }
     } catch (e) {
       enforce.errors++; // retried next pass; the rest of the pass — especially the undo loop — proceeds
-      log("free_org_cap.enforce_failed", {
-        orgId: org.orgId,
-        phase: org.graceUntil === null ? "flag" : "suspend",
-        error: String(e),
-      });
+      log("free_org_cap.enforce_failed", { orgId: org.orgId, phase, error: String(e) });
     }
   }
 
@@ -171,6 +191,7 @@ export async function runFreeOrgCapReconcile(
 
   return {
     flagged,
+    reminded,
     suspended,
     restored,
     graceCleared,
