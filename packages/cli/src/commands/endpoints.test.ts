@@ -25,7 +25,7 @@ function loggedInStore(): CredentialStore {
   };
 }
 
-/** A logged-in store whose default profile carries a bound org — drives the `targeting org:` banner. */
+/** A logged-in store whose default profile carries a bound org. */
 function loggedInOrgStore(): CredentialStore {
   const s = loggedInStore();
   return { ...s, getOrg: async () => ({ id: "org_1", slug: "acme", name: "Acme, Inc." }) };
@@ -254,13 +254,15 @@ describe("wbhk endpoints create", () => {
     expect(t.stderr().toLowerCase()).toContain("not logged in");
   });
 
-  it("echoes the target org banner (stderr) on a mutating command when the profile is org-bound", async () => {
+  // The CLI no longer narrates its target org on every command. `wbhk whoami` is the one place that
+  // reports the bound org — an echo on each command was noise, not information, since the org is fixed by
+  // the credential and only changes when you pass an explicit `--org`.
+  it("does NOT echo a `targeting org` banner on a mutating command", async () => {
     const t = makeTestContext({ store: loggedInOrgStore(), fetch: okFetch(created) });
     await run(app, ["endpoints", "create", "orders-prod"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
-    // The org banner rides stderr (stdout stays a clean record); centrally emitted via authedClient.
-    expect(t.stderr()).toContain("targeting org: acme (Acme, Inc.)");
-    expect(t.stdout()).not.toContain("targeting org:");
+    expect(t.stderr()).not.toContain("targeting org");
+    expect(t.stdout()).not.toContain("targeting org");
   });
 
   it("maps a 429 (per-org soft cap) to the RATE_LIMITED exit code", async () => {
@@ -506,8 +508,8 @@ describe("global --org selector (authed path, end to end)", () => {
     const f = authCapturingFetch();
     const t = makeTestContext({ store: twoOrgs(), env: { WBHK_ORG: "acme" }, fetch: f.fetch });
     await run(app, ["endpoints", "list"], t.ctx);
-    expect(f.auth()).toContain("whk_prod"); // acme → prod
-    expect(t.stderr()).toContain("targeting org: acme (Acme, Inc.)");
+    expect(f.auth()).toContain("whk_prod"); // acme → prod — the binding IS the invariant
+    expect(t.stderr()).not.toContain("targeting org"); // …and it's no longer narrated
   });
 
   it("WBHK_ORG env pointing at a nonexistent org → OrgNotFound (actionable usage error)", async () => {
@@ -574,9 +576,16 @@ describe("global --org selector (authed path, end to end)", () => {
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
   });
 
-  it("C1/C6: WBHK_API_KEY set, NO org selector → works, and NO `targeting org` banner (env cred)", async () => {
-    // The default profile even carries a bound org — the banner must STILL be suppressed for an env cred,
-    // because the env key's real org is server-determined, not this local profile's.
+  it("C1/C6: WBHK_API_KEY set with an org-bound profile, NO org selector → still succeeds", async () => {
+    // This used to assert "no `targeting org` banner". With the banner gone that assertion would pass
+    // vacuously, so it now pins what this LAYER can actually observe: the env-credential path still runs a
+    // command cleanly even when the local profile carries its own key and a bound org.
+    //
+    // The two invariants it LOOKED like it covered live where they can really be tested:
+    //   - env-key read precedence over a profile's key → context.test.ts ("honors the env-var credential
+    //     through the assembled store"); the fake store here doesn't model backend precedence.
+    //   - never deriving an env key's org from the local store → global-flags.test.ts's resolveEffectiveOrg
+    //     block ("NEVER reads the local store").
     const store = orgProfileStore({ default: { key: "whk_default", org: ACME } });
     const t = makeTestContext({
       store,
@@ -585,7 +594,6 @@ describe("global --org selector (authed path, end to end)", () => {
     });
     await run(app, ["endpoints", "list"], t.ctx);
     expect(normalizeStricliExitCode(t.ctx.process.exitCode)).toBe(EXIT.SUCCESS);
-    expect(t.stderr()).not.toContain("targeting org"); // banner skipped for the env credential
   });
 });
 
