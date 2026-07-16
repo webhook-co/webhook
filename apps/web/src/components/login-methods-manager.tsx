@@ -135,12 +135,26 @@ export interface LoginMethodsManagerProps {
  * The social sign-ins linked to the account. BOTH providers always render — connected ones with a red
  * Disconnect, unconnected ones saying how to connect.
  *
- * WHY "CONNECT" IS NOT A BUTTON YET. Linking a new provider needs Better Auth's `linkSocial`, which must run
- * on the auth origin against a live IdP session — the dashboard is app.webhook.co and there is no link route
- * on auth.webhook.co (and `/login` bounces an already-signed-in user straight to /session/handoff, so it
- * can't be borrowed for this). Until that route exists, signing in with the provider is genuinely the way to
- * link it: the pinned verified-email auto-link does the work. A button that only said "Connect" and then
- * explained you have to sign out would be worse than the sentence.
+ * WHY "CONNECT" IS NOT A BUTTON. Not because linking is unavailable — an earlier version of this comment
+ * claimed "there is no link route on auth.webhook.co" and that was simply false. `POST /api/auth/link-social`
+ * has always been mounted: the `[...all]` catch-all hands the raw Request to Better Auth with no allowlist,
+ * and the captcha plugin gates only `/sign-in/magic-link`.
+ *
+ * What is missing is a PAGE on the auth origin that calls it, and the dashboard cannot call it from here: the
+ * auth session cookie is host-only (founder decision X-2 — no cross-subdomain sharing), so a credentialed
+ * cross-origin fetch would need CORS that apps/auth deliberately does not configure. It would also buy
+ * nothing — /link-social returns the provider's authorize URL, which the browser has to navigate to anyway.
+ * (`/login` can't be borrowed as that page: it bounces an already-signed-in user to /session/handoff.)
+ *
+ * So signing in with the provider IS the way to link, and that is deliberate rather than a stopgap: Better
+ * Auth's implicit linking is SAME-EMAIL only and the founder wants it that way. `findOAuthUser` locates the
+ * user BY EMAIL, so a match is structural; the account row is then inserted as long as the provider asserts a
+ * verified email (required — `trustedProviders` is empty) and the local account is verified (it always is:
+ * magic-link sets emailVerified on create and sign-in, and our email-change writes it true).
+ *
+ * Hence the copy below says "using this email" — that is the actual constraint, not a hedge. A provider whose
+ * email DIFFERS does not link and does not error: it creates a separate account. That case is what a Connect
+ * button would exist for, and it is deferred — see internal/build-plans/connect-social-login-slice.md.
  *
  * The server enforces a last-method guard, so disconnecting can never strand you.
  */
