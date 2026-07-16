@@ -39,9 +39,22 @@ const Shield = () => (
   </svg>
 );
 
+const Buildings = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path
+      d="M4 20V7l6-3v16M10 20h10V11l-6-3M7 10.5h.01M7 14h.01M7 17.5h.01M14 12h.01M14 15h.01M14 18h.01M17 12h.01M17 15h.01M17 18h.01"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
 /** The account surface's own nav. It is short, and that is the point — this is not a second product. */
 const NAV = [
   { href: "/account/profile", label: "Profile", icon: <User /> },
+  { href: "/account/organizations", label: "Organizations", icon: <Buildings /> },
   { href: "/account/security", label: "Login & security", icon: <Shield /> },
   { href: "/account/connected-apps", label: "Connected apps", icon: <Plug /> },
 ] as const;

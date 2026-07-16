@@ -239,3 +239,151 @@ describe("findOwnersOverFreeCap (role-targeted cross-user detection)", () => {
     expect((await findOwnersOverFreeCap(reconciler, CAP)).map((o) => o.userId)).toEqual([u]); // reconciler: sees it
   });
 });
+
+describe("findOwnersOverFreeCap — the keep mark (slice 5)", () => {
+  /** Mark an org to be kept BY a given user, exactly as the picker's per-org tenant write does. */
+  const mark = (orgId: string, byUserId: string) =>
+    withTenant(
+      app,
+      orgId,
+      (tx) => tx`
+        update orgs
+           set free_org_cap_keep_requested_at = now(), free_org_cap_keep_requested_by = ${byUserId}
+         where id = ${orgId}`,
+    );
+
+  const freeOrgIds = async (userId: string) =>
+    (await findOwnersOverFreeCap(reconciler, CAP))
+      .find((o) => o.userId === userId)!
+      .freeOrgs.map((o) => o.orgId);
+
+  it("with NOTHING marked, the order is unchanged — oldest first (today's default)", async () => {
+    const u = randomUUID();
+    await seedUser(u);
+    const a = await seedOrg(u);
+    const b = await seedOrg(u);
+    const c = await seedOrg(u);
+    await admin`update orgs set created_at = '2026-01-01' where id = ${a}`;
+    await admin`update orgs set created_at = '2026-02-01' where id = ${b}`;
+    await admin`update orgs set created_at = '2026-03-01' where id = ${c}`;
+
+    expect(await freeOrgIds(u)).toEqual([a, b, c]); // → slice(2) suspends c, the newest
+  });
+
+  it("a marked org sorts to the FRONT, so the caller's slice(cap) spares it", async () => {
+    const u = randomUUID();
+    await seedUser(u);
+    const a = await seedOrg(u);
+    const b = await seedOrg(u);
+    const c = await seedOrg(u);
+    await admin`update orgs set created_at = '2026-01-01' where id = ${a}`;
+    await admin`update orgs set created_at = '2026-02-01' where id = ${b}`;
+    await admin`update orgs set created_at = '2026-03-01' where id = ${c}`;
+
+    await mark(c, u); // the newest — the one the default would have suspended
+    // c now leads; slice(2) keeps [c, a] and suspends b instead. That IS the feature.
+    expect(await freeOrgIds(u)).toEqual([c, a, b]);
+  });
+
+  it("marking EVERY org is identical to marking none — the mark cannot escape the cap", async () => {
+    // The load-bearing property. The web app writes marks one org per transaction, so "at most cap marked"
+    // is unenforceable at write time; the reconciler re-validates by slicing at cap regardless. A user who
+    // marks everything reorders nothing and still loses their newest org.
+    const u = randomUUID();
+    await seedUser(u);
+    const a = await seedOrg(u);
+    const b = await seedOrg(u);
+    const c = await seedOrg(u);
+    await admin`update orgs set created_at = '2026-01-01' where id = ${a}`;
+    await admin`update orgs set created_at = '2026-02-01' where id = ${b}`;
+    await admin`update orgs set created_at = '2026-03-01' where id = ${c}`;
+
+    await mark(a, u);
+    await mark(b, u);
+    await mark(c, u);
+    expect(await freeOrgIds(u)).toEqual([a, b, c]); // all marked → tie → oldest-first, exactly as unmarked
+  });
+
+  it("ties among marked orgs fall back to oldest-first, not to mark time", async () => {
+    // Marked-ness is a boolean sort key; the timestamp is for display/audit. Sorting by mark time would
+    // invent a second policy ("last click wins") that nothing else in the lane follows.
+    const u = randomUUID();
+    await seedUser(u);
+    const a = await seedOrg(u);
+    const b = await seedOrg(u);
+    const c = await seedOrg(u);
+    await admin`update orgs set created_at = '2026-01-01' where id = ${a}`;
+    await admin`update orgs set created_at = '2026-02-01' where id = ${b}`;
+    await admin`update orgs set created_at = '2026-03-01' where id = ${c}`;
+
+    // b is marked FIRST, c SECOND — so "most recently marked" would put c ahead, while "oldest created"
+    // puts b ahead. The two rules disagree here, which is the only reason this test is worth writing.
+    await mark(b, u);
+    await mark(c, u);
+    // b leads: created_at wins, mark time is not a sort key. Unmarked a trails both.
+    expect(await freeOrgIds(u)).toEqual([b, c, a]);
+  });
+
+  it("a CO-OWNER's mark cannot re-rank YOUR list — one owner's intent never speaks for another's slots", async () => {
+    // THE security property of this slice, and a real hole before attribution existed.
+    //
+    // The mark is a column on the ORG (ADR-0113 forbids the per-(user, org) table this would otherwise want),
+    // so every co-owner can set it and every co-owner sees it. But the CAP is counted PER OWNER. Without
+    // `keep_requested_by`, X marking a shared org re-ranked V's whole list — pushing an org of V's that X is
+    // not a member of, cannot read, and cannot name, into V's overflow to be suspended. X's own list stayed
+    // untouched. Owning the marked org was true; the blast radius landed on a different tenant entirely.
+    const victim = randomUUID();
+    const attacker = randomUUID();
+    await seedUser(victim);
+
+    const a = await seedOrgAt(victim, "2026-01-01T00:00:00Z"); // V's, private
+    const b = await seedOrgAt(victim, "2026-02-01T00:00:00Z"); // V's, private — the target
+    const shared = await seedOrgAt(victim, "2026-03-01T00:00:00Z"); // V's throwaway, co-owned with X
+    await addOwner(shared, attacker); // owner→owner invites are supported
+
+    // Baseline: V is over cap by one, so the newest (the shared throwaway) is the overflow. V is fine with it.
+    expect(await freeOrgIds(victim)).toEqual([a, b, shared]);
+
+    // X marks the org they legitimately co-own.
+    await mark(shared, attacker);
+
+    // V's ranking is UNCHANGED: X's mark counts only in X's own list. `b` is not pushed into the overflow.
+    expect(await freeOrgIds(victim)).toEqual([a, b, shared]);
+  });
+
+  it("both owners' marks coexist — each steers only its author's ranking", async () => {
+    const v = randomUUID();
+    const x = randomUUID();
+    await seedUser(v);
+    const a = await seedOrgAt(v, "2026-01-01T00:00:00Z");
+    const b = await seedOrgAt(v, "2026-02-01T00:00:00Z");
+    const shared = await seedOrgAt(v, "2026-03-01T00:00:00Z");
+    await addOwner(shared, x);
+    // Give X enough free orgs of their own to be over cap too, so both appear in the result.
+    await seedOrgAt(x, "2026-04-01T00:00:00Z");
+    await seedOrgAt(x, "2026-05-01T00:00:00Z");
+
+    await mark(shared, x); // X wants the shared one kept…
+    await mark(b, v); // …V wants their own `b` kept.
+
+    // V's list: b floats (V marked it); shared does NOT (X's mark is not V's).
+    expect(await freeOrgIds(v)).toEqual([b, a, shared]);
+    // X's list: shared floats (X marked it).
+    expect((await freeOrgIds(x))[0]).toBe(shared);
+  });
+
+  it("surfaces keepRequestedAt so the reconciler's callers can see the choice", async () => {
+    const u = randomUUID();
+    await seedUser(u);
+    const a = await seedOrg(u);
+    await seedOrg(u);
+    await seedOrg(u);
+    await mark(a, u);
+
+    const marked = (await findOwnersOverFreeCap(reconciler, CAP))
+      .find((o) => o.userId === u)!
+      .freeOrgs.filter((o) => o.keepRequestedAt !== null);
+    expect(marked.map((o) => o.orgId)).toEqual([a]);
+    expect(marked[0]!.keepRequestedAt).toBeInstanceOf(Date);
+  });
+});

@@ -175,6 +175,98 @@ export async function countOwnedFreeOrgs(app: Sql, userId: string): Promise<numb
   return free;
 }
 
+/** One org the picker shows: an org this user OWNS, with everything the cap decision turns on. */
+export interface OwnedOrgCapView {
+  readonly orgId: string;
+  readonly slug: string;
+  readonly name: string;
+  /** Paid orgs are unlimited and never at risk — shown, but not selectable and not counted. */
+  readonly isFree: boolean;
+  readonly status: OrgStatus;
+  /** When SOMEONE asked to keep this org through the cap. Null = unmarked. */
+  readonly keepRequestedAt: Date | null;
+  /** True iff THIS user is the one who asked. A co-owner's mark does nothing to this user's ranking, so the
+   *  picker must not render it as if this user had ticked it. */
+  readonly keepRequestedByMe: boolean;
+  /** Set once the reconciler flags it — the org suspends at this date unless the overage is resolved. */
+  readonly graceUntil: Date | null;
+}
+
+/**
+ * Every org this user owns, with its cap-relevant state — the picker's read (slice 5).
+ *
+ * Runs as webhook_app, in the two-phase shape every cross-org read here uses: enumerate under the user GUC
+ * (`listUserOrgs` → `user_org_directory()`, the ONLY RLS-legal cross-org enumeration), then read per-org
+ * detail under each org's OWN tenant context. `countOwnedFreeOrgs` does the same dance and throws the detail
+ * away; this keeps it.
+ *
+ * Deliberately does NOT rank the orgs or say which will be suspended. Only `findOwnersOverFreeCap` (running
+ * as the reconciler, cross-USER) can know that: a co-owned org is overflow if it is overflow for ANY of its
+ * owners, and webhook_app cannot see another user's org list to work that out. The picker therefore shows
+ * this user's own orgs and their marks — a statement of intent — not a prediction of the outcome.
+ */
+export async function listOwnedOrgsForCap(app: Sql, userId: string): Promise<OwnedOrgCapView[]> {
+  const owned = (await listUserOrgs(app, userId)).filter((o) => o.role === "owner");
+
+  const views: OwnedOrgCapView[] = [];
+  for (const org of owned) {
+    const row = await withTenant(app, org.orgId, async (tx) => {
+      const paid = await hasEntitledSubscription(tx);
+      const [r] = await tx<{ keep: Date | null; by: string | null; grace: Date | null }[]>`
+        select free_org_cap_keep_requested_at as keep, free_org_cap_keep_requested_by as by,
+               free_org_cap_grace_until as grace
+          from orgs where id = ${org.orgId}`;
+      return { paid, keep: r?.keep ?? null, by: r?.by ?? null, grace: r?.grace ?? null };
+    });
+    views.push({
+      orgId: org.orgId,
+      slug: org.slug,
+      name: org.name,
+      isFree: !row.paid,
+      status: org.status,
+      keepRequestedAt: row.keep,
+      keepRequestedByMe: row.by === userId,
+      graceUntil: row.grace,
+    });
+  }
+  return views;
+}
+
+/**
+ * Mark (or unmark) one org to be kept through the free-org cap — the picker's write (slice 5).
+ *
+ * ONE org, under ITS OWN tenant context, because that is the only write webhook_app has: `orgs_update` is
+ * `id = current_org_id()`, so there is no context in which the app can flip two orgs together. A picker
+ * saving N changes is therefore N transactions, and a crash halfway leaves a partial selection — which is
+ * survivable precisely because the mark is a preference the reconciler re-validates against `cap`, not a
+ * truth it trusts. Nothing here can push a user over the cap; the worst a partial save does is leave the
+ * default (oldest-first) deciding some of the ranking.
+ *
+ * The caller MUST have already proven this user owns the org (`isOrgOwner`): RLS proves the write is scoped
+ * to the context org, never that the caller may make it.
+ *
+ * `userId` is recorded, not decorative: the cap is per-owner and this column is per-ORG, so a mark with no
+ * author would re-rank every co-owner's list — letting one owner push another owner's unrelated org into the
+ * overflow. `findOwnersOverFreeCap` only honours a mark against its author's own ranking. Unmarking clears
+ * both fields together (a coherence CHECK in 0088 makes half-set unrepresentable).
+ */
+export async function setOrgFreeCapKeep(
+  app: Sql,
+  orgId: string,
+  userId: string,
+  keep: boolean,
+): Promise<void> {
+  await withTenant(
+    app,
+    orgId,
+    (tx) => tx`
+      update orgs
+         set free_org_cap_keep_requested_at = ${keep ? new Date() : null},
+             free_org_cap_keep_requested_by = ${keep ? userId : null}
+       where id = ${orgId}`,
+  );
+}
+
 /** One FREE org owned by a user who is over the free-org cap (from {@link findOwnersOverFreeCap}). */
 export interface OverCapFreeOrg {
   readonly orgId: string;
@@ -187,6 +279,12 @@ export interface OverCapFreeOrg {
   readonly graceUntil: Date | null;
   /** When the T-7 reminder was sent for the CURRENT grace window. Null = still owed (or not flagged). */
   readonly remindedAt: Date | null;
+  /** When an owner asked to KEEP this org through the cap (slice 5). Null = unmarked. A mark sorts the org
+   *  ahead of unmarked ones — but ONLY in the ranking of the owner who made it, and the slice still bounds
+   *  it either way. */
+  readonly keepRequestedAt: Date | null;
+  /** WHO asked. The reconciler honours a mark only against this user's own list — see findOwnersOverFreeCap. */
+  readonly keepRequestedBy: string | null;
 }
 
 /** A user who owns MORE than the cap allows, with ALL their owned free orgs (oldest-first). */
@@ -208,8 +306,25 @@ export interface OverCapOwner {
  * "Free" mirrors {@link countOwnedFreeOrgs}/`hasEntitledSubscription` exactly (no ACTIVE-status subscription),
  * and every owned free org counts (a co-owned one counts for each owner) — the same attribution that closes
  * the sockpuppet-co-owner bypass. The active-status set comes from `BILLING_ACTIVE_STATUSES` (single source,
- * passed in via `string_to_array` so it can't drift). Orders each owner's free orgs oldest-first so the
- * reconciler can keep the oldest `cap` and suspend the rest by default.
+ * passed in via `string_to_array` so it can't drift).
+ *
+ * ORDERING IS THE POLICY. Each owner's free orgs come back ordered so the caller's `.slice(cap)` IS the
+ * overflow: KEEP-MARKED-BY-THIS-OWNER first (slice 5's picker), then oldest-first among equals (the original
+ * default, unchanged for anyone who never marks anything).
+ *
+ * "BY THIS OWNER" is the security property, not a detail. The mark is a column on `orgs` (ADR-0113 forbids
+ * the per-(user, org) table this would otherwise want), so it is visible to every owner of that org — but the
+ * cap is counted PER OWNER. An unattributed mark would therefore re-rank EVERY owner's list at once: a
+ * co-owner of your throwaway org could mark it and push a different org of yours — one they have no
+ * membership in and cannot see — into your overflow, to be suspended, while their own list stayed untouched.
+ * Matching `keep_requested_by` against the row's `user_id` confines a mark's effect to the ranking of the
+ * person who made it.
+ *
+ * The mark is a PREFERENCE, re-validated here, never trusted: the slice still cuts at `cap`, so marking every
+ * org is exactly equivalent to marking none and the flag cannot be used to escape the cap — only to reorder
+ * who survives it. That matters because the web app writes marks one org per transaction (RLS gives it no
+ * cross-org write), so "at most `cap` marked" is not enforceable at write time. Ties among marked orgs fall
+ * back to oldest-first, matching the unmarked policy rather than inventing a second one.
  */
 export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promise<OverCapOwner[]> {
   const rows = await reconciler<
@@ -221,6 +336,8 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
       suspended_reason: string | null;
       grace_until: Date | null;
       reminded_at: Date | null;
+      keep_requested_at: Date | null;
+      keep_requested_by: string | null;
     }[]
   >`
     with owned_free as (
@@ -230,7 +347,9 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
              o.status,
              o.suspended_reason,
              o.free_org_cap_grace_until as grace_until,
-             o.free_org_cap_reminded_at as reminded_at
+             o.free_org_cap_reminded_at as reminded_at,
+             o.free_org_cap_keep_requested_at as keep_requested_at,
+             o.free_org_cap_keep_requested_by as keep_requested_by
         from memberships m
         join orgs o on o.id = m.org_id
        where m.role = 'owner'
@@ -240,15 +359,22 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
               and b.status = any(string_to_array(${BILLING_ACTIVE_STATUSES.join(",")}, ','))
          )
     )
-    select user_id, org_id, org_created_at, status, suspended_reason, grace_until, reminded_at
+    select user_id, org_id, org_created_at, status, suspended_reason, grace_until, reminded_at,
+           keep_requested_at, keep_requested_by
       from owned_free
      where user_id in (
        select user_id from owned_free group by user_id having count(*) > ${cap}
      )
-     order by user_id, org_created_at asc, org_id asc`;
+     -- "is not distinct from", never a plain "=": equality yields NULL for an unmarked org, and Postgres
+     -- sorts NULLS FIRST under DESC, which would float every UNMARKED org to the front and invert the whole
+     -- policy. This form is null-safe and returns a real boolean for every row.
+     order by user_id,
+              (keep_requested_by is not distinct from user_id) desc,
+              org_created_at asc,
+              org_id asc`;
 
-  // Group by owner, PRESERVING the function's oldest-first ordering (Map keeps insertion order, and the rows
-  // arrive ordered by (user_id, org_created_at)).
+  // Group by owner, PRESERVING the SQL's ordering (Map keeps insertion order, and the rows arrive ordered by
+  // user_id, then keep-marked-first, then oldest-first). The caller's `.slice(cap)` depends on that order.
   const byUser = new Map<string, OverCapFreeOrg[]>();
   for (const r of rows) {
     const list = byUser.get(r.user_id) ?? [];
@@ -259,6 +385,8 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
       suspendedReason: r.suspended_reason,
       graceUntil: r.grace_until,
       remindedAt: r.reminded_at,
+      keepRequestedAt: r.keep_requested_at,
+      keepRequestedBy: r.keep_requested_by,
     });
     byUser.set(r.user_id, list);
   }

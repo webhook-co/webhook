@@ -100,10 +100,18 @@ export default async function SuspendedPage({ params }: { params: Promise<{ slug
       <Card>
         <CardContent className="flex flex-col items-start gap-4 pt-6">
           <p className="text-sm text-fg-secondary">{detail(access.name)}</p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button asChild>
               <Link href={`/org/${access.slug}/billing`}>{cta}</Link>
             </Button>
+            {/* The other way out, and only for THIS reason: the cap is per-person, so the choice of which
+                free orgs survive lives on the account surface, not here. A non-cap suspension has no such
+                lever, so it doesn't get the button. */}
+            {access.suspendedReason === "free_org_cap" && (
+              <Button asChild variant="secondary">
+                <Link href="/account/organizations">Choose which to keep</Link>
+              </Button>
+            )}
             <Button asChild variant="secondary">
               <Link href={`/org/${access.slug}/settings`}>Organization settings</Link>
             </Button>
