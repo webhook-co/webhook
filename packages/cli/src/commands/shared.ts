@@ -14,7 +14,6 @@ import { parseAdvisoryHeader } from "../output/advisory-notice.js";
 import { writeAdvisory } from "../state/advisory-store.js";
 import {
   announceActiveProfile,
-  announceRequestOrg,
   resolveEffectiveOrg,
   resolveRequestProfile,
   type GlobalFlags,
@@ -59,11 +58,11 @@ export async function resolveAuthedContext(
   announceActiveProfile(ctx, profile);
   const cred = await ctx.store.get(profile);
   if (cred === null) return new NotLoggedInError();
-  // Resolve the EFFECTIVE org once — env-guarded (an env key's org isn't in the local store) and never
-  // throwing — and reuse it for both the banner and the returned context, so a consumer like `events open`
-  // doesn't read the store again. Passing the resolved org means announceRequestOrg won't re-read it.
+  // Resolve the EFFECTIVE org once — env-guarded (an env key's org isn't in the local store). Consumed by
+  // callers that need it LOCALLY (e.g. `events open` / listen's `o` key build the dashboard deep-link's
+  // slug from it), not announced: the org is fixed by the credential, so echoing it on every command was
+  // noise rather than information. `wbhk whoami` is where you ask what org you're bound to.
   const effective = await resolveEffectiveOrg(ctx, profile, selectorOrg);
-  announceRequestOrg(ctx, effective);
   const { org, envCredential } = effective;
   const baseUrl = resolveApiBaseUrl({
     flag: flags.apiUrl,

@@ -34,7 +34,6 @@ import { clearCursor, loadCursor, saveCursor, type CursorLoad } from "../state/c
 import { acquireListenLock, ListenLockedError, type ListenLock } from "../state/listen-lock.js";
 import { colorize } from "../output/color.js";
 import {
-  announceRequestOrg,
   announceActiveProfile,
   globalFlags,
   resolveEffectiveOrg,
@@ -440,12 +439,10 @@ export const listenCommand = buildCommand<ListenFlags, [string], AppContext>({
     const cred = await this.store.get(profile);
     if (cred === null) return new NotLoggedInError();
     // Resolve the EFFECTIVE org once — env-guarded (an env key's org isn't in the local store, so we never
-    // build a wrong-org link from it) and never-throwing — and reuse it for the banner AND the TUI `o`-key
-    // deep-link, so the dashboard slug comes from a purely local value (nothing on the interactive path
-    // blocks on the network). An env-key tail without a local org just shows `o`-key guidance (that
-    // interactive+env combination is vanishingly rare).
+    // build a wrong-org link from it) — for the TUI `o`-key deep-link, so the dashboard slug comes from a
+    // purely local value (nothing on the interactive path blocks on the network). An env-key tail without a
+    // local org just shows `o`-key guidance (that interactive+env combination is vanishingly rare).
     const effective = await resolveEffectiveOrg(this, profile, selectorOrg);
-    announceRequestOrg(this, effective);
     const { org } = effective;
     // Resolve the bearer once (proactively refreshing an OAuth credential at/near expiry) — used for both
     // the tunnel UPGRADE and the --forward api client. The reactive 401 refresh hook is wired into the

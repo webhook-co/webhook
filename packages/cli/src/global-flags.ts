@@ -168,8 +168,10 @@ type EnvCredentialCtx = {
 /**
  * Whether the active credential comes from the ENV backend (`WBHK_API_KEY`) rather than a stored profile.
  * The env key bypasses profiles entirely — it has top read precedence and carries NO local org metadata —
- * so the org SELECTOR and the "targeting org" BANNER (both profile-metadata based) must be suppressed for
- * it. The single source of truth for that guard, reused by whoami / authedClient / listen / replay.
+ * so anything derived from a profile's stored org must be suppressed for it: the org SELECTOR, and any
+ * LOCAL use of the org (whoami's report, the dashboard deep-link's slug), which would otherwise describe an
+ * unrelated login's org. The single source of truth for that guard, reused by whoami / authedClient /
+ * listen / resolveEffectiveOrg.
  */
 export async function isEnvCredential(ctx: EnvCredentialCtx, profile: string): Promise<boolean> {
   if (hasEnvApiKey(ctx)) return true;
@@ -338,45 +340,17 @@ export function announceActiveProfile(
   ctx.process.stderr.write(`using profile: ${sanitizeControl(profile)}\n`);
 }
 
-/**
- * Print a one-line stderr banner naming the ORG a command is about to target — so a mutating command never
- * silently hits an org the user didn't expect (the token=org invariant made visible). Stays OFF stdout so
- * pipes stay clean; slug + name are config-controlled, so both are sanitized. Called centrally once the
- * profile's bound org is known (see `authedClient`).
- */
-export function announceActiveOrg(
-  ctx: { readonly process: { readonly stderr: { write(s: string): void } } },
-  org: Org,
-): void {
-  ctx.process.stderr.write(
-    `targeting org: ${sanitizeControl(org.slug)} (${sanitizeControl(org.name)})\n`,
-  );
-}
-
-/**
- * The single place every credential-binding command echoes its target org — so the "targeting org" banner
- * and the credential actually used can never disagree. Two rules, applied uniformly (was copy-pasted across
- * authedClient / listen / replay / logout, which risked one path drifting and announcing the wrong org):
- *   1. NEVER announce for an env (WBHK_API_KEY) credential — its real org is server-determined, so the local
- *      profile's stored org does not describe it (mirrors whoami's env guard).
- *   2. Otherwise announce the selector-resolved org, else the profile's stored org (nothing if neither).
- */
-export function announceRequestOrg(
-  ctx: { readonly process: { readonly stderr: { write(s: string): void } } },
-  resolved: { org?: Org; envCredential: boolean },
-): void {
-  // Takes the ALREADY-resolved org + env-ness (from resolveEffectiveOrg) so it re-derives nothing — no
-  // second isEnvCredential probe, no second store read per command. Env creds don't announce (their real
-  // org is server-side); otherwise announce the resolved org when present.
-  if (resolved.envCredential) return;
-  if (resolved.org !== undefined) announceActiveOrg(ctx, resolved.org);
-}
+// NOTE: there is deliberately no "targeting org" banner. Every authed command used to echo its bound org to
+// stderr, which was noise rather than information: the org is FIXED by the credential, so the answer was the
+// same on every command and only changed when you passed an explicit `--org`. `wbhk whoami` is the one place
+// that reports the bound org. The env-credential guard that banner carried has NOT gone away — it lives in
+// resolveEffectiveOrg below, which is still load-bearing for the dashboard deep-link's slug.
 
 /**
  * The org a credential-binding command should treat as its target for LOCAL display / deep-linking (e.g.
  * the dashboard event URL's slug): the selector-resolved org, else the profile's persisted org — but NEVER
  * the local store's org for an env (WBHK_API_KEY) credential, whose real org is server-determined, so the
- * local profile's stored org does NOT describe it (same guard as {@link announceRequestOrg} and whoami;
+ * local profile's stored org does NOT describe it (the same guard whoami applies;
  * without it, an env key would build a wrong-org deep-link from an unrelated login's stored org). Also
  * reports whether the credential is an env key, so a caller that still needs the env org's slug knows it
  * must ask whoami rather than the (untrusted-for-env) local store. A MISSING config yields `org: undefined`
