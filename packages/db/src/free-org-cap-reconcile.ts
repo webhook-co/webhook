@@ -172,9 +172,26 @@ export async function runFreeOrgCapReconcile(
     );
   }
 
-  // The overflow set: for every over-cap owner, the orgs BEYOND the oldest `cap` (the ones to disable).
+  // TWO sets, and the difference between them is what stops the cap being escapable.
+  //
+  //   overflow — for every over-cap owner, the orgs BEYOND the oldest `cap`: the ones to disable NOW.
+  //   atRisk   — for every over-cap owner, ALL of their free orgs: everything whose owner has not yet
+  //              resolved the overage, whether or not it happens to be in the tail this hour.
+  //
+  // The undo loop keys on atRisk, NOT overflow. Keying on overflow was a cap ESCAPE: the picker's keep mark
+  // is a lead sort key, so toggling it moves the tail to a different org — and "left the tail" would then be
+  // read as "the owner resolved it", clearing that org's grace and wiping its elapsed clock while the newly
+  // tailed org starts a fresh 14 days. Flip one checkbox every ~13 days and NOTHING is ever suspended, with
+  // the counters reading perfectly healthy the whole time. Leaving the tail is not resolving anything.
+  //
+  // With atRisk, a flag survives the churn: un-marking later finds the org's original deadline already
+  // expired and suspends it on that pass. The mark can still reorder who goes first — it just can't rewind
+  // anyone's clock. (An org that leaves the tail keeps an inert flag until its owner is genuinely back under
+  // cap; it is never suspended while it is out of the tail, because the enforce loop only walks `overflow`.)
   const overflow = new Map<string, OverCapFreeOrg>();
+  const atRisk = new Set<string>();
   for (const owner of await findOwnersOverFreeCap(reconciler, cap)) {
+    for (const org of owner.freeOrgs) atRisk.add(org.orgId);
     for (const org of owner.freeOrgs.slice(cap)) overflow.set(org.orgId, org);
   }
 
@@ -222,9 +239,10 @@ export async function runFreeOrgCapReconcile(
     }
   }
 
-  // Reconcile the inverse: orgs we manage that are no longer overflow (owner resolved the overage) → undo.
+  // Reconcile the inverse: orgs we manage whose owner is NO LONGER OVER CAP (they genuinely resolved it —
+  // upgraded, deleted, reassigned) → undo. Keyed on atRisk, not overflow: see the comment on those sets.
   for (const managed of await listFreeCapManagedOrgs(reconciler)) {
-    if (overflow.has(managed.orgId)) continue; // still overflow → leave as-is
+    if (atRisk.has(managed.orgId)) continue; // owner still over cap → nothing has been resolved
     if (managed.status !== "suspended" && managed.graceUntil === null) continue; // nothing to undo
     // RESTORE and CLEAR_GRACE are counted apart, not as one "undo": restore also writes `ingest_paused`,
     // clear_grace touches only `orgs`. A regressed ingest_paused grant therefore kills every restore while

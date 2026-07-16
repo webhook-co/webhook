@@ -50,28 +50,50 @@ function formatDay(at: Date): string {
  */
 export function OrgCapPicker({ orgs, cap }: OrgCapPickerProps) {
   const router = useRouter();
-  const [pending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  /** Optimistic marks, keyed by org id — the checkbox must respond before the round-trip. */
-  const [marks, setMarks] = useState<Record<string, boolean>>(() =>
-    Object.fromEntries(orgs.map((o) => [o.orgId, o.keepRequestedByMe])),
-  );
+  /**
+   * ONLY the rows with a toggle in flight — deliberately NOT a mirror of `orgs`.
+   *
+   * A mirror seeded by `useState` initializes once and never re-runs, so it goes stale the moment
+   * `router.refresh()` delivers fresh props — and stale here means a tick claiming "this org is protected"
+   * beside a freshly-rendered "scheduled to be suspended" from the same row's props. That is reachable in
+   * normal use: the mark is org-level, so a co-owner can change it under you.
+   *
+   * Deriving from props with a per-row override instead means the truth is always the server's, the rollback
+   * on failure is just "drop the override", and there is no second copy to drift.
+   */
+  const [inFlight, setInFlight] = useState<Record<string, boolean>>({});
+
+  const isMarked = (o: OrgCapPickerOrg) => inFlight[o.orgId] ?? o.keepRequestedByMe;
 
   const free = orgs.filter((o) => o.isFree);
   const overBy = free.length - cap;
-  const markedCount = free.filter((o) => marks[o.orgId]).length;
+  const markedCount = free.filter(isMarked).length;
 
   function toggle(orgId: string, next: boolean) {
     setError(null);
-    setMarks((m) => ({ ...m, [orgId]: next }));
+    setInFlight((m) => ({ ...m, [orgId]: next }));
     startTransition(async () => {
-      const res = await setOrgKeepAction(orgId, next);
-      if (!res.ok) {
-        setMarks((m) => ({ ...m, [orgId]: !next })); // roll the optimistic flip back
-        setError(res.error);
-        return;
+      // try/catch, not just the ok/error union: `setOrgKeepAction` only wraps its DB write, so verifySession,
+      // getTenantDb and isOrgOwner all THROW straight out of the action. Without this the promise rejects,
+      // the override is never dropped, no error renders — and the user is left looking at a tick that was
+      // never saved, for an org that suspends in 14 days.
+      try {
+        const res = await setOrgKeepAction(orgId, next);
+        if (!res.ok) {
+          setError(res.error);
+          return;
+        }
+        router.refresh(); // fresh props become the truth; the override below is dropped either way
+      } catch {
+        setError("Couldn't save that just now. Try again.");
+      } finally {
+        setInFlight((m) => {
+          const { [orgId]: _dropped, ...rest } = m;
+          return rest;
+        });
       }
-      router.refresh();
     });
   }
 
@@ -99,7 +121,9 @@ export function OrgCapPicker({ orgs, cap }: OrgCapPickerProps) {
       <Card>
         <CardContent className="flex flex-col gap-1 pt-6">
           {orgs.map((org) => {
-            const marked = marks[org.orgId] ?? false;
+            // A PAID org is never counted, so a mark on it is inert — show it unticked rather than as a
+            // ticked-and-disabled box the owner can't clear (reachable: mark a free org, then upgrade it).
+            const marked = org.isFree && isMarked(org);
             return (
               <div
                 key={org.orgId}
@@ -107,7 +131,10 @@ export function OrgCapPicker({ orgs, cap }: OrgCapPickerProps) {
               >
                 <Checkbox
                   checked={marked}
-                  disabled={!org.isFree || pending}
+                  // Only THIS row's own in-flight save disables it. A shared pending flag froze every other
+                  // row for the duration, silently swallowing clicks — and each save is its own transaction
+                  // anyway, so there is nothing to serialize.
+                  disabled={!org.isFree || org.orgId in inFlight}
                   onCheckedChange={(v) => toggle(org.orgId, v === true)}
                   aria-label={`Keep ${org.name}`}
                 />

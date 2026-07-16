@@ -155,6 +155,45 @@ describe("runFreeOrgCapReconcile", () => {
     expect(late).toMatchObject({ reminded: 0, suspended: 1 });
   });
 
+  it("toggling the keep mark CANNOT rewind the clock — the cap is not escapable across time", async () => {
+    // THE bug slice 5 shipped with, and the reason the undo loop keys on atRisk rather than overflow.
+    //
+    // The mark is a lead sort key, so flipping it moves the overflow tail to a different org. If "left the
+    // tail" were read as "the owner resolved it", the reconciler would clear that org's grace — wiping its
+    // elapsed clock while the newly tailed org started a fresh 14 days. Flipping one checkbox every ~13 days
+    // would then mean NOTHING is ever suspended: the cap 100% unenforced, counters reading healthy.
+    const uid = await seedUser();
+    await seedOrgAt(uid, "2026-01-01T00:00:00Z"); // A — always kept
+    const b = await seedOrgAt(uid, "2026-02-01T00:00:00Z");
+    const c = await seedOrgAt(uid, "2026-03-01T00:00:00Z"); // newest → the default overflow
+
+    const mark = (orgId: string, on: boolean) =>
+      admin`
+        update orgs
+           set free_org_cap_keep_requested_at = ${on ? new Date() : null},
+               free_org_cap_keep_requested_by = ${on ? uid : null}
+         where id = ${orgId}`;
+
+    await reconcile(T0); // flags c, deadline T0+14d
+    expect((await orgState(c)).grace?.toISOString()).toBe(new Date(T0 + GRACE_MS).toISOString());
+
+    // Day 13: user ticks "keep c". The tail moves to b, which gets its own fresh deadline…
+    await mark(c, true);
+    const day13 = T0 + 13 * DAY;
+    await reconcile(day13);
+    expect((await orgState(b)).grace).not.toBeNull();
+    // …but c's ORIGINAL deadline must survive. Clearing it here is the escape.
+    expect((await orgState(c)).grace?.toISOString()).toBe(new Date(T0 + GRACE_MS).toISOString());
+    expect((await orgState(c)).status).toBe("active"); // not suspended: it's out of the tail
+
+    // Day 26: user unticks c, putting it back in the tail. Its old clock already expired on day 14, so it
+    // suspends on THIS pass. The toggle bought nothing.
+    await mark(c, false);
+    const pass = await reconcile(T0 + 26 * DAY);
+    expect(pass.suspended).toBe(1);
+    expect((await orgState(c)).status).toBe("suspended");
+  });
+
   it("restores a suspended org once the owner is no longer over the cap (resolved the overage)", async () => {
     const uid = await seedUser();
     await seedOrgAt(uid, "2026-01-01T00:00:00Z"); // A
