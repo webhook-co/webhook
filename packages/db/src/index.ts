@@ -48,6 +48,7 @@ export * from "./replay-destinations";
 export * from "./signing-keys";
 export * from "./subscriptions";
 export * from "./org-lifecycle";
+export * from "./free-org-cap-reconcile";
 export * from "./usage-rollup";
 export * from "./delivery-stats-rollup";
 export * from "./cap-producer";

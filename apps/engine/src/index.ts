@@ -26,6 +26,7 @@ import {
   reconcileStripeTransport,
   type MeterSummaryReader,
   runCapProducer,
+  runFreeOrgCapReconcile,
   runMeterReporter,
   enqueueAutoDeliveries,
   fromCachedSealedSecret,
@@ -74,6 +75,7 @@ import {
   verifyListenTicket,
 } from "@webhook-co/shared";
 import { kvCredentialCache } from "@webhook-co/shared/kv-cache";
+import { MAX_FREE_ORGS_PER_USER } from "@webhook-co/shared/plans";
 import { WorkerEntrypoint } from "cloudflare:workers";
 
 import {
@@ -169,6 +171,9 @@ export interface Env {
   HYPERDRIVE_RETENTION?: Hyperdrive;
   /** Hyperdrive config for the webhook_meter cross-org metering-enumeration read (query caching off). */
   HYPERDRIVE_METER: Hyperdrive;
+  /** Hyperdrive config for the webhook_capreconciler cross-user free-org-cap reconcile (query caching off).
+   *  Optional: absent until the reconciler role + Hyperdrive are provisioned, so the cron ships dark. */
+  HYPERDRIVE_CAPRECONCILER?: Hyperdrive;
   /**
    * Hyperdrive config for the webhook_meter_audit cross-org RECONCILIATION read (S4.4d, F6 — query caching
    * off). OPTIONAL: present only once the audit role + Hyperdrive are provisioned; while absent the
@@ -957,6 +962,14 @@ export default {
         ),
       ),
     );
+    // Free-org-cap reconcile (PR2b): across all users, flag → suspend the overflow Free orgs of anyone over
+    // the cap, and restore when they resolve it. Dark until the reconciler role + Hyperdrive are provisioned.
+    // Independent of the others — a failure must not sink them.
+    ctx.waitUntil(
+      runFreeOrgCapCron(env).catch((err: unknown) =>
+        console.log(JSON.stringify({ message: "free-org-cap cron failed", error: String(err) })),
+      ),
+    );
   },
 } satisfies ExportedHandler<Env>;
 
@@ -1594,6 +1607,35 @@ async function runRetentionPruneDrainCron(env: Env): Promise<void> {
     if (isTotalRetentionFailure(result)) {
       throw new Error(`retention prune: all ${result.orgs} claimed orgs failed`);
     }
+  } finally {
+    await sql.end();
+  }
+}
+
+/** Grace between first flagging an over-cap Free org and suspending it — the owner's window to resolve. */
+const FREE_ORG_CAP_GRACE_MS = 14 * 24 * 60 * 60 * 1000;
+/** Restore window written onto a suspended org (informational for the UI; no hard-delete lives here). */
+const FREE_ORG_CAP_RESTORE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Free-org-cap reconcile (PR2b slice 3b). Across ALL users, enforce the "at most N owned FREE orgs" rule the
+ * best-effort creation gate can't: flag → suspend the overflow of anyone over the cap, and restore an org once
+ * its owner resolves the overage. Dark until the webhook_capreconciler role + Hyperdrive are provisioned. One
+ * short-lived connection as that role (its role-targeted policies + column grants scope it to the ownership
+ * graph + the suspend-lifecycle write). A restored org's held deliveries are re-woken by the hourly delivery
+ * reconciler, so this cron needs no DO access.
+ */
+async function runFreeOrgCapCron(env: Env): Promise<void> {
+  if (!env.HYPERDRIVE_CAPRECONCILER) return; // dark until the reconciler role + Hyperdrive are provisioned
+  const sql = createClient(env.HYPERDRIVE_CAPRECONCILER.connectionString);
+  try {
+    const result = await runFreeOrgCapReconcile(sql, {
+      now: Date.now(),
+      cap: MAX_FREE_ORGS_PER_USER,
+      graceMs: FREE_ORG_CAP_GRACE_MS,
+      restoreMs: FREE_ORG_CAP_RESTORE_MS,
+    });
+    console.log(JSON.stringify({ message: "free-org-cap reconcile", ...result }));
   } finally {
     await sql.end();
   }

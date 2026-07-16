@@ -182,6 +182,8 @@ export interface OverCapFreeOrg {
   /** Its current service state, so the reconciler can skip an org already suspended for this reason. */
   readonly status: OrgStatus;
   readonly suspendedReason: string | null;
+  /** Its grace deadline, if flagged — the reconciler suspends once `now >= graceUntil`. Null = not flagged. */
+  readonly graceUntil: Date | null;
 }
 
 /** A user who owns MORE than the cap allows, with ALL their owned free orgs (oldest-first). */
@@ -214,6 +216,7 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
       org_created_at: Date;
       status: OrgStatus;
       suspended_reason: string | null;
+      grace_until: Date | null;
     }[]
   >`
     with owned_free as (
@@ -221,7 +224,8 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
              o.id as org_id,
              o.created_at as org_created_at,
              o.status,
-             o.suspended_reason
+             o.suspended_reason,
+             o.free_org_cap_grace_until as grace_until
         from memberships m
         join orgs o on o.id = m.org_id
        where m.role = 'owner'
@@ -231,7 +235,7 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
               and b.status = any(string_to_array(${BILLING_ACTIVE_STATUSES.join(",")}, ','))
          )
     )
-    select user_id, org_id, org_created_at, status, suspended_reason
+    select user_id, org_id, org_created_at, status, suspended_reason, grace_until
       from owned_free
      where user_id in (
        select user_id from owned_free group by user_id having count(*) > ${cap}
@@ -248,10 +252,34 @@ export async function findOwnersOverFreeCap(reconciler: Sql, cap: number): Promi
       createdAt: r.org_created_at,
       status: r.status,
       suspendedReason: r.suspended_reason,
+      graceUntil: r.grace_until,
     });
     byUser.set(r.user_id, list);
   }
   return [...byUser].map(([userId, freeOrgs]) => ({ userId, freeOrgs }));
+}
+
+/** An org the free-org-cap reconciler currently MANAGES — suspended for the cap, or flagged in its grace
+ *  window. Used to find orgs to RESTORE/clear once their owner is no longer over the cap. */
+export interface FreeCapManagedOrg {
+  readonly orgId: string;
+  readonly status: OrgStatus;
+  readonly graceUntil: Date | null;
+}
+
+/**
+ * Every org the reconciler is currently acting on: suspended for `free_org_cap`, OR flagged with a grace
+ * deadline. Read as the reconciler (cross-org). The reconcile pass compares this against the CURRENT overflow
+ * set — a managed org NOT in that set means the owner resolved the overage (upgraded/deleted/reassigned), so
+ * it must be restored (if suspended) or un-flagged (if in grace).
+ */
+export async function listFreeCapManagedOrgs(reconciler: Sql): Promise<FreeCapManagedOrg[]> {
+  const rows = await reconciler<{ org_id: string; status: OrgStatus; grace_until: Date | null }[]>`
+    select id as org_id, status, free_org_cap_grace_until as grace_until
+      from orgs
+     where (status = 'suspended' and suspended_reason = 'free_org_cap')
+        or free_org_cap_grace_until is not null`;
+  return rows.map((r) => ({ orgId: r.org_id, status: r.status, graceUntil: r.grace_until }));
 }
 
 // ── The free-org-cap reconciler's WRITE side (migration 0085) ────────────────────────────────────────────
@@ -344,8 +372,12 @@ export async function suspendOrgForFreeCap(
 /**
  * Restore an org suspended for the free-org cap: back to active, suspend metadata cleared, ingest un-paused
  * (only the free_org_cap pause — an event-cap pause is left to the cap producer). Only acts on an org
- * currently suspended FOR free_org_cap. Returns true iff it restored — the caller must then WAKE that org's
- * delivery DOs (clearing orgs.status alone leaves the held backlog frozen until something pokes them).
+ * currently suspended FOR free_org_cap. Returns true iff it restored.
+ *
+ * Held deliveries are NOT woken here: they stayed durably owed while suspended, and the existing hourly
+ * DELIVERY reconciler re-wakes any idle DO with due work — so a restored org's backlog drains within the hour
+ * without this path needing DO access (the reconciler role has none). The return value is for the caller's
+ * metrics/logging.
  */
 export async function restoreOrgFromFreeCap(reconciler: Sql, orgId: string): Promise<boolean> {
   return reconciler.begin(async (tx) => {
