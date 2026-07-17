@@ -14,6 +14,7 @@ import { isUuid } from "./endpoints";
 import { getAuditChainKey } from "./env";
 import {
   loadMoreEvents,
+  loadMoreOrgEvents,
   revealHeader,
   type EventSummaryItem,
   type RevealHeaderResult,
@@ -81,6 +82,37 @@ export async function loadMoreEventsAction(
     logActionError("events.load_more_failed", error);
     return { ok: false };
   }
+}
+
+/**
+ * Fetch the next page of the ORG's events (the consolidated /org/{slug}/events "Load older").
+ *
+ * Mirrors loadMoreEventsAction's guards exactly — same cursor-shape validation, same server-side filter
+ * re-parse (this action is independently callable), same `{ok:false}` on a fault so the list keeps its rows.
+ * The only difference is that there is no endpointId to validate: RLS is the whole boundary, and an
+ * `?endpointId=` DRILL-DOWN, if present, arrives inside `filters` and is shape-checked by parseEventFilters.
+ */
+export async function loadMoreOrgEventsAction(
+  slug: string,
+  input: { cursor: Cursor; filters?: EventFilterParams },
+): Promise<LoadMoreEventsResult> {
+  const session = await requireOrgAccess(slug);
+
+  const cursor = input?.cursor as { orderKey?: unknown; id?: unknown } | undefined;
+  if (!cursor || typeof cursor.id !== "string" || !isUuid(cursor.id)) return { ok: false };
+  if (typeof cursor.orderKey !== "string" || !ORDER_KEY_RE.test(cursor.orderKey)) {
+    return { ok: false };
+  }
+
+  const filters = parseEventFilters(input?.filters ?? {}, PROVIDERS);
+  const page = await loadMoreOrgEvents(
+    session.orgId,
+    { orderKey: cursor.orderKey, id: cursor.id },
+    filters,
+  );
+  // loadMoreOrgEvents logs + returns null on a fault (it does not throw), so this is the whole error path.
+  if (!page) return { ok: false };
+  return { ok: true, items: page.items, nextCursor: page.nextCursor };
 }
 
 /**

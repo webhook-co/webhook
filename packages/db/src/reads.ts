@@ -230,6 +230,34 @@ export async function listEndpoints(
   return buildPage(rows, limit, toEndpoint, (r) => ({ orderKey: r.order_key!, id: r.id }));
 }
 
+/** An endpoint's display name + whether it is soft-deleted. Keyed by endpoint id. */
+export interface EndpointNameEntry {
+  readonly name: string;
+  readonly deleted: boolean;
+}
+
+/**
+ * Every endpoint in the RLS-pinned org as `{ id: {name, deleted} }` — INCLUDING soft-deleted ones.
+ *
+ * For labelling an org-wide events list: its rows can come from any endpoint, and ADR-0076 keeps a
+ * soft-deleted endpoint's events listable, so a name map built from `listEndpoints` (which filters
+ * `deleted_at is null`) would leave exactly those rows unlabelled. `deleted` is carried rather than dropped
+ * because "deleted" and "absent" are different facts and the UI says different things about them.
+ *
+ * Unbounded by design: endpoints are capped at DEFAULT_MAX_ENDPOINTS_PER_ORG (100) per org, so this is one
+ * small round trip the page already needs for its endpoint filter — no per-row cost, no N+1, and no join that
+ * would make `id` ambiguous in the events browse.
+ */
+export async function listEndpointNames(tx: TenantTx): Promise<Record<string, EndpointNameEntry>> {
+  const rows = await tx<{ id: string; name: string; deleted_at: Date | null }[]>`
+    select id, name, deleted_at from endpoints`;
+  // null-prototype: an endpoint id is a uuid, but a map keyed by external data must never let a key alias
+  // an Object.prototype member and read back a bogus entry.
+  const out: Record<string, EndpointNameEntry> = Object.create(null);
+  for (const r of rows) out[r.id] = { name: r.name, deleted: r.deleted_at !== null };
+  return out;
+}
+
 /**
  * Resolve one endpoint by id under RLS. By default a soft-deleted endpoint reads as not-found (ADR-0076),
  * so the `endpoints.get` capability 404s after a delete. `includeDeleted` keeps a soft-deleted endpoint

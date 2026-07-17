@@ -138,3 +138,27 @@ describe("hasAppliedFilters", () => {
     expect(hasAppliedFilters(parseEventFilters({ status: "failed" }))).toBe(true);
   });
 });
+
+describe("parseEventFilters — endpointId (the org-wide browse's drill-down)", () => {
+  const EP = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
+
+  it("parses a uuid ?endpointId=", () => {
+    expect(parseEventFilters({ endpointId: EP })).toEqual({ endpointId: EP });
+  });
+
+  // Shape-validated, NOT membership-validated — see the parser comment. A non-uuid must never reach SQL:
+  // `endpoint_id = 'oops'` raises 22P02, which would turn a hand-edited URL into a 500.
+  it("DROPS a non-uuid ?endpointId= so it never reaches SQL", () => {
+    expect(parseEventFilters({ endpointId: "oops" })).toEqual({});
+    expect(parseEventFilters({ endpointId: "" })).toEqual({});
+  });
+
+  it("takes the first value of a repeated ?endpointId=", () => {
+    expect(parseEventFilters({ endpointId: [EP, "other"] })).toEqual({ endpointId: EP });
+  });
+
+  it("hasAppliedFilters counts an endpoint filter", () => {
+    expect(hasAppliedFilters(parseEventFilters({ endpointId: EP }))).toBe(true);
+    expect(hasAppliedFilters(parseEventFilters({ endpointId: "oops" }))).toBe(false);
+  });
+});

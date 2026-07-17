@@ -25,6 +25,19 @@ export const DATE_PRESETS: readonly DatePreset[] = [
   { id: "30d", label: "Last 30 days", ms: 30 * DAY },
 ];
 
+/**
+ * The default window for the ORG-WIDE events browse when no `?range=` is set.
+ *
+ * The per-endpoint browse defaults to all time; the org-wide one must not. Measured: the keyset's `limit + 1`
+ * early-stop does NOT hold once a residual filter (a search term, a sparse status) makes the planner abandon
+ * the ordered index — the resulting Sort is a BLOCKING operator that consumes the entire input before emitting
+ * row 1. 578ms at 1.8M rows, ~32s extrapolated at 100M; 29ms with a date bound.
+ *
+ * 7d is also the Free plan's retention window, so for most orgs it hides nothing that still exists. It is a
+ * DISCLOSED default — the chip shows it and "Any time" is one click away — never a silent filter.
+ */
+export const DEFAULT_ORG_EVENTS_RANGE = "7d";
+
 const PRESET_BY_ID = new Map(DATE_PRESETS.map((p) => [p.id, p]));
 
 /** True when `id` names a known preset (a hand-edited `?range=foo` is not). */

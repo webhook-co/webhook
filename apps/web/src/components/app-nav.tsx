@@ -10,6 +10,7 @@ import {
   Send,
   Settings,
   Users,
+  Inbox,
   Webhook,
   Zap,
 } from "lucide-react";
@@ -34,9 +35,10 @@ import { usePathname } from "next/navigation";
  * paths here is what would silently break: they would still typecheck, still render, and simply link out of
  * the org.
  */
-const NAV = {
+export const NAV = {
   overview: { path: "/dashboard", label: "Overview", Icon: Gauge },
   endpoints: { path: "/endpoints", label: "Endpoints", Icon: Webhook },
+  events: { path: "/events", label: "Events", Icon: Inbox },
   triggers: { path: "/triggers", label: "Triggers", Icon: Zap },
   destinations: { path: "/destinations", label: "Destinations", Icon: Send },
   deliveries: { path: "/deliveries", label: "Deliveries", Icon: Activity },
@@ -60,10 +62,11 @@ export const COMMAND_ITEMS = (slug: string) =>
   [
     { ...NAV.overview, keywords: ["home", "dashboard", "stats"] },
     { ...NAV.endpoints, keywords: ["ingest", "url", "webhook"] },
+    { ...NAV.events, keywords: ["events", "received", "payload", "inspect"] },
     { ...NAV.triggers, keywords: ["agent", "mcp"] },
     { ...NAV.destinations, keywords: ["forward", "target"] },
     { ...NAV.deliveries, keywords: ["attempts", "failures", "retries"] },
-    { ...NAV.usage, keywords: ["events", "quota"] },
+    { ...NAV.usage, keywords: ["quota", "metering", "cap"] },
     { ...NAV.billing, keywords: ["plan", "invoice", "subscription", "upgrade"] },
     { ...NAV.credentials, keywords: ["keys", "api key", "tokens", "devices"] },
     { ...NAV.team, keywords: ["members", "invite", "roles"] },
@@ -71,45 +74,74 @@ export const COMMAND_ITEMS = (slug: string) =>
     { ...NAV.settings, keywords: ["account", "profile", "delete"] },
   ].map(({ path, label, keywords }) => ({ href: orgHref(slug, path), label, keywords }));
 
+/**
+ * The ONE nav entry the current path belongs to — so two rows can never both look current, and none can
+ * silently look dead.
+ *
+ * A per-item `startsWith` prefix rule cannot express this: `/endpoints/<id>/events` starts with `/endpoints`,
+ * so it would light up Endpoints while the reader is looking at events. Encoding that as two regexes that
+ * must be exact inverses (one stops matching exactly where the other starts) is guaranteed drift. Instead one
+ * function returns exactly one key, most-specific first, and it is exhaustively table-testable without
+ * rendering anything.
+ *
+ * Both events routes claim the `events` key: the consolidated /events browse AND the per-endpoint
+ * /endpoints/<id>/events list. Someone reading events should see "Events" highlighted.
+ */
+export function activeNavKey(pathname: string, slug: string): keyof typeof NAV | null {
+  const prefix = `/org/${slug}`;
+  if (!pathname.startsWith(prefix)) return null;
+  const path = pathname.slice(prefix.length) || "/";
+  if (path === "/events" || path.startsWith("/events/")) return "events";
+  if (/^\/endpoints\/[^/]+\/events(\/|$)/.test(path)) return "events";
+  for (const [key, entry] of Object.entries(NAV)) {
+    if (path === entry.path || path.startsWith(`${entry.path}/`)) return key as keyof typeof NAV;
+  }
+  return null;
+}
+
 export function AppNav({ slug }: { slug: string }) {
   const pathname = usePathname();
+  const activeKey = activeNavKey(pathname, slug);
 
-  // Match on the org-rooted href. The old `pathname === href || pathname.startsWith(href + "/")` is still the
-  // right shape — but ONLY once href carries the org prefix. Comparing a bare `/endpoints` against
-  // `/org/acme/endpoints` matches nothing, so every item would render inactive: a silent, purely visual
-  // failure that no type checks and no unit test on the NAV table would catch.
-  const isActive = (href: string) => pathname === href || pathname.startsWith(`${href}/`);
-
-  const item = ({ path, label, Icon }: { path: string; label: string; Icon: typeof Gauge }) => {
-    const href = orgHref(slug, path);
-    return (
-      <AppNavItem asChild active={isActive(href)} icon={<Icon aria-hidden="true" />}>
-        <Link href={href}>{label}</Link>
-      </AppNavItem>
-    );
-  };
+  const item = (
+    key: keyof typeof NAV,
+    { path, label, Icon }: { path: string; label: string; Icon: typeof Gauge },
+    nested = false,
+  ) => (
+    <AppNavItem
+      asChild
+      active={activeKey === key}
+      nested={nested}
+      icon={nested ? undefined : <Icon aria-hidden="true" />}
+    >
+      <Link href={orgHref(slug, path)}>{label}</Link>
+    </AppNavItem>
+  );
 
   return (
     <>
       {/* Overview is the landing after login — a cross-cutting read before you pick a section, so it sits
           above the direction groups (it belongs to neither Inbound nor Outbound). */}
-      {item(NAV.overview)}
+      {item("overview", NAV.overview)}
       {/* Grouped by direction: Inbound is what you receive; Outbound is where you send it and how those
           sends fared. Within Outbound, Destinations (the targets) precede Deliveries (the results) —
           a delivery can't exist before a destination. */}
       <AppNavSection>Inbound</AppNavSection>
-      {item(NAV.endpoints)}
-      {item(NAV.triggers)}
+      {item("endpoints", NAV.endpoints)}
+      {/* Events sits UNDER Endpoints as a sub-item — always visible, never collapsed: it is the page most
+          readers want, and hiding it behind a disclosure would cost the clicks this page exists to remove. */}
+      {item("events", NAV.events, true)}
+      {item("triggers", NAV.triggers)}
       <AppNavSection>Outbound</AppNavSection>
-      {item(NAV.destinations)}
-      {item(NAV.deliveries)}
+      {item("destinations", NAV.destinations)}
+      {item("deliveries", NAV.deliveries)}
       <AppNavSection>Account</AppNavSection>
-      {item(NAV.usage)}
-      {item(NAV.billing)}
-      {item(NAV.credentials)}
-      {item(NAV.team)}
-      {item(NAV.audit)}
-      {item(NAV.settings)}
+      {item("usage", NAV.usage)}
+      {item("billing", NAV.billing)}
+      {item("credentials", NAV.credentials)}
+      {item("team", NAV.team)}
+      {item("audit", NAV.audit)}
+      {item("settings", NAV.settings)}
     </>
   );
 }
