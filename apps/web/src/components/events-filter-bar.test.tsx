@@ -72,3 +72,32 @@ describe("EventsFilterBar — the endpoint facet (org-wide browse only)", () => 
     expect(screen.getByRole("option", { name: "All endpoints" })).toBeInTheDocument();
   });
 });
+
+// The 3-char floor, as the READER experiences it. pg_trgm extracts zero trigrams below 3 characters, so a
+// short term genuinely cannot run — but it used to be dropped in SILENCE, handing back the full unfiltered
+// list and leaving the reader to infer their search never happened.
+describe("EventsFilterBar — the search floor is explained, not silently enforced", () => {
+  it("says why a 1-2 char term has not run, and stops once it can", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText("Search events");
+
+    expect(screen.queryByText(/Keep typing/)).not.toBeInTheDocument();
+
+    await user.type(input, "ab");
+    expect(screen.getByText(/Keep typing/)).toBeVisible();
+    // Announced, and tied to the input — a sighted reader sees it, a screen-reader user is told.
+    expect(screen.getByRole("status")).toHaveTextContent(/at least 3 characters/);
+    expect(input).toHaveAccessibleDescription(/Keep typing/);
+
+    await user.type(input, "c");
+    expect(screen.queryByText(/Keep typing/)).not.toBeInTheDocument();
+  });
+
+  it("does not nag someone who typed only whitespace", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    await user.type(screen.getByLabelText("Search events"), "  ");
+    expect(screen.queryByText(/Keep typing/)).not.toBeInTheDocument();
+  });
+});

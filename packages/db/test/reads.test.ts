@@ -420,10 +420,10 @@ describe("reads repos (RLS + keyset pagination)", () => {
   //
   // The alternative was a trigram GIN on (headers::text), which would have kept it AND made the disjunction
   // bitmap-able. It was benchmarked on the ingest hot path against a rule written before the number was known
-  // (see ingest-gin-writeamp.pg.test.ts): allowed 1.25x p99, MEASURED 12.80x. `webhook_ingest` has a 5s
+  // (see ingest-gin-writeamp.pg.test.ts): allowed 1.25x p99, MEASURED ~88x. `webhook_ingest` has a 5s
   // statement_timeout and WATERMARK_DELTA_MS derives from it — a GIN pending-list flush inside that budget is
   // a DROPPED WEBHOOK. Header search is not worth dropping webhooks for.
-  it("no longer matches request headers (refused: a GIN on headers cost 12.8x ingest p99)", async () => {
+  it("no longer matches request headers (refused: a GIN on headers cost ~88x ingest p99)", async () => {
     const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-hsearch" }, hasher)).id;
     await seedEvent(orgA, ep, {
       providerEventId: "evt_h1",
@@ -1301,5 +1301,48 @@ describe("listEvents: an explicit endpointId beats one in the filters", () => {
     expect(page.items.length).toBeGreaterThan(0);
     expect(page.items.every((e) => e.endpointId === epA)).toBe(true);
     expect(page.items.some((e) => e.endpointId === epTail)).toBe(false);
+  });
+});
+
+// THE BROWSE IS BOUNDED — the guard that makes an unbounded org-wide browse survivable.
+//
+// This page lets a reader ask for "Any time" across every endpoint in the org. Measured on real data, that
+// degrades badly the moment a residual filter makes the planner abandon the ordered index: the resulting Sort
+// is a BLOCKING operator that consumes the whole input before emitting row 1 — 578ms at 1.8M rows, ~32s
+// extrapolated at 100M. The 7d default hides that for most readers; it does not REMOVE it, and a one-click
+// escape hatch to all-time would be a self-inflicted DoS without a bound.
+//
+// `set local` (not ALTER ROLE) is deliberate and was audited: a role-level timeout would apply at SESSION
+// start, landing unpredictably as Hyperdrive's long-lived pools recycle, and would break org deletion (one
+// statement cascading over every event) and silently drop Stripe tail revenue (tail-flush's multi-day rollup).
+// Scoped to the browse transaction, it is structurally unable to touch any of them.
+describe("browseEvents bounds itself with a statement_timeout", () => {
+  it("applies the timeout inside the browse transaction", async () => {
+    await withTenant(app, orgA, async (tx) => {
+      await listOrgEvents(tx, { limit: 5 });
+      const [row] = await tx<{ statement_timeout: string }[]>`show statement_timeout`;
+      expect(row?.statement_timeout).toBe("5s");
+    });
+  });
+
+  it("is transaction-LOCAL: it never leaks onto the pooled connection", async () => {
+    // The whole safety argument rests on this. `set local` reverts at commit, so the next user of this
+    // pooled connection — a cron, a lifecycle job, the tail flush — is unaffected. A plain `set` would leak
+    // a 5s cap onto whatever ran next on that connection, which is exactly the failure ALTER ROLE would have
+    // caused wholesale.
+    await withTenant(app, orgA, (tx) => listOrgEvents(tx, { limit: 5 }));
+    await withTenant(app, orgA, async (tx) => {
+      const [row] = await tx<{ statement_timeout: string }[]>`show statement_timeout`;
+      expect(row?.statement_timeout).not.toBe("5s");
+    });
+  });
+
+  it("also bounds the endpoint-scoped browse (same body, same exposure)", async () => {
+    const ep = (await createEndpoint(app, { orgId: orgA, name: "ep-timeout" }, hasher)).id;
+    await withTenant(app, orgA, async (tx) => {
+      await listEvents(tx, { endpointId: ep, limit: 5 });
+      const [row] = await tx<{ statement_timeout: string }[]>`show statement_timeout`;
+      expect(row?.statement_timeout).toBe("5s");
+    });
   });
 });

@@ -15,6 +15,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import * as React from "react";
 
 import { DateRangeFilter } from "@/components/date-range-filter";
+import { effectiveDateRange } from "@/lib/date-range";
+import { SEARCH_MIN_LENGTH, searchTooShort } from "@/lib/event-filters";
 import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verification-state";
 
 // The events-list filter bar, driven entirely by the URL query so the filtered view is shareable,
@@ -44,9 +46,19 @@ export interface EventsFilterBarProps {
     readonly name: string;
     readonly deleted: boolean;
   }[];
+  /**
+   * The window the PAGE applies when the URL names none (the org browse defaults to 7d; the per-endpoint one
+   * omits this and defaults to all time).
+   *
+   * The bar must be told, because it reads the URL and the default lives server-side — so without this the
+   * chip read "Date range" while the reader was looking at 7 days of data. A default the UI does not name is
+   * a silent filter. Resolution goes through effectiveDateRange, the same function the page uses, so the two
+   * cannot drift apart again.
+   */
+  readonly defaultRange?: string;
 }
 
-export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) {
+export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFilterBarProps) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -70,10 +82,13 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
   const search = searchParams.get("search") ?? "";
-  const range = searchParams.get("range") ?? "";
+  // RAW (what the URL says) vs EFFECTIVE (what the page applied). They differ exactly when the URL names no
+  // date choice and the page falls back — the case the chip used to mislabel.
+  const rawRange = searchParams.get("range") ?? "";
   // Read GUARDED: without the `endpoints &&`, a hand-added ?endpointId= on the per-endpoint page (which has
   // no such control) would enable Clear with nothing visibly set.
   const endpointSel = endpoints ? (searchParams.get("endpointId") ?? "") : "";
+  const range = effectiveDateRange({ range: rawRange, from, to }, defaultRange ?? "");
   const active =
     endpointSel !== "" ||
     providerSel.length > 0 ||
@@ -81,7 +96,9 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
     from !== "" ||
     to !== "" ||
     search !== "" ||
-    range !== "";
+    // rawRange, NOT the effective one: the page's default is not a filter the reader SET, so it must not
+    // light up Clear — and clearing it would only round-trip back to the same default anyway.
+    rawRange !== "";
 
   // A single-select Combobox, NOT a MultiSelect like the facets beside it — deliberately. Two reasons:
   //   * SQL: `endpoint_id = $1` rides events_tunnel_idx (endpoint_id, received_at, id) with an equality seek
@@ -161,6 +178,9 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
   // NOT pending, any external ?search change is adopted — even one that round-trips back to a prior value
   // (the bug a "last-pushed value" ref had: it skipped the re-sync and left a filtered-but-blank box).
   const [searchInput, setSearchInput] = React.useState(search);
+  // Off the LIVE input, not the URL: the hint answers the reader as they type, before the debounce decides
+  // (correctly) not to push a term that cannot run.
+  const tooShort = searchTooShort({ search: searchInput });
   const searchPendingRef = React.useRef(false);
   React.useEffect(() => {
     if (!searchPendingRef.current) setSearchInput(search);
@@ -211,11 +231,21 @@ export function EventsFilterBar({ providers, endpoints }: EventsFilterBarProps) 
             // doesn't re-sync over the typing; the debounce clears it after pushing.
             searchPendingRef.current = e.target.value.trim() !== search;
           }}
-          placeholder="Search by event id, external id, provider event id, or header"
+          placeholder="Search by event id, provider event id, or dedup key"
           aria-label="Search events"
+          aria-describedby={tooShort ? "events-search-hint" : undefined}
           className="pl-9"
         />
       </div>
+      {/* A term below pg_trgm's 3-char floor cannot be run (no index can serve `%ab%`), and it used to be
+          dropped in SILENCE — so the reader got the full unfiltered list back and had to guess that their
+          search never happened. Say so instead. Reads off searchInput, not the URL: the point is to answer
+          the reader WHILE they type, before the debounce would (not) push anything. */}
+      {tooShort ? (
+        <p id="events-search-hint" role="status" className="mt-1.5 text-sm text-fg-muted">
+          Keep typing — search needs at least {SEARCH_MIN_LENGTH} characters.
+        </p>
+      ) : null}
 
       {/* Tier 2 — narrow: the faceting controls, with Clear right-aligned (disabled when nothing's set). */}
       <div className="flex flex-wrap items-center gap-2">

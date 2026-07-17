@@ -12,6 +12,7 @@ import * as React from "react";
 
 import {
   activeDateLabel,
+  ALL_TIME_RANGE,
   DATE_PRESETS,
   hasDateRange,
   isDatePreset,
@@ -127,6 +128,18 @@ export function DateRangeFilter({
               {value.range === preset.id ? <Check className="size-4" /> : null}
             </button>
           ))}
+          {/* The escape hatch from the org page's 7d default. It sends the explicit `all` token rather than
+              clearing the params, because applyPatch deletes empty values and the page defaults when they are
+              ABSENT — "clear the range" would round-trip straight back to 7d. Sits after the presets: it is
+              the widest window, and the list reads narrowest-to-widest. */}
+          <button
+            type="button"
+            onClick={() => pickPreset(ALL_TIME_RANGE)}
+            className="flex items-center justify-between rounded-control px-2.5 py-1.5 text-left text-sm text-fg-secondary outline-none hover:bg-surface-sunken hover:text-fg focus-visible:bg-surface-sunken focus-visible:text-fg"
+          >
+            <span>Any time</span>
+            {value.range === ALL_TIME_RANGE ? <Check className="size-4" /> : null}
+          </button>
           <div className="my-1 h-px bg-hairline" />
           <span className="px-2.5 py-1 text-xs font-medium text-fg-muted">Custom range</span>
         </div>

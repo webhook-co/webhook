@@ -139,9 +139,16 @@ export function parseEventFilters(
   //
   // The floor is not arbitrary: `pg_trgm` extracts ZERO trigrams from a 1-2 char pattern, so `%ab%` returns
   // every row from the GIN and rechecks all of them — no index can ever serve it. A 1-char substring search
-  // is also useless on its own terms. Dropped (not run) rather than passed to SQL.
+  // is also useless on its own terms. Dropped (not run) rather than passed to SQL — but the drop is
+  // REPORTABLE via searchTooShort, because a silently dropped term shows the reader an unfiltered list and
+  // leaves them to infer their search never ran.
   const search = cleanString(params.search);
-  if (search !== undefined && search.length >= 3 && search.length <= 256) filters.search = search;
+  if (
+    search !== undefined &&
+    search.length >= SEARCH_MIN_LENGTH &&
+    search.length <= SEARCH_MAX_LENGTH
+  )
+    filters.search = search;
   // SHAPE-validated only, deliberately NOT membership-validated — a departure from the provider filter
   // above, which checks its value against a static vocabulary.
   //
@@ -173,4 +180,23 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
     filters.search !== undefined ||
     filters.endpointId !== undefined
   );
+}
+
+/** Mirrors the contract's `.trim().min(3).max(256)`. Web bypasses contract validation, so it re-states it. */
+export const SEARCH_MIN_LENGTH = 3;
+export const SEARCH_MAX_LENGTH = 256;
+
+/**
+ * True when a search term was typed but is too short to run (1-2 chars after trimming).
+ *
+ * The floor itself is unavoidable — pg_trgm extracts no trigrams below 3 characters, so no index can serve
+ * `%ab%` and it degrades to scanning + rechecking every row in the org. What IS avoidable is dropping the
+ * term in silence: that renders the FULL, unfiltered list in response to a search, which reads as "no filter
+ * exists" rather than "your term is too short", and it flips hasAppliedFilters to false so the page can show
+ * onboarding copy at someone who was searching. API/CLI/MCP 400 on the same term; web should not pretend it
+ * ran. Whitespace-only is "no search", not "too short" — never nag someone who typed a space.
+ */
+export function searchTooShort(params: { search?: string | null }): boolean {
+  const search = cleanString(params.search);
+  return search !== undefined && search.length > 0 && search.length < SEARCH_MIN_LENGTH;
 }

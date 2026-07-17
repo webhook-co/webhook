@@ -174,7 +174,7 @@ function eventSearchFilter(tx: TenantTx, search: string | undefined) {
   //    bitmap-OR a disjunction when EVERY branch is index-backed, so this one unindexed branch forgot the
   //    trigram path for the WHOLE search: all three GINs paid ingest write-amp for ZERO read benefit, on
   //    every surface. The obvious fix — a trigram GIN on (headers::text) — was MEASURED and refused: p99
-  //    0.69ms -> 8.80ms, a 12.8x write-amp on the metered ingest hot path, against a pre-committed 1.25x
+  //    0.09ms -> 8.01ms, a ~88x write-amp on the metered ingest hot path, against a pre-committed 1.25x
   //    budget (test/ingest-gin-writeamp.pg.test.ts, which now asserts the refusal). Dropping the branch is
   //    what makes the remaining GINs work.
   //
@@ -444,7 +444,34 @@ export async function listOrgEvents(
  * `org_id = current_org_id()` leads events_org_ordered_idx (org_id, received_at, id) — a backward scan for the
  * DESC browse, no Sort node. Both are pinned by packages/db/test/index-usage.test.ts.
  */
+/**
+ * The wall-clock cap on an events browse. Deliberately generous — this is a BACKSTOP against a pathological
+ * plan, not a latency target: a healthy bounded browse is ~29ms, and the p99 the reader should ever see is
+ * orders of magnitude under this. It exists so a worst case fails FAST and loudly instead of holding a
+ * connection for half a minute.
+ */
+const BROWSE_STATEMENT_TIMEOUT = "5s";
+
 async function browseEvents(tx: TenantTx, opts: ListOrgEventsOptions): Promise<Page<EventSummary>> {
+  // BOUND THE BROWSE. This is the one read a user can point at their whole org, over all time, with a
+  // residual filter — and measured on real data that is exactly when the planner abandons the ordered index
+  // and falls back to a BLOCKING Sort that consumes the entire input before emitting row 1: 578ms at 1.8M
+  // rows, ~32s extrapolated at 100M. The 7d default makes that rare; it does not make it impossible, and the
+  // page deliberately offers a one-click "Any time". An unbounded escape hatch is a self-inflicted DoS.
+  //
+  // `set local`, NOT `ALTER ROLE webhook_app SET statement_timeout` — that was the original plan and the
+  // audit refused it. A role-level cap applies at SESSION start, so with Hyperdrive's long-lived pools it
+  // would land gradually and unpredictably as connections recycle (a clean canary, then breakage hours
+  // later — and the rollback has the same property). Worse, webhook_app is the general-purpose role: the
+  // same 5s would abort org deletion (`delete from orgs` cascades over every event in ONE statement — the
+  // org becomes undeletable AND the Stripe cancellation never enqueues, so we keep charging someone who
+  // asked to be deleted) and tail-flush's multi-day rollup (silently dropping invoice tail revenue).
+  //
+  // Scoped here, it is transaction-local, reverts at commit, cannot touch any of those, and is reversible
+  // per call. It bounds exactly the surface this page widened and nothing else.
+  // set_config(..., is_local => true) rather than `set local`: SET takes no bind parameter (it is parsed,
+  // not planned), and this is the same tx-scoped mechanism withTenant already uses for the RLS GUC.
+  await tx`select set_config('statement_timeout', ${BROWSE_STATEMENT_TIMEOUT}, true)`;
   const limit = clampLimit(opts.limit);
   const { cursor, endpointId, provider, receivedAfter, receivedBefore, verificationState, search } =
     opts;

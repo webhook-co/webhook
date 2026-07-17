@@ -925,7 +925,7 @@
             "name": "search",
             "in": "query",
             "required": false,
-            "description": "Case-insensitive substring across id fields + header names/values.",
+            "description": "Case-insensitive substring (min 3 chars) across providerEventId + dedupKey, or an exact event id.",
             "schema": {
               "type": "string",
               "minLength": 3,

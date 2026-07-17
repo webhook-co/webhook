@@ -65,19 +65,38 @@ function headers(i: number): string {
   return JSON.stringify(base);
 }
 
+/**
+ * Time ONE insert as POSTGRES ITSELF reports it — `EXPLAIN (ANALYZE)`'s "Execution Time", in ms.
+ *
+ * Timing from Node would be wrong here, and not subtly. This suite also runs against a REMOTE Neon in the
+ * nightly, where a ~20-100ms round trip dwarfs a sub-millisecond insert: the RTT lands in both the before and
+ * the after, so a real ~88x write-amp measures as ~1.1x and the assertion below goes RED for a reason that
+ * has nothing to do with the GIN. Timing the server's own work makes the number mean the same thing on a
+ * local socket and across the Atlantic, because the transport is never in the sample.
+ *
+ * EXPLAIN ANALYZE really does perform the INSERT, so the table still grows exactly as it would.
+ *
+ * An earlier draft timed this with `clock_timestamp()` either side of the statement in a CTE. It produced the
+ * right answer, but it was resting on UNSPECIFIED behaviour: Postgres executes WITH sub-statements
+ * concurrently with each other and with the main query, and explicitly does not define their order — so
+ * nothing guaranteed the t0 CTE was evaluated before the data-modifying one. A benchmark that happens to be
+ * right is not a benchmark. "Execution Time" is defined to be the server's execution of this statement.
+ */
 async function insertOne(i: number): Promise<number> {
   const id = newId();
-  const started = performance.now();
-  await withTenant(
+  const rows = await withTenant(
     app,
     orgId,
-    (tx) => tx`
+    (tx) => tx<{ "QUERY PLAN": unknown }[]>`
+      explain (analyze, timing off, format json)
       insert into events (id, org_id, endpoint_id, payload_r2_key, payload_bytes, headers,
                           dedup_key, dedup_strategy, provider, verified)
       values (${id}, ${orgId}, ${endpointId}, ${`k/${id}`}, 1024, ${headers(i)}::jsonb,
               ${`unique:${id}`}, 'unique', 'stripe', true)`,
   );
-  return performance.now() - started;
+  const raw = rows[0]!["QUERY PLAN"];
+  const plan = (typeof raw === "string" ? JSON.parse(raw) : raw) as [{ "Execution Time": number }];
+  return plan[0]["Execution Time"];
 }
 
 /** Insert N rows, return {p99, max} in ms. */
@@ -104,13 +123,19 @@ afterAll(async () => {
 });
 
 describe("GIN-on-headers ingest write-amp (the measurement that refused option (a))", () => {
-  // MEASURED 2026-07-17: p99 0.69ms -> 8.80ms = 12.80x, max 9.19ms.
+  // MEASURED 2026-07-17 (server-side, EXPLAIN ANALYZE Execution Time): p99 0.09ms -> 8.01ms = ~88x, max 8.33ms.
   //
-  // The rule (written above, BEFORE the number was known) allowed 1.25x. 12.8x refuses it outright, so the
+  // The rule (written above, BEFORE the number was known) allowed 1.25x. ~88x refuses it outright, so the
   // headers branch was DROPPED instead — see eventSearchFilter in reads.ts.
   //
-  // Note `max` was 9.19ms, nowhere near the 1000ms single-insert bound: eyeballing that alone would have said
-  // "harmless, ship it" and put a 12x write-amp on the metered ingest path. The p99 is the number that
+  // An earlier version of this benchmark timed the insert from NODE and reported 12.8x. That was the same
+  // refusal, but the number was DILUTED: the client round trip sat in BOTH the before and the after, so it
+  // shrank the ratio toward 1. Timing Postgres's own work is what exposes the real cost — and it is why this
+  // test cannot go red from network noise on the remote nightly. The exact ratio drifts run to run (~88-93x
+  // observed); nothing here depends on the digits, only on it being nowhere near the 1.25x the rule allowed.
+  //
+  // Note `max` is 8.33ms, nowhere near the 1000ms single-insert bound: eyeballing that alone would have said
+  // "harmless, ship it" and put a ~88x write-amp on the metered ingest path. The p99 is the number that
   // mattered, and pre-committing the rule is what stopped the wrong read of the data.
   //
   // This test now ASSERTS THE REFUSAL, so the finding cannot rot into folklore: if a future Postgres, a

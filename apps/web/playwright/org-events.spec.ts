@@ -171,3 +171,53 @@ test("the endpoint drill-down filters to one endpoint and back", async ({ page }
   await page.getByRole("option", { name: "All endpoints" }).click();
   await expect(page.getByRole("cell", { name: "alpha-one" })).toBeVisible();
 });
+
+// THE DEFAULT MUST BE ESCAPABLE — in a real browser, through a real URL round trip.
+//
+// The org page defaults to 7d (an unbounded org-wide browse degrades to a blocking Sort: ~32s at 100M rows).
+// A default is only honest if the reader can leave it. It shipped unleavable, and the code CLAIMED the
+// opposite: "Any time is one click away" — while no control cleared the range.
+//
+// A unit test cannot cover this. The failure lives in the round trip: the bar deletes empty params, the page
+// defaults on absent ones, so a naive "clear" button returns to 7d and the chip reads "Any time" over 7-day
+// data. That is a page+URL+RSC behaviour — exactly what mocked next/navigation cannot see, and exactly the
+// shape that already shipped once with a green suite.
+test("the 7d default is escapable: 'Any time' survives the URL round trip", async ({ page }) => {
+  const { users, orgs } = world();
+  await signIn(page, users.dana.id, orgs.alpha.id);
+  await page.goto(`/org/${orgs.alpha.slug}/events`);
+
+  // The TRIGGER, by its aria-label — not a bare /Any time/, which also matches the menu item inside the open
+  // popover. The default is DISCLOSED, not silent: the chip names the window it applied even though the URL
+  // carries no ?range=.
+  const trigger = page.getByRole("button", { name: /^Filter by received date:/ });
+  await expect(trigger).toHaveAccessibleName(/Last 7 days/);
+
+  await trigger.click();
+  await page.getByRole("button", { name: "Any time", exact: true }).click();
+
+  // An explicit token, NOT an absent param. If this ever regresses to clearing the params, the URL loses
+  // `range` and the page silently re-applies 7d — with the chip still claiming "Any time".
+  await expect(page).toHaveURL(/[?&]range=all\b/);
+  await expect(trigger).toHaveAccessibleName(/Any time/);
+
+  // The round trip is the assertion: reload, and the choice must SURVIVE rather than default back.
+  await page.reload();
+  await expect(trigger).toHaveAccessibleName(/Any time/);
+  await expect(trigger).not.toHaveAccessibleName(/Last 7 days/);
+});
+
+// A typo must not become an unbounded scan. `?range=bogus` used to count as "date intent" purely by being
+// PRESENT, so it resolved to no bound at all — the exact ~32s query the default exists to prevent, reachable
+// by fat-fingering a URL. Only a KNOWN token is intent now; junk falls back to the default.
+test("a junk ?range= falls back to the default rather than widening to all-time", async ({
+  page,
+}) => {
+  const { users, orgs } = world();
+  await signIn(page, users.dana.id, orgs.alpha.id);
+  await page.goto(`/org/${orgs.alpha.slug}/events?range=bogus`);
+
+  await expect(
+    page.getByRole("button", { name: /^Filter by received date:/ }),
+  ).toHaveAccessibleName(/Last 7 days/);
+});

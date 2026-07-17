@@ -224,5 +224,6 @@ describe("reveal rate-limit COUNT rides the audit_log action-window index (migra
 // Coaxing GUCs until an assertion goes green would manufacture a plan production never runs — precisely the
 // "green and worthless" failure this file already carries (see the header: enable_seqscan=off on 300 rows
 // proves an ordered path EXISTS, never that the planner PICKS it). So the trigram-vs-org-index question is
-// owned by the realistic-volume plan guard, which runs WITHOUT forcing GUCs. What IS pinned here, above, is
-// every plan this fixture can honestly show.
+// NOT answered anywhere yet, and saying otherwise would be the same overclaim in a different costume: a
+// realistic-volume guard that runs without forcing GUCs is owed work, tracked in this lane, not something
+// this file can point at today. What IS pinned here, above, is every plan this fixture can honestly show.

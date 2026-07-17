@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { firstParam, hasAppliedFilters, parseEventFilters } from "./event-filters";
+import { firstParam, hasAppliedFilters, parseEventFilters, searchTooShort } from "./event-filters";
 
 const PROVIDERS = ["stripe", "github", "shopify"] as const;
 
@@ -200,5 +200,34 @@ describe("parseEventFilters — the search floor (pg_trgm needs 3 chars)", () =>
   it("keeps a full uuid (the paste-an-id-to-jump-to-it path)", () => {
     const id = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5061";
     expect(parseEventFilters({ search: id })).toEqual({ search: id });
+  });
+});
+
+// A DROPPED TERM MUST BE VISIBLE, not silent.
+//
+// The 3-char floor is real (pg_trgm extracts zero trigrams below it), but dropping a short term silently is a
+// UX cliff: typing "ab" applied NO filter, so the reader saw every event in the org and had to infer that
+// their search hadn't run. Worse, hasAppliedFilters went false, so the page could show onboarding copy in
+// response to a search. The same term 400s on API/CLI/MCP — web was the only surface that pretended.
+//
+// The filter is still not RUN (that part was right). What changes is that the caller can now TELL, and say so.
+describe("a below-floor search term is reported, not silently swallowed", () => {
+  it("does not run the filter, but reports the term as too short", () => {
+    const parsed = parseEventFilters({ search: "ab" }, ["stripe"]);
+    expect(parsed.search).toBeUndefined();
+    expect(searchTooShort({ search: "ab" })).toBe(true);
+  });
+
+  it("is false for a term that actually runs, and for no term at all", () => {
+    expect(searchTooShort({ search: "abc" })).toBe(false);
+    expect(searchTooShort({ search: "" })).toBe(false);
+    expect(searchTooShort({})).toBe(false);
+    // Whitespace-only is "no search", not "too short" — it must not nag someone who typed a space.
+    expect(searchTooShort({ search: "  " })).toBe(false);
+  });
+
+  it("counts the TRIMMED term, matching the contract's .trim().min(3)", () => {
+    expect(searchTooShort({ search: " ab " })).toBe(true);
+    expect(searchTooShort({ search: " abc " })).toBe(false);
   });
 });

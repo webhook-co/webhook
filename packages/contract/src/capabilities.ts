@@ -235,7 +235,7 @@ export const eventsList = defineCapability({
         // on the event id when the term is a uuid. A plain string (no coerce) → JSON-Schema-clean. Both
         // substring columns are backed by trigram GIN indexes (migration 0023).
         //
-        // Deliberately NOT searched: request headers (a trigram GIN on them measured 12.8x ingest p99 — see
+        // Deliberately NOT searched: request headers (a trigram GIN on them measured ~88x ingest p99 — see
         // packages/db/test/ingest-gin-writeamp.pg.test.ts) and `external_id` (never written; migration 0090).
         // Both were removed together: an unindexable branch makes the WHOLE disjunction unindexable.
         //

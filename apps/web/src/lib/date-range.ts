@@ -33,16 +33,46 @@ export const DATE_PRESETS: readonly DatePreset[] = [
  * the ordered index — the resulting Sort is a BLOCKING operator that consumes the entire input before emitting
  * row 1. 578ms at 1.8M rows, ~32s extrapolated at 100M; 29ms with a date bound.
  *
- * 7d is also the Free plan's retention window, so for most orgs it hides nothing that still exists. It is a
- * DISCLOSED default — the chip shows it and "Any time" is one click away — never a silent filter.
+ * 7d is also the Free plan's retention window, so for most orgs it hides nothing that still exists.
+ *
+ * It is only a DISCLOSED default because the chip names the window AND {@link ALL_TIME_RANGE} makes all-time
+ * reachable in one click. Without that escape hatch it is a SILENT FILTER — which is exactly what shipped:
+ * this comment claimed "Any time is one click away" while no such control existed.
  */
 export const DEFAULT_ORG_EVENTS_RANGE = "7d";
+
+/**
+ * The explicit "no date bound" token (`?range=all`) — the escape hatch from {@link DEFAULT_ORG_EVENTS_RANGE}.
+ *
+ * It MUST be an explicit token rather than "clear the params", and that is not a style choice. The filter
+ * bar's applyPatch DELETES a key whose value is empty, and the page applies the default when the date params
+ * are ABSENT — so a control that cleared `range`/`from`/`to` would round-trip straight back to 7d, silently.
+ * The same shape already shipped as a bug once: a custom calendar range pushed `range: ""`, the default
+ * re-injected itself, and the reader saw 7 days while the chip read "Custom range".
+ *
+ * A present, non-empty token survives applyPatch, survives the URL, and reads as intent to the page.
+ */
+export const ALL_TIME_RANGE = "all";
 
 const PRESET_BY_ID = new Map(DATE_PRESETS.map((p) => [p.id, p]));
 
 /** True when `id` names a known preset (a hand-edited `?range=foo` is not). */
 export function isDatePreset(id: string | null | undefined): id is string {
   return typeof id === "string" && PRESET_BY_ID.has(id);
+}
+
+/**
+ * True when `?range=` carries a DELIBERATE choice — a window preset, or the explicit all-time token.
+ *
+ * This is the distinction the default turns on, and it is NOT "is the param present". A hand-edited
+ * `?range=bogus` must fall back to the default rather than to all-time: an unrecognised token is a typo, and
+ * resolving a typo into "scan the org's entire retained history" is how a stray URL becomes a ~32s query at
+ * 100M rows. Absent, empty, and junk all mean "no choice made" — only a KNOWN token is intent.
+ */
+export function isDateIntent(id: string | null | undefined): boolean {
+  // Not `isDatePreset(id) || id === ALL_TIME_RANGE`: isDatePreset is a type predicate, so TS narrows `id` to
+  // null|undefined on the right of the `||` and flags the comparison as impossible.
+  return typeof id === "string" && (PRESET_BY_ID.has(id) || id === ALL_TIME_RANGE);
 }
 
 /** The absolute lower bound for a preset (`now − window`), or undefined for an unknown id. */
@@ -92,17 +122,44 @@ export function activeDateLabel(value: {
   from?: string | null;
   to?: string | null;
 }): string {
+  if (value.range === ALL_TIME_RANGE) return "Any time";
   const preset = presetLabel(value.range);
   if (preset !== undefined) return preset;
   if (hasText(value.from) || hasText(value.to)) return "Custom range";
   return "Date range";
 }
 
-/** True when any date bound is active — a valid preset, or a non-empty custom from/to. */
+/**
+ * True when the reader has made an explicit date choice — a preset, all-time, or a custom from/to.
+ *
+ * All-time counts. It bounds nothing, but it IS a choice, and the bar uses this to decide whether there is
+ * anything to clear: a reader who picked "Any time" must be able to get back to the default.
+ */
 export function hasDateRange(value: {
   range?: string | null;
   from?: string | null;
   to?: string | null;
 }): boolean {
-  return isDatePreset(value.range) || hasText(value.from) || hasText(value.to);
+  return isDateIntent(value.range) || hasText(value.from) || hasText(value.to);
+}
+
+/**
+ * The window actually in force — THE single rule, shared by the page (which resolves it into a db bound) and
+ * the filter bar (which labels the chip with it). Returns a `?range=` token, or "" when a custom from/to owns
+ * the window.
+ *
+ * It exists because those two used to decide independently and drifted the moment the URL had no `?range=`:
+ * the page applied its default server-side while the bar read the (absent) param, so the reader got 7 days
+ * under a chip that said "Date range". A default nobody can see is a silent filter — the precise thing this
+ * module claimed it wasn't. Both callers now ask the same question and cannot disagree.
+ *
+ * The precedence mirrors parseEventFilters: an explicit choice ALWAYS beats the fallback, and a custom
+ * from/to suppresses it entirely (a naive `range || fallback` re-injects the default over a user's calendar
+ * dates — that bug shipped to prod once already).
+ */
+export function effectiveDateRange(
+  value: { range?: string | null; from?: string | null; to?: string | null },
+  fallback: string,
+): string {
+  return hasDateRange(value) ? (value.range ?? "") : fallback;
 }

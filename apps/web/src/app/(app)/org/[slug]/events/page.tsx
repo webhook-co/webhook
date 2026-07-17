@@ -4,7 +4,7 @@ import type { Metadata } from "next";
 
 import { EventsFilterBar } from "@/components/events-filter-bar";
 import { OrgEventsList } from "@/components/org-events-list";
-import { DEFAULT_ORG_EVENTS_RANGE } from "@/lib/date-range";
+import { DEFAULT_ORG_EVENTS_RANGE, effectiveDateRange } from "@/lib/date-range";
 import {
   firstParam,
   hasAppliedFilters,
@@ -61,11 +61,15 @@ export default async function OrgEventsPage({
   // other), and with no `?range` the default re-injected itself — the preset branch then OWNS the window and
   // parseEventFilters IGNORES from/to. A reader who picked Jan 1-9 saw the last 7 days while the chip read
   // "Custom range": silently wrong data, with the UI asserting the opposite. Caught in review, on prod.
-  const hasDateIntent =
-    firstParam(sp.range) !== undefined ||
-    firstParam(sp.from) !== undefined ||
-    firstParam(sp.to) !== undefined;
-  const range = hasDateIntent ? firstParam(sp.range) : DEFAULT_ORG_EVENTS_RANGE;
+  //
+  // `?range=all` is the OTHER thing that must count as intent — the explicit escape hatch. Without it in this
+  // predicate the default silently swallows it and "Any time" means "last 7 days", which is the same failure
+  // wearing a different hat. Note the range arm tests isDateIntent (a KNOWN token), not mere presence: a
+  // hand-edited `?range=bogus` is a typo and must fall back to the default, never widen to all-time.
+  const range = effectiveDateRange(
+    { range: firstParam(sp.range), from: firstParam(sp.from), to: firstParam(sp.to) },
+    DEFAULT_ORG_EVENTS_RANGE,
+  );
 
   const rawParams: EventFilterParams = {
     provider: sp.provider,
@@ -119,7 +123,14 @@ export default async function OrgEventsPage({
   return (
     <PageContainer>
       <PageHeader title="Events" description="Every event captured across all your endpoints." />
-      <EventsFilterBar providers={[...PROVIDERS]} endpoints={endpointOptions} />
+      {/* defaultRange is what makes the 7d default DISCLOSED rather than silent: the bar reads the URL, the
+          default lives here, so without telling it the chip said "Date range" over 7 days of data. The
+          per-endpoint bar omits it and stays all-time. */}
+      <EventsFilterBar
+        providers={[...PROVIDERS]}
+        endpoints={endpointOptions}
+        defaultRange={DEFAULT_ORG_EVENTS_RANGE}
+      />
       {result.status === "error" ? (
         // A read FAULT is not an empty result. Rendering the list here printed "No events match these
         // filters" over a database error — telling the reader their filters found nothing when in fact we

@@ -115,9 +115,19 @@ export const eventsListCommand = buildCommand<ListFlags, [string], AppContext>({
       },
       search: {
         kind: "parsed",
-        parse: (value: string) => value,
+        // A CLIENT-side floor, so `--search ab` fails HERE with a sentence a human can act on rather than as
+        // a raw server 400. The server floor (contract `.trim().min(3)`) is the real boundary and stays — this
+        // only buys a better message. 3 is not arbitrary: pg_trgm extracts zero trigrams below it, so no index
+        // can serve `%ab%` and it degrades to scanning every row in the org.
+        parse: (value: string) => {
+          const term = value.trim();
+          if (term.length > 0 && term.length < 3) {
+            throw new Error(`--search needs at least 3 characters (got ${term.length}).`);
+          }
+          return value;
+        },
         brief:
-          "substring search over event/provider/external ids + request header names/values (+ exact event id)",
+          "substring (min 3 chars) over the provider event id + dedup key, or an exact event id (uuid)",
         optional: true,
       },
     },
