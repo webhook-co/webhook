@@ -32,8 +32,11 @@
 //   node scripts/hyperdrive-cache-posture.mjs --lint     (no network; wired into `pnpm lint`)
 //   node scripts/hyperdrive-cache-posture.mjs            (deploy preflight; needs CLOUDFLARE_ACCOUNT_ID +
 //                                                         CLOUDFLARE_API_TOKEN and the generated overlays)
-// The deploy path runs AFTER gen-wrangler-prod.mjs, which emits every app's wrangler.prod.jsonc each run, and
-// strips an `@gen-optional` binding whose id var is unset — so the overlays name exactly what this run ships.
+// The deploy path runs AFTER gen-wrangler-prod.mjs. That generator emits EVERY app's wrangler.prod.jsonc on
+// every run — not only the apps the calling workflow deploys — so this checks every app's bindings regardless
+// of which workflow invoked it. That is deliberate: a binding resolving to a caching pool is a tenant leak no
+// matter which deploy noticed it, so blocking all of them is right. It is NOT "exactly what this run ships",
+// and this comment used to say that it was.
 
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -52,6 +55,28 @@ const APPS_DIR = join(ROOT, "apps");
 export const CACHING_ALLOWED_BINDINGS = ["HYPERDRIVE_CACHED"];
 
 /**
+ * The apps that connect to Postgres, and therefore MUST declare at least one hyperdrive binding.
+ *
+ * This list is the floor's whole point. A global "did we find ANY bindings?" check only fires when EVERY app
+ * breaks at once — so moving ONE app to a filename discovery misses (wrangler.json / wrangler.toml are both
+ * valid) dropped it silently while the guard still printed a completeness claim over the others. Naming the
+ * apps makes a single app's disappearance a red build.
+ *
+ * Kept honest by a test asserting this equals the set of apps whose wrangler config declares a hyperdrive
+ * binding — so adding a sixth DB-touching app without listing it here goes red.
+ */
+export const DB_APPS = ["engine", "api", "mcp", "web", "auth"];
+
+/**
+ * Which DB-touching apps did NOT contribute a binding — either absent from discovery, or found with none.
+ * @param {ReadonlyArray<{name: string, bindings: number}>} seen @returns {string[]}
+ */
+export function missingDbApps(seen) {
+  const counted = new Map((seen ?? []).map((s) => [s.name, s.bindings]));
+  return DB_APPS.filter((app) => (counted.get(app) ?? 0) === 0);
+}
+
+/**
  * Every entry of a wrangler config's `hyperdrive` array, as `{binding, id}`, in file order.
  *
  * PARSED, never text-scanned. The first version of this file regex'd for flat `{...}` chunks, which was wrong
@@ -61,8 +86,9 @@ export const CACHING_ALLOWED_BINDINGS = ["HYPERDRIVE_CACHED"];
  *     binding from BOTH layers — so a tenant binding re-pointed at the cached pool produced ZERO violations.
  *   - OVER-match: apps/mcp + apps/web document deploy-injected bindings as commented-out JSON in exactly the
  *     shape the regex harvested, so a comment could turn `pnpm lint` red for a binding that does not exist.
- * Reading `config.hyperdrive` after a real JSONC parse removes both failure modes at the root: comments are
- * comments, and only the actual array is consulted.
+ * Parsing removes both REGEX failure modes at the root: comments are comments, and only real arrays are
+ * consulted. It did not make the read complete on its own — the first parsed version read ONLY the top-level
+ * `hyperdrive` key and so silently missed `env.<name>` sections, which is a third under-match this now covers.
  *
  * FAILS LOUD on a parse error — reporting bindings from a partial parse is how a guard silently checks less
  * than it claims.
@@ -79,10 +105,28 @@ export function hyperdriveBindings(text) {
         `${errors[0].offset}) — refusing to report bindings from a partial parse.`,
     );
   }
-  const entries = Array.isArray(config?.hyperdrive) ? config.hyperdrive : [];
-  return entries
-    .filter((e) => typeof e?.binding === "string" && typeof e?.id === "string")
-    .map(({ binding, id }) => ({ binding, id }));
+  // Top level AND every `env.<name>` section. Wrangler supports env sections natively and
+  // apps/play/wrangler.jsonc already uses one — reading only the top-level key silently yielded ZERO bindings
+  // for a config that declares them under an env, so a tenant binding re-pointed at the cached pool inside an
+  // env section passed both layers green. A `hyperdrive` key that is present but NOT an array is a malformed
+  // config, not "no bindings": refuse it rather than swallow it.
+  const sections = [config, ...Object.values(config?.env ?? {})];
+  const out = [];
+  for (const section of sections) {
+    if (section?.hyperdrive === undefined) continue;
+    if (!Array.isArray(section.hyperdrive)) {
+      throw new Error(
+        "the wrangler config's `hyperdrive` key is present but not an array — refusing to read it as " +
+          '"no bindings".',
+      );
+    }
+    for (const e of section.hyperdrive) {
+      if (typeof e?.binding === "string" && typeof e?.id === "string") {
+        out.push({ binding: e.binding, id: e.id });
+      }
+    }
+  }
+  return out;
 }
 
 /** The id placeholder a binding MUST use: `HYPERDRIVE_TENANT` ⇒ `<HYPERDRIVE_TENANT_ID>`. */
@@ -162,12 +206,21 @@ export function configsByIdFromPages(pages) {
  * already at 16 — paging off page 1 would drop configs, and every dropped id fails closed, wedging every prod
  * deploy with an error pointing at a leak that does not exist.
  */
-export async function fetchAllConfigs(accountId, token, fetchImpl = fetch) {
+export async function fetchAllConfigs(accountId, token, fetchImpl = fetch, perPage = 100) {
   const pages = [];
-  for (let page = 1; ; page++) {
+  // Page while the API keeps handing back FULL pages. Deliberately NOT driven by `result_info.total_pages`:
+  // that is a field only our own test fake was ever seen to emit, so keying the loop on it proved the MOCK,
+  // not the API. If CF omits it, that loop stopped at page 1, every dropped id failed closed, and EVERY prod
+  // deploy died citing a leak that does not exist. A short page ends the walk; an exactly-full last page
+  // costs one extra empty request and then ends.
+  //
+  // MAX_PAGES is a runaway backstop, not a limit we expect to reach — if it trips, that is a bug HERE, so it
+  // throws rather than silently reporting a posture over a truncated set.
+  const MAX_PAGES = 100;
+  for (let page = 1; page <= MAX_PAGES; page++) {
     const url =
       `https://api.cloudflare.com/client/v4/accounts/${accountId}/hyperdrive/configs` +
-      `?per_page=100&page=${page}`;
+      `?per_page=${perPage}&page=${page}`;
     const res = await fetchImpl(url, { headers: { Authorization: `Bearer ${token}` } });
     const body = await res.json();
     if (!res.ok || !body?.success) {
@@ -177,11 +230,14 @@ export async function fetchAllConfigs(accountId, token, fetchImpl = fetch) {
         `Cloudflare API error (${res.status}): ${JSON.stringify(body?.errors ?? [])}`,
       );
     }
-    pages.push(body.result ?? []);
-    const totalPages = body.result_info?.total_pages ?? 1;
-    if (page >= totalPages || (body.result ?? []).length === 0) break;
+    const result = body.result ?? [];
+    pages.push(result);
+    if (result.length < perPage) return configsByIdFromPages(pages);
   }
-  return configsByIdFromPages(pages);
+  throw new Error(
+    `Hyperdrive config listing did not terminate within ${MAX_PAGES} pages — refusing to report a posture ` +
+      "over a possibly-truncated set.",
+  );
 }
 
 /**
@@ -208,18 +264,35 @@ async function readAppConfigs(filename) {
   return configs.filter(Boolean);
 }
 
+/**
+ * Refuse to report a posture unless EVERY DB-touching app contributed at least one binding. Shared by both
+ * entry points, because a completeness claim over a set we failed to discover is the failure this file exists
+ * to cure — and it committed that failure twice already.
+ * @param {ReadonlyArray<{name: string, text: string}>} configs
+ */
+function assertEveryDbAppSeen(configs) {
+  const seen = configs.map(({ name, text }) => ({
+    name,
+    bindings: hyperdriveBindings(text).length,
+  }));
+  const missing = missingDbApps(seen);
+  if (missing.length > 0) {
+    throw new Error(
+      `these apps connect to Postgres but contributed no hyperdrive binding: ${missing.join(", ")}. ` +
+        "Refusing to report a posture that skips them — did a wrangler config get renamed (wrangler.json / " +
+        ".toml are both valid), or move its bindings somewhere this guard does not read?",
+    );
+  }
+}
+
 async function lintMain() {
   const configs = await readAppConfigs("wrangler.jsonc");
   const bindings = configs.flatMap((c) => hyperdriveBindings(c.text));
-  // The same floor deployMain has. Without it, a discovery break (an app's config renamed to wrangler.json,
-  // a Worker on wrangler.toml) makes `bindingPlaceholderViolations([])` return [] and this print
-  // "✔ every binding …" over NOTHING — the exact claims-outrun-the-code failure this file exists to cure.
-  if (bindings.length === 0) {
-    throw new Error(
-      `found no hyperdrive bindings across ${configs.length} app config(s) — refusing to report "every ` +
-        'binding pinned" over an empty set. Did an app config get renamed?',
-    );
-  }
+  // PER-APP floor. A global "did we find any bindings?" check only fires when EVERY app breaks at once — so
+  // moving ONE app to a filename discovery misses (wrangler.json / wrangler.toml are both valid to wrangler)
+  // dropped it silently while this still printed a completeness claim over the rest. Naming the DB-touching
+  // apps makes a single app's disappearance a red build.
+  assertEveryDbAppSeen(configs);
   const violations = bindingPlaceholderViolations(configs);
   if (violations.length > 0) {
     console.error("✖ Hyperdrive binding pinning: a binding does not point at its own pool:\n");
@@ -248,14 +321,11 @@ async function deployMain() {
         "clean posture over zero bindings.",
     );
   }
+  // Same PER-APP floor as the lint layer: ONE app missing from the overlays must not pass as clean.
+  assertEveryDbAppSeen(overlays);
   const bindings = overlays.flatMap(({ name, text }) =>
     hyperdriveBindings(text).map((b) => ({ app: name, ...b })),
   );
-  if (bindings.length === 0) {
-    throw new Error(
-      "the generated overlays declare no hyperdrive bindings — refusing to report clean.",
-    );
-  }
 
   const violations = cachePostureViolations({
     bindings,

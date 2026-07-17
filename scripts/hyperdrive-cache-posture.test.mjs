@@ -9,18 +9,20 @@
 // Cloudflare API and proves the pool each binding actually resolves to has caching disabled.
 
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
   CACHING_ALLOWED_BINDINGS,
+  DB_APPS,
   bindingPlaceholderViolations,
   cachePostureViolations,
   configsByIdFromPages,
   fetchAllConfigs,
   hyperdriveBindings,
+  missingDbApps,
 } from "./hyperdrive-cache-posture.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -60,6 +62,36 @@ test("hyperdriveBindings tolerates id-before-binding key order", () => {
 
 test("hyperdriveBindings returns [] for a non-string", () => {
   assert.deepEqual(hyperdriveBindings(null), []);
+});
+
+// REGRESSION (round-3 review). Reading ONLY the top-level `hyperdrive` key was a NEW silent under-match:
+// wrangler natively supports `env.<name>` sections, and apps/play/wrangler.jsonc already uses one. A binding
+// declared there parses with ZERO errors and yielded ZERO bindings — so a tenant binding re-pointed at the
+// cached pool inside an env section passed both layers green.
+test("hyperdriveBindings sees bindings nested under an env.<name> section", () => {
+  const text = `{
+    "hyperdrive": [{ "binding": "HYPERDRIVE_TENANT", "id": "<HYPERDRIVE_TENANT_ID>" }],
+    "env": {
+      "production": {
+        "hyperdrive": [{ "binding": "HYPERDRIVE_INGEST", "id": "<HYPERDRIVE_CACHED_ID>" }]
+      }
+    }
+  }`;
+  assert.deepEqual(hyperdriveBindings(text), [
+    { binding: "HYPERDRIVE_TENANT", id: "<HYPERDRIVE_TENANT_ID>" },
+    { binding: "HYPERDRIVE_INGEST", id: "<HYPERDRIVE_CACHED_ID>" },
+  ]);
+  // …and the re-pointing inside the env section is caught, not swallowed.
+  assert.equal(bindingPlaceholderViolations([{ name: "web", text }]).length, 1);
+});
+
+// `"hyperdrive"` present but NOT an array parses with zero errors. Silently reading it as "no bindings" is
+// the same swallow; it is a malformed config and must be refused.
+test("hyperdriveBindings THROWS when `hyperdrive` is present but not an array", () => {
+  assert.throws(
+    () => hyperdriveBindings(`{"hyperdrive":{"binding":"HYPERDRIVE_TENANT","id":"x"}}`),
+    /not an array/,
+  );
 });
 
 // REGRESSION (round-2 review, UNDER-match). The first implementation regex'd for flat `{...}` chunks. A brace
@@ -277,6 +309,62 @@ test("reports every offending binding, not just the first", () => {
 // The Cloudflare list endpoint defaults to per_page=20 and the account is at 16 today. Paging off page 1
 // would drop configs, and every dropped id fails closed — wedging EVERY prod deploy with an error pointing at
 // a leak that does not exist.
+// ---------------------------------------------------------------- the per-app floor
+
+// REGRESSION (round-3 review). The floor was a GLOBAL binding count, so it only fired if EVERY app broke at
+// once. Reviewer simulated the real case: move ONE app to wrangler.toml with its tenant binding re-pointed at
+// the cached pool, and the guard printed "✔ all 2 binding(s) across 1 app config(s)" and exited 0 — the leak,
+// green. Each DB-touching app must be found individually.
+// Asserts DB_APPS against REALITY, not against itself: it must equal the set of apps whose SHIPPED
+// wrangler.jsonc actually declares a hyperdrive binding. A tautological `deepEqual(DB_APPS, [...the same
+// literal])` would be green and worthless — add a sixth DB-touching app and this goes red; retire one and it
+// goes red too, so the floor can never quietly stop covering an app.
+test("DB_APPS equals the apps whose SHIPPED wrangler.jsonc declares a hyperdrive binding", async () => {
+  const appDirs = (await readdir(join(ROOT, "apps"), { withFileTypes: true }))
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
+  const withBindings = [];
+  for (const name of appDirs) {
+    let text;
+    try {
+      text = await readFile(join(ROOT, "apps", name, "wrangler.jsonc"), "utf8");
+    } catch {
+      continue; // not a Worker
+    }
+    if (hyperdriveBindings(text).length > 0) withBindings.push(name);
+  }
+  assert.deepEqual([...DB_APPS].sort(), withBindings.sort());
+});
+
+test("missingDbApps flags a DB-touching app that yielded no bindings", () => {
+  const seen = [
+    { name: "engine", bindings: 2 },
+    { name: "api", bindings: 1 },
+    { name: "mcp", bindings: 1 },
+    { name: "auth", bindings: 1 },
+    // web absent — renamed to wrangler.toml, or discovered with zero bindings
+  ];
+  assert.deepEqual(missingDbApps(seen), ["web"]);
+});
+
+test("missingDbApps flags an app that was FOUND but contributed zero bindings", () => {
+  const seen = [
+    { name: "engine", bindings: 2 },
+    { name: "api", bindings: 1 },
+    { name: "mcp", bindings: 1 },
+    { name: "auth", bindings: 1 },
+    { name: "web", bindings: 0 },
+  ];
+  assert.deepEqual(missingDbApps(seen), ["web"]);
+});
+
+test("missingDbApps is empty when every DB app contributed a binding", () => {
+  const seen = ["engine", "api", "mcp", "auth", "web"].map((name) => ({ name, bindings: 1 }));
+  assert.deepEqual(missingDbApps(seen), []);
+});
+
+// ---------------------------------------------------------------- pagination
+
 test("configsByIdFromPages merges every page", () => {
   const byId = configsByIdFromPages([[{ id: "a", name: "one" }], [{ id: "b", name: "two" }]]);
   assert.deepEqual(Object.keys(byId).sort(), ["a", "b"]);
@@ -288,17 +376,27 @@ test("configsByIdFromPages yields a null-prototype map (a config id can never al
   assert.equal(byId["__proto__"], undefined);
 });
 
-/** A fake CF list endpoint over `pages`, honouring ?page= and reporting total_pages. */
-const fakeCf = (pages, calls = []) =>
+/**
+ * A fake CF list endpoint over `pages`, honouring ?page=.
+ *
+ * `withResultInfo: false` is the important mode: the previous version of this fake ALWAYS synthesised
+ * `result_info.total_pages`, i.e. it manufactured the exact field the code depended on. That proved the loop
+ * follows total_pages WHEN PRESENT — never that Cloudflare actually sends it. Paging must not hinge on a
+ * field we have not verified the API emits.
+ */
+const fakeCf = (pages, calls = [], { withResultInfo = true, perPage = 100 } = {}) =>
   async function fakeFetch(url) {
     calls.push(url);
     const page = Number(new URL(url).searchParams.get("page"));
+    const result = pages[page - 1] ?? [];
     return {
       ok: true,
       json: async () => ({
         success: true,
-        result: pages[page - 1] ?? [],
-        result_info: { page, per_page: 100, total_pages: pages.length },
+        result,
+        ...(withResultInfo
+          ? { result_info: { page, per_page: perPage, total_pages: pages.length } }
+          : {}),
       }),
     };
   };
@@ -308,13 +406,23 @@ const fakeCf = (pages, calls = []) =>
 // deploy with an error pointing at a leak that does not exist.
 test("fetchAllConfigs follows pagination and merges every page", async () => {
   const calls = [];
+  // perPage=2 so page 1 is FULL — which is what tells the loop to ask for page 2. (The previous version of
+  // this test handed back a 2-item page 1 at per_page=100, a response the API can never produce, and relied
+  // on the fake's synthesised total_pages to keep walking.)
   const byId = await fetchAllConfigs(
     "acct",
     "tok",
-    fakeCf([[{ id: "a" }, { id: "b" }], [{ id: "c" }]], calls),
+    fakeCf([[{ id: "a" }, { id: "b" }], [{ id: "c" }]], calls, { perPage: 2 }),
+    2,
   );
   assert.deepEqual(Object.keys(byId).sort(), ["a", "b", "c"]);
   assert.equal(calls.length, 2);
+  assert.match(calls[0], /per_page=2/);
+});
+
+test("fetchAllConfigs asks for per_page=100 by default", async () => {
+  const calls = [];
+  await fetchAllConfigs("acct", "tok", fakeCf([[{ id: "a" }]], calls));
   assert.match(calls[0], /per_page=100/);
 });
 
@@ -322,6 +430,48 @@ test("fetchAllConfigs stops after the last page (no infinite loop)", async () =>
   const calls = [];
   await fetchAllConfigs("acct", "tok", fakeCf([[{ id: "a" }]], calls));
   assert.equal(calls.length, 1);
+});
+
+// REGRESSION (round-3 review). Paging must NOT depend on `result_info.total_pages` — a field only our own
+// fake was ever seen to emit. If CF omits it the old loop broke after page 1, every dropped id failed closed,
+// and EVERY prod deploy died citing a leak that does not exist. A FULL page means "ask for the next one".
+test("fetchAllConfigs pages correctly when the API sends NO result_info", async () => {
+  const calls = [];
+  const page1 = Array.from({ length: 3 }, (_, i) => ({ id: `p1-${i}` })); // full page (perPage=3)
+  const page2 = [{ id: "p2-0" }]; // short page ⇒ the last
+  const byId = await fetchAllConfigs(
+    "acct",
+    "tok",
+    fakeCf([page1, page2], calls, { withResultInfo: false }),
+    3,
+  );
+  assert.equal(Object.keys(byId).length, 4);
+  assert.equal(calls.length, 2);
+});
+
+test("fetchAllConfigs stops on a SHORT first page without a second request", async () => {
+  const calls = [];
+  await fetchAllConfigs(
+    "acct",
+    "tok",
+    fakeCf([[{ id: "a" }]], calls, { withResultInfo: false }),
+    3,
+  );
+  assert.equal(calls.length, 1);
+});
+
+// A full LAST page (total is an exact multiple of per_page) must not loop forever: the next request returns
+// empty and ends it.
+test("fetchAllConfigs terminates when the last page is exactly full", async () => {
+  const calls = [];
+  const byId = await fetchAllConfigs(
+    "acct",
+    "tok",
+    fakeCf([[{ id: "a" }, { id: "b" }], []], calls, { withResultInfo: false }),
+    2,
+  );
+  assert.deepEqual(Object.keys(byId).sort(), ["a", "b"]);
+  assert.equal(calls.length, 2);
 });
 
 test("fetchAllConfigs THROWS on an API error rather than reporting an empty, clean account", async () => {
