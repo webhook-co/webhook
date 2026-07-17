@@ -40,6 +40,9 @@ export default async function OrgEventsPage({
     search?: string | string[];
     range?: string | string[];
     endpointId?: string | string[];
+    method?: string | string[];
+    dedupStrategy?: string | string[];
+    eventType?: string | string[];
   }>;
 }) {
   const { slug } = await params;
@@ -79,6 +82,9 @@ export default async function OrgEventsPage({
     search: firstParam(sp.search),
     range,
     endpointId: firstParam(sp.endpointId),
+    method: sp.method,
+    dedupStrategy: sp.dedupStrategy,
+    eventType: firstParam(sp.eventType),
   };
   const filters = parseEventFilters(rawParams, PROVIDERS);
   const result = await loadOrgEvents(session.orgId, filters);
@@ -103,6 +109,9 @@ export default async function OrgEventsPage({
     status: rawParams.status,
     search: rawParams.search,
     endpointId: rawParams.endpointId,
+    method: rawParams.method,
+    dedupStrategy: rawParams.dedupStrategy,
+    eventType: rawParams.eventType,
     from: filters.receivedAfter?.toISOString(),
     to: filters.receivedBefore?.toISOString(),
   };
@@ -114,6 +123,9 @@ export default async function OrgEventsPage({
     rawParams.status,
     rawParams.search,
     rawParams.endpointId,
+    rawParams.method,
+    rawParams.dedupStrategy,
+    rawParams.eventType,
     filterParams.from,
     filterParams.to,
   ]

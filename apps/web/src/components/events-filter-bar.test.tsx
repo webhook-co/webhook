@@ -136,3 +136,34 @@ describe("EventsFilterBar — the URL never carries a search that cannot run", (
     );
   });
 });
+
+// THE NEW FACETS render with human labels (never raw slugs), and event type commits on Enter/blur.
+describe("EventsFilterBar — method / dedup strategy / event type facets", () => {
+  it("the dedup-strategy facet shows human labels, never the raw enum slug", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    await user.click(screen.getByRole("button", { name: /Filter by dedup strategy/ }));
+    expect(screen.getByRole("option", { name: "Content hash" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Unique (no dedup)" })).toBeInTheDocument();
+    // the raw slug is never an option label
+    expect(screen.queryByRole("option", { name: "content_hash" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "sw_webhook_id" })).not.toBeInTheDocument();
+  });
+
+  it("the method facet offers the seven verbs", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    await user.click(screen.getByRole("button", { name: /Filter by HTTP method/ }));
+    for (const verb of ["GET", "POST", "DELETE", "OPTIONS"]) {
+      expect(screen.getByRole("option", { name: verb })).toBeInTheDocument();
+    }
+  });
+
+  it("event type is a free text input, and its coverage caveat is announced", () => {
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText("Filter by event type");
+    expect(input).toHaveAttribute("aria-describedby", "events-eventtype-hint");
+    // the honest coverage note is present (parsed for some providers only)
+    expect(screen.getByText(/parsed for some providers only/)).toBeInTheDocument();
+  });
+});

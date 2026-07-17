@@ -35,6 +35,9 @@ export default async function EventsPage({
     to?: string | string[];
     search?: string | string[];
     range?: string | string[];
+    method?: string | string[];
+    dedupStrategy?: string | string[];
+    eventType?: string | string[];
   }>;
 }) {
   const { slug, id } = await params;
@@ -53,6 +56,9 @@ export default async function EventsPage({
     to: firstParam(sp.to),
     search: firstParam(sp.search),
     range: firstParam(sp.range),
+    method: sp.method,
+    dedupStrategy: sp.dedupStrategy,
+    eventType: firstParam(sp.eventType),
   };
   const filters = parseEventFilters(rawParams, PROVIDERS);
   const result = await loadEvents(session.orgId, id, filters);
@@ -68,6 +74,9 @@ export default async function EventsPage({
     provider: rawParams.provider,
     status: rawParams.status,
     search: rawParams.search,
+    method: rawParams.method,
+    dedupStrategy: rawParams.dedupStrategy,
+    eventType: rawParams.eventType,
     from: filters.receivedAfter?.toISOString(),
     to: filters.receivedBefore?.toISOString(),
   };
@@ -112,7 +121,7 @@ export default async function EventsPage({
             // once-seeded state with the freshly-filtered first page. `from` carries the resolved preset
             // bound, so changing the preset re-keys without a separate `range` term; a multi-select array
             // stringifies to a comma-join (distinct per selection).
-            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}:${filterParams.search ?? ""}`}
+            key={`${id}:${filterParams.provider ?? ""}:${filterParams.status ?? ""}:${filterParams.from ?? ""}:${filterParams.to ?? ""}:${filterParams.search ?? ""}:${filterParams.method ?? ""}:${filterParams.dedupStrategy ?? ""}:${filterParams.eventType ?? ""}`}
             endpointId={id}
             initialItems={result.items}
             initialCursor={result.nextCursor}

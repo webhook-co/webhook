@@ -13,9 +13,10 @@
 // include June 2, set `to=2026-06-03`.) Keeping this exclusive holds the cross-surface parity that an
 // inclusive-of-the-to-day shortcut would break.
 
-import type { VerificationState } from "@webhook-co/shared";
+import type { DedupStrategy, HttpMethod, VerificationState } from "@webhook-co/shared";
 
 import { isDatePreset, resolvePresetBound } from "./date-range";
+import { DEDUP_STRATEGIES, HTTP_METHODS } from "./event-facets";
 import { VERIFICATION_STATES } from "./verification-state";
 
 /** The coerced, SQL-ready filter (instant bounds). Mirrors the db `ListEventsOptions` filter fields. */
@@ -29,6 +30,12 @@ export interface EventFilters {
   readonly search?: string;
   /** Drill down to ONE endpoint (the org-wide browse). Absent = every endpoint in the org. */
   readonly endpointId?: string;
+  /** Multi-select HTTP-method filter — OR'd. Set only when non-empty. */
+  readonly method?: readonly HttpMethod[];
+  /** Multi-select dedup-strategy filter — OR'd. Set only when non-empty. */
+  readonly dedupStrategy?: readonly DedupStrategy[];
+  /** Exact event-type match. Set only when non-empty (max 256, mirroring the contract). */
+  readonly eventType?: string;
 }
 
 /** The raw, human-facing filter values as they ride in the URL query + across the load-more boundary. */
@@ -46,6 +53,12 @@ export interface EventFilterParams {
   readonly range?: string | null;
   /** Drill down to ONE endpoint (`?endpointId=`) — org-wide browse only; the per-endpoint page ignores it. */
   readonly endpointId?: string | string[] | null;
+  /** Multi-select HTTP method (`?method=GET&method=POST`). */
+  readonly method?: string | string[] | null;
+  /** Multi-select dedup strategy (`?dedupStrategy=unique`). */
+  readonly dedupStrategy?: string | string[] | null;
+  /** Exact event-type match (`?eventType=charge.succeeded`). */
+  readonly eventType?: string | null;
 }
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -101,6 +114,9 @@ export function parseEventFilters(
     verificationState?: VerificationState[];
     search?: string;
     endpointId?: string;
+    method?: HttpMethod[];
+    dedupStrategy?: DedupStrategy[];
+    eventType?: string;
   } = {};
   // Multi-select: validate each provider against the vocabulary (a hand-edited `?provider=foo` member
   // is dropped, not passed to SQL), de-dup, and only set the filter when at least one valid one remains.
@@ -159,6 +175,31 @@ export function parseEventFilters(
   // copy). Membership-checking here would also force an endpoint query on EVERY load-more.
   const endpointId = firstParam(params.endpointId ?? undefined);
   if (endpointId !== undefined && isUuid(endpointId)) filters.endpointId = endpointId;
+
+  // method + dedupStrategy: multi-select, validated against the closed client vocab (a hand-edited junk
+  // member is dropped, not passed to SQL), de-duped, set only when non-empty — the same shape as provider.
+  const methods = [
+    ...new Set(
+      paramList(params.method).filter((m) => (HTTP_METHODS as readonly string[]).includes(m)),
+    ),
+  ] as HttpMethod[];
+  if (methods.length > 0) filters.method = methods;
+  const strategies = [
+    ...new Set(
+      paramList(params.dedupStrategy).filter((d) =>
+        (DEDUP_STRATEGIES as readonly string[]).includes(d),
+      ),
+    ),
+  ] as DedupStrategy[];
+  if (strategies.length > 0) filters.dedupStrategy = strategies;
+
+  // eventType: an EXACT match on a single free string (unbounded, user-controlled — no enum). Trim, drop
+  // empty/whitespace, and cap at 256 to mirror the contract (the web bypasses contract validation, so this
+  // IS its copy of that bound). Events with no parsed type simply won't match — the UI copy says so.
+  const eventType = cleanString(firstParam(params.eventType ?? undefined));
+  if (eventType !== undefined && eventType.length <= SEARCH_MAX_LENGTH)
+    filters.eventType = eventType;
+
   return filters;
 }
 
@@ -178,7 +219,10 @@ export function hasAppliedFilters(filters: EventFilters): boolean {
     filters.receivedBefore !== undefined ||
     filters.verificationState !== undefined ||
     filters.search !== undefined ||
-    filters.endpointId !== undefined
+    filters.endpointId !== undefined ||
+    filters.method !== undefined ||
+    filters.dedupStrategy !== undefined ||
+    filters.eventType !== undefined
   );
 }
 

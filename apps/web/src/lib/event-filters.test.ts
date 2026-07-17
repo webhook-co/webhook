@@ -273,3 +273,40 @@ describe("the web's search bounds match the contract's", () => {
     expect(longEnough.success).toBe(true);
   });
 });
+
+describe("parseEventFilters — the new facets (method, eventType, dedupStrategy)", () => {
+  it("method: multi-select, validated against the 7 verbs; junk dropped", () => {
+    expect(parseEventFilters({ method: ["GET", "POST"] }).method).toEqual(["GET", "POST"]);
+    expect(parseEventFilters({ method: "GET" }).method).toEqual(["GET"]);
+    // a hand-edited bad verb is dropped, not passed to SQL; de-duped
+    expect(parseEventFilters({ method: ["GET", "TRACE", "GET"] }).method).toEqual(["GET"]);
+    expect(parseEventFilters({ method: "nope" }).method).toBeUndefined();
+    expect(parseEventFilters({ method: [] }).method).toBeUndefined();
+  });
+
+  it("dedupStrategy: multi-select, validated against the 5 strategies; junk dropped", () => {
+    expect(parseEventFilters({ dedupStrategy: ["unique", "content_hash"] }).dedupStrategy).toEqual([
+      "unique",
+      "content_hash",
+    ]);
+    expect(parseEventFilters({ dedupStrategy: "bogus" }).dedupStrategy).toBeUndefined();
+  });
+
+  it("eventType: a single trimmed string (exact match); empty/whitespace dropped", () => {
+    expect(parseEventFilters({ eventType: "charge.succeeded" }).eventType).toBe("charge.succeeded");
+    expect(parseEventFilters({ eventType: "  invoice.paid  " }).eventType).toBe("invoice.paid");
+    expect(parseEventFilters({ eventType: "   " }).eventType).toBeUndefined();
+    expect(parseEventFilters({ eventType: "" }).eventType).toBeUndefined();
+    // a repeated param takes first-wins (never throws on an array)
+    expect(parseEventFilters({ eventType: ["a.b", "c.d"] }).eventType).toBe("a.b");
+    // an over-long value is dropped (mirrors the contract's max 256)
+    expect(parseEventFilters({ eventType: "x".repeat(257) }).eventType).toBeUndefined();
+  });
+
+  it("hasAppliedFilters is true when any new facet is set", () => {
+    expect(hasAppliedFilters(parseEventFilters({ method: ["GET"] }))).toBe(true);
+    expect(hasAppliedFilters(parseEventFilters({ dedupStrategy: ["unique"] }))).toBe(true);
+    expect(hasAppliedFilters(parseEventFilters({ eventType: "charge.succeeded" }))).toBe(true);
+    expect(hasAppliedFilters(parseEventFilters({}))).toBe(false);
+  });
+});

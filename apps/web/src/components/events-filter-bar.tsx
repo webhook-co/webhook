@@ -17,6 +17,7 @@ import * as React from "react";
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { effectiveDateRange } from "@/lib/date-range";
 import { SEARCH_MIN_LENGTH, searchTooShort } from "@/lib/event-filters";
+import { DEDUP_STRATEGIES, DEDUP_STRATEGY_LABELS, HTTP_METHODS } from "@/lib/event-facets";
 import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verification-state";
 
 // The events-list filter bar, driven entirely by the URL query so the filtered view is shareable,
@@ -27,7 +28,18 @@ import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verificati
 // list. No client-side filtering — the DB does it.
 
 // `endpointId` is listed unconditionally: Clear deleting a param the per-endpoint page never sets is a no-op.
-const FILTER_KEYS = ["provider", "status", "from", "to", "search", "range", "endpointId"] as const;
+const FILTER_KEYS = [
+  "provider",
+  "status",
+  "from",
+  "to",
+  "search",
+  "range",
+  "endpointId",
+  "method",
+  "dedupStrategy",
+  "eventType",
+] as const;
 /** Exported so tests wait on the REAL window rather than a duplicated guess that could drift from it. */
 export const SEARCH_DEBOUNCE_MS = 300;
 
@@ -73,6 +85,8 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   const [pendingSel, setPendingSel] = React.useState<{
     provider?: string[];
     status?: string[];
+    method?: string[];
+    dedupStrategy?: string[];
   }>({});
   const providerSel = (pendingSel.provider ?? searchParams.getAll("provider")).filter((p) =>
     providers.includes(p),
@@ -80,6 +94,13 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   const statusSel = (pendingSel.status ?? searchParams.getAll("status")).filter((s) =>
     (VERIFICATION_STATES as readonly string[]).includes(s),
   );
+  const methodSel = (pendingSel.method ?? searchParams.getAll("method")).filter((m) =>
+    (HTTP_METHODS as readonly string[]).includes(m),
+  );
+  const dedupSel = (pendingSel.dedupStrategy ?? searchParams.getAll("dedupStrategy")).filter((d) =>
+    (DEDUP_STRATEGIES as readonly string[]).includes(d),
+  );
+  const eventType = searchParams.get("eventType") ?? "";
   const from = searchParams.get("from") ?? "";
   const to = searchParams.get("to") ?? "";
   const search = searchParams.get("search") ?? "";
@@ -94,6 +115,9 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     endpointSel !== "" ||
     providerSel.length > 0 ||
     statusSel.length > 0 ||
+    methodSel.length > 0 ||
+    dedupSel.length > 0 ||
+    eventType !== "" ||
     from !== "" ||
     to !== "" ||
     search !== "" ||
@@ -135,6 +159,15 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
     () => VERIFICATION_STATES.map((s) => ({ value: s, label: VERIFICATION_STATE_LABELS[s] })),
     [],
   );
+  // method labels ARE the verbs (no mapping); dedup shows a human label, never the raw slug.
+  const methodOptions = React.useMemo<MultiSelectOption[]>(
+    () => HTTP_METHODS.map((m) => ({ value: m, label: m })),
+    [],
+  );
+  const dedupOptions = React.useMemo<MultiSelectOption[]>(
+    () => DEDUP_STRATEGIES.map((d) => ({ value: d, label: DEDUP_STRATEGY_LABELS[d] })),
+    [],
+  );
 
   // The query string WE last pushed. Changing two controls within the RSC-navigation commit window
   // would otherwise both start from the stale `searchParams` snapshot and clobber each other; merging
@@ -165,7 +198,10 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
 
   // Set a multi-value key to the given list (repeated params), merged against the last-pushed value so a
   // concurrent single-key change isn't clobbered. An empty list deletes the key (no filter).
-  function setMulti(key: "provider" | "status", values: readonly string[]) {
+  function setMulti(
+    key: "provider" | "status" | "method" | "dedupStrategy",
+    values: readonly string[],
+  ) {
     setPendingSel((prev) => ({ ...prev, [key]: [...values] }));
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     next.delete(key);
@@ -182,6 +218,20 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   // Off the LIVE input, not the URL: the hint answers the reader as they type, before the debounce decides
   // (correctly) not to push a term that cannot run.
   const tooShort = searchTooShort({ search: searchInput });
+
+  // eventType is an EXACT match, so it commits on Enter/blur — NOT debounced-as-you-type like search, which
+  // would query partial types (`charge` never equals `charge.succeeded`). Local state mirrors the URL and is
+  // re-synced when the URL changes (back button, Clear).
+  const [eventTypeInput, setEventTypeInput] = React.useState(eventType);
+  React.useEffect(() => {
+    setEventTypeInput(eventType);
+  }, [eventType]);
+  function commitEventType() {
+    const trimmed = eventTypeInput.trim();
+    if (trimmed === eventType) return; // no-op: nothing to push
+    setEventTypeInput(trimmed);
+    applyPatch({ eventType: trimmed });
+  }
   const searchPendingRef = React.useRef(false);
   React.useEffect(() => {
     if (!searchPendingRef.current) setSearchInput(search);
@@ -289,6 +339,41 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
           className="w-40"
         />
 
+        <MultiSelect
+          label="Filter by HTTP method"
+          placeholder="All methods"
+          options={methodOptions}
+          selected={methodSel}
+          onChange={(values) => setMulti("method", values)}
+          className="w-36"
+        />
+
+        <MultiSelect
+          label="Filter by dedup strategy"
+          placeholder="All dedup"
+          options={dedupOptions}
+          selected={dedupSel}
+          onChange={(values) => setMulti("dedupStrategy", values)}
+          className="w-44"
+        />
+
+        {/* eventType is a free EXACT match, not a dropdown: the vocabulary is unbounded + user-controlled, so
+            a `select distinct` per render would be the wrong shape. Commits on Enter/blur. The hint is honest
+            about coverage — event type is only parsed for some providers, so a "no results" here can mean
+            "we don't extract this provider's type", not "no such events". */}
+        <Input
+          value={eventTypeInput}
+          onChange={(e) => setEventTypeInput(e.target.value)}
+          onBlur={commitEventType}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitEventType();
+          }}
+          placeholder="Event type (e.g. charge.succeeded)"
+          aria-label="Filter by event type"
+          aria-describedby="events-eventtype-hint"
+          className="w-56"
+        />
+
         {endpoints ? (
           <Combobox
             label="Filter by endpoint"
@@ -314,6 +399,17 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
           Clear filters
         </Button>
       </div>
+
+      {/* Always mounted (screen-reader-stable, like the search hint); visible only while an event-type filter
+          is set. It exists because event type is NULL for providers whose payload we don't parse a type from,
+          so an empty result is genuinely ambiguous — say so rather than let it read as "no such events". */}
+      <p
+        id="events-eventtype-hint"
+        className={eventType !== "" ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
+      >
+        Event type is parsed for some providers only — no matches can mean we don&apos;t extract
+        this provider&apos;s type, not that no events arrived.
+      </p>
     </div>
   );
 }
