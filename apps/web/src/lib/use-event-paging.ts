@@ -45,8 +45,11 @@ export function useEventPaging({
   const [cursor, setCursor] = React.useState<Cursor | null>(initialCursor);
   const [pending, setPending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  // Synchronous in-flight latch — `pending` state re-renders a frame late, so it can't block a same-tick
-  // double-click (which would skip a page by advancing the cursor twice).
+  // Synchronous in-flight latch. `pending` state re-renders a frame LATE, so `disabled={pending}` cannot
+  // block a second click landing in the SAME tick: both handlers would read the same cursor, fetch the same
+  // page, and append it — showing the reader every row of that page TWICE. (The inherited comment said this
+  // "skips a page by advancing the cursor twice"; it does not — both writes set the same nextCursor. The
+  // symptom is duplicate rows.) Covered by the same-tick double-click test in events-list.test.tsx.
   const pendingRef = React.useRef(false);
 
   const handleLoadMore = React.useCallback(async () => {

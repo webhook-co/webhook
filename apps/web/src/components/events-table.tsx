@@ -23,14 +23,6 @@ export interface EventsTableProps {
   readonly items: readonly EventSummaryItem[];
   /** Whether a filter is actually APPLIED (from the PARSED filters) — drives the empty copy honestly. */
   readonly isFiltered: boolean;
-  /**
-   * Endpoint id → display name. PRESENCE renders the Endpoint column; omit it on a page that is already
-   * scoped to one endpoint, where the column would repeat the same value on every row.
-   *
-   * A plain Record (not a Map) because this crosses a props boundary. The org page builds it from the
-   * `loadEndpoints` call it already makes for the endpoint filter, so there is no per-row cost and no N+1.
-   */
-  readonly endpointNames?: Readonly<Record<string, string>>;
   /** Empty-state copy when nothing is filtered. The two browses onboard differently. */
   readonly emptyMessage: string;
 }
@@ -40,19 +32,22 @@ export interface EventsTableProps {
  *
  * Presentational and state-free, so the endpoint-scoped list and the org-wide one render IDENTICAL rows and
  * cannot drift on the columns, the link shape, or the verification pill.
+ *
+ * An Endpoint column belongs here once the org-wide browse exists — it is deliberately NOT here yet. It
+ * needs `EndpointMeta {name, deleted}` (server/events.ts), whose absence-vs-deleted distinction a naive
+ * `Record<string, string>` would flatten: an endpoint can be missing from a name map because the map was
+ * built with a name FILTER, because `loadEndpoints` errored, or because the live tail prepended an event for
+ * an endpoint created after the page rendered — none of which mean "deleted". It lands with its producer.
  */
-export function EventsTable({ items, isFiltered, endpointNames, emptyMessage }: EventsTableProps) {
+export function EventsTable({ items, isFiltered, emptyMessage }: EventsTableProps) {
   // The org this is rendered in — read from the URL, which is the source of truth for it.
   const slug = useOrgSlug();
-  const showEndpoint = endpointNames !== undefined;
-  const colSpan = showEndpoint ? 5 : 4;
 
   return (
     <Table>
       <TableHeader>
         <TableRow>
           <TableHead>Received</TableHead>
-          {showEndpoint ? <TableHead>Endpoint</TableHead> : null}
           <TableHead>Provider</TableHead>
           <TableHead>Verified</TableHead>
           <TableHead>Event ID</TableHead>
@@ -60,7 +55,7 @@ export function EventsTable({ items, isFiltered, endpointNames, emptyMessage }: 
       </TableHeader>
       <TableBody>
         {items.length === 0 ? (
-          <TableEmpty colSpan={colSpan}>
+          <TableEmpty colSpan={4}>
             {isFiltered
               ? "No events match these filters. Adjust or clear them to see more."
               : emptyMessage}
@@ -79,14 +74,6 @@ export function EventsTable({ items, isFiltered, endpointNames, emptyMessage }: 
                   {formatDateTime(event.receivedAt)}
                 </Link>
               </TableCell>
-              {showEndpoint ? (
-                <TableCell className="text-fg-secondary">
-                  {/* An endpoint absent from the map is a SOFT-DELETED one (ADR-0076 keeps its events
-                      listable). Fall back to neutral prose, never the raw uuid — the house rule is that a
-                      raw id is never the visible label. */}
-                  {endpointNames[event.endpointId] ?? "Deleted endpoint"}
-                </TableCell>
-              ) : null}
               <TableCell className="text-fg-secondary">
                 <span className="flex items-center gap-2">
                   <ProviderLogo slug={event.provider} size={16} />

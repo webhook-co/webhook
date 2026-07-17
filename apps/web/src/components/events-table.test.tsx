@@ -1,9 +1,17 @@
 import { render, screen, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { EventSummaryItem } from "@/server/events";
 
 import { EventsTable } from "./events-table";
+
+// Without this, `useOrgSlug()` returns "" and `orgHref` degrades to the BARE path — every href assertion
+// below would then pin a string production never emits, and deleting the `orgHref(slug, …)` wrapper would
+// leave this file green. org-url.ts:11 names the trap: "a link that forgets the prefix is a 404, and neither
+// the type checker nor a unit test that only asserts 'there is an anchor here' will notice."
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
+}));
 
 const EP_A = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const EP_B = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5099";
@@ -27,61 +35,43 @@ function ev(id: string, over: Partial<EventSummaryItem> = {}): EventSummaryItem 
 const ONBOARDING = "No events yet. Point a provider at this endpoint's webhook URL.";
 
 describe("EventsTable", () => {
-  it("renders no Endpoint column when endpointNames is omitted", () => {
-    render(<EventsTable items={[ev(A)]} isFiltered={false} emptyMessage={ONBOARDING} />);
-    expect(screen.queryByRole("columnheader", { name: "Endpoint" })).not.toBeInTheDocument();
-    expect(screen.getAllByRole("columnheader")).toHaveLength(4);
-  });
-
-  it("renders the Endpoint column when endpointNames is set", () => {
-    render(
-      <EventsTable
-        items={[ev(A)]}
-        isFiltered={false}
-        endpointNames={{ [EP_A]: "stripe-prod" }}
-        emptyMessage={ONBOARDING}
-      />,
-    );
-    expect(screen.getByRole("columnheader", { name: "Endpoint" })).toBeInTheDocument();
-    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
-    expect(within(screen.getByText(A).closest("tr")!).getByText("stripe-prod")).toBeInTheDocument();
-  });
-
-  // The house rule: a raw id is never the visible label. An endpoint absent from the map is a soft-deleted
-  // one (ADR-0076 keeps its events listable), so the row must say so rather than print a uuid at the reader.
-  it("labels an endpoint missing from the map, and NEVER shows its raw uuid", () => {
-    render(
-      <EventsTable
-        items={[ev(B, { endpointId: EP_B })]}
-        isFiltered={false}
-        endpointNames={{ [EP_A]: "stripe-prod" }}
-        emptyMessage={ONBOARDING}
-      />,
-    );
-    const row = screen.getByText(B).closest("tr")!;
-    expect(within(row).getByText("Deleted endpoint")).toBeInTheDocument();
-    expect(within(row).queryByText(EP_B)).not.toBeInTheDocument();
-  });
-
-  // Rows can come from many endpoints; each must link to ITS OWN. `loadEvent` asserts
-  // `event.endpointId !== endpointId → not_found`, so a wrong endpoint in the href is a guaranteed 404.
-  it("links every row to its own event's endpoint", () => {
+  // Rows can come from more than one endpoint (the org-wide browse), and each must link to ITS OWN.
+  // `loadEvent` asserts `event.endpointId !== endpointId → not_found`, so a wrong endpoint in the href is a
+  // guaranteed 404 — and so is a MISSING /org/{slug} prefix, which the mock above is what makes visible.
+  it("links every row to its own event's endpoint, under the org prefix", () => {
     render(
       <EventsTable
         items={[ev(A), ev(B, { endpointId: EP_B })]}
         isFiltered={false}
-        endpointNames={{ [EP_A]: "a", [EP_B]: "b" }}
         emptyMessage={ONBOARDING}
       />,
     );
     expect(within(screen.getByText(A).closest("tr")!).getByRole("link")).toHaveAttribute(
       "href",
-      `/endpoints/${EP_A}/events/${A}`,
+      `/org/acme/endpoints/${EP_A}/events/${A}`,
     );
     expect(within(screen.getByText(B).closest("tr")!).getByRole("link")).toHaveAttribute(
       "href",
-      `/endpoints/${EP_B}/events/${B}`,
+      `/org/acme/endpoints/${EP_B}/events/${B}`,
     );
+  });
+
+  it("renders the tri-state verification pill and the null-provider placeholder", () => {
+    render(
+      <EventsTable
+        items={[
+          ev(A, { verificationState: "verified" }),
+          ev(B, { verified: false, verificationState: "unattempted", provider: null }),
+        ]}
+        isFiltered={false}
+        emptyMessage={ONBOARDING}
+      />,
+    );
+    // Scope to the row: the table HEADER cell is also "Verified", so a bare getByText collides.
+    expect(within(screen.getByText(A).closest("tr")!).getByText("Verified")).toBeInTheDocument();
+    const row = screen.getByText(B).closest("tr")!;
+    expect(within(row).getByText("Not verified")).toBeInTheDocument();
+    expect(within(row).getByText("—")).toBeInTheDocument();
   });
 
   it("shows the caller's onboarding copy when empty and unfiltered", () => {
@@ -97,14 +87,9 @@ describe("EventsTable", () => {
     expect(screen.queryByText(ONBOARDING)).not.toBeInTheDocument();
   });
 
-  it("spans the empty row across every column, including Endpoint", () => {
-    const { rerender } = render(
-      <EventsTable items={[]} isFiltered={false} emptyMessage={ONBOARDING} />,
-    );
+  it("spans the empty row across every column", () => {
+    render(<EventsTable items={[]} isFiltered={false} emptyMessage={ONBOARDING} />);
     expect(screen.getByText(ONBOARDING).closest("td")).toHaveAttribute("colspan", "4");
-    rerender(
-      <EventsTable items={[]} isFiltered={false} endpointNames={{}} emptyMessage={ONBOARDING} />,
-    );
-    expect(screen.getByText(ONBOARDING).closest("td")).toHaveAttribute("colspan", "5");
+    expect(screen.getAllByRole("columnheader")).toHaveLength(4);
   });
 });

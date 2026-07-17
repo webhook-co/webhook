@@ -4,9 +4,19 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { EventSummaryItem } from "@/server/events";
+import type { LoadMoreEventsResult } from "@/server/event-actions";
 import type { MintTicketResult } from "@/lib/live-events";
 
 import { EventsList } from "./events-list";
+
+// Without this, `useOrgSlug()` returns "" and `orgHref` degrades to the BARE path — so every href assertion
+// below would pin a string production never emits, and deleting the `orgHref(slug, …)` wrapper would leave
+// the suite green. org-url.ts:11 names this exact trap: "a link that forgets the prefix is a 404, and neither
+// the type checker nor a unit test that only asserts 'there is an anchor here' will notice." Mirrors
+// deliveries-list.test.tsx.
+vi.mock("next/navigation", () => ({
+  useParams: () => ({ slug: "acme" }),
+}));
 
 const ENDPOINT_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
 const ORG_ID = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f50aa";
@@ -162,7 +172,7 @@ describe("EventsList", () => {
     // links to the event detail
     expect(within(screen.getByText(A).closest("tr")!).getByRole("link")).toHaveAttribute(
       "href",
-      `/endpoints/${ENDPOINT_ID}/events/${A}`,
+      `/org/acme/endpoints/${ENDPOINT_ID}/events/${A}`,
     );
   });
 
@@ -186,8 +196,37 @@ describe("EventsList", () => {
     );
     expect(within(screen.getByText(A).closest("tr")!).getByRole("link")).toHaveAttribute(
       "href",
-      `/endpoints/${OTHER_ENDPOINT}/events/${A}`,
+      `/org/acme/endpoints/${OTHER_ENDPOINT}/events/${A}`,
     );
+  });
+
+  // The `pendingRef` latch in useEventPaging, which is the hook's whole reason for existing. `pending` state
+  // re-renders a frame LATE, so `disabled={pending}` cannot block a second click landing in the same tick:
+  // both handlers read the same cursor, both fetch the same page, and both append it — so the reader sees
+  // every row of page 2 TWICE. (The latch is invisible to every other test here: deleting it leaves them all
+  // green, which is exactly how it would come back.)
+  it("cannot double-fetch a page on a same-tick double-click", async () => {
+    const cursor: Cursor = { receivedAt: new Date("2026-06-28T12:00:00Z"), id: A };
+    const loadMore = vi.fn(
+      async () => new Promise<never>(() => {}) as unknown as Promise<LoadMoreEventsResult>,
+    );
+    render(
+      <EventsList
+        endpointId={ENDPOINT_ID}
+        initialItems={[ev(A)]}
+        initialCursor={cursor}
+        filterParams={{}}
+        isFiltered={false}
+        loadMore={loadMore}
+      />,
+    );
+    const button = screen.getByRole("button", { name: /load older events/i });
+    // Two clicks with NO await between them — the same tick, before React can re-render `disabled`.
+    await act(async () => {
+      button.click();
+      button.click();
+    });
+    expect(loadMore).toHaveBeenCalledTimes(1);
   });
 
   it("loads more, appends the next page, and hides the button when the cursor is exhausted", async () => {
