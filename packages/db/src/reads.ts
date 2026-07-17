@@ -659,43 +659,30 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
  * UUIDv7 ids > head). ZERO_UUID sorts below every UUIDv7, so `(T, ZERO_UUID)` with `>` includes every real
  * event at instant T. Resolve once at start, iterate by cursor.
  */
-/**
- * A cursor at the gapless watermark frontier (`now() - δ`, ZERO_UUID) — "everything currently VISIBLE is
- * behind you, nothing in flight is skipped".
- *
- * ZERO_UUID is the low tiebreaker, so the keyset `(received_at, id) > (frontier, 0-uuid)` still admits a row
- * landing exactly at the frontier microsecond. Erring toward one duplicate beats erring toward one lost
- * event: the tail is at-least-once and the client dedupes by id.
- */
-async function watermarkFrontierCursor(tx: TenantTx): Promise<Cursor> {
-  const [row] = await tx<{ t: string }[]>`
-    select to_char((now() - (${WATERMARK_DELTA_MS} * interval '1 millisecond')) at time zone 'UTC',
-                   'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as t`;
-  return { orderKey: row!.t, id: ZERO_UUID };
-}
-
 export async function resolveSince(
   tx: TenantTx,
   opts: { readonly endpointId: string; readonly since: Exclude<Since, { kind: "invalid" }> },
 ): Promise<Cursor | undefined> {
   const { endpointId, since } = opts;
   if (since.kind === "beginning") return undefined;
-  if (since.kind === "now") {
-    const head = await latestTailCursor(tx, { endpointId });
-    if (head) return head;
-    // NO event at/below the watermark — an endpoint whose whole history is younger than δ.
-    //
-    // Returning undefined here (as this did) hands the DO its OLDEST-INCLUSIVE sentinel: `now` and
-    // `beginning`, two opposite requests, collapse onto one value, and "go live" replays the very burst it
-    // was asked to skip. Bounded by δ, but wrong in principle and wrong for the reader.
-    //
-    // Seed at the watermark frontier instead. It is the same position latestTailCursor would return if a row
-    // existed there, so both branches mean one thing: "everything already visible is behind you". Deliberately
-    // the frontier and NOT wall-clock `now()` — an event still in flight has a received_at up to δ in the past
-    // and is not yet visible, so a wall-clock seed would skip it forever. That is the gap the watermark exists
-    // to close, and the reason `now` is resolved here rather than by the client.
-    return watermarkFrontierCursor(tx);
-  }
+  // `now` = "everything already VISIBLE is behind you" — the newest event at/below the gapless watermark.
+  //
+  // KNOWN RESIDUAL, deliberately not papered over. `latestTailCursor` is watermark-bounded, so when an
+  // endpoint's ENTIRE history is younger than δ it returns null, and null degrades to the DO's
+  // oldest-inclusive sentinel: a reader who presses "go live" on a brand-new endpoint mid-burst sees that
+  // burst. Bounded — everything replayed is younger than δ by definition of reaching that case — but it does
+  // contradict "live means from this point forward".
+  //
+  // It is NOT fixable by substituting a synthetic frontier cursor at `now() - δ`. That was tried and is a
+  // provable NO-OP: reaching this case means every row already sorts ABOVE `now() - δ`, so the keyset `>`
+  // admits exactly the rows the sentinel admits. Zero events change hands. (The test that "proved" it worked
+  // only by rewriting received_at an hour into the past — a mutation time never performs.)
+  //
+  // The real fix is a WALL-CLOCK seed (`{ now(), ZERO_UUID }`), which does skip the burst — but it also
+  // skips any event still in flight, whose received_at is up to δ old and not yet visible. That is exactly
+  // the gap the watermark exists to close, and `--since now` on the CLI shares this resolver and depends on
+  // it. Trading a bounded replay for silent event loss on two surfaces needs its own decision, not a rider.
+  if (since.kind === "now") return (await latestTailCursor(tx, { endpointId })) ?? undefined;
   if (since.kind === "timestamp") return { orderKey: msDateToOrderKey(since.date), id: ZERO_UUID };
   const [row] = await tx<{ t: string }[]>`
     select to_char((now() - (${since.ms} * interval '1 millisecond')) at time zone 'UTC',
