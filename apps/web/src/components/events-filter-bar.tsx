@@ -16,7 +16,7 @@ import * as React from "react";
 
 import { DateRangeFilter } from "@/components/date-range-filter";
 import { effectiveDateRange } from "@/lib/date-range";
-import { SEARCH_MIN_LENGTH, searchTooShort } from "@/lib/event-filters";
+import { SEARCH_MAX_LENGTH, SEARCH_MIN_LENGTH, searchTooShort } from "@/lib/event-filters";
 import { DEDUP_STRATEGIES, DEDUP_STRATEGY_LABELS, HTTP_METHODS } from "@/lib/event-facets";
 import { VERIFICATION_STATE_LABELS, VERIFICATION_STATES } from "@/lib/verification-state";
 
@@ -223,14 +223,27 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   // would query partial types (`charge` never equals `charge.succeeded`). Local state mirrors the URL and is
   // re-synced when the URL changes (back button, Clear).
   const [eventTypeInput, setEventTypeInput] = React.useState(eventType);
+  // What we last PUSHED. Comparing against this, not the URL `eventType`, makes commit idempotent: the URL
+  // value lags a commit by one RSC round trip, so an Enter immediately followed by blur would otherwise
+  // re-push the same value (a wasted navigation). Kept in sync with the URL when it commits.
+  const committedEventTypeRef = React.useRef(eventType);
   React.useEffect(() => {
     setEventTypeInput(eventType);
+    committedEventTypeRef.current = eventType;
   }, [eventType]);
   function commitEventType() {
+    // Only a value the parser would actually APPLY reaches the URL — mirrors the search path. An event type
+    // over the parser's max (SEARCH_MAX_LENGTH, shared with the contract) is dropped there, so pushing it
+    // would light Clear + the coverage hint over a fully UNFILTERED list: the silent-drop cliff. So an
+    // over-long term applies as "no filter" (effective ""), exactly what the parser does with it.
     const trimmed = eventTypeInput.trim();
-    if (trimmed === eventType) return; // no-op: nothing to push
-    setEventTypeInput(trimmed);
-    applyPatch({ eventType: trimmed });
+    const effective = trimmed.length <= SEARCH_MAX_LENGTH ? trimmed : "";
+    // Normalize the displayed value even on a no-op commit, so trailing whitespace / an over-long paste
+    // doesn't linger in the box after blur.
+    setEventTypeInput(effective);
+    if (effective === committedEventTypeRef.current) return;
+    committedEventTypeRef.current = effective;
+    applyPatch({ eventType: effective });
   }
   const searchPendingRef = React.useRef(false);
   React.useEffect(() => {
@@ -265,11 +278,14 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
   }, [searchInput, search, committedQuery, router, pathname]);
 
   function clear() {
-    // Wipe every filter — including the search box. Reset the search input + pending flag so an in-flight
+    // Wipe every filter — including the free-text boxes. Reset the search input + pending flag so an in-flight
     // debounce (if the user typed then hit Clear within the window) no-ops instead of re-pushing the
-    // just-cleared term.
+    // just-cleared term; reset the event-type box + its committed ref too, since typed-but-uncommitted text
+    // otherwise lingers (its URL value never changed, so the URL→input sync effect wouldn't fire).
     setSearchInput("");
     searchPendingRef.current = false;
+    setEventTypeInput("");
+    committedEventTypeRef.current = "";
     const next = new URLSearchParams(lastPushedRef.current ?? committedQuery);
     for (const key of FILTER_KEYS) next.delete(key);
     apply(next);
@@ -370,7 +386,12 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
           }}
           placeholder="Event type (e.g. charge.succeeded)"
           aria-label="Filter by event type"
-          aria-describedby="events-eventtype-hint"
+          // Only point at the hint while the filter is set — matching the search input. Otherwise a screen
+          // reader announces the whole coverage caveat on every focus of an empty box, where it's noise.
+          aria-describedby={eventType !== "" ? "events-eventtype-hint" : undefined}
+          // The parser drops anything over this (shared with the contract), so cap the box at the same bound:
+          // a value that can't be applied can't be typed, and the silent-drop cliff can't be reached by hand.
+          maxLength={SEARCH_MAX_LENGTH}
           className="w-56"
         />
 
@@ -402,13 +423,16 @@ export function EventsFilterBar({ providers, endpoints, defaultRange }: EventsFi
 
       {/* Always mounted (screen-reader-stable, like the search hint); visible only while an event-type filter
           is set. It exists because event type is NULL for providers whose payload we don't parse a type from,
-          so an empty result is genuinely ambiguous — say so rather than let it read as "no such events". */}
+          so an empty result is genuinely ambiguous — say so rather than let it read as "no such events".
+          The TEXT empties when inactive (not just the class) so it's never announced on an empty box — the
+          describedby link on the input is dropped in the same state, matching the search hint. */}
       <p
         id="events-eventtype-hint"
         className={eventType !== "" ? "mt-1.5 text-sm text-fg-muted" : "sr-only"}
       >
-        Event type is parsed for some providers only — no matches can mean we don&apos;t extract
-        this provider&apos;s type, not that no events arrived.
+        {eventType !== ""
+          ? "Event type is parsed for some providers only — no matches can mean we don’t extract this provider’s type, not that no events arrived."
+          : ""}
       </p>
     </div>
   );

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,15 +8,22 @@ import { EventsFilterBar, SEARCH_DEBOUNCE_MS } from "./events-filter-bar";
 // what the bar pushed unobservable — and what it pushes to the URL is the contract under test.
 const replace = vi.fn();
 
+// Mutable so a test can seed the bar with an existing query (e.g. an already-applied event-type filter).
+// Reset to empty before each test.
+let mockSearch = "";
+
 // The bar is URL-driven (next/navigation); stub the hooks so it renders deterministically with no query.
 vi.mock("next/navigation", () => ({
   useParams: () => ({ slug: "acme" }),
   useRouter: () => ({ push: vi.fn(), replace: (...args: unknown[]) => replace(...args) }),
   usePathname: () => "/endpoints/ep/events",
-  useSearchParams: () => new URLSearchParams(""),
+  useSearchParams: () => new URLSearchParams(mockSearch),
 }));
 
-beforeEach(() => replace.mockClear());
+beforeEach(() => {
+  replace.mockClear();
+  mockSearch = "";
+});
 
 describe("EventsFilterBar", () => {
   it("renders provider options as display names with brand logos (not raw slugs)", async () => {
@@ -159,11 +166,64 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     }
   });
 
-  it("event type is a free text input, and its coverage caveat is announced", () => {
+  it("event type is a free text input; the coverage caveat stays silent until a filter is set", () => {
+    // No event-type filter yet: the caveat text is empty and the input does NOT point at it, so a screen
+    // reader doesn't announce the whole provider-coverage sentence on every focus of an empty box.
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText("Filter by event type");
+    expect(input).not.toHaveAttribute("aria-describedby");
+    expect(screen.queryByText(/parsed for some providers only/)).not.toBeInTheDocument();
+  });
+
+  it("the coverage caveat is announced once an event-type filter is applied", () => {
+    mockSearch = "eventType=charge.succeeded";
     render(<EventsFilterBar providers={["stripe"]} />);
     const input = screen.getByLabelText("Filter by event type");
     expect(input).toHaveAttribute("aria-describedby", "events-eventtype-hint");
-    // the honest coverage note is present (parsed for some providers only)
     expect(screen.getByText(/parsed for some providers only/)).toBeInTheDocument();
+  });
+
+  it("commits a trimmed event type on blur, normalizing the visible value", async () => {
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText<HTMLInputElement>("Filter by event type");
+    await user.type(input, "  charge.succeeded  ");
+    await user.tab(); // blur → commit
+    // The applied value reaches the URL trimmed…
+    expect(replace).toHaveBeenCalled();
+    const url = String(replace.mock.calls.at(-1)?.[0]);
+    expect(url).toContain("eventType=charge.succeeded");
+    expect(url).not.toContain("+charge"); // no leading whitespace survived
+    // …and the box itself no longer shows the stray whitespace.
+    expect(input.value).toBe("charge.succeeded");
+  });
+
+  it("never pushes an over-long event type (the parser would drop it → silent-drop cliff)", () => {
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText<HTMLInputElement>("Filter by event type");
+    // maxLength caps typing, but a paste could still exceed it. fireEvent.change bypasses the DOM cap (as a
+    // paste effectively does) to land an over-long value in React state, then blur commits.
+    const tooLong = "x".repeat(1000);
+    fireEvent.change(input, { target: { value: tooLong } });
+    fireEvent.blur(input);
+    // No URL push carries the un-appliable term (it collapses to "no filter", exactly what the parser does).
+    for (const call of replace.mock.calls) {
+      expect(String(call[0])).not.toContain(tooLong);
+    }
+    // And the box is normalized back to empty rather than lingering with an un-appliable value.
+    expect(input.value).toBe("");
+  });
+
+  it("Clear filters wipes typed-but-uncommitted event-type text", async () => {
+    // With a filter already applied, Clear is enabled. An event type typed but not yet committed (no
+    // Enter/blur) has no URL value to sync from, so it would linger after Clear unless reset explicitly.
+    mockSearch = "provider=stripe";
+    const user = userEvent.setup();
+    render(<EventsFilterBar providers={["stripe"]} />);
+    const input = screen.getByLabelText<HTMLInputElement>("Filter by event type");
+    await user.type(input, "charge.succeeded");
+    expect(input.value).toBe("charge.succeeded");
+    await user.click(screen.getByRole("button", { name: /Clear filters/ }));
+    expect(input.value).toBe("");
   });
 });
