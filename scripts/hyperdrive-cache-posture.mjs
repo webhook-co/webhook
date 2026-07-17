@@ -9,10 +9,10 @@
 // renders org B's rows — silently, with no error anywhere.
 //
 // Two things must hold, and the repo previously enforced NEITHER:
-//   1. SELECTION — a tenant binding must resolve to the tenant pool, never to the cached one. The committed
-//      wrangler.jsonc files carry `<HYPERDRIVE_*_ID>` placeholders, and gen-wrangler-prod.mjs's per-app
-//      allow-list permits engine to use BOTH `<HYPERDRIVE_TENANT_ID>` and `<HYPERDRIVE_CACHED_ID>` — so
-//      nothing stopped someone re-pointing a tenant binding at the cached pool.
+//   1. SELECTION — a tenant binding must resolve to the tenant pool. Historically gen-wrangler's per-app
+//      allow-list permitted engine to use BOTH `<HYPERDRIVE_TENANT_ID>` and `<HYPERDRIVE_CACHED_ID>`, so
+//      nothing stopped someone re-pointing a tenant binding at the cached pool. That allow-list entry — and
+//      the caching binding itself — are now GONE, so the pinning check below is what keeps it that way.
 //   2. POSTURE — the pool a binding resolves to must actually have caching disabled. That lived only in an
 //      out-of-repo Cloudflare config object, asserted by a COMMENT in apps/web/wrangler.jsonc claiming
 //      "(cache-disabled …)" beside a binding that sets no `caching` key at all.
@@ -51,6 +51,8 @@ import { parse as parseJsonc } from "jsonc-parser";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const APPS_DIR = join(ROOT, "apps");
+/** The config a plain `wrangler deploy` uses; variants are checked for pinning but never satisfy the floor. */
+const MAIN_CONFIG = "wrangler.jsonc";
 
 // There is deliberately NO exemption list here. One existed — CACHING_ALLOWED_BINDINGS = ["HYPERDRIVE_CACHED"]
 // — and it WAS the hole, twice, because it skipped the binding BY NAME for every app:
@@ -180,6 +182,41 @@ function matchesConfig(file, filename) {
   if (filename === "wrangler.jsonc")
     return /^wrangler(\..+)?\.jsonc$/.test(file) && !file.endsWith(".prod.jsonc");
   return file === filename;
+}
+
+/**
+ * Only the bindings a plain `wrangler deploy -c <config>` actually SHIPS — the TOP-LEVEL `hyperdrive` array.
+ *
+ * This exists because over-approximating is safe in one direction and unsafe in the other, and one function
+ * cannot serve both:
+ *   - the VIOLATION layers want the union (top-level + previews + env.<name>): checking a binding that may not
+ *     deploy is harmless, missing one that does is a leak.
+ *   - the FLOOR wants only what deploys: a binding sitting in a `previews` block satisfies "web declares the
+ *     tenant binding" while the shipped worker binds NOTHING — every dashboard read then 500s, with three
+ *     green guards reporting it as checked. Over-approximating here is a FALSE NEGATIVE.
+ * The deploys pass no `--env`, so previews/env sections are not applied.
+ * @param {unknown} text @returns {Array<{binding: string, id: string}>}
+ */
+export function deployableBindings(text) {
+  if (typeof text !== "string") return [];
+  /** @type {import("jsonc-parser").ParseError[]} */
+  const errors = [];
+  const config = parseJsonc(text, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
+    throw new Error(
+      `could not parse the wrangler config as JSONC (${errors.length} error(s)) — refusing to report ` +
+        "bindings from a partial parse.",
+    );
+  }
+  if (config?.hyperdrive === undefined) return [];
+  if (!Array.isArray(config.hyperdrive)) {
+    throw new Error(
+      "the wrangler config's top-level `hyperdrive` key is not an array — refusing to skip it.",
+    );
+  }
+  return config.hyperdrive
+    .filter((e) => typeof e?.binding === "string" && typeof e?.id === "string")
+    .map(({ binding, id }) => ({ binding, id }));
 }
 
 /** The id placeholder a binding MUST use: `HYPERDRIVE_TENANT` ⇒ `<HYPERDRIVE_TENANT_ID>`. */
@@ -345,17 +382,20 @@ async function readAppConfigs(filename) {
  * @param {ReadonlyArray<{name: string, text: string}>} configs
  */
 function assertEveryDbAppSeen(configs) {
-  // Merge across an app's config VARIANTS (an app can ship more than one wrangler config).
-  const byApp = new Map();
-  for (const { name, text } of configs) {
-    byApp.set(name, [...(byApp.get(name) ?? []), ...hyperdriveBindings(text)]);
-  }
-  const missing = missingDbApps([...byApp].map(([name, bindings]) => ({ name, bindings })));
+  // The MAIN config only, and only its TOP-LEVEL bindings — the floor must reflect what actually deploys.
+  //   * variants are NOT merged: a wrangler.staging.jsonc declaring the tenant binding must not satisfy the
+  //     floor for a wrangler.jsonc that lost it. Each config that ships stands on its own.
+  //   * previews/env sections are NOT counted (see deployableBindings): they do not deploy without --env.
+  const seen = configs
+    .filter((c) => (c.file ?? "wrangler.jsonc") === MAIN_CONFIG || c.file === "wrangler.prod.jsonc")
+    .map(({ name, text }) => ({ name, bindings: deployableBindings(text) }));
+  const missing = missingDbApps(seen);
   if (missing.length > 0) {
     throw new Error(
-      `these apps connect to Postgres but do not declare ${REQUIRED_TENANT_BINDING}: ${missing.join(", ")}. ` +
-        "Refusing to report a posture that skips them — did a wrangler config get renamed, lose its tenant " +
-        "binding, or move it somewhere this guard does not read?",
+      `these apps connect to Postgres but their DEPLOYED config does not declare ` +
+        `${REQUIRED_TENANT_BINDING}: ${missing.join(", ")}. Refusing to report a posture that skips them — ` +
+        "did a config get renamed, lose its tenant binding, or move it into a previews/env section that a " +
+        "plain `wrangler deploy` never applies?",
     );
   }
 }

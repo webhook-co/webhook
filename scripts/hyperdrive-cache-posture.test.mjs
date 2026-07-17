@@ -21,6 +21,7 @@ import {
   cachePostureViolations,
   configsByIdFromPages,
   fetchAllConfigs,
+  deployableBindings,
   hyperdriveBindings,
   missingDbApps,
 } from "./hyperdrive-cache-posture.mjs";
@@ -186,7 +187,7 @@ test("a binding pointed at ANOTHER pool's placeholder is a violation", () => {
   assert.match(violations[0], /HYPERDRIVE_CACHED_ID/);
 });
 
-test("HYPERDRIVE_CACHED pinned to its own placeholder is clean (it is a real, allowed pool)", () => {
+test("a binding pinned to its own placeholder is clean, whatever it is called", () => {
   const text = `{"hyperdrive":[{"binding":"HYPERDRIVE_CACHED","id":"<HYPERDRIVE_CACHED_ID>"}]}`;
   assert.deepEqual(bindingPlaceholderViolations([{ name: "engine", text }]), []);
 });
@@ -546,5 +547,45 @@ test("fetchAllConfigs' error text carries only CF's errors array, never the requ
       assert.doesNotMatch(err.message, /SHOULD-NOT-APPEAR/);
       return true;
     },
+  );
+});
+
+// ---------------------------------------------------------------- deployableBindings (what the FLOOR reads)
+
+// REGRESSION (rounds 7+8). hyperdriveBindings UNIONS previews/env sections — right for the violation layers
+// (checking a binding that may not deploy is harmless; missing one that does is a leak) but WRONG for the
+// floor, where it is a FALSE NEGATIVE: a tenant binding parked in `previews` satisfied "web declares the
+// tenant binding" while a plain `wrangler deploy` (no --env) shipped a worker binding NOTHING. Every
+// dashboard read 500s, and three green guards call it checked.
+test("deployableBindings reads ONLY the top-level array, not previews/env", () => {
+  const text = `{
+    "hyperdrive": [{ "binding": "HYPERDRIVE_INGEST", "id": "<HYPERDRIVE_INGEST_ID>" }],
+    "previews": { "hyperdrive": [{ "binding": "HYPERDRIVE_TENANT", "id": "<HYPERDRIVE_TENANT_ID>" }] },
+    "env": { "dev": { "hyperdrive": [{ "binding": "HYPERDRIVE_AUTHN", "id": "<HYPERDRIVE_AUTHN_ID>" }] } }
+  }`;
+  // the union still sees all three (the violation layers need that)…
+  assert.equal(hyperdriveBindings(text).length, 3);
+  // …but only the top-level one actually ships.
+  assert.deepEqual(deployableBindings(text), [
+    { binding: "HYPERDRIVE_INGEST", id: "<HYPERDRIVE_INGEST_ID>" },
+  ]);
+});
+
+test("the floor rejects a tenant binding parked in previews", () => {
+  const parked = `{
+    "hyperdrive": [{ "binding": "HYPERDRIVE_INGEST", "id": "<HYPERDRIVE_INGEST_ID>" }],
+    "previews": { "hyperdrive": [{ "binding": "HYPERDRIVE_TENANT", "id": "<HYPERDRIVE_TENANT_ID>" }] }
+  }`;
+  const seen = DB_APPS.map((name) => ({
+    name,
+    bindings: name === "web" ? deployableBindings(parked) : [{ binding: REQUIRED_TENANT_BINDING }],
+  }));
+  assert.deepEqual(missingDbApps(seen), ["web"]);
+});
+
+test("deployableBindings THROWS rather than reading a non-array top-level key as 'no bindings'", () => {
+  assert.throws(
+    () => deployableBindings(`{"hyperdrive":{"binding":"X","id":"y"}}`),
+    /not an array/,
   );
 });

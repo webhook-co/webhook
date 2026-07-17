@@ -23,7 +23,16 @@ Tenant-scoped reads go **only** through a dedicated **cache-disabled** Hyperdriv
 binding. The engine declares two bindings:
 
 - `HYPERDRIVE_TENANT` — `caching` disabled — for **all** tenant-scoped reads/writes.
-- `HYPERDRIVE_CACHED` — caching on — for non-tenant, cache-safe lookups only.
+- ~~`HYPERDRIVE_CACHED` — caching on — for non-tenant, cache-safe lookups only.~~ **RETIRED 2026-07-17.**
+  The binding was read by ZERO source files for its entire life (the only mentions were comments saying never
+  to use it), but its existence forced the cache-posture guard to carry a by-name exemption — and two separate
+  `/code-review` rounds walked a cross-tenant leak straight through that exemption: an app could bind the
+  caching pool beside the tenant one and route org-wide reads (which bind no `org_id`, so their cache key is
+  identical across every org) through it with every layer green. The binding is deleted from
+  `apps/engine/wrangler.jsonc` and its placeholder from `gen-wrangler-prod.mjs`; the guard now enforces the
+  rule ABSOLUTELY — every hyperdrive binding must resolve to a caching-disabled pool, no name skipped. The
+  `webhook-prod-cached` config and the `HYPERDRIVE_CACHED_ID` repo var still exist; re-adding the binding means
+  re-adding an exemption scoped to an (app, binding) PAIR, never a bare name.
 
 All tenant data access is routed through the `packages/db` client so no surface can
 accidentally pick the cached binding for tenant rows. KV stays the cache for hot,
