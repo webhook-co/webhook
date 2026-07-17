@@ -563,11 +563,12 @@ export async function tailEventsWithCursors(
 }
 
 /**
- * The cursor of the LATEST event at/below the gapless watermark for an endpoint, or null if there is
- * none — the "current position" a `?since=now` listen session starts from, so it tails only NEW events
- * and skips the backlog. (The cli-only seed can't get this: events.tail returns no cursor when caught
- * up.) Same watermark as tailEvents, ordered DESC on the raw received_at to take the max (received_at, id)
- * at exact µs. Backed by events_tunnel_idx (endpoint_id, received_at, id).
+ * The cursor of the LATEST event at/below the gapless watermark for an endpoint, or null if there is none —
+ * the head position for the connect-time STATUS frame and the browse `headCursor`. (NOT the `?since=now`
+ * seed any more: since 2026-07-17 that is wall-clock server-now, resolved in resolveSince; latestTailCursor
+ * would have replayed a young endpoint's whole burst via its null case.) Same watermark as tailEvents,
+ * ordered DESC on the raw received_at to take the max (received_at, id) at exact µs. Backed by
+ * events_tunnel_idx (endpoint_id, received_at, id).
  */
 export async function latestTailCursor(
   tx: TenantTx,
@@ -653,11 +654,17 @@ const ZERO_UUID = "00000000-0000-0000-0000-000000000000";
  * live) — the clamp emerges from the keyset + watermark, needing no extra query or index. `<RFC3339>` uses
  * the parsed instant (a ms Date → `.sss000Z` µs order key); `<duration>` resolves now() minus the duration
  * against the DB clock (skew-safe) as a µs order key. `beginning` → no cursor (oldest-inclusive). `now` is
- * the ONE mode that must skip the ENTIRE backlog (only NEW events), so it resolves to the actual watermark
- * head (`latestTailCursor`, µs-exact): exclusive of the head excludes every backlog row (no same-ms
- * re-surface — the µs head is exact), and it's gapless for live tailing (future events get monotonic
- * UUIDv7 ids > head). ZERO_UUID sorts below every UUIDv7, so `(T, ZERO_UUID)` with `>` includes every real
- * event at instant T. Resolve once at start, iterate by cursor.
+ * the ONE mode that must skip the ENTIRE backlog (only NEW events): it resolves to WALL-CLOCK server-now (a
+ * `(now(), ZERO_UUID)` boundary), so every already-arrived row — whose received_at is in the past — is
+ * excluded, and only events arriving after this instant are delivered (once they mature below the watermark,
+ * their received_at is still > the seed, so the keyset admits them). This deliberately means an in-flight
+ * event a few seconds old but not yet visible is skipped: it arrived before the reader asked to go live, so
+ * it is history. Wall-clock has NO null/degenerate case — earlier this branch used
+ * `latestTailCursor(...) ?? undefined`, which for a young endpoint (nothing below the watermark) returned
+ * undefined = the oldest-inclusive sentinel = a full replay of the young burst; that is gone. ZERO_UUID sorts
+ * below every UUIDv7, so `(now, ZERO_UUID)` with `>` admits an event landing on the exact µs (one possible
+ * dup, deduped by id — the safe direction). Resolved SERVER-side, never a client clock. Resolve once, iterate
+ * by cursor. NOTE: `wbhk listen --since now` shares this and changed with it (was the watermark head).
  */
 export async function resolveSince(
   tx: TenantTx,
@@ -686,14 +693,13 @@ export async function resolveSince(
   //
   // NOTE: `wbhk listen --since now` shares this resolver and changed with it — it now starts strictly after
   // the connect instant rather than at the watermark head. That was the accepted cost of the decision.
-  if (since.kind === "now") {
-    const [row] = await tx<{ t: string }[]>`
-      select to_char(now() at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as t`;
-    return { orderKey: row!.t, id: ZERO_UUID };
-  }
   if (since.kind === "timestamp") return { orderKey: msDateToOrderKey(since.date), id: ZERO_UUID };
+  // `now` and `<duration>` are the same boundary — server now() minus an offset (0 for `now`) — so they
+  // share one round trip rather than two near-identical to_char selects. Same format as orderKeyCol, so the
+  // seed is byte-compatible with the row order keys the keyset compares it against.
+  const offsetMs = since.kind === "now" ? 0 : since.ms;
   const [row] = await tx<{ t: string }[]>`
-    select to_char((now() - (${since.ms} * interval '1 millisecond')) at time zone 'UTC',
+    select to_char((now() - (${offsetMs} * interval '1 millisecond')) at time zone 'UTC',
                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as t`;
   return { orderKey: row!.t, id: ZERO_UUID };
 }

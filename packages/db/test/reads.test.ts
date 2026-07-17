@@ -940,7 +940,7 @@ describe("cursorBelowOldest (CURSOR_EXPIRED guard for future retention)", () => 
   });
 });
 
-describe("latestTailCursor (the ?since=now boundary)", () => {
+describe("latestTailCursor (the STATUS-frame + browse head; no longer the ?since=now seed)", () => {
   it("returns the latest event at/below the watermark (the newest of the tail set)", async () => {
     const c = await withTenant(app, orgA, (tx) => latestTailCursor(tx, { endpointId: epTail }));
     expect(c).not.toBeNull();
@@ -1079,12 +1079,17 @@ describe("resolveSince (Kinesis total-function via synthetic boundary)", () => {
     await seedEvent(orgA, epNow, { provider: "stripe" }); // young: above the watermark, the null case
     await seedEvent(orgA, epNow, { provider: "stripe" });
 
-    const cursor = await withTenant(app, orgA, (tx) =>
-      resolveSince(tx, { endpointId: epNow, since: { kind: "now" } }),
-    );
+    const { cursor, dbNow } = await withTenant(app, orgA, async (tx) => {
+      const cursor = await resolveSince(tx, { endpointId: epNow, since: { kind: "now" } });
+      // The reference clock is the DB's, NOT the test runner's — the cursor is now()-derived, and on the
+      // remote nightly the runner and Neon are different hosts, so a runner Date.now() comparison could go
+      // negative from clock skew (a red nightly that is not a regression — the trap this lane has hit).
+      const [row] = await tx<{ t: number }[]>`select extract(epoch from now()) * 1000 as t`;
+      return { cursor, dbNow: row!.t };
+    });
     expect(cursor).toBeDefined(); // old code returned undefined here → oldest-inclusive replay
-    const ageMs = Date.now() - new Date(cursor!.orderKey).getTime();
-    expect(ageMs).toBeGreaterThanOrEqual(0);
+    const ageMs = dbNow - new Date(cursor!.orderKey).getTime();
+    expect(ageMs).toBeGreaterThanOrEqual(0); // the seed is at/before the DB clock read just after it
     expect(ageMs).toBeLessThan(60_000); // it is "now", not the dawn of the endpoint
   });
 

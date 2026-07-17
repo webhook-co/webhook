@@ -75,19 +75,6 @@ export interface LiveEventsSessionOptions {
   readonly clearTimeoutFn?: (handle: unknown) => void;
   /** Backoff jitter source (deterministic in tests); defaults to `Math.random`. */
   readonly rand?: () => number;
-  /**
-   * How long a within-session reconnect may resume the sticky session before it is treated as a NEW go-live.
-   *
-   * This is the transport twin of the hook's visibility bound, and it exists because the two reconnect paths
-   * are different. The hook re-creates the session on a visibility change; a DEAD SOCKET (a laptop sleep that
-   * never fired visibilitychange) does NOT — scheduleReconnect reuses the sticky sessionId, and the DO's
-   * existing-binding branch resumes from its durable cursor no matter what the client seeds. So the only way
-   * to force "live from now" on that path is to drop the sessionId, which the staleness check below does.
-   * Defaults high; the hook passes its own bound so the two agree.
-   */
-  readonly maxResumeGapMs?: number;
-  /** Injected wall clock (deterministic in tests); defaults to `Date.now`. A DURATION source, so skew-safe. */
-  readonly nowFn?: () => number;
 }
 
 export interface LiveEventsSession {
@@ -152,8 +139,6 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
     setTimeoutFn = (fn, ms) => setTimeout(fn, ms),
     clearTimeoutFn = (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
     rand = Math.random,
-    maxResumeGapMs = 5 * 60 * 1000,
-    nowFn = Date.now,
   } = options;
 
   let ws: WebSocketLike | null = null;
@@ -161,9 +146,6 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
   let attempt = 0;
   let sessionId: string | null = null;
   let reconnectHandle: unknown = null;
-  // Wall-clock of the last proof the tail was alive (a ready or an event). A reconnect whose gap since this
-  // exceeds maxResumeGapMs is a stale session, not a blip: drop the sticky sessionId so it restarts live.
-  let lastActivityAt = 0;
 
   function detach(socket: WebSocketLike): void {
     socket.onopen = null;
@@ -198,12 +180,10 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
     switch (frame.type) {
       case "ready":
         sessionId = frame.sessionId;
-        lastActivityAt = nowFn();
         attempt = 0; // a clean connect resets the backoff.
         onConnectionChange("connected");
         return;
       case "event":
-        lastActivityAt = nowFn();
         onEvent(toItem(frame.summary));
         // Report the position BEFORE acking: this is what lets a paused tail resume exactly, so a tab switch
         // costs nothing. At-least-once means a resume may redeliver the last item; the list dedupes by id.
@@ -269,16 +249,8 @@ export function createLiveEventsSession(options: LiveEventsSessionOptions): Live
     // already holds a binding, and listen-session's `existing` branch leaves the durable cursor untouched
     // without reading either header. The seed is what makes the NO-sessionId paths (remount, tab show, a
     // cold DO) correct — and those are the common ones, not the exotic ones.
-    // A reconnect gone stale (a dead socket after a long sleep) is no longer a resume. Drop the sticky
-    // sessionId so the engine mints a fresh one → a new DO → first-bind → `since=now`. Keeping it would land
-    // on the same DO, whose existing-binding branch resumes from the durable cursor and floods the gap.
-    const staleResume =
-      sessionId !== null && lastActivityAt !== 0 && nowFn() - lastActivityAt > maxResumeGapMs;
-    if (staleResume) sessionId = null;
-
     const params = new URLSearchParams({ endpointId });
-    // A dropped-session reconnect is a fresh go-live: `since=now`, never the (now stale) resume cursor.
-    if (seedFrom && !staleResume) params.set("sinceCursor", seedFrom);
+    if (seedFrom) params.set("sinceCursor", seedFrom);
     else params.set("since", "now");
     if (sessionId) params.set("sessionId", sessionId);
     const url = `${wsUrl}?${params.toString()}`;
