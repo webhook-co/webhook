@@ -245,6 +245,27 @@ describe("EventsFilterBar — method / dedup strategy / event type facets", () =
     expect(clearBtn).toBeDisabled();
   });
 
+  it("Clear immediately clears a URL-sourced filter (endpoint/date), not just optimistic facets", async () => {
+    // The uneven-clearing bug: earlier only the multi-selects cleared optimistically, while endpoint/date/the
+    // Clear button kept reading raw searchParams and lagged the RSC round trip — a half-cleared bar. Routing
+    // every read through viewParams (the last-pushed query) makes them all clear on the same render. Here the
+    // only filter is a URL-sourced endpoint drill-down, which has no optimistic layer of its own.
+    const EP = "0190a1b2-c3d4-7e5f-8a0b-1c2d3e4f5060";
+    mockSearch = `endpointId=${EP}`;
+    const user = userEvent.setup();
+    render(
+      <EventsFilterBar
+        providers={["stripe"]}
+        endpoints={[{ id: EP, name: "stripe-prod", deleted: false }]}
+      />,
+    );
+    const clearBtn = screen.getByRole("button", { name: /Clear filters/ });
+    expect(clearBtn).toBeEnabled();
+    await user.click(clearBtn);
+    // Clear disables on the same render — endpointSel now reads the emptied viewParams, not the stale URL.
+    expect(clearBtn).toBeDisabled();
+  });
+
   // FINDING 1 (the chip-vs-data lie via URL, not just typed input): a shared link whose ?eventType= is
   // whitespace-only or over the max is DROPPED by the server parser, so the bar must not present it as an
   // applied filter. The box stays empty, Clear stays disabled, and the coverage hint stays hidden — the bar's
